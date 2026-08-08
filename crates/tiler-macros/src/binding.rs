@@ -688,9 +688,10 @@ pub(crate) struct BoundRegion {
     /// beside the lowered facts instead of being reconstructed later from them.
     #[allow(
         dead_code,
-        reason = "read by this module's tests and reserved for the lowering slice; no expansion \
-                  builds an index region yet, because every region states `FallbackOnly` and \
-                  invokes no backend compiler"
+        reason = "read by this module's tests and reserved for the lowering slice; nothing in this \
+                  crate calls `IndexRegionBuilder::new_with_shape_environment`, so no expansion \
+                  builds an index region yet — a delivering region included, since `crate::aot` \
+                  compiles from the semantic program rather than from an index region"
     )]
     environment: ShapeEnv,
     operands: Vec<BoundOperand>,

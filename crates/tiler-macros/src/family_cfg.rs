@@ -73,12 +73,26 @@
 //! `each_family_predicate_matches_exactly_its_own_rust_target` checks the table
 //! against `rustc`'s own answer rather than against this module's reading of it.
 //!
-//! The version does not yet reach an identity subject, because the frontend
-//! computes no artifact identity. A region can state a selected family since
-//! Tom accepted the `deliver` statement, but no expansion compiles one — the
-//! statement is refused before emission — so every expansion delivers
-//! `FallbackOnly`, which ADR 0053 defines as invoking no backend compiler. The
-//! slice that first compiles a selected family is what folds it in.
+//! A region stating `deliver macos;` compiles a selected family during its own
+//! expansion — [`crate::aot::deliver`] runs the offline Metal driver, and
+//! [`crate::delivery::DeliveryPlan::items_source`] gates the resulting payload
+//! index on the predicate this module renders — so a delivering expansion embeds
+//! a row from this table. Two spellings reach `FallbackOnly` instead, which ADR
+//! 0053 defines as invoking no backend compiler: a region stating no `deliver`
+//! statement, and one stating `fallback-only`. What is refused rather than
+//! compiled is a family no bound compile declaration measures, which today is
+//! every family except macOS at that declaration's own deployment minimum and
+//! MSL version; `crate::aot::require_buildable` raises that refusal, and it
+//! names the unmeasured families rather than the whole statement.
+//!
+//! [`MAP_VERSION`] is nonetheless an input to none of it. The compilation
+//! identity an expansion resolves against the cache is a function of what
+//! [`crate::aot::deliver`] hands `accept_or_publish_metal_plan` — the program,
+//! the selected plan, the bound declaration, the optimization level, and the
+//! toolchain fingerprint — and this map is not among them: it renders the
+//! `#[cfg]` that selects a payload once the bytes exist, rather than deciding
+//! what the bytes are. The pinned rows above are the whole of what a widening
+//! has to pass.
 
 use tiler_metal_aot::input::ApplePlatform;
 
@@ -88,12 +102,11 @@ use tiler_metal_aot::input::ApplePlatform;
 /// another versioned subject's counter (ADR 0074 convention 3).
 #[allow(
     dead_code,
-    reason = "the version names the table for the tests that pin it and for the compilation \
-              identity that will fold it in. Nothing reads it during an expansion yet because \
-              every expansion delivers `FallbackOnly` — a stated selected family is refused \
-              before emission, since nothing compiles one — so no expansion embeds a predicate \
-              at all; the slice that first compiles a selected family is what makes it an \
-              identity input."
+    reason = "the version names the table for `the_versioned_map_is_pinned_row_by_row`, which is \
+              what a widening has to pass, and nothing outside this module's tests reads it. A \
+              delivering expansion does embed this map — it gates its payload index on a rendered \
+              predicate — but what it embeds is `consumer_cfg`'s answer, and the version names the \
+              table as a whole rather than travelling with any row."
 )]
 pub(crate) const MAP_VERSION: &str = "tiler.frontend.family-consumer-cfg.v1";
 
