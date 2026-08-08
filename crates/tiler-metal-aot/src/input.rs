@@ -105,7 +105,14 @@ pub enum AppleSdk {
 
 impl AppleSdk {
     /// Every SDK selector this toolchain vocabulary currently names.
-    pub const ALL: [Self; 9] = [
+    ///
+    /// The declared length is `variant_count`, so an SDK added to the enum and
+    /// not to this list is an array-length error at this declaration. Nothing
+    /// else catches it: [`Self::selector`] and the test-only index map close
+    /// themselves, and once their arms are written a short `ALL` compiles.
+    /// [`Self::COUNT`] is this array's own length, so the inventory test sizes
+    /// its `seen` array from the very list whose completeness it is checking.
+    pub const ALL: [Self; core::mem::variant_count::<Self>()] = [
         Self::MacOs,
         Self::IPhoneOs,
         Self::IPhoneSimulator,
@@ -185,7 +192,14 @@ pub enum ApplePlatform {
 
 impl ApplePlatform {
     /// Every artifact family this compiler-target vocabulary names.
-    pub const ALL: [Self; 10] = [
+    ///
+    /// The declared length is `variant_count`, so a family added to the enum
+    /// and not to this list is an array-length error at this declaration.
+    /// `tiler_metal::target_correspondence` compares [`Self::COUNT`] against
+    /// `MetalPlatform::COUNT`, which does not catch this: `COUNT` is this
+    /// array's own length, so an omitted family leaves both sides equal and the
+    /// correspondence tests iterate `ALL` and never reach the missing family.
+    pub const ALL: [Self; core::mem::variant_count::<Self>()] = [
         Self::MacOs,
         Self::IOsDevice,
         Self::IOsSimulator,
@@ -344,7 +358,13 @@ pub enum MslVersion {
 
 impl MslVersion {
     /// Every semantic MSL revision this toolchain vocabulary names.
-    pub const ALL: [Self; 12] = [
+    ///
+    /// The declared length is `variant_count`, so a standard added to the enum
+    /// and not to this list is an array-length error at this declaration. As
+    /// with [`ApplePlatform::ALL`], the `COUNT` equality in
+    /// `tiler_metal::target_correspondence` cannot see the omission, because
+    /// [`Self::COUNT`] is this array's own length.
+    pub const ALL: [Self; core::mem::variant_count::<Self>()] = [
         Self::Metal1_0,
         Self::Metal1_1,
         Self::Metal1_2,
