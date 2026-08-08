@@ -1,7 +1,7 @@
 ---
 id: verify-and-file-the-remaining-maturity-audit-leads
 title: Verify and file the remaining maturity-audit leads
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-verify-an
-lease_expires_at: 1786164387
 ---
 ## Six leads from the 2026-08-07 maturity audit, verified to differing degrees
 
@@ -62,3 +59,29 @@ Convention 5b's Measurement closes "the record's fail-closed channel comparison 
 ### Sibling sweep — a negative result worth keeping
 
 Every `until <ticket>` construction in `docs/` was extracted and its target's status read. Six distinct tickets, **all `done`**. Four are past-tense records of work that landed and are correct as written; the Q-SEM-015 planning gate in `docs/open-questions.md` explicitly states "All three are `done`, so the gate is open". Lead 6's two cells are the only live-tense pointers of this class in the repository, so that class is now closed rather than sampled.
+
+## Outcome — done, 2026-08-08
+
+Landed at merge `982a3f9e` (worker commit `58f19f2b`). `tickets/` only, carries the green gate. **Nothing was repaired**, which was the ticket's whole shape.
+
+### Lead 5 refuted, and this is the result that justified the pass
+
+The audit's **ground was true** — the paragraph names five goldens, the directory holds ten, exactly one stages a barrier — and its **conclusion was wrong**. The paragraph is a *dated Fact about the `tiler.schedule.v5` step at `a395852a`*, and coordinator-verified: `git ls-tree a395852a crates/tiler-metal/goldens/` returns **six** files — `cooperative_workgroup_reduction` plus precisely the five it names. The enumeration was **complete when written**. The other four landed 2026-08-06.
+
+So the proposed "nine of ten" repair would have asserted those four moved at a step predating them — **a new false claim, produced by fixing a true observation**. The ticket was filed with the opposite instruction. The neighbouring version pair two paragraphs down was checked too and correctly left alone.
+
+This is exactly the conclusion-versus-ground split the brief asked for, and it is the fifth time this week that reading the dated context rather than the current tree changed the answer.
+
+### The other five, verified
+
+- **Leads 1 + 4a** — verified. No `scripts/` directory exists; the `Makefile` header says *"Spikes deliberately have no target."* Both ADRs are stale **against their own spike README**, which already records this correctly. Convention 5b's Measurement is **imprecise rather than false**.
+- **Lead 2** — the coordinator's suspicion was right **in both directions**: all eight of D-4's owners are `done`, and the 16 non-terminal tickets the dtype file references are integer, quantized and sub-byte owners with **zero BF16**. Narrow claim holds, broad reading false.
+- **Lead 3** — verified and **larger**: the count sites are **five, not three**. Not filed separately; folded into the existing digest-domain ticket, whose `Closes when` phrase would otherwise have let two survive.
+- **Lead 4** — **larger than reported**: 32 "gate" occurrences across 22 lines, and the record cited as *agreeing* with the correction is the biggest source of the same false claim. Two occurrences use "gate" in an unrelated sense and were named so they are not swept.
+- **Lead 6** — verified exactly, and a **sibling sweep closed the class**: every `until <ticket>` construction in `docs/` resolves to six tickets, **all `done`**; four are correct past-tense records and one explicitly says the gate is open. Lead 6's two cells are the only live-tense pointers. A negative result recorded so the class is closed rather than sampled.
+
+### Four tickets filed, with two deliberate mergers
+
+Leads 1+4a merged (same scope, same root cause, one verification) and 2+6 merged (same file, same scope, same class) **to avoid serializing on an exclusive scope**; conversely lead 4 was **split in two** because its second half is a different scope. Scope shape drove the packaging, not lead count.
+
+Anchor-reach demonstrated by planting drift in a new anchor and watching `make citations` fail by name at exit 2, then reverting.
