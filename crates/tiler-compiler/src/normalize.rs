@@ -944,16 +944,44 @@ fn find_ordered_reassociation(
     Ok(None)
 }
 
+/// Returns one semantic value's fixed shape, refusing a symbolic one.
+///
+/// **This is where a symbolic program stops being compilable, and that is
+/// load-bearing rather than incidental.** Normalization rebuilds a program
+/// through `SemanticProgramBuilder`, which mints the rebuilt draft with no
+/// shape environment: a rebuilt symbolic input would either lose the
+/// environment its symbols resolve in or silently acquire a different one, and
+/// the program's identity folds that environment as its fifth subject. Refusing
+/// the whole program is the only answer that keeps identity a function of what
+/// the frontend wrote.
+///
+/// Every downstream stage — physical assembly, artifact packaging, reference
+/// evaluation — refuses one too, each for its own reason. Together they are why
+/// no artifact can differ by its shape-environment subject and why the
+/// envelope's three carried subjects stay sufficient.
+fn static_shape(
+    program: &SemanticProgram,
+    value: ValueId,
+    rule: &'static str,
+) -> Result<Shape, NormalizeError> {
+    program
+        .shape(value)
+        .map_err(|_| NormalizeError::Structure { rule })?
+        .as_static()
+        .cloned()
+        .ok_or(NormalizeError::Structure {
+            rule: "symbolic-extent",
+        })
+}
+
 fn value_fact(program: &SemanticProgram, value: ValueId) -> Result<ValueFact, NormalizeError> {
+    let shape = static_shape(program, value, "algebraic-value")?;
     let value = program
         .value(value)
         .map_err(|_| NormalizeError::Structure {
             rule: "algebraic-value",
         })?;
-    Ok(ValueFact::new(
-        value.resolved_type().clone(),
-        value.shape().clone(),
-    ))
+    Ok(ValueFact::new(value.resolved_type().clone(), shape))
 }
 
 fn reassociated_signature_is_valid(
@@ -1005,17 +1033,14 @@ fn rebuild_ordered_reassociation(
         })?;
     let mut mapped = vec![None; program.value_count()];
     for input in program.inputs() {
+        let shape = static_shape(program, input.value(), "algebraic-input-value")?;
         let value = program
             .value(input.value())
             .map_err(|_| NormalizeError::Structure {
                 rule: "algebraic-input-value",
             })?;
         let rebuilt = builder
-            .input_resolved(
-                input.key().clone(),
-                value.shape().clone(),
-                value.resolved_type().clone(),
-            )
+            .input_resolved(input.key().clone(), shape, value.resolved_type().clone())
             .map_err(|_| NormalizeError::Rebuild {
                 rule: "algebraic-input",
             })?;
@@ -1182,8 +1207,13 @@ fn detect_shared_values(program: &SemanticProgram) -> Result<Congruence, Normali
     let mut canonical: HashMap<OperationSignature, usize> = HashMap::new();
     let facts: Vec<(ResolvedValueType, Shape)> = program
         .values()
-        .map(|value| (value.resolved_type().clone(), value.shape().clone()))
-        .collect();
+        .map(|value| {
+            Ok((
+                value.resolved_type().clone(),
+                static_shape(program, value.id(), "shared-value")?,
+            ))
+        })
+        .collect::<Result<_, NormalizeError>>()?;
     for (index, operation) in program.operations().enumerate() {
         let results = operation
             .results()
@@ -1275,17 +1305,14 @@ fn rebuild(
     let mut mapped: Vec<Option<ValueId>> = vec![None; program.value_count()];
     for input in program.inputs() {
         let position = ordinal(&ordinals, input.value())?;
+        let shape = static_shape(program, input.value(), "input-value")?;
         let value = program
             .value(input.value())
             .map_err(|_| NormalizeError::Structure {
                 rule: "input-value",
             })?;
         let rebuilt = builder
-            .input_resolved(
-                input.key().clone(),
-                value.shape().clone(),
-                value.resolved_type().clone(),
-            )
+            .input_resolved(input.key().clone(), shape, value.resolved_type().clone())
             .map_err(|_| NormalizeError::Rebuild { rule: "input" })?;
         mapped[position] = Some(rebuilt);
     }
@@ -1560,17 +1587,14 @@ pub(crate) fn revalidate_structurally(
 
     for input in program.inputs() {
         let position = ordinal(&ordinals, input.value())?;
+        let shape = static_shape(program, input.value(), "input-value")?;
         let value = program
             .value(input.value())
             .map_err(|_| NormalizeError::Structure {
                 rule: "input-value",
             })?;
         let rebuilt = builder
-            .input_resolved(
-                input.key().clone(),
-                value.shape().clone(),
-                value.resolved_type().clone(),
-            )
+            .input_resolved(input.key().clone(), shape, value.resolved_type().clone())
             .map_err(|_| NormalizeError::Rebuild { rule: "input" })?;
         mapped[position] = Some(rebuilt);
     }

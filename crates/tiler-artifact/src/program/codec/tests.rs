@@ -3003,7 +3003,14 @@ fn program_input_binding(envelope: &mut ArtifactEnvelope) -> &mut super::super::
 /// the step traded those four for thirty-two. A digest byte can coincide by
 /// chance, so this is measured rather than asserted arithmetic, and it is
 /// pinned because `docs/artifact-abi.md` states it as a measurement.
-const DIFFERING_CARRIER_POSITIONS: usize = 68;
+///
+/// **It was 68 until `tiler.semantic-graph.v3`, and the arithmetic did not
+/// change — one more digest byte now coincides.** No structure moved: the two
+/// tag pairs and the two digests are the same four and sixty-four positions,
+/// and the tagged extent encoding merely gave both digests different content.
+/// This is exactly the chance the doc comment above warns about, which is why
+/// the count is measured and not derived.
+const DIFFERING_CARRIER_POSITIONS: usize = 67;
 
 #[test]
 fn a_bf16_artifact_round_trips_and_its_carrier_enters_identity() {

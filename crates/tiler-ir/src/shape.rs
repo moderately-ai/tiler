@@ -32,6 +32,10 @@ pub use sourced::{
 // bounded constraint and guard vocabulary, the builder, the verified
 // environment, its identity, and every error either step can return — and
 // nothing else in `env` is part of that closure.
+// Crate-internal: the semantic layer's fifth identity subject is total, so it
+// needs the identity of the environment that declares nothing. Not public —
+// nothing outside this crate mints an identity it did not derive.
+pub(crate) use env::empty_environment_identity;
 pub use env::{
     BindingSource, ConstraintConflict, ExtentInterval, ExtentRelation, ExtentTerm, FactProvenance,
     FragmentViolation, GuardApplicability, InterfaceParameterKey, RootBinding,

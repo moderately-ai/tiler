@@ -16,8 +16,8 @@
 //! minting a mirror — which is the defect [`SourcedExtent`]'s own documentation
 //! is written against.
 //!
-//! **Fact — the index layer is the only consumer at this commit.** It authors a
-//! symbolic region through
+//! **Fact — the index and semantic layers are both consumers at this commit.**
+//! The index layer authors a symbolic region through
 //! [`IndexRegionBuilder::new_with_shape_environment`](crate::index::IndexRegionBuilder::new_with_shape_environment),
 //! [`IndexRegionBuilder::symbolic_dimension`](crate::index::IndexRegionBuilder::symbolic_dimension),
 //! and
@@ -26,9 +26,23 @@
 //! [`DomainDimensionRef::extent`](crate::index::DomainDimensionRef::extent),
 //! [`TensorRef::shape`](crate::index::TensorRef::shape), and
 //! [`VerifiedIndexRegion::extent_sources`](crate::index::VerifiedIndexRegion::extent_sources).
-//! A semantic-layer consumer is planned and does not exist yet, so every claim
-//! below about "a consumer" is stated once here rather than duplicated into a
-//! layer that would then have to be kept in step.
+//! The semantic layer authors a symbolic *input* through
+//! [`SemanticProgramBuilder::try_standard_with_shape_environment`](crate::semantic::SemanticProgramBuilder::try_standard_with_shape_environment),
+//! [`SemanticProgramBuilder::input_sourced`](crate::semantic::SemanticProgramBuilder::input_sourced),
+//! and
+//! [`SemanticProgramBuilder::input_resolved_sourced`](crate::semantic::SemanticProgramBuilder::input_resolved_sourced),
+//! and inspects one through
+//! [`SemanticProgram::shape`](crate::semantic::SemanticProgram::shape) and
+//! [`SemanticProgram::extent_sources`](crate::semantic::SemanticProgram::extent_sources).
+//! Every claim below about "a consumer" is stated once here rather than
+//! duplicated into each layer, which would then have to be kept in step.
+//!
+//! An *inferred* semantic result shape is still a [`Shape`]: shape inference
+//! over symbolic operands is a separate delivery, so a symbolic value cannot be
+//! an operation operand yet and only a program input may name a symbol. That is
+//! a boundary rather than a partial state — every representable program is
+//! constructible, verifiable, and identifiable — and it is what
+//! `resolve-semantic-shape-inference-over-symbolic-extents` moves.
 //!
 //! # What this module owns, and what it deliberately does not
 //!
@@ -90,10 +104,11 @@
 //!
 //! - **A semantic output extent is the quoted case.** The clause above is about
 //!   "initial output shape[s]", which is a semantic-layer quantity, and it names
-//!   them outright. Nothing has to be inferred. **This case has no implementation
-//!   at this commit** — the semantic layer does not yet carry a sourced shape —
-//!   and it is stated first anyway because it is the rule the other three read
-//!   across from rather than re-derive.
+//!   them outright. Nothing has to be inferred. It is stated first because it is
+//!   the rule the other three read across from rather than re-derive.
+//!   [`SemanticProgramBuilder::input_resolved_sourced`](crate::semantic::SemanticProgramBuilder::input_resolved_sourced)
+//!   enforces it on the semantic side, at the constructor rather than at build,
+//!   so a refused source leaves the draft exactly as it was.
 //! - **An index-layer tensor boundary extent inherits it directly.** An index
 //!   region's output boundary *is* the realization of an initial output shape,
 //!   so the clause reaches it with no further step than identifying the two.
@@ -255,7 +270,15 @@ impl SourcedExtent {
 /// so [`Self::Sourced`] holds at least one symbol and a boundary has exactly
 /// one spelling. That is what makes [`Self::as_static`] depend on the boundary
 /// rather than on which constructor authored it.
-#[derive(Clone, Debug)]
+/// # Equality
+///
+/// Structural, and sound because of the normalization invariant above: an
+/// all-literal boundary has exactly one spelling, so two equal boundaries are
+/// the same boundary and two different boundaries never compare equal. Equality
+/// asks what was *written* — two symbols an environment forces together are
+/// still two different spellings — which is the same question
+/// [`Self::as_static`] answers and the one identity is a function of.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum SourcedShape {
     /// Every extent was a literal fixed when the boundary was authored.
     Static(Shape),
@@ -350,11 +373,35 @@ impl SourcedShape {
 
     /// Returns the exact canonical byte length [`Self::encode`] appends.
     pub(crate) fn encoded_len(&self) -> usize {
-        self.extents()
-            .map(|extent| extent.encoded_len())
-            .fold(8_usize, usize::saturating_add)
+        extents_encoded_len(self.extents())
+    }
+
+    /// Returns the length [`Self::encode`] appends for a wholly literal shape.
+    ///
+    /// A consumer's canonical-work accounting reserves an inferred boundary's
+    /// bytes before the boundary itself exists, and an inferred boundary is
+    /// always literal. This answers that question through the same framing
+    /// [`Self::encoded_len`] uses rather than restating it, and without
+    /// materializing the [`Self::Static`] it would describe.
+    pub(crate) fn static_encoded_len(shape: &Shape) -> usize {
+        extents_encoded_len(shape.extents().iter().copied().map(SourcedExtent::Static))
     }
 }
+
+/// Frames a run of sourced extents: the length, then each extent's own bytes.
+///
+/// The single definition of a boundary's framing. Both
+/// [`SourcedShape::encoded_len`] and [`SourcedShape::static_encoded_len`]
+/// delegate here so a boundary's byte length cannot be described two ways, in
+/// the same spirit as this crate's string framing.
+fn extents_encoded_len(extents: impl Iterator<Item = SourcedExtent>) -> usize {
+    extents
+        .map(|extent| extent.encoded_len())
+        .fold(SOURCED_SHAPE_LENGTH_BYTES, usize::saturating_add)
+}
+
+/// Width of the rank prefix [`crate::identity::push_len`] writes.
+const SOURCED_SHAPE_LENGTH_BYTES: usize = std::mem::size_of::<u64>();
 
 /// Why one sourced extent may not be used where it was written.
 ///

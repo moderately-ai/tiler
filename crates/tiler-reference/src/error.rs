@@ -811,6 +811,15 @@ pub enum EvaluationError {
     },
     /// An internally malformed verified program reached the evaluator.
     MalformedProgram,
+    /// A value's shape names a declared `ShapeEnv` symbol.
+    ///
+    /// Reference evaluation compares a produced tensor against the shape the
+    /// program declares, and a symbolic extent declares no single one. Resolving
+    /// it through the environment would make the oracle answer for a program
+    /// with concrete extents nobody wrote, so the evaluator refuses instead —
+    /// the same line the sourced vocabulary draws between graph identity and
+    /// specialized identity.
+    SymbolicShape,
 }
 
 impl fmt::Display for EvaluationError {
@@ -880,6 +889,9 @@ impl fmt::Display for EvaluationError {
                 write!(formatter, "reference registry failure: {source}")
             }
             Self::MalformedProgram => formatter.write_str("verified semantic program is malformed"),
+            Self::SymbolicShape => {
+                formatter.write_str("a value's shape names a declared shape-environment symbol")
+            }
             _ => self.fmt_capability_error(formatter),
         }
     }
@@ -1092,6 +1104,7 @@ pub(crate) fn dense_result_error(source: &EvaluationError) -> ReferenceOperation
         | EvaluationError::ResultType { .. }
         | EvaluationError::ValueConformance { .. }
         | EvaluationError::ValueConformanceComposition { .. }
-        | EvaluationError::MalformedProgram => ReferenceOperationError::InvalidApplication,
+        | EvaluationError::MalformedProgram
+        | EvaluationError::SymbolicShape => ReferenceOperationError::InvalidApplication,
     }
 }

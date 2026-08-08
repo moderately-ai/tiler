@@ -1730,6 +1730,8 @@ fn the_layer_verifies_at_the_c1_prefill_row() {
             program
                 .shape(output.value())
                 .expect("an output value has a shape")
+                .as_static()
+                .expect("a statically authored program has a fixed output shape")
                 .clone()
         })
         .collect();
@@ -1783,6 +1785,8 @@ fn the_layer_verifies_at_the_c1_decode_row() {
             program
                 .shape(output.value())
                 .expect("an output value has a shape")
+                .as_static()
+                .expect("a statically authored program has a fixed output shape")
                 .clone()
         })
         .collect();
@@ -2073,6 +2077,8 @@ fn a_nonempty_cache_changes_no_occurrence() {
         program
             .shape(output.value())
             .expect("an output value has a shape")
+            .as_static()
+            .expect("a statically authored program has a fixed output shape")
             .clone()
     };
     assert_eq!(context_shape(&prefill), layer_shape([GROUPS, 10, HEAD_DIM]));

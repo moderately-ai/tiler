@@ -192,3 +192,146 @@ This is an internal design choice that *avoids* a public-boundary step rather th
 ### Release trigger for redispatch
 
 All **seven** scopes free simultaneously. Recheck with `tkt claims` plus a scope scan of live `tkt/*` branches.
+
+## Delivered 2026-08-07 — the combined unit landed whole
+
+Both halves in one commit: the semantic layer carries a sourced shape, and `SemanticIdentity` gained its fifth subject. Every check below was run on this branch at its own HEAD with `CARGO_TARGET_DIR=./target`.
+
+### Per-Fact audit at base `0132c0c3`, before any edit
+
+| Claim | Where | Verdict |
+| --- | --- | --- |
+| `ValueFact` holds a `Shape`; `ValueFact::shape` | `semantic/operation.rs:997`, `:1018` | **verified** |
+| `ValueDefinition` holds no shape, is `pub(super)` | `semantic/operation.rs:1564` | **verified** |
+| `ValueData` (`:1593`) and `ValueRef::shape` (`:1637`) | repair §2 | **verified**, both exact |
+| `input`/`input_resolved` take `Shape` by value | `semantic/program.rs:493`, `:516` | **verified** |
+| `SemanticProgram::shape -> Result<&Shape, HandleError>` | `semantic/program.rs:237` | **verified** |
+| Contract admits symbolic semantic extents | `shape-environment-contract.md:89-91` | **verified**; hard-wrapped, so a single-line grep is a false negative |
+| `docs/ir.md` "will not complete the symbolic contract above" | `docs/ir.md:1158` | **verified** |
+| `SemanticIdentity` owns four subjects; graph doc excludes providers/snapshots/provenance | `semantic/identity.rs:40-45`, `:21-22` | **verified** |
+| `encode_shape` writes rank then eight untagged BE bytes; domain `tiler.semantic-graph.v2\0` | `semantic/identity.rs:384-389`, `:17` | **verified** |
+| `SourcedExtent::encode` prepends a tag byte | `shape/sourced.rs:222-228` | **verified** |
+| `project_semantic` projects three named subjects | `tiler-artifact/src/program/codec/model.rs:1018-1033` | **verified** |
+| "Only the three reached subjects travel" | `docs/artifact-abi.md:414` | **verified** |
+| 45 call sites: compiler 24, ir 11, reference 7, artifact 2, macros 1 | repair §1 | **verified exactly**, reproduced by the `#[deprecated]` method |
+| `normalize.rs ×8` | repair §1 | **imprecise, as the coordinator said** — 9 warnings at 7 distinct lines |
+| the three `metal_plan.rs` pins move | repair §4 | **verified**, and the pin list was incomplete — see the table below |
+| **`docs/ir.md:858` is "the canonical-identity statement"** | coordinator block | **false** — `:858` is mid-paragraph in the *residual*-identity Fact at `:855`. The statement meant is at **`:869-870`**, and it is hard-wrapped across those two lines ("root-binding\nprovenance"), which is why a grep for the phrase returns nothing. Corrected at `:869-872`. |
+| **"index refinement receipt" is a fourth cascade site** (`index/refinement.rs:3746-3748`) | coordinator block | **false, and self-contradicted by the same block.** Those lines encode `SemanticCapabilityAuthority` (`semantic/registry.rs:1902`), a *three*-subject type that is not `SemanticIdentity` — which the same block's own "Not affected, and checked rather than assumed" paragraph says two paragraphs earlier. `tiler.ir.index-realization-authority.v1` does not move. **The cascade is three domains, not four.** |
+| **the artifact would need a fourth subject newtype and a `v15 → v16` step** | audit block §"artifact claim is false" | **imprecise, and the real reason is stronger.** The artifact already carries *three of four* subjects and deliberately omits the registry snapshot under ADR 0072, so omitting a fifth needs no new machinery at all. What it needs is the *soundness* argument, which is the coupling below. |
+
+### The resolution taken, and the coupling pinned rather than assumed
+
+The fifth subject is **total over the empty-environment identity** (`shape/env.rs::empty_environment_identity`, read from `ShapeEnvBuilder::new().build()` rather than written out). "Declares no symbols" and "has an empty environment" stay one fact with one spelling, and every downstream enumeration writes five unconditional subjects with no presence tag to frame. This deliberately differs from `crates/tiler-ir/src/index`, whose region bytes carry a presence tag: the difference is the position, not the rule — a fixed subject slot in an identity bundle must hold a value.
+
+`I-A` (folding `ShapeEnvIdentity` into `SemanticGraphIdentity`, which would have avoided the whole cascade) was **not** re-litigated: [the symbolic-semantic-extents record](../docs/research/shapes/symbolic-semantic-extents.md) eliminates it at its Q2 table because `ShapeEnvIdentity` bundles root-binding provenance, which the accepted three-identity table puts on the interface side.
+
+**No symbolic program reaches the artifact, and three independent refusals hold it there** — each stating its own reason rather than deferring to an upstream invariant:
+
+- `tiler-compiler`'s `normalize.rs::static_shape` — a rebuilt draft is minted with no environment, so a rebuilt symbolic input would lose or silently change the environment its identity folds.
+- `tiler-ir`'s `KernelProgramBuilder::new` → `KernelProgramBuildError::SymbolicInterfaceExtent` — a covered boundary is a sized quantity.
+- `tiler-artifact`'s `ArtifactProgramBuilder::new` → `ArtifactBuildError::SymbolicSemanticInterface` — the envelope projects three subjects and can only omit the fifth while no two artifacts differ by it.
+
+The last two are pinned by `no_symbolic_program_reaches_a_verified_kernel_program` (tiler-ir) and `a_symbolic_semantic_program_never_reaches_the_artifact_builder` (tiler-artifact), each with the accepted neighbour that differs only in the extent's source kind. **`contracts/artifacts` was not edited and `docs/artifact-abi.md:414` stays true unedited.**
+
+### Byte stability
+
+Abandoned, not narrowed, exactly as the coordinator said. `SourcedShape::encode` tags every extent, so a wholly static program's graph bytes move.
+
+### The complete recomputed pin table, measured on this tree
+
+Recomputed by running the suite, never carried from the ticket's hypothesis. The hypothesis was **incomplete by two**.
+
+| Pin | Location | Before | After | In the ticket's list? |
+| --- | --- | --- | --- | --- |
+| `ARTIFACT_IDENTITY` | `tiler-build/src/metal_plan.rs` | `7a2bfe51…4357d` | `e16ce926…08057` | yes |
+| `CACHE_SUBJECT` | `tiler-build/src/metal_plan.rs` | `8bdcde64…b1aa2` | `287df982…8104b` | yes |
+| `FIXED_CONTENT_BYTES` | `tiler-build/src/metal_plan.rs` | 65,294 | 65,308 | yes |
+| explain request qualifier | `tiler-compiler/src/explain.rs` | `f99d1e5eb387f42f` | `940c09e0821665a6` | **no** — moved by `request-subject.v6` |
+| `DIFFERING_CARRIER_POSITIONS` | `tiler-artifact/src/program/codec/tests.rs` | 68 | 67 | **no** — see below |
+| `IDENTITY_DOMAIN` | `crates/tiler/src/route/tests.rs` | — | **unmoved** | conditional; condition did not fire |
+| `index/law.rs` pins | `tiler-ir` | — | **unmoved** | predicted unmoved — held |
+| `schedule/builder.rs` pins | `tiler-ir` | — | **unmoved** | predicted unmoved — held |
+| every other pinned literal | 16 `.rs` files | — | **unmoved** | — |
+
+`IDENTITY_DOMAIN` not moving is *evidence for the artifact argument*, not luck: it moves only if the artifact domain steps, and the artifact domain did not step.
+
+**`DIFFERING_CARRIER_POSITIONS` 68 → 67 is a chance coincidence, not a structural change.** The count is the two carrier/access tag pairs (4 bytes) plus the two 32-byte digests covering them, less whatever digest bytes coincide. Nothing structural moved; one more digest byte now happens to match. The constant's own doc comment already warned that this is measured rather than derived, which is why it is pinned.
+
+**`FIXED_CONTENT_BYTES` +14 was checked rather than copied.** The fixture reaches 7 extents (input `[2,2]`, two rank-0 constants, two rank-2 results, one rank-1 sum) and the graph identity appears **twice** in the envelope — once as the artifact program's carried subject and once inside the nested kernel program's subject — so a one-byte-per-extent encoding step costs `2 × 7 = 14`. Measured directly with a temporary probe (`graph_len=886 occurrences=2 extents=7`), which was then removed; the arithmetic is now recorded at the test so the next mover can check a delta instead of copying one.
+
+### The domain cascade, as landed
+
+- `tiler.semantic-graph.v2 → v3` — `semantic/identity.rs`, tagged extents through `SourcedShape::encode`.
+- `tiler.compiler.request-subject.v5 → v6` — `tiler-compiler/src/request.rs`, fifth `push_slice` before the output count.
+- `tiler.program-alternative.v1 → v2` — `tiler-compiler/src/pipeline.rs`, fifth component in the fixed run.
+- `tiler.shape-env.v3` — **does not move**, as `fold` required: no byte a shape environment encodes changed.
+- `tiler.artifact-program.v15`, the envelope, and the manifest schema — **do not move**.
+- `OBLIGATION_DOMAIN` (`semantic/precondition.rs`) — **does not move**, and this is a decision rather than an omission. A precondition subject is always an operand, and an operand is always literal, so nothing an obligation identity can encode changed; `static_subject_shape` is the site that says so and names the ticket that must step it.
+
+### Public boundary, ADR 0075 — the exact draft surface
+
+Added, all `tiler_ir`:
+
+- `SemanticProgramBuilder::try_standard_with_shape_environment(Arc<ShapeEnv>)`
+- `SemanticProgramBuilder::input_sourced<T>(InputKey, Vec<SourcedExtent>)`
+- `SemanticProgramBuilder::input_resolved_sourced(InputKey, Vec<SourcedExtent>, ResolvedValueType)`
+- `SemanticProgram::extent_sources() -> Option<&ExtentSources>`
+- `SemanticIdentity::shape_environment() -> &ShapeEnvIdentity`
+- `BuildError::{ExtentSource, ShapeVocabulary, SymbolicOperandUnsupported}`
+- `ShapeRefineError::SymbolicShape`, `ShapeWitnessError::SymbolicShape`
+- `KernelProgramBuildError::SymbolicInterfaceExtent`, `ArtifactBuildError::SymbolicSemanticInterface`, `IndexRefinementVerificationError::SymbolicSemanticBoundary`, `EvaluationError::SymbolicShape` (`tiler_reference`)
+- `SourcedShape` gained `Eq`/`Hash`/`PartialEq`
+
+Changed: `SemanticProgram::shape` and `ValueRef::shape` return `&SourcedShape`. `ValueFact::shape` is **unchanged** and still returns `&Shape` — the ticket's own dispatch note requires it, and the `#[deprecated]` measurement confirms the 45-site population excludes it entirely (`ValueFact::shape` has 66 further sites, none of which move).
+
+Deliberately **not** added: a `try_new_with_shape_environment` for a custom registry, because the ticket names only the standard-registry constructor. A symbolic program over a custom registry is therefore not constructible; that asymmetry is stated rather than hidden.
+
+Not accepted. **This is a labelled draft** until Tom accepts its exact included and excluded surface.
+
+### Evidence, and every new check watched failing
+
+14 new tests. Each was perturbed at its *subject* and observed failing, then restored:
+
+| Perturbation | Tests that failed |
+| --- | --- |
+| fifth subject made constant (drop the environment fold) | `two_environments_over_one_spelling…`, `a_program_that_declares_no_symbol…` |
+| encode a symbol's determined value instead of the symbol | `two_symbols_in_one_environment_are_two_programs` |
+| drop `SourcedExtent`'s source tag | the three `metal_plan.rs` pins |
+| `ArtifactProgramBuilder` accepts a symbolic interface | `a_symbolic_semantic_program_never_reaches_the_artifact_builder` |
+| `KernelProgramBuilder` accepts a symbolic interface | `no_symbolic_program_reaches_a_verified_kernel_program` |
+| drop the `ExtentSources::admit` check | `a_foreign_symbol_is_refused…`, `a_post_ceiling_binding_is_refused…` |
+| let a symbolic operand through as rank-1 | `a_symbolic_value_is_refused_as_an_operation_operand` |
+| `refine` accepts a symbolic value | `rust_side_evidence_and_shape_witnesses_refuse_a_symbolic_value` |
+| drop `input_sourced`'s environment | six of the seven symbolic tests |
+| break the all-literal normalization in `SourcedShape::sourced` | `a_wholly_literal_program_stays_static_through_every_construction_path` |
+
+**The collision probe was strengthened because the first one did not bite.** `a_symbol_and_the_value_its_environment_pins_are_two_programs` survived the "encode the determined value" perturbation, because the two programs are still separated by `SourcedExtent`'s *tag* alone. `two_symbols_in_one_environment_are_two_programs` is the probe that closes it: both programs carry the symbol tag and **one** environment, so their environment subjects are equal by construction and only the symbol's own bytes can separate them. `a_symbolic_axis_and_a_literal_one_do_not_collide_across_ranks` covers the framing direction.
+
+### Commands, all exit 0 on this tree
+
+```
+cargo fmt --check
+cargo check --workspace --all-targets
+cargo clippy --workspace --all-targets --locked --exclude tiler-prototype-run --exclude tiler-prototype-compile --exclude tiler-prototype-candle -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
+cargo nextest run --workspace --locked      # 3163 passed, 8 skipped (3149 at base)
+cargo test --workspace --doc --locked
+tkt lint                                     # ok: no problems found
+make citations                               # 923 citations across 491 files resolve
+git diff --check
+```
+
+A bare `cargo clippy --workspace` fails on four pre-existing findings in `prototypes/serial-sum-run/src/proof.rs`, untouched by this change; the `Makefile`'s `lint` target excludes the prototypes deliberately and is what was run.
+
+### What the next semantic-graph identity step must account for
+
+[`remove-the-workload-shapes-from-the-concatenate-normative-definition`](remove-the-workload-shapes-from-the-concatenate-normative-definition.md) also steps this domain and is not dispatched. Its coordination note says to check whether this ticket landed first; it has. So that ticket steps **`tiler.semantic-graph.v3 → v4`**, not `v2 → v3`, and it must recompute the **five** pins in the table above rather than the three the older text names — the explain request qualifier and `DIFFERING_CARRIER_POSITIONS` are the two the hypothesis missed, and it must hold `implementation/compiler`, `implementation/artifact`, and `implementation/build` to move them. It does **not** need to touch `request-subject` or `program-alternative`: those stepped for the *subject set*, which it does not change, and a value move inside them stays injective.
+
+### Documents this landing falsifies that are outside these seven scopes
+
+Filed as [`repair-the-records-the-sourced-semantic-shape-falsifies`](repair-the-records-the-sourced-semantic-shape-falsifies.md). `docs/ir.md` was repaired here (`:377` four → five subjects with the accessor listed, `:869-872` the environment identity named as the fifth subject, `:904` the Fact narrowed with a dated correction). Nothing outside `contracts/foundation` was edited.
+
+### Scope confirmation
+
+31 files, all inside `implementation/{ir,compiler,reference,artifact,frontend,build}`, `contracts/foundation`, and `project/tickets`. `crates/tiler-conformance/**` untouched — it reads only `.graph()` and its hex pins are `result_sha256` oracle values; the whole crate's tests pass unchanged. `contracts/artifacts` and `contracts/navigation` untouched.

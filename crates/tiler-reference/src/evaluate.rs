@@ -236,9 +236,7 @@ impl ReferenceEvaluator {
             for (result_index, (result, evaluated)) in
                 results.into_iter().zip(evaluated).enumerate()
             {
-                let expected_shape = program
-                    .shape(result)
-                    .map_err(|_| EvaluationError::MalformedProgram)?;
+                let expected_shape = static_shape(program, result)?;
                 if expected_shape != evaluated.shape() {
                     return Err(EvaluationError::ResultShape {
                         operation: operation.key().clone(),
@@ -317,9 +315,7 @@ impl ReferenceEvaluator {
                     actual: binding.key.clone(),
                 });
             }
-            let expected = program
-                .shape(declaration.value())
-                .map_err(|_| EvaluationError::MalformedProgram)?;
+            let expected = static_shape(program, declaration.value())?;
             if binding.tensor.shape() != expected {
                 return Err(EvaluationError::InputShape {
                     key: declaration.key().clone(),
@@ -356,6 +352,18 @@ impl ReferenceEvaluator {
         }
         Ok((values, retained_work, conformance))
     }
+}
+
+/// Returns the fixed shape a program declares for one value.
+///
+/// The evaluator's single narrowing of the semantic layer's total shape view,
+/// so a symbolic program is refused once rather than at each comparison.
+fn static_shape(program: &SemanticProgram, value: ValueId) -> Result<&Shape, EvaluationError> {
+    program
+        .shape(value)
+        .map_err(|_| EvaluationError::MalformedProgram)?
+        .as_static()
+        .ok_or(EvaluationError::SymbolicShape)
 }
 
 fn resolved_type(

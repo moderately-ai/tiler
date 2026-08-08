@@ -772,6 +772,14 @@ impl CoverAssembly {
                 .map_err(|_| {
                     AssemblyRefusal::missing(regions[*position].label(), "named-output-unshaped")
                 })?
+                // Physical assembly sizes every allocation and view from this
+                // shape, so a symbolic one has nothing to size. Refused by its
+                // own rule rather than folded into the handle failure above,
+                // because the program is well formed and only unschedulable.
+                .as_static()
+                .ok_or_else(|| {
+                    AssemblyRefusal::missing(regions[*position].label(), "named-output-symbolic")
+                })?
                 .clone();
             output_value[*position] = Some(internals.len());
             outputs.push((output.key().clone(), internals.len()));
@@ -1508,6 +1516,10 @@ fn build_cover_core(
                 .shape(input.value())
                 .map_err(|_| ProgramError::Structure {
                     rule: "program-input-unshaped",
+                })?
+                .as_static()
+                .ok_or(ProgramError::Structure {
+                    rule: "program-input-symbolic",
                 })?
                 .clone();
             let elements = shape_elements(&shape)?;

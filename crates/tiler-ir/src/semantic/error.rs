@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::interface::{InputKey, InterfaceKind, OutputKey};
 use super::registry::{RegistryError, RegistryLookupError};
 use super::types::{ResolvedValueType, TypeIdentityError};
-use crate::shape::{Shape, ShapeExpectation};
+use crate::shape::{ExtentSourceError, Shape, ShapeError, ShapeExpectation};
 
 /// A fixed-width semantic arena or interface entity category.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -197,6 +197,29 @@ pub enum BuildError {
         /// Arena entity kind that exhausted its identifier space.
         entity: EntityKind,
     },
+    /// A sourced input extent named a symbol this program cannot resolve.
+    ///
+    /// A program resolves every symbolic extent against exactly one
+    /// environment, fixed at construction. A symbol that environment does not
+    /// declare — including every symbol when no environment was supplied — has
+    /// no meaning here, and one whose binding arrives after
+    /// [`EXTENT_PHASE_CEILING`](crate::shape::EXTENT_PHASE_CEILING) arrives too
+    /// late for a shape that must be evaluable before any device work begins.
+    ExtentSource(ExtentSourceError),
+    /// The shape vocabulary cannot represent the normalized sourced boundary.
+    ShapeVocabulary(ShapeError),
+    /// A value whose shape names a symbol was used as an operation operand.
+    ///
+    /// Result shapes are inferred by the frozen semantic authority through
+    /// [`ValueFact`](super::operation::ValueFact), which carries a fixed
+    /// [`Shape`]; inference over symbolic operands is a separate delivery. Until
+    /// it lands a symbolic extent reaches a program *input* and nothing
+    /// downstream of one, which is a refusal rather than a shape this layer
+    /// would have to guess.
+    SymbolicOperandUnsupported {
+        /// Role the rejected value occupied.
+        role: ValueRole,
+    },
 }
 
 impl fmt::Display for BuildError {
@@ -250,6 +273,12 @@ impl fmt::Display for BuildError {
                 "semantic program canonical work is {actual} bytes, exceeding governed limit {limit}"
             ),
             Self::TooManyEntities { entity } => write!(formatter, "too many {entity} entities"),
+            Self::ExtentSource(error) => error.fmt(formatter),
+            Self::ShapeVocabulary(error) => error.fmt(formatter),
+            Self::SymbolicOperandUnsupported { role } => write!(
+                formatter,
+                "{role} has a symbolic extent, which semantic shape inference does not yet accept"
+            ),
         }
     }
 }
@@ -263,6 +292,8 @@ impl Error for BuildError {
             Self::RegistryLookup(error) => Some(error),
             Self::Reify(error) => Some(error),
             Self::ShapeRefinement(error) => Some(error),
+            Self::ExtentSource(error) => Some(error),
+            Self::ShapeVocabulary(error) => Some(error),
             _ => None,
         }
     }
@@ -281,6 +312,16 @@ pub enum ShapeRefineError {
         /// Authoritative shape recorded by the semantic graph.
         actual: Shape,
     },
+    /// The authoritative shape names a symbol, so no fixed evidence can match.
+    ///
+    /// Rust-side evidence states a shape known when the consumer was compiled.
+    /// A symbolic extent is bound later by declaration, so the question is not
+    /// answered negatively here — it is refused, because answering it either way
+    /// would claim something the environment has not fixed.
+    SymbolicShape {
+        /// Requested evidence, rendered independently of Rust type names.
+        expected: ShapeExpectation,
+    },
 }
 
 impl fmt::Display for ShapeRefineError {
@@ -291,6 +332,10 @@ impl fmt::Display for ShapeRefineError {
                 formatter,
                 "requested {expected} does not match authoritative shape {actual}"
             ),
+            Self::SymbolicShape { expected } => write!(
+                formatter,
+                "requested {expected} cannot be proved for a shape naming a declared symbol"
+            ),
         }
     }
 }
@@ -299,7 +344,7 @@ impl Error for ShapeRefineError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Handle(error) => Some(error),
-            Self::EvidenceMismatch { .. } => None,
+            Self::EvidenceMismatch { .. } | Self::SymbolicShape { .. } => None,
         }
     }
 }
@@ -345,6 +390,17 @@ pub enum ShapeWitnessError {
     ForeignWitness,
     /// The witness proves the predicate for a different ordered subject pair.
     SubjectMismatch,
+    /// One subject's shape names a symbol, so structural equality decides nothing.
+    ///
+    /// Two symbolic boundaries may still be provably one size, but that is an
+    /// equality-class fact the environment answers through
+    /// [`ExtentSources::proves_equal`](crate::shape::ExtentSources::proves_equal)
+    /// rather than a structural comparison this witness performs. Refusing is
+    /// what keeps the witness a statement about spelling.
+    SymbolicShape {
+        /// Ordered subject whose shape named a symbol.
+        subject: ShapeWitnessSubject,
+    },
 }
 
 impl fmt::Display for ShapeWitnessError {
@@ -361,6 +417,10 @@ impl fmt::Display for ShapeWitnessError {
             Self::SubjectMismatch => {
                 formatter.write_str("shape witness proves a different ordered subject pair")
             }
+            Self::SymbolicShape { subject } => write!(
+                formatter,
+                "{subject} has a shape naming a declared symbol, which structural equality cannot decide"
+            ),
         }
     }
 }
@@ -369,7 +429,10 @@ impl Error for ShapeWitnessError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::SubjectHandle { error, .. } => Some(error),
-            Self::NotSameShape { .. } | Self::ForeignWitness | Self::SubjectMismatch => None,
+            Self::NotSameShape { .. }
+            | Self::ForeignWitness
+            | Self::SubjectMismatch
+            | Self::SymbolicShape { .. } => None,
         }
     }
 }
