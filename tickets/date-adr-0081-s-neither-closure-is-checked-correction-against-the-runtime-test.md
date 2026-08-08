@@ -1,7 +1,7 @@
 ---
 id: date-adr-0081-s-neither-closure-is-checked-correction-against-the-runtime-test
 title: Date ADR 0081 s neither-closure-is-checked correction against the runtime test
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [correct-the-artifact-abis-claim-that-nothing-asserts-the-kernel-identity-crossing]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decisions, documentation]
-claimed_from: todo
-assignee: w-terra-adr0081
-lease_expires_at: 1786210891
 ---
 
 ADR 0081 item 2's `Correction — 2026-07-26` says "neither closure is checked now. The decision stands; its enforcement is review." A mechanical check has since landed for one of the two closures.
