@@ -16,11 +16,11 @@ lease_expires_at: 1786223949
 
 `docs/status.md`'s device-execution Measurement bullet says `crates/tiler-conformance` "was admitted on 2026-08-07 and every one of its runs landed the same day." The runs remain the 2026-08-07 population, but later crate edits mean the undated sentence no longer identifies its historical boundary.
 
-## Facts, read at `0339d28e`
+## Facts, read at `689c5ccc0e4b8fa5087c5a91feeafd24360c5012`
 
 **Fact.** The source-safe anchor `every one of its runs landed the same day` is live in `docs/status.md`'s `The conformance crate's three verticals` bullet. It is a navigation record, not a conformance-crate comment.
 
-**Fact.** `f519c695` and `fe282f1e` add no `require_or_report` call site; the latter adds the device-free `the_serial_sum_identity_crosses_the_shared_opaque_bound_at_the_second_contributor` test. Thus the statement remains true of the measured-run population but is imprecise as an undated account of the crate.
+**Fact.** `git grep -n 'require_or_report(' f519c695 -- crates/tiler-conformance | wc -l` and the same command at `fe282f1e` each return `10`; neither landing adds a measured-entry verdict. `fe282f1e` adds the device-free `the_serial_sum_identity_crosses_the_shared_opaque_bound_at_the_second_contributor` test, which does not call `require_or_report`. Thus the statement remains true of the measured-entry construction but is imprecise as an undated account of the crate.
 
 ## Outcome
 
