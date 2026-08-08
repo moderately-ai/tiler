@@ -12,10 +12,13 @@
 //!    `cargo check` and `cargo clippy` against a non-Apple `--target`, recorded
 //!    on `restore-the-conformance-crates-non-apple-build-and-lint-claim`.
 //! 2. **It compiles and the deterministic tests silently vanish.** That one is
-//!    worse, because the suite still reports green: gating one more module on
-//!    the macOS predicate would remove twelve runs from every non-Apple host and
-//!    no run anywhere would say so. A test population that collapses to zero and
-//!    reports success is a check that cannot say no.
+//!    worse, because the suite still reports green. **Dated 2026-08-08 — twelve
+//!    was true when this warning was introduced.** At `dd8f43db2`, each of
+//!    `bf16_vertical`, `envelope`, and `serial_sum` had twelve tests, so moving
+//!    one of those modules behind the macOS predicate removed twelve runs from
+//!    every non-Apple host and no run anywhere said so. The census below is the
+//!    current authority. A test population that collapses to zero and reports
+//!    success is a check that cannot say no.
 //!
 //! This module is the instrument for the second, and it is a *source* census
 //! rather than a harness one deliberately: a test cannot enumerate the harness's
@@ -46,15 +49,23 @@ use std::path::{Path, PathBuf};
 
 /// How many test functions a non-Apple host must still run.
 ///
-/// **A floor, and it sits one below the population deliberately.** The crate
-/// declares 76 tests and the macOS predicate removes three of them, in
-/// `dispatch`, so a non-Apple host runs 73. Seventy-two is what makes the
-/// *smallest* collapse fail rather than only the large ones: the three smallest
-/// device-free modules, `device_preflight`, `lints`, and `publication`'s own
-/// tests, hold two tests each, so gating any of them drops the population to 71
-/// and this refuses it. Gating `retained_record`'s tests drops it to 69,
-/// `applicability` to 67, `publication::proof` to 64, `bf16_vertical`'s to 60,
-/// and either `serial_sum`'s tests or `envelope`'s to 56.
+/// **A floor, and it sits one below the population deliberately.** The runtime
+/// census below derives and prints the device-free and macOS-gated populations
+/// from the source it walks; their sum is the whole test population, and its
+/// `portability census:` output is the current count authority. Seventy-three is
+/// what makes the *smallest* collapse fail rather than only the large ones: the
+/// three smallest device-free modules, `device_preflight`, `lints`, and
+/// `publication`'s own tests, hold two tests each, so gating any of them drops
+/// the population to 72 and this refuses it. Gating `retained_record`'s tests
+/// drops it to 70, `applicability` to 68, `publication::proof` to 65,
+/// `bf16_vertical`'s to 61, `serial_sum`'s tests to 56, and `envelope`'s to 57.
+///
+/// **Dated 2026-08-08 — the retired census was true when written.** At
+/// `9c46b5ae`, "The crate declares 76 tests and the macOS predicate removes
+/// three of them, in `dispatch`, so a non-Apple host runs 73." described the
+/// source population. `fe282f1e` later added one device-free serial-sum test
+/// without changing this prose. A later grep for the retired count lands in
+/// this note, not in the current-census authority above.
 ///
 /// The narrow margin is the cost of that sensitivity: removing two device-free
 /// tests for any reason turns this red. Raising the floor with the population
@@ -83,7 +94,7 @@ use std::path::{Path, PathBuf};
 /// attribute here would make this file declare a test it does not have, which is
 /// the trap the module header names.
 ///
-/// It last rose 67 → 72 on 2026-08-07 under
+/// It rose 67 → 72 on 2026-08-07 under
 /// `separate-the-tree-and-split-groupings-at-a-contributor-count-where-their-partitions-differ`,
 /// which added five tests to `serial_sum`'s: the twelve-contributor operand
 /// pair's counts, the refusal of the other parallel strategy's declared
@@ -93,9 +104,14 @@ use std::path::{Path, PathBuf};
 /// contradiction: a measured run is a device-free *test* that reports its
 /// measured half as unavailable when there is no device, which is exactly the
 /// outcome this floor exists to keep observable. **The floor moved with the
-/// population and by the same five**, and the two-test sensitivity above is
-/// unchanged: the smallest gateable module still drops the population to 71.
-const DEVICE_FREE_TEST_FLOOR: usize = 72;
+/// population and by the same five**. At that time, the smallest gateable
+/// module dropped the then-current population to 71.
+///
+/// **Current 2026-08-08 — it rises 72 → 73 under
+/// `refresh-the-device-free-test-floor-s-prose-census`.** `fe282f1e` added one
+/// device-free serial-sum test without moving the floor; raising it restores the
+/// one-below relation and makes the two-test gate loss refuse again.
+const DEVICE_FREE_TEST_FLOOR: usize = 73;
 
 /// A non-Apple host still runs the device-free test population.
 ///
@@ -193,9 +209,13 @@ fn a_non_apple_host_still_runs_the_device_free_test_population() {
 /// names on every other host. The negated form is the *companion* module a
 /// non-Apple host compiles instead, which is the opposite of gated.
 ///
-/// Only file-backed modules are resolved. An inline `mod name { … }` block
-/// carries no tests in this crate, and the mention check in the census above is
-/// what keeps that true rather than assumed.
+/// Only file-backed modules need child-path resolution. **Corrected 2026-08-08
+/// — the earlier claim that inline modules carry no tests was never true.** At
+/// `dd8f43db2`, `applicability` already had an inline test module with six
+/// tests. Inline test attributes are counted in their parent source file; the
+/// per-file predicate-mention check in the census above rejects an individually
+/// gated test from a device-free file, so omitting inline child-path resolution
+/// does not misclassify one.
 fn macos_gated_sources(files: &[PathBuf], predicate: &str) -> Vec<PathBuf> {
     let negated = format!("not({predicate}");
     let mut gated = Vec::new();
