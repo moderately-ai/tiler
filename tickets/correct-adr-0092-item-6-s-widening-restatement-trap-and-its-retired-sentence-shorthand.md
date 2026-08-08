@@ -1,7 +1,7 @@
 ---
 id: correct-adr-0092-item-6-s-widening-restatement-trap-and-its-retired-sentence-shorthand
 title: Correct ADR 0092 item 6 s widening restatement trap and its retired sentence shorthand
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [correct-the-architecture-citation-that-drops-the-inline-frontend-qualifier, accept-the-public-route-requirement-answer-boundary]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decisions, contracts, citations]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786170921
 ---
 
 ADR 0092 decision item 6 instructs a future worker to restate a sentence in `docs/architecture.md`, and a worker following it literally would **widen** that sentence back into a claim the same paragraph refuses. It is p1 because the defect is an instruction that produces a wrong edit, not merely a stale description.
