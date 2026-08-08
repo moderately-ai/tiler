@@ -1,7 +1,7 @@
 ---
 id: record-the-landed-physical-provider-seam-in-adrs-0078-and-0090
 title: Record the landed physical-provider seam in ADRs 0078 and 0090
-status: in-progress
+status: done
 priority: p2
 dependencies: [drive-an-external-physical-implementation-provider-through-compilation]
 related: [accept-the-public-backend-provider-composition-boundary, disclose-offered-and-selected-physical-provider-sets-separately]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [backend-providers, decision, documentation, public-boundary]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786180895
 ---
 ## User-visible outcome
 
