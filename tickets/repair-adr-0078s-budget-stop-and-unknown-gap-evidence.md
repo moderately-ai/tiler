@@ -3,7 +3,7 @@ id: repair-adr-0078s-budget-stop-and-unknown-gap-evidence
 title: Repair ADR 0078's budget-stop and Unknown-gap evidence
 status: in-progress
 priority: p3
-dependencies: []
+dependencies: [reconcile-the-accepted-proof-budget-stop-rule-with-executable-refinement]
 related: [record-the-landed-physical-provider-seam-in-adrs-0078-and-0090]
 scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
@@ -15,30 +15,26 @@ lease_expires_at: 1786211136
 ---
 ## User-visible outcome
 
-[ADR 0078](../docs/decisions/0078-name-the-intended-public-extension-seams.md) item 3's exhausted-budget paragraph names symbols that exist, so a reader checking whether the tree still realizes the rule finds the code instead of three absent names.
+This record stays unchanged because its accepted proof-budget-stop rule does not match the current executable-refinement path. Its P1 dependency must decide whether to restore the accepted behaviour or supersede the decision; this ticket must not adapt ADR 0078 to the drift.
 
 ## Why this exists
 
-`record-the-landed-physical-provider-seam-in-adrs-0078-and-0090` censused ADR 0078's tree-claims on 2026-08-08 and found this one false. It left a dated **Correction pending** note in the record rather than restating the rule in new words, because writing a true replacement requires deriving the current index-domain discharge model and a guess would replace a false Fact with a different false Fact.
+`a17884b0` accepted ADR 0078 unchanged. At that commit, `OccurrenceEvidence::BudgetStopped` in `crates/tiler-compiler/src/lowering.rs` represented the `Unknown` gap, `proof_budget_stop` returned a stop only when no other diagnostic was present, and `refine` returned `Ok(OccurrenceEvidence::BudgetStopped(stop))`; the pipeline recorded that state while retaining the compile path. ADR 0078 alone says `and the plan stands`; [the operation-extension contract](../docs/operation-extensions.md) instead combines its "An exhausted analysis budget is an `Unknown` gap" anchor with fail-closed index/access lowering language and a separate sole-diagnostic sentence.
 
-**Fact — verified at `750b29e0` by reading, not only by grep.** The paragraph reads "When the exhaustive access proof cannot afford a region, `lowering::refine` records a typed `RefinementBudgetStop` naming the resource, its limit, and the required amount, and the plan stands … `proof_budget_stop` returns the stop only when it is the *sole* diagnostic".
+**Fact — the current implementation does not realize ADR 0078's plan-standing rule.** The `pub fn complete` method on `ResolvedIndexRealization` in `crates/tiler-ir/src/index/refinement.rs` discharges residual predicates with one `struct IndexDomainProofLedger`. Its `fn debit` path records exhaustion, `fn fill_unassessed` assigns the resulting `ResourceLimit` claim to obligations not reached, and `IndexDomainProofRefusalKind::Disproved` is selected before `IndexDomainProofRefusalKind::Unknown`. Thus every produced assessment is retained and an assessed disproof wins, but a counterexample in a later unassessed obligation remains honestly unknown. The compiler maps that outcome through `IndexDomainDischargeRefusalKind::Unknown` and `LoweringError::SemanticDischarge`; `const fn semantic_discharge_is_invalid` returns false for Unknown, yet `lowering_failure` produces `UnsupportedCapability` before cover enumeration. `pending_and_refused_proofs_have_no_executable_coverage_spelling` confirms that no executable receipt is minted. This is source-true current behaviour, but it contradicts ADR 0078's accepted plan-standing behaviour rather than repairing its evidence.
 
-- `grep -rn "RefinementBudgetStop\|proof_budget_stop" crates/` returns nothing.
-- `lowering::refine` exists (`grep -n "^fn refine(" crates/tiler-compiler/src/lowering.rs`), but `LoweringError`'s four variants are `Occurrence`, `Resolve`, `Refine`, and `SemanticDischarge` — read the enum, none is a budget stop.
-- `legality::IndexRefinementOutcome` is `Refined` or `Pending`, with no budget arm.
-- A budget-stop vocabulary survives elsewhere: `RegionBudgetStop` and `ExplainEvent::BudgetStop` in `crates/tiler-compiler/src/region.rs`, and `IndexDomainDischargeRefusalKind::Unknown` reached through `LoweringError::SemanticDischarge`.
+**Fact — the operation-extension contract has a narrower reconciliation question.** Its `Missing optional knowledge is conservative` and `compile refusal for index/access lowering` anchors can agree with the current fail-closed `UnsupportedCapability` outcome without admitting executable coverage or calling an Unknown a semantic disproof. Its literal `A budget stop is reported only when it is the sole diagnostic` sentence needs separate reconciliation: the current atomic assessment retains an assessed `Disproved` with a later ResourceLimit Unknown, then returns Disproved overall. The implementation preserves the intended safety property that ResourceLimit never overrides an assessed disproof, but the ticket must determine whether that precedence satisfies the contract's sole-diagnostic wording.
 
-## What this must establish before editing
+**Fact — `RegionBudgetStop` is separate and has two classes.** `RegionBudgetResource::CandidatesPerSeed` and `RegionBudgetResource::Expansions` bound candidate growth; `fn retain_singleton_coverage` runs before `fn grow`, so either stop leaves singleton coverage intact and reports lost search alternatives. `RegionBudgetResource::Members`, `RegionBudgetResource::BoundaryOutputs`, and `RegionBudgetResource::LiveValues` are region-shape admission bounds applied by `fn classify` and `fn classify_shape`; they may refuse a fused candidate, including the whole-program candidate, rather than merely truncate search. The `pub(crate) fn budget_stops` accessor retains both classes, but neither is an index-domain proof claim or an executable-refinement receipt.
 
-1. Which authority now carries the obligation the paragraph states: an exhausted analysis budget is an `Unknown` gap, neither a rejection nor an admission.
-2. Whether the sole-diagnostic guarantee still holds — that a budget stop can never hide a real refusal behind an exhausted analysis — and which code enforces it. If nothing does, that is a defect and belongs in its own ticket rather than in a prose repair.
-3. Whether `IndexDomainDischargeRefusalKind::Unknown` and a region-formation budget stop are the same finding or two, since item 3's neighbouring paragraphs turn on keeping distinct findings distinct.
+## Stop condition and graph repair
 
-## Closes when
+The ticket's original purpose changed: truthful prose cannot name current code as realizing ADR 0078's plan-standing rule. The dependency `reconcile-the-accepted-proof-budget-stop-rule-with-executable-refinement` owns both the ADR restore-versus-supersede question and the operation-extension contract's sole-diagnostic reconciliation. This ticket remains in progress only to preserve its live claim; after the graph-repair commit lands, the coordinator must release it to the dependency-blocked queue rather than close it or edit the ADR.
 
-The paragraph cites symbols that resolve, by searchable anchor and not by line number; the dated **Correction pending** note it replaces is itself retired with a dated note rather than deleted; `make citations` passes; and the rule item 3 decides is unchanged.
+## Resume condition
 
-## Graph maintenance
+Resume only after the P1 ticket has either restored ADR 0078's accepted plan-standing behaviour with current tests, or Tom has accepted a superseding decision, and after it has aligned the operation-extension contract's sole-diagnostic wording with the implementation. Then re-read ADR 0078, the operation-extension contract, current lowering/discharge/planning construction and consumption sites, and the exact diff before proposing any evidence repair.
 
-- This repairs evidence, not a decision. If the derivation shows the tree no longer realizes the rule, stop and file that as a defect — a record must not be edited to match a tree that drifted away from an accepted decision.
-- The record's other 2026-08-08 corrections are independent of this one and are already landed.
+## Verification boundary
+
+This graph repair changes only ticket files, so the latest full gate carries under `AGENTS.md`; `tkt lint`, `make citations`, the base diff check, and the ticket guard remain mandatory.
