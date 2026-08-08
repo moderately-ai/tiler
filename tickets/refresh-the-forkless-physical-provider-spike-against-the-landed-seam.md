@@ -1,7 +1,7 @@
 ---
 id: refresh-the-forkless-physical-provider-spike-against-the-landed-seam
 title: Refresh the forkless physical-provider spike against the landed seam
-status: todo
+status: in-progress
 priority: p2
 dependencies: [drive-an-external-physical-implementation-provider-through-compilation]
 related: [prototype-a-forkless-custom-metal-physical-provider, record-the-landed-physical-provider-seam-in-adrs-0078-and-0090]
@@ -9,6 +9,9 @@ scopes: [research/extensions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [backend-providers, spike, evidence]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786184079
 ---
 ## User-visible outcome
 

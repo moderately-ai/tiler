@@ -1,7 +1,7 @@
 ---
 id: date-the-two-v4-step-paragraphs-trailing-the-v5-block
 title: Date the two v4-step paragraphs that now trail the artifact ABI's v5 block
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [date-the-artifact-abis-metal-golden-enumeration-to-its-step]
@@ -9,6 +9,9 @@ scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, identity]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786184079
 ---
 ## Two `tiler.schedule.v4` paragraphs now trail the `v5` block and read as its continuation
 
