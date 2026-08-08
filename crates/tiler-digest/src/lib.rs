@@ -8,7 +8,7 @@
 //!
 //! # Why the implementation is local
 //!
-//! The wire contract governs FIPS 180-4 SHA-256 as `tiler.digest.sha-256.v1` with tag `0x01`; the envelope, manifest, section, and sidecar domains are likewise governed constants. `select-the-governed-artifact-digest-implementation` separately measured the implementation choice and adopted `sha2` 0.11.0. Keeping that implementation behind this crate leaves the wire algorithm and every encoded envelope byte independent of the dependency that computes them.
+//! The wire contract governs FIPS 180-4 SHA-256 as `tiler.digest.sha-256.v1` with tag `0x01`; every domain separator a consumer hashes under is likewise a governed constant. `select-the-governed-artifact-digest-implementation` separately measured the implementation choice and adopted `sha2` 0.11.0. Keeping that implementation behind this crate leaves the wire algorithm and every encoded envelope byte independent of the dependency that computes them.
 //!
 //! The implementation is FIPS 180-4 SHA-256. It is pinned by the standard
 //! published test vectors, by the message lengths that exercise every padding
@@ -73,9 +73,13 @@
 //! domains: a domain belongs to the authority that decides what it names. What
 //! each such authority owes is the check over the set it admits, plus the
 //! argument that its set cannot prefix another's.
-//! `tiler_artifact::proof::tests::no_governed_domain_of_either_container_prefixes_another`
-//! is the authority for the envelope's and sidecar's eight, and
-//! `docs/artifact-abi.md` records the obligation normatively.
+//! `tiler_artifact::domains::no_governed_domain_of_this_crate_prefixes_another`
+//! is the authority for that crate's whole admitted set — eighteen domains
+//! across the envelope, the proof sidecar, and the artifact program's identity
+//! and key encodings. `tiler_artifact::domains::GovernedDomain` is that
+//! population and is what sizes it, so a count disagreeing with this sentence is
+//! settled there rather than here; `docs/artifact-abi.md` records the obligation
+//! and the per-container split normatively.
 
 use std::fmt;
 
@@ -383,11 +387,12 @@ mod tests {
     /// the single compression it brackets. A change that helps one says nothing
     /// about the other, which is why both lengths are reported here.
     ///
-    /// One figure this corrects: the manifest is **18,013 bytes**, not the
-    /// 25,000 that `tiler-artifact`'s `codec/tests.rs` records in
-    /// `single_byte_corruptions_are_rejected`. The 26 KB that other tickets
-    /// cite is the *envelope*, which the same instrumentation saw at 26,169
-    /// bytes; the manifest is its interior and is smaller.
+    /// One conflation this heads off: **18,013 bytes** is the *manifest*, while
+    /// the ~26 KB other records cite is the *envelope* whose interior it is —
+    /// the same instrumentation saw that envelope at 26,169 bytes. Both are
+    /// from that one run and both have since shrunk: `tiler-artifact`'s
+    /// `single_byte_corruptions_are_rejected` records the envelope reaching
+    /// 15,030 bytes in the codec work of 2026-07-27.
     ///
     /// The counts predate [ADR 0104](../../../docs/decisions/0104-fold-the-per-record-graph-identity-as-a-digest.md),
     /// which added one short call per coverage record from `tiler-ir` and made
