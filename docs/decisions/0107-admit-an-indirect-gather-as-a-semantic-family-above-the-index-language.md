@@ -19,13 +19,13 @@ ticket: "admit-an-indirect-gather-family-for-tied-embedding-lookup"
 
 **What was accepted, stated so it is not over-read.** The family is admitted as a semantic operation and as nothing below it, and the acceptance covers precisely that: a **registered, reference-evaluated, unplannable** family is a legitimate delivered state rather than a half-landing to be finished. The index-expression vocabulary stays unchanged, which is the record's substance and not a deferral inside it.
 
-**What acceptance did not commit to.** Not the public boundary: under [ADR 0075](0075-scope-public-boundary-approval-by-change-category.md) the key, the gathered-axis attribute, `GatherAxis`, `GatherError`, and `gather_result_shape` remain a **labelled draft** until their exact included and excluded surface is separately accepted. Not the index-layer question, which [`admit-the-indirect-access-class-into-the-index-layer`](../../tickets/admit-the-indirect-access-class-into-the-index-layer.md) identified as a decision in its own right. [ADR 0108](0108-site-a-data-dependent-index-coordinate-on-the-expression.md) remains `proposed` and was returned for revision, so no index-layer representation has been selected. That record changes nothing decided here.
+**What acceptance did not commit to.** Not the public boundary: under [ADR 0075](0075-scope-public-boundary-approval-by-change-category.md) the key, the gathered-axis attribute, `GatherAxis`, `GatherError`, and `gather_result_shape` remain a **labelled draft** until their exact included and excluded surface is separately accepted. Not the index-layer question, which [`admit-the-indirect-access-class-into-the-index-layer`](../../tickets/admit-the-indirect-access-class-into-the-index-layer.md) held as a decision in its own right and which [ADR 0108](0108-site-a-data-dependent-index-coordinate-on-the-expression.md) now answers — in shape, deciding that such a coordinate would be an expression form rather than a field on the access, and in timing, admitting neither yet. That record extends this one and changes nothing decided here.
 
 **The counterpoint accepted alongside it.** A registered family that no program can plan is a trap for a reader who reasonably takes registration to imply reachability — records are read less often than registries. That risk was stated and accepted; the mitigation is that the fail-closed boundary is tested rather than asserted, with `classify` returning `None` so no region derives legality, and six perturbations each firing their own gate.
 
 **Dated correction, 2026-08-08 — the mitigation above overstates its evidence, and the decision is unaffected.** The sentence is retained verbatim because it is what was put to Tom and accepted; this paragraph records what a re-read found rather than editing the claim under him. `grep -rn 'gather_f32_op' crates/tiler-compiler/` returns nothing, and `crates/tiler-compiler/tests/` mentions gather zero times, so **no test names this key against `classify` or against the request boundary**. The six perturbations are real and each does fire a gate, but five of those gates are in `tiler-ir` and `tiler-reference`; the sixth is `every_unplanned_operation_is_registered_and_consumes_no_dimension` in `crates/tiler-compiler/src/policy.rs`, which asserts over `operation_capability` — a different authority from `classify`, as that file's own prose says of the BF16 rows — and which builds no program. What is genuinely tested is that the family is registered, carries no realization law, refuses out-of-range and signed indices, and holds no capability row. What is asserted and not tested is the compile-time refusal itself. [`pin-the-gather-request-boundary-refusal-with-a-test`](../../tickets/pin-the-gather-request-boundary-refusal-with-a-test.md) owns the repair. The counterpoint's *acceptance* stands: the risk was named and taken, and the correction narrows the mitigation rather than withdrawing it.
 
-**Dated correction, 2026-08-08 — ADR 0108 was returned for revision, and this decision's no-admission boundary is unchanged.** The proposed expression route rested on three findings that a source re-read contradicted: an append-only access tag can preserve old identity bytes; `IndexRegionBuilder::prepare_access` establishes rank equality before the verifier's coordinate/extent `zip` sites; and the existing unknown reasons neither promise eventual closure nor make a data-dependent bound undecidable in principle. `decide_gather_index` is factored for reuse by a future host-side validator, as this record's named-enforcement-boundary rule permits. The proposed expression node was also incomplete as a nested logical read and its public-boundary census counted private `IndexNode` while omitting authoring and validation surfaces. None of those corrections changes what Tom accepted here: gather remains a semantic family and nothing below it. They reopen the separate representation question and return it to [`revise-adr-0108-with-a-complete-data-dependent-index-vertical`](../../tickets/revise-adr-0108-with-a-complete-data-dependent-index-vertical.md).
+**Dated correction, 2026-08-08 — ADR 0108 was returned for revision, and this decision's no-admission boundary is unchanged.** The proposed expression route rested on three findings that a source re-read contradicted: an append-only access tag can preserve old identity bytes; `IndexRegionBuilder::prepare_access` establishes rank equality before the verifier's coordinate/extent `zip` sites; and the existing unknown reasons neither promise eventual closure nor make a data-dependent bound undecidable in principle. `decide_gather_index` is factored for reuse by a future host-side validator, as this record's named-enforcement-boundary rule permits. The proposed expression node was also incomplete as a nested logical read and its public-boundary census counted private `IndexNode` while omitting authoring and validation surfaces. The accepted Context's conclusions that the gap is “structural rather than a vocabulary choice” and that “the obstacle is the access record's shape, not a missing expression form” are therefore not established by the cited facts: those facts diagnose the current absence but leave a complete nested read/value expression and an append-only tagged access open for comparison. Likewise, the accepted rejected-alternative paragraph establishes the non-weakening obligation but does not prove that every complete expression candidate would weaken the direct verifier; a bare node remains insufficient, and either complete candidate must prove preservation end to end. The accepted “What acceptance did not commit to” paragraph and final Consequences bullet also describe the former proposed ADR 0108 as having decided the expression shape and left only timing open; both statements are retained verbatim and retired by this correction. None of those corrections changes what Tom accepted here: gather remains a semantic family and nothing below it. The completed research ticket no longer holds a live decision; [ADR 0108](0108-site-a-data-dependent-index-coordinate-on-the-expression.md) remains `proposed`, and [`revise-adr-0108-with-a-complete-data-dependent-index-vertical`](../../tickets/revise-adr-0108-with-a-complete-data-dependent-index-vertical.md) owns both the representation and timing questions.
 
 ## Context
 
@@ -50,13 +50,13 @@ This record is that later explicit contract for the gather half. It is subordina
 to ADR 0046 rather than an amendment to it, and the condition ADR 0046 attaches is
 what fixes its shape: nothing here may weaken the direct-access verifier.
 
-The implemented index layer is narrower than the contract paragraph. `IndexNode` has five variants and every
+The implemented index layer is narrower than the contract paragraph and the gap is
+structural rather than a vocabulary choice. `IndexNode` has five variants and every
 operand of every one is a literal, a domain-dimension ordinal, or one declared
 shape symbol; `IndexExprClass` has three variants and no data-dependent member; and
 `AccessData` carries a single tensor ordinal, so an access has nowhere to name a
-second tensor as a coordinate source. Those facts diagnose why the current language
-cannot express gather; they do not decide whether the eventual remedy is a verified
-nested read/value expression or an append-only tagged access representation.
+second tensor as a coordinate source. The obstacle is the access record's shape,
+not a missing expression form.
 
 ## Decision
 
@@ -141,19 +141,19 @@ accepts their exact included and excluded surface.
   profile.
 - Admitting the access class *below* the semantic layer remains open and is now
   bounded by a stated condition rather than by an absence. [ADR
-  0108](0108-site-a-data-dependent-index-coordinate-on-the-expression.md) was
-  returned for revision, so both the representation and its admission timing
-  remain open while the current typed refusal stands.
+  0108](0108-site-a-data-dependent-index-coordinate-on-the-expression.md) since
+  decided the shape that admission would take and deferred taking it, so what
+  remains open is the timing and its trigger rather than the design.
 
 ## Alternatives considered
 
-**Admit a data-dependent `IndexNode` variant now.** Rejected because a bare node is
-not a complete verified logical read. The current bounds proofs, interval
-propagation, reachability, compaction, identity, and reference evaluation are
-written over expressions whose operands are literals, dimensions, and symbols.
-A nested read would have to extend every one of those contracts while preserving
-ADR 0046's direct-access guarantees; this record neither designs nor authorizes
-that extension.
+**Admit a data-dependent `IndexNode` variant now.** It would let the family reach
+an index region, and it would weaken the verifier for the direct-access language —
+every bounds proof, interval propagation, and totality argument in the index layer
+is written over expressions whose operands are literals, dimensions, and symbols.
+ADR 0046 admits indirect operations on exactly the condition that this does not
+happen, so taking this route would put the two records in conflict rather than in
+sequence.
 
 **Move the lookup outside Tiler and accept materialized `[T, 1024]` activations.**
 Cheaper, and it was eliminated on the product boundary rather than here: it does not

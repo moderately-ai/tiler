@@ -3,7 +3,7 @@ id: revise-adr-0108-with-a-complete-data-dependent-index-vertical
 title: Revise ADR 0108 with a complete data-dependent index vertical
 status: todo
 priority: p1
-dependencies: []
+dependencies: [accept-adr-0109-fail-closed-on-unknown-index-domain-proof]
 related: [accept-adr-0108-data-dependent-index-coordinate-siting, admit-the-indirect-access-class-into-the-index-layer, emit-the-indirect-gather-on-metal, admit-a-storage-carrier-for-integer-program-inputs]
 scopes: [contracts/decisions, contracts/foundation, contracts/navigation]
 shared_scopes: [project/tickets]
@@ -34,6 +34,11 @@ defers with a non-circular trigger; it does not implement either form.
   `IndexRegionBuilder`, builder errors, and `IndexExprView`.
 - No `LogicalAccess`, realization law, compiler recognition route, or backend
   construct realizes an indirect gather today.
+- ADR 0109 decision 2 requires every retained index-domain obligation to be
+  proved before executable coverage. Decision 4 records that ADR 0109 added no
+  run-time validation, fallback, or identity widening; it documents the absence
+  of current authority rather than a prohibition a future ADR must supersede. A
+  host/per-dispatch result is not timeless program proof.
 
 ## Required comparison
 
@@ -43,6 +48,11 @@ For each candidate, derive and compare the complete contract for:
   coordinate expression;
 - static proof versus named host validation, including what evidence belongs to
   timeless program identity and what belongs only to one dispatch;
+- conformance to ADR 0109's refusal-before-coverage boundary: each candidate must
+  prove every retained obligation before executable coverage, or explicitly
+  return decision 2 to Tom for supersession before selecting a route that depends
+  on run-time validation; decision 4 instead establishes that a new decision must
+  supply the run-time and identity authority absent today;
 - the semantic `tiler::u32@1` index value, conversion to any target address
   width, overflow behavior, and refusal of signed or lossy interpretations;
 - bounds for both the outer access and nested source read, rank equality,
@@ -91,7 +101,11 @@ a public boundary without Tom's separate ADR 0075 decision.
 Stop and return to Tom if the comparison exposes a consequential public-boundary
 choice, a change to ADR 0046's accepted guarantee, an identity-domain step, or an
 evidence claim that cannot be represented without changing what a verified region
-means. Do not disguise one of those decisions as implementation detail.
+means. Also stop if a candidate cannot satisfy ADR 0109 before executable coverage:
+host validation cannot silently become timeless proof, and superseding ADR 0109
+decision 2 is Tom's decision. Decision 4 requires no supersession, but it confirms
+that a new run-time or identity contract would also need Tom's authority. Do not
+disguise either decision as implementation detail.
 
 ## Closes when
 

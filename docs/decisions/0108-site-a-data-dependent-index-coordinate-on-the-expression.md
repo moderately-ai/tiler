@@ -9,7 +9,7 @@ decision_status: "proposed"
 implementation_status: "none"
 applies_to: ["tiler.contract.ir"]
 evidence: ["tiler.research.shapes.transformer-operation-and-shape-surface"]
-depends_on: ["ADR-0046", "ADR-0075", "ADR-0107"]
+depends_on: ["ADR-0046", "ADR-0075", "ADR-0107", "ADR-0109"]
 ticket: "revise-adr-0108-with-a-complete-data-dependent-index-vertical"
 ---
 
@@ -39,6 +39,16 @@ direct-access language. The returned draft correctly treated that requirement as
 load-bearing, but it chose a representation and an admission condition from
 premises the implementation does not support.
 
+[ADR 0109](0109-fail-closed-before-executable-planning-when-index-domain-proof-is-unknown.md)
+additionally governs when retained index-domain obligations may cross into
+executable work. Its accepted decision 2 requires every such obligation to be
+proved before executable coverage or planning. Decision 4 records that ADR 0109
+itself added no run-time check, fallback, or identity widening; it is evidence
+that no such authority exists today, not a prohibition a future decision would
+need to supersede. A host-side validation of one dispatch may prove that
+dispatch's semantic precondition, but it is not timeless program proof and cannot
+silently mint the existing executable coverage identity.
+
 ## Decision
 
 **No index-layer representation is selected or admitted by this revision.** The
@@ -57,6 +67,14 @@ typing, proof subjects, compaction, canonical identity, public authoring and
 inspection, reference semantics, compiler explanation, `LogicalAccess`, and the
 work graph. It may select a representation, defer with a non-circular trigger,
 or show that neither candidate is yet supportable. It may not implement either.
+Any candidate relying on host or per-dispatch validation must either prove how all
+retained index-domain obligations are discharged before executable coverage under
+ADR 0109, or return to Tom with an explicit proposal to supersede ADR 0109
+decision 2. Decision 4 confirms that no present ADR 0109 authority supplies the
+required run-time or identity contract; a future decision would have to add that
+authority, not “supersede” the historical scope statement. The comparison may
+not reinterpret a run-time observation as a timeless proof to avoid that
+decision.
 
 Until that comparison is decided, the exact five-node, three-class,
 three-unknown-reason census is a useful negative boundary rather than evidence
@@ -137,6 +155,11 @@ source:
   coordinate live;
 - which bounds are static, which may be host-validated, and which object retains
   each result without treating a run-time observation as timeless program proof;
+- how every retained index-domain obligation is proved before executable coverage
+  as ADR 0109 decision 2 requires, or the exact supersession of decision 2 that
+  must return to Tom before a run-time-validation route can be selected; ADR 0109
+  decision 4 is the record that no present run-time or identity authority exists,
+  not a second prohibition to supersede;
 - the logical `tiler::u32@1` index contract, any conversion to physical address
   width, and the refusal of signed or lossy interpretations;
 - source-tensor and expression reachability, rank equality, nested-access bounds,
@@ -159,6 +182,9 @@ source:
   as a draft by this outcome.
 - ADR 0107 and ADR 0046 remain accepted and unchanged in authority. The current
   no-admission boundary and typed request refusal remain in force.
+- ADR 0109 decision 2 remains accepted and governs every candidate's executable
+  boundary. Decision 4 confirms that ADR 0109 supplied no run-time or identity
+  authority, and this revision supplies none either.
 - Q-SHAPE-007 remains open on both the index-layer design and the unfired scatter
   half.
 - The access-record and nested-expression candidates both remain open until the
