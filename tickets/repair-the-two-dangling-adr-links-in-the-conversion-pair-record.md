@@ -1,7 +1,7 @@
 ---
 id: repair-the-two-dangling-adr-links-in-the-conversion-pair-record
 title: Repair the two dangling ADR links in the conversion pair record
-status: in-progress
+status: blocked
 priority: p2
 dependencies: [decide-how-the-link-check-reads-a-retained-byte-identical-drafted-adr-span]
 related: []

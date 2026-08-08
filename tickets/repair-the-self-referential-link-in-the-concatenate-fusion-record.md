@@ -1,7 +1,7 @@
 ---
 id: repair-the-self-referential-link-in-the-concatenate-fusion-record
 title: Repair the self-referential link in the concatenate fusion record
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [research/indexing]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786167947
 ---
 ## What is broken
 
