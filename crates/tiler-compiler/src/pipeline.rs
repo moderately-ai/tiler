@@ -81,7 +81,9 @@ use crate::region::{
 };
 #[cfg(test)]
 use crate::request::verify_planned_request;
-use crate::request::{CompilationRequest, RequestError, VerifiedTargetResolution, verify_request};
+use crate::request::{
+    BudgetResource, CompilationRequest, RequestError, VerifiedTargetResolution, verify_request,
+};
 use crate::rewrite::{
     RewriteAssessment, RewriteProposal, RewriteRuleIdentity, record_adopted_alternatives,
 };
@@ -1663,28 +1665,45 @@ impl TargetRejections {
 /// A [`crate::cover::CoverBudgetResource::Refusals`] stop is deliberately not a
 /// truncation: it bounds how many refusals the *explanation* retains, and a
 /// search that explored the whole space while declining to name every candidate
-/// it refused found everything there was to find.
+/// it refused found everything there was to find. It is excluded here by holding
+/// no row in the shared refusal vocabulary rather than by an inequality against
+/// its variant, so a cover budget added later has to decide which side of the
+/// distinction it falls on instead of defaulting into this one.
+///
+/// **Not every stop this reports is a truncation, despite the name, and the
+/// refusal it builds says which.** The three region-*shape* stops carry
+/// [`BudgetRefusal::Bounding`]: they declare the largest region this profile
+/// forms at all, so a program whose only implementable cover needs a bigger one
+/// has no plan under them however long the search runs. The five search stops
+/// carry [`BudgetRefusal::Truncated`], and only for those is widening the bound
+/// a route to a plan that this compilation never saw.
+///
+/// Widths are carried through unchanged. This previously narrowed both to the
+/// `u32`/`usize` pair the request error then held, which would have reported a
+/// saturated `u32::MAX` as the declared limit for either of the two budgets
+/// `DeterministicBudgets` declares as `u64`.
 fn truncating_budget(
     formation: &RegionFormationOutcome,
     plans: &planning::CompletePlans,
 ) -> Option<RequestError> {
-    let exceeded = |resource: &'static str, limit: u64, actual: u64| RequestError::BudgetExceeded {
-        resource,
-        limit: u32::try_from(limit).unwrap_or(u32::MAX),
-        actual: usize::try_from(actual).unwrap_or(usize::MAX),
-    };
+    let exceeded =
+        |resource: BudgetResource, limit: u64, actual: u64| RequestError::BudgetExceeded {
+            resource,
+            limit,
+            actual,
+        };
     if let Some(stop) = formation.budget_stops().first() {
-        return Some(exceeded(stop.resource.key(), stop.limit, stop.actual));
+        return Some(exceeded(stop.resource.resource(), stop.limit, stop.actual));
     }
-    if let Some(stop) = plans
-        .cover_budget_stops
-        .iter()
-        .find(|stop| stop.resource != crate::cover::CoverBudgetResource::Refusals)
-    {
-        return Some(exceeded(stop.resource.key(), stop.limit, stop.actual));
+    if let Some((resource, stop)) = plans.cover_budget_stops.iter().find_map(|stop| {
+        stop.resource
+            .truncating_resource()
+            .map(|resource| (resource, stop))
+    }) {
+        return Some(exceeded(resource, stop.limit, stop.actual));
     }
     let stop = plans.portfolio.budget_stops().first()?;
-    Some(exceeded(stop.resource.key(), stop.limit, stop.actual))
+    Some(exceeded(stop.resource.resource(), stop.limit, stop.actual))
 }
 
 fn target_axis(error: &PhysicalError) -> &'static str {
@@ -2174,7 +2193,7 @@ fn request_failure_details(error: &RequestError) -> (String, SubjectKind, String
             resource,
             limit,
             actual,
-        } => format!("budget-{resource}-{limit}-{actual}"),
+        } => format!("budget-{}-{limit}-{actual}", resource.key()),
         RequestError::UnsupportedCapability { phase, rule } => {
             format!("unsupported-{phase}-{rule}")
         }

@@ -73,7 +73,7 @@ use crate::region::{
     RegionCandidate, RegionContentIdentity, RegionError, RegionFormationOutcome, RegionGraph,
     RegionOccurrenceIdentity, SemanticMemberId, SemanticStage, SemanticValueId,
 };
-use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
+use crate::request::{BudgetResource, DeterministicBudgets, StrictF32NumericalContract};
 
 /// Canonical domain-separation tag for one region-cover identity.
 const COVER_IDENTITY_TAG: &[u8] = b"tiler.compiler.region-cover.v1\0";
@@ -102,12 +102,31 @@ pub(crate) enum CoverBudgetResource {
 }
 
 impl CoverBudgetResource {
+    /// Returns the resource a stop here refuses a compilation on, if any.
+    ///
+    /// `None` for [`Self::Refusals`] alone, and that is the typed form of the
+    /// exclusion this budget's own documentation states: a search that explored
+    /// the whole space while declining to name every candidate it refused found
+    /// everything there was to find, so it truncates no plan and can refuse no
+    /// compilation. Returning an `Option` rather than testing the variant at the
+    /// consuming site is what keeps the exclusion decidable here — a cover
+    /// budget added above must say which side of it it falls on.
+    pub(crate) const fn truncating_resource(self) -> Option<BudgetResource> {
+        match self {
+            Self::Covers => Some(BudgetResource::RegionCovers),
+            Self::Expansions => Some(BudgetResource::RegionCoverExpansions),
+            Self::Refusals => None,
+        }
+    }
+
     /// Returns the stable resource key.
     pub(crate) const fn key(self) -> &'static str {
-        match self {
-            Self::Covers => "region-covers",
-            Self::Expansions => "region-cover-expansions",
-            Self::Refusals => "region-cover-refusals",
+        match self.truncating_resource() {
+            Some(resource) => resource.key(),
+            // The explanation budget never reaches a refusal, so it holds no
+            // row in the shared vocabulary and keeps its key here — it still
+            // names itself in the explain record its stop writes.
+            None => "region-cover-refusals",
         }
     }
 }

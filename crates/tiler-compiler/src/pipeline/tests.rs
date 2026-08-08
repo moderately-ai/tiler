@@ -1547,7 +1547,7 @@ fn the_widest_assembled_plan_is_the_split_reduction_with_its_epilogue() {
     assert_eq!(
         crate::request::verify_request(narrow).err(),
         Some(crate::request::RequestError::BudgetExceeded {
-            resource: "regions",
+            resource: BudgetResource::Regions,
             limit: 3,
             actual: 4,
         }),
@@ -1608,9 +1608,10 @@ fn the_widest_assembled_plan_binds_four_buffers_per_declared_output() {
         assert_eq!(
             crate::request::verify_request(narrow).err(),
             Some(crate::request::RequestError::BudgetExceeded {
-                resource: "buffers",
-                limit,
-                actual: semantic.input_count() + 4 * semantic.output_count(),
+                resource: BudgetResource::Buffers,
+                limit: u64::from(limit),
+                actual: u64::try_from(semantic.input_count() + 4 * semantic.output_count())
+                    .unwrap(),
             }),
             "the boundary must refuse a budget the widest plan exceeds",
         );
@@ -1667,7 +1668,7 @@ fn the_two_chain_program_is_refused_by_regions_until_the_budget_admits_both() {
     assert_eq!(
         crate::request::verify_request(narrow).err(),
         Some(crate::request::RequestError::BudgetExceeded {
-            resource: "regions",
+            resource: BudgetResource::Regions,
             limit: 4,
             actual: 8,
         }),
@@ -1724,7 +1725,7 @@ fn a_two_output_program_over_its_buffer_budget_is_refused_at_the_request_boundar
     assert_eq!(
         source,
         &CompileError::BudgetExhausted(crate::request::RequestError::BudgetExceeded {
-            resource: "buffers",
+            resource: BudgetResource::Buffers,
             limit: 9,
             actual: 10,
         }),
@@ -4274,7 +4275,7 @@ fn budget_exhaustion_is_not_reported_as_unsupported() {
     assert_eq!(
         error,
         CompileError::BudgetExhausted(RequestError::BudgetExceeded {
-            resource: "semantic-operations",
+            resource: BudgetResource::SemanticOperations,
             limit: 4,
             actual: 5,
         })
@@ -4613,7 +4614,7 @@ fn a_region_shape_budget_below_the_only_implementable_cover_reports_the_budget()
         matches!(
             source.as_ref(),
             CompileError::BudgetExhausted(RequestError::BudgetExceeded {
-                resource: "region-members",
+                resource: BudgetResource::RegionMembers,
                 limit: 1,
                 ..
             })
@@ -7613,13 +7614,16 @@ fn the_widened_budgets_admit_the_split_program_and_still_refuse_a_narrower_reque
     );
     // The pre-widening values. The request boundary refuses them by name,
     // rather than admitting a request whose split it would later fail to build.
-    for (resource, narrow) in [("regions", 2_u32), ("buffers", 3)] {
+    for (resource, narrow) in [
+        (BudgetResource::Regions, 2_u32),
+        (BudgetResource::Buffers, 3),
+    ] {
         let mut request = CompilationRequest::governed_under(
             &semantic,
             StrictF32NumericalContract::governed_relaxed(),
         );
         match resource {
-            "regions" => request.budgets.regions = narrow,
+            BudgetResource::Regions => request.budgets.regions = narrow,
             _ => request.budgets.buffers = narrow,
         }
         assert!(
@@ -7628,7 +7632,7 @@ fn the_widened_budgets_admit_the_split_program_and_still_refuse_a_narrower_reque
                 Err(crate::request::RequestError::BudgetExceeded { resource: named, .. })
                     if named == resource
             ),
-            "a budget too narrow for the split program was admitted: {resource}"
+            "a budget too narrow for the split program was admitted: {resource:?}"
         );
     }
 
