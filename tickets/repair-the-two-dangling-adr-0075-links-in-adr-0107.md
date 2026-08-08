@@ -1,7 +1,7 @@
 ---
 id: repair-the-two-dangling-adr-0075-links-in-adr-0107
 title: Repair the two dangling ADR 0075 links in ADR 0107
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786167946
 ---
 ## What is broken
 
