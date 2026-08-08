@@ -78,8 +78,8 @@ A grouping-sensitive operand set at 12 exists: the current four-contributor oper
 
 `implementation/runtime` covers only `crates/tiler-runtime/**` and `prototypes/serial-sum-run/**`. Two required files fell outside it, and `tkt guard` would have exited 6:
 
-- **`crates/tiler-conformance/src/serial_sum.rs`** (`implementation/conformance`, now added) is the **authoritative device home**. `carry-the-device-executed-value-proof-into-the-conformance-crate` landed the grouping-sensitive case there under ADR 0106, and the file states at `:51` that "the corpus's only device observation of a different-but-permitted reassociated answer lives here." It is gated by `make full`; the prototype is `cargo run` only, so the prototype copy alone is not the deliverable. It fixes `PARALLEL_COLUMNS = 4` at `:127`.
-- **`docs/correctness-and-testing.md`** (`contracts/numerics`, now added) carries at line 219 the standing claim this ticket's landing falsifies: "no grouping-sensitive operand set has been driven through both strategies at such a shape on hardware, so the four-contributor run above is still the corpus's only device observation".
+- **`crates/tiler-conformance/src/serial_sum.rs`** (`implementation/conformance`, now added) is the **authoritative device home**. `carry-the-device-executed-value-proof-into-the-conformance-crate` landed the grouping-sensitive case there under ADR 0106, and the file's module header states that "the corpus's only device observation of a different-but-permitted reassociated answer lives here." It is gated by `make full`; the prototype is `cargo run` only, so the prototype copy alone is not the deliverable. It fixes `pub(crate) const PARALLEL_COLUMNS: u64 = 4`. **Both line citations in this bullet were stale and are replaced by anchors, 2026-08-07 by the worker** — the header sentence was at `:61`–`:63` and not `:51`, and `PARALLEL_COLUMNS` at `:138` and not `:127`, read at this branch's own base `aebd16c0`. Neither drift changed what the bullet asserts; the anchors are what survive the next edit.
+- **`docs/correctness-and-testing.md`** (`contracts/numerics`, now added) carries the standing claim this ticket's landing falsifies, in the paragraph beginning "**Measurement, and the boundary it does not exceed.**": "no grouping-sensitive operand set has been driven through both strategies at such a shape on hardware, so the four-contributor run above is still the corpus's only device observation". **The line citation was stale and is replaced by an anchor, 2026-08-07 by the worker** — the paragraph is line 221 and not 219 at base `aebd16c0`.
 
 `docs/roadmap.md:435` ("at a `1x4` shape") is `contracts/navigation` and is **deliberately left out** — file it as a ledger update rather than widening this branch further.
 
@@ -94,6 +94,59 @@ This ticket is `todo`. Its `## Trigger check log` and the instruction "do **not*
 ## Closes when
 
 The ticket had no closing gate; its de facto conditions sat under "What this ticket would then owe", written in the subjunctive while it was `deferred`. It closes when all four of those are discharged **in `crates/tiler-conformance`** (the gated home, not only the prototype), `docs/correctness-and-testing.md:219`'s claim is corrected to name what was driven and on what host, and the report states the contributor count, both declared partitions, both returned values, and the host and toolchain row the run is bounded to.
+
+## Worker record, 2026-08-07 — all four owed bullets discharged in `crates/tiler-conformance`
+
+Branch `tkt/separate-the-tree-and-split-groupings-at-a-contributor-count-where-their-partitions-differ`, base `aebd16c0`, work commit **`9c46b5aeed784234e684fd870770b6f8a50fa8ef`**. Closure is the coordinator's; this section records what was verified and measured.
+
+### Per-Fact audit at this base, before any edit
+
+Read in full: `AGENTS.md`, this ticket, `crates/tiler-compiler/src/physical.rs` (4,690 lines), `crates/tiler-conformance/src/{lib,serial_sum,measurement,portability}.rs` and `serial_sum/tests.rs`, `docs/correctness-and-testing.md`.
+
+- **The two rules are read by two different functions.** *Verified.* `single_workgroup_tree_region` calls `capped_tree_partition(contributors)` and `split_reduction_regions` calls `governed_partition(contributors)`.
+- **The repair block's replacement line citations, `physical.rs:2612` and `:2798`, definitions at `:2219` and `:2128`.** *Verified, all four exact at this base.* The repair block corrected the trigger entry's `:2547`/`:2733`, and its own numbers had not drifted further.
+- **Twelve is the smallest separating count; tree `{6, 2}` against split `{4, 3}`.** *Verified, re-derived rather than adopted.* Counts 4, 6, 8, 9, 10 give both rules the same partition; 5, 7, 11 are prime and both decline; 12 is the first disagreement.
+- **The cap moves the choice and never the domain.** *Verified* over `0..200_000`: the two rules' `None` sets are identical.
+- **2,561 divergent counts below 4,096, and 8,192 giving tree 256×32 against split 128×64.** *Verified.*
+- **`bound-the-tree-cap-s-unmeasured-downward-direction` may move the count set.** *Verified it has not:* that ticket is still `todo`, so `capped_tree_partition`'s rule at this base is the one the count was derived from.
+- **The four-contributor operands padded with eight `+0.0` give tree `0x3f800001` against split `0x3f800000`.** *Verified in binary32, and then observed on hardware.*
+- **`crates/tiler-conformance/src/serial_sum.rs` states the only-observation claim "at `:51`" and fixes `PARALLEL_COLUMNS = 4` "at `:127`".** *Both false as line citations* — `:61`–`:63` and `:138` respectively; repaired above to anchors. The claim itself was **imprecise about its home**: the sentence sits in the module header *and* on `tests::every_retained_alternative_rounds_the_way_its_declared_grouping_rounds`, and only the second is the case that carries it.
+- **`docs/correctness-and-testing.md`'s standing claim is at line 219.** *False as a line citation* — the paragraph is 221; 219 is the declared-grouping-oracle paragraph. Repaired above to an anchor.
+- **`docs/roadmap.md:435` is `contracts/navigation`.** *Verified*, and deliberately untouched; filed as [`correct-the-roadmap-s-1x4-reduction-execution-row-for-the-twelve-contributor-run`](correct-the-roadmap-s-1x4-reduction-execution-row-for-the-twelve-contributor-run.md).
+
+### The measurement
+
+**Measurement, 2026-08-07.** Host row: Apple M4 Max, GPU family Apple9, macOS 27.0 build `26A5388g`, `arm64`; offline compiler `Apple metal version 32023.921 (metalfe-32023.921)`, linker `AIR-LLD 32023.921`, SDK `macosx 27.0` build `26A5388f`; profile `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1`, AOT target `air64-apple-macos26.0` under `metal4.0`, 25,493 `metallib` bytes; Rust toolchain `nightly-2026-07-19`. **This is a different offline-compiler row from the ticket's 2026-08-02 `32023.883` measurement.**
+
+A `1x12` reduction under `FLUSH_AND_REASSOCIATE_F32`, all three retained alternatives emitted, linked, dispatched, and read back:
+
+| Alternative | Declared partition, read from its own published geometry | Answer |
+| --- | --- | --- |
+| serial fold | 12 of 1 | `3f800000` |
+| single-workgroup tree | **6 of 2**, widest workgroup 6, 32 threadgroup bytes | **`3f800001`** |
+| multi-pass split | **4 of 3**, 3 encoders | **`3f800000`** |
+
+Each matched its own declared grouping bit for bit, and each parallel alternative's bits were **refused** by the other's declared grouping — a value this contract permits, refused by the same function that admitted the device's own bits. The split's answer coincides with the serial fold's here, so this shape separates the tree from the split and the four-contributor shape remains the one where both parallel strategies diverge from the fold. Neither subsumes the other.
+
+### The operand-pair caveat, discharged rather than skipped
+
+The padded set was measured to be exactly as weak as the repair block warned: of the 144 single-contributor corruptions it leaves **81** undetected under the tree's grouping and **98** under the split's. A genuine twelve-wide second set was therefore added — `SEPARATING_EXACT_OPERANDS`, twelve distinct powers of two — on which every one of the 58,786 order-preserving groupings produces `0x457ff000`, every subset sum is distinct, and **0 of 144** corruptions escape under either grouping. Both sets are dispatched at `1x12`; all four counts are pinned device-free.
+
+### Files changed and checks
+
+`crates/tiler-conformance/src/serial_sum.rs`, `crates/tiler-conformance/src/serial_sum/tests.rs`, `crates/tiler-conformance/src/portability.rs`, `docs/correctness-and-testing.md`.
+
+`cargo fmt --check`; `cargo nextest run -p tiler-conformance` — **75 run, 75 passed, 1 skipped**, the skip being the pre-existing `#[ignore]`d whole-profile envelope run at `crates/tiler-conformance/src/envelope/tests.rs`; `cargo clippy -p tiler-conformance --all-targets -- -D warnings`; `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p tiler-conformance`; `cargo test --doc` (workspace); `tkt lint`; `./check-citations.sh`; `git diff --check`; `tkt guard`. **Caveat on the rustdoc gate:** every module in this crate is `#[cfg(test)]`, so `cargo doc` documents `lib.rs`'s header alone and cannot fail for any doc comment this change adds.
+
+The portability floor moved **67 → 72** with the population, by the same five, and was watched failing at 74.
+
+### Each new test watched failing on its own subject
+
+- separating count set to 8, where the two rules agree → the tree publishes `{4, 2}` where `{6, 2}` was required;
+- the exact twelve-wide set replaced by the padded one → the corruption census reports `(144, 81)` where `(144, 0)` was required;
+- the split held to the tree's own partition → the two declared groupings collapse to one value;
+- **each strategy held to its own partition instead of the other's** → "the single-workgroup-tree returned `[3f800001]`, which the other parallel strategy's declared `{6, 2}` also produces; the two groupings did not separate on this device". This is the refusal itself failing, on the bits the device returned;
+- the padded set dispatched against the exact set's oracle → the serial fold returns `[3f800000]` where `[457ff000]` was required.
 
 ### One graph edge that was missing
 
