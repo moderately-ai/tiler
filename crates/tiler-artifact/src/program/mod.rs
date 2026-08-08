@@ -556,7 +556,13 @@ pub use codec::{DIGEST_BYTES, Digest, DigestAlgorithm};
 // this module.
 pub(crate) use codec::envelope_digest;
 // The envelope's seven governed domains and this module's seven identity
-// domains, reachable only under test. `crate::domains` checks the
+// domains. Thirteen are crate-visible only under `cfg(test)`: these seven, the
+// five key domains re-exported from `model`, and `ROUTE_REQUIREMENT_DOMAIN`.
+// `DELIVERED_REALIZATION_DOMAIN` is the exception — it is `pub`, re-exported
+// below beside the record whose canonical bytes it opens, so its value is
+// observable to a consumer. Observable is not accepted: it carries this
+// module's reviewed-draft boundary status (see the crate header, ADR 0075)
+// until Tom accepts the exact surface. `crate::domains` checks the
 // no-domain-prefixes-another property over the *union* of every domain the crate
 // admits rather than per container, because the property is global: one
 // algorithm hashes them all in one process, so a domain added anywhere could
