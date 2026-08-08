@@ -1,7 +1,7 @@
 ---
 id: replace-the-digest-note-s-restated-domain-count-with-its-type
 title: Replace the digest note s restated domain count with its type
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [repoint-tiler-digest-s-domain-separation-note-at-the-moved-union-check, correct-the-coverage-graph-digest-domain-s-eight-count-and-hyphenated-artifact-prefix]
@@ -9,9 +9,6 @@ scopes: [implementation/digest]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, digest, documentation]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786182057
 ---
 
 The `tiler-digest` header was repaired on 2026-08-08 to point at the moved union check — and the repair **restated the domain count in prose**, which is the exact rot schedule that repair existed to break.
