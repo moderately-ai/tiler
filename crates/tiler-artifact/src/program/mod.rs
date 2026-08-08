@@ -542,11 +542,13 @@ pub use codec::{
 // moved the way ADR 0082 moved the cache. Tom decided on 2026-08-06 that the
 // governed digest is its own bottom crate, `tiler-digest`, and this re-export is
 // what keeps `tiler_artifact::program::{DIGEST_BYTES, Digest, DigestAlgorithm}`
-// resolving for every consumer that already used it. The surface a consumer sees
-// is unchanged and still deliberately narrow: the algorithm and the opaque
-// digest, with `digest_parts` private to `tiler-digest` and [`envelope_digest`]
-// crate-private here, so an outside caller can digest a subject under its own
-// domain and cannot construct an envelope association.
+// resolving for every consumer that already used it. The surface stays
+// deliberately narrow: the algorithm and the opaque digest, with the general
+// parts-digest this crate carried gone rather than promoted across the boundary
+// and [`envelope_digest`] crate-private here, so an outside caller can digest a
+// subject under an explicit domain — plain or qualified — and cannot express
+// the ambiguous concatenation the general form put on its caller, nor construct
+// an envelope association.
 pub use codec::{DIGEST_BYTES, Digest, DigestAlgorithm};
 // [`envelope_digest`] *is* the proof sidecar's association with an envelope, and
 // nothing outside this crate has a use for it. Named re-exports rather than a
