@@ -1,7 +1,7 @@
 ---
 id: date-or-regenerate-the-six-kernel-identity-lengths-in-the-artifact-abi
 title: Date or regenerate the six kernel identity lengths in the artifact ABI
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [replace-the-stale-artifact-abi-byte-figures-with-the-properties-tests-pin]
@@ -9,6 +9,9 @@ scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, abi, identity, documentation]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786176329
 ---
 
 The last unowned quantity in `docs/artifact-abi.md` after its byte figures were retired. Same defect class, one paragraph over.

@@ -1,7 +1,7 @@
 ---
 id: admit-a-recognized-chain-more-than-one-materialization-boundary-deep
 title: Admit a recognized chain more than one materialization boundary deep
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [admit-a-staged-family-that-reads-a-materialized-intermediate, admit-elementwise-epilogues-over-a-materialized-intermediate]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, planner]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786176329
 ---
 ## User-visible outcome
 

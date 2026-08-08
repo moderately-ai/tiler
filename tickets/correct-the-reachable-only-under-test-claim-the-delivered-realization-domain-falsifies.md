@@ -1,7 +1,7 @@
 ---
 id: correct-the-reachable-only-under-test-claim-the-delivered-realization-domain-falsifies
 title: Correct the reachable-only-under-test claim the delivered realization domain falsifies
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [correct-the-dangling-digest-parts-reference-in-the-artifact-program-module, pin-the-identity-domain-strings-so-a-reverted-domain-reddens-the-gate]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, identity]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786176329
 ---
 
 A domain census in `crates/tiler-artifact/src/program/mod.rs` says its fourteen named domains are "reachable only under test". **Thirteen are. One is public.**

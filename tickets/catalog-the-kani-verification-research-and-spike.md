@@ -1,7 +1,7 @@
 ---
 id: catalog-the-kani-verification-research-and-spike
 title: Catalog the Kani verification research record and spike
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [spike-kani-bounded-verification-on-one-inexhaustible-encoder]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, catalog, verification]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786176329
 ---
 ## User-visible outcome
 
