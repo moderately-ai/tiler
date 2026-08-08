@@ -107,6 +107,8 @@ About 50 `fn tag(self) -> u8` tables in `tiler-ir` and `tiler-artifact` are reac
 
 Tables reached by an exhaustible encoder are already covered by the tests above. Separately, the seven artifact tag tables in `crates/tiler-artifact/src/program/codec/tests.rs:541` are already proved injective — a total `from_tag` left inverse over a complete enumeration implies injectivity — so they need nothing.
 
+**Correction 2026-08-08.** The left-inverse argument is valid, but two enumerations it quantified over were not shown complete. The `SubnormalMode` and `ExceptionalValueAssumption` lists carry payload products and have no type-derived sizes, so widening `FlushedZeroSign` or `ValueDomainProvenance` can leave the round trip short after the tag tables are repaired. [`derive-the-artifact-numerical-and-fenced-space-populations`](derive-the-artifact-numerical-and-fenced-space-populations.md) owns those two populations and the parallel `FencedSpaces` census. The other five artifact tables and this ticket's encoder classifications are unchanged.
+
 ### Pinned identities
 
 **None moved.** No encoding was changed; the whole diff is tests, test-local enumerations, two `cfg(test)` feature declarations, and doc comments. Verified by `cargo nextest run --workspace` on this branch's tree: 3085 tests run, 3085 passed, 7 skipped — including every checked-in identity hex, golden, and digest pin in `tiler-ir`, `tiler-artifact`, `tiler-cache`, `tiler-metal`, and `tiler-conformance`.

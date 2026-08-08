@@ -38,13 +38,15 @@ fn governed_scalar(name: &str) -> ResolvedValueType {
 /// Every inhabitant of [`DimensionBehaviour`], built from its spaces' own counts.
 ///
 /// **Derived rather than written out, and that is what makes the count a
-/// population rather than a guess.** The five arrays it walks are each sized by
-/// `variant_count` over the vocabulary they enumerate, so widening any behaviour
-/// space is a build error in `crate::exhaustive_injectivity` instead of a list
-/// that stays at twelve entries while the domain it claims to cover grows. The
-/// earlier hand-written spelling could not fail that way: a new
-/// [`SubnormalMode`] would have left this at twelve and every count assertion
-/// downstream still asserting twelve.
+/// population rather than a guess.** The three fieldless-enum arrays it walks
+/// are sized by `variant_count`, and each payload-carrying array is sized by one
+/// exhaustive outer-arm census that sums the unit arm and its payload
+/// vocabulary. Adding an outer arm or widening either payload is therefore a
+/// build error in `crate::exhaustive_injectivity` instead of a list that stays at
+/// twelve entries while the domain it claims to cover grows. The earlier
+/// hand-written spelling could not fail that way: a new inhabitant would have
+/// left this at twelve and every count assertion downstream still asserting
+/// twelve.
 fn all_behaviours() -> Vec<DimensionBehaviour> {
     let mut behaviours = Vec::new();
     behaviours.extend(SUBNORMAL_MODES.map(DimensionBehaviour::Subnormals));
