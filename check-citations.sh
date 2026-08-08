@@ -1,6 +1,6 @@
 #!/bin/sh
-# Resolve the pinned source citations in open tickets and live documents against
-# this working tree.
+# Resolve the pinned source citations and the local markdown links in open
+# tickets and live documents against this working tree.
 #
 # WHAT A GREEN RUN MEANS, AND WHAT IT DOES NOT
 #
@@ -71,6 +71,99 @@
 # retires a citation quotes the retired line number in prose, or as the bare
 # `:789-810` suffix the house style already uses, rather than pinning it to a
 # path -- so it is not a citation here and cannot be demanded to resolve.
+#
+# WHAT COUNTS AS A LINK, AND WHY IT IS A SECOND POPULATION
+#
+# A markdown link is a different claim from a citation and is checked
+# separately. A citation says "this file contains this text"; a link says
+# "follow me and you arrive somewhere". Every catalog, index, and cross-
+# reference in `docs/` is navigated by link, including the two entry points
+# AGENTS.md sends every reader to, and until 2026-08-08 not one of them was
+# resolved: a link target is not an inline code span, so it never reached
+# classify() at all. Replacing a live row in `docs/decisions/README.md` with
+# `](9999-no-such-adr-...)` left this script at exit 0 with byte-identical
+# output -- including an unchanged `bare path mention(s)` count, which is the
+# proof that the dangling target was not landing in that bucket but was not
+# being seen at all.
+#
+# The forms read are the inline link `[text](target)` -- matched on `](target)`
+# so a code span inside the link text cannot hide it -- the image `![alt](src)`,
+# which is the same syntax, and the reference definition `[label]: target`.
+# `[^label]:` is a footnote, not a definition, and is excluded.
+#
+# Link targets are read only outside inline code spans and outside fenced
+# blocks, and both exclusions carry their weight. A target quoted as text --
+# which is how the two tickets describing the planted failure above spell
+# `](9999-no-such-adr-...)` -- is prose about a link rather than a link. A
+# fenced block is content proposed for somewhere else: the four dangling-looking
+# targets in `tickets/catalog-the-kani-verification-research-and-spike.md` are
+# catalog rows the ticket is asking someone to paste into `docs/research/`, so
+# they are relative to that directory and not to the ticket that quotes them.
+# Both are the rule classify() already applies to citations, reaching a second
+# population.
+#
+# WHAT IS DELIBERATELY NOT RESOLVED, AND WHY. Each of these is counted in the
+# census, so every exclusion is a number a reader can see rather than a silence.
+#
+#   - External targets: `http://`, `https://`, `mailto:`, `tel:`, and any other
+#     `scheme://`. Resolving them is a claim about the network, not about this
+#     working tree. It would need network access on a gate that has none, would
+#     be nondeterministic, and link-rot in a cited upstream specification is not
+#     a defect in this repository. 661 of them reach this branch on 2026-08-08:
+#     637 inline `](https://...)` targets over the whole tree less those in
+#     terminal tickets, plus the reference definitions, which are almost all
+#     upstream URLs.
+#
+#   - Heading anchors, both same-document (`#section`) and into another document
+#     (`other.md#section`). For a link that carries a path the *path* is
+#     resolved and the fragment is not, and a pure `#section` is skipped whole.
+#     The anchor slug is produced by whatever renders the markdown, and this
+#     repository pins no renderer: GitHub, editors, and rustdoc disagree on
+#     punctuation stripping, on unicode, and on how duplicate headings are
+#     suffixed. A checker that picked one would fail links that work where the
+#     documents are actually read, and a check that invents failures gets
+#     weakened rather than repaired. The two counts are reported so the size of
+#     the unresolved property stays visible.
+#
+#   - Vendored upstream sources under `docs/research/*/sources/`. Their links
+#     are relative to the upstream site or repository they were copied from, and
+#     only the one file of each upstream tree was copied here, so essentially
+#     none of them can resolve: `Broadcasting.md` from the ONNX operator
+#     reference names a sibling that was never vendored, and `/onnx/defs` names
+#     a web root. Measured 2026-08-08 across those 15 files: 507 `](...)`
+#     targets, 212 of them reaching this branch once the external ones are
+#     counted first, and 92 that a resolver run over them reports as dangling.
+#     Demanding those resolve is the unsatisfiable condition the bare-path rule
+#     above already names, not 92 caught defects, and repairing them would mean
+#     editing evidence that is supposed to be a verbatim copy. This is the one
+#     place where the fail-closed choice the pinned checker makes for these same
+#     files is NOT free -- there it was measured at zero cost, here at 92 -- so
+#     the two populations decide it differently and both say why.
+#
+#   - A target with whitespace in it. Markdown requires `<...>` around such a
+#     target, and nothing here uses that; what the pattern actually catches is
+#     pseudo-code in a vendored specification (`](%max_trip_count, %keepgoing)`).
+#     An empty `]()` is likewise malformed rather than broken.
+#
+# WHAT A LINK IS RESOLVED AGAINST. The target is joined to the directory of the
+# file that carries it, `.` and `..` segments are collapsed, and the result must
+# be a tracked file or a tracked directory. The git index is the authority
+# rather than the filesystem for three reasons: a link is a promise to a reader
+# who has a clone, so a target that exists only in someone's working tree is
+# already broken for them; awk cannot tell a directory from an empty file, and
+# probing one emits an i/o error and reports success, so directory targets
+# (`../../spikes/runtime/inline-dispatch`) need the index anyway; and this host
+# is case-insensitive, so a filesystem test would accept `docs/README.MD`.
+#
+# A path-shaped target absent from the index but present on disk is accepted and
+# counted on its own census line, so a document created and not yet staged does
+# not fail the run while the fact that it is unstaged stays visible. A `..` that
+# walks above the repository root fails; so does a site-absolute `/path` outside
+# the vendored subtree, because nothing here is served from a web root.
+#
+# The link population is floored the same way the citations are: once per corpus
+# in report(), plus a form floor under the fixture link, so a matcher that stops
+# finding `](` cannot report a clean run.
 #
 # THE TWO POPULATIONS, AND WHAT TERMINAL MEANS IN EACH
 #
@@ -203,6 +296,18 @@ wraps in the source it names: `AGENTS.md "origin/main...main # 0 0"`.
 A citation whose code span straddles a line break in prose, which a
 line-oriented matcher loses in silence: `AGENTS.md
 "Priorities: **correctness, long-term maintainability, then performance**."`
+
+Link form, and the guaranteed instance the link form floor names: [the agent
+guide](AGENTS.md). The fixture has no directory of its own -- it is written to a
+temporary path -- so its links resolve from the repository root, which is where
+a reader of this file would read them from anyway.
+
+The excluded link shapes, one each, so the census lines that count them are fed
+by something on every run rather than only when the corpus happens to carry one:
+[an external target](https://example.invalid/no-such-page) is not resolved,
+[a heading anchor into another document](AGENTS.md#research) has its path
+resolved and its `#research` fragment left alone, and [a same-document
+anchor](#built-in-fixture) has nothing to resolve at all.
 
 **Deliberately false, retained as the boundary demonstration -- do not "fix"
 it.** `make check` runs the citation check **last**, after the test target
@@ -341,6 +446,14 @@ BEGIN {
 		# entries.
 		nseg = split(p, segs, "/")
 		for (si = 1; si <= nseg; si++) component[segs[si]] = 1
+
+		# Link targets resolve against the index rather than the filesystem;
+		# the header states the three reasons. Every directory prefix is
+		# recorded too, because a link may legitimately name a directory and
+		# awk cannot tell one from an empty file.
+		tracked[p] = 1
+		dir = p
+		while (sub(/\/[^\/]*$/, "", dir)) treedir[dir] = 1
 	}
 	close(indexfile)
 
@@ -377,6 +490,18 @@ FNR == 1 {
 	in_span = 0
 	span = ""
 	span_wrapped = 0
+
+	# A link is relative to the directory of the file carrying it. The fixture
+	# has no directory of its own -- it is written to a temporary path -- so its
+	# links resolve from the repository root, which is where a reader would read
+	# them from anyway.
+	linkdir = FILENAME
+	if (role == "fixture" || !sub(/\/[^\/]*$/, "/", linkdir)) linkdir = ""
+	# Vendored upstream copies link into the site or repository they came from,
+	# never into this tree, and only one file of each was copied. The header
+	# records the measurement behind treating that as unsatisfiable rather than
+	# as 507 defects. Pinned citations in these same files stay checked.
+	vendored = (FILENAME ~ /^docs\/research\/[^\/]+\/sources\//)
 }
 
 {
@@ -413,6 +538,17 @@ FNR == 1 {
 	# and command output, not citations.
 	if ($0 ~ /^[ \t]*```/) { in_fence = !in_fence; in_span = 0; span = ""; next }
 	if (in_fence) next
+
+	# A reference definition carries its target on its own line rather than
+	# inside `](...)`, and its label may itself hold a code span
+	# (``[`Literal::byte_string`]: ...``), so it is read from the raw line before
+	# the span walk. `[^label]:` is a footnote, not a definition.
+	if ($0 ~ /^\[[^^][^]]*\]:[ \t]*[^ \t]/) {
+		refdest = $0
+		sub(/^\[[^]]*\]:[ \t]*/, "", refdest)
+		sub(/[ \t].*$/, "", refdest)
+		link(refdest)
+	}
 
 	scan_line($0)
 }
@@ -482,6 +618,7 @@ function scan_line(line,   n, parts, i) {
 	n = split(line, parts, "`")
 	for (i = 1; i <= n; i++) {
 		if (in_span) span = span parts[i]
+		else scan_links(parts[i])
 		if (i < n) {
 			if (in_span) { classify(span, span_wrapped); span = ""; in_span = 0 }
 			else { in_span = 1; span = ""; span_wrapped = 0 }
@@ -491,6 +628,85 @@ function scan_line(line,   n, parts, i) {
 	# Markdown. The flag rides along so the assembly path can be counted and
 	# floored: it is the one branch here whose failure is pure silence.
 	if (in_span) { span = span " "; span_wrapped = 1 }
+}
+
+# Pull every link target out of one stretch of prose. The match is on
+# `](target)` rather than on the whole `[text](target)`, so a code span inside
+# the link text -- which the caller has already split this string on -- cannot
+# hide the link. Measured 2026-08-08, no line in either corpus ends inside a
+# `](`, so a target is always complete on the line that opens it.
+function scan_links(s,   p, dest) {
+	while ((p = index(s, "](")) > 0) {
+		s = substr(s, p + 2)
+		p = index(s, ")")
+		if (p == 0) return
+		dest = substr(s, 1, p - 1)
+		s = substr(s, p + 1)
+		link(dest)
+	}
+}
+
+function link_fail(dest, msg) {
+	link_failures++
+	printf "FAIL  %s\n        link: [...](%s)\n        %s\n", ticket, dest, msg
+}
+
+# Resolve one link target against this tree. Every branch that declines to
+# resolve feeds a counter that report() prints, so an exclusion is a number
+# rather than a silence; the header argues each one.
+function link(dest,   target, resolved, n, segs, out, i, k) {
+	# An empty `]()` and a target carrying whitespace are malformed markdown
+	# rather than broken links; the header names what the pattern otherwise
+	# catches in a vendored specification.
+	if (dest == "" || dest ~ /[ \t]/) return
+
+	if (dest ~ /^[A-Za-z][A-Za-z0-9+.-]*:\/\// || dest ~ /^mailto:/ || dest ~ /^tel:/) {
+		link_external++
+		return
+	}
+	if (dest ~ /^#/) { link_selfanchor++; return }
+	if (vendored) { link_vendored++; return }
+
+	target = dest
+	if (sub(/#.*$/, "", target)) link_fragment++
+	if (target == "") { link_selfanchor++; return }
+
+	link_checked++; link_ck[role]++
+
+	if (target ~ /^\//) {
+		link_fail(dest, "site-absolute target, but nothing in this tree is served from a web root")
+		return
+	}
+
+	# Join to the linking directory and collapse `.` and `..`. An empty segment
+	# absorbs a doubled or trailing slash, so `research/numerics/` names the
+	# directory rather than an empty child of it.
+	n = split(linkdir target, segs, "/")
+	k = 0
+	for (i = 1; i <= n; i++) {
+		if (segs[i] == "" || segs[i] == ".") continue
+		if (segs[i] == "..") {
+			if (k == 0) {
+				link_fail(dest, "walks above the repository root")
+				return
+			}
+			k--
+			continue
+		}
+		out[++k] = segs[i]
+	}
+	# Everything cancelled: the target is the repository root, which is there.
+	if (k == 0) return
+	resolved = out[1]
+	for (i = 2; i <= k; i++) resolved = resolved "/" out[i]
+
+	if (tracked[resolved] || treedir[resolved]) return
+	# Path-shaped and untracked: accept it if it is on disk, so a document
+	# created and not yet staged does not fail the run, and count it so the fact
+	# that a reader with a clone cannot follow it stays visible. The shape test
+	# keeps exists() away from directories, which it cannot read.
+	if (resolved ~ /\.[A-Za-z0-9]+$/ && exists(resolved)) { link_untracked++; return }
+	link_fail(dest, "no tracked file or directory at " resolved)
 }
 
 function end_file() {
@@ -621,14 +837,14 @@ function classify(t, wrapped,   path, pin, anchor, form, ln, lo, hi, resolved, h
 	}
 }
 
-# One floor per corpus population. The fixture needs none: it is floored five
-# times over by the per-form floors below, each of which names a fixture
-# citation as the instance that should have fed it. A corpus is different --
-# every citation in it is contingent, so the only thing that says the population
-# was reached at all is that something in it was checked.
-function population_floor(n, name, hint) {
+# One floor per corpus population, per checked property. The fixture needs none:
+# it is floored six times over by the per-form floors below, each of which names
+# a fixture instance that should have fed it. A corpus is different -- every
+# citation and every link in it is contingent, so the only thing that says the
+# population was reached at all is that something in it was checked.
+function population_floor(n, name, unit, hint) {
 	if (n + 0 > 0) return 0
-	printf "\nEMPTY  the %s population contributed 0 checked citation(s), so nothing in it was verified.\n", name
+	printf "\nEMPTY  the %s population contributed 0 checked %s, so nothing in it was verified.\n", name, unit
 	printf "       %s\n", hint
 	return 1
 }
@@ -673,32 +889,57 @@ function report(   starved, empty, live) {
 		printf "  parse warn   %d file(s) ended inside an unclosed code span, so citations in them may have been missed:%s\n", \
 			unterminated, unterminated_files
 
+	# The links are a second property over the same population and are reported
+	# on their own block, floored on their own counts, and failed on their own
+	# message. A citation says a file contains some text; a link says a reader
+	# who follows it arrives somewhere. Neither verdict stands in for the other.
+	printf "\nlinks: %d local markdown link(s) resolved across the same population\n", link_checked + 0
+	printf "  tickets      %d link(s) from the open ticket and comment files above\n", \
+		link_ck["ticket"] + link_ck["comment"] + 0
+	printf "  docs         %d link(s) from the live document files above\n", link_ck["doc"] + 0
+	printf "  fixture      %d link(s) from %s\n", link_ck["fixture"] + 0, FIXTURE_LABEL
+	printf "  not resolved %d external (scheme://, mailto:, tel:), %d same-document heading anchor(s), %d in vendored upstream sources under docs/research/*/sources/\n", \
+		link_external + 0, link_selfanchor + 0, link_vendored + 0
+	printf "  fragments    %d resolved link(s) carried a #heading into another document; the path was resolved and the anchor deliberately was not\n", \
+		link_fragment + 0
+	printf "  untracked    %d resolved on the filesystem only and are absent from the index, so a reader with a clone cannot follow them\n", \
+		link_untracked + 0
+
 	if (checked + 0 == 0) {
 		printf "\ncheck-citations: parsed ZERO citations. A run that examines nothing cannot report a clean result -- the matcher has stopped reaching its subject.\n"
 		exit 1
 	}
 
-	empty = population_floor(cit_checked["ticket"] + cit_checked["comment"], "tickets/**", \
+	empty = population_floor(cit_checked["ticket"] + cit_checked["comment"], "tickets/**", "citation(s)", \
 		"An open ticket citing a line or an anchor is the ordinary case here; zero means the glob, the frontmatter reader, or the terminal-state skip stopped reaching them.")
-	empty += population_floor(cit_checked["doc"], "docs/**", \
+	empty += population_floor(cit_checked["doc"], "docs/**", "citation(s)", \
 		"ADRs and contracts pin lines into the tree by the hundred; zero means the find, the superseded skip, or role_of stopped reaching them.")
+	empty += population_floor(link_ck["ticket"] + link_ck["comment"], "tickets/** markdown link", "link(s)", \
+		"An open ticket links to its siblings and to the documents it cites; zero means scan_links stopped reaching the prose, or every target was classified away as external, anchored, or vendored.")
+	empty += population_floor(link_ck["doc"], "docs/** markdown link", "link(s)", \
+		"Every catalog, index, and cross-reference in docs/ is navigated by link, in the hundreds; zero means the population the entry points live in went unresolved -- which is exactly the state this check was added to end.")
 	if (empty > 0)
-		printf "\ncheck-citations: %d corpus population(s) contributed ZERO checked citations. The other population passing says nothing about this one -- separate counts exist so that neither can stand in for the other.\n", empty
+		printf "\ncheck-citations: %d corpus population(s) contributed ZERO checked citations or links. The other population passing says nothing about this one -- separate counts exist so that neither can stand in for the other.\n", empty
 
 	starved = form_floor(cit_line, "the line-only form (`path:LINE`)", "`AGENTS.md:1`")
 	starved += form_floor(cit_anchor, "the anchor-only form (`path \"anchor\"`)", "`Makefile \"check: citations fmt build lint test\"`")
 	starved += form_floor(cit_both, "the line+anchor form (`path:LINE \"anchor\"`)", "`ticketsplease.toml:1 \"schema_version = 1\"`")
 	starved += form_floor(anchor_wrapped, "the whitespace-collapsing anchor fallback", "`AGENTS.md \"origin/main...main # 0 0\"`, whose subject wraps in the source")
 	starved += form_floor(spanned, "code-span assembly across a line break", "a citation whose backticks straddle two lines of prose")
+	starved += form_floor(link_ck["fixture"], "local markdown link resolution (`[text](target)`)", "`[the agent guide](AGENTS.md)`")
 
 	if (starved > 0)
-		printf "\ncheck-citations: %d citation form(s) were parsed ZERO times. The fixture supplies one of each, so this is the matcher losing a form, not a corpus drifting -- and an unexercised branch reports no failures no matter what the tree contains.\n", starved
+		printf "\ncheck-citations: %d citation or link form(s) were parsed ZERO times. The fixture supplies one of each, so this is the matcher losing a form, not a corpus drifting -- and an unexercised branch reports no failures no matter what the tree contains.\n", starved
 	if (failures > 0) {
 		printf "\ncheck-citations: %d citation(s) do not resolve against this tree.\n", failures
 		printf "Repair the citation by re-reading the source at your own base. Prefer a quoted anchor over a bare line number: `path.rs \"distinctive phrase\"`.\n"
 	}
-	if (empty > 0 || starved > 0 || failures > 0) exit 1
+	if (link_failures > 0) {
+		printf "\ncheck-citations: %d markdown link(s) do not resolve against this tree.\n", link_failures
+		printf "Repair the link by naming a target that exists, relative to the directory of the file carrying it. A link is a promise that a reader who follows it arrives somewhere.\n"
+	}
+	if (empty > 0 || starved > 0 || failures > 0 || link_failures > 0) exit 1
 
-	printf "\ncheck-citations: every pinned citation resolves. This says the citations point somewhere; it does NOT say the tickets and documents around them are true.\n"
+	printf "\ncheck-citations: every pinned citation and every local markdown link resolves. This says they point somewhere; it does NOT say the tickets and documents around them are true.\n"
 }
 ' "$@"

@@ -14,16 +14,18 @@
 # rather than after a build.
 check: citations fmt build lint test
 
-# Resolve the pinned source citations in open tickets against the working
-# tree. This is in `check` rather than only in `full` on purpose. `tickets/`
-# is not in the delta rule's gated set (see AGENTS.md, "Verify and ship"), so a
-# ticket-only change carries the previous green gate and reruns `tkt lint`
-# alone -- a check reachable only from `full` would never see the edits it
-# exists to catch. Run this target beside `tkt lint` for a ticket-only delta.
+# Resolve the pinned source citations and the local markdown links in open
+# tickets and live documents against the working tree. This is in `check`
+# rather than only in `full` on purpose. `tickets/` is not in the delta rule's
+# gated set (see AGENTS.md, "Verify and ship"), so a ticket-only change carries
+# the previous green gate and reruns `tkt lint` alone -- a check reachable only
+# from `full` would never see the edits it exists to catch. Run this target
+# beside `tkt lint` for a ticket-only delta.
 #
-# A green run means the citations point somewhere. It does not mean the
-# tickets are true; the script's own header is explicit about the difference,
-# and AGENTS.md carries the reading obligation that actually governs it.
+# A green run means the citations and the links point somewhere. It does not
+# mean the tickets are true, and it does not mean a link that resolves reaches
+# the document it claims to; the script's own header is explicit about both
+# differences, and AGENTS.md carries the reading obligation that governs them.
 citations:
 	./check-citations.sh
 
