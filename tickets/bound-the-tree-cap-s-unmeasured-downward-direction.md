@@ -1,7 +1,7 @@
 ---
 id: bound-the-tree-cap-s-unmeasured-downward-direction
 title: Bound the tree cap's unmeasured downward direction
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [cap-the-tree-reduction-participants-at-the-measured-256, activate-measured-reduction-selection-from-a-target-cost-row]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [reductions, scheduling, measurement]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786170921
 ---
 ## Per-Fact audit — 2026-08-08, at base `6eabf97e`
 
