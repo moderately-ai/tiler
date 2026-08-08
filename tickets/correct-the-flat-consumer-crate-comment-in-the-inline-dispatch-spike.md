@@ -1,7 +1,7 @@
 ---
 id: correct-the-flat-consumer-crate-comment-in-the-inline-dispatch-spike
 title: Correct the flat consumer-crate comment in the inline dispatch spike
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [correct-adr-0092-item-6-s-widening-restatement-trap-and-its-retired-sentence-shorthand, accept-the-public-route-requirement-answer-boundary]
@@ -9,6 +9,9 @@ scopes: [research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, spikes, contracts]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786174094
 ---
 
 The last surviving site of the retired flat claim. Reported by two workers independently, neither able to edit it in scope.

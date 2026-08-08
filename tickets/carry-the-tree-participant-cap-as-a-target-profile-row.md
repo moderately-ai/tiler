@@ -1,7 +1,7 @@
 ---
 id: carry-the-tree-participant-cap-as-a-target-profile-row
 title: Carry the tree participant cap as a target profile row
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [cap-the-tree-reduction-participants-at-the-measured-256]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [target-profiles, public-boundary]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786174094
 ---
 ## The gap between what the code does and what its own doc says it should
 

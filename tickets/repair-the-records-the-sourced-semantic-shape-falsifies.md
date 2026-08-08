@@ -1,7 +1,7 @@
 ---
 id: repair-the-records-the-sourced-semantic-shape-falsifies
 title: Repair the records the sourced semantic shape falsifies
-status: todo
+status: in-progress
 priority: p1
 dependencies: [carry-a-sourced-shape-on-semantic-values]
 related: [carry-symbolic-extents-into-the-semantic-program]
@@ -9,6 +9,9 @@ scopes: [contracts/artifacts, contracts/decisions, contracts/navigation, researc
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, shapes, identity, correction]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786174094
 ---
 ## User-visible outcome
 
