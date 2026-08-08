@@ -1,7 +1,7 @@
 ---
 id: correct-the-architecture-citation-that-drops-the-inline-frontend-qualifier
 title: Correct the architecture citation that drops the inline frontend qualifier
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [repair-the-eight-dangling-links-in-the-runtime-route-answer-record, accept-the-public-route-requirement-answer-boundary]
@@ -9,6 +9,9 @@ scopes: [research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [citations, contracts, documentation]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786169827
 ---
 
 `docs/research/runtime/backend-scoped-route-requirement-answers.md` cites `docs/architecture.md` for a sentence that document does not contain, dropping the qualifier the sentence turns on. **This is the failure class the citation checker cannot catch**: the pin resolves, so nothing goes red, and the claim is wrong anyway.

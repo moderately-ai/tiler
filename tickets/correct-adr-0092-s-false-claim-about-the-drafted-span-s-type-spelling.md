@@ -1,7 +1,7 @@
 ---
 id: correct-adr-0092-s-false-claim-about-the-drafted-span-s-type-spelling
 title: Correct ADR 0092 s false claim about the drafted span s type spelling
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [repair-the-eight-dangling-links-in-the-runtime-route-answer-record, decide-how-the-link-check-reads-a-retained-byte-identical-drafted-adr-span]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decisions, documentation, citations]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786169827
 ---
 
 ADR 0092 states as fact something about its own source record that stopped being true when that record was re-transferred. The sentence is an accepted decision's description of another document, so it is exactly the kind of claim nobody re-reads.
