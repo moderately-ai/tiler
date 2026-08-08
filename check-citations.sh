@@ -165,13 +165,14 @@
 # in report(), plus a form floor under the fixture link, so a matcher that stops
 # finding `](` cannot report a clean run.
 #
-# THE TWO POPULATIONS, AND WHAT TERMINAL MEANS IN EACH
+# THE THREE POPULATIONS, AND WHAT TERMINAL MEANS IN EACH
 #
-# `tickets/**` and `docs/**` are read and counted separately, and each carries
-# its own floor, so neither can collapse into the other and read as a clean run
-# on the strength of the one that still works.
+# `tickets/**`, `docs/**`, and the tracked markdown at the repository root are
+# read and counted separately, and each carries its own floor, so none of them
+# can collapse into another and read as a clean run on the strength of the ones
+# that still work.
 #
-# The skip rule is the same rule in both, stated over different metadata: skip a
+# The skip rule is the same rule in each, stated over different metadata: skip a
 # record whose citations describe a tree it is no longer authoritative over,
 # because rewriting one to match today's line numbers destroys the account of
 # what was actually done. Check the records a reader will follow into the code,
@@ -201,8 +202,11 @@
 # a check that requires it to be gone.
 #
 # A document with no status facet at all is checked rather than skipped, and the
-# census counts how many there are. Twenty-four reach that branch on 2026-08-07
-# and they are two unrelated populations, both correctly checked:
+# census counts how many there are. Twenty-four files under `docs/` reach that
+# branch on 2026-08-07 and they are two unrelated populations, both correctly
+# checked. The repository-root documents reach the same branch by the same rule
+# and are counted on their own census line, for the reasons the next section
+# gives; the twenty-four is a `docs/` count and stays one.
 #
 #   - Nine Tiler documents whose `kind` has no status facet at all. The kind
 #     table in `docs/document-metadata.md` requires one of contract, decision,
@@ -220,6 +224,50 @@
 #     demanded of them. If one ever does resolve to a real claim about this
 #     tree, the failure names the file and a reader decides; a carve-out here
 #     would instead be a hole nobody sees.
+#
+# THE REPOSITORY-ROOT DOCUMENTS, AND WHY THEIR FLOOR IS A FILE COUNT
+#
+# `README.md`, `AGENTS.md`, and `CLAUDE.md` are the first files a reader opens,
+# and until 2026-08-08 they were the only tracked markdown that no population
+# reached. Appending `[planted](docs/decisions/9999-no-such-adr.md)` to
+# AGENTS.md left this script at exit 0 -- not one defect fewer than expected,
+# but no defect there catchable at all, because the file was never opened.
+# AGENTS.md links the ADR that governs every unsafe site in the workspace, and
+# README.md is six links of route into `docs/`, `spikes/`, and AGENTS.md itself,
+# so the reader a dangling link here misroutes is the one being onboarded.
+#
+# Measured 2026-08-08 before they were added: 3 files, 7 local links (README.md
+# 6, AGENTS.md 1, CLAUDE.md 0), 0 pinned citations, and all 7 resolve. This
+# population closes a gap; it did not repair a break.
+#
+# Their status is decided by the `doc` rule, which they share rather than
+# duplicate, because that rule already answers the question they ask: a document
+# with no status facet at all is checked rather than skipped. README.md is a
+# `tiler-doc/v1` portal, the same kind as seven of the nine Tiler documents that
+# reach that branch under `docs/`, and the kind table requires no status facet of
+# a portal. AGENTS.md and CLAUDE.md carry no frontmatter whatever and reach the
+# same branch by a different road: nothing was seen, so nothing was seen that
+# retires them. `superseded` retires a root document exactly as it retires any
+# other, because the branch is shared whole rather than sliced. What made them a
+# third population was never the status rule -- it is that the fall-through in
+# role_of() called them tickets, and the ticket rule demands a `status` key that
+# a portal and a plain markdown file both legitimately lack.
+#
+# What is deliberately NOT shared is the counting. Every counter is keyed by
+# role, so the census reports the two on separate lines and each carries its own
+# floor. That separation is the point: seven links inside the 5205 that `docs/`
+# contributes would be invisible, and a root population that read zero files
+# would sail through the `docs/` link floor untouched.
+#
+# The root floor is on the file count, which is where this population differs
+# from the other two. It carries no pinned citation at all -- every path in these
+# three files is a bare mention with no line and no anchor, which the bare-path
+# rule above deliberately declines to check -- so a citation floor here would
+# fail on a correct tree. The file count is what says the `*.md` glob still
+# matches and role_of() still routes them; the link floor beside it is what says
+# their prose was actually walked. A population that silently reads zero files
+# prints the same green as one that read all three, and only a floor tells them
+# apart.
 #
 # Usage: ./check-citations.sh [--verbose]
 
@@ -358,13 +406,31 @@ if [ "$#" -eq "$docs_before" ]; then
 	exit 2
 fi
 
+# The repository-root documents, appended last. The glob is over the root rather
+# than over the three names it matches today, so a document added beside them is
+# covered the day it lands; the floor in report() is what says the glob still
+# matches. Appended one file at a time, which the docs comment above rejects as
+# quadratic: that cost was measured over 256 files, and testing each name is
+# what an unmatched glob needs here -- the shell passes `*.md` through literally
+# when nothing matches, and awk would abort on that as a filename.
+root_before=$#
+for f in *.md; do
+	[ -e "$f" ] || continue
+	set -- "$@" "$f"
+done
+if [ "$#" -eq "$root_before" ]; then
+	printf 'check-citations: no document files matched *.md at the repository root.\n' >&2
+	exit 2
+fi
+
 # The fixture leads, so its forms are counted even when a later population is
 # empty. Populations are appended above and classified by path inside awk rather
 # than assumed to be tickets, which is what keeps `tickets/**` from being the
-# only thing this script can read. A third population is an append there, a
-# branch in role_of(), a branch in decide() stating how its status is
-# determined, and its own line in the census -- and, if it is a corpus rather
-# than a fixture, its own floor beside the two in report().
+# only thing this script can read. A further population is an append there, a
+# branch in role_of(), an answer in decide() for how its status is determined --
+# reused from an existing branch where one already fits, as the repository-root
+# documents reuse the `doc` rule -- and its own line in the census, and, if it is
+# a corpus rather than a fixture, its own floor beside the others in report().
 set -- "$fixture" "$@"
 
 # The program below is one single-quoted shell word, so it must contain no
@@ -424,6 +490,13 @@ BEGIN {
 	# The fixture lives at a temporary path; report it by what it is.
 	FIXTURE_LABEL = "<built-in fixture>"
 
+	# The repository-root population is three tracked documents -- README.md,
+	# AGENTS.md, CLAUDE.md -- and awk offers no type to size the enumeration
+	# from, so the floor is asserted by hand and the census prints the count
+	# beside it for a reader to compare. It is a floor and not an equality: a
+	# document added at the root should raise the census without editing this.
+	ROOT_FLOOR = 3
+
 	n_terminal = split(terminal, tstates, " ")
 	for (i = 1; i <= n_terminal; i++)
 		if (tstates[i] != "") is_terminal[tstates[i]] = 1
@@ -472,6 +545,13 @@ function role_of(path) {
 	if (path == fixture) return "fixture"
 	if (path ~ /^docs\//) return "doc"
 	if (path ~ /\.comments\//) return "comment"
+	# A markdown file with no directory component is a repository-root document.
+	# The test is over the shape rather than over the three names, so a document
+	# added beside them is classified the day it lands. The fixture lives at an
+	# absolute temporary path and is matched by exact path above, so it never
+	# reaches here. Without this branch the fall-through calls them tickets and
+	# the ticket rule in decide() fails them for having no `status` key.
+	if (path !~ /\//) return "root"
 	return "ticket"
 }
 
@@ -569,13 +649,20 @@ function decide(   parent) {
 	# absent status is a property of the document kind or of its being a
 	# verbatim upstream copy, never a statement that the record is retired, so
 	# it must not read as a licence to skip; the header enumerates both sets.
-	if (role == "doc") {
+	#
+	# The repository-root documents share this branch rather than carrying a
+	# parallel one, because it already answers the question they ask. README.md
+	# is a `tiler-doc/v1` portal whose kind requires no status facet; AGENTS.md
+	# and CLAUDE.md carry no frontmatter at all and reach the same conclusion by
+	# a different road. Only the counters differ, and they are keyed by role so
+	# the census and the floors keep the two populations apart.
+	if (role == "doc" || role == "root") {
 		if (doc_superseded) {
 			skip_file = 1
 			files_terminal[role]++
 			return
 		}
-		if (!doc_status_seen) docs_no_status++
+		if (!doc_status_seen) no_status[role]++
 		files_live[role]++
 		return
 	}
@@ -861,18 +948,32 @@ function form_floor(n, form, example) {
 	return 1
 }
 
+# A floor on how many files a population reached, rather than on what they
+# contained. The repository-root corpus carries no pinned citation at all and
+# only seven links, so what it contributes cannot be the thing that proves it was
+# read; the file count can. A glob that has stopped matching reads zero files and
+# is otherwise indistinguishable from a clean run.
+function count_floor(n, floor, name, unit, hint) {
+	if (n + 0 >= floor) return 0
+	printf "\nSHORT  the %s population reached %d %s, below its floor of %d.\n", name, n + 0, unit, floor
+	printf "       %s\n", hint
+	return 1
+}
+
 function report(   starved, empty, live) {
-	live = files_live["ticket"] + files_live["comment"] + files_live["doc"]
-	printf "\ncitations: %d pinned citation(s) resolved across %d live ticket/comment/document file(s) and the built-in fixture\n", checked + 0, live + 0
-	# The two corpora are reported on their own lines, and floored on their own
-	# counts below, so a population that stopped being reached cannot ride the
-	# other one to a green run.
+	live = files_live["ticket"] + files_live["comment"] + files_live["doc"] + files_live["root"]
+	printf "\ncitations: %d pinned citation(s) resolved across %d live ticket/comment/document file(s), the repository-root documents among them, and the built-in fixture\n", checked + 0, live + 0
+	# Each corpus is reported on its own line, and floored on its own counts
+	# below, so a population that stopped being reached cannot ride another one
+	# to a green run.
 	printf "  tickets      %d citation(s) from %d open file(s) of %d read (%d ticket, %d comment), %d skipped as terminal (%s)\n", \
 		cit_checked["ticket"] + cit_checked["comment"], files_live["ticket"] + files_live["comment"], \
 		files_read["ticket"] + files_read["comment"], files_read["ticket"] + 0, files_read["comment"] + 0, \
 		files_terminal["ticket"] + files_terminal["comment"], terminal
 	printf "  docs         %d citation(s) from %d live file(s) of %d read, %d skipped as superseded, %d carrying no status facet\n", \
-		cit_checked["doc"] + 0, files_live["doc"] + 0, files_read["doc"] + 0, files_terminal["doc"] + 0, docs_no_status + 0
+		cit_checked["doc"] + 0, files_live["doc"] + 0, files_read["doc"] + 0, files_terminal["doc"] + 0, no_status["doc"] + 0
+	printf "  root         %d citation(s) from %d live file(s) of %d read against a floor of %d, %d skipped as superseded, %d carrying no status facet\n", \
+		cit_checked["root"] + 0, files_live["root"] + 0, files_read["root"] + 0, ROOT_FLOOR, files_terminal["root"] + 0, no_status["root"] + 0
 	printf "  comments     %d checked, inheriting the status of their parent ticket\n", files_live["comment"] + 0
 	printf "  fixture      %d citation(s) from %s, which holds no status for a ticket transition to change\n", \
 		cit_checked["fixture"] + 0, FIXTURE_LABEL
@@ -897,6 +998,7 @@ function report(   starved, empty, live) {
 	printf "  tickets      %d link(s) from the open ticket and comment files above\n", \
 		link_ck["ticket"] + link_ck["comment"] + 0
 	printf "  docs         %d link(s) from the live document files above\n", link_ck["doc"] + 0
+	printf "  root         %d link(s) from the repository-root document files above\n", link_ck["root"] + 0
 	printf "  fixture      %d link(s) from %s\n", link_ck["fixture"] + 0, FIXTURE_LABEL
 	printf "  not resolved %d external (scheme://, mailto:, tel:), %d same-document heading anchor(s), %d in vendored upstream sources under docs/research/*/sources/\n", \
 		link_external + 0, link_selfanchor + 0, link_vendored + 0
@@ -918,8 +1020,19 @@ function report(   starved, empty, live) {
 		"An open ticket links to its siblings and to the documents it cites; zero means scan_links stopped reaching the prose, or every target was classified away as external, anchored, or vendored.")
 	empty += population_floor(link_ck["doc"], "docs/** markdown link", "link(s)", \
 		"Every catalog, index, and cross-reference in docs/ is navigated by link, in the hundreds; zero means the population the entry points live in went unresolved -- which is exactly the state this check was added to end.")
+	# Two floors on the root population, guarding two different failures. The
+	# file count says the *.md glob still matches and role_of() still routes
+	# them; the link count says their prose was actually walked. Neither implies
+	# the other: three files read with zero links resolved is a matcher that
+	# stopped reaching them, and it would otherwise print exactly as green as a
+	# clean run. There is deliberately no citation floor here -- this population
+	# carries no pinned citation at all, so one would fail on a correct tree.
+	empty += count_floor(files_read["root"], ROOT_FLOOR, "repository-root", "file(s)", \
+		"README.md, AGENTS.md, and CLAUDE.md are tracked at the root and none of them is going away; fewer than that means the *.md glob or role_of stopped reaching them, and a population that reads zero files prints the same green as one that read all three.")
+	empty += population_floor(link_ck["root"], "repository-root markdown link", "link(s)", \
+		"README.md is six links of route into docs/ and spikes/, and AGENTS.md links the ADR governing every unsafe site in the workspace; zero means scan_links stopped reaching them, or the entry points stopped pointing anywhere at all.")
 	if (empty > 0)
-		printf "\ncheck-citations: %d corpus population(s) contributed ZERO checked citations or links. The other population passing says nothing about this one -- separate counts exist so that neither can stand in for the other.\n", empty
+		printf "\ncheck-citations: %d corpus population floor(s) went unmet -- a population contributed ZERO checked citations or links, or read fewer files than it must. Another population passing says nothing about this one; separate counts exist so that none can stand in for the others.\n", empty
 
 	starved = form_floor(cit_line, "the line-only form (`path:LINE`)", "`AGENTS.md:1`")
 	starved += form_floor(cit_anchor, "the anchor-only form (`path \"anchor\"`)", "`Makefile \"check: citations fmt build lint test\"`")
