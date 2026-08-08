@@ -1,7 +1,7 @@
 ---
 id: decide-whether-adr-0103-s-eight-domain-count-is-a-dated-record-or-a-stale-claim
 title: Decide whether ADR 0103's eight-domain count is a dated record or a stale claim
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [cover-the-fifth-envelope-digest-domain-in-the-union-no-prefix-check]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786172922
 ---
 `docs/decisions/0103-declare-the-manifests-artifact-identity-by-digest.md` states, in its consequences:
 
