@@ -53,7 +53,8 @@ fn the_published_rows_are_not_the_direct_paths_own() {
 ///
 /// **Disk hygiene is a gate obligation here rather than tidiness.** Every routed
 /// run on every Apple host writes eight envelopes and their records, one of which
-/// is a four-megabyte operand stream, and a guard that failed to remove them
+/// is a four-megabyte operand stream, and the `#[ignore]`d prefill run writes
+/// four more totalling forty-eight megabytes; a guard that failed to remove them
 /// would accumulate that on each `make full`. The removal is asserted rather than
 /// assumed because it happens in a `Drop` that no other test would notice
 /// failing.

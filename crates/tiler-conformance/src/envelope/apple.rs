@@ -61,6 +61,14 @@ use crate::measurement::{Measured, MeasurementBoundary};
 use crate::publication::{publish_contraction, publish_serial_sum_matrix};
 use crate::serial_sum::{F32_BYTES, compile_under, declaration, pack_f32, unpack_f32};
 
+/// How many result elements a routed case prints in full before eliding.
+///
+/// Small enough that the adversarial members' whole results are readable and the
+/// L3 cells' are not: a thousand hexadecimal words is not a reader's evidence and
+/// the digest is. Named here rather than written at the one match arm because the
+/// number is a judgement about a log's readability, not about the comparison.
+const PRINTED_ELEMENTS: usize = 16;
+
 /// One route this device has proved it can carry out, with everything it needs.
 ///
 /// Held across the commit: every device object the encode touches is created
@@ -557,6 +565,7 @@ fn prove_member(
         entries: routed_entries,
         shared: routed_shared,
         retained: None,
+        retained_declined: None,
     })
 }
 
@@ -576,6 +585,13 @@ fn prove_member(
 /// workspace's own two implementations of the contraction. The digest of the
 /// producer's *expected* bytes is computed beside it, and it is a validity
 /// condition on the published record rather than a second device claim.
+///
+/// `retained_declined` is the caller's row verdict, resolved before anything was
+/// published: `Some` means this hardware cannot speak for the retained
+/// measurement, so the member still routes and is still compared against its
+/// published reference and the retained comparison is not made. It is carried on
+/// the result rather than dropped, because an absent comparison with a stated
+/// reason and one with none are different outcomes.
 fn prove_contraction(
     device: &Device,
     facts: &DeviceFacts,
@@ -583,7 +599,14 @@ fn prove_contraction(
     environment: &ExecutionEnvironment,
     base: &Path,
     member: &ContractionMember,
+    retained_declined: Option<String>,
 ) -> Result<RoutedMember, EnvelopeFailure> {
+    // Resolved once, before the case loop: the retained digest is compared only
+    // where the row admits it, and folding the two into one value here is what
+    // keeps the loop from re-deciding it per case.
+    let retained = member
+        .retained_result_sha256
+        .filter(|_| retained_declined.is_none());
     let path = proof_member(base, member.class, "selected");
     let (bytes, sidecar) = read_artifact(&path)?;
     let recorded = RecordedArtifactProgramIdentity::from_bytes(sidecar.artifact_identity_bytes())
@@ -683,13 +706,11 @@ fn prove_contraction(
         // all three values at once. Returning at the first disagreement would
         // hide exactly the fact that separates a device defect from a fixture
         // that asks the wrong question.
-        let comparison = member
-            .retained_result_sha256
-            .map(|retained| RetainedComparison {
-                executed: result_digest(&observed),
-                embedded: result_digest(&expected),
-                retained,
-            });
+        let comparison = retained.map(|retained| RetainedComparison {
+            executed: result_digest(&observed),
+            embedded: result_digest(&expected),
+            retained,
+        });
 
         if observed != expected {
             return Err(EnvelopeFailure::Mismatch {
@@ -717,10 +738,22 @@ fn prove_contraction(
         // profile cell: a thousand hexadecimal words is not a reader's evidence,
         // and the digest is. The element count is stated either way so an elided
         // line still says how much agreed.
+        //
+        // **Keyed on the result's size and not on whether a comparison was
+        // made.** A cell whose retained comparison was declined still returns a
+        // thousand elements, and keying on the comparison printed every one of
+        // them — observed while watching the decline fire.
         match &comparison {
-            None => eprintln!(
+            None if observed.len() <= PRINTED_ELEMENTS => eprintln!(
                 "    {}: {observed:08x?} against {expected:08x?}",
                 case.key()
+            ),
+            None => eprintln!(
+                "    {}: {} element(s) agree with the published reference; SHA-256 of the \
+                 EXECUTED result bytes {}, not compared against any retained measurement",
+                case.key(),
+                observed.len(),
+                result_digest(&observed),
             ),
             Some(comparison) => eprintln!(
                 "    {}: {} element(s) agree with the published reference; SHA-256 of the \
@@ -746,10 +779,11 @@ fn prove_contraction(
          published reference, over {} declared operand(s){}",
         member.class,
         shape.inputs.len(),
-        if member.retained_result_sha256.is_some() {
-            ", and the executed bytes carry the retained realization-probe digest"
-        } else {
-            "; no realization-probe measurement exists for these operands"
+        match (member.retained_result_sha256, &retained_declined) {
+            (Some(_), None) =>
+                ", and the executed bytes carry the retained realization-probe digest".to_owned(),
+            (Some(_), Some(reason)) => format!("; {reason}"),
+            (None, _) => "; no realization-probe measurement exists for these operands".to_owned(),
         },
     );
     Ok(RoutedMember {
@@ -758,6 +792,7 @@ fn prove_contraction(
         entries: 1,
         shared: 0,
         retained: last_comparison,
+        retained_declined,
     })
 }
 
@@ -938,6 +973,16 @@ pub(super) fn run_contraction(member: &ContractionMember) -> Measured<RoutedMemb
             .any(|known| known.class == member.class),
         "a contraction member this module does not publish was routed",
     );
+
+    let boundary: MeasurementBoundary = host::boundary(&routing.apple, &routing.declaration, 0);
+    let declined = match retained_row(member, &boundary) {
+        Ok(declined) => declined,
+        // The record is a checked-in file, so failing to read it is a defect
+        // rather than a boundary — and it must not degrade into comparing
+        // anyway, which is what makes it `Failed` here.
+        Err(cause) => return Measured::Failed(cause),
+    };
+
     let published =
         match publish_contraction(&routing.apple.toolchain, &routing.declaration, member) {
             Ok(published) => published,
@@ -950,15 +995,57 @@ pub(super) fn run_contraction(member: &ContractionMember) -> Measured<RoutedMemb
         &routing.environment,
         published.base(),
         member,
+        declined,
     ) {
-        Ok(routed) => {
-            let boundary: MeasurementBoundary =
-                host::boundary(&routing.apple, &routing.declaration, 0);
-            Measured::Ran {
-                boundary: Box::new(boundary),
-                observed: routed,
-            }
-        }
+        Ok(routed) => Measured::Ran {
+            boundary: Box::new(boundary),
+            observed: routed,
+        },
         Err(cause) => Measured::Failed(cause.to_string()),
     }
+}
+
+/// Compares this host's row against the retained record's, and says whether the
+/// retained comparison may be made.
+///
+/// **Called before anything is published**, which is the ordering the record's own
+/// boundary asks for: a comparison against a measurement has to know which row it
+/// is on before it makes the comparison rather than after.
+/// [`crate::retained_record`] states what a difference in each field does; in
+/// short, a difference in the *machine* declines the retained comparison by name
+/// while the member still routes and is still compared against its published
+/// reference, and a difference in the toolchain is announced and compared.
+///
+/// A member carrying no retained digest is not compared against a row at all —
+/// there is nothing for the row to bound — and the sentence says so rather than
+/// printing an agreement nothing rests on.
+fn retained_row(
+    member: &ContractionMember,
+    boundary: &MeasurementBoundary,
+) -> Result<Option<String>, String> {
+    if member.retained_result_sha256.is_none() {
+        eprintln!(
+            "  retained row: {} carries no retained measurement, so no row bounds it",
+            member.class,
+        );
+        return Ok(None);
+    }
+    let comparison =
+        crate::retained_record::compare(boundary).map_err(|cause| cause.to_string())?;
+    eprintln!("  retained row: {}", comparison.render());
+    let hardware = comparison.hardware_differences();
+    if hardware.is_empty() {
+        return Ok(None);
+    }
+    let reason = format!(
+        "the retained digest was measured on other hardware, so this run declines to compare \
+         against it: {}",
+        hardware
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; "),
+    );
+    eprintln!("  {reason}");
+    Ok(Some(reason))
 }

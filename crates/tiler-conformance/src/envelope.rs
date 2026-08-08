@@ -82,8 +82,27 @@
 //! What still runs on a host that cannot measure is everything decidable without
 //! an envelope: the interface recognizers and every way of missing them, the
 //! sidecar payload-length refusal, the routed dtype rows, the member and class
-//! pins, the digest helper against its published vectors, and the retained
-//! comparison's two verdicts including the perturbation it must refuse.
+//! pins, the digest helper against its published vectors, the retained
+//! comparison's two verdicts including the perturbation it must refuse, the six
+//! correctness cells checked against the retained record's own `direct` rows,
+//! the derivation that decides which of them a sidecar can carry, and the split
+//! between the ordinary gate's cells and the `#[ignore]`d run's.
+//!
+//! # Which cells this routes, and the two bounds that decide it
+//!
+//! The retained record states six correctness cells and this module routes five.
+//! Two independent bounds decide the shape of what runs:
+//!
+//! - **`tiler_artifact::proof::MAX_PROOF_PAYLOAD_BYTES`** admits one case payload
+//!   of 16 MiB, and `w_vocab_slice`'s `[8192, 1024]` weights operand is exactly
+//!   twice that. No arrangement here reaches it — the constant is another crate's
+//!   public surface — so the cell is pinned, excluded, and held to that
+//!   arithmetic by a test rather than to a sentence.
+//! - **The reference evaluator's per-occurrence fold bound** decides which of the
+//!   remaining five the *ordinary gate* publishes. `w_decode_kv` folds under it
+//!   and is published by the evaluator every other consumer gets; the four
+//!   prefill cells need a stated allowance and 1,094,713,344 steps, so they are
+//!   routed by an `#[ignore]`d run measured at 30.8 s.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -177,15 +196,10 @@ pub(crate) const PLAN_ROLES: [&str; 2] = ["selected", "materialized"];
 /// Its `2 x 2` result has more than one row *and* more than one column, which is
 /// what makes the two operand access relations — `(t, o, d) -> (t, d)` never
 /// mentioning `o`, and `(t, o, d) -> (o, d)` never mentioning `t` — separately
-/// observable. [`L3_CELL_CLASS`] arrives as a second member rather than as a move
-/// of this one for exactly that reason.
+/// observable. [`L3_CORRECTNESS_CELLS`] arrive as further members rather than as
+/// a move of this one for exactly that reason: every cell of the profile is
+/// `M = 1` or has `M != N`, so none of them can separate those two relations.
 pub(crate) const CONTRACTION_CLASS: &str = "contraction";
-/// Class name of the published L3 correctness cell, `w_decode_kv`.
-///
-/// Named for the retained cell rather than for the profile, because the remaining
-/// five cells follow at no architectural cost and `contraction-l3` would then
-/// name whichever of the six happened to land first.
-pub(crate) const L3_CELL_CLASS: &str = "contraction-w-decode-kv";
 
 /// Interface key of the contraction's first operand, `[M, K]`.
 pub(crate) const CONTRACTION_ACTIVATIONS_KEY: &str = "activations";
@@ -194,24 +208,186 @@ pub(crate) const CONTRACTION_WEIGHTS_KEY: &str = "weights";
 /// Interface key of the contraction's one output, `[M, N]`.
 pub(crate) const CONTRACTION_OUTPUT_KEY: &str = "projected";
 
-/// SHA-256 of the `direct` realization's result bytes for `w_decode_kv`,
-/// retained by the L3 realization probe.
+/// One cell of the L3 correctness profile, with the digest a device measured for
+/// its `direct` realization.
 ///
-/// **This is a measurement, not a constant this workspace derived.** It was
-/// recorded on an Apple M4 Max under macOS 27.0 `26A5388g`, Xcode 26.6
-/// `17F113`, SDK 26.5 `25F70`, and the offline Metal compiler `32023.883`, by
-/// `spikes/scheduling/metal_contraction_vertical`, and it lives in that spike's
-/// `results/2026-07-31-correctness-apple9-f32-msl4-macos26-m4max-metal32023.883/workload.tsv`.
-/// A run on any other host row is a different claim: this module states the row
-/// it compared against, and a reader who is not on it must treat the comparison
-/// as unmade rather than as evidence.
+/// **Every digest below is a measurement, not a constant this workspace
+/// derived.** All six were recorded on an Apple M4 Max under macOS 27.0
+/// `26A5388g`, Xcode 26.6 `17F113`, SDK 26.5 `25F70`, and the offline Metal
+/// compiler `32023.883`, by `spikes/scheduling/metal_contraction_vertical`, and
+/// they live in that spike's `workload.tsv` under
+/// [`crate::retained_record::RECORD_DIRECTORY`]. They stay literals here and are
+/// held against that file by
+/// `tests::the_pinned_cells_are_the_retained_records_own_direct_rows`, so a
+/// transcription defect is a red test on every host rather than an agreement
+/// nobody checked; reading them from the record and comparing them to themselves
+/// would remove the pin instead of checking it.
 ///
 /// The digest domain is the probe's own — little-endian `f32` bytes in row-major
 /// order, exactly the buffer the probe's host handed to `CC_SHA256` — so
 /// [`result_digest`] reproduces it from readback bit patterns without an
 /// intervening shape or dtype.
-pub(crate) const L3_CELL_RESULT_SHA256: &str =
-    "79810ce471cbd6cd05e5c0c30ea6023e74b997bd5b349212b71cd4a23fe8701f";
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct L3CorrectnessCell {
+    /// The retained record's own identifier for the cell.
+    pub(crate) id: &'static str,
+    /// The class name the cell is published and opened under.
+    ///
+    /// Carried rather than derived from [`Self::id`], because a class name is a
+    /// path component in a published member's file name and deriving it would
+    /// need a format at a site that has to be `const`.
+    pub(crate) class: &'static str,
+    /// Rows of the activations operand and of the result.
+    pub(crate) m: u64,
+    /// Rows of the weights operand and columns of the result.
+    pub(crate) n: u64,
+    /// The contracted extent, shared by both operands.
+    pub(crate) k: u64,
+    /// `m * n * k`, the multiply-accumulate fold the oracle is asked for.
+    ///
+    /// Stated rather than multiplied at the point of use, and checked against the
+    /// product by `tests::the_pinned_cells_are_the_retained_records_own_direct_rows`.
+    /// It is what decides whether publishing this cell needs a *stated* reference
+    /// iteration-step allowance, and a number a reader can compare against the
+    /// record by eye is worth more there than an expression.
+    pub(crate) fold_steps: u64,
+    /// SHA-256 of the `direct` realization's result bytes.
+    pub(crate) result_sha256: &'static str,
+}
+
+/// The reference evaluator's default per-occurrence iteration-step allowance.
+///
+/// Restated rather than imported because `tiler-reference` keeps the constant
+/// `pub(crate)`. Unlike the two other restatements of it in this workspace, this
+/// one is checked: `ReferenceEvaluator::iteration_step_allowance` is a public
+/// accessor and `crate::publication::proof::tests` compares the two, so a bound
+/// that moved is a red test rather than a stale number deciding which cells the
+/// gate runs.
+pub(crate) const REFERENCE_DEFAULT_STEP_ALLOWANCE: u64 = 16 * 1024 * 1024;
+
+/// The six correctness cells of the L3 contraction profile, in the record's own
+/// order.
+///
+/// Named for the retained cells rather than for the profile, because a class
+/// like `contraction-l3` would name whichever of the six happened to land first.
+pub(crate) const L3_CORRECTNESS_CELLS: [L3CorrectnessCell; 6] = [
+    L3CorrectnessCell {
+        id: "w_decode_kv",
+        class: "contraction-w-decode-kv",
+        m: 1,
+        n: 1024,
+        k: 1024,
+        fold_steps: 1_048_576,
+        result_sha256: "79810ce471cbd6cd05e5c0c30ea6023e74b997bd5b349212b71cd4a23fe8701f",
+    },
+    L3CorrectnessCell {
+        id: "w_prefill_q",
+        class: "contraction-w-prefill-q",
+        m: 10,
+        n: 2048,
+        k: 1024,
+        fold_steps: 20_971_520,
+        result_sha256: "1c54f5cd7265ee288ec79bcd9254243b78a95d57c3c489e5ea90bcc4298073c0",
+    },
+    L3CorrectnessCell {
+        id: "w_prefill_mlp_in",
+        class: "contraction-w-prefill-mlp-in",
+        m: 128,
+        n: 3072,
+        k: 1024,
+        fold_steps: 402_653_184,
+        result_sha256: "eb382840ac9e533f57e51a0ffed2d61608664ecc5869aaa9f93afa3c312696a0",
+    },
+    L3CorrectnessCell {
+        id: "w_prefill_mlp_out",
+        class: "contraction-w-prefill-mlp-out",
+        m: 128,
+        n: 1024,
+        k: 3072,
+        fold_steps: 402_653_184,
+        result_sha256: "124571de47ebff2f152b120afc9944b3465bffe94d8ac283a077677f61feb5f5",
+    },
+    L3CorrectnessCell {
+        id: "w_prefill_o",
+        class: "contraction-w-prefill-o",
+        m: 128,
+        n: 1024,
+        k: 2048,
+        fold_steps: 268_435_456,
+        result_sha256: "b99eff9042d9e4b25e3844ff0462e5e6303e57b146aa79400622885bffc5f2f6",
+    },
+    L3CorrectnessCell {
+        id: "w_vocab_slice",
+        class: "contraction-w-vocab-slice",
+        m: 1,
+        n: 8192,
+        k: 1024,
+        fold_steps: 8_388_608,
+        result_sha256: "88b01ae776f42bdb2f2d1092ddfd039e20e652d28393a6e2ec19e5cc1d9803c8",
+    },
+];
+
+impl L3CorrectnessCell {
+    /// Whether the *default* reference evaluator folds this cell's oracle.
+    ///
+    /// **This is the line the gate is split on, and it is a property rather than
+    /// a cost estimate.** Publishing a cell needs the reference's expected bytes,
+    /// and a fold above the default allowance is only reachable by a caller
+    /// stating a larger number. A cell on this side of the line therefore
+    /// publishes under exactly the evaluator every other consumer gets, so
+    /// nothing the ordinary gate runs authorizes extra host work; the cells on
+    /// the other side are routed by an `#[ignore]`d run that states the
+    /// allowance where a reader can see it.
+    pub(crate) const fn folds_under_the_default_allowance(&self) -> bool {
+        self.fold_steps <= REFERENCE_DEFAULT_STEP_ALLOWANCE
+    }
+
+    /// Bytes of this cell's largest proof-sidecar payload.
+    ///
+    /// A sidecar binds one payload per declared interface entry, so the largest
+    /// of the three — `[m, k]` activations, `[n, k]` weights, `[m, n]` expected —
+    /// is what the artifact layer's per-payload bound is applied to. Computed
+    /// rather than tabulated, because a cell whose extents moved must move this
+    /// with them.
+    pub(crate) const fn largest_payload_bytes(&self) -> u64 {
+        let activations = self.m * self.k;
+        let weights = self.n * self.k;
+        let expected = self.m * self.n;
+        let largest = if activations > weights {
+            activations
+        } else {
+            weights
+        };
+        let largest = if largest > expected {
+            largest
+        } else {
+            expected
+        };
+        largest * crate::serial_sum::F32_BYTES
+    }
+
+    /// Whether the artifact layer's proof sidecar can carry this cell at all.
+    ///
+    /// **A hard boundary rather than a cost, and it is owned elsewhere.**
+    /// `tiler_artifact::proof::MAX_PROOF_PAYLOAD_BYTES` bounds one case payload
+    /// at 16 MiB, and `w_vocab_slice`'s `[8192, 1024]` weights operand is exactly
+    /// 33,554,432 bytes — twice it. No arrangement inside this crate reaches that
+    /// cell: splitting the operand across cases would publish a different program,
+    /// and the constant is `tiler-artifact`'s public surface, which
+    /// `implementation/conformance` does not own.
+    /// `tests::the_unpublishable_cell_is_named_against_the_bound_that_stops_it`
+    /// holds the exclusion to that arithmetic, so a raised bound admits the cell
+    /// by making a test say so rather than by anyone remembering.
+    pub(crate) fn fits_one_proof_payload(&self) -> bool {
+        u64::try_from(tiler_artifact::proof::MAX_PROOF_PAYLOAD_BYTES)
+            .is_ok_and(|limit| self.largest_payload_bytes() <= limit)
+    }
+
+    /// The extents this cell is published and routed at.
+    pub(crate) const fn extents(&self) -> (u64, u64, u64) {
+        (self.m, self.n, self.k)
+    }
+}
 
 /// How many entries and shared allocations a member of each role must show.
 ///
@@ -1785,14 +1961,15 @@ impl RetainedComparison {
 /// One published contraction member, and what its executed bytes are compared
 /// against.
 ///
-/// **The two members are the same route and two different claims**, which is why
-/// one path drives both rather than two paths sharing a helper. The `2x2x3`
+/// **The members are one route and two different claims**, which is why one path
+/// drives all of them rather than two paths sharing a helper. The `2x2x3`
 /// member's result has more than one row *and* more than one column, so it is the
 /// one that can separate the two operand access relations, and its operand classes
 /// are adversarial numerical cases with no measured device result anywhere to
-/// compare against. The L3 cell's `1x1024` result cannot separate those relations
-/// at all, and carries the one thing the other cannot: a `result_sha256` a device
-/// measured over these exact operands.
+/// compare against. Every L3 cell is `M = 1` or has `M != N`, so none of them can
+/// separate those relations at all — and each carries the one thing the
+/// adversarial member cannot: a `result_sha256` a device measured over those
+/// exact operands.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ContractionMember {
     /// The class name this member is published and opened under.
@@ -1816,28 +1993,54 @@ pub(crate) struct ContractionMember {
     pub(crate) retained_result_sha256: Option<&'static str>,
 }
 
-/// The two contraction members this module routes, in the order it routes them.
+/// Restates one L3 correctness cell as a routable member.
 ///
-/// The extents are stated here and checked against the operand tables and the
-/// retained measurement written for them by
+/// **Derived rather than written out, so [`L3_CORRECTNESS_CELLS`] is the single
+/// authority for a cell's class, extents, and retained digest.** Seven members
+/// written by hand would be a second table, and the failure it invites is a class
+/// pointing at another cell's digest — which would route, agree with its own
+/// published reference, and disagree with the retained value in a way that reads
+/// as a device defect.
+const fn l3_member(index: usize) -> ContractionMember {
+    let cell = L3_CORRECTNESS_CELLS[index];
+    ContractionMember {
+        class: cell.class,
+        family: crate::publication::ProofFamily::L3CorrectnessCell {
+            m: cell.m,
+            n: cell.n,
+            k: cell.k,
+        },
+        retained_result_sha256: Some(cell.result_sha256),
+    }
+}
+
+/// Every contraction member this module routes, in the order it routes them.
+///
+/// The adversarial `2x2x3` member leads, then the correctness cells in the
+/// retained record's own order — **five of the six.** `w_vocab_slice` is absent
+/// because no sidecar can carry its operand, which is
+/// [`L3CorrectnessCell::fits_one_proof_payload`]; the exclusion is a hand-written
+/// index here only because a `const` cannot filter, and
+/// `tests::the_routed_members_are_exactly_the_publishable_cells` derives the same
+/// set from that predicate and compares, so this list cannot quietly drop or
+/// re-admit a cell.
+///
+/// The extents are checked against the operand tables and the retained
+/// measurement written for them by
 /// `crate::publication::proof::tests::the_published_contraction_extents_are_the_ones_this_module_is_written_for`,
 /// so moving one fails in the ordinary gate rather than on the first host that
 /// publishes.
-pub(crate) const CONTRACTION_MEMBERS: [ContractionMember; 2] = [
+pub(crate) const CONTRACTION_MEMBERS: [ContractionMember; 6] = [
     ContractionMember {
         class: CONTRACTION_CLASS,
         family: crate::publication::ProofFamily::Contraction { m: 2, n: 2, k: 3 },
         retained_result_sha256: None,
     },
-    ContractionMember {
-        class: L3_CELL_CLASS,
-        family: crate::publication::ProofFamily::L3CorrectnessCell {
-            m: 1,
-            n: 1024,
-            k: 1024,
-        },
-        retained_result_sha256: Some(L3_CELL_RESULT_SHA256),
-    },
+    l3_member(0),
+    l3_member(1),
+    l3_member(2),
+    l3_member(3),
+    l3_member(4),
 ];
 
 /// The probe's digest domain: little-endian `f32` bytes in row-major order.
@@ -2039,6 +2242,17 @@ pub(crate) struct RoutedMember {
     pub(crate) shared: usize,
     /// The retained comparison, for a member that carries a measurement.
     pub(crate) retained: Option<RetainedComparison>,
+    /// Why a member carrying a measurement was nevertheless not compared
+    /// against it.
+    ///
+    /// **`None` and `Some` are two different absences and collapsing them is the
+    /// silent skip this crate exists to refuse.** A member with no retained
+    /// digest has nothing to compare; a member with one that this hardware row
+    /// cannot speak for has something to compare and a stated reason not to. Only
+    /// the second may leave [`Self::retained`] empty while
+    /// `ContractionMember::retained_result_sha256` is `Some`, and the routed test
+    /// requires the reason rather than accepting the gap.
+    pub(crate) retained_declined: Option<String>,
 }
 
 /// The dtype-dispatch rows an environment states, for comparison.

@@ -47,21 +47,32 @@ use std::path::{Path, PathBuf};
 /// How many test functions a non-Apple host must still run.
 ///
 /// **A floor, and it sits one below the population deliberately.** The crate
-/// declares 57 tests and the macOS predicate removes three of them, in
-/// `dispatch`, so a non-Apple host runs 54. Fifty-three is what makes the
+/// declares 68 tests and the macOS predicate removes three of them, in
+/// `dispatch`, so a non-Apple host runs 65. Sixty-four is what makes the
 /// *smallest* collapse fail rather than only the large ones: the three smallest
 /// device-free modules, `device_preflight`, `lints`, and `publication`'s own
-/// tests, hold two tests each, so gating any of them drops the population to 52
-/// and this refuses it. Gating `envelope` or `serial_sum`'s tests drops it to
-/// 42, and `bf16_vertical` to 41.
+/// tests, hold two tests each, so gating any of them drops the population to 63
+/// and this refuses it. Gating `retained_record`'s tests drops it to 61,
+/// `applicability` or `publication::proof` to 59, `serial_sum`'s tests to 53,
+/// `bf16_vertical`'s to 52, and `envelope`'s to 48.
 ///
 /// The narrow margin is the cost of that sensitivity: removing two device-free
 /// tests for any reason turns this red. Raising the floor with the population
 /// is the ordinary edit; lowering it is a decision about what a non-Apple host
-/// is held to, and belongs in a ticket rather than in this line. It last rose
-/// with `bf16_vertical`'s thirteenth test on 2026-08-07, under
-/// `route-the-bf16-vertical-s-declared-conformance-through-the-checked-bridge`.
-const DEVICE_FREE_TEST_FLOOR: usize = 53;
+/// is held to, and belongs in a ticket rather than in this line.
+///
+/// It last rose 53 → 64 on 2026-08-07 under
+/// `route-the-realization-conformance-half-into-the-conformance-crate`, which
+/// added eleven device-free tests: four in the new `retained_record`, five in
+/// `envelope`'s (the record cross-check, the publishable-member derivation, the
+/// payload-bound exclusion, the gate split, and the routed run's second half),
+/// and two in `publication::proof` (the restated reference bound, and which
+/// families state an iteration-step allowance). **The floor moved with the
+/// population and by the same eleven**, which is what preserves the two-test
+/// sensitivity above; it was not moved to make anything pass, and the two runs
+/// this ticket added are `#[test]`s the census counts from source whether or not
+/// one of them carries `#[ignore]`.
+const DEVICE_FREE_TEST_FLOOR: usize = 64;
 
 /// A non-Apple host still runs the device-free test population.
 ///

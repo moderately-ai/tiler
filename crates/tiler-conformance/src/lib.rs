@@ -156,6 +156,7 @@
 //! | `applicability` | whether this host may *offer* the profile it routes under, and the observation that is asked from |
 //! | `device_preflight` | every obligation a host discharges before a routing commit, and how each refusal is classified |
 //! | `measurement` | whether this host could measure, and the exact row a measured result is bounded to |
+//! | `retained_record` | the realization probe's retained record, its `direct` digests, and how this host's row compares against it |
 //! | `portability` | the census that holds the non-Apple claim below to a population rather than to this paragraph |
 //! | `lints` | this crate's uninherited lint table, held against the workspace's |
 //! | `dispatch` | preparing, encoding, submitting, and classifying device dispatches (macOS only) |
@@ -240,5 +241,7 @@ mod measurement;
 mod portability;
 #[cfg(test)]
 mod publication;
+#[cfg(test)]
+mod retained_record;
 #[cfg(test)]
 mod serial_sum;

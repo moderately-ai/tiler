@@ -219,26 +219,13 @@ const CONTRACTION_CASES: [ContractionCase; 5] = [
     ),
 ];
 
-/// The extents of the one L3 correctness cell published here, `w_decode_kv`.
-///
-/// Stated and checked for the same reason [`CONTRACTION_M`] is, and one reason
-/// more: a *retained* `result_sha256` exists for exactly this cell at exactly
-/// these extents — `crate::envelope::L3_CELL_RESULT_SHA256` — so operands
-/// generated at any other shape would be compared against a digest that never
-/// described them.
-const L3_CELL_M: u64 = 1;
-/// See [`L3_CELL_M`].
-const L3_CELL_N: u64 = 1024;
-/// See [`L3_CELL_M`].
-const L3_CELL_K: u64 = 1024;
-
 /// The probe's workload seed, `contraction_probe.py`'s `WORKLOAD_SEED`.
 const WORKLOAD_SEED: u64 = 0x5445_524D;
 /// The probe's right-operand seed derivation, `host.m`'s `fill_prng` call.
 const RIGHT_SEED_MASK: u64 = 0xA5A5_A5A5_A5A5_A5A5;
-/// The stable case key of the one operand set the probe measured.
+/// The stable case key of the one operand set the probe measured, per cell.
 ///
-/// One case rather than five: the retained digest is a measurement of this exact
+/// One case rather than five: the retained digest is a measurement of that exact
 /// workload, and an adversarial operand class published beside it would carry no
 /// retained value to be compared against. The five adversarial classes stay on
 /// the `2x2x3` member, which is what that member is for.
@@ -291,14 +278,45 @@ pub(crate) enum ProofFamily {
 impl ProofFamily {
     /// The extents a contraction family names, for the members that have them.
     ///
-    /// Returned rather than matched at each call site because two published
-    /// members carry contraction extents and the routed half asserts them against
-    /// the artifact's own declaration; a second match would be a second place for
-    /// the two to disagree.
+    /// Returned rather than matched at each call site because every published
+    /// contraction member carries contraction extents and the routed half asserts
+    /// them against the artifact's own declaration; a second match would be a
+    /// second place for the two to disagree.
     pub(crate) const fn contraction_extents(self) -> Option<(u64, u64, u64)> {
         match self {
             Self::SerialSum { .. } => None,
             Self::Contraction { m, n, k } | Self::L3CorrectnessCell { m, n, k } => Some((m, n, k)),
+        }
+    }
+
+    /// The iteration-step allowance the oracle is asked to fold this family
+    /// under.
+    ///
+    /// **A stated number, and the statement is the authorization.** The reference
+    /// holds one occurrence to
+    /// [`crate::envelope::REFERENCE_DEFAULT_STEP_ALLOWANCE`] by default, and four
+    /// of the six L3 correctness cells fold past it — the largest at 402,653,184
+    /// multiply-accumulate steps. A caller that has decided to pay for a larger
+    /// fold says so in visible code, which is exactly what this is; what it never
+    /// does is widen what *one* walk may cost, because the evaluator windows an
+    /// occurrence above the bound into folds each passing the test a
+    /// single-window fold passes.
+    ///
+    /// Written as a maximum rather than as the fold itself, so a family under the
+    /// default keeps the ordinary evaluator's own number and this returns an
+    /// authorization only where one is needed. The two cells the ordinary gate
+    /// routes are on that side of the line, which is
+    /// `crate::envelope::L3CorrectnessCell::folds_under_the_default_allowance`.
+    fn iteration_step_allowance(self) -> usize {
+        let default = usize::try_from(crate::envelope::REFERENCE_DEFAULT_STEP_ALLOWANCE)
+            .expect("the reference's default allowance fits a usize");
+        match self {
+            Self::SerialSum { .. } | Self::Contraction { .. } => default,
+            Self::L3CorrectnessCell { m, n, k } => m
+                .checked_mul(n)
+                .and_then(|outputs| outputs.checked_mul(k))
+                .and_then(|steps| usize::try_from(steps).ok())
+                .map_or(default, |steps| steps.max(default)),
         }
     }
 }
@@ -322,7 +340,7 @@ pub(crate) enum SidecarFailure {
         /// The extents the case table is written for.
         written: (u64, u64, u64),
     },
-    /// A published L3 cell is not the one a retained `result_sha256` describes.
+    /// A published L3 cell is not one a retained `result_sha256` describes.
     ///
     /// Its own class, and a stricter one than [`Self::UnwrittenContractionShape`]:
     /// that refusal says an operand table would have to be written, and this one
@@ -332,8 +350,8 @@ pub(crate) enum SidecarFailure {
     UnretainedProbeCell {
         /// The extents the publication asked for.
         requested: (u64, u64, u64),
-        /// The extents a retained digest exists for.
-        retained: (u64, u64, u64),
+        /// The extents a retained digest exists for, in the record's own order.
+        retained: Vec<(u64, u64, u64)>,
     },
 }
 
@@ -352,12 +370,17 @@ impl std::fmt::Display for SidecarFailure {
             ),
             Self::UnretainedProbeCell {
                 requested: (m, n, k),
-                retained: (rm, rn, rk),
+                retained,
             } => write!(
                 formatter,
-                "a {m}x{n}x{k} L3 cell is published and the retained realization-probe digest it \
-                 is compared against was measured at {rm}x{rn}x{rk}; a cell with no retained \
+                "a {m}x{n}x{k} L3 cell is published and the retained realization-probe digests it \
+                 would be compared against were measured at {}; a cell with no retained \
                  measurement cannot be published through this family",
+                retained
+                    .iter()
+                    .map(|(rm, rn, rk)| format!("{rm}x{rn}x{rk}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
             ),
         }
     }
@@ -461,7 +484,18 @@ fn tensor(shape: &Shape, bits: &[u32]) -> Tensor {
 /// the oracle evaluates the program the artifact actually declares. A version of
 /// this that bound only the leading operand would have evaluated a different
 /// program and reported its bits as normative.
-fn reference_bits(program: &SemanticProgram, operands: &[Operand]) -> Vec<u32> {
+///
+/// **The allowance is the caller's and is stated rather than defaulted.** Four of
+/// the six L3 correctness cells fold past the reference's own per-occurrence
+/// bound, and the number that authorizes them comes from
+/// [`ProofFamily::iteration_step_allowance`] — visible caller code — rather than
+/// from a constant nobody re-derives. A family under the bound is handed the
+/// evaluator's own default, so publishing it authorizes nothing.
+fn reference_bits(
+    program: &SemanticProgram,
+    operands: &[Operand],
+    iteration_step_allowance: usize,
+) -> Vec<u32> {
     let tensors: Vec<Tensor> = operands
         .iter()
         .map(|operand| tensor(&operand.shape, &operand.bits))
@@ -473,6 +507,7 @@ fn reference_bits(program: &SemanticProgram, operands: &[Operand]) -> Vec<u32> {
         .collect();
     let outputs = ReferenceEvaluator::standard()
         .expect("the governed reference profile composes")
+        .with_iteration_step_allowance(iteration_step_allowance)
         .evaluate(program, &bindings)
         .expect("the reference evaluates the program");
     match outputs[0].payload() {
@@ -549,10 +584,20 @@ fn cases_for(family: ProofFamily) -> Result<Vec<(&'static str, Vec<Operand>)>, S
                 .collect())
         }
         ProofFamily::L3CorrectnessCell { m, n, k } => {
-            if (m, n, k) != (L3_CELL_M, L3_CELL_N, L3_CELL_K) {
+            // Membership in the retained set rather than equality with one cell:
+            // the probe's stream is defined at every shape, so the refusal has to
+            // come from whether a *measurement* exists rather than from whether
+            // operands can be generated.
+            if !crate::envelope::L3_CORRECTNESS_CELLS
+                .iter()
+                .any(|cell| cell.extents() == (m, n, k))
+            {
                 return Err(SidecarFailure::UnretainedProbeCell {
                     requested: (m, n, k),
-                    retained: (L3_CELL_M, L3_CELL_N, L3_CELL_K),
+                    retained: crate::envelope::L3_CORRECTNESS_CELLS
+                        .iter()
+                        .map(crate::envelope::L3CorrectnessCell::extents)
+                        .collect(),
                 });
             }
             // The right operand's seed is the workload seed masked, exactly as
@@ -618,8 +663,9 @@ pub(crate) fn encoded(
     let output_key = output_key_for(family);
     // Every case over the same program, so the routed half compares one artifact
     // against several operand classes rather than needing an artifact each.
+    let allowance = family.iteration_step_allowance();
     for (key, operands) in cases_for(family)? {
-        let expected = reference_bits(program, &operands);
+        let expected = reference_bits(program, &operands, allowance);
         draft
             .push_case(ProofCaseSpec {
                 key: ProofCaseKey::new(key).expect("the case key is valid"),
@@ -641,11 +687,21 @@ pub(crate) fn encoded(
 
 #[cfg(test)]
 mod tests {
+    use tiler_reference::ReferenceEvaluator;
+
     use super::{
-        CONTRACTION_K, CONTRACTION_M, CONTRACTION_N, L3_CELL_K, L3_CELL_M, L3_CELL_N,
-        RIGHT_SEED_MASK, WORKLOAD_SEED, probe_bits, probe_value,
+        CONTRACTION_K, CONTRACTION_M, CONTRACTION_N, ProofFamily, RIGHT_SEED_MASK, WORKLOAD_SEED,
+        probe_bits, probe_value,
     };
-    use crate::envelope::CONTRACTION_MEMBERS;
+    use crate::envelope::{
+        CONTRACTION_MEMBERS, L3_CORRECTNESS_CELLS, REFERENCE_DEFAULT_STEP_ALLOWANCE,
+    };
+
+    /// The extents of the cell whose retained digest this crate first routed.
+    ///
+    /// Kept as a literal so the two tests below that need *one* cell name it
+    /// rather than indexing the table they are checking.
+    const DECODE_KV: (u64, u64, u64) = (1, 1024, 1024);
 
     /// The published cell's operand stream is the probe's, pinned against values
     /// the probe's own Python produced.
@@ -686,8 +742,9 @@ mod tests {
     /// mode this repository has recorded.
     #[test]
     fn every_published_cell_operand_is_exactly_representable() {
-        let activations = probe_bits(L3_CELL_M * L3_CELL_K, WORKLOAD_SEED);
-        let weights = probe_bits(L3_CELL_N * L3_CELL_K, WORKLOAD_SEED ^ RIGHT_SEED_MASK);
+        let (m, n, k) = DECODE_KV;
+        let activations = probe_bits(m * k, WORKLOAD_SEED);
+        let weights = probe_bits(n * k, WORKLOAD_SEED ^ RIGHT_SEED_MASK);
         assert_eq!(activations.len(), 1024);
         assert_eq!(weights.len(), 1_048_576);
 
@@ -716,8 +773,9 @@ mod tests {
     /// names.
     #[test]
     fn the_two_operands_are_not_the_same_stream() {
-        let activations = probe_bits(L3_CELL_M * L3_CELL_K, WORKLOAD_SEED);
-        let weights = probe_bits(L3_CELL_M * L3_CELL_K, WORKLOAD_SEED ^ RIGHT_SEED_MASK);
+        let (m, _, k) = DECODE_KV;
+        let activations = probe_bits(m * k, WORKLOAD_SEED);
+        let weights = probe_bits(m * k, WORKLOAD_SEED ^ RIGHT_SEED_MASK);
         assert_ne!(activations, weights);
     }
 
@@ -737,14 +795,109 @@ mod tests {
             .iter()
             .map(|member| member.family.contraction_extents())
             .collect();
+        let mut expected = vec![Some((CONTRACTION_M, CONTRACTION_N, CONTRACTION_K))];
+        expected.extend(
+            L3_CORRECTNESS_CELLS
+                .iter()
+                .filter(|cell| cell.fits_one_proof_payload())
+                .map(|cell| Some(cell.extents())),
+        );
         assert_eq!(
-            declared,
-            [
-                Some((CONTRACTION_M, CONTRACTION_N, CONTRACTION_K)),
-                Some((L3_CELL_M, L3_CELL_N, L3_CELL_K)),
-            ],
+            declared, expected,
             "a published contraction member moved away from the operand table or the retained \
              measurement written for it here",
+        );
+        assert_eq!(
+            declared.len(),
+            6,
+            "the adversarial member and the five correctness cells a sidecar can carry are routed",
+        );
+    }
+
+    /// The restated reference bound is the reference's own, and it decides which
+    /// cells the gate routes.
+    ///
+    /// **Restating a `pub(crate)` constant is only safe while something compares
+    /// it**, and this crate can: the evaluator publishes the number it is holding
+    /// one occurrence to. Without this the four cells that need a stated allowance
+    /// would be selected against a number that had silently stopped being the
+    /// reference's, and the gate's split would be about a literal rather than
+    /// about a bound.
+    #[test]
+    fn the_restated_reference_bound_is_the_evaluators_own() {
+        let evaluator = ReferenceEvaluator::standard().expect("the governed profile composes");
+        assert_eq!(
+            u64::try_from(evaluator.iteration_step_allowance())
+                .expect("the reference's allowance fits a u64"),
+            REFERENCE_DEFAULT_STEP_ALLOWANCE,
+            "this crate restates the reference's per-occurrence bound and the reference has moved \
+             it; which cells the ordinary gate routes is decided by that number",
+        );
+    }
+
+    /// Only the cells whose fold exceeds the bound ask for an allowance, and each
+    /// asks for exactly its own fold.
+    ///
+    /// **The negative half is the load-bearing one.** An allowance handed to every
+    /// family would authorize a larger fold for the serial sum and the adversarial
+    /// contraction — which need none — and the authorization would then be
+    /// invisible rather than stated. The positive half pins that a cell asks for
+    /// its own step count rather than for some round number that happens to cover
+    /// it.
+    #[test]
+    fn only_the_cells_past_the_bound_state_an_allowance() {
+        let default = usize::try_from(REFERENCE_DEFAULT_STEP_ALLOWANCE).expect("it fits a usize");
+        assert_eq!(
+            ProofFamily::SerialSum {
+                rows: 1,
+                columns: 3
+            }
+            .iteration_step_allowance(),
+            default,
+        );
+        assert_eq!(
+            ProofFamily::Contraction {
+                m: CONTRACTION_M,
+                n: CONTRACTION_N,
+                k: CONTRACTION_K,
+            }
+            .iteration_step_allowance(),
+            default,
+        );
+
+        let mut stated = 0_usize;
+        let mut defaulted = 0_usize;
+        for cell in &L3_CORRECTNESS_CELLS {
+            let (m, n, k) = cell.extents();
+            let allowance = ProofFamily::L3CorrectnessCell { m, n, k }.iteration_step_allowance();
+            assert_eq!(
+                m * n * k,
+                cell.fold_steps,
+                "{}: the pinned fold must be the product of the cell's own extents",
+                cell.id,
+            );
+            if cell.folds_under_the_default_allowance() {
+                assert_eq!(
+                    allowance, default,
+                    "{}: a cell under the bound must be published by the ordinary evaluator",
+                    cell.id,
+                );
+                defaulted += 1;
+            } else {
+                assert_eq!(
+                    u64::try_from(allowance).expect("an allowance fits a u64"),
+                    cell.fold_steps,
+                    "{}: a cell past the bound states its own fold and no more",
+                    cell.id,
+                );
+                stated += 1;
+            }
+        }
+        assert_eq!(
+            (defaulted, stated),
+            (2, 4),
+            "two correctness cells fold under the reference's own bound and four state an \
+             allowance; a split that moved would change what the ordinary gate authorizes",
         );
     }
 }
