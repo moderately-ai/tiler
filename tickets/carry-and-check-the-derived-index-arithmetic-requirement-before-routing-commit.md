@@ -1,7 +1,7 @@
 ---
 id: carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit
 title: Carry and check the derived index-arithmetic requirement before routing commit
-status: in-progress
+status: awaiting-decision
 priority: p1
 dependencies: []
 related: [emit-a-route-requirement-from-the-build-producer-so-a-family-authority-refusal-is-drivable, check-synchronization-realization-before-the-routing-commit, separate-metal-launch-index-from-index-and-address-width, declare-a-required-gpu-family-in-the-artifact]

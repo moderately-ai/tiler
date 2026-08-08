@@ -1,7 +1,7 @@
 ---
 id: resolve-the-markdown-links-the-citation-check-cannot-see
 title: Resolve the markdown links the citation check cannot see
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-resolve-t
-lease_expires_at: 1786166309
 ---
 ## The catalog rows that navigate the whole corpus are unchecked
 
