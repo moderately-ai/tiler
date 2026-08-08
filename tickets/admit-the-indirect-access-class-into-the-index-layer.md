@@ -3,7 +3,7 @@ id: admit-the-indirect-access-class-into-the-index-layer
 title: Decide whether the index layer admits a data-dependent access class
 status: todo
 priority: p2
-dependencies: [accept-adr-0107-indirect-gather-semantic-family]
+dependencies: []
 related: [admit-an-indirect-gather-family-for-tied-embedding-lookup, emit-the-indirect-gather-on-metal, implement-index-domain-predicates]
 scopes: [implementation/ir, contracts/foundation, contracts/decisions, contracts/navigation]
 shared_scopes: [project/tickets]

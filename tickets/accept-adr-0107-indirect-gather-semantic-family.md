@@ -1,7 +1,7 @@
 ---
 id: accept-adr-0107-indirect-gather-semantic-family
 title: Accept or revise ADR 0107 on admitting an indirect gather above the index language
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [admit-an-indirect-gather-family-for-tied-embedding-lookup, admit-the-indirect-access-class-into-the-index-layer, emit-the-indirect-gather-on-metal]
@@ -31,3 +31,11 @@ Acceptance is not acceptance of the public boundary. Under ADR 0075 the key, the
 ## What closes this ticket
 
 Either set `decision_status: accepted` with an acceptance date and unblock the two follow-ons, or record the requested revisions here and send the record back. If accepted with modifications, amend the record rather than superseding it — it has never been operative.
+
+## Accepted — Tom, 2026-08-07
+
+Accepted in the interactive orchestration session, as a direct answer to the decision presented with its trade-off and counterpoint. Not relayed through any intermediary.
+
+`docs/decisions/0107-…md` moved to `decision_status: accepted` with the acceptance provenance, the exact accepted extent, what acceptance did **not** commit to (the public boundary stays a labelled draft under ADR 0075; the index-layer question stays its own decision), and the counterpoint recorded alongside it — that a registered-but-unplannable family is a trap for a reader who takes registration to imply reachability, accepted on the strength of the boundary being tested rather than asserted.
+
+`admit-the-indirect-access-class-into-the-index-layer` is unblocked and dependency-ready. `emit-the-indirect-gather-on-metal` stays `blocked` on *that* ticket, which is correct — it is a second decision, not a consequence of this one.
