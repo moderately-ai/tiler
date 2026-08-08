@@ -1,7 +1,7 @@
 ---
 id: correct-the-roadmap-s-milestone-0b-inline-composition-claim
 title: Correct the roadmap's Milestone 0B inline-composition claim
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-roadmap0b
-lease_expires_at: 1786163600
 ---
 ## The roadmap asserts an absence the tree refutes
 
@@ -44,3 +41,31 @@ Four dated corrections landed in `docs/roadmap.md`'s Milestone 0B section, all c
 **The exit accounting was evidenced rather than deferred, because the evidence existed.** This ticket's "What this ticket must not do" section asserted that no evidence about the rust-analyzer measurement or the fallback paths had been gathered. That was true of this ticket and false of the tree: `docs/integration/frontends.md` carries a maintained Landed/Withdrawn/Outstanding/Parked sweep over exactly those items. Warm rust-analyzer was measured 2026-08-01 over a real LSP session and the "blocked, component unavailable" clause is explicitly void; cold is parked and unmeasured; the macOS fallback path is implemented and tested but constructs the declared result without evaluating the region's arithmetic; the non-Apple fallback path is check-level source compilation from a macOS host in an `#[ignore]`d test, and no expansion has ever run where `xcrun` is absent. The milestone-exit judgement is explicitly not made.
 
 **Out-of-scope defect filed.** `correct-the-stale-fallbackonly-claims-in-tiler-macros-family-cfg` — two comments in `crates/tiler-macros/src/family_cfg.rs` still assert that no expansion compiles a selected family, refuted by `aot::deliver` and the facade fixture. Not fixable here; `crates/**` is outside this ticket's scope.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge `388f07ba` (worker commit `643caeeb`). `docs/` + `tickets/` only, carries the green gate.
+
+### The finding neither this ticket nor its parent had
+
+`spikes/runtime/inline-dispatch` takes a `deliver macos;` region to a **completed hardware dispatch**, bit-compared against the consumer's own `f32`, twice — one-entry and two-entry, the latter watching a reversed encode fail open. Coordinator-confirmed the spike exists and drives `tiler::tensor! { … deliver macos; … }`.
+
+So **"the macro-to-dispatch vertical remains implementation work" is false.** The worker did *not* declare the milestone exited on that basis; it said what now blocks it is consumer integration, a second Apple family, and two named measurements. That restraint is the point — the recurring failure here is a correction that overshoots in the opposite direction, and this one had every opportunity to.
+
+### Four tiers assigned, not one claim flipped
+
+- **Cold AOT → loadable bundle**: produce and embed are a **tested guarantee** in the gate; *loadable* is a **bounded measurement only**, from a hand-run spike on one host, because the `trybuild` fixture cannot load a `metallib`.
+- **Warm expansions invoke no external compiler**: **met** — but a warm expansion still runs four `xcrun` queries plus two `--version` executions, the fingerprint being an identity input. The stronger "no `xcrun` on a warm hit" was **withdrawn as unreachable by construction**, not deferred.
+- **Rust DX without build scripts**: **tested guarantee**, from outside the workspace via `trybuild`.
+- **rust-analyzer warm**: **measured** 2026-08-01 in a real LSP session, 137–217 ms against 10–16 ms — so the record's "blocked, component unavailable" clause is void. **Cold is unmeasured**, parked with a trigger.
+- **macOS fallback**: implemented and tested, but it **constructs the declared result and evaluates no arithmetic** — stated rather than left to read as semantic equivalence. **Non-Apple fallback is unmeasured**: no expansion has ever run where `xcrun` is absent, and no ticket owns it.
+
+### Corrections to this ticket's own framing
+
+Its claim that no evidence exists about rust-analyzer and fallback paths was **true of the ticket and false of the tree** — `docs/integration/frontends.md` carries a maintained Landed/Withdrawn/Outstanding/Parked sweep over exactly those items. And the warm-half fixture it named drives `accept_or_publish_metal_plan` directly, so it is evidence about the *resolution*, not about a second `tensor!` expansion end to end.
+
+### Filed, not fixed
+
+`crates/tiler-macros/src/family_cfg.rs` asserts in two places that "every expansion delivers `FallbackOnly`" — coordinator-confirmed present, and refuted by `aot::deliver` and the facade fixture **in the same crate**. Filed as `correct-the-stale-fallbackonly-claims-in-tiler-macros-family-cfg`, with the note that the `dead_code` allowance on `MAP_VERSION` may itself be correct while its stated *reason* is false — worth checking before deleting.
+
+The worker verified `make citations` actually reaches its own anchors by **breaking one, watching exit 1, and reverting** — the second worker in a row to apply that discipline unprompted.
