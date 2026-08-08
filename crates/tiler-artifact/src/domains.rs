@@ -19,11 +19,19 @@
 //! # Why the population is enumerated from a type
 //!
 //! This module exists because the previous check was a hand-written array of
-//! eight beside a hand-written `8`. Three domains — the envelope's manifest
-//! framing tag and both payload domains — had been added to the crate without
-//! being added to it, so the check covered 8 of 11 and reported success either
-//! way. A count literal beside a list cannot notice a population that stopped
-//! covering its domain.
+//! eight beside a hand-written `8`, and it reported success either way. That
+//! array has been described by two different figures, both measured at
+//! `96dfe333` where this module landed, and they are not in conflict. The check
+//! was named `no_governed_domain_of_either_container_prefixes_another`, and
+//! against the two containers it named it covered 8 of 11: three domains — the
+//! envelope's manifest framing tag and both payload domains — had been added to
+//! the crate without being added to it. Against the set the obligation actually
+//! ranges over it covered 8 of 18, because the artifact program's seven identity
+//! and key domains lay outside the containers it considered at all. Only the
+//! second figure is measured against the population this module enumerates, and
+//! quoting the first without its scope understates the gap by those seven. A
+//! count literal beside a list cannot notice a population that stopped covering
+//! its domain.
 //!
 //! Three independent mechanisms replace it, and each can say *no* on its own:
 //!
@@ -243,14 +251,41 @@ const _: () = {
 /// report a separation it had not established.
 ///
 /// Across crates the obligation is discharged by a spelling argument rather than
-/// a check, because no crate can hold the union — `tiler-artifact` depends on
-/// `tiler-ir` and not the reverse, and `tiler-digest` deliberately knows no
-/// domain at all. Every domain enumerated here opens `tiler.artifact` or
-/// `tiler.proof-sidecar.`, and every domain the shared IR admits opens
-/// `tiler.ir.`, so no prefix relation between the two sets is expressible. That
-/// argument is asserted below rather than only stated, so a domain spelled
-/// outside this crate's established prefixes breaks a test rather than silently
-/// invalidating a paragraph.
+/// a check, because no crate holds the union. `tiler-ir` does not depend on this
+/// crate and cannot see its domains at all; this crate does depend on `tiler-ir`,
+/// which is the direction that would allow a union check, but finds no
+/// enumeration to range over, because that crate keeps its population in a
+/// private `PINNED_IDENTITY_DOMAINS`; and `tiler-digest`, which owns the
+/// algorithm, deliberately knows no subject domain at all.
+///
+/// This comment used to argue that the two namespaces are disjoint by
+/// construction: "every domain the shared IR admits opens `tiler.ir.`". That
+/// claim is retired, and quoted here so the retired wording stays greppable — a
+/// later search for it lands in this note rather than in a live premise. It was
+/// never true at any commit. `EXPR_DOMAIN`, spelled
+/// `tiler.artifact-program.abi-expr.v1`, moved into `tiler-ir` at `d1a95e18` on
+/// 2026-07-25, and this sentence was written at `96dfe333` on 2026-08-08, so the
+/// shared IR has always admitted a domain inside this crate's own
+/// `tiler.artifact` prefix, with most of its domains spelled outside `tiler.ir.`
+/// altogether. The first differing byte after `tiler.` does not separate the two
+/// sets either: that domain and this crate's `ARTIFACT_DOMAIN` agree through the
+/// whole of `tiler.artifact-program.`.
+///
+/// What separates them is each domain's terminator rather than its namespace.
+/// Every domain [`GovernedDomain`] enumerates ends in a NUL that occurs nowhere
+/// else in it, both asserted below, so one of them can prefix a longer byte
+/// string only where that string carries a NUL at an interior position. Read at
+/// this commit, `crates/tiler-ir/src/domains.rs` pins no spelling that does:
+/// its terminated spellings carry the NUL only at the end, and the three it
+/// spells without one carry no NUL at all and open `tiler.contract.` or
+/// `tiler.scalar`, neither of which any domain enumerated here extends. What
+/// the terminator leaves open is exact equality, which would be one spelling
+/// shared by two crates rather than a prefix relation between two spellings.
+///
+/// Only this crate's half of that argument is checkable here, and it is checked:
+/// a domain spelled outside this crate's established prefixes, or carrying any
+/// NUL but its terminator, breaks a test rather than silently invalidating a
+/// paragraph.
 #[test]
 fn no_governed_domain_of_this_crate_prefixes_another() {
     let domains = GovernedDomain::ALL;
@@ -285,6 +320,18 @@ fn no_governed_domain_of_this_crate_prefixes_another() {
             "{domain:?} is spelled {:?} and does not end with its NUL terminator. The terminator \
              is what keeps one domain from prefixing another that extends its name — \
              `…manifest` would prefix `…manifest-digest.v1` without it.",
+            String::from_utf8_lossy(bytes),
+        );
+        // The first NUL being the last byte is the same property as "the
+        // terminator is the only NUL", stated without counting the rest.
+        assert_eq!(
+            bytes.iter().position(|byte| *byte == 0),
+            Some(bytes.len() - 1),
+            "{domain:?} is spelled {:?} and carries a NUL that is not its terminator. The \
+             cross-crate half of the no-prefix obligation rests on the terminator being the only \
+             NUL a domain contains: that is what confines this domain to prefixing byte strings \
+             which carry a NUL at an interior position, and no domain the shared IR pins does. An \
+             interior NUL here reopens the case that argument closes.",
             String::from_utf8_lossy(bytes),
         );
     }
