@@ -1,7 +1,7 @@
 ---
 id: reroute-the-dtype-ledgers-cells-that-point-at-terminal-tickets
 title: Reroute the dtype ledger's BF16 and host-dtype cells off terminal tickets
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/navigation, research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, dtype, bf16, work-graph]
+claimed_from: todo
+assignee: w-reroute-t
+lease_expires_at: 1786166309
 ---
 ## Three passages route a reader to owners that are all `done`, two of them for work that was ruled out
 
