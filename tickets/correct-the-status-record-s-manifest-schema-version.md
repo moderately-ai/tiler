@@ -1,7 +1,7 @@
 ---
 id: correct-the-status-record-s-manifest-schema-version
 title: Correct the status record's manifest schema version
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786182999
 ---
 ## The version drifted by two major steps, and it did not drift alone
 
