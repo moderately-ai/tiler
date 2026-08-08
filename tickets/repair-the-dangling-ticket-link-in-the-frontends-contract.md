@@ -21,11 +21,15 @@ lease_expires_at: 1786167947
 [`state-a-debug-retention-from-the-inline-frontend`](../../tickets/state-a-debug-retention-from-the-inline-frontend.md)
 ```
 
-`tickets/state-a-debug-retention-from-the-inline-frontend.md` was removed at `3249a5a3` ("Repair four fired tickets: strike expired claims, settle the unsafe-pin posture, re-scope the retention read-back"). The sibling link on the same line, `retain-succeeding-metal-stage-tool-output`, still resolves.
+> **Fact repair, 2026-08-08, at base `db3f4d07`.** The claim struck below read: "`tickets/state-a-debug-retention-from-the-inline-frontend.md` was removed at `3249a5a3`." **It was renamed, not removed.** `git show --name-status -M 3249a5a3` reports `R087 tickets/state-a-debug-retention-from-the-inline-frontend.md tickets/emit-from-a-populated-retention-in-the-inline-expansion.md`; the plain `--name-status` that reports it as a `D` is rename detection being off, not a deletion. The commit subject's own third clause — "re-scope the retention read-back" — names the rename. The rest of that sentence is Verified: the sibling link `retain-succeeding-metal-stage-tool-output` does resolve.
+
+`tickets/state-a-debug-retention-from-the-inline-frontend.md` was renamed to `tickets/emit-from-a-populated-retention-in-the-inline-expansion.md` at `3249a5a3` ("Repair four fired tickets: strike expired claims, settle the unsafe-pin posture, re-scope the retention read-back"). The sibling link on the same line, `retain-succeeding-metal-stage-tool-output`, still resolves.
 
 Surfaced by the first run of the markdown-link resolution added to `check-citations.sh` under `resolve-the-markdown-links-the-citation-check-cannot-see`.
 
 ## The judgement this needs
+
+> **This framing is superseded, 2026-08-08.** All three options below presume the bullet is still outstanding and that only its citation is wrong. **It is not: the bullet's prose was false at this base, and both of its owners are `done`.** `retain-succeeding-metal-stage-tool-output` reads `status: done`, and so does the renamed `emit-from-a-populated-retention-in-the-inline-expansion` (landed at merge `08714fd7`). Against source: `grep -n 'ToolOutput::capture' crates/tiler-metal-aot/src/driver.rs` returns **two** sites, `:304` in the failure arm and `:307` as the `Ok` value, so "drops both streams on success" is false; `grep -n 'retained: stage_retention' crates/tiler-build/src/metal_cache.rs` returns `:403`, so "`accept_or_publish_delivered_metal_artifact` states `DebugRetention::none()`" is false; and `crates/tiler-macros/src/retention.rs` exists and is called from `aot.rs:698`, so "the invocation that would ask for one" is built. Repointing the link under the **Still outstanding** heading — the narrowest reading of this ticket — would have produced exactly the failure the ticket's last line forbids, in its worse form: a link that *resolves*, so the checker never flags it again, attached to prose contradicted by the code and filed under a heading that hides a delivered capability. The repair taken instead was to move the item to **Landed** with a date, per the section's own stated convention that "an item moves in the change that discharges it and says on which date it moved".
 
 The sentence names an owner for a capability the contract declines to deliver. Decide which is true and write that:
 
