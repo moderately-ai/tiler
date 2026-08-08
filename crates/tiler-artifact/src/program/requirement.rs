@@ -87,7 +87,12 @@ use super::keys::{BackendKey, RouteFeatureKey};
 /// than naming a capability.
 pub const MAX_ROUTE_FEATURE_PAYLOAD_BYTES: usize = 1_024;
 
-const ROUTE_REQUIREMENT_DOMAIN: &[u8] = b"tiler.artifact.route-requirement.v1\0";
+/// Versioned domain separator opening one core route requirement's canonical bytes.
+///
+/// The one governed domain of this crate spelled `tiler.artifact.` rather than
+/// `tiler.artifact-`, which `docs/artifact-abi.md` records where it states the
+/// cross-crate spelling argument.
+pub(crate) const ROUTE_REQUIREMENT_DOMAIN: &[u8] = b"tiler.artifact.route-requirement.v1\0";
 
 /// Which live-device quantity one core route requirement constrains.
 ///

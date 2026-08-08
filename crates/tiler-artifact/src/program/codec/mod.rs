@@ -92,10 +92,18 @@ pub use tiler_digest::{DIGEST_BYTES, Digest, DigestAlgorithm};
 // encoding of an artifact, which only `crate::proof`'s sidecar association
 // needs.
 pub(crate) use encode::envelope_digest;
+// Every governed domain this container admits, reachable under test so
+// `crate::domains` can enumerate the crate's whole set in one place. The two
+// framing tags are here for the same reason the digest domains are: each opens a
+// canonical byte run that is digested or compared, so a prefix relation involving
+// one merges subjects exactly as a colliding digest domain would.
 #[cfg(test)]
 pub(crate) use encode::{
-    ENVELOPE_DIGEST_DOMAIN, IDENTITY_DIGEST_DOMAIN, MANIFEST_DIGEST_DOMAIN, SECTION_DIGEST_DOMAIN,
+    ENVELOPE_DIGEST_DOMAIN, IDENTITY_DIGEST_DOMAIN, MANIFEST_DIGEST_DOMAIN, MANIFEST_DOMAIN,
+    SECTION_DIGEST_DOMAIN,
 };
+#[cfg(test)]
+pub(crate) use payload::{PAYLOAD_IDENTITY_DOMAIN, PAYLOAD_METADATA_DOMAIN};
 // The carried-payload vocabulary is the one part of this module that is
 // public. A backend assembler outside this crate must be able to describe what
 // it compiled, and nothing else here is reachable: the envelope, the encoder,

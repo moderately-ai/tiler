@@ -553,14 +553,16 @@ pub use codec::{DIGEST_BYTES, Digest, DigestAlgorithm};
 // crate-visible `mod codec`, so the codec's working vocabulary stays confined to
 // this module.
 pub(crate) use codec::envelope_digest;
-// The envelope's four governed digest domains, reachable only under test.
-// `crate::proof::tests` checks the no-domain-prefixes-another property over the
-// *union* of both containers' domains rather than per container, because the
-// property is global: one algorithm hashes both, so a domain added to either
-// one could silently merge two subjects across the boundary.
+// The envelope's seven governed domains and this module's seven identity
+// domains, reachable only under test. `crate::domains` checks the
+// no-domain-prefixes-another property over the *union* of every domain the crate
+// admits rather than per container, because the property is global: one
+// algorithm hashes them all in one process, so a domain added anywhere could
+// silently merge two subjects across a boundary.
 #[cfg(test)]
 pub(crate) use codec::{
-    ENVELOPE_DIGEST_DOMAIN, IDENTITY_DIGEST_DOMAIN, MANIFEST_DIGEST_DOMAIN, SECTION_DIGEST_DOMAIN,
+    ENVELOPE_DIGEST_DOMAIN, IDENTITY_DIGEST_DOMAIN, MANIFEST_DIGEST_DOMAIN, MANIFEST_DOMAIN,
+    PAYLOAD_IDENTITY_DOMAIN, PAYLOAD_METADATA_DOMAIN, SECTION_DIGEST_DOMAIN,
 };
 pub use error::{
     AbiExprUse, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind, ArtifactKeyKind,
@@ -579,6 +581,10 @@ pub use keys::{
     MAX_GOVERNED_KEY_BYTES, MAX_OPAQUE_IDENTITY_BYTES, MAX_TARGET_PROFILE_DESCRIPTOR_BYTES,
     PayloadDigest, RepresentationKey, RouteFeatureKey, TargetProfileDescriptorDigest,
     TargetProfileKey, TargetProfileRef,
+};
+#[cfg(test)]
+pub(crate) use model::{
+    ARTIFACT_DOMAIN, DEFERRED_KEY_DOMAIN, PAYLOAD_KEY_DOMAIN, PROVIDER_KEY_DOMAIN, STAGE_KEY_DOMAIN,
 };
 pub use model::{
     AbiExprRef, AbiExprView, ArtifactExecutionPolicy, ArtifactInputRef, ArtifactOutputRef,
@@ -599,6 +605,8 @@ pub use realization::{
     RecordFamily, ScalarArithmeticRecord, ScalarArithmeticView, TargetEvidence,
     TargetEvidenceDeclaration, overlapping_behaviour,
 };
+#[cfg(test)]
+pub(crate) use requirement::ROUTE_REQUIREMENT_DOMAIN;
 // The one shared scalar-arithmetic policy vocabulary, named by re-export rather
 // than restated. `tiler-compiler` names the same types the same way, so the
 // dimension set, the behaviour spaces, the means, the locus, and the structured

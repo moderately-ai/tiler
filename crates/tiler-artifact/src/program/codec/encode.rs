@@ -178,7 +178,13 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 pub(super) const MANIFEST_SCHEMA: (u16, u16) = (16, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
-pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";
+///
+/// A framing tag rather than a digest argument, and still a governed domain:
+/// it is the leading run of a canonical byte sequence this crate digests and
+/// compares, so a domain that prefixed it would merge those bytes with another
+/// subject exactly as a colliding digest domain would. `crate::domains`
+/// enumerates it for that reason.
+pub(crate) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";
 /// Domain separator of the manifest digest carried in the framing header.
 pub(crate) const MANIFEST_DIGEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest-digest.v1\0";
 /// Domain separator of one section's exact-content digest.
