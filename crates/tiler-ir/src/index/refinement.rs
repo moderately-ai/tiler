@@ -101,10 +101,28 @@ pub const MAX_INDEX_REFINEMENT_SIGNATURE_VALUES: usize = 4_096;
 /// Maximum operand-use bindings retained by one refinement receipt.
 ///
 /// A binding associates one semantic operand use with one verified region input
-/// boundary. The independent name is required because aliasing can produce
-/// more bindings than distinct boundaries; the value deliberately matches the
-/// region boundary population ceiling so an alias-expanded binding inventory
-/// cannot exceed the boundary inventory the region itself may retain.
+/// boundary *in one stage*, so the retained population is the product of three
+/// independent multiplicities: the occurrence's operand uses, the component
+/// expansion of each used input, and the number of stages reading the resulting
+/// boundary. `bind_operands` pushes one binding per (operand use, expanded
+/// component, reading stage) triple; one boundary read by several stages is the
+/// staged vocabulary's motivating case — the value a fold reads and the pass
+/// consuming that fold reads again.
+///
+/// The independent name is therefore load-bearing rather than a convenience.
+/// None of the three multiplicities bounds the others, so this is an
+/// **independent** ceiling that `count_operand_bindings` enforces before the
+/// binding vector is allocated, not a consequence of the boundary ceiling. A
+/// binding inventory can exceed the distinct expanded-input population, and
+/// [`IndexRefinementVerificationError::OperandBindingsTooLarge`] is the refusal
+/// naming it when it does. Sharing [`super::MAX_BOUNDARY_TENSORS`]'s value
+/// keeps one number for a reader to hold; it does not make one bound imply the
+/// other.
+///
+/// `operand_binding_population_is_bounded_before_collection` fixes both halves:
+/// sixteen aliased uses of one 1,024-component input exactly fill this limit
+/// while the distinct expanded population stays 1,024, and a seventeenth
+/// crosses it.
 pub const MAX_INDEX_REFINEMENT_OPERAND_BINDINGS: usize = super::MAX_BOUNDARY_TENSORS;
 /// Maximum raw scalar-operation declarations admitted by one authority.
 pub const MAX_REFINEMENT_EMITTED_SCALAR_OPERATIONS: usize = 4_096;
@@ -1351,10 +1369,15 @@ impl IndexRefinementDomainProof {
 /// [`Self::final_scalar_authority`] answer the last stage alone and never the
 /// realization; a consumer that must see the whole chain reads
 /// [`Self::regions`], [`Self::scalar_authorities`], or [`Self::realization`].
-/// The accessors are named for what they return because the one-stage
-/// realization every registered law produces makes stage and realization
-/// indistinguishable, and a reader who learned the accessor there would
-/// otherwise carry that reading into the first chain met.
+/// The accessors are named for what they return because a one-stage
+/// realization makes stage and realization indistinguishable, and a reader who
+/// learned an accessor there would otherwise carry that reading into the first
+/// chain met. That is still most of what a reader sees — nine of
+/// [`IndexRealizationLaw`](super::IndexRealizationLaw)'s twelve variants are
+/// single-region — but it is no longer all of it: the standard semantic
+/// authority registers staged laws for `tiler::rms-norm-f32@1` and
+/// `tiler::softmax-f32@1`, so a chain reaches these accessors from the governed
+/// vocabulary rather than only from a test registry.
 #[derive(Clone, Debug)]
 pub struct IndexRefinementReceipt {
     graph: SemanticGraphIdentity,
@@ -1504,9 +1527,9 @@ impl PendingIndexRefinementReceipt {
     }
     /// Returns the exact retained final-stage verified region.
     ///
-    /// For the one-stage realization every registered law produces this is the
-    /// only region, and evaluating it evaluates the occurrence. For a chain it
-    /// is one stage of several and evaluating it does not: at least one of its
+    /// For a one-stage realization this is the only region, and evaluating it
+    /// evaluates the occurrence. For a chain it is one stage of several and
+    /// evaluating it does not: at least one of its
     /// input boundaries reads the value the preceding stage handed on, which no
     /// operand named by [`Self::operand_bindings`] carries. A consumer that can
     /// run exactly one region must therefore establish that
@@ -1679,8 +1702,10 @@ impl ResolvedIndexRealization {
     /// [`IndexRefinementVerificationError::SemanticRealizationLawRefused`] under
     /// `staged-law-requires-region-sequence` when the registered law realizes a
     /// region *sequence*, which one region cannot satisfy — [`Self::verify_sequence`]
-    /// is the method for those. Otherwise returns a typed refusal when scalar
-    /// authority, effect, or ordered tensor interfaces disagree.
+    /// is the method for those. This is the first thing checked, before anything
+    /// looks at `region` or at `lowering`. Otherwise this method is
+    /// [`Self::verify_sequence`] over a one-stage sequence and returns exactly
+    /// what that method returns.
     pub fn verify(
         &self,
         lowering: &IndexRealizationAuthority,
@@ -1720,8 +1745,17 @@ impl ResolvedIndexRealization {
     ///
     /// # Errors
     ///
-    /// Returns a typed refusal when scalar authority, effect, ordered tensor
-    /// interfaces, or the realized sequence disagree.
+    /// Checked in body order. First, that `lowering` and this resolution
+    /// describe the same occurrence: a disagreeing operation, attribute set,
+    /// numerical contract, graph or occurrence, capability signature, or
+    /// projected semantic authority is refused before the candidate is read at
+    /// all. Then a typed refusal when effect, scalar authority, ordered tensor
+    /// interfaces, the governed numerical contract, or the realized sequence
+    /// disagree.
+    ///
+    /// The sequence comparison reports region identities when both the
+    /// expectation and the candidate are single-stage, and the whole-sequence
+    /// identities otherwise.
     pub fn verify_sequence(
         &self,
         lowering: &IndexRealizationAuthority,
@@ -5021,8 +5055,9 @@ mod tests {
             fixture.verify(&truncated).unwrap_err(),
             IndexRefinementVerificationError::OperandInterface { position: 1 }
         );
-        // And through the single-region entry point the compiler drives, where
-        // the law refuses before any comparison is reached.
+        // And through the single-region entry point, where the law refuses
+        // before any comparison is reached. Not the compiler's path — it drives
+        // `verify_sequence` — but a public one, so the refusal is reachable.
         let refusal = fixture
             .resolution
             .verify(&fixture.authority, &stages[1])
