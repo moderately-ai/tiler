@@ -861,6 +861,28 @@ fn the_normative_reference_states_both_relations_both_reservations_and_the_bound
         reference.contains("tiler::reindex-f32@1"),
         "and it names the family that removes the axis a selection leaves behind: {reference}"
     );
+    for clause in [
+        "semantic value facts generally can carry sourced extents",
+        "window grammar carries only a literal offset and a literal extent",
+        "no source-bearing selection field",
+        "after its name is decoded and before parsing any relation-specific fields",
+        "inference later requires a static operand shape to check bounds and derive the result",
+        "no source-bearing selection reaches that inference",
+    ] {
+        assert!(
+            reference.contains(clause),
+            "the normative reference omits the current literal-versus-sourced boundary clause {clause:?}: {reference}"
+        );
+    }
+    for retired_clause in [
+        "no index-expression variant carries",
+        "a semantic value fact carries static extents",
+    ] {
+        assert!(
+            !reference.contains(retired_clause),
+            "the normative reference retains the false clause {retired_clause:?}: {reference}"
+        );
+    }
 }
 
 #[test]
