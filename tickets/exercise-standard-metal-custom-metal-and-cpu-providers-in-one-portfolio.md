@@ -3,7 +3,7 @@ id: exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio
 title: Exercise standard Metal, custom Metal, and CPU providers in one portfolio
 status: todo
 priority: p1
-dependencies: [expose-explicit-backend-provider-and-selection-policy-composition, join-build-time-producers-to-runtime-adapters-through-artifact-identity]
+dependencies: [expose-explicit-backend-provider-and-selection-policy-composition, express-the-typed-backend-family-selection-policy, join-build-time-producers-to-runtime-adapters-through-artifact-identity]
 related: [prototype-inline-aot-integration-proof, prototype-metal-runtime-proof]
 scopes: [research/runtime, research/extensions, research/artifacts]
 shared_scopes: [project/tickets]
