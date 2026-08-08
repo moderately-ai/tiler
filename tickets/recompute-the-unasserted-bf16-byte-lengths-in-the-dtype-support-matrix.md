@@ -1,7 +1,7 @@
 ---
 id: recompute-the-unasserted-bf16-byte-lengths-in-the-dtype-support-matrix
 title: Recompute the unasserted BF16 byte lengths in the dtype support matrix
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [dtype, artifact, identity, documentation]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786169827
 ---
 
 `docs/dtype-support.md` states five BF16 artifact byte lengths that **no test asserts**, so nothing goes red when they drift. The derived index-arithmetic step grew the artifact envelope, which makes them stale in a way the gate cannot see.
