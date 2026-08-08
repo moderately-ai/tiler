@@ -1,7 +1,7 @@
 ---
 id: expose-explicit-backend-provider-and-selection-policy-composition
 title: Expose explicit backend-provider and selection-policy composition
-status: todo
+status: in-progress
 priority: p1
 dependencies: [drive-an-external-physical-implementation-provider-through-compilation, produce-a-custom-backend-payload-through-the-build-orchestrator, select-executable-variants-across-registered-backend-families, route-a-custom-backend-through-an-independently-selected-adapter]
 related: [prototype-public-compiler-api, admit-the-tiler-facade-and-proc-macro-crate-boundary]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/build, implementation/runtime, 
 shared_scopes: [project/tickets]
 paths: []
 tags: [backend-providers, pluggability, implementation, api]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786180895
 ---
 ## User-visible outcome
 

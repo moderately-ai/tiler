@@ -1,7 +1,7 @@
 ---
 id: correct-the-coverage-graph-digest-domain-s-eight-count-and-hyphenated-artifact-prefix
 title: Correct the coverage graph digest domain s eight-count and hyphenated artifact prefix
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [repoint-tiler-digest-s-domain-separation-note-at-the-moved-union-check, cover-the-fifth-envelope-digest-domain-in-the-union-no-prefix-check]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, digest, documentation]
+claimed_from: todo
+assignee: coord
+lease_expires_at: 1786180895
 ---
 
 A doc comment in `tiler-ir` argues that no prefix relation exists between its coverage-graph domain and `tiler-artifact`'s. **The argument is wrong twice**, and it is a cross-crate correctness argument rather than decoration — which is why this is p1 despite being a comment.
