@@ -1,7 +1,7 @@
 ---
 id: resolve-semantic-shape-inference-over-symbolic-extents
 title: Resolve semantic shape inference over symbolic extents
-status: in-progress
+status: awaiting-decision
 priority: p1
 dependencies: [carry-a-sourced-shape-on-semantic-values]
 related: [carry-symbolic-extents-into-the-semantic-program]
