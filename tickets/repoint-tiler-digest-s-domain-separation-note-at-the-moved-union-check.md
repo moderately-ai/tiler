@@ -1,7 +1,7 @@
 ---
 id: repoint-tiler-digest-s-domain-separation-note-at-the-moved-union-check
 title: Repoint tiler-digest's domain-separation note at the moved union check
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [cover-the-fifth-envelope-digest-domain-in-the-union-no-prefix-check]
@@ -9,9 +9,6 @@ scopes: [implementation/digest]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786172921
 ---
 The crate header of `crates/tiler-digest/src/lib.rs` names the union no-prefix authority under its old path and its old population. Both moved in `cover-the-fifth-envelope-digest-domain-in-the-union-no-prefix-check`.
 

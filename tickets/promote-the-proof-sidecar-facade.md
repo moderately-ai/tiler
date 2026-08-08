@@ -29,7 +29,7 @@ The proof-case evidence sidecar landed as a crate-private draft authority in `cr
 
 **Two things the contract must state, whichever document takes it.** That the sidecar is producer evidence and never artifact semantics — a sidecar names an artifact, an artifact never names a sidecar, and an artifact validates and dispatches with none present. And the measurement boundary the implementation already pins as a test: a validated sidecar is evidence of *integrity and association* and not of *authenticity*, because every digest and identity in it is derived from its own content, so a re-sealed forgery validates and binds. A consumer that treats sidecar payloads as anything but test data has read a guarantee the container does not make.
 
-**Fact — one union property crosses the two containers and is checked in only one place.** `crate::proof::tests::no_governed_domain_of_either_container_prefixes_another` checks all seven governed domains together, because one algorithm hashes both containers in one process; the envelope codec's own three-domain test carries no note pointing at it. Whoever takes this ticket should decide whether that cross-reference belongs in the codec's test or in the contract.
+**Fact — one union property crosses the two containers and is checked in only one place.** `crate::proof::tests::no_governed_domain_of_this_crate_prefixes_another` checks all eighteen governed domains together, because one algorithm hashes both containers in one process; the envelope codec's own three-domain test carries no note pointing at it. Whoever takes this ticket should decide whether that cross-reference belongs in the codec's test or in the contract.
 
 ## Decision — Tom, 2026-07-25
 
