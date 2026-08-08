@@ -1,7 +1,7 @@
 ---
 id: revise-adr-0108-with-a-complete-data-dependent-index-vertical
 title: Revise ADR 0108 with a complete data-dependent index vertical
-status: todo
+status: awaiting-decision
 priority: p1
 dependencies: [accept-adr-0109-fail-closed-on-unknown-index-domain-proof]
 related: [accept-adr-0108-data-dependent-index-coordinate-siting, admit-the-indirect-access-class-into-the-index-layer, emit-the-indirect-gather-on-metal, admit-a-storage-carrier-for-integer-program-inputs]
