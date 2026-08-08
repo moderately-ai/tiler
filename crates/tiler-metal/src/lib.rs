@@ -292,6 +292,8 @@ pub mod direct_requirement;
 pub mod emit;
 /// The emitted translation unit, its entry points, and its binding tables.
 pub mod record;
+/// Whether this backend realizes the synchronization a routed entry requires.
+pub mod synchronization_requirement;
 /// Explicit Metal target facts consumed by emission.
 pub mod target;
 
@@ -301,6 +303,8 @@ mod applicability_tests;
 mod direct_requirement_tests;
 #[cfg(test)]
 mod golden_compilation;
+#[cfg(test)]
+mod synchronization_requirement_tests;
 #[cfg(test)]
 mod target_correspondence;
 #[cfg(test)]
