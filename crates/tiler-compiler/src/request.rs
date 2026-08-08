@@ -2112,10 +2112,11 @@ impl NormalizedOutput {
     /// [`Self::input_elements_at`] is deliberate: this feeds structural cost
     /// estimates alone — [`NormalizedProgram::max_input_elements`] records the
     /// caller — and a maximum that refused would turn an estimate into a
-    /// feasibility gate. The substitute is an estimate and not a bound: it is
-    /// exact for a bijection and an overestimate for a replication, and a
-    /// relation added to the vocabulary could sit either side of it. It is
-    /// unreachable for the three maps recognized today.
+    /// feasibility gate. It is unreachable for the three maps recognized today,
+    /// and where a fourth reached it the domain would be an estimate rather than
+    /// a bound: it happens to equal the operand count for a bijection and to
+    /// exceed it for a replication, but a narrowing relation would sit the other
+    /// side and nothing here would say so.
     pub(crate) fn max_input_elements(&self) -> u64 {
         match self {
             // Same two sources the reading arm folds, and for the same reason:
@@ -2513,6 +2514,11 @@ impl NormalizedProgram {
 fn read_tensor_elements(map: &LogicalAccess, domain_elements: u64) -> Option<u64> {
     match map {
         LogicalAccess::LinearIdentity => Some(domain_elements),
+        // The overflow refusal is unreachable through a recognized program:
+        // `recognize_structural_read` took this shape from the declared value,
+        // and `element_count_u64` already multiplied the same extents when the
+        // shape's own arm minted its count. It declines rather than saturating
+        // because a saturated count is a work count nothing derived.
         LogicalAccess::ReindexBijection { operand_shape, .. }
         | LogicalAccess::BroadcastReplication { operand_shape, .. } => {
             tiler_ir::schedule::element_count(operand_shape).ok()
