@@ -51,6 +51,30 @@ Three candidate resolutions, none of which this ticket's scope can settle alone 
 
 Filed as `decide-how-the-link-check-reads-a-retained-byte-identical-drafted-adr-span`.
 
+## Re-audit at `bdbeb2b5bff854d45a8fbe33cf244aafcce878cd`, and the applied repair
+
+**Every Fact in the 2026-08-08 audit above re-verified, unchanged.** `git diff db3f4d07..bdbeb2b5 -- docs/research/numerics/conversion-family-decomposition-across-pairs.md` is empty, so the record did not move between the two bases; each Fact was nonetheless re-read in the file rather than carried over. The **FALSE** verdict on "only the relative prefix is wrong" stands: ADR 0102's Work record still asserts `docs/decisions/0102-key-conversion-families-by-the-ordered-pair-and-derive-their-fields.md "the byte-identity the landing established still holds after acceptance"`, and `grep -c 'span\|repoint' AGENTS.md` still reports `0`, so the runtime record's convention claim remains overstated and remains `research/runtime`'s to repair.
+
+**Fact — the span's exact extent, and its byte-identity.** The retained transfer is `### Context` through the end of `### Alternatives considered`, 27 lines, ending immediately before `## Boundary, acquisition requests, and unsupported cases`. Mapping `### ` to `## ` and comparing against ADR 0102's `## Context`-through-alternatives range reports byte-identical; the comparison was proved able to fail by appending one character to a line, which `cmp` reported as `differ: char 681, line 5`. Re-run after fencing, the span is still byte-identical, which is the direct evidence that fencing spends none of the property three documents protect.
+
+**Applied: option 1, the whole-span fence.** ```` ```text ```` opens immediately above `### Context` and ```` ``` ```` closes immediately below the last alternatives-considered paragraph. The whole span is fenced rather than the failing Context paragraph alone, following both siblings: being drafted for another directory is a property of the entire transfer, so a paragraph-only fence re-breaks on the next re-transfer or the next link added elsewhere in the span.
+
+**Measurement — the fence cost, counted before and after rather than estimated.** The cost here is nil, matching the runtime sibling at `91f67cc5` and *not* the concatenate record at `e96e6aaa`. That record's own prose states its cost precisely, and it is worth quoting exactly because it is easy to restate wrongly: four retired line pins sat inside its span, but only **three** were being checked — the fourth, `:197`, was already skipped as an ambiguous partial path — so its `docs` population moved `702 → 700`, three pins out against one anchor in. "Four pins left the matcher" overstates it by one.
+
+| Population | Base `bdbeb2b5` | Fence only | Fence + this record's new prose |
+| --- | --- | --- | --- |
+| `docs` pinned citations | 704 | 704 | 706 |
+| `docs` markdown links | 5,205 | 5,203 | 5,205 |
+| Tree-wide link failures | 2 | 0 | 0 |
+| `./check-citations.sh` exit | 1 | 0 | 0 |
+
+The fenced region contains exactly the two failing links, zero links that resolved, and zero pinned citations — its only inline code span is `` `(source, destination)` ``, which is not path-shaped and never reached `classify()`. The `704 → 704` column is the measurement that matters: **no pinned citation was removed from the matcher.** The `+2` in the final column is this record's own two new anchors, and the `−2 / +2` on links is the two failures leaving and the two new prose links arriving.
+
+**Both perturbations exercised the subject, not the assertion.**
+
+1. *Opening fence removed.* Both links return **by name**, exit 1: `` no tracked file or directory at docs/research/numerics/0091-separate-bf16-float-conversion-families-and-keep-the-accumulator-an-operation-fact.md `` and the matching `0041-…` line, under `check-citations: 2 markdown link(s) do not resolve against this tree.`
+2. *A link broken **after** the closing fence* — `sources/README.md` changed to `sources/PERTURBATION-NO-SUCH-FILE.md` in the acquisition-request paragraph. Caught, exit 1, `no tracked file or directory at docs/research/numerics/sources/PERTURBATION-NO-SUCH-FILE.md`, and it was the **only** failure. That is the load-bearing one: it proves the fence closes where intended and has not silently swallowed the remainder of the file. Both perturbations reverted; the span re-verified byte-identical afterwards.
+
 ## Closes when
 
 The convention question above is decided, and this record's two links are brought into line with it. `make citations` reports no link failure in this file.
