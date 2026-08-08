@@ -29,6 +29,17 @@ AGENTS.md's documentation section supports the refusal without stating it as a c
 
 The construct is also not closed: any future research record that drafts an ADR body it cannot land will produce more of these. The decision should say what the convention is, not only what these two files do.
 
+## The filing pass's shared claim does not survive re-reading, beyond these ten
+
+`resolve-the-markdown-links-the-citation-check-cannot-see` states: `"All fourteen verified by reading each site and confirming the intended target exists, so every one is a wrong relative path rather than a missing file."` Checked site by site at `db3f4d077bf8bd680cacd7a36986f39fec6294f8`, that holds for **one** of the fourteen.
+
+- **Ten** are the deliberate drafted-span construct above. The target exists; the path is wrong *for that file* on purpose.
+- **Two** — `docs/decisions/0107-…`'s links to `0075-approve-public-boundaries-by-change-category.md` and `0075-treat-a-tested-public-boundary-as-a-labelled-draft.md` — carry the right relative path and a **wrong slug**. ADR 0075's only filename is `0075-scope-public-boundary-approval-by-change-category.md`; neither cited slug has ever existed. Whoever repairs `repair-the-two-dangling-adr-0075-links-in-adr-0107` should also check that ADR 0107's two sentences still mean what they say once both point at the one ADR 0075.
+- **One** — `docs/integration/frontends.md`'s `../../tickets/state-a-debug-retention-from-the-inline-frontend.md` — names a ticket id that exists under no prefix. The nearest is `accept-the-debug-retention-and-stage-outputs-public-surface.md`, a different id, so this is a missing or renamed target and the repair is a judgement about which ticket was meant, not a prefix.
+- **One** — `docs/research/indexing/concatenate-fusion-role-and-lowering.md`'s self-link resolving to `docs/research/indexing/research/indexing/…` — is the doubled-prefix case the filing describes.
+
+The filing claim is a coordinator-visible one that four other repair tickets inherit, so it is worth correcting at the source rather than four times over.
+
 ## Options
 
 1. **Fence the retained span in each record.** `check-citations.sh` already skips fenced blocks, and its header's stated reason is exactly this case — `"content proposed for somewhere else … relative to that directory and not to the ticket that quotes them"`. Preserves every byte of the span, so all four documents' byte-identity claims stay true, and needs no change to the checker. **Cost:** the span renders as literal text — headings, bold, and numbered lists stop rendering — and both records present the span as prose a reader may read. Also removes the span from pinned-citation checking; measured at this base, neither span contains a pinned citation, so the immediate loss is zero.
