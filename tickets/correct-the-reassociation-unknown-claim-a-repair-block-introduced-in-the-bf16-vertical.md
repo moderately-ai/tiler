@@ -1,7 +1,7 @@
 ---
 id: correct-the-reassociation-unknown-claim-a-repair-block-introduced-in-the-bf16-vertical
 title: Correct the reassociation-Unknown claim a repair block introduced in the BF16 vertical
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-correct-t
-lease_expires_at: 1786160601
 ---
 ## A correction introduced a new false claim, which is the pattern this repository keeps hitting
 
@@ -42,3 +39,30 @@ The bullet states the vacuous `SoundProof` discharge with its correct ground; no
 **Where it is actually reached.** It needs a reduction member *and* a permitting contract, which is an `f32` region today: `tiler-compiler fusion_legality::tests::a_reassociating_contract_discharges_the_mixed_region_by_forbidding_contraction` puts `serial_sum_program` (which carries `StrictSerialF32Sum`) to `StrictF32NumericalContract::governed_reassociating()` and asserts `unknown.obligation() == FusionObligation::ReductionReassociation` with `unknown.reason() == "unproven-reassociation"`. Both cited names resolve against `cargo nextest list -p tiler-compiler`.
 
 **Why no BF16 region can reach it.** `tiler-ir` registers exactly three BF16 op keys — `constant_bf16_op` (ValueSource), `multiply_bf16_op` and `add_bf16_op` (ElementwiseArithmetic) — and no fold, so `is_reduction` is false for every member a BF16 region can hold. The vacuous discharge is therefore a property of the BF16 vocabulary, not only of this vertical's pointwise shape.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge `cd489e6a` (worker commit `0e116005`). `make full` exit 0, 1,091 release tests.
+
+### The worker refused the coordinator's instruction, and was right
+
+My brief told it to "name the surviving contraction wall as the place the `Unknown` branch is actually reached." **That would have been the fifth false claim in this chain.** It refused, verified, and reported — coordinator-confirmed on both grounds:
+
+1. `a_contraction_permitting_bf16_contract_stops_at_the_fusion_legality_wall` asserts `unrealized-contraction`, which is `FusionObligation::ArithmeticContraction` — **a different obligation entirely**.
+2. That test's contract is `NumericalContractBuilder::strict_bf16()`, which routes through `strict()` and sets `reassociation: NumericalPermission::Forbidden`. So the region satisfies **both** disjuncts and takes the `SoundProof` arm. It is not an `Unknown` site at all.
+
+The `Unknown` branch is reached only at `fusion_legality::tests::a_reassociating_contract_discharges_the_mixed_region_by_forbidding_contraction`, over `serial_sum_program` under `governed_reassociating()` — an **f32 reduction** region, asserting `unproven-reassociation` explicitly. Both names verified against `cargo nextest list`.
+
+That is five coordinator-authored errors in this one chain, each caught by a worker reading the source before writing. The reading obligation in `AGENTS.md` is doing exactly the work it was added for.
+
+### The correction, and why it overshoots in neither direction
+
+`push_reduction_obligations` discharges `SoundProof` when `!has_reduction || reassociation == Forbidden`, and **`!has_reduction` short-circuits before the contract is read** — so no reduction-free region can record `Unknown` under any contract.
+
+The replacement says neither `Unknown` nor *proved*: a `SoundProof` recorded over no contributors "is evidence that none were present, not evidence that any are right". `BF16_FACT_REASSOCIATION_PERMITTED` is kept as its own bullet — a vocabulary-level open question, explicitly **not** the thing deciding the obligation.
+
+**The vacuity ground was strengthened beyond the brief.** Rather than "no fold registered", it is now the checkable population: three BF16 keys — `constant_bf16_op` as a value source, `multiply_bf16_op` and `add_bf16_op` elementwise — so `is_reduction` is false for **every member a BF16 region can hold**. That makes it a property of the vocabulary rather than of this one pointwise vertical.
+
+The worker also confirmed `StrictF32NumericalContract` is the *general* contract type despite its historical name, so the discharge argument genuinely applies to BF16 rather than being an f32-only path.
+
+70 tests passed, 1 skipped (the deliberate `#[ignore]`). One LEAK verdict on an unrelated test — the known macOS pipe-inheritance race AGENTS.md describes, not a new unreaped child.
