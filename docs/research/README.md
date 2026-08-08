@@ -15,7 +15,9 @@ The [metadata contract](../document-metadata.md#kinds-and-status-facets) defines
 each evidence class and its required boundary; the labels are categories, not a
 single weakest-to-strongest ladder.
 
-<!-- BEGIN GENERATED RESEARCH CATALOG -->
+The rows below are **maintained by hand**, and nothing checks them. A renderer once produced this block from frontmatter; it was deleted along with the rest of the repository's Python tooling, and the [metadata contract](../document-metadata.md#validation-and-catalog-updates) records what that leaves behind — add, retitle, or supersede a record and you must edit its row in the same change, because nothing will tell you later that you did not.
+
+<!-- BEGIN RESEARCH CATALOG -->
 ### Foundation, semantics, and extensions
 
 - [Concatenate fusion role and lowering](indexing/concatenate-fusion-role-and-lowering.md) — pending; primary-source-synthesis; informs: [IR stack and invariants](../ir.md), [Fusion and scheduling](../compiler/fusion-and-scheduling.md)
@@ -142,7 +144,7 @@ single weakest-to-strongest ladder.
 - [Information architecture and provenance audit](documentation/information-architecture-audit.md) — adopted; primary-source-synthesis; informs: [Documentation metadata and traceability](../document-metadata.md), [Use typed documentation metadata and derived backlinks](../decisions/0054-use-typed-documentation-metadata.md)
 - [Open-ticket accuracy, scope, and outcome-language audit](documentation/open-ticket-audit-2026-07-27.md) — pending; primary-source-synthesis
 - [Production crate architecture and maintainability audit](documentation/production-crate-codebase-audit.md) — pending; primary-source-synthesis; informs: [System architecture](../architecture.md)
-<!-- END GENERATED RESEARCH CATALOG -->
+<!-- END RESEARCH CATALOG -->
 
 Use the linked report for exact environment, source revision, limitations, and
 remaining unknowns. Reproduction entry points are indexed separately in the

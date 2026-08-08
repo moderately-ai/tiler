@@ -15,7 +15,9 @@ accepted. Unresolved questions are collected in
 
 ## Browse by theme
 
-<!-- BEGIN GENERATED ADR TOPICS -->
+Both indexes on this page are **maintained by hand**; the renderer that once produced them from frontmatter is gone, and the [metadata contract](../document-metadata.md#validation-and-catalog-updates) makes editing the affected entry part of the change that adds, retitles, or supersedes a decision.
+
+<!-- BEGIN ADR TOPICS -->
 ### Foundation, semantics, and extensions
 
 - [0106: Admit tiler-conformance as the cross-layer evidence member](0106-admit-tiler-conformance-as-the-cross-layer-evidence-member.md) — accepted
@@ -144,11 +146,11 @@ accepted. Unresolved questions are collected in
 
 - [0075: Scope public-boundary approval by change category](0075-scope-public-boundary-approval-by-change-category.md) — accepted; contracts: [System architecture](../architecture.md); evidence: [Prototype crate layout and Rust MSRV](../research/workspace/prototype-crate-layout-and-msrv.md), [Operation-extension surface research](../research/extensions/operation-extension-surface.md)
 - [0054: Use typed documentation metadata and derived backlinks](0054-use-typed-documentation-metadata.md) — accepted; contracts: [Documentation metadata and traceability](../document-metadata.md); evidence: [Information architecture and provenance audit](../research/documentation/information-architecture-audit.md)
-<!-- END GENERATED ADR TOPICS -->
+<!-- END ADR TOPICS -->
 
 ## Chronological index
 
-<!-- BEGIN GENERATED ADR CHRONOLOGY -->
+<!-- BEGIN ADR CHRONOLOGY -->
 - [0001: Separate semantic planning from physical scheduling](0001-separate-semantic-and-physical-plans.md) — accepted
 - [0002: Generate Metal artifacts ahead of time](0002-aot-metal-artifacts.md) — accepted
 - [0003: Keep the compiler independent of Candle](0003-candle-is-an-integration.md) — accepted
@@ -255,7 +257,7 @@ accepted. Unresolved questions are collected in
 - [0104: Fold the per-coverage-record graph identity as a digest, and site the governed digest so it can be](0104-fold-the-per-record-graph-identity-as-a-digest.md) — accepted
 - [0105: Retire the scalar-lowering provider seam](0105-retire-the-scalar-lowering-provider-seam.md) — accepted
 - [0106: Admit tiler-conformance as the cross-layer evidence member](0106-admit-tiler-conformance-as-the-cross-layer-evidence-member.md) — accepted
-<!-- END GENERATED ADR CHRONOLOGY -->
+<!-- END ADR CHRONOLOGY -->
 
 ## Template
 

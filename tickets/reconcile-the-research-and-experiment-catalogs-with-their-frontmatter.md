@@ -40,6 +40,8 @@ Every row of the two hand-maintained catalogs says what the frontmatter behind i
 
 Run from the repository root. It counts what it examined, so a run that reached nothing is distinguishable from a run that found nothing.
 
+The block delimiter this splits on lost the word `GENERATED` under [`make-the-research-catalog-generated-or-stop-claiming-it-is`](make-the-research-catalog-generated-or-stop-claiming-it-is.md), which found no generator had produced it since `scripts/docs.py` was deleted. The split literal below is updated to match, because [the metadata contract](../docs/document-metadata.md#validation-and-catalog-updates) names this script as one a reader can still run.
+
 ```python
 import re, pathlib, collections
 root = pathlib.Path(".")
@@ -62,7 +64,7 @@ for title, sup in spikes.values():
         inv[r].append(title)
 
 cat = (root / "docs/research/README.md").read_text(encoding="utf-8")
-rows = [l for l in cat.split("GENERATED RESEARCH CATALOG -->")[1].split("<!-- END")[0].split("\n")
+rows = [l for l in cat.split("RESEARCH CATALOG -->")[1].split("<!-- END")[0].split("\n")
         if l.startswith("- [")]
 print(f"population: {len(rows)} research rows, {len(research)} research records, {len(spikes)} experiments")
 bad = 0

@@ -35,7 +35,9 @@ uv run --with mpmath python spikes/numerics/check_witnesses.py
 
 Most harnesses are standard library plus `pytest`. Five are not, and each says so in its own README: `spikes/numerics/check_witnesses.py` and `spikes/numerics/region_accuracy_probe.py` need `mpmath`; `spikes/program-planning/qwen3-conformance-fixture` and `spikes/program-planning/qwen3-corpus-reachability` each pin their own locked `torch` and `transformers` environment, because there the dependency *is* the evidence and a floating resolution would silently re-baseline the retained digests; and `spikes/numerics/qwen3-weight-quantization-profiles` needs `numpy`, `torch`, and `transformers` from the host interpreter and deliberately pins none of them, because every reading it takes is a difference against a baseline it recomputes in the same process.
 
-<!-- BEGIN GENERATED EXPERIMENT CATALOG -->
+The rows below are **maintained by hand**, like the [research catalog](../docs/research/README.md)'s and for the same reason: the renderer that once produced this block from frontmatter is gone, and the [metadata contract](../docs/document-metadata.md#validation-and-catalog-updates) makes editing the affected row part of the change that edits the record behind it.
+
+<!-- BEGIN EXPERIMENT CATALOG -->
 ### Foundation, semantics, and extensions
 
 - [Index and access-model experiment](indexing/README.md) — reproducible; executable-model; supports: [Symbolic index and access model](../docs/research/indexing/index-access-model.md)
@@ -98,9 +100,7 @@ Most harnesses are standard library plus `pytest`. Five are not, and each says s
 - [Inline regions dispatched on Metal hardware](runtime/inline-dispatch/README.md) — reproducible; executable-model, bounded-measurement; supports: [Consumer-neutral runtime execution contract](../docs/research/runtime/runtime-execution-contract.md)
 - [Transfer synchronization and lifetime model](transfers/README.md) — reproducible; executable-model; supports: [Transfer synchronization and resource-lifetime contract](../docs/research/transfers/transfer-synchronization-and-resource-lifetime.md)
 
-### Documentation governance
-
-<!-- END GENERATED EXPERIMENT CATALOG -->
+<!-- END EXPERIMENT CATALOG -->
 
 Each experiment entry identifies its supported research claim, exact entry
 point, prerequisites, retained results, and measurement boundary. Generated
