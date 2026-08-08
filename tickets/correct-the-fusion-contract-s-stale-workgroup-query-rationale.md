@@ -21,6 +21,18 @@ lease_expires_at: 1786232732
 workgroup-width authority incorrectly after the rule's source comment was found
 to do the same.
 
+## Per-Fact audit — 2026-08-08, at `7dcd99b6`
+
+Every Fact below was re-read at this branch's exact base before any edit.
+
+| Ticket Fact | Verdict | Evidence |
+| --- | --- | --- |
+| The contract states a repository-wide declared workgroup bound | **verified** | `docs/compiler/fusion-and-scheduling.md`, anchor `inside the widest workgroup any profile in this repository declares`. |
+| Apple9 supplies workgroup width through a prepared-entry query rather than a compile-profile fact | **verified** | The authority ledger's `Workgroup threads — absent as a fact, declared as a prepared-kernel query`; `TargetProfileBuilder::declare_max_threads_per_workgroup_query` requires `PreparedKernelPreflight` and rejects a coexisting fact. |
+| The calibration observed an entry-specific 1,024 | **verified** | The spike's anchor `The workgroup bound is not a constant this spike asserts`; its declined-row table says `the prepared entry admits 1,024 threads per workgroup`. |
+| Exactly two neighbouring claims in this contract need the phase-qualified repair | **verified** | `rg -n -i 'workgroup|prepared entry|qualified entry' docs/compiler/fusion-and-scheduling.md` finds the stale inventory phrase and `inside the qualified entry's workgroup width` in the calibration section; the other matches are generic topology/legality statements. |
+| The 509 representation argument remains independent of target feasibility | **verified** | The contract anchors `The chosen width never exceeds 509` and `widest width reached anywhere in that range is exactly 509`; `pipeline::tests::the_tree_widens_toward_the_cap_rather_than_truncating_at_it` pins 509, while ADR 0043 keeps `PreparedKernelPreflight` target assessment distinct. |
+
 ## Facts, coordinator-verified at `55621aef`
 
 **Fact — one claimed repository-wide declared fact is false.** The document's
