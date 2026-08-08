@@ -1,7 +1,7 @@
 ---
 id: make-the-research-catalog-generated-or-stop-claiming-it-is
 title: Make the research catalog generated or stop claiming it is
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [catalog-the-four-cost-model-reading-notes-and-correct-the-stale-token-out-key-count]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-make-the-
-lease_expires_at: 1786160601
 ---
 ## The marker is false, and it is the root cause rather than a cosmetic defect
 
@@ -38,3 +35,35 @@ Found while catalogueing those four notes; reported rather than absorbed, becaus
 ## Closes when
 
 Either the marker is gone and the file states the obligation as manual, or a generator exists that produces the block, fails on an empty population, has been watched failing, and preserves the non-frontmatter clauses the row form carries.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge `e416dc82` (worker commit `fcec068b`). `docs/` + `spikes/README.md` + `tickets/` only, carries the green gate.
+
+### A generator did exist, and the markers are fossils of a deliberate deletion
+
+`scripts/docs.py` — *"Validate Tiler's documentation graph and render checked-in catalogs"* — carried a `MARKERS` table for all three catalogs and was deleted at **`e197176f`** ("Replace the Python gate with a Makefile of cargo commands"), coordinator-verified. So the markers are not an aspiration never built; they are residue of a decision already taken.
+
+### This ticket's framing was wrong, and the worker was right to refuse it
+
+I called it "a genuinely two-sided decision". It is not a worker-available trade-off, for three verified reasons:
+
+1. **A merged contract already forbids the claim.** `docs/document-metadata.md`: *"There is no validator and no renderer… maintained by hand and checked by reading. **No sentence anywhere in this document promises otherwise; if one appears to, it is the defect.**"* Coordinator-verified. Three portals were carrying exactly that defect.
+2. **A `done` ticket records the absence as deliberate** — `reconcile-the-research-and-experiment-catalogs-with-their-frontmatter` names "no generator, no gate, and no schema change" as an explicit non-goal.
+3. Writing one would therefore **reverse a recorded deletion and contradict a merged contract**, which is Tom's under `AGENTS.md`, not a cost/benefit call.
+
+**And it is not cheap.** The block is not currently a function of frontmatter: eight rows carry `primary documents:` with **no frontmatter source**, two carry free-prose supersession qualifiers, and `adopted_by` renders two different ways. A generator's first run would *rewrite* the file rather than confirm it, and would need frontmatter backfill across four-plus research scopes. That is a docs-wide metadata redesign.
+
+### Scope the worker added, flagged rather than absorbed
+
+The ticket named **one** marker. There were **four pairs across three files** — research catalog, experiment catalog, ADR topics, ADR chronology — all from the same deleted script, all in `contracts/navigation`. Coordinator-confirmed at the base: 2 markers in `docs/research/README.md`, 4 in `docs/decisions/README.md`, 2 in `spikes/README.md`. Fixing only the named one would have left three identical lies, which is the error this ticket exists to prevent.
+
+It also removed an empty `### Documentation governance` heading from the experiment catalog, having verified in the **deleted script's own source** that it emitted every heading from a fixed `GROUPS` table unconditionally, and that no experiment record carries `catalog_group` at all.
+
+Delimiters were **renamed, not deleted** — they bound the block for the by-hand reconciliation check `docs/document-metadata.md` advertises, and deleting them outright would have broken a check the contract points readers at. My third stated Fact was wrong on all three clauses: there were three other occurrences rather than one, the snippet is not in an "unrelated" ticket but is one of the contract's advertised checks, and it does not "produce nothing".
+
+### Two things left standing, deliberately
+
+**A 107th record is uncatalogued right now** — `docs/research/verification/kani-bounded-encoder-verification.md` and its spike, owned by `catalog-the-kani-verification-research-and-spike` (`todo`, unclaimed). Live proof the defect class is still open: nothing detects an uncatalogued record, and closing that gap means reversing `e197176f` and amending a merged contract. The worker deliberately did not file a ticket for it, because filing one would presume the answer. That judgement is correct and the question is recorded here instead.
+
+The reconcile check was **watched failing**: deleting a row gives `105 rows, 107 records, REDDENED`, and the stale split literal gives a loud `IndexError` rather than a green run over zero rows.
