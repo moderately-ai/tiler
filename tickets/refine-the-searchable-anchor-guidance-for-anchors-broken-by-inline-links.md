@@ -1,7 +1,7 @@
 ---
 id: refine-the-searchable-anchor-guidance-for-anchors-broken-by-inline-links
 title: Refine the searchable anchor guidance for anchors broken by inline links
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [correct-adr-0092-s-false-claim-about-the-drafted-span-s-type-spelling, correct-the-architecture-citation-that-drops-the-inline-frontend-qualifier]
@@ -9,9 +9,6 @@ scopes: [implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: [process, documentation, citations]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786170921
 ---
 
 `AGENTS.md` tells every worker to **"Cite by searchable anchor, not by line number,"** on the reasoning that "a line number rots silently and sends a reader into unrelated code; a quoted distinctive phrase or a symbol name fails loudly and can be re-located." That reasoning is sound and the rule should stay. But the rule as written has a failure mode it does not warn about, and the coordinator hit it twice on the day the rule was added.
