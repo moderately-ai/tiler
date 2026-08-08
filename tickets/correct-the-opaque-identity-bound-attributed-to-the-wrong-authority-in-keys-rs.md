@@ -39,3 +39,19 @@ The sentence naming the real authority, and the "crate-private" clause corrected
 **Cite by searchable anchor, run its grep before committing, and use `grep -F`** — three ways an anchor fails as absence: a line break inside it (doc comments wrap at 80 columns), an emphasis or backtick marker the source lacks, and unescaped brackets read as a character class.
 
 **Check the rest of this module doc and name the count.** A sweep of the neighbouring contract read 14 claims and found this one; the module doc itself is unexamined.
+
+## Worker audit, re-verified at `cb62784c7d8b63aa2e73c9ac490101b748abc0ec`
+
+**All three stated Facts verified; none required repair.** Two carry a precision note.
+
+- **Fact 1 (the bound) — verified.** `keys.rs` said the descriptor identity "is under [`MAX_OPAQUE_IDENTITY_BYTES`]"; the `opaque_identity!` invocation passes `MAX_TARGET_PROFILE_DESCRIPTOR_BYTES`, and `crates/tiler-artifact/src/program/tests.rs`'s `an_opaque_identity_takes_the_bound_of_the_authority_that_mints_it` asserts `limit: super::MAX_TARGET_PROFILE_DESCRIPTOR_BYTES`. *Precision:* the invocation **passes** the constant as its `$limit` argument rather than supplying it; the declaration is separate and `pub`.
+- **Fact 2 (the contract is right) — verified** at this base, not only at `7d6c7963`: `grep -F "carries its own 64 KiB ceiling" docs/artifact-abi.md` returns one hit.
+- **Fact 3 (crate-private) — verified.** *Precision:* the adjective is **literally true** of the compiler's constant — `pub(crate) const MAX_TARGET_PROFILE_DESCRIPTOR_BYTES` in `crates/tiler-compiler/src/target/feasibility.rs`. The defect is the implication that the compiler is the only holder, which is how the ticket already frames the fix.
+
+**Ever-true verdicts, from `git log -S` and `git show`.** The bound clause was **true when written**: `22616630` (2026-07-27) wrote it while the invocation genuinely passed `MAX_OPAQUE_IDENTITY_BYTES`, and `0b7e59d3` (2026-07-30) declared this crate's own constant and moved the invocation, the constant doc, and the type doc onto it *without touching the module doc*. The visibility clause was **never true as read**: `fe6d3a87` (2026-08-01) rewrote this very sentence to insert "crate-private" two days *after* this file already declared its own `pub` constant of that name — that commit edited the stale sentence and did not notice the staleness. Treated as practice prescribes: the first dated beside, the second substituted with its wording quoted.
+
+**Module-doc census: 23 propositions read, 20 checkable against source or ADRs, 3 unfalsifiable rationale. Three of the 20 were wrong** — the two this ticket names, plus one it did not.
+
+**New finding, same file, same defect class.** The governed-key subject list read "…which capability, which target property." That list is one-to-one with the `governed_key!` invocations and was exact at `d5b63819` (2026-07-24). It decayed twice: `d1a95e18` (2026-07-25) moved `TargetPropertyKey` to `tiler_ir::program::abi`, and `d715d5da` (2026-07-31) added `RouteFeatureKey` without extending the sentence. So the doc named a key this module no longer defines and omitted one it does. Corrected to "which backend-scoped route requirement" with a dated note, since it too was true when written.
+
+Verified-correct and left alone: ADR 0074 §2 and ADR 0090 item 10 both say what they are cited for; the alphabet equality with `tiler_compiler::target` (identical predicate at `target.rs`); 256 versus `MAX_TARGET_PROFILE_KEY_BYTES = 128`; the absent mutual dependency (neither `Cargo.toml` names the other); `CanonicalArtifactProgramIdentity` exposing only `as_bytes`; `super::codec::budget`'s reuse-rather-than-restate rule; and the `MAX_KERNEL_IDENTITY_BYTES` bound on `BackendEntryKey`. The constant's own doc and the `TargetProfileDescriptorDigest` type doc were **already correct** and are unchanged.

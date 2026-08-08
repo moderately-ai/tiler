@@ -5,8 +5,18 @@
 //! A **governed key** is bounded UTF-8 text this crate compares and encodes as
 //! meaning: which backend family, which executable representation, which
 //! declared target profile, which feasibility rule set, which capability, which
-//! target property. It has a validating constructor because a producer legally
-//! names one.
+//! backend-scoped route requirement. It has a validating constructor because a
+//! producer legally names one.
+//!
+//! **Corrected 2026-08-08; the list was true when written.** It is one-to-one
+//! with the `governed_key!` invocations below and was exact at `d5b63819`
+//! (2026-07-24), when both were written. It then decayed twice with neither
+//! change touching it: `d1a95e18` (2026-07-25) moved `TargetPropertyKey` to
+//! `tiler_ir::program::abi`, for the reason recorded in the comment where that
+//! key used to be declared, and `d715d5da` (2026-07-31) added
+//! [`RouteFeatureKey`] without extending the sentence. The retired sixth item
+//! read "which target property", quoted so it stays greppable — a later hit for
+//! that phrase lands in this note rather than in a live claim.
 //!
 //! An **opaque identity** is bytes another authority derived — a payload
 //! content digest, a backend entry key, a target-profile descriptor digest.
@@ -77,14 +87,42 @@
 //! crate enforces when it mints one. A [`TargetProfileDescriptorDigest`] is a
 //! digest in name only:
 //! `tiler_compiler::feasibility` records that its bytes *are* the descriptor
-//! identity rather than a hash of it, and it is under
-//! [`MAX_OPAQUE_IDENTITY_BYTES`], which for that subject is a **codec resource
-//! ceiling rather than a claim about profiles**: `tiler_compiler` bounds a
-//! descriptor with its crate-private `MAX_TARGET_PROFILE_DESCRIPTOR_BYTES` and
+//! identity rather than a hash of it, and it is under this crate's own
+//! [`MAX_TARGET_PROFILE_DESCRIPTOR_BYTES`], which its `opaque_identity!`
+//! invocation below passes as the limit and which `super::tests`'s
+//! `an_opaque_identity_takes_the_bound_of_the_authority_that_mints_it` asserts.
+//! That constant is this layer's **admission ceiling rather than a claim about
+//! profiles**: `tiler_compiler::feasibility` holds the matching governing mint
+//! bound under the same name, `pub(crate)` there where this one is `pub`, and
 //! refuses where a descriptor is minted, so a governed producer cannot reach
 //! this bound and a value that does reach it was not minted by one. This crate
 //! still refuses it, because it validates what it is handed rather than
 //! trusting where it came from.
+//!
+//! **Corrected 2026-08-08.** Two clauses above were wrong in different ways, so
+//! they are treated differently.
+//!
+//! The bound was *true when written*, and is dated rather than substituted.
+//! `22616630` (2026-07-27) wrote that this identity "is under
+//! [`MAX_OPAQUE_IDENTITY_BYTES`]" while the `opaque_identity!` invocation below
+//! genuinely passed that constant. It went stale at `0b7e59d3` (2026-07-30),
+//! which gave the descriptor its own [`MAX_TARGET_PROFILE_DESCRIPTOR_BYTES`] in
+//! this file and moved the invocation, the constant's own doc, and the type's
+//! doc onto it — and left this paragraph behind.
+//!
+//! The visibility clause was *never* true as a reader would take it, and is
+//! substituted with its wording quoted. `fe6d3a87` (2026-08-01) rewrote this
+//! same sentence to say `tiler_compiler` "bounds a descriptor with its
+//! crate-private `MAX_TARGET_PROFILE_DESCRIPTOR_BYTES`". That is literally true
+//! of the compiler's `pub(crate)` constant and reads as though the compiler is
+//! the only holder of one, when this file had declared its own `pub` constant
+//! of that name two days earlier. A later hit for that quoted phrase lands in
+//! this note rather than in a live claim.
+//!
+//! Both clauses sat beneath the heading above, which states the opposite rule.
+//! `docs/artifact-abi.md` described the ceiling correctly throughout, so here
+//! the contract outranked the source — the direction that makes this shape hard
+//! to find.
 
 use std::fmt;
 
