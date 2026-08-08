@@ -1,7 +1,7 @@
 ---
 id: re-date-the-six-identity-growth-fit-sites-one-displacement-behind
 title: Re-date the six identity growth fit sites one displacement behind
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [correct-the-region-shape-budget-sites-outside-the-corrections-scopes, repair-the-records-the-sourced-semantic-shape-falsifies]
@@ -9,9 +9,6 @@ scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, documentation, measurement]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786178177
 ---
 
 Six sites state `3530n + 723` as the **live** identity-growth fit. It was displaced by exactly `n + 1` on 2026-08-08 and is now `3531n + 724`. Every one of the six was written by a 2026-08-07 correction sweep, so this is a correction that has itself gone one displacement stale.
