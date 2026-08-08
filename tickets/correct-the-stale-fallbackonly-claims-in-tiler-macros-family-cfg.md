@@ -1,7 +1,7 @@
 ---
 id: correct-the-stale-fallbackonly-claims-in-tiler-macros-family-cfg
 title: Correct the stale FallbackOnly claims in tiler-macros family_cfg
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/frontend]
 shared_scopes: []
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-correct-t
+lease_expires_at: 1786165341
 ---
 ## Two comments in `crates/tiler-macros/src/family_cfg.rs` assert an absence the crate refutes
 

@@ -1,7 +1,7 @@
 ---
 id: retire-the-gate-reproduction-claims-in-the-apple-numerical-record
 title: Retire the gate-reproduction claims in the Apple numerical behaviour record
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, evidence, gate]
+claimed_from: todo
+assignee: w-retire-th
+lease_expires_at: 1786165341
 ---
 ## The record corrects the claim once and then makes it twenty-two more times
 

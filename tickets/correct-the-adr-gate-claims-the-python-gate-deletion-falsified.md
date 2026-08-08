@@ -1,7 +1,7 @@
 ---
 id: correct-the-adr-gate-claims-the-python-gate-deletion-falsified
 title: Retire the deleted Python gate's claims in ADRs 0074 and 0076
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, evidence, gate]
+claimed_from: todo
+assignee: w-correct-t
+lease_expires_at: 1786165341
 ---
 ## Two accepted ADRs assert that the repository gate runs a spike harness, and no gate reaches `spikes/`
 

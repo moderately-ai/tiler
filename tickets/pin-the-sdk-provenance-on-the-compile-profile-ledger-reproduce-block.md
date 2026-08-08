@@ -1,7 +1,7 @@
 ---
 id: pin-the-sdk-provenance-on-the-compile-profile-ledger-reproduce-block
 title: Pin the SDK provenance on the compile-profile ledger xcrun reproduce block
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [pin-the-sdk-provenance-the-xcrun-reproduce-forms-silently-rebase]
@@ -9,6 +9,9 @@ scopes: [research/target-profiles]
 shared_scopes: []
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-pin-the-s
+lease_expires_at: 1786165341
 ---
 ## Three host-resolved SDK header paths in the compile-profile authority ledger
 
