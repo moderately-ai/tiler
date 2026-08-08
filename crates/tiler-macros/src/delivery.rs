@@ -768,7 +768,7 @@ pub(crate) fn stated_delivery(
 /// Builds the plan a selection naming no family delivers.
 ///
 /// `FallbackOnly`'s plan, and only its: a selection that invokes the backend
-/// compiler goes through [`crate::aot::delivered_plan`], which has an artifact
+/// compiler goes through [`crate::aot::deliver`], which has an artifact
 /// and per-family outcomes to supply.
 ///
 /// # Errors
