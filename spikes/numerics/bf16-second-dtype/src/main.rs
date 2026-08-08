@@ -1,3 +1,14 @@
+// `variant_count` is what pins `perturb::fused_operations_are_unexpressible`'s
+// admitted-operation list to `corpus::Operation`. That perturbation reports that
+// no fused multiply-add variant is expressible, and every other site that has to
+// know about an operation is an exhaustive `match` — `Operation::apply` and
+// `Operation::as_str` — which `rustc` already closes. A hand-written list of the
+// admitted set has no such check, so a fused variant added to the enum would
+// leave the perturbation reporting an absence that had stopped being true.
+// Declaring that list at `variant_count` makes the omission an array-length
+// build error at the claim instead. The use is in the binary itself rather than
+// behind `cfg(test)`, so the gate is unconditional.
+#![feature(variant_count)]
 //! A bounded BF16 proof across the second-dtype seams.
 //!
 //! Run from this directory; see `README.md`. The binary's only product is a
