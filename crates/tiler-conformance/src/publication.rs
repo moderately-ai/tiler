@@ -390,7 +390,8 @@ fn publish_member(
     // Built before either file is written, so a record the artifact layer refuses
     // stops the publication instead of leaving an envelope on disk with nothing
     // describing it.
-    let record = proof::encoded(artifact, program, family).map_err(PublicationFailure::Sidecar)?;
+    let record =
+        proof::encoded(artifact, program, family, plan).map_err(PublicationFailure::Sidecar)?;
 
     let envelope_path = proof_member(publication.base, class, role);
     let record_path = sidecar_path(&envelope_path);

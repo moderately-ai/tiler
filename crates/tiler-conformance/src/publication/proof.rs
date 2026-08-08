@@ -37,16 +37,43 @@
 //! remain are the ones that hold against a *measurement*: the probe stream
 //! against the probe's own implementation, and the published cell against the
 //! extents its retained digest was taken at.
+//!
+//! # The oracle is told the contract the packaged plan declares
+//!
+//! Every expected payload below is computed under
+//! [`conformance_of`], which reads the two subnormal dimensions off the
+//! *packaged kernels'* own [`NumericalRealization`] and the subject off the
+//! plan's delivered-realization evidence. Until 2026-08-07 it went through
+//! `ReferenceEvaluator::standard()`, which is
+//! `under(registry, ReferenceNumericalConformance::strict())` — subnormals
+//! preserved, and [`tiler_reference::ConformanceSubject::Unstated`], which
+//! reaches every capability with nothing to check. The artifacts those bytes
+//! travel with are compiled under
+//! [`tiler_compiler::session::NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32`],
+//! and [`NUMERICAL_IDENTITY`] has always *said* so, so the record claimed a
+//! contract its own oracle was not evaluating.
+//!
+//! **It moved no published byte, and that is a property of the operands rather
+//! than of the contract.** `tests::stating_the_packaged_contract_moves_no_published_expectation`
+//! names and counts the corpus positions that hold a subnormal operand at all
+//! and shows the two readings agreeing at every one of them; the L3 cells hold
+//! none, because the probe's `m * 2^-24` stream makes every product and every
+//! exact partial sum an integer multiple of `2^-72`, which is normal. A corpus
+//! that grew a case those arguments do not cover would have compared a flushing
+//! device against a preserving oracle, and that is the window this closes.
 
 use tiler_artifact::program::VerifiedArtifactProgram;
 use tiler_artifact::proof::{
     ProofBuildError, ProofCaseKey, ProofCaseSpec, ProofCodecError, ProofNumericalIdentity,
     ProofProvenance, ProofReferenceIdentity, ProofSidecarBuilder,
 };
+use tiler_compiler::session::PlanAlternative;
+use tiler_ir::schedule::{ArithmeticType, NumericalRealization};
 use tiler_ir::semantic::{F32, InputKey, OutputKey, SemanticProgram};
 use tiler_ir::shape::Shape;
 use tiler_reference::{
-    FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
+    FloatBitOrder, FrozenReferenceRegistry, InputBinding, ReferenceElement, ReferenceEvaluator,
+    ReferenceNumericalConformance, Tensor, TensorPayloadView, UnsupportedReferenceContract,
 };
 
 use crate::envelope::{
@@ -60,6 +87,21 @@ use crate::serial_sum::{INPUT_KEY, OUTPUT_KEY};
 /// It names the flush-to-zero contract because that is the one this crate
 /// publishes under; the strict contract is unhonourable on every governed Apple
 /// family.
+///
+/// **It is now also the contract the bytes were computed under**, which it was
+/// not while [`reference_bits`] evaluated the strict reading: this key said
+/// flush-to-zero and the oracle preserved. [`conformance_of`] closes that by
+/// deriving the oracle's contract from the packaged plan, and
+/// `tests::the_published_oracle_carries_the_packaged_plans_own_contract` holds
+/// the derived contract's two subnormal dimensions against [`super::CONTRACT`]'s.
+///
+/// **It is not the realization's own key and cannot be derived from one.** This
+/// is a governed name in the sidecar's identity domain; a
+/// [`NumericalRealization::profile_key`] is the compiler's structural contract
+/// key, which encodes all eleven dimensions and the canonical NaN payload
+/// (`tiler.contract.f32.v2.037fc0000001…` for this contract). The two name one
+/// contract in two domains, nothing converts between them, and the test asserts
+/// the packaged key against [`super::CONTRACT`]'s rather than against this one.
 const NUMERICAL_IDENTITY: &[u8] = b"tiler.numerical.flush-subnormals-to-zero-f32";
 /// Governed key of the implementation that produced the expected bytes.
 const REFERENCE_IDENTITY: &[u8] = b"tiler.reference.standard-evaluator.v1";
@@ -321,6 +363,76 @@ impl ProofFamily {
     }
 }
 
+/// Why the oracle's numerical contract could not be derived from a packaged
+/// plan.
+///
+/// Its own vocabulary rather than a `String`, because the four cases are four
+/// different things to do next: a plan packaging nothing, two packaged kernels
+/// declaring different realizations, a delivered realization naming other than
+/// one scalar subject, and a realization the reference cannot answer for at all.
+/// Only the last is [`tiler_reference`]'s refusal; the first three are this
+/// route's own preconditions for having a realization and a subject to hand it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UnderivableOracleContract {
+    /// The plan packages no kernel, so nothing declares a realization.
+    NoPackagedKernel,
+    /// Two packaged kernels declare different numerical realizations.
+    ///
+    /// Refused rather than resolved by taking the first: the sidecar states one
+    /// contract for the whole member, and a plan whose stages disagree has no
+    /// single contract for it to state. Nothing this build packages disagrees, so
+    /// this has not been observed firing; what *is* exercised is the comparison,
+    /// on the two-stage serial-sum role — one publication, two kernels — which is
+    /// why taking the first kernel and calling it the member's contract would be
+    /// an unchecked assumption rather than a shortcut.
+    DisagreeingRealizations {
+        /// The realization the first packaged kernel declares.
+        first: NumericalRealization,
+        /// The first realization that disagrees with it.
+        other: NumericalRealization,
+    },
+    /// The delivered realization named other than exactly one scalar subject.
+    ///
+    /// ADR 0076's evidence carries one subject per selected scalar contract, so
+    /// a plan reaching here with another count is one whose contract this route
+    /// cannot name a single arithmetic type for — and stating one anyway is
+    /// precisely the assertion [`ReferenceNumericalConformance::from_realization`]
+    /// exists to refuse.
+    AmbiguousSubject {
+        /// How many subjects the delivered realization stated.
+        stated: usize,
+    },
+    /// The reference refused the realization or the subject stated for it.
+    Unsupported(UnsupportedReferenceContract),
+}
+
+impl std::fmt::Display for UnderivableOracleContract {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoPackagedKernel => formatter.write_str(
+                "the published plan packages no kernel, so no packaged stage declares the \
+                 numerical realization the oracle would be evaluated under",
+            ),
+            Self::DisagreeingRealizations { first, other } => write!(
+                formatter,
+                "two packaged kernels declare different numerical realizations ({first:?} and \
+                 {other:?}), so the sidecar has no one contract to state for the member",
+            ),
+            Self::AmbiguousSubject { stated } => write!(
+                formatter,
+                "the delivered realization states {stated} scalar-arithmetic subject(s) and the \
+                 oracle's conformance is resolved for exactly one",
+            ),
+            Self::Unsupported(cause) => write!(
+                formatter,
+                "the reference refused the packaged plan's declared contract: {cause}",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for UnderivableOracleContract {}
+
 /// Why a proof-case sidecar could not be published.
 #[derive(Debug)]
 pub(crate) enum SidecarFailure {
@@ -328,6 +440,12 @@ pub(crate) enum SidecarFailure {
     Build(ProofBuildError),
     /// The verified record did not encode.
     Encode(ProofCodecError),
+    /// The oracle's contract could not be derived from the published plan.
+    ///
+    /// A refusal here stops the publication rather than falling back to the
+    /// strict reading: an expected payload computed under a contract nobody
+    /// declared is exactly the record this member must not write.
+    Oracle(UnderivableOracleContract),
     /// A published contraction shape has no operand table written for it.
     ///
     /// Its own class rather than a panic: [`CONTRACTION_CASES`] is literal rows,
@@ -360,6 +478,10 @@ impl std::fmt::Display for SidecarFailure {
         match self {
             Self::Build(cause) => write!(formatter, "the proof sidecar draft refused: {cause:?}"),
             Self::Encode(cause) => write!(formatter, "the proof sidecar did not encode: {cause:?}"),
+            Self::Oracle(cause) => write!(
+                formatter,
+                "the proof sidecar's expected bytes have no stated contract: {cause}",
+            ),
             Self::UnwrittenContractionShape {
                 requested: (m, n, k),
                 written: (wm, wn, wk),
@@ -477,6 +599,106 @@ fn tensor(shape: &Shape, bits: &[u32]) -> Tensor {
     .expect("the input tensor is well formed")
 }
 
+/// The numerical realization every packaged kernel of one plan declares.
+///
+/// **Read off the packaged kernels rather than off the contract this module
+/// compiles under.** [`VerifiedKernel::numerical`](tiler_ir::kernel::VerifiedKernel::numerical)
+/// hands back the realization the scheduled region the kernel refines recorded,
+/// so this is the plan's own choice at the sites its contract left free — not a
+/// second transcription of `super::CONTRACT` that a change to planning could
+/// leave stale.
+///
+/// Every kernel is examined rather than the first taken, because a member is one
+/// sidecar over one program: the two-stage serial-sum role packages two kernels
+/// and a member whose stages disagreed would have no single contract to publish.
+fn packaged_realization(
+    plan: PlanAlternative<'_>,
+) -> Result<NumericalRealization, UnderivableOracleContract> {
+    let mut packaged = plan.kernels().iter();
+    let first = packaged
+        .next()
+        .ok_or(UnderivableOracleContract::NoPackagedKernel)?
+        .numerical();
+    for kernel in packaged {
+        let other = kernel.numerical();
+        if other != first {
+            return Err(UnderivableOracleContract::DisagreeingRealizations { first, other });
+        }
+    }
+    Ok(first)
+}
+
+/// The arithmetic type one plan's delivered-realization evidence is stated for.
+///
+/// **This is where the subject comes from on a plan-derived route.** The BF16
+/// vertical reads its subject off a [`RealizationWitness`](tiler_ir::schedule::RealizationWitness),
+/// which needs a `VerifiedScheduledRegion`; a publication is handed a plan and
+/// holds no region, so that route is unavailable here. What a plan does hold is
+/// ADR 0076's delivered-realization evidence, whose subject table is materialized
+/// from the *selected contract's* own arithmetic type — one row per selected
+/// scalar contract — and [`ScalarArithmeticSubject::arithmetic`](tiler_ir::numerics::ScalarArithmeticSubject::arithmetic)
+/// is that type. So the subject is compiler-minted evidence about the plan
+/// rather than a constant this file writes down beside it.
+///
+/// The count is checked rather than assumed: the surface is an
+/// `ExactSizeIterator`, and a plan naming two subjects is one this route cannot
+/// resolve a single conformance for.
+fn packaged_subject(
+    plan: PlanAlternative<'_>,
+) -> Result<ArithmeticType, UnderivableOracleContract> {
+    let mut subjects = plan.delivered_realization().scalar_arithmetic();
+    let stated = subjects.len();
+    if stated != 1 {
+        return Err(UnderivableOracleContract::AmbiguousSubject { stated });
+    }
+    let subject = subjects
+        .next()
+        .ok_or(UnderivableOracleContract::AmbiguousSubject { stated })?;
+    Ok(subject.subject().arithmetic())
+}
+
+/// Derives the oracle's numerical contract from the plan a member packages.
+///
+/// The checked bridge this route was missing. Both arguments
+/// [`ReferenceNumericalConformance::from_realization`] takes come from the same
+/// plan — the realization from its packaged kernels and the subject from its
+/// delivered-realization evidence — and the bridge cross-checks them against each
+/// other through the realization's own declared canonical arithmetic NaN
+/// payload, so a subject drawn from somewhere other than the plan that declared
+/// the realization is refused rather than carried.
+///
+/// # Errors
+///
+/// Returns [`UnderivableOracleContract`] naming which of the four boundaries
+/// refused.
+fn conformance_of(
+    plan: PlanAlternative<'_>,
+) -> Result<ReferenceNumericalConformance, UnderivableOracleContract> {
+    conformance_stated_for(plan, packaged_subject(plan)?)
+}
+
+/// [`conformance_of`] with the subject supplied rather than derived.
+///
+/// Split out so the refusal can be watched *firing on this route*: a test states
+/// a subject the packaged realization contradicts and reads back the bridge's own
+/// answer, which is a stronger claim than calling
+/// [`ReferenceNumericalConformance::from_realization`] beside the route and
+/// checking that it refuses. The publishing path never calls this directly —
+/// [`conformance_of`] is its one entry point, and the subject it passes is the
+/// plan's.
+///
+/// # Errors
+///
+/// As [`conformance_of`], less the subject-count boundary.
+fn conformance_stated_for(
+    plan: PlanAlternative<'_>,
+    arithmetic: ArithmeticType,
+) -> Result<ReferenceNumericalConformance, UnderivableOracleContract> {
+    let realization = packaged_realization(plan)?;
+    ReferenceNumericalConformance::from_realization(&realization, arithmetic)
+        .map_err(UnderivableOracleContract::Unsupported)
+}
+
 /// Evaluates the program under the governed reference to get expected outputs.
 ///
 /// **Every declared operand is bound, not the first one.** The evaluator takes
@@ -491,10 +713,18 @@ fn tensor(shape: &Shape, bits: &[u32]) -> Tensor {
 /// [`ProofFamily::iteration_step_allowance`] — visible caller code — rather than
 /// from a constant nobody re-derives. A family under the bound is handed the
 /// evaluator's own default, so publishing it authorizes nothing.
+///
+/// **The contract is the caller's too, and is derived rather than defaulted.**
+/// `ReferenceEvaluator::standard()` is `under(registry, strict())`, which
+/// preserves subnormals and states no subject; the registry here is that same
+/// governed snapshot with the packaged plan's own contract in place of the strict
+/// one, so the oracle answers the question the device half was compiled to
+/// answer. [`conformance_of`] is where the contract comes from.
 fn reference_bits(
     program: &SemanticProgram,
     operands: &[Operand],
     iteration_step_allowance: usize,
+    conformance: ReferenceNumericalConformance,
 ) -> Vec<u32> {
     let tensors: Vec<Tensor> = operands
         .iter()
@@ -505,11 +735,13 @@ fn reference_bits(
         .zip(&tensors)
         .map(|(operand, tensor)| InputBinding::new(&operand.key, tensor))
         .collect();
-    let outputs = ReferenceEvaluator::standard()
-        .expect("the governed reference profile composes")
-        .with_iteration_step_allowance(iteration_step_allowance)
-        .evaluate(program, &bindings)
-        .expect("the reference evaluates the program");
+    let outputs = ReferenceEvaluator::under(
+        FrozenReferenceRegistry::standard().expect("the governed reference profile composes"),
+        conformance,
+    )
+    .with_iteration_step_allowance(iteration_step_allowance)
+    .evaluate(program, &bindings)
+    .expect("the reference evaluates the program");
     match outputs[0].payload() {
         TensorPayloadView::Dense(elements) => elements
             .iter()
@@ -638,6 +870,11 @@ fn output_key_for(family: ProofFamily) -> OutputKey {
 
 /// Builds and encodes the proof-case sidecar for one published artifact.
 ///
+/// The plan is taken beside the artifact because the expected payloads are
+/// normative under a contract, and the plan is what declares it:
+/// [`conformance_of`] reads the realization and the subject off it, so the
+/// oracle cannot be told a contract the packaged program does not carry.
+///
 /// # Errors
 ///
 /// Returns [`SidecarFailure`] naming the boundary that refused. Nothing is worked
@@ -647,7 +884,9 @@ pub(crate) fn encoded(
     artifact: &VerifiedArtifactProgram,
     program: &SemanticProgram,
     family: ProofFamily,
+    plan: PlanAlternative<'_>,
 ) -> Result<Vec<u8>, SidecarFailure> {
+    let conformance = conformance_of(plan).map_err(SidecarFailure::Oracle)?;
     let mut draft = ProofSidecarBuilder::new(
         artifact,
         ProofProvenance {
@@ -665,7 +904,7 @@ pub(crate) fn encoded(
     // against several operand classes rather than needing an artifact each.
     let allowance = family.iteration_step_allowance();
     for (key, operands) in cases_for(family)? {
-        let expected = reference_bits(program, &operands, allowance);
+        let expected = reference_bits(program, &operands, allowance, conformance);
         draft
             .push_case(ProofCaseSpec {
                 key: ProofCaseKey::new(key).expect("the case key is valid"),
@@ -687,21 +926,327 @@ pub(crate) fn encoded(
 
 #[cfg(test)]
 mod tests {
-    use tiler_reference::ReferenceEvaluator;
+    use tiler_build::BoundMetalCompileDeclaration;
+    use tiler_compiler::session::Compilation;
+    use tiler_ir::schedule::ArithmeticType;
+    use tiler_ir::semantic::{
+        CANONICAL_BF16_ARITHMETIC_NAN_BITS, CANONICAL_F32_ARITHMETIC_NAN_BITS, InputKey,
+        SemanticProgram,
+    };
+    use tiler_ir::shape::Shape;
+    use tiler_reference::{
+        ConformanceSubject, ReferenceEvaluator, ReferenceNumericalConformance,
+        UnsupportedReferenceContract,
+    };
 
     use super::{
-        CONTRACTION_K, CONTRACTION_M, CONTRACTION_N, ProofFamily, RIGHT_SEED_MASK, WORKLOAD_SEED,
-        probe_bits, probe_value,
+        CONTRACTION_K, CONTRACTION_M, CONTRACTION_N, NUMERICAL_IDENTITY, Operand, ProofFamily,
+        RIGHT_SEED_MASK, UnderivableOracleContract, WORKLOAD_SEED, cases_for, conformance_of,
+        conformance_stated_for, packaged_realization, probe_bits, probe_value, reference_bits,
     };
     use crate::envelope::{
-        CONTRACTION_MEMBERS, L3_CORRECTNESS_CELLS, REFERENCE_DEFAULT_STEP_ALLOWANCE,
+        CONTRACTION_MEMBERS, L3_CORRECTNESS_CELLS, REDUCTION_CLASSES,
+        REFERENCE_DEFAULT_STEP_ALLOWANCE, contraction_program,
     };
+    use crate::publication::{CONTRACT, PUBLISHED_ROWS};
+    use crate::serial_sum::{INPUT_KEY, compile_under, serial_sum_program};
 
     /// The extents of the cell whose retained digest this crate first routed.
     ///
     /// Kept as a literal so the two tests below that need *one* cell name it
     /// rather than indexing the table they are checking.
     const DECODE_KV: (u64, u64, u64) = (1, 1024, 1024);
+
+    /// Compiles one published program exactly as [`super::super::publish_member`]
+    /// receives it.
+    ///
+    /// The real `compile()` under the real [`CONTRACT`], against the
+    /// authoritative macOS Apple9 declaration — none of which needs a device or
+    /// the offline Apple toolchain, which is what lets the three tests below run
+    /// on every host. Publishing the result would need both; deriving the
+    /// oracle's contract from it needs neither, and that derivation is what these
+    /// check.
+    ///
+    /// The [`Compilation`] is returned rather than a `PlanAlternative`, because
+    /// the alternative borrows it.
+    fn published_compilation(program: &SemanticProgram) -> Compilation {
+        let declaration = BoundMetalCompileDeclaration::first_macos_apple9()
+            .expect("the authoritative declaration assembles");
+        compile_under(&declaration, program, CONTRACT)
+            .expect("a published member's program compiles under the published contract")
+    }
+
+    /// Every published member's `(family, program)` pair, less the L3 cells.
+    ///
+    /// The L3 cells are excluded because their operand streams run to
+    /// `3072x1024` and each expected payload costs a reference fold of up to
+    /// 1,094,713,344 steps to state, which is the cost the ordinary gate already
+    /// declines. What they contribute to the argument below is covered instead by
+    /// the probe stream's own property, stated in this module's header: every
+    /// operand is `m * 2^-24`, so every product and every exact partial sum is an
+    /// integer multiple of `2^-72` and no subnormal can arise for either reading
+    /// to disagree about.
+    fn adversarial_members() -> Vec<(ProofFamily, SemanticProgram)> {
+        let mut members: Vec<(ProofFamily, SemanticProgram)> = REDUCTION_CLASSES
+            .into_iter()
+            .map(|(_, columns)| {
+                (
+                    ProofFamily::SerialSum {
+                        rows: PUBLISHED_ROWS,
+                        columns,
+                    },
+                    serial_sum_program(PUBLISHED_ROWS, columns),
+                )
+            })
+            .collect();
+        members.push((
+            ProofFamily::Contraction {
+                m: CONTRACTION_M,
+                n: CONTRACTION_N,
+                k: CONTRACTION_K,
+            },
+            contraction_program(CONTRACTION_M, CONTRACTION_N, CONTRACTION_K),
+        ));
+        members
+    }
+
+    /// The oracle's contract is the packaged plan's own, carried with its subject.
+    ///
+    /// **What this route was missing, and the shape of what replaced it.** Every
+    /// expected payload used to be computed through `ReferenceEvaluator::standard()`
+    /// — `under(registry, strict())` — so the oracle preserved subnormals and
+    /// carried [`ConformanceSubject::Unstated`], which reaches every capability
+    /// with nothing to check, while the artifact beside it was compiled under
+    /// [`CONTRACT`]. This asserts the three things that changed: the subject is
+    /// the plan's `f32`, both subnormal dimensions are the contract's flush, and
+    /// the realization those came off is the one the packaged kernels declare —
+    /// [`CONTRACT`]'s structural key — rather than a value this module wrote down
+    /// beside them.
+    ///
+    /// [`NUMERICAL_IDENTITY`] is deliberately not compared against that key. It
+    /// is a governed name in the sidecar's own identity domain and the profile
+    /// key is the compiler's structural one; they name one contract in two
+    /// domains and nothing converts between them, so what the sidecar's claim can
+    /// be held to here is the *dimensions*, which is what the assertions above
+    /// do.
+    ///
+    /// The hand-stated transcription is constructed here so the difference is
+    /// exhibited rather than described: equal on both dimensions every applier
+    /// reads, and speaking about no value set at all.
+    #[test]
+    fn the_published_oracle_carries_the_packaged_plans_own_contract() {
+        let program = contraction_program(CONTRACTION_M, CONTRACTION_N, CONTRACTION_K);
+        let compilation = published_compilation(&program);
+        let plan = compilation
+            .selected()
+            .expect("the portfolio retains a selected plan");
+
+        let conformance = conformance_of(plan).expect("the packaged f32 realization bridges");
+        assert_eq!(
+            conformance.subject(),
+            ConformanceSubject::Arithmetic(ArithmeticType::F32),
+            "the oracle was handed a conformance naming no format, or another one",
+        );
+        assert_eq!(conformance.input_subnormals(), CONTRACT.input_subnormals());
+        assert_eq!(
+            conformance.result_subnormals(),
+            CONTRACT.result_subnormals()
+        );
+
+        let transcribed = ReferenceNumericalConformance::new(
+            CONTRACT.input_subnormals(),
+            CONTRACT.result_subnormals(),
+        );
+        assert_eq!(transcribed.subject(), ConformanceSubject::Unstated);
+        assert_ne!(
+            transcribed, conformance,
+            "the derived conformance must differ from the hand-stated one, or the subject the \
+             capability checks is not being carried",
+        );
+        assert_ne!(
+            ReferenceNumericalConformance::strict(),
+            conformance,
+            "the oracle is still evaluating the strict reading the artifact does not deliver",
+        );
+
+        // The realization those two dimensions were read off is the packaged
+        // kernels' own, and it is this module's declared contract rather than a
+        // realization assembled beside the plan.
+        let realization = packaged_realization(plan).expect("the packaged kernels agree");
+        assert_eq!(realization.profile_key, CONTRACT.key());
+        assert_ne!(
+            realization.profile_key.as_bytes(),
+            NUMERICAL_IDENTITY,
+            "the sidecar's governed numerical key and the compiler's structural contract key are \
+             separate identity domains; a build in which they coincided would make the comment on \
+             NUMERICAL_IDENTITY wrong rather than this assertion",
+        );
+        assert_eq!(
+            realization.canonical_arithmetic_nan_bits, CANONICAL_F32_ARITHMETIC_NAN_BITS,
+            "the packaged realization declares another width's canonical arithmetic NaN",
+        );
+    }
+
+    /// A subject the packaged realization contradicts is refused, watched firing
+    /// on this route.
+    ///
+    /// **The perturbation that shows this route is checked rather than merely
+    /// called.** [`conformance_of`] is the only way this module obtains an oracle
+    /// contract, and the check that makes its derived subject an *agreement*
+    /// rather than an assertion lives in the bridge: the realization carries the
+    /// canonical arithmetic NaN pattern of the region's own type, so a subject
+    /// drawn from anywhere but the plan that declared it is refused. Perturbing
+    /// the subject is what exercises that; perturbing an assertion would not.
+    ///
+    /// Both refusal classes are walked, because they answer different questions.
+    /// `Bf16` is a format this reference *does* evaluate, so its rejection is the
+    /// declaration cross-check firing; `F16` and `F64` are formats it evaluates
+    /// nothing in, so theirs is the evaluability boundary. A bridge that only had
+    /// the second would still refuse `Bf16` here and would be checking nothing
+    /// about the declaration.
+    #[test]
+    fn a_subject_the_packaged_realization_contradicts_is_refused_on_this_route() {
+        let program = contraction_program(CONTRACTION_M, CONTRACTION_N, CONTRACTION_K);
+        let compilation = published_compilation(&program);
+        let plan = compilation
+            .selected()
+            .expect("the portfolio retains a selected plan");
+
+        assert_eq!(
+            conformance_stated_for(plan, ArithmeticType::Bf16),
+            Err(UnderivableOracleContract::Unsupported(
+                UnsupportedReferenceContract::DeclaredNanPayloadMismatch {
+                    arithmetic: ArithmeticType::Bf16,
+                    declared: CANONICAL_F32_ARITHMETIC_NAN_BITS,
+                    expected: u32::from(CANONICAL_BF16_ARITHMETIC_NAN_BITS),
+                },
+            )),
+            "an f32 plan accepted a bf16 subject, so the oracle's subject is asserted rather than \
+             agreed",
+        );
+
+        let mut refused = 0_usize;
+        for arithmetic in [ArithmeticType::F16, ArithmeticType::F64] {
+            assert_eq!(
+                conformance_stated_for(plan, arithmetic),
+                Err(UnderivableOracleContract::Unsupported(
+                    UnsupportedReferenceContract::ArithmeticNotEvaluable { arithmetic },
+                )),
+            );
+            refused += 1;
+        }
+        assert_eq!(refused, 2, "both unevaluable formats were exercised");
+
+        // And the plan's own subject bridges on the same call, so the refusals
+        // above are decisions about the subject rather than a route that never
+        // succeeds.
+        assert_eq!(
+            conformance_stated_for(plan, ArithmeticType::F32),
+            conformance_of(plan),
+        );
+        assert!(conformance_of(plan).is_ok());
+    }
+
+    /// Telling the oracle the packaged contract moves no published expectation,
+    /// over a counted subnormal population.
+    ///
+    /// **The agreement is a property of the operands, and this is what names
+    /// them.** Flushing and preserving differ only at a subnormal, so a corpus
+    /// holding none would satisfy this test for a reason that says nothing about
+    /// the contract. The positions that hold one are therefore counted rather
+    /// than assumed: two, the `signed-zero-and-subnormal` serial-sum case at the
+    /// `nontrivial` extent and the `negative-zero-fold` contraction case's least
+    /// positive subnormal, both `0x00000001`. A corpus that lost them turns this
+    /// red instead of leaving a vacuous pass, and a corpus that grew a case the
+    /// two readings disagree on turns it red for the opposite reason — which is
+    /// the outcome that would mean the published bytes had genuinely moved and
+    /// the retained digests they are compared against need re-measuring.
+    ///
+    /// **The last section is the one that watches the contract reach the
+    /// oracle.** Everything above is satisfied by a [`reference_bits`] that
+    /// accepted the conformance and dropped it, because both readings would then
+    /// be the same reading. So it is closed by an operand the two readings
+    /// genuinely disagree on — the least positive subnormal, alone, through the
+    /// singleton reduction — where the declared contract must return `0x00000000`
+    /// and the strict one `0x00000001`. Reverting the evaluator to
+    /// `ReferenceEvaluator::standard()` fails exactly there and nowhere else.
+    #[test]
+    fn stating_the_packaged_contract_moves_no_published_expectation() {
+        let strict = ReferenceNumericalConformance::strict();
+        let mut subnormal_operands = 0_usize;
+        let mut compared = 0_usize;
+
+        for (family, program) in adversarial_members() {
+            let compilation = published_compilation(&program);
+            let plan = compilation
+                .selected()
+                .expect("the portfolio retains a selected plan");
+            let declared = conformance_of(plan).expect("the packaged f32 realization bridges");
+            let allowance = family.iteration_step_allowance();
+
+            for (key, operands) in cases_for(family).expect("the published family has a case table")
+            {
+                subnormal_operands += operands
+                    .iter()
+                    .flat_map(|operand| operand.bits.iter())
+                    .filter(|bits| f32::from_bits(**bits).is_subnormal())
+                    .count();
+                assert_eq!(
+                    reference_bits(&program, &operands, allowance, declared),
+                    reference_bits(&program, &operands, allowance, strict),
+                    "{family:?} case {key}: the declared and the strict readings disagree, so \
+                     publishing the declared one moves bytes a retained digest was measured \
+                     against",
+                );
+                compared += 1;
+            }
+        }
+
+        assert_eq!(
+            compared, 20,
+            "five operand classes over three serial-sum extents and the adversarial contraction",
+        );
+        assert_eq!(
+            subnormal_operands, 2,
+            "the corpus holds no subnormal operand, so the agreement above is about a population \
+             that cannot distinguish the two readings",
+        );
+
+        // The two readings *are* distinguishable by this oracle, on this route,
+        // at a published member's own program: the least positive subnormal alone
+        // through the singleton reduction. Without this the agreements above
+        // would also be satisfied by an evaluator that ignored the contract it
+        // was handed.
+        let singleton = serial_sum_program(PUBLISHED_ROWS, 1);
+        let compilation = published_compilation(&singleton);
+        let declared = conformance_of(
+            compilation
+                .selected()
+                .expect("the portfolio retains a selected plan"),
+        )
+        .expect("the packaged f32 realization bridges");
+        let probe = vec![Operand {
+            key: InputKey::new(INPUT_KEY).expect("the input key is valid"),
+            shape: Shape::from_dims([PUBLISHED_ROWS, 1]),
+            bits: vec![0x0000_0001],
+        }];
+        let allowance = ProofFamily::SerialSum {
+            rows: PUBLISHED_ROWS,
+            columns: 1,
+        }
+        .iteration_step_allowance();
+        assert_eq!(
+            reference_bits(&singleton, &probe, allowance, strict),
+            vec![0x0000_0001],
+            "the strict reading must carry the least positive subnormal through unchanged",
+        );
+        assert_eq!(
+            reference_bits(&singleton, &probe, allowance, declared),
+            vec![0x0000_0000],
+            "the declared contract did not reach the oracle: a flushing conformance returned the \
+             preserving answer",
+        );
+    }
 
     /// The published cell's operand stream is the probe's, pinned against values
     /// the probe's own Python produced.
