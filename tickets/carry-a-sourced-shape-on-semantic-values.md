@@ -97,3 +97,65 @@ They were left as two tickets after that finding, and the board went on offering
 ### Dispatch conditions
 
 Not before `implementation/compiler`, `implementation/reference`, `implementation/artifact`, `implementation/frontend` and `contracts/foundation` are all free — that is a wide batch and it will need most of the board quiet. [`resolve-semantic-shape-inference-over-symbolic-extents`](resolve-semantic-shape-inference-over-symbolic-extents.md) stays separate: keeping `ValueFact` on `Shape` means only inputs can be symbolic until it lands, which is a coherent boundary rather than a partial state.
+
+## Audit 2026-08-07 — per-Fact verification at base `ad999a52`, tree left clean
+
+A worker claimed the combined unit, audited every Fact against source at the base, measured the call-site population independently, and **committed no source change**. `git status` clean; the only mutation is this block. The measurement below reproduces one earlier claim exactly, corrects three, and finds one **missing scope** and one **false claim in the merge block**.
+
+### Per-Fact audit
+
+| Claim | Where | Verdict |
+| --- | --- | --- |
+| `ValueFact` holds a `Shape` | `semantic/operation.rs:997` | **verified** |
+| `ValueDefinition` holds a `Shape` | original body, Fact 1 | **false** — already corrected by repair §2; it is `pub(super)` and holds no shape (`operation.rs:1564`) |
+| `ValueData` (`:1593`), `ValueRef::shape` (`:1637`), `ValueFact::shape` (`:1018`) | repair §2 | **verified**, all three line numbers exact |
+| `SemanticProgramBuilder::input`/`input_resolved` take `Shape` by value | `program.rs:493`, `:516` | **verified** |
+| `SemanticProgram::shape -> Result<&Shape, HandleError>` | `program.rs:237` | **verified** |
+| Contract admits symbolic semantic extents | `shape-environment-contract.md:89-91` | **verified** — the sentence is hard-wrapped; a single-line grep returns nothing, which is a false negative, not absence |
+| `docs/ir.md` "will not complete the symbolic contract above" | `docs/ir.md:1158` | **verified** (the research record cites it as `:1111`; that line reference has drifted) |
+| `SemanticIdentity` owns exactly four subjects; graph doc excludes providers/snapshots/compilation provenance | `semantic/identity.rs:40-45`, `:21-22` | **verified** |
+| `encode_shape` writes rank then eight untagged big-endian bytes, domain `tiler.semantic-graph.v2\0` | `semantic/identity.rs:384-389`, `:17` | **verified** |
+| 45 call sites across 5 crates — compiler 24, ir 11, reference 7, artifact 2, macros 1 | repair §1 | **verified exactly**, by the `#[deprecated]` method the repair block recommends |
+| per-file compiler breakdown "`normalize.rs` ×8" | repair §1 | **imprecise** — 9 warnings at 7 distinct lines. The stated sub-counts sum to 23, not the 24 the same sentence claims |
+| "the compiler sites are real source, not fixtures" | repair §1 | **imprecise** — broadly right, but `request.rs:4491` and `normalize.rs:1160` are `#[cfg(test)]` *items*, not module boundaries, so the claim needs per-site checking rather than the range reading it invites |
+
+### The merge block's artifact claim is false
+
+> "The artifact program subject and the expansion cache's `ComposedSubject` already carry the semantic subjects, so no cache facet, artifact section, or crate dependency is added."
+
+**True for the cache** — `crates/tiler-cache` never names `SemanticIdentity`; `ComposedSubject` takes opaque facet bytes. **False for the artifact.** `project_semantic` (`tiler-artifact/src/program/codec/model.rs:1018-1033`) does not carry `SemanticIdentity`; it projects **three named typed subjects** into a wire struct. `docs/artifact-abi.md:414` states this deliberately: "Only the three reached subjects travel". A fourth would need a new subject newtype, manifest schema major step, `tiler.artifact-program.v15 → v16`, and an ABI-doc edit under **`contracts/artifacts` — a scope this ticket does not hold and which `w-decide-wh` currently claims.**
+
+**Resolution that keeps the unit inside its scopes.** Make the fifth subject **total** over an empty-environment identity (this is the elimination `fold` asked for and left open; optional makes "declares no symbols" and "empty environment" two states for one fact). The subject is then constant across every artifact-reachable program, because the compiler refuses a symbolic program at `normalize.rs`'s rebuild, so no two artifacts can differ by it. The artifact keeps three subjects, `docs/artifact-abi.md:154` and `:414` stay true unedited, and the artifact domain does **not** step — only its values move, which is exactly the precedent `docs/artifact-abi.md:229` and `:231` already state for a nested domain. That coupling is load-bearing and needs its own test, not an assumption.
+
+### Byte stability is not "only for static programs" — it is abandoned
+
+The merge block says the byte-stability requirement "applies only to programs with no symbolic extent". That is **self-contradictory**: `SourcedExtent::encode` prepends a tag byte (`sourced.rs:222-228`) where `encode_shape` writes none, so a wholly static program's graph bytes move too. `fold`'s own Fact says so outright. If static bytes did not move, no domain step and no pin recompute would be needed — yet the same block demands both. The coherent reading is that byte stability is **dropped entirely**, which is why the domain steps; do not restate it as a surviving requirement.
+
+### Missing scope: `implementation/build`
+
+The three pins the ticket says must move — `ARTIFACT_IDENTITY`, `CACHE_SUBJECT`, `FIXED_CONTENT_BYTES` at `crates/tiler-build/src/metal_plan.rs:1493-1497` — are under **`implementation/build`**, which is **not** in this ticket's `scopes`. That is the same defect the 2026-08-07 repair found and fixed for five other crates, missed once more because the pins were enumerated without mapping them back through `ticketsplease.toml`. It is currently **unclaimed**, so it can simply be added. `crates/tiler/src/route/tests.rs` is `implementation/frontend` and is already held.
+
+### The domain cascade, enumerated from source
+
+A fifth subject forces a step at every site that enumerates the subject set into a versioned preimage:
+
+- `tiler.semantic-graph.v2 → v3` — `semantic/identity.rs`
+- `tiler.compiler.request-subject.v5 → v6` — `tiler-compiler/src/request.rs:2949-2960`
+- `tiler.program-alternative.v1 → v2` — `tiler-compiler/src/pipeline.rs:285-303`
+- index refinement receipt — `tiler-ir/src/index/refinement.rs:3746-3748`
+
+Not affected, and checked rather than assumed: `capability.rs:1631` and `tiler-reference/src/identity.rs:49-51` encode a **different** three-subject authority type (`LoweringCapabilityAuthority` / `SemanticCapabilityAuthority`), not `SemanticIdentity`.
+
+`crates/tiler-conformance` is safe to leave to its live branch: it reads only `.graph()` (`publication/proof.rs:893`), and its hex pins are `result_sha256` numerical-oracle values, not identity bytes — none move.
+
+### Stale claims this change must repair, all in declared scopes
+
+- `docs/ir.md:904` — "no semantic construction path names it" and an extent "reaches no semantic value at layer 1" both become false.
+- `docs/ir.md:858` — the canonical-identity statement `fold` already named.
+- `shape/sourced.rs:19-31` and `:92-96` — "the index layer is the only consumer at this commit" and "**This case has no implementation at this commit**" become false the moment the semantic layer carries a sourced shape.
+
+### Why the tree was left clean rather than partially cut
+
+Part A forces the v3 tagged encoding; v3 forces the fifth subject, or a symbolic program ships unkeyed; the fifth subject forces the cascade above. There is therefore **no smaller coherent unit than the whole** — every intermediate stopping point is a half-stepped identity domain, which `AGENTS.md` names as not a coherent boundary. The base state is the only other gated boundary, so that is what is preserved.
+
+**Before the next dispatch:** add `implementation/build`; state the total-vs-optional elimination and the artifact-omission argument above as decided, since they change what the ticket delivers; and treat the pin list as a hypothesis — recompute every pin on the merged tree and report unmoved ones too.
