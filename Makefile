@@ -62,12 +62,43 @@ lint:
 		--exclude tiler-prototype-run --exclude tiler-prototype-compile \
 		--exclude tiler-prototype-candle -- -D warnings
 
+# The floors below extend the `fmt` target's reasoning — "a glob that has
+# stopped matching produces no complaints, which is indistinguishable from a
+# population that is clean" — to the globs `trybuild` itself expands. A
+# zero-match glob is silent at every layer: `expand_globs` collects an empty
+# match list without an error, a case that never expanded is not something
+# `Runner::run` can count as a failure, and the "no trybuild tests enabled"
+# notice is both a bare `println!` and unreachable when one half collapses,
+# because each harness registers a `pass` glob and a `fail` glob against one
+# `TestCases` and the surviving half keeps the list non-empty. Rename a fixture
+# directory and the harness reports `ok` while testing nothing.
+#
+# That silence costs more here than an ordinary missing assertion. These globs
+# carry compile-fail evidence, which is the kind this gate already goes out of
+# its way to keep — the `--doc` command below is retained for a *different*
+# population of it, the `Preflight::commit` doc-tests, and nothing was doing the
+# equivalent job for these. Two of the nine facade fixtures are also read by
+# name from `tiler-macros`; the other seven and all seventeen `tiler-ir`
+# compile-fail fixtures are held up by nothing but the count on their line.
+#
+# One floor per glob, stated next to the command that consumes it. The eighth,
+# `crates/tiler/tests/facade/pass`, is floored in `fmt` above instead, because
+# `rustfmt --check` reads it there and duplicating the count would only give it
+# two places to be wrong.
+#
 # Two commands because nextest does not run doc-tests, at all. Dropping the
 # second would silently stop running the compile-fail doc-tests on
 # `Preflight::commit`, which are the compiler-checked evidence for ADR 0051's
 # one-way routing commit — they would pass by never being compiled.
 # `.config/nextest.toml` is what makes the first quiet on a green run.
 test:
+	test $$(ls crates/tiler/tests/facade/fail/*.rs | wc -l) -eq 9
+	test $$(ls crates/tiler-ir/tests/index-region/pass/*.rs | wc -l) -eq 1
+	test $$(ls crates/tiler-ir/tests/index-region/fail/*.rs | wc -l) -eq 4
+	test $$(ls crates/tiler-ir/tests/shape-evidence/pass/*.rs | wc -l) -eq 2
+	test $$(ls crates/tiler-ir/tests/shape-evidence/fail/*.rs | wc -l) -eq 7
+	test $$(ls crates/tiler-ir/tests/typed-handles/pass/*.rs | wc -l) -eq 1
+	test $$(ls crates/tiler-ir/tests/typed-handles/fail/*.rs | wc -l) -eq 6
 	cargo nextest run --workspace --locked
 	cargo test --workspace --doc --locked --quiet
 
