@@ -1,7 +1,7 @@
 ---
 id: carry-the-exhausted-resource-through-the-budget-refusal
 title: Carry the exhausted resource through the budget refusal
-status: in-progress
+status: awaiting-decision
 priority: p3
 dependencies: []
 related: [measure-executable-coverage-identity-growth-against-the-program-identity-bound]
