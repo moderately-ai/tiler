@@ -1,7 +1,7 @@
 ---
 id: pin-the-tiler-compiler-identity-domain-spellings-the-ir-census-does-not-reach
 title: Pin the tiler-compiler identity domain spellings the ir census does not reach
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [pin-the-identity-domain-strings-so-a-reverted-domain-reddens-the-gate]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, tests, versioning]
-claimed_from: todo
-assignee: w-sol-identity
-lease_expires_at: 1786201849
 ---
 
 `tiler-ir` now carries a source census pinning its identity domain spellings. The scan is `CARGO_MANIFEST_DIR`-rooted, so it reaches that crate only. **`tiler-compiler` is the largest uncovered population.**
