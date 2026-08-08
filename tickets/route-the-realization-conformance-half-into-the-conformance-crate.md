@@ -1,7 +1,7 @@
 ---
 id: route-the-realization-conformance-half-into-the-conformance-crate
 title: Route the realization-conformance half into the conformance crate
-status: in-progress
+status: done
 priority: p2
 dependencies: [carry-the-device-executed-value-proof-into-the-conformance-crate]
 related: [retain-contraction-conformance-evidence, publish-an-l3-contraction-cell-through-the-accepted-route, survey-what-belongs-in-the-conformance-crate]
@@ -9,9 +9,6 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, conformance, contraction, migration]
-claimed_from: todo
-assignee: w-route-th
-lease_expires_at: 1786144902
 ---
 ## User-visible outcome
 
@@ -136,3 +133,37 @@ cargo clippy -p tiler-conformance --all-targets --target x86_64-unknown-linux-gn
 - **`w_vocab_slice` is uncompared**, blocked on `tiler_artifact::proof::MAX_PROOF_PAYLOAD_BYTES`. Needs its own ticket holding the artifact scope.
 - **The row-difference policy** above is a worker's reasoned choice on evidence this ticket predates, and is Tom's to confirm.
 - `retain-contraction-conformance-evidence` still needs narrowing to its reference half by the coordinator; not closed from here.
+
+## Outcome — done, 2026-08-07
+
+Landed at merge **`2fb699a9`** (worker commit `b26d407f`). 11 files, +1,821/−180. `make full` exit 0 on the merged tree, 1,090 release tests. `crates/tiler-reference/` is **byte-identical to base** — coordinator-confirmed by an empty `git diff --name-only`.
+
+**Five of six L3 contraction cells now compare executed device bytes** against the retained `direct` digests, all reproducing exactly on Apple M4 Max / macOS 27.0 `26A5388g` / Apple9 / metal `32023.921`: `w_decode_kv`, `w_prefill_q`, `w_prefill_mlp_in`, `w_prefill_mlp_out`, `w_prefill_o`.
+
+### The coordinator's brief was for a different ticket
+
+My brief described `from_realization`, `ConformanceSubject`, and `bf16_vertical::conformance_of` as "the shape this ticket generalizes". **This ticket is the L3 `result_sha256` device comparison and touches none of that** — the brief belonged to `route-the-bf16-vertical-s-declared-conformance-through-the-checked-bridge`. The worker noticed, worked from the ticket, and said so. Exactly right.
+
+### The cost claim in this ticket was false, and the correction matters
+
+The ticket framed the cost as "a device dispatch per cell, not a host fold, so the 1.1e9-step host cost does not apply". **The dispatch is nearly free** — the whole routed run was 0.34 s at base. The cost is the **oracle**: `publication/proof.rs::reference_bits` evaluates every published expectation through `ReferenceEvaluator`, so the 1.1e9-step fold applies in full and is the only reason an `#[ignore]` is needed at all. Measured: **30.78 s and 323 MB peak RSS** for the four prefill cells, against 0.62 s for the rest of the crate. `w_decode_kv` folds under the reference's own per-occurrence bound, so the gate publishes it through the unmodified evaluator and authorizes nothing.
+
+Two smaller repairs: the quoted `tiler-reference` header sentence was **not verbatim**, and that file holds **nine** `#[test]`s rather than eight. `TILER_CONFORMANCE_ARTIFACT_BASE` is stale, retired when envelope production moved in-process.
+
+### A deliberate deviation from the ticket, and it was the right call
+
+The ticket required any non-matching environment row to make the member "named unavailable". **Implemented literally that check is permanently dead**: the record's toolchain row is SDK 26.5 / metal `32023.883`, and this host resolves SDK 27.0 / metal `32023.921` — coordinator-verified with `xcrun metal --version` and `xcrun --show-sdk-version` — so *no* current host matches and every run would report a boundary instead of comparing.
+
+The split landed instead: a difference in the **machine** (device, GPU family) declines by name while the member still routes and still compares against its published reference; a difference in the **toolchain** is announced and the comparison proceeds. Perturbation 2 proved the decline path is **live rather than dead code**, by reclassifying `offline-compiler` as a hardware field and watching this host's genuine toolchain difference trip the decline inside a real routed run — which also **found and fixed a real defect**, a declined comparison printing all 1,024 result elements because elision keyed on the comparison rather than the result size.
+
+### Population and floor moved together
+
+57 → 68 tests, 65 device-free. `DEVICE_FREE_TEST_FLOOR` moved **53 → 64, by the same eleven**, preserving the documented two-test sensitivity, with per-module counts written into the constant. Not moved to make anything pass. The unsafe census and `lints.rs` are untouched.
+
+`retained_record.rs` now reads the spike's `environment.tsv` and `workload.tsv`, so the six pinned digests are a **checked transcription** on every host rather than a hand copy, and every row difference is printed by name before any digest is compared.
+
+### Two things filed rather than absorbed
+
+`w_vocab_slice` cannot route: its `[8192, 1024]` weights operand is 33,554,432 bytes against a `pub` `MAX_PROOF_PAYLOAD_BYTES` of 16,777,216 — **exactly a factor of two**, coordinator-verified. The exclusion is *derived* from that constant and pinned to the doubling, so it cannot be quietly edited. Filed as `decide-whether-the-proof-payload-limit-admits-the-vocabulary-projection-weights`.
+
+And the publication path's oracle still runs under `strict()`, whose subject is `Unstated`, while artifacts compile under `FLUSH_SUBNORMALS_TO_ZERO_F32`. Unobservable on these operands — the probe stream is `m·2⁻²⁴` — but a genuine asymmetry, and closing it needs a `VerifiedScheduledRegion` the contraction path does not hold. Filed as `state-a-subject-on-the-contraction-publication-path-s-reference-oracle`.
