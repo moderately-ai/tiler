@@ -1,7 +1,7 @@
 ---
 id: refresh-the-device-free-test-floor-s-prose-census
 title: Refresh the device-free test floor s prose census
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [date-the-conformance-measurement-bullet-s-all-runs-claim]
@@ -9,9 +9,6 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: w-terra-conformance-census
-lease_expires_at: 1786214147
 ---
 
 `DEVICE_FREE_TEST_FLOOR`'s doc comment retained a historical census after the live population grew. The initial prose-only premise was false: the unchanged floor also ceased to reject removal of a two-test device-free module.
