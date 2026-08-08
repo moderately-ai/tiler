@@ -2,6 +2,7 @@
 
 use std::cell::Cell;
 use std::error::Error as _;
+use std::mem::variant_count;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -13,14 +14,15 @@ use super::{
     map_scalar_apply_error, minimum_reducer_body, with_admitted_proof_budget,
 };
 use crate::index::model::{
-    ReducerBodyOperationData, ReducerBodyValueData, ReducerBodyValueSource, ScalarReducerBodyData,
+    IndexNode, ReducerBodyOperationData, ReducerBodyValueData, ReducerBodyValueSource,
+    ScalarReducerBodyData,
 };
 use crate::index::scalar::{ScalarApplyError, ScalarInferenceHostFailure};
 use crate::index::{
     DomainRole, FrozenScalarRegistry, IndexBuildError, IndexDomainEvidence, IndexDomainFactSource,
-    IndexDomainPredicate, IndexDomainSoundProof, IndexDomainUnknownReason, IndexExtentRef,
-    IndexLimitKind, IndexRegionBuilder, MAX_SCALAR_CANONICAL_BYTES, ProofResource, ScalarArity,
-    ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
+    IndexDomainPredicate, IndexDomainSoundProof, IndexDomainUnknownReason, IndexExprClass,
+    IndexExtentRef, IndexLimitKind, IndexRegionBuilder, MAX_SCALAR_CANONICAL_BYTES, ProofResource,
+    ScalarArity, ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
     ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract,
     ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder, ScalarResultIndex,
     TensorRole, UnknownIndexDomainPredicate, VerifiedIndexRegion,
@@ -351,6 +353,41 @@ fn every_coordinate_predicate_retains_exact_inspectable_evidence() {
     }
 }
 
+/// The three sound bounds arguments, sized from their vocabulary.
+///
+/// Held at module scope rather than inside the identity test below because a
+/// `const` after a statement is denied by `clippy::items_after_statements`, and
+/// because the length is the point: a fourth argument fails to compile here
+/// until someone names it, where a hand-written list would have gone on
+/// reporting no identity collision over a population that had quietly shrunk.
+const SOUND_PROOFS: [IndexDomainSoundProof; variant_count::<IndexDomainSoundProof>()] = [
+    IndexDomainSoundProof::VacuousEmptyDomain,
+    IndexDomainSoundProof::Interval,
+    IndexDomainSoundProof::ProvedExtentEquality,
+];
+
+/// A discharged record can carry every evidence class but one.
+///
+/// `IndexDomainEvidence::Unknown` is the exclusion and it is structural: an
+/// unknown is not evidence and cannot construct a
+/// `DischargedIndexDomainPredicate` at all, which is why it sits beside the
+/// evidence-bearing classes rather than inside them. The remaining three are
+/// `SoundProof`, `ExhaustiveFinite`, and `Empirical`, and the identity
+/// enumeration below covers all of them. A fifth class must decide which side
+/// it falls on before that enumeration can claim to be complete, so it breaks
+/// here first.
+const _: () = assert!(
+    variant_count::<IndexDomainEvidence>() == 4,
+    "a fifth evidence class must decide whether a discharged record can carry it \
+before the identity enumeration below can stay complete."
+);
+
+/// Both premise sources a bounds proof may rest on, sized from their vocabulary.
+const FACT_SOURCE_CASES: [IndexDomainFactSource; variant_count::<IndexDomainFactSource>()] = [
+    IndexDomainFactSource::Program,
+    IndexDomainFactSource::ShapeEnvironment,
+];
+
 #[test]
 fn index_domain_subject_predicate_outcome_and_basis_each_enter_region_identity() {
     let region = verified_copy();
@@ -402,15 +439,23 @@ fn index_domain_subject_predicate_outcome_and_basis_each_enter_region_identity()
     };
     assert_ne!(identity(&baseline), identity(&changed_predicate));
 
-    let evidence_cases = [
-        IndexDomainEvidence::SoundProof(IndexDomainSoundProof::VacuousEmptyDomain),
-        IndexDomainEvidence::SoundProof(IndexDomainSoundProof::Interval),
-        IndexDomainEvidence::SoundProof(IndexDomainSoundProof::ProvedExtentEquality),
-        IndexDomainEvidence::ExhaustiveFinite { points: 7 },
-        IndexDomainEvidence::Empirical,
-    ];
+    // Sized from the vocabularies rather than written out, so a fourth sound
+    // proof or a fifth evidence class cannot leave this enumeration silently
+    // covering less while still reporting no identity collision. The three
+    // arguments come from `SOUND_PROOFS`, whose length is the type's; the two
+    // remaining classes a discharged record can carry are appended by hand, and
+    // the `variant_count` pin beside that constant is what makes a fifth class a
+    // build error rather than an omission.
+    let evidence_cases = SOUND_PROOFS
+        .into_iter()
+        .map(IndexDomainEvidence::SoundProof)
+        .chain([
+            IndexDomainEvidence::ExhaustiveFinite { points: 7 },
+            IndexDomainEvidence::Empirical,
+        ])
+        .collect::<Vec<_>>();
     let mut evidence_identities = Vec::new();
-    for evidence in evidence_cases {
+    for evidence in evidence_cases.iter().copied() {
         let mut changed_basis = compacted();
         changed_basis.index_domain_evidence[0].evidence = evidence;
         evidence_identities.push(identity(&changed_basis));
@@ -423,11 +468,7 @@ fn index_domain_subject_predicate_outcome_and_basis_each_enter_region_identity()
     // identity, beside its subject, predicate, and evidence. Two regions whose
     // bounds hold for the same reason but rest on different premises are
     // different regions, so the tag must move the bytes.
-    let fact_source_cases = [
-        IndexDomainFactSource::Program,
-        IndexDomainFactSource::ShapeEnvironment,
-    ];
-    let mut fact_source_identities = fact_source_cases
+    let mut fact_source_identities = FACT_SOURCE_CASES
         .into_iter()
         .map(|facts| {
             let mut changed_facts = compacted();
@@ -437,7 +478,10 @@ fn index_domain_subject_predicate_outcome_and_basis_each_enter_region_identity()
         .collect::<Vec<_>>();
     fact_source_identities.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
     fact_source_identities.dedup();
-    assert_eq!(fact_source_identities.len(), fact_source_cases.len());
+    assert_eq!(
+        fact_source_identities.len(),
+        variant_count::<IndexDomainFactSource>()
+    );
 
     let unknown = |reason| {
         let mut changed_outcome = compacted();
@@ -451,6 +495,11 @@ fn index_domain_subject_predicate_outcome_and_basis_each_enter_region_identity()
             });
         changed_outcome
     };
+    // Six cases over three variants, because two of them are the same variant
+    // distinguished only by its fields. The population cannot be mirrored from
+    // `variant_count` for that reason, so the *variant* census is pinned at
+    // `the_index_expression_vocabulary_admits_no_data_dependent_form` instead —
+    // a fourth reason is a build error there before it can be an omission here.
     let unknown_cases = [
         IndexDomainUnknownReason::InsufficientFacts,
         IndexDomainUnknownReason::UnsupportedFragment,
@@ -493,5 +542,92 @@ fn index_domain_subject_predicate_outcome_and_basis_each_enter_region_identity()
     assert_ne!(
         identity(&baseline),
         identity(&unknown(IndexDomainUnknownReason::InsufficientFacts))
+    );
+}
+
+/// The index-expression vocabulary ADR 0107 left unchanged, sized from its
+/// types.
+///
+/// ADR 0107 admitted `tiler::gather-f32@1` as a semantic family "and as nothing
+/// below it", and the substance of that record is a *negative*: no `IndexNode`
+/// form reads tensor data and no `IndexExprClass` member is data-dependent, so a
+/// gather occurrence reaches no index region. ADR 0108 decides the shape a
+/// data-dependent coordinate would take if one were ever admitted — an
+/// expression form and a fourth class, never a second tensor on `AccessData` —
+/// and decides that none is admitted yet.
+///
+/// A negative decision with no check erodes silently, because the way to break
+/// it is to *add* something and nothing is watching the count. These pins are
+/// what make the widening loud: each compares a `variant_count` against a
+/// hand-written literal, so a sixth node form or a fourth class is a build error
+/// here that names the record it contradicts. Neither is a tautology — the two
+/// sides come from different places, the type and this file — which is exactly
+/// what an expectation derived from the list it checks would fail to be.
+///
+/// The unit-variant vocabularies get the stronger form: their arrays are
+/// *sized* by `variant_count` and *filled* by hand, so a widened vocabulary
+/// fails to compile until someone names the new inhabitant. `IndexNode` and
+/// `IndexDomainUnknownReason` carry fields and cannot be mirrored that way, so
+/// they take a length pin and state their census.
+#[test]
+fn the_index_expression_vocabulary_admits_no_data_dependent_form() {
+    // Sized by the type, filled by hand: a fourth class breaks this line.
+    const CLASSES: [IndexExprClass; variant_count::<IndexExprClass>()] = [
+        IndexExprClass::Affine,
+        IndexExprClass::QuasiAffine,
+        IndexExprClass::SemiAffine,
+    ];
+    // Five forms, none naming a tensor. A `variant_count`-sized array of values
+    // is unavailable because every form but `Dimension` carries a non-const
+    // payload, so the census is asserted and printed instead of mirrored.
+    const NODE_FORMS: usize = 5;
+    const _: () = assert!(
+        variant_count::<IndexNode>() == NODE_FORMS,
+        "ADR 0107 and ADR 0108 state that no `IndexNode` form reads tensor data. \
+Widening this enum contradicts both records; amend them before widening it."
+    );
+    // Three reasons, every one meaning `dischargeable in principle by supplying
+    // more` — more facts, a stronger engine, a larger budget. ADR 0108 finds
+    // that admitting a data-dependent coordinate without a fourth reason naming
+    // undecidability *in principle* is what would weaken the guarantee ADR 0046
+    // protects, because it would make one type mean two incompatible things.
+    const UNKNOWN_REASONS: usize = 3;
+    const _: () = assert!(
+        variant_count::<IndexDomainUnknownReason>() == UNKNOWN_REASONS,
+        "a fourth unknown reason is ADR 0108's stated repair and arrives with the \
+expression form, not before it."
+    );
+
+    assert_eq!(
+        CLASSES
+            .into_iter()
+            .fold(IndexExprClass::Affine, IndexExprClass::join),
+        IndexExprClass::SemiAffine,
+        "`SemiAffine` is the weakest implemented class, so it absorbs the other two"
+    );
+    // The property the node census stands in for, named rather than inferred
+    // from it: each admitted form's operands are literals, domain dimensions, or
+    // declared shape symbols, and no form's name mentions a tensor. Written as a
+    // wildcard-free match so a sixth form must be named here rather than inherit
+    // an answer from a catch-all.
+    let form_name = |node: &IndexNode| match node {
+        IndexNode::Constant(_) => "integer-literal",
+        IndexNode::Dimension(_) => "domain-dimension",
+        IndexNode::LinearCombination { .. } => "linear-combination",
+        IndexNode::FloorDiv { .. } => "floor-div-by-extent",
+        IndexNode::Modulo { .. } => "modulo-by-extent",
+    };
+    assert_eq!(form_name(&IndexNode::Dimension(0)), "domain-dimension");
+    // The census, printed rather than re-asserted. `assert_eq!(NODE_FORMS, 5)`
+    // would compare a literal against itself and pass for any population, which
+    // is the failure mode the pins above exist to avoid; the counts are read
+    // from the types here so a reader of the output sees the population the
+    // decision was made over.
+    println!(
+        "index-expression census: {} node forms, {} classes, {} unknown reasons, {NODE_FORMS} and \
+{UNKNOWN_REASONS} pinned",
+        variant_count::<IndexNode>(),
+        CLASSES.len(),
+        variant_count::<IndexDomainUnknownReason>(),
     );
 }

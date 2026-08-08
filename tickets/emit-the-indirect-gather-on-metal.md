@@ -3,7 +3,7 @@ id: emit-the-indirect-gather-on-metal
 title: Emit the indirect gather on Metal
 status: blocked
 priority: p3
-dependencies: [admit-the-indirect-access-class-into-the-index-layer]
+dependencies: [admit-the-indirect-access-class-into-the-index-layer, accept-adr-0108-data-dependent-index-coordinate-siting]
 related: [admit-an-indirect-gather-family-for-tied-embedding-lookup, admit-a-storage-carrier-for-integer-program-inputs]
 scopes: [implementation/metal, implementation/compiler]
 shared_scopes: [project/tickets]
