@@ -229,7 +229,7 @@ Keep feasibility separate from cost and measurements bounded to their profile. R
 
 ## Documentation and durable records
 
-Documentation is manually maintained: links, frontmatter, supersession, entry points, and catalogs have no automated validator. Update catalogs and dependent contract language with the decision or metadata they describe.
+Documentation is manually maintained. One mechanical property is checked: `make citations` resolves every local markdown link in an open ticket or a live document, so a catalog row or cross-reference that points at nothing fails the gate. It reads the same population as the pinned citations, and `check-citations.sh` states which link shapes it declines to resolve and why. Nothing else is validated — not frontmatter, not supersession, not whether an entry point still lists the right documents, not whether a link that resolves points at the document it claims to, and not the heading anchor after a `#`. Update catalogs and dependent contract language with the decision or metadata they describe.
 
 Applying an ADR means aligning status, catalogs, contracts, terminology, and released graph edges. Read affected documents in full before declaring the sweep complete.
 
