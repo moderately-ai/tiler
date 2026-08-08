@@ -1,7 +1,7 @@
 ---
 id: answer-input-element-counts-as-the-declared-tensors-own-count
 title: Answer input element counts as the declared tensor's own count, not the reading region's domain
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [answer-per-ordinal-element-counts-only-for-ordinals-an-output-reads]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: []
 paths: []
 tags: [defect]
+claimed_from: todo
+assignee: w-answer-in
+lease_expires_at: 1786158471
 ---
 ## User-visible outcome
 

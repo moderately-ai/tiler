@@ -1,7 +1,7 @@
 ---
 id: catalog-the-four-cost-model-reading-notes-and-correct-the-stale-token-out-key-count
 title: Catalog the four cost-model reading notes and correct the stale token-out key count
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [close-the-four-licence-readings-tom-supplied-and-admit-graefe-and-ward, admit-an-indirect-gather-family-for-tied-embedding-lookup]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation, research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-catalog-t
+lease_expires_at: 1786158472
 ---
 ## Two unrelated debts, both reported by workers that could not reach them
 

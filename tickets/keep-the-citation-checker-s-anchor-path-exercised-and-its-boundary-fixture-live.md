@@ -1,7 +1,7 @@
 ---
 id: keep-the-citation-checker-s-anchor-path-exercised-and-its-boundary-fixture-live
 title: Keep the citation checker's anchor path exercised and its boundary fixture live
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [pin-ticket-source-citations-against-the-tree-they-name]
@@ -9,6 +9,9 @@ scopes: [implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-keep-the-
+lease_expires_at: 1786158471
 ---
 ## The defect, and how it arrived
 

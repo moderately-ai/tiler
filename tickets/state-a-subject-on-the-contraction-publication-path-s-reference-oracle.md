@@ -1,7 +1,7 @@
 ---
 id: state-a-subject-on-the-contraction-publication-path-s-reference-oracle
 title: State a subject on the contraction publication path's reference oracle
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [route-the-realization-conformance-half-into-the-conformance-crate, give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject]
@@ -9,6 +9,9 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: w-state-a-s
+lease_expires_at: 1786158472
 ---
 ## The asymmetry
 

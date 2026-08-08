@@ -1,7 +1,7 @@
 ---
 id: admit-a-storage-carrier-for-integer-program-inputs
 title: Admit a storage carrier for integer program inputs
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-an-indirect-gather-family-for-tied-embedding-lookup, reclassify-language-model-work-as-a-conformance-track]
 related: [design-model-ingestion-and-complete-execution, enumerate-the-mature-tensor-dtype-taxonomy, route-an-embedded-artifact-through-a-consumer-storage-seam]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/artifact, implementation/frontend, co
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, abi, frontend, gather, language-model, class-generic-capability]
+claimed_from: todo
+assignee: w-admit-a-s
+lease_expires_at: 1786158471
 ---
 ## User-visible outcome
 
