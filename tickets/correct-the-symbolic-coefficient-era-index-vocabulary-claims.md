@@ -78,3 +78,19 @@ Follow each file's existing convention. `docs/roadmap.md`, `docs/open-questions.
 ## Closes when
 
 Every declared non-identity site above is classified as a live claim repaired with a dated correction, or as an already-recorded correction needing none, with the classification stated per site rather than counted; the corrected symbolic-window diagnostic is pinned by its complete test assertion and the recorded subject perturbation; the two reserved triggers are re-derived from source and their wording states that the remaining symbolic-slice boundary is the literal-only selection grammar; and the `docs/ir.md` contract, broader semantic-shape records, and `SLICE_F32_NORMATIVE_DEFINITION` identity-bearing remainder have explicit follow-up owners rather than being claimed fixed.
+
+## Outcome and completed remainders — 2026-08-09
+
+Commit `c7ffe174` corrected the non-identity source and document population and
+its exact symbolic-window diagnostic. Commit `83bb7839` closed this ticket after
+filing the three separately scoped remainders. All three have since landed:
+[`correct-the-ir-contract-after-sourced-semantic-result-shapes`](correct-the-ir-contract-after-sourced-semantic-result-shapes.md),
+[`repair-the-shape-records-after-sourced-semantic-result-shapes`](repair-the-shape-records-after-sourced-semantic-result-shapes.md),
+and
+[`correct-the-slice-normative-definition-and-recompute-compiler-identities`](correct-the-slice-normative-definition-and-recompute-compiler-identities.md).
+
+The remaining symbolic Slice admission is still owned by
+[`admit-a-position-selecting-slice-for-the-rotary-table`](admit-a-position-selecting-slice-for-the-rotary-table.md);
+this completed correction did not decide its attribute-versus-operand boundary
+or its identity consequences. No stale vocabulary site discovered by this
+ticket remains unowned.

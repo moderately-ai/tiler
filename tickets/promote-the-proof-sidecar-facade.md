@@ -4,7 +4,7 @@ title: Promote the proof-sidecar facade
 status: done
 priority: p0
 dependencies: [prototype-proof-case-sidecar]
-related: [prototype-metal-aot-slice, prototype-metal-runtime-proof]
+related: [prototype-metal-aot-slice, prototype-metal-runtime-proof, expose-the-dispatch-record-on-a-decoded-artifact, route-the-runtime-loader-through-the-dispatch-record]
 scopes: [implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
@@ -78,3 +78,18 @@ The test's own doc comment previously read "Every governed domain is a fixed con
 **Fixed, because this change contradicts it.** `docs/artifact-abi.md` stated that every codec item is `pub(crate)` and that "no crate outside `tiler-artifact` can encode or decode an artifact and no consumer surface has been accepted". False since `carry-the-metal-payload-in-an-artifact-envelope` promoted the codec's capability on 2026-07-25 — `prototypes/serial-sum-compile/src/main.rs:59` imports `decode_artifact`. Writing a facade-status section for the sidecar beside a false facade-status claim for the envelope was not an option, so the status line, the opening Fact, and "Maturity of the implementation" now record which items were promoted and which stayed `pub(crate)`.
 
 **Found and not fixed, needing a ticket.** Two sentences in the same document are overtaken by `carry-reconstructable-kernel-programs-in-the-neutral-envelope` closing: under "Deliberate exclusions", "`carry-reconstructable-kernel-programs-in-the-neutral-envelope` owns deciding what a decoded envelope must reconstruct" — it decided; and item 3 of "Where the implemented profile is narrower than this contract", which records the reconstruction gap as open rather than as a decided contract. Correcting them means stating the dispatch-record decision and its implementation state in the contract, which is `expose-the-dispatch-record-on-a-decoded-artifact`'s subject and which that ticket could not do, holding only `implementation/artifact`. Not taken here rather than written from a state this ticket did not verify.
+
+## Current follow-through — 2026-08-09
+
+The final finding above is no longer open. The dispatch-record projection landed
+under
+[`expose-the-dispatch-record-on-a-decoded-artifact`](expose-the-dispatch-record-on-a-decoded-artifact.md),
+and the runtime consumed it under
+[`route-the-runtime-loader-through-the-dispatch-record`](route-the-runtime-loader-through-the-dispatch-record.md).
+`docs/artifact-abi.md` now states the accepted decision and implemented boundary:
+a decoded envelope is a dispatch record and never reconstructs shared IR. The
+former open-reconstruction clauses are gone from the live contract.
+
+The proof-sidecar facade promotion itself remains exactly as accepted and
+delivered in `6a1a9f7c`; no proof format, public surface, or identity moved in
+this ticket-record reconciliation.

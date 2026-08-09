@@ -4,7 +4,7 @@ title: Repair the eight dangling links in the runtime route answer record
 status: done
 priority: p1
 dependencies: []
-related: []
+related: [correct-adr-0092-s-false-claim-about-the-drafted-span-s-type-spelling, correct-the-architecture-citation-that-drops-the-inline-frontend-qualifier]
 scopes: [research/runtime]
 shared_scopes: [project/tickets]
 paths: []
@@ -79,3 +79,18 @@ Every one of these is a reader sent nowhere from a live research record, and fiv
 ```sh
 ./check-citations.sh 2>&1 | grep -A2 backend-scoped-route-requirement-answers
 ```
+
+## Outcome and completed findings — 2026-08-09
+
+Commit `91f67cc5` fenced the byte-identical drafted ADR span, preserved its
+transferred bytes, repaired the record's false AGENTS.md attribution, and made
+the link check green without repointing content authored for another directory.
+Commit `c8c3da05` closed this ticket.
+
+Both defects found during the full-file audit were separately owned and have
+landed:
+[`correct-adr-0092-s-false-claim-about-the-drafted-span-s-type-spelling`](correct-adr-0092-s-false-claim-about-the-drafted-span-s-type-spelling.md)
+and
+[`correct-the-architecture-citation-that-drops-the-inline-frontend-qualifier`](correct-the-architecture-citation-that-drops-the-inline-frontend-qualifier.md).
+No dangling-link or neighbouring-record remainder reported here is still
+unfiled.
