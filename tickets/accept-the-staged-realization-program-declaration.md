@@ -5,7 +5,7 @@ status: done
 priority: p2
 dependencies: []
 related: [account-for-a-staged-realization-stage-in-the-kernel-program, admit-a-scheduled-region-for-a-staged-elementary-family, accept-the-fold-with-epilogue-scheduled-region]
-scopes: [implementation/ir]
+scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, api, ir, program, identity-domain]
@@ -75,3 +75,12 @@ Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on thi
 ## Outcome — accepted
 
 **Accepted by Tom on 2026-08-06, as-is with no exclusion, at the live session's decision round (presented by the orchestrator, explain-then-recommend, relay source this ticket).** The declaration, its builder route, view, limit, and diagnostics are accepted public surface exactly as landed, three-vocabulary consequence included. The in-code draft label rewrites (the `StagedRealization` struct, `staged_realizations()`, and `StagedRealizationRef`) ride with the identity-campaign branch, which holds `implementation/ir`.
+
+## Current-state correction — 2026-08-09
+
+The routed source-label sweep landed: `StagedRealization`,
+`push_staged_realization`, `staged_realizations()`, and
+`StagedRealizationRef` all state the accepted boundary. The IR contract's live
+program-scope paragraph is corrected with this record from proposal/parked to
+accepted. No public item, diagnostic, identity domain, or behavior changes in
+this documentation reconciliation.
