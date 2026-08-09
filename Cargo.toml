@@ -147,7 +147,7 @@ opt-level = 1
 # reason. Its lexer discards comments and strings, recognizes wrapped direct
 # attributes, and fails closed on unsupported permission or source-loading
 # syntax. Across all sixteen member trees it separately closes workspace-owned
-# and source-generating macro authority: sixteen private local `macro_rules!`
+# and source-generating macro authority: seventeen private local `macro_rules!`
 # definitions with duplicate multiplicity refused, the guarded `tensor!`
 # procedural exporter and its sole facade
 # re-export, the exact facade-owned compiler `compile_error!` re-export used by

@@ -283,7 +283,11 @@ const REOPENABLE_BUILTIN_DERIVES: [&str; 9] = [
 const GUARDED_MACRO_NAMESPACES: [&str; 4] = ["core", "std", "tiler", "tiler_macros"];
 
 /// The exact private declarative-macro producer population in member source.
-const WORKSPACE_LOCAL_MACRO_RULES: [(&str, &str); 16] = [
+const WORKSPACE_LOCAL_MACRO_RULES: [(&str, &str); 17] = [
+    (
+        "crates/tiler-artifact/src/program/codec/tests.rs",
+        "exhaustive_enum_population",
+    ),
     (
         "crates/tiler-artifact/src/program/handles.rs",
         "draft_handle",

@@ -41,3 +41,81 @@ lease_expires_at: 1786245873
 - Change no production vocabulary, codec tag, identity byte, artifact domain, schema, or public surface.
 
 The dependency on the IR ticket is sequencing, not scope expansion: it lets this copy follow the established private pattern while keeping `implementation/artifact` conflict-free from the IR edit. The related edges are symmetric and non-blocking for discovery; only this ticket depends on the IR repair, so the graph has no cycle.
+
+## Outcome — implemented on the ticket branch, 2026-08-08
+
+The two artifact payload-carrying populations now derive their array lengths
+from one private exhaustive outer-arm macro, invoked once per enum. The current
+arm sums are `1 + variant_count::<FlushedZeroSign>() = 3` and
+`1 + variant_count::<ValueDomainProvenance>() = 4`; the governed-tag round-trip
+test consumes the resulting arrays. The artifact synchronization test derives
+the two-field boolean product from one exhaustive, bool-typed
+`FencedSpaces` destructure, preserving the current four fences and 649 optional
+synchronization subjects without a hand-maintained field count.
+
+This is test-only population evidence. No production enum, field, constructor,
+encoder, tag, identity byte, artifact domain, schema, or public item changed.
+The independent Metal copy remains owned by
+[`derive-the-metal-fenced-space-population`](derive-the-metal-fenced-space-population.md).
+
+The new private producer is pinned as
+`("crates/tiler-artifact/src/program/codec/tests.rs",
+"exhaustive_enum_population")`. The current workspace population is seventeen;
+the earlier fifteen- and sixteen-producer statements remain explicitly
+historical in ADR 0079 and the completed unsafe ticket.
+
+### Subject perturbations
+
+Each temporary production-vocabulary change was made independently, unrelated
+exhaustive encoders and constructors were repaired far enough to reach this
+ticket's mechanism, and the subject was then restored.
+
+- Adding `FlushedZeroSign::NegativeZero` made `SUBNORMAL_MODES` report
+  `expected an array with a size of 4, found one with a size of 3`.
+- Adding `ValueDomainProvenance::ExternalAttestation` made
+  `EXCEPTIONAL_ASSUMPTIONS` report
+  `expected an array with a size of 5, found one with a size of 4`.
+- Adding fieldless `SubnormalMode::TreatAsZero` first reported
+  `non-exhaustive patterns: SubnormalMode::TreatAsZero not covered` at the
+  macro-generated census match. After assigning that arm contribution `1`,
+  `SUBNORMAL_MODES` reported
+  `expected an array with a size of 4, found one with a size of 3`.
+- Adding fieldless `ExceptionalValueAssumption::AssumePresent` first reported
+  `non-exhaustive patterns: ExceptionalValueAssumption::AssumePresent not covered`
+  at the macro-generated census match. After assigning that arm contribution
+  `1`, `EXCEPTIONAL_ASSUMPTIONS` reported
+  `expected an array with a size of 5, found one with a size of 4`.
+- Adding a third boolean `FencedSpaces::constant` field, repairing ordinary
+  construction sites, and adding it to the field census while leaving the
+  enumeration short made `FENCED_SPACES` report
+  `expected an array with a size of 8, found one with a size of 4`.
+- Renaming the actual artifact macro and both calls to
+  `exhaustive_enum_population_v2` left `cargo check -p tiler-artifact
+  --all-targets` green. The complete 18-test unsafe inventory reported one
+  ``unpinned macro_rules! definition `exhaustive_enum_population_v2` `` and two
+  ``custom macro invocation `exhaustive_enum_population_v2!` is unsupported``
+  diagnostics.
+
+Every perturbation was restored before verification.
+
+### Verification
+
+- `cargo nextest run -p tiler-artifact` — 252 passed, 1 skipped.
+- `cargo test -p tiler-artifact --doc` — 2 passed.
+- `cargo nextest run -p tiler --test workspace_unsafe_sites` — all 18 passed;
+  the live census remained 426 sources, 63 Cargo targets, thirteen doctest roots,
+  sixteen packages, 73 fixture plus one rustdoc tensor invocation, and four
+  admitted unsafe sites.
+- `cargo check -p tiler-artifact --all-targets`
+- `cargo clippy -p tiler-artifact --all-targets -- -D warnings`
+- `RUSTDOCFLAGS='-D warnings' cargo doc -p tiler-artifact --no-deps`
+- `cargo fmt --all -- --check`
+- `tkt lint --format json`
+- `make citations` — 926 pinned citations and 6,251 local links resolved.
+- `git diff --check`
+- Fresh `make full` — workspace check, Clippy, rustdoc, 3,248 nextest tests
+  with eight skipped, every workspace doctest, 1,116 release tests with three
+  skipped, ticket lint, citations, formatting, and shellcheck all passed.
+
+The changed-file set contains no production identity encoder, codec golden,
+schema/domain constant, or Metal file; no checked identity or golden moved.

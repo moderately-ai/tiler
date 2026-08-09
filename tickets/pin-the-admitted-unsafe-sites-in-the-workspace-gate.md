@@ -867,3 +867,21 @@ to `exhaustive_enum_population_v2`. `cargo check --locked -p tiler-ir
 ``custom macro invocation `exhaustive_enum_population_v2!` is unsupported``
 diagnostics at the real definition and call sites. The original spelling was
 restored before the clean rerun.
+
+### Artifact producer-population reconciliation, 2026-08-08
+
+The sixteen-producer population above is preserved as the historical count
+before the artifact injectivity repair. That repair adds one private, test-only
+`macro_rules! exhaustive_enum_population` at
+`crates/tiler-artifact/src/program/codec/tests.rs`, with exactly two same-file
+invocations. The current integrated population is therefore seventeen. The
+producer emits only private const population declarations and adds no unsafe,
+attribute, source-load, nested-macro, export, public, or identity authority;
+all other inventoried populations remain unchanged.
+
+The subject perturbation renamed the real definition and both calls to
+`exhaustive_enum_population_v2`. `cargo check -p tiler-artifact --all-targets`
+still passed, while the complete focused inventory reported one ``unpinned
+macro_rules! definition `exhaustive_enum_population_v2` `` and both
+``custom macro invocation `exhaustive_enum_population_v2!` is unsupported``
+diagnostics. The original spelling was restored before the clean rerun.

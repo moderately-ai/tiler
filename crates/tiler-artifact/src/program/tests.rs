@@ -5497,12 +5497,23 @@ const MEMORY_ORDERINGS: [MemoryOrdering; std::mem::variant_count::<MemoryOrderin
     MemoryOrdering::SequentiallyConsistent,
 ];
 
+/// Returns the number of bools in one exhaustive field census.
+const fn bool_field_count<const N: usize>(_: [bool; N]) -> usize {
+    N
+}
+
+/// The independent boolean fields carried by [`FencedSpaces`].
+const FENCED_SPACE_FIELD_COUNT: usize = {
+    let FencedSpaces { workgroup, device } = FencedSpaces::NONE;
+    bool_field_count([workgroup, device])
+};
+
 /// Every fence a synchronization requirement can name.
 ///
-/// `FencedSpaces` is a struct, so `variant_count` does not apply; this is the
-/// product of `bool`'s two inhabitants over its two fields, exhaustive by the
-/// type's definition.
-const FENCED_SPACES: [FencedSpaces; 4] = [
+/// `FencedSpaces` is a struct, so `variant_count` does not apply. Each field in
+/// the exhaustive census above is boolean, making the inhabitant count two to
+/// the power of the field count.
+const FENCED_SPACES: [FencedSpaces; 1 << FENCED_SPACE_FIELD_COUNT] = [
     FencedSpaces {
         workgroup: false,
         device: false,

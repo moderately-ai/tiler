@@ -1,9 +1,9 @@
-// `variant_count` sizes this crate's exhaustive-injectivity enumerations from
-// the enums themselves, so a vocabulary widened in `tiler-ir` is a build error
-// in the test that claims to cover it rather than a population that quietly
-// shrinks while still reporting no collision. A hand-written length has no such
-// check, which is exactly the failure the enumerations exist to rule out. The
-// same reasoning admitted it to `tiler-metal` and `tiler-ir`.
+// This crate's exhaustive-injectivity populations are derived from their Rust
+// types: `variant_count` sizes fieldless-enum arrays, exhaustive outer-arm sums
+// size payload-carrying-enum arrays, and an exhaustive bool-field census sizes
+// a struct product. A vocabulary widened in `tiler-ir` is therefore a build
+// error in the test that claims to cover it rather than a population that
+// quietly shrinks while still reporting no collision.
 //
 // Gated on `test` because the enumerations are test-local: the vocabularies are
 // public but the lists of their inhabitants are not, so an unconditional
