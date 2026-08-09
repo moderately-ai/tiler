@@ -41,3 +41,15 @@ Not moving `semantic_operations`. Not deciding the program boundary. Not decidin
 ## Closes when
 
 The trigger is on the deferral with its evidence, and one dated entry in that ticket's `## Trigger check log` records it as `fired`, `not fired`, or `unevaluable` with a reproducing command.
+
+## Outcome — delivered 2026-08-06
+
+`453aef62` added trigger 4 to
+[`decide-whether-executable-coverage-evidence-folds-as-a-digest`](decide-whether-executable-coverage-evidence-folds-as-a-digest.md)
+with the bounded four-fold-restatement measurement and evaluated it in that
+ticket's trigger log. It fired immediately: the governed
+`semantic_operations` budget was 62, already above the approximately
+30-operation embedding-ceiling trigger. The target therefore left deferral and
+went through its stated decision procedure; its later Outcome records Tom's
+digest-fold answer and accepted ADR 0104. This ticket changed no budget,
+identity, or encoding itself.
