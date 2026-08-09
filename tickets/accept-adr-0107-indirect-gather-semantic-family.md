@@ -39,3 +39,16 @@ Accepted in the interactive orchestration session, as a direct answer to the dec
 `docs/decisions/0107-…md` moved to `decision_status: accepted` with the acceptance provenance, the exact accepted extent, what acceptance did **not** commit to (the public boundary stays a labelled draft under ADR 0075; the index-layer question stays its own decision), and the counterpoint recorded alongside it — that a registered-but-unplannable family is a trap for a reader who takes registration to imply reachability, accepted on the strength of the boundary being tested rather than asserted.
 
 `admit-the-indirect-access-class-into-the-index-layer` is unblocked and dependency-ready. `emit-the-indirect-gather-on-metal` stays `blocked` on *that* ticket, which is correct — it is a second decision, not a consequence of this one.
+
+## Current follow-on correction (2026-08-09)
+
+The final dependency account above is the acceptance-time state. The indirect
+access ticket is now `done`, but its completed outcome was a research decision
+packet, not an admitted IR form: ADR 0108 was returned for revision and the
+successor comparison remains the owner of that representation choice. Metal
+emission therefore remains correctly `blocked`, now on the revised ADR/IR
+admission chain and the independent integer-storage carrier rather than on the
+completed research ticket. Separately,
+`pin-the-gather-request-boundary-refusal-with-a-test` is current `todo` work
+that will replace this acceptance record's asserted fail-closed mitigation with
+the three reachable checks at the actual ordered refusal boundaries.
