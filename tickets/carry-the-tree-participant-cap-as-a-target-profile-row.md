@@ -4,14 +4,11 @@ title: Carry the tree participant cap as a target profile row
 status: awaiting-decision
 priority: p2
 dependencies: []
-related: [cap-the-tree-reduction-participants-at-the-measured-256]
-scopes: [implementation/compiler]
+related: [cap-the-tree-reduction-participants-at-the-measured-256, pin-the-local-memory-refusal-band-the-tree-cap-opened]
+scopes: [implementation/compiler, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
-tags: [target-profiles, public-boundary]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786174094
+tags: [target-profiles, public-boundary, decision, needs-tom]
 ---
 ## Per-Fact audit at `cc667626`, 2026-08-08
 
@@ -25,7 +22,7 @@ Re-read at this base before any edit, per AGENTS.md. Verdicts below; the bodies 
 | The doc asserts a downstream crate's declaration and a repository-wide inventory | **verified, and understated** | Three inventory claims, not two: `declares 32,768 bytes`, `no profile in this repository`, and `the widest workgroup any profile in this repository declares`. |
 | The `declare_*` / `declare_measured_*` pair must be built by this ticket | **false — the mechanism landed** | `activate-measured-reduction-selection-from-a-target-cost-row` is `done`. `CostRow` is a private enum in `target.rs` with one public pair plus one reader per row, `TargetCostRowResolution::Unknown` meaning *no preference*, a conditional descriptor section behind `COST_ROW_DOMAIN`, and `declare_measured_*` taking `TargetCompileProfileMeasurementSource`. This ticket is an instance of that mechanism, not a design. |
 | The "Reserved" section's premise that the sibling is parked | **false** | It is `done`; Tom accepted the *model* on 2026-08-07 and expressly excluded the spelling. |
-| `BoundMetalCompileDeclaration::first_macos_apple9` is in reach | **false** | It is `crates/tiler-build/src/metal_declaration.rs` = `implementation/build`, which this ticket does not declare. |
+| `BoundMetalCompileDeclaration::first_macos_apple9` is in reach | **false at the audited base; scheduling repair applied 2026-08-09** | It is `crates/tiler-build/src/metal_declaration.rs` = `implementation/build`. The original ticket omitted that scope; the board audit added it before any implementation claim. |
 | The inventory claims are "true today" | **false for one of the three** | See below: `capped_tree_partition`'s workgroup claim is inaccurate as stated, which is stronger evidence for this ticket's smaller-instance deliverable than the ticket itself gives. |
 
 ## The gap between what the code does and what its own doc says it should
@@ -41,7 +38,7 @@ Re-read at this base before any edit, per AGENTS.md. Verdicts below; the bodies 
 ## What this ticket owes
 
 - The participant preference declared on the target profile as a **second `CostRow` variant** plus its own `declare_*` / `declare_measured_*` pair and reader, additively — the mechanism `activate-measured-reduction-selection-from-a-target-cost-row` landed and whose documentation already states that this is how a second row arrives. The measured constructor carries a `TargetCompileProfileMeasurementSource`, so validity stays `MeasuredEnvironment` and cannot widen into a portable claim.
-- `BoundMetalCompileDeclaration::first_macos_apple9` declaring it from the retained 2026-08-07 calibration, citing that spike. **Needs `implementation/build`, which this ticket does not declare.**
+- `BoundMetalCompileDeclaration::first_macos_apple9` declaring it from the retained 2026-08-07 calibration, citing that spike. `implementation/build` is now declared for that required edit.
 - **Silence meaning "no preference", never "no plan"** — and a profile declaring no row must remain plannable. What silence should *select* is an open fork, recorded below; the ticket's original wording picked one branch without pricing it.
 - The identity consequence carried completely. **Bounded by reading at this base:** `cost_rows` is written into `complete_descriptor` behind `COST_ROW_DOMAIN`, in a section emitted only when non-empty, so a profile declaring no row keeps its bytes and `COMPLETE_PROFILE_DESCRIPTOR_DOMAIN` stays at `v11`. Only the qualified Apple9 profile declares a cost row today, so only its canonical descriptor moves — and it does move, since the section grows a second entry. Every pinned artifact identity and cache subject derived from that descriptor must be recomputed on the merged tree and ledgered, with a before/after table.
 
@@ -93,9 +90,9 @@ The ticket owes "a profile that declares no row must select exactly as the balan
 
 No change to the cap's value or to the rule's shape — [`bound-the-tree-cap-s-unmeasured-downward-direction`](bound-the-tree-cap-s-unmeasured-downward-direction.md) landed the rule and is `done`. No selection change. No new measurement; the excursion width is [`measure-the-tree-width-excursion-past-the-cap`](measure-the-tree-width-excursion-past-the-cap.md)'s.
 
-## Scope the ticket does not declare
+## Scope and sequencing repair — 2026-08-09
 
-`BoundMetalCompileDeclaration::first_macos_apple9` is in `crates/tiler-build/` = `implementation/build`, which is absent from this ticket's `scopes`. Whoever takes the work after the decisions above needs it added. The doc-leakage deliverable also overlaps an open sibling: [`pin-the-local-memory-refusal-band-the-tree-cap-opened`](pin-the-local-memory-refusal-band-the-tree-cap-opened.md) closes on `capped_tree_partition`'s band paragraph ceasing to describe the band as argued-not-observed, which is the same paragraph carrying two of the three inventory claims. Sequence them rather than racing.
+`BoundMetalCompileDeclaration::first_macos_apple9` is in `crates/tiler-build/` = `implementation/build`; that required scope is now declared rather than left as a future worker's board mutation. The doc-leakage deliverable also overlaps [`pin-the-local-memory-refusal-band-the-tree-cap-opened`](pin-the-local-memory-refusal-band-the-tree-cap-opened.md), now linked in `related`: that sibling closes on `capped_tree_partition`'s band paragraph ceasing to describe the band as argued-not-observed, which is the same paragraph carrying two of the three inventory claims. Sequence them rather than racing.
 
 ## Graph maintenance
 

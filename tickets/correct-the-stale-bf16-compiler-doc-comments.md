@@ -1,14 +1,16 @@
 ---
 id: correct-the-stale-bf16-compiler-doc-comments
 title: Correct the two stale BF16 doc comments in tiler-compiler
-status: todo
+status: closed
 priority: p3
 dependencies: []
 related: [state-and-check-a-bf16-numerical-contract, move-the-navigation-docs-onto-the-two-contract-key-domains]
-scopes: [implementation/compiler]
+scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, bf16]
+closed_reason: obsolete
+closed_note: The recognizer-widening landing already replaced both cited comments and tests.
 ---
 ## User-visible outcome
 
@@ -57,3 +59,9 @@ it is still real.
 
 Neither comment asserts something the source refutes, and the corrected claims
 each cite the site that makes them true.
+
+## Repository audit and closure — 2026-08-09
+
+**Both original Facts are false as current work.** The current pipeline test is `a_pure_bf16_program_is_statable_and_refused_at_the_request_boundary`; its documentation says `The governed baseline refuses a pure-BF16 program by its own dtype row` and asserts `DTypeNotDispatchable` with `Unknown` for the BF16 subject. The positive profile test is now `a_flush_accepting_bf16_contract_reaches_a_selected_plan`; its documentation records that the old `dtype-f32` recognizer wall is gone and asserts a selected plan. `NumericalContractBuilder::strict_bf16` likewise says `Statable, and now planned`, cites both the single- and multi-occurrence positive tests, and separately explains the authoritative profile's remaining numerical-row refusal.
+
+Neither stale test name nor the old “refused by the recognizer” sentence remains in the cited source. The correction landed before this ticket was revisited, so no compiler edit, test rename, or assertion change remains. This ticket closes as obsolete with a ticket-only record; `implementation/compiler` is removed because no compiler edit remains.

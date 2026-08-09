@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, planner]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786176329
 ---
 ## User-visible outcome
 

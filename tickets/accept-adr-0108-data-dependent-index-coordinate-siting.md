@@ -9,8 +9,6 @@ scopes: [contracts/decisions, contracts/foundation, contracts/navigation, implem
 shared_scopes: [project/tickets]
 paths: []
 tags: [decisions, indexing, ir, gather, verification, needs-tom]
-assignee: sol-adr0108
-lease_expires_at: 1786219272
 ---
 ## Decision outcome — returned for revision on 2026-08-08
 

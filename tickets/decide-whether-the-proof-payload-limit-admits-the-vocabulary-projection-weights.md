@@ -5,13 +5,10 @@ status: awaiting-decision
 priority: p2
 dependencies: []
 related: [route-the-realization-conformance-half-into-the-conformance-crate]
-scopes: [implementation/artifact, contracts/artifacts]
+scopes: [implementation/artifact, contracts/artifacts, implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
-tags: []
-claimed_from: todo
-assignee: w-decide-wh
-lease_expires_at: 1786159357
+tags: [decision, needs-tom, public-boundary]
 ---
 ## The hard stop, measured
 
@@ -89,7 +86,7 @@ What moves is a set of pinned assertions and derived populations, all outside `i
 6. `crates/tiler-artifact/src/proof/` — there is **no** negative test for `MAX_PROOF_PAYLOAD_BYTES` anywhere in the owning crate. The only limit test in `proof/tests.rs` is for `MAX_PROOF_CASES`. The single assertion on this bound's value lives in another crate. A change here should add the missing one rather than continue relying on `tiler-conformance` to notice.
 7. Ticket text: `route-the-realization-conformance-half-into-the-conformance-crate.md` (three sites) and this ticket.
 
-Items 3 through 5 are `implementation/conformance`, which has a live branch and was not touched.
+Items 3 through 5 are `implementation/conformance`. The original ticket omitted that required scope because the audit stopped before touching the crate; the 2026-08-09 board repair declares it now so an accepted decision can actually meet this ticket's closing condition without an undeclared expansion.
 
 ### Recommendation
 

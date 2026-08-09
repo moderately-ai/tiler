@@ -8,7 +8,7 @@ related: [emit-from-a-populated-retention-in-the-inline-expansion]
 scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
-tags: []
+tags: [decision, needs-tom, public-boundary]
 ---
 ## What is awaiting acceptance
 

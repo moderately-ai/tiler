@@ -1,6 +1,6 @@
 ---
 id: carry-the-exhausted-resource-through-the-budget-refusal
-title: Carry the exhausted resource through the budget refusal
+title: Accept or revise the exhausted-resource budget-refusal surface
 status: awaiting-decision
 priority: p3
 dependencies: []
@@ -8,10 +8,7 @@ related: [measure-executable-coverage-identity-growth-against-the-program-identi
 scopes: [implementation/compiler, implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
-tags: [compiler, diagnostics]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786182999
+tags: [compiler, diagnostics, public-boundary, needs-tom]
 ---
 ## User-visible outcome
 
@@ -57,10 +54,18 @@ Every claim above was re-read at this base before any edit. **Every one of the f
 
 **This repair does not change what the ticket is for.** The outcome, the non-goals, and the closing condition all survive; what changed is that the resource is a thirteen-row vocabulary over four authorities rather than a five-row one over one, and that the refusal has to say which kind of demand it reports.
 
+## Decision boundary — the implementation is built, not accepted
+
+The source now contains the complete draft described below: public `BudgetResource` and `BudgetRefusal` vocabularies, a payload-bearing `CompileFailureClass::BudgetExhausted`, exhaustive mappings from all thirteen internal resources, and the frontend rendering change. That makes this an acceptance ticket now, not an implementation ticket.
+
+Tom decides whether to accept that exact caller-visible surface. **Recommendation: accept it as built.** A closed typed vocabulary is what lets a caller distinguish an exact demand from a lower bound without re-reading compiler source, and the public failure already promises structured classification. **Strongest counterpoint:** the compiler currently exposes only the five program-scoped rows through the public request path, so publishing all thirteen rows commits names for truncation paths a caller cannot yet reach. If that counterpoint wins, revise the public projection rather than silently treating the worker's 2026-08-08 type choice as acceptance.
+
+The phrase **“Decided 2026-08-08” below records the implementation choice made by the worker; it is not Tom's acceptance provenance.** This ticket remains `awaiting-decision` until Tom accepts or revises the exact public enum variants, fields, exhaustiveness posture, and rendering behavior.
+
 ## Required work
 
 - Carry `resource`, `limit`, and `actual` through `CompileFailureClass::BudgetExhausted`, matching the shape the two sibling arms already use, and keep the mapping exhaustive with no wildcard arm.
-- Decide deliberately whether `resource` is `&'static str` like the sibling `rule` fields or a typed enumeration of budget names, and record the reason on the item. **Decided 2026-08-08: a typed enumeration, `BudgetResource`.** The item's own reasoning — a closed set a caller may match totally — is not the load-bearing one, and ADR 0074 convention 5's clause test does not decide this: that test picks whether a type is `#[non_exhaustive]`, not whether it is a string. Two things decide it. First, ADR 0074 **convention 1** already names this case in its own words: a variant carries "the exhausted resource with its attempted and permitted quantities". Second, and dispositive, `actual` is an exact quantity for eight resources and a lower bound for five — a `&'static str` cannot tell a caller which, so the same source reading the ticket exists to remove would come straight back. `BudgetResource::refusal()` answers it in one total match. Convention 5's clause test *was* applied, to the attribute: `BudgetResource` is 5a and carries `#[non_exhaustive]`; `BudgetRefusal` is a closed two-way split and deliberately does not.
+- Decide deliberately whether `resource` is `&'static str` like the sibling `rule` fields or a typed enumeration of budget names, and record the reason on the item. **Worker selection 2026-08-08, pending Tom's acceptance: a typed enumeration, `BudgetResource`.** The item's own reasoning — a closed set a caller may match totally — is not the load-bearing one, and ADR 0074 convention 5's clause test does not decide this: that test picks whether a type is `#[non_exhaustive]`, not whether it is a string. Two things decide it. First, ADR 0074 **convention 1** already names this case in its own words: a variant carries "the exhausted resource with its attempted and permitted quantities". Second, and dispositive, `actual` is an exact quantity for eight resources and a lower bound for five — a `&'static str` cannot tell a caller which, so the same source reading the ticket exists to remove would come straight back. `BudgetResource::refusal()` answers it in one total match. Convention 5's clause test *was* applied, to the attribute: `BudgetResource` is 5a and carries `#[non_exhaustive]`; `BudgetRefusal` is a closed two-way split and deliberately does not.
 - Add the regression the bug lacked: a compilation that exceeds one budget must report that budget's name, limit, and actual, and the test must be watched failing before the fix.
 - **Added by the work:** the exhausted-resource strings were four separate tables. They are now one, `BudgetResource::key()`, with each authority delegating to it, so the key a refusal reports and the key its explain record carries cannot drift apart. Every one of the thirteen strings is byte-identical to the string it replaced.
 
@@ -76,4 +81,4 @@ That arm needed more than a `{ .. }` to be correct. Its message said the compile
 
 ## Closes when
 
-A public caller can name the exhausted resource, its limit, and the value that exceeded it from the typed failure alone, with a regression test that was watched failing first.
+Tom accepts or revises the exact public failure surface, and a public caller can name the exhausted resource, its limit, and the value that exceeded it from the typed failure alone, with a regression test that was watched failing first.

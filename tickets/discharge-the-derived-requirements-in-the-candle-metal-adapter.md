@@ -1,17 +1,14 @@
 ---
 id: discharge-the-derived-requirements-in-the-candle-metal-adapter
-title: Discharge the derived requirements in the candle metal adapter
+title: Accept or revise derived-requirement discharge in the Candle Metal adapter
 status: awaiting-decision
 priority: p2
 dependencies: []
-related: [check-synchronization-realization-before-the-routing-commit, carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit, prototype-candle-metal-adapter]
+related: [check-synchronization-realization-before-the-routing-commit, carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit, prototype-candle-metal-adapter, correct-the-reversed-requirement-order-in-the-serial-sum-run-doc-comment]
 scopes: [implementation/candle]
 shared_scopes: [project/tickets]
 paths: []
-tags: []
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786187249
+tags: [public-boundary, needs-tom]
 ---
 ## User-visible outcome
 
@@ -62,6 +59,14 @@ Four properties, perturbed separately, each quoted in the worker report:
 - **Unmeasured:** the entry walk — `entry.entry().resources()` over a real `RoutedEntry` — is exercised only by a device-bound run, which the coordination host cannot perform. `RoutedEntry`'s fields are `pub(super)` in `tiler-runtime`, so no device-free fixture in this crate can construct one. The decision it feeds is fully covered device-free.
 - **Unsupported:** no artifact this workspace produces requires a subject Metal declines or an arithmetic outside `CompleteU64`, so the refusing path is unreachable from a real route today. It is a delivery-time guard against a producer that built for a different backend.
 - **Not constructible:** `IndexArithmetic` has one variant, so two entries cannot differ in it and the index pass's own per-entry behaviour has no negative fixture. `minimum_gpu_family`'s wildcard-free match is what stops a widened vocabulary reaching this decision unclassified.
+
+## Decision boundary — the prototype surface is built, not accepted
+
+The adapter implementation and tests described above have landed. What remains is Tom's public-boundary answer: accept or revise the additive `RouteRefusal::{SynchronizationUnrealizable, IndexArithmeticUnsupported}` variants and the witness-bearing `prepare_entries` seam that makes discharge precede pipeline construction.
+
+**Recommendation: accept the draft as built.** The two variants retain the owning typed causes, preserve the device-free-before-device-dependent refusal order, and make deletion or forgery of the discharge step a compile failure. **Strongest counterpoint:** `RouteRefusal` is deliberately exhaustive rather than `#[non_exhaustive]`, so even an additive variant is a breaking promise to downstream matches; Tom may prefer a nested derived-requirement refusal before accepting more top-level variants.
+
+This ticket is therefore `awaiting-decision`, not complete implementation work. The worker's implementation result is evidence for the decision; it is not acceptance provenance. If Tom accepts it, the remaining out-of-scope runtime comment repair stays a separate ticket. If he revises it, return this node to `todo` with the exact replacement surface rather than editing the prototype under a parked decision.
 
 ## Graph maintenance
 

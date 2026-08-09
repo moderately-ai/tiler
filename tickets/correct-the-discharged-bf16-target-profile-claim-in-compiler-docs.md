@@ -1,14 +1,16 @@
 ---
 id: correct-the-discharged-bf16-target-profile-claim-in-compiler-docs
 title: Correct the discharged BF16 target-profile claim in the compiler's capability documentation
-status: todo
+status: closed
 priority: p3
 dependencies: []
 related: [refresh-the-reduced-precision-float-matrix-row-after-the-bf16-gate-landings, declare-the-bf16-rows-on-the-authoritative-metal-profile]
-scopes: [implementation/compiler]
+scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, bf16, compiler, numerics]
+closed_reason: obsolete
+closed_note: Current policy and test docs already carry the corrected BF16 reasoning; no source edit remains.
 ---
 ## User-visible outcome
 
@@ -33,3 +35,9 @@ tags: [documentation, bf16, compiler, numerics]
 ## Closes when
 
 Neither doc comment asserts that no target profile can state a BF16 numerical fact, both give the reason that is still true, and the capability table and its checks are unchanged.
+
+## Repository audit and closure — 2026-08-09
+
+**Original Facts: false as current work; historical only.** The complete current `operation_capabilities` documentation, anchored at `The ground moved and the conclusion did not`, already says a BF16 program is recognized and planned, explicitly marks the old “no target profile can even state” sentence false, and gives the surviving width-specific evidence reason for keeping BF16 out of the capability table. The `UNPLANNED_OPERATIONS` test documentation says the same thing and `every_unplanned_operation_is_registered_and_consumes_no_dimension` still checks the rowless population. A full-file search of `crates/tiler-compiler/src/explain.rs` finds no `no target declaration names bf16` note to repair.
+
+The source correction landed before this ticket was revisited, so changing `policy.rs`, `explain.rs`, the capability table, or its tests would revert or duplicate correct work. This ticket closes as obsolete with a ticket-only record; `implementation/compiler` is removed because no compiler edit remains.

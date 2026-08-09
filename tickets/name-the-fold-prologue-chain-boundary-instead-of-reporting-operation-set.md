@@ -1,31 +1,53 @@
 ---
 id: name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set
-title: Name the fold-prologue chain boundary instead of reporting operation-set
-status: todo
+title: Decide the stable diagnostic key for a materialized reduction prologue
+status: awaiting-decision
 priority: p3
 dependencies: []
-related: []
-scopes: [implementation/compiler]
+related: [admit-a-recognized-chain-more-than-one-materialization-boundary-deep]
+scopes: [implementation/compiler, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
-tags: []
+tags: [decision, needs-tom, public-boundary]
 ---
 ## User-visible outcome
 
-`sum(matmul(a,b) * 2.0)` refuses under a rule naming what was actually declined — a fold's prologue may not itself be a chain — instead of `operation-set`, which claims the vocabulary cannot spell an operation it spells fine standalone.
+A caller receives a stable rule that truthfully classifies the materialized producer a reduction prologue cannot retain, without pretending the compiler has distinguished a producer kind it discarded.
 
-## Why this exists (audited 2026-08-06; citations repaired and the mechanism re-measured 2026-08-08)
+## Per-Fact audit — 2026-08-09
 
-`recognize_elementwise_output` builds an epilogue chain from `ElementwiseRefusal::Folded`; `recognize_elementwise` — sole caller `recognize_reduction` — discards the finding. The refusal is correct (`NormalizedSerialSum` carries no producer); the rule name and the "the same general walk" doc are the defects.
+- **Verified mechanism.** `recognize_reduction` is the production caller of `recognize_elementwise`; `ElementwiseRefusal::Folded(ValueId)` reaches `impl From<ElementwiseRefusal> for RequestError`, whose source-safe anchor is `Flattens a discovered materialization boundary into the rule a caller`. That arm reports `operation-set` because `NormalizedSerialSum` has no producer field.
+- **False proposed classification.** `Folded` carries only a `ValueId`, not the producing family or whether the producer is a chain. `materializes_its_result` covers reductions, contractions, and every staged family realization. Renaming the single arm to `reduction-prologue-chain` would therefore classify direct materialized producers and staged families as chains without evidence.
+- **Impossible required control.** `sum(rms_norm(x))` reaches the same `Folded` arm as `sum(sum(x) * 2.0)`. A one-arm rename necessarily changes both. The original requirement that the first remain `operation-set` while the second receives the new key cannot pass without first widening the internal refusal to retain producer classification.
+- **Public-boundary consequence.** `session::CompileFailureClass::UnsupportedCapability { rule }` documents `rule` as the stable diagnostic key. This is an intentional caller-visible observed-value change, not a comment-only rename.
+- **Imprecise documentation finding.** The existing “same general walk” statement is correct about the shared planner. What differs is how the two callers consume `Folded`: output recognition builds an epilogue, while reduction recognition flattens it. Amend with that distinction rather than deleting the shared-walk claim.
 
-**Citations repaired 2026-08-08.** The two line pins were stale and are replaced by anchors, per AGENTS.md. The `From` impl is `crates/tiler-compiler/src/request.rs "Flattens a discovered materialization boundary into the rule a caller"`, not line 4259; the doc claiming one walk is `crates/tiler-compiler/src/request.rs "The prologue is recognized by the same general walk"`, not line 5276. Both underlying claims were re-read and hold at `68ba010a`, and `recognize_elementwise` still has exactly one caller; only the pins moved.
+The original implementation prescription is withdrawn. It would make the diagnostic more specific in spelling and less accurate in meaning.
 
-**The mechanism was measured rather than inferred (2026-08-08).** Renaming this `From` impl's rule to a probe string makes `sum(sum(x) * 2.0)` — the `folded_prologue(true)` row of `every_refusal_names_its_unrecognized_property` — report the probe: `left: "PROBE-flattened-folded"`. Renaming `plan_elementwise`'s neighbouring `leaves.staged.is_none()` arm instead leaves that row reporting `operation-set`, so this flattening is the sole wall for the shape and the neighbouring guard is never consulted for it. That neighbour is a chain-*width* rule rather than this one; `StagedOperandAdmission`'s doc now separates the three folded-value walls and their owners.
+## Decision boundary
 
-## The work (no admission change)
+Tom chooses the stable public classification:
 
-Distinct rule `reduction-prologue-chain`; the doc stops claiming one walk (shared planner, different findings); `select_supported_strategy`'s boundary paragraph gains the row. Perturbations: the chain-prologue refuses under the new rule, the standalone chain still compiles, and a genuinely unspellable prologue (e.g. `sum(rms_norm(x))`) still reports `operation-set` — else the split renamed rather than separated. File the admission itself as a `deferred` follow-on with the worked-example trigger.
+1. **One key for the actual retained fact.** Rename every flattened `Folded` result to a key such as `materialized-reduction-prologue`, covering any producer whose value would have to cross into `NormalizedSerialSum`.
+2. **Producer-specific keys.** Extend `ElementwiseRefusal::Folded` or the reduction recognizer to retain a governed producer class, then decide separate keys for reduction, contraction, and staged-family producers.
+3. **Keep `operation-set`.** Preserve the broad key and correct only the explanatory documentation.
+
+**Recommendation: option 1.** It names exactly what the recognizer knows and what the normalized form lacks, without widening the recognizer merely to improve a diagnostic. **Strongest counterpoint:** callers may care whether the missing admission is a nested fold, a contraction result, or a staged family; one broad key gives them no more remediation detail than `operation-set` unless the explain path carries the producer separately.
+
+The optimizer contract's stable-reason-code promise is now in scope so the accepted classification can be stated where callers are told what a key means.
+
+## Required evidence after the decision
+
+- Keep `sum(sum(x) * 2.0)`, a direct materialized contraction prologue, and `sum(rms_norm(x))` as separate subjects. State the intentional key for each; do not require an impossible distinction from one unextended arm.
+- Keep the accepted neighbour — the same fold over the same scaling of a declared input — compiling end to end.
+- Keep a genuinely unspellable elementwise family reporting `operation-set` so the new classification does not absorb the vocabulary wall.
+- Perturb the production subject, not the expected string: remove or bypass the materialized producer and show the classified refusal changes or disappears.
+- File admission of a materialized producer into `NormalizedSerialSum` separately; the existing staged-operand-depth deferral owns a different boundary.
+
+## Explicit non-goals
+
+No admission change, request identity change, schedule change, or silent reuse of the deeper-chain ticket. A producer-kind split is implementation work only if Tom selects option 2.
 
 ## Closes when
 
-The rule is separated with all three perturbations observed and the deferral filed.
+Tom selects the public classification; the source docs, optimizer contract, and complete affected test population agree with it; the accepted neighbour and genuinely unspellable control remain distinct; and the separate admission owner is filed.

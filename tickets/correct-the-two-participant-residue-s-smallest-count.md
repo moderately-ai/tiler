@@ -6,7 +6,7 @@ priority: p3
 dependencies: []
 related: [restate-the-tree-width-rule-outside-the-compiler-crate, bound-the-tree-cap-s-unmeasured-downward-direction, measure-the-tree-width-excursion-past-the-cap]
 scopes: [implementation/compiler]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [reductions, documentation]
 ---
@@ -24,9 +24,17 @@ tags: [reductions, documentation]
 
 ## What this owes
 
-- The sentence corrected in `crates/tiler-compiler/src/physical.rs` so it names the population it means: apart from four contributors, where two is the only admissible count, the smallest is 1,042.
+- The sentence corrected in `crates/tiler-compiler/src/physical.rs` so it names both populations without an implicit antecedent: four is the smallest count taking two participants; 1,042 is the first count where the rule takes two while declining an admissible wider count.
 - No change to any figure, constant, or rule. 1,133, 1,176, 1,042, 521, 265, and 254 all verify by enumeration.
-- **Fact — the phrasing did not spread.** `grep -rn "1_133\|1,133\|1_176\|1,176\|1_042\|1,042" crates docs prototypes spikes` returns only `physical.rs:2256-2258` and the corrected restatement in `docs/compiler/fusion-and-scheduling.md`. Neither pinning test in `crates/tiler-compiler/src/pipeline/tests.rs` carries it, so this is one sentence and not a sweep.
+- **False original population claim — the live source/docs surface is narrow, but two completed records also repeat the ambiguity.** The source search outside tickets returns only `physical.rs` and the already-correct `docs/compiler/fusion-and-scheduling.md` restatement. The complete records [`bound-the-tree-cap-s-unmeasured-downward-direction`](bound-the-tree-cap-s-unmeasured-downward-direction.md) and [`measure-the-tree-width-excursion-past-the-cap`](measure-the-tree-width-excursion-past-the-cap.md) both say “The smallest is 1,042” after naming the 1,133-count population. Preserve their historical outcomes and add dated corrections that distinguish the smallest member, four, from the first member declining a wider admissible count, 1,042.
+
+## Sequencing
+
+[`complete-the-tree-cap-audit-sweep-inside-the-compiler-crate`](complete-the-tree-cap-audit-sweep-inside-the-compiler-crate.md) also edits `physical.rs`. Land these sequentially rather than dispatching them together. This ticket owns the residue paragraph and the two completed-record corrections; the sweep owns the prime fallback-loop subject and the private target-domain naming.
+
+## Closes when
+
+The live source sentence names four as the smallest two-participant count and 1,042 as the first count that declines an admissible wider choice; the external compiler contract remains semantically unchanged because it is already correct; and both completed ticket records carry dated corrections without rewriting their historical outcomes.
 
 ## How it was found
 

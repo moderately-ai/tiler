@@ -8,7 +8,7 @@ related: [derive-the-region-shape-budgets-from-the-declaration, state-the-rule-t
 scopes: [contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
-tags: [budgets, identity, research]
+tags: [budgets, identity, research, decision, needs-tom, public-boundary]
 ---
 ## The question
 

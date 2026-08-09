@@ -8,10 +8,7 @@ related: [carry-symbolic-extents-into-the-semantic-program]
 scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, shapes, extents, semantic-graph]
-claimed_from: todo
-assignee: coord
-lease_expires_at: 1786170921
+tags: [implementation, shapes, extents, semantic-graph, decision, needs-tom, public-boundary]
 ---
 ## User-visible outcome
 

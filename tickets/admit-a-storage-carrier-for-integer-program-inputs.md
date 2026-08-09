@@ -5,13 +5,10 @@ status: blocked
 priority: p1
 dependencies: [admit-an-indirect-gather-family-for-tied-embedding-lookup, reclassify-language-model-work-as-a-conformance-track]
 related: [design-model-ingestion-and-complete-execution, enumerate-the-mature-tensor-dtype-taxonomy, route-an-embedded-artifact-through-a-consumer-storage-seam, admit-the-bf16-type-and-carrier-into-every-total-map]
-scopes: [implementation/ir, implementation/artifact, implementation/frontend, contracts/artifacts]
+scopes: [implementation/ir, implementation/artifact, implementation/frontend, contracts/artifacts, implementation/compiler, implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, abi, frontend, gather, language-model, class-generic-capability]
-claimed_from: todo
-assignee: w-admit-a-s
-lease_expires_at: 1786158471
 ---
 ## User-visible outcome
 
@@ -65,7 +62,7 @@ Measured rather than predicted: with `StorageScalar::U32` appended at tag `0x04`
 
 **Even the dishonest `KernelType::I32` variant does not fit the declared scopes**: it still needs `crates/tiler-compiler/src/boundary.rs`. The compiler scope is unavoidable either way.
 
-**Blocked, not deferred.** `implementation/compiler` was held by a live exclusive claim (`answer-input-element-counts-as-the-declared-tensors-own-count`) when this was audited on 2026-08-07. `implementation/metal` was unheld. Adding a scope required by authorized work is scheduling metadata under `AGENTS.md`, but taking one that another live worker holds exclusively is a coordination decision, not a worker's.
+**Historical scheduling blocker, cleared.** `implementation/compiler` was held by a live exclusive claim (`answer-input-element-counts-as-the-declared-tensors-own-count`) when this was audited on 2026-08-07. `implementation/metal` was unheld. The 2026-08-09 board repair found no live claims and added both required scopes. The ticket remains `blocked`, now for its declared dependencies rather than for an obsolete scope collision.
 
 ## What a redispatch needs
 
@@ -100,8 +97,8 @@ The worker asked whether `msl_type(KernelType::U32)` should spell `uint` or refu
 
 ### Release trigger for redispatch
 
-**All six scopes free simultaneously**: `implementation/ir`, `implementation/artifact`, `implementation/frontend`, `contracts/artifacts`, `implementation/compiler`, `implementation/metal`. Add the last two to this ticket at redispatch — scheduling metadata under AGENTS.md, and explained here.
+**The six required scopes are now declared**: `implementation/ir`, `implementation/artifact`, `implementation/frontend`, `contracts/artifacts`, `implementation/compiler`, `implementation/metal`. Redispatch waits for the two frontmatter dependencies to complete and for those scopes to be conflict-free at dispatch time; it no longer waits for someone to repair this ticket's own declaration.
 
-Recheck with `tkt claims` plus a scope scan of live `tkt/` branches. At the time of writing, `implementation/compiler` was held by an exclusive claim on `answer-input-element-counts-as-the-declared-tensors-own-count` and `implementation/metal` was free but undeclared.
+Recheck with `tkt claims` plus a scope scan of live `tkt/` branches. At the original audit, `implementation/compiler` was held by an exclusive claim on `answer-input-element-counts-as-the-declared-tensors-own-count`; on 2026-08-09 `tkt claims --format json` reported no live claims after expired claim metadata was released.
 
 The redispatch brief must carry: the corrected `StorageScalar` Fact (**three** variants at `enum StorageScalar`, not two — the ticket's own repro command was self-falsifying, printing `Bf16` inside its own `-A 6` window), the append-not-move finding for both tag encoders, the two tripwires to retarget, and the `msl_type` decision above.

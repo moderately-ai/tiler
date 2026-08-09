@@ -1,14 +1,16 @@
 ---
 id: state-the-search-constant-provenance-the-caps-audit-found-bare
 title: State the search-constant provenance the caps audit found bare
-status: todo
+status: closed
 priority: p3
 dependencies: []
-related: []
-scopes: [implementation/compiler]
+related: [state-the-rule-that-a-deterministic-budget-is-a-derivation]
+scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+closed_reason: superseded
+closed_note: Its surviving six-cap provenance work and physical-plan policy question are consolidated into the broader deterministic-budget ticket.
 ---
 ## User-visible outcome
 
@@ -23,3 +25,7 @@ The audit's counted table: 43 bare production constants and nine bare search-bud
 ## Closes when
 
 ~~The ALL constant derives from variant_count~~ **— struck 2026-08-08: `MetalHostPredicate::ALL` was landed by `size-the-four-hand-written-metal-all-arrays-from-their-types` in `crates/tiler-metal/`, a crate this ticket does not scope, and the metal-AOT counterparts landed the same day. This clause named completed work in the section governing closure; the outcome section was amended when the first half landed and this one was missed.** Each bare bound carries its classification sentence (derived / stated-with-owner); the exhaustiveness-fact asymmetry is either closed or stated at the two silent layers.
+
+## Superseded — 2026-08-09
+
+The surviving half is not an independent ticket. The complete source audit belongs to [`state-the-rule-that-a-deterministic-budget-is-a-derivation`](state-the-rule-that-a-deterministic-budget-is-a-derivation.md), which now owns the exact **eight derived / six literal** population, the omitted `region_candidates_per_seed`, the false governing-document classifications, and the `physical_plan_combinations` decision that can empty the portfolio. Keeping this node open would offer two workers the same compiler comments with contradictory 9/5 and 8/6 populations. Closed as superseded; no source work was performed here.

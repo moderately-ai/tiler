@@ -8,10 +8,7 @@ related: [emit-a-route-requirement-from-the-build-producer-so-a-family-authority
 scopes: [implementation/ir, implementation/artifact, implementation/compiler, implementation/metal, implementation/runtime, implementation/build, contracts/artifacts, implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
-tags: [correctness, fail-closed, index-arithmetic, artifact-schema, metal, public-boundary]
-claimed_from: todo
-assignee: w-carry-and
-lease_expires_at: 1786165341
+tags: [correctness, fail-closed, index-arithmetic, artifact-schema, metal, public-boundary, decision, needs-tom]
 ---
 ## User-visible outcome
 
