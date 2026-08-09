@@ -50,17 +50,9 @@ proves; do not change any dependency or public surface.
 
 ## Outcome
 
-- Correct the architecture paragraph so it names both mechanically checked
-  slices without implying that either pins the entire packaging table: the
-  frontend direct-edge frontier and the runtime dev-inclusive transitive
-  refusal.
-- Correct the runtime manifest comment to distinguish the one normal direct
-  dependency from the dev-inclusive resolved closure checked by
-  `identity_join`.
-- Preserve ADR 0081's decision and the current dependency graph. Do not add,
-  remove, or promote dependencies, and do not edit public runtime APIs.
-- Re-read both full files and the complete test at the worker's exact base;
-  repair this ticket first if any Fact has drifted.
+Delivered in `d6fcb5b4` (`Align runtime dependency records`, 2026-08-08). The architecture paragraph now names two bounded checked slices — the frontend direct-edge frontier and the runtime dev-inclusive transitive refusal — without implying that either pins the whole packaging table. The runtime manifest comment now distinguishes its one normal direct dependency from the broader resolved closure that `identity_join` checks.
+
+ADR 0081, the dependency graph, and public runtime APIs were unchanged. No dependency was added, removed, or promoted. The focused runtime check, touched-package Cargo gates, `tkt lint`, `make citations`, `git diff --check`, and exact-base scope guard passed before integration.
 
 ## What closes this
 

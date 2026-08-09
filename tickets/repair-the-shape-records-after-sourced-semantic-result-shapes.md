@@ -59,9 +59,11 @@ Two implementation records also need separate ownership: `crates/tiler-ir/src/se
 
 ## Outcome
 
-Add dated corrections that distinguish the old static result boundary from the current source-bearing `ValueFact` and operation-inference path. For each operation family mentioned, say whether a symbolic result is constructible today and locate any remaining refusal at the family-specific schema, inference, bounds, or lowering layer instead of generalizing from one family to all semantic values.
+The owned seven-claim correction landed in `cb21e6a6` (`docs: correct sourced semantic result-shape records`, 2026-08-08) and the ticket closed in `4aef7812`. Dated corrections in `symbolic-semantic-extents.md`, `transformer-operation-and-shape-surface.md`, and the contraction, Slice, and Softmax roadmap rows now distinguish the old static-result premise from the current source-bearing `ValueFact` and `push_operation` path. They name the four elementwise families that construct sourced results and place each surviving refusal at its family-specific schema, inference, bounds, or later lowering boundary.
 
-This is documentation repair only. Do not introduce a new operation schema, inference rule, compiler capability, or public API. Preserve historical measurements and conclusions that do not depend on the retired premise.
+The change was documentation-only: it introduced no operation schema, inference rule, compiler capability, public API, or identity change, and it preserved historical measurements and conclusions not derived from the retired premise. `make citations`, `tkt lint`, `git diff --check`, and the exact-base scope guard passed before closure.
+
+All mapped remainders have since completed. [`repair-downstream-records-after-sourced-semantic-results`](repair-downstream-records-after-sourced-semantic-results.md), [`correct-static-valuefact-premises-in-semantic-family-comments`](correct-static-valuefact-premises-in-semantic-family-comments.md), and [`correct-the-slice-normative-definition-and-recompute-compiler-identities`](correct-the-slice-normative-definition-and-recompute-compiler-identities.md) are `done`; they own the research, implementation-comment, and identity-bearing Slice populations respectively. This ticket therefore has no still-unowned six-site remainder.
 
 ## Closes when
 
