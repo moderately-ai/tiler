@@ -37,3 +37,4 @@ The trigger fires and this becomes one atomic question to Tom with the workload 
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** No workload's natural spelling is refused by `contraction.rule.index-in-more-than-two-operands`; the pinned workload's three index structures remain binary, and nothing added since states a three-operand shared index. Recheck: `grep -rn 'index-in-more-than-two-operands' crates/tiler-ir/src/semantic/contraction.rs`.
+- 2026-08-09 — **not fired.** The semantic verifier still emits `contraction.rule.index-in-more-than-two-operands`, and the current tests exercise it only as a refusal. No named workload records a natural three-operand shared-index contraction or shows binary decomposition to be more expensive or numerically inequivalent. Recheck at that exact rule anchor in `crates/tiler-ir/src/semantic/contraction.rs` and its refusal assertions in `crates/tiler-ir/src/semantic/contraction/tests.rs`.

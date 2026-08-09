@@ -43,3 +43,4 @@ Filed by [`scope-first-quantized-lm-profile`](scope-first-quantized-lm-profile.m
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** Both dependencies are `todo`: [`implement-first-quantized-backend-profile`](implement-first-quantized-backend-profile.md) and [`admit-an-indirect-gather-family-for-tied-embedding-lookup`](admit-an-indirect-gather-family-for-tied-embedding-lookup.md). The activation boundary is explicit that neither exists yet.
+- 2026-08-09 — **not fired; one dependency has landed.** The indirect gather family is now `done` and admits the exact `tiler::u32@1` index route, but `implement-first-quantized-backend-profile` remains `todo`. The ticket's activation boundary requires both a real selected quantized profile and gather, so the tied-matrix composition still has no executable producer to extend. Recheck both dependency statuses and preserve the shared-logical-value requirement when the second one lands.

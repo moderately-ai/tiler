@@ -71,3 +71,4 @@ Primary starting points:
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** No proposed milestone requires file-backed, out-of-core, or persistent resources that ordinary runtime-provided tensor inputs cannot represent. The expansion cache that landed this wave is a *compile-time* artifact cache under `tiler-cache`, not a program resource, so it does not fire this gate. Recheck: the gate's own condition, stated as a corpus state.
+- 2026-08-09 — **not fired.** No selected workload requires file-backed, out-of-core, or persistent program resources beyond ordinary runtime-provided tensor inputs. The artifact/expansion caches and caller-owned KV allocations are compile-time storage and ordinary program bindings respectively; neither opens an external-resource semantic or execution contract.

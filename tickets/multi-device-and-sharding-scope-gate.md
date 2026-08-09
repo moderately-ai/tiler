@@ -78,3 +78,4 @@ Primary starting points:
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** Tiler proposes no semantic collective, no compiler-selected sharding, and no execution across more than one live device; the compile path still assembles single-device kernel programs. Recheck: the gate's own three conditions, each a corpus state.
+- 2026-08-09 — **not fired.** Tiler still proposes no semantic collective, compiler-selected sharding, or execution across more than one live device. Both hardware transfer spikes remain deferred for lack of a qualifying multi-device host/evidence need, and the current program/runtime contracts remain single-device.

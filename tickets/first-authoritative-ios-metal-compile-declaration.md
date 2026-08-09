@@ -43,3 +43,4 @@ An MSL 4.0 measurement exists for the iOS families under their own SDK and targe
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** The reactivation trigger is the first consumer asking for an iOS artifact; none has, and the hardware half remains blocked ([`measure-apple-numerics-on-physical-ios-device`](measure-apple-numerics-on-physical-ios-device.md), also unfired this sweep). `BoundMetalCompileDeclaration` still publishes one constructor. Recheck: `grep -n 'pub fn first_macos_apple9' crates/tiler-build/src/metal_declaration.rs`.
+- 2026-08-09 — **not fired.** No consumer record requests an iOS artifact, no physical iOS measurement row has become available, and `BoundMetalCompileDeclaration` still exposes only `first_macos_apple9` as a constructor. The authoritative declaration therefore remains macOS-only. Recheck the complete constructor `impl` and the physical-device measurement ticket rather than inferring from an `ios` string search.

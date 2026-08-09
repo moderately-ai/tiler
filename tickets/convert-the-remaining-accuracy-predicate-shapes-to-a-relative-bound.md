@@ -39,3 +39,4 @@ Fires when a registered accuracy contract states one of the four shapes for an o
 ## Trigger check log
 
 - 2026-08-06 — not fired. Every registered requirement converts today. Reproduce with `cargo nextest run -p tiler-compiler -E 'test(/relative_accuracy|unit_roundoff/)'`, whose `the_registered_softmax_accuracy_is_twenty_four_unit_roundoffs`, `the_two_exponentials_yield_one_relative_accuracy`, and `the_faithful_normalization_requirement_gives_two_unit_roundoffs` cover all three registered families and none reaches a refusal; and no consumer exists, because `elementary_relative_accuracy` has no non-test caller.
+- 2026-08-09 — **not fired.** `elementary_relative_accuracy` still has no non-test caller, every registered requirement uses the convertible ULP/relative shapes, and no rule reports `accuracy.elementary.unconvertible-predicate`. The additional BF16 and conformance work did not add one of the four predicate shapes this ticket owns.

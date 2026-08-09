@@ -1,7 +1,7 @@
 ---
 id: define-the-widening-relation-over-a-symbolic-broadcast-extent
 title: Define the widening relation when a broadcast result extent is a symbol
-status: deferred
+status: awaiting-decision
 priority: p2
 dependencies: [relocate-the-sourced-extent-vocabulary-to-the-shape-module, carry-a-sourced-shape-on-semantic-values]
 related: [decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode, resolve-semantic-shape-inference-over-symbolic-extents, assemble-the-decoder-layer-program, assemble-the-causal-self-attention-block-program, design-model-ingestion-and-complete-execution, design-autoregressive-state-and-kv-cache, deliver-an-artifact-family-from-a-symbolic-region]
@@ -49,10 +49,11 @@ Tom has decided the meaning of a many-to-one relation at a symbolic result exten
 ## Graph maintenance
 
 - Filed 2026-08-05 by [`decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode`](decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode.md), which ran the elimination and corrected the three records rather than taking the vocabulary change.
-- Depends on [`relocate-the-sourced-extent-vocabulary-to-the-shape-module`](relocate-the-sourced-extent-vocabulary-to-the-shape-module.md) and [`carry-a-sourced-shape-on-semantic-values`](carry-a-sourced-shape-on-semantic-values.md): a predicate over a sourced extent on a mapping is not designable before the sourced vocabulary lives in `tiler_ir::shape` and a semantic value can carry one. Both are `todo`, and the seven decisions of [symbolic semantic extents](../docs/research/shapes/symbolic-semantic-extents.md) are all still Tom's.
+- Depends on [`relocate-the-sourced-extent-vocabulary-to-the-shape-module`](relocate-the-sourced-extent-vocabulary-to-the-shape-module.md) and [`carry-a-sourced-shape-on-semantic-values`](carry-a-sourced-shape-on-semantic-values.md): a predicate over a sourced extent on a mapping was not designable before the sourced vocabulary lived in `tiler_ir::shape` and a semantic value could carry one. Both are now `done`; their completion is what ripens this ticket into a decision rather than silently answering it.
 - Related to [`resolve-semantic-shape-inference-over-symbolic-extents`](resolve-semantic-shape-inference-over-symbolic-extents.md) rather than dependent on it: that ticket routes the *elementwise* rule through `proves_equal`, and this one is the same question for a shape-declaring attribute, which its record does not reach.
 - Declared `research/shapes` because the addendum belongs beside the symbolic-extent record, and `implementation/ir` because `crates/tiler-ir/src/semantic/broadcast.rs` is where the predicate and the normative definition live.
 
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** The mapping's declared extents are still literal, so no symbolic widening predicate has a subject: `BroadcastAxisMapping` holds `result_extents: Vec<Extent>` with `Extent(u64)`, and both dependency tickets are `todo`. Recheck: `grep -n 'result_extents: Vec<Extent>' crates/tiler-ir/src/semantic/broadcast.rs` — while that line exists, the trigger has not fired.
+- 2026-08-09 — **fired; moved to `awaiting-decision`.** Both prerequisite tickets are `done`: the one sourced-extent vocabulary now lives in `tiler_ir::shape`, semantic values carry `SourcedShape`, and symbolic elementwise results are constructible. `BroadcastAxisMapping` nevertheless still stores `result_extents: Vec<Extent>`, so the unresolved boundary is now exactly this ticket's public/identity question rather than missing prerequisite machinery. **Recommendation:** keep the literal-extent-one refusals unchanged, admit a sourced mapping extent whose many-to-one relation is defined over the symbol's whole domain and remains canonical when one binding is `1`, and derive the exact key/domain steps from the grammar that lands. The counterpoint is that this widens a public attribute and its canonical encoding to make one graph cover a degenerate binding; refusing it instead preserves the smaller surface but durably requires separate prefill/decode graph identities.

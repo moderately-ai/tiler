@@ -35,3 +35,4 @@ The suite either asserts dispositions through a surface that is not the rendered
 ## Trigger check log
 
 - 2026-08-05 — not fired. `publish-the-backend-provider-conformance-suite` is `todo` and itself blocked on `exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio`, so no suite has enumerated its dispositions. Reproduce with `grep -m1 '^status:' tickets/publish-the-backend-provider-conformance-suite.md`.
+- 2026-08-09 — **not fired.** [`publish-the-backend-provider-conformance-suite`](publish-the-backend-provider-conformance-suite.md) remains `todo`, and its end-to-end portfolio consumer [`exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio`](exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio.md) remains `todo`. No published suite yet consumes explain dispositions as an assertable provider contract, so this stays deferred behind that subject rather than being implemented against local trace fixtures alone.

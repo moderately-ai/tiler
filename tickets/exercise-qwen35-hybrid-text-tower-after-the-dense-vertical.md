@@ -42,3 +42,4 @@ The exact hybrid text tower has a dependency-ordered delivery graph grounded in 
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** The trigger is the selected dense decoder workload reaching model-boundary correctness and performance qualification. [`prove-the-c1-complete-model-execution`](prove-the-c1-complete-model-execution.md) and [`prove-the-c1-stateful-attention-vertical`](prove-the-c1-stateful-attention-vertical.md) are both `todo`, so no dense vertical has been qualified. Recheck: those two statuses.
+- 2026-08-09 — **not fired.** Both named dense-vertical prerequisites remain `todo`; neither model-boundary correctness nor the stateful attention vertical has been qualified. The hybrid-only recurrence, convolution, and state surfaces therefore remain deliberately downstream rather than parallel work. Recheck both prerequisite statuses with `tkt show`.

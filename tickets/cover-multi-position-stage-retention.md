@@ -33,3 +33,4 @@ A test drives `accept_or_publish_metal_plan` (or the seam beneath it) with a sel
 ## Trigger check log
 
 - 2026-08-05 — not fired. `BoundMetalCompileDeclaration` has one constructor, so every plan resolves at one delivery position. Reproduce: `grep -n "pub fn" crates/tiler-build/src/metal_declaration.rs` inside the `impl BoundMetalCompileDeclaration` block — one of the four is a constructor (`first_macos_apple9`).
+- 2026-08-09 — **not fired.** The `impl BoundMetalCompileDeclaration` block still has exactly one constructor, `first_macos_apple9`; its other public methods inspect rows, recover the target profile, or validate a compiled artifact. No second delivery position is constructible, so the real cache path still cannot reach the multi-position subject. Recheck at `impl BoundMetalCompileDeclaration` and `pub fn first_macos_apple9` in `crates/tiler-build/src/metal_declaration.rs`.

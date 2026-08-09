@@ -30,3 +30,4 @@ or a Mac loading an iOS metallib is not device evidence.
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** Hardware-blocked and unchanged: no physical Apple-silicon iOS device is attached to this host, so the `IOsDevice` device side is unmeasurable. Tom's 2026-08-01 iOS deprioritization applies to the whole park. Recheck: the record's own `environment.family.ios-device.execution` row, `unavailable:no iOS device is attached to this host`.
+- 2026-08-09 — **not fired.** The current host still exposes no attached iPhone or iPad, and no new retained physical-iOS measurement has been added to the Apple numerics record. The compile-side inference cannot be promoted to device Fact without that hardware. Recheck `system_profiler SPUSBDataType` for an attached iOS device and the record's `environment.family.ios-device.execution` row.

@@ -40,3 +40,4 @@ Any one of these makes this actionable, and each needs re-checking at the revisi
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** All three conditions are conditions on Candle, and the workspace still resolves `candle-core = "0.11.0"` and `candle-metal-kernels = "0.11.0"` with no `git`/`rev` fork pinned (`prototypes/candle-metal-adapter/Cargo.toml`), so `ensure_completed` is unchanged and no in-flight `CommandBuffer` is public. Recheck: `grep -n 'candle-core\|candle-metal-kernels' prototypes/candle-metal-adapter/Cargo.toml`.
+- 2026-08-09 — **not fired.** The adapter still pins `candle-core` and `candle-metal-kernels` 0.11.0 with no exact-revision fork, and no public terminal-status command-buffer channel has appeared. The existing completion limitation therefore remains the activation boundary rather than implementation work in Tiler.

@@ -46,3 +46,4 @@ Installing or mutating any toolchain component; declaring anything on a target p
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** No declaration is owed: no elementary-identity dimension exists in `CANONICAL_DIMENSIONS`, and the deciding ticket is itself `deferred`. The offline probe's most recent run found no fold, so the second clause has not fired either. Recheck with `grep -c 'ElementaryIdentity' crates/tiler-ir/src/numerics.rs`, which answers `0` while the dimension is unadmitted.
+- 2026-08-09 — **not fired.** `CANONICAL_DIMENSIONS` still has no elementary-identity member and the admission decision remains `deferred`; no contract therefore needs a runtime realization declaration. No newer retained measurement reports an offline fold either. Recheck the complete canonical-dimension array and `tkt show decide-whether-to-admit-an-elementary-identity-permission`.

@@ -48,3 +48,4 @@ Any work that adds register or occupancy information to a **target profile**. `i
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** The narrowed trigger is a *target profile* gaining a register-per-thread or occupancy axis. None has: `CapabilityAxis` declares no register or occupancy row, and the only `Registers` spelling in the compiler outside `estimate` is `CostUnit::Registers` and `Quantity::Registers` — a reporting unit, not a device limit. Recheck: `grep -rn 'Registers\|Occupancy' crates/tiler-compiler/src/target.rs` returns no axis.
+- 2026-08-09 — **not fired.** The target-profile authority still declares no register-per-thread or occupancy limit. `PressureDimension::{Registers, Occupancy}` and `Quantity::Registers` remain estimate/reporting vocabulary, not device-limit rows, so the demand side exists and the comparison authority this component needs still does not.

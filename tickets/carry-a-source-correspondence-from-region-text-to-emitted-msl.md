@@ -36,3 +36,4 @@ tags: [deferred, diagnostics, frontend]
 ## Trigger check log
 
 - 2026-08-04 — **not fired**, re-confirmed by the deferred sweep against the same tree the deferral above was written on. Neither trigger moved: no invocation-controlled text reaches emitted MSL, and no `metal` diagnostic is consumer-actionable. Recheck: the two conditions in the section above, each already stated as a corpus state.
+- 2026-08-09 — **not fired.** No frontend span/correspondence value crosses the semantic program, compiler, or Metal emitter, and the retained actionable diagnostic remains the emitted-source position rather than an invocation-controlled source construct. The accepted exact diagnostic work did not create a consumer-actionable MSL attribution subject.

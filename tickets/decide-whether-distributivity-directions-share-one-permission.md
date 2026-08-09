@@ -35,3 +35,4 @@ direction explicitly.
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** ADR 0095 stands and the parent [`decide-whether-to-admit-a-distributivity-permission`](decide-whether-to-admit-a-distributivity-permission.md) has not been reopened, so the question still does not arise. This pair is the sweep's worked example and the parking is deliberate: `deferred` keeps the node reachable for the reopening path. Recheck: the parent's status.
+- 2026-08-09 — **not fired.** The parent is `done` on the accepted decline and has not been reopened; ADR 0095 remains accepted. No permission exists whose two directions need one-or-two identity treatment, so this conditional question remains deliberately parked. Recheck `tkt show decide-whether-to-admit-a-distributivity-permission` and the anchor `decision_status: "accepted"` in `docs/decisions/0095-decline-a-distributivity-permission.md`.

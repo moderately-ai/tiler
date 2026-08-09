@@ -45,3 +45,4 @@ The triggered, selected internal producer's complete result reaches its real con
 ## Trigger check log
 
 - 2026-08-08 — **not fired.** `rg -n 'input\(compound weight\).*DequantizeStrictAffine.*Contraction' docs/research/numerics/first-quantized-lm-profile.md` identifies the selected path as a direct compound input followed by decode and contraction, and the same record explicitly excludes activation quantization, mixed precision, and KV-cache quantization. No selected internal compound producer exists.
+- 2026-08-09 — **not fired.** The strict-affine physical-candidate ticket is now `closed` as obsolete under its own trigger, and no replacement workload selects an internal compound producer with a real downstream consumer. The selected quantized path remains interface compound input → dequantize → contraction, so the removed producer-less public-boundary decision should not be recreated.

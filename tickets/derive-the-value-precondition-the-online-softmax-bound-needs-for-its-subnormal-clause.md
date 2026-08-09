@@ -42,3 +42,4 @@ A precondition for a rewrite no contract can perform discharges nothing, so this
 ## Trigger check log
 
 - 2026-08-06 — not fired. ADR 0095 was reaffirmed on 2026-08-06 and admits no distributivity permission; ADR 0101 decision 5 reserves the elementary-identity permission and admits none. No second rule carries the clause. Reproduce with `grep -n 'decision_status' docs/decisions/0095-decline-a-distributivity-permission.md docs/decisions/0101-treat-elementary-function-identities-as-a-fourth-numerical-dimension.md`.
+- 2026-08-09 — **not fired.** The rule object and its subnormal refusal are now fully derived, but the two permissions named by the trigger remain declined or unadmitted, and no second registered rewrite carries this clause. A more complete research input does not make an unusable discharge predicate actionable. Recheck ADR 0095's accepted decline, ADR 0101 decision 5, and the registered rewrite identities in `crates/tiler-compiler/src/rewrite.rs`.

@@ -39,3 +39,4 @@ Fires when a rewrite exists whose refusal has a price to report — that is, whe
 ## Trigger check log
 
 - 2026-08-06 — not fired. No rewrite computes a price: no rule consumes a numerical dimension no permission grants, and no admission rule is registered. Reproduce with `grep -n 'numerical\.' crates/tiler-compiler/src/normalize.rs`, which returns three lines — the ordered-reassociation rule's two categorical reason keys, `numerical.reassociation-forbidden` and `numerical.reassociation-permitted`, and one test assertion over the first. No reason key names a quantity.
+- 2026-08-09 — **not fired.** Exact rationals exist in target-accuracy calculations, but `FactValue` has no exact-rational arm and no compile-path rewrite computes or reports a price. ADR 0095 still declines distributivity and ADR 0101 still admits no elementary-identity permission, so no quantitative refusal needs this explain value yet.

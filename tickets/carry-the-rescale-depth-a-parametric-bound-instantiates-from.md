@@ -47,3 +47,4 @@ A shape parameter for a rewrite no contract can perform is a field nothing reads
 ## Trigger check log
 
 - 2026-08-06 — not fired. ADR 0095 was reaffirmed on 2026-08-06 and admits no distributivity permission; ADR 0101 decision 5 reserves the elementary-identity permission and admits none. No second depth-instantiated rule exists. Reproduce with `grep -n 'decision_status' docs/decisions/0095-decline-a-distributivity-permission.md docs/decisions/0101-treat-elementary-function-identities-as-a-fourth-numerical-dimension.md`.
+- 2026-08-09 — **not fired.** ADR 0095 still declines distributivity, ADR 0101 still reserves rather than admits the elementary-identity permission, and no second rule instantiates a bound from a fold tree's depth. The tree declaration remains speculative until one of those two routes changes.

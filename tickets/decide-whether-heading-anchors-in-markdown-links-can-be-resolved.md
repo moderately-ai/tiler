@@ -27,3 +27,4 @@ A pinned renderer. If this repository ever commits to one way the documents are 
 ## Trigger check log
 
 - 2026-08-08 — **not fired**. No renderer is pinned. Reproduce: `grep -rn "slug\|anchor" AGENTS.md docs/document-metadata.md` returns no rendering commitment, and no documentation build target exists in `Makefile` (`grep -n "^doc" Makefile` shows only `cargo doc`, which renders rustdoc for crates and not `docs/**`).
+- 2026-08-09 — **not fired.** The repository still pins no Markdown renderer or heading-slug algorithm. The current repository guide now states the narrower implemented fact explicitly: `make citations` resolves the file but not the heading anchor after `#`; that is a declared limitation, not a renderer contract that can decide this ticket. `Makefile` still has only the Rust `doc` target. Recheck the anchor `not the heading anchor after a \`#\`` in `AGENTS.md` and `doc:` in `Makefile`.
