@@ -38,3 +38,7 @@ Every Fact above re-read at this base and verified; nothing false or imprecise w
 ## Closes when
 
 `make citations` reports no link failure in this file, with both links pointing at the real 0075 filename.
+
+## Outcome audit — 2026-08-09
+
+Delivered by `2a37630468002372ef4a7d5866f2c79a3f88ad68`. Both `ADR 0075` links in ADR 0107 now target `0075-scope-public-boundary-approval-by-change-category.md`: the acceptance-boundary statement near the status and the labelled-draft statement in the decision body. Their text and the accepted gather decision did not change. The current citation gate resolves both targets.

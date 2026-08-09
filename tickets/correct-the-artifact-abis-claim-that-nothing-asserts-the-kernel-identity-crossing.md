@@ -35,3 +35,9 @@ Prefer restating what was true at the tree the sentence describes over deleting 
 ## Out of scope
 
 `crates/**` and `prototypes/**`: the filing ticket already landed those and its Outcome records what it did.
+
+## Outcome audit — 2026-08-09
+
+Delivered by `6444432c98ea6bd0cfdf03807709ae052dcfa7ea`. The artifact contract now names `the_serial_sum_identity_crosses_the_shared_opaque_bound_at_the_second_contributor` as the two-sided inequality witness, keeps the six observed lengths unpinned, explains why the widest selected kernel identity is the subject, and describes the artifact-only over-bound fixtures as derived from `MAX_OPAQUE_IDENTITY_BYTES + 1`. The current conformance test and both derived artifact vectors remain present at those source anchors.
+
+The two neighbouring findings discovered during the repair were not absorbed: [`correct-the-opaque-identity-bound-attributed-to-the-wrong-authority-in-keys-rs`](correct-the-opaque-identity-bound-attributed-to-the-wrong-authority-in-keys-rs.md) and [`date-adr-0081-s-neither-closure-is-checked-correction-against-the-runtime-test`](date-adr-0081-s-neither-closure-is-checked-correction-against-the-runtime-test.md) were filed separately and are now also `done`. No identity byte, bound, or test subject changed in this documentation repair.

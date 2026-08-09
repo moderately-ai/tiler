@@ -35,3 +35,7 @@ tags: [documentation]
 ## Closes when
 
 The live encoder comment and schema-15 contract Fact state no ordinal into a set that can grow, and each retains its separate-domain reasoning. The already-corrected ADR 0074 block remains unmodified. `docs/artifact-abi.md` under "The governed digest" and `crates/tiler-artifact/src/domains.rs` remain the population authorities.
+
+## Outcome audit — 2026-08-09
+
+Delivered by `492685365feae2e22eda38a505280516d05ad665`. The live schema-15 Fact now says the trailing identity digest is under `its own governed digest domain`, and the encoder says `It is a separate domain rather than a reuse of MANIFEST_DIGEST_DOMAIN`. Both retain the reason that the manifest digest covers the bytes containing the identity digest; neither carries a growing-set ordinal. The already-corrected ADR 0074 block stayed untouched, and no domain byte, schema version, encoded byte, identity pin, or runtime behaviour moved.

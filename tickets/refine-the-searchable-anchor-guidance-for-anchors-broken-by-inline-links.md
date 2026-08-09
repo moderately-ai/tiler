@@ -36,3 +36,7 @@ Connect it explicitly to the existing "a failed search does not prove absence" s
 **Do not add a mechanical checker for this.** An anchor's searchability is only meaningful against the file the citation names, and `AGENTS.md` already records that a mechanical check does not discharge a reading obligation. The fix here is the wording of an instruction, not a new gate — and a gate that resolved anchors would itself be one more thing that can quietly stop working.
 
 Note the rule is being applied correctly in the meantime: every worker handed a broken anchor this week located the real text anyway and reported the anchor as imprecise, which is exactly the loud failure the rule intends. This ticket lowers the cost of that, it does not repair a breakage.
+
+## Outcome audit — 2026-08-09
+
+Delivered by `713582475b842b20da0200b1b1125a8d7824fa85`. `AGENTS.md` now names rendered inline links, emphasis markers, and line breaks as ways an apparently literal anchor can fail as false absence; directs readers to prefer the shortest distinctive source fragment without those constructs; requires a full-sentence anchor to be tested against its named file before handoff; and explicitly connects the rule to `A failed search does not prove absence`. The repair remained guidance rather than adding a mechanical checker, exactly as scoped.
