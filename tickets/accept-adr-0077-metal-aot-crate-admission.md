@@ -96,3 +96,7 @@ ADR 0077 item 5's clause that this admission must not be cited as precedent for 
 ### Gate
 
 `uv run --locked python scripts/docs.py render` and the full `uv run --locked python scripts/check_repository.py` both pass; `git diff --check` is clean and `tkt lint` reports no problems.
+
+## Current follow-on correction — 2026-08-09
+
+The open-question statements above are historical. [`admit-the-device-free-runtime-validation-crate`](admit-the-device-free-runtime-validation-crate.md) is `done`: ADR 0081 admitted `tiler-runtime` as a device-free artifact loader by applying ADR 0077's own distinction, not by waiving its non-precedent clause. [`decide-the-expansion-cache-owner-and-digest-authority`](decide-the-expansion-cache-owner-and-digest-authority.md) is also `done`, and [`implement-the-expansion-cache-protocol`](implement-the-expansion-cache-protocol.md) delivered the dedicated `tiler-cache` crate under ADR 0082 while preserving `tiler-metal-aot`'s empty dependency closure. The cache ticket explicitly retains its complete-subject and process-crash/race follow-ups; this correction records ownership and admission, not closure of those narrower gaps.

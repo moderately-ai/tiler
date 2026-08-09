@@ -83,3 +83,7 @@ None. `validate_proposal_disclosure` fires on an inline link from a `kind: contr
 ### Gate
 
 `uv run --locked python scripts/docs.py render` and the full `uv run --locked python scripts/check_repository.py` both pass; `git diff --check` is clean and `tkt lint` reports no problems.
+
+## Current propagation correction — 2026-08-09
+
+The dependent handoff above is complete. [`propagate-extension-seam-classification-into-governed-contracts`](propagate-extension-seam-classification-into-governed-contracts.md) is `done`: `docs/operation-extensions.md` now states the intended seam inventory and negative-space rules, and `docs/architecture.md` states the permanently internal authorities and the explain/feasibility qualifications. ADR 0078 correctly remains `implementation_status: partial` because the physical-implementation provider and mature fusion numerical capability remain deliberately unassigned; propagation did not decide them.
