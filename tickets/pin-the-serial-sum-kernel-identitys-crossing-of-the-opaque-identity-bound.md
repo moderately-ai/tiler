@@ -56,3 +56,21 @@ Each is a historical narrative and the history is right; only the tense and the 
 ## Out of scope
 
 `docs/artifact-abi.md` is already repaired and dated by the filing ticket. Do not restate any regenerated length there as a fresh prose figure.
+
+## Outcome — delivered
+
+Commit `fe282f1e` placed the real two-sided assertion in
+`tiler-conformance::serial_sum`: the ordinary compiled one-contributor identity
+is below `MAX_OPAQUE_IDENTITY_BYTES`, while the same construction with two
+contributors is above it. The permanent check states the route it uses and was
+shown failing by changing the program subject from two contributors to one; it
+does not pin either derived length.
+
+The artifact-local vectors now derive their fabricated over-bound size from the
+constant and explicitly point to the conformance assertion. The serial-sum
+compile and run narratives preserve the historical 1,121-byte measurement as
+dated history, record the later 1,309-byte observation as another dated point,
+and state the inequality as the surviving property. The separately scoped
+artifact-ABI claim was filed for its own repair. Commit `c819a3e2` closed this
+ticket. No identity encoding, bound, program semantics, or dependency edge
+changed.

@@ -57,3 +57,20 @@ The spike builds at a recorded commit, its `README.md` and `results/` state what
 - Do not delete a compile-fail fixture whose boundary still holds; four bypasses are pinned as `compile_fail` doctests in `crates/tiler-compiler/src/physical_provider.rs` and the spike should state the same boundary from outside the tree rather than a different one.
 - If the spike finds the out-of-tree path blocked by something the integration fixture cannot see, that is a defect in the landed surface and belongs in its own ticket rather than in a spike note.
 - The remaining ADR 0090 correction needs a carrier ticket holding `contracts/decisions`; this ticket holds `research/extensions` and `project/tickets` only.
+
+## Current completion correction — 2026-08-09
+
+The Outcome above is the state at the spike re-run, not the current open-work
+account. Commit `2e97120d` delivered the refreshed spike and its 8/8 recorded
+out-of-tree result; commit `0e400211` closed this research ticket and filed the
+separate ADR carrier its scopes could not perform. That carrier landed at
+`7fcbf072`, so ADR 0090 now cites the positive re-run rather than the obsolete
+missing-method golden. The original `Closes when` is therefore satisfied by the
+ticket plus its carrier, not by an out-of-scope edit hidden in this branch.
+
+The two disclosure tickets named above have also since landed. Commit
+`788b0c03` added the complete offered physical-provider environment beside the
+already selected set, and ADR 0090 records both halves separately. What remains
+is acceptance of the labelled-draft public surface, owned by
+`accept-the-installed-physical-provider-public-surface`; there is no remaining
+provider-environment implementation gap on this completed spike ticket.
