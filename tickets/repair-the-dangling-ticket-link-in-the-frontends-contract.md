@@ -43,3 +43,7 @@ A contract document linking into `tickets/` is a link into a mutable work graph 
 ## Closes when
 
 `make citations` reports no link failure in this file.
+
+## Outcome audit — 2026-08-09
+
+Delivered by `a9c2119cfe1e5bc94f053d0ad9d83f94584e67e0`. The repair did not merely redirect a ghost link: the frontends contract moved the already-delivered retention read-back from `Still outstanding` to `Landed`, names both completed owners — including the renamed `emit-from-a-populated-retention-in-the-inline-expansion` — and records the producer capture, publication retention, and expansion read-back that make the old prose false. The empty outstanding section is retained explicitly, and the caller-visible acceptance question remains linked to its separate decision ticket. The current citation gate resolves every link in the repaired bullet.
