@@ -4,7 +4,7 @@ title: Admit the sub-tensor selection operation family
 status: done
 priority: p2
 dependencies: []
-related: [admit-a-position-selecting-slice-for-the-rotary-table, project-only-the-final-position-logits, admit-live-extent-operands-to-payload-indexing, admit-the-reindex-and-broadcast-operation-families, own-operation-family-support-matrix, reclassify-language-model-work-as-a-conformance-track]
+related: [admit-a-position-selecting-slice-for-the-rotary-table, project-only-the-final-position-logits, admit-live-extent-operands-to-payload-indexing, admit-the-reindex-and-broadcast-operation-families, own-operation-family-support-matrix, reclassify-language-model-work-as-a-conformance-track, decide-the-source-bearing-slice-offset-boundary]
 scopes: [contracts/foundation, implementation/ir, implementation/reference, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
@@ -55,3 +55,9 @@ The family's form is decided with its ground, a governed key verifies and refere
 **Support matrix:** the row moved **R1 → R4** for the F32 literal-offset semantics and reference, with R5 awaiting a fusion role and the strided and symbolic relations explicitly left at R1 with their own triggers. Both existing triggers are preserved with their evidence; the rotary-table trigger now owes the index vocabulary rather than the family.
 
 **Compiler seating is an integrator edit, not part of this branch** — `crates/tiler-compiler/**` was held by a live sibling. Two edits are required in the same landing or the workspace gate goes red, both exactly the shape `tiler::concatenate-f32@1` needed: add `"tiler::slice-f32@1"` to `UNPLANNED_OPERATIONS` in `crates/tiler-compiler/src/policy.rs` (the family performs no arithmetic, so a capability row would claim a target dimension it never asks for), and recompute the pinned explain request digest in `crates/tiler-compiler/src/explain.rs` **on the merged tree** from an observed run, because the request subject folds the registry snapshot and every admitted family moves it.
+
+## Current correction — 2026-08-09
+
+The outcome above is historical where it says the symbolic-offset remainder is an `IndexNode` vocabulary gap. The index module now carries `SourcedIndexInteger` coefficients, and the slice module records the fired trigger under the source anchor `the index-vocabulary one has since closed`: `t + C` is expressible as a sourced coefficient.
+
+The delivered literal family and every identity, refusal, reference result, and support-matrix movement above remain unchanged. The live refusal is now at the semantic selection boundary: `SliceAxisSelection::Window` still carries `offset: u64`, and `decode_axis` refuses `symbolic-window` before parsing relation fields. [`decide-the-source-bearing-slice-offset-boundary`](decide-the-source-bearing-slice-offset-boundary.md) owns whether that source arrives as an attribute or an operand and the resulting inference, bounds, reference, and identity consequences. The rotary-table consumer therefore waits on that decision, not on more index-expression vocabulary.

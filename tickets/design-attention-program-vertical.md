@@ -82,3 +82,13 @@ The durable record is [First attention program vertical](../docs/research/progra
 | 10 | [`scope-causal-structure-aware-attention-schedules`](scope-causal-structure-aware-attention-schedules.md) | 8 |
 
 **Rung L5's trigger has not fired.** It reads "L4 delivers a block", and this rung delivered L4's design. What it hands L5 is the seam: `k_rope` and `v_heads` as retained program outputs, and `S` kept a separate extent symbol from `T` so a decode step is a binding change rather than a graph change.
+
+## Current corrections — 2026-08-09
+
+The delivered section above is the exact 2026-07-31 design outcome and remains useful history. Three of its current-looking conclusions have since moved:
+
+- The phrase “the only reachable D-A plan” names the then-role-less compiler. `crates/tiler-compiler/src/fusion_legality.rs`, anchor `The table below is the complete set of families the governed provider declares a role for`, now registers the block's normalization, softmax, structural, and contraction families. That does not prove a complete D-A plan exists; it means 18,329,108,488 bytes is the historical unfused design column, not the current reachable-plan measurement. [`plan-the-materialized-attention-decomposition`](plan-the-materialized-attention-decomposition.md) must produce the actual plan before D-B compares against it.
+- D-10 is closed: the governed `reverse-axis` reindex form landed. The historical list correctly records what this design had to decide; it must not be read as the current unresolved-decision population.
+- The semantic block assembly has landed, but the Metal attention-contraction realization and materialized planning tickets remain unfinished, so L5's executable-block trigger still has not fired.
+
+[`reconcile-the-first-attention-planning-record-with-landed-fusion-roles-and-budgets`](reconcile-the-first-attention-planning-record-with-landed-fusion-roles-and-budgets.md) owns the complete research-record sweep, including the current 62-member/3-boundary-output/80-live-value shape bounds and the independent bounded-search stops. This completed ticket records the correction and does not pretend the durable document is already repaired.
