@@ -83,3 +83,13 @@ D-4's stale "four dated `Fact` paragraphs" count was dropped rather than re-pinn
 ### The checker caught the ticket rewriting its own anchors
 
 `make citations` failed with **3** on the first run, all in this live ticket, whose Facts pinned anchors the work had just rewritten. Repaired per the retired-citation rule — retired words de-pinned to prose, repinned to surviving text. Two anchor-reach perturbations demonstrated and reverted. Markdown links in both touched files were resolved **by hand**, including heading anchors, since the sibling extension is still live.
+
+## Later gate correction — 2026-08-09
+
+The final clause above records the branch at landing time. The sibling link
+extension is no longer live work: commit `6a0184a5` taught `make citations` to
+resolve local Markdown link paths as a separate, floored population, and the
+follow-up root-document check landed as well. Heading fragments remain an
+explicitly excluded renderer-derived question, so the hand-check of heading
+anchors remains historical evidence rather than a capability now claimed by the
+gate. The dtype-ledger reroute itself is unchanged and complete.

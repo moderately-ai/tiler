@@ -84,3 +84,19 @@ Enumerated mechanically, then every survivor resolved by reading its site. `grep
 - **Unowned — 2 sites.** This ticket's nine figures, repaired above. And the kernel-identity paragraph flagged below, whose five unpinned lengths I could not regenerate within this ticket's scope.
 
 **One sibling flagged and deliberately not repaired, because I could not verify it and will not guess.** The "Governed budgets" paragraph anchored at *"the three identities never shared a subject"* states six kernel-identity byte lengths — 736, 1,483, 1,845, 1,700, 2,279 beside the pinned 1,121 — in the present tense ("measures 736 bytes"), bounded to "this checkout (Apple M4 Max, macOS, the pinned toolchain)" but to no commit and no date. Five of the six have no pin. That is the same shape as this ticket's defect, and the kernel identity has stepped since (`tiler.kernel.v7`, `tiler.kernel-program.v11`), so they are plausibly stale; the pinned `1,121` would not catch it, because its assertion is only that the value exceeds `MAX_OPAQUE_IDENTITY_BYTES`. Regenerating them needs the serial-`f32`-sum kernel built at one contributor and at ranks 3 to 8 through `crates/tiler-conformance/src/serial_sum.rs`'s `serial_sum_program` and `compile_under`, which is a different subject from this ticket and a real measurement job. **Not repaired, not asserted either way** — it wants its own narrow `contracts/artifacts` ticket, and an arithmetic refresh of it would be exactly the failure this ticket exists to record.
+
+## Later follow-through — 2026-08-09
+
+Both remainders above are now complete. The six kernel-identity figures were
+re-measured, dated, and qualified by
+[`date-or-regenerate-the-six-kernel-identity-lengths-in-the-artifact-abi`](date-or-regenerate-the-six-kernel-identity-lengths-in-the-artifact-abi.md),
+which also corrected this record's false proposed construction: the named
+conformance helper was rank-two-only and could not regenerate ranks three
+through eight. The surviving unpinned BF16-versus-F32 identity property was
+then made executable by
+[`pin-the-differing-identity-positions-beside-the-carrier-positions-constant`](pin-the-differing-identity-positions-beside-the-carrier-positions-constant.md):
+`DIFFERING_IDENTITY_POSITIONS` is now distinct from the carrier-envelope count,
+and the test first proves equal identity lengths before counting the four
+structural tag positions. The offsets remain deliberately unpinned. Thus the
+Outcome's proposed work and unowned-quantity account are historical; no live
+remainder remains under this ticket.

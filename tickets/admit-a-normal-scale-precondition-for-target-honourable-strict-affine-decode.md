@@ -4,7 +4,7 @@ title: Admit a normal-scale precondition so strict-affine decode is target honou
 status: done
 priority: p2
 dependencies: [prototype-quantized-value-vertical, scope-first-quantized-lm-profile]
-related: [implement-first-runtime-semantic-value-precondition-enforcement, produce-typed-strict-affine-quantize-semantic-preconditions, implement-first-quantized-backend-profile, enforce-resolved-encoded-value-binding-conformance]
+related: [implement-first-runtime-semantic-value-precondition-enforcement, produce-typed-strict-affine-quantize-semantic-preconditions, implement-first-quantized-backend-profile, enforce-resolved-encoded-value-binding-conformance, resolve-the-provisional-normal-scale-discharge-public-surface]
 scopes: [implementation/ir, implementation/reference, implementation/metal, implementation/compiler, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
@@ -84,3 +84,17 @@ No public item was removed or renamed. `SubnormalFreedom` is deliberately *not* 
 **Not done here, deliberately.** No U4 packing, per-axis map, or contraction work. No tensor-payload enforcement. No dtype-ledger cell moved. The `f16`/`bf16`/`f64` arms of `discharges` are reservations, not implemented support — nothing emits arithmetic in them.
 
 **Provisional boundary acceptance (2026-08-01, overnight mode).** The coordinator provisionally accepted the five public items — `positive_normal_scalar_predicate`, `ENCODED_NUMERIC_SCALE_DOMAIN`, `SubnormalFreedom` with `discharges`, and the two derived accessors — with the deliberate identity exclusions (derived value never folded twice) noted. Recorded for Tom's morning review.
+
+## Later public-boundary correction — 2026-08-09
+
+The paragraph above is the latest acceptance provenance in this record; it is
+not Tom's acceptance of the exact public surface. A full current-source audit
+found six exported symbols in the five groupings it names:
+`positive_normal_scalar_predicate`, `ENCODED_NUMERIC_SCALE_DOMAIN`, the
+`SubnormalFreedom` enum, `SubnormalFreedom::discharges`,
+`VerifiedScheduledRegion::subnormal_freedom`, and
+`VerifiedKernel::subnormal_freedom`. Their current rustdoc carries no draft
+marker. [`resolve-the-provisional-normal-scale-discharge-public-surface`](resolve-the-provisional-normal-scale-discharge-public-surface.md)
+now owns the missing exact-boundary decision and, absent Tom's acceptance, the
+restoration of draft labels. The numerical implementation and this ticket's
+completed honourability outcome are unchanged.
