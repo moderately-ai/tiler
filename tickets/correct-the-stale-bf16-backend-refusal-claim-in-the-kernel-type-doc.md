@@ -1,7 +1,7 @@
 ---
 id: correct-the-stale-bf16-backend-refusal-claim-in-the-kernel-type-doc
 title: Correct the stale Bf16 backend-refusal claim in the kernel type doc
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [re-read-the-bf16-and-elementary-support-rows-against-source, lower-bf16-to-metal]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [doc-claim, bf16, kernel]
+claimed_from: todo
+assignee: terra-bf16
+lease_expires_at: 1786243732
 ---
 
 ## The defect (navigation re-read 2026-08-06, coordinator-verified)

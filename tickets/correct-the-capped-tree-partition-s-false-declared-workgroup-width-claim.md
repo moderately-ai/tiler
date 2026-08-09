@@ -1,7 +1,7 @@
 ---
 id: correct-the-capped-tree-partition-s-false-declared-workgroup-width-claim
 title: Correct the capped tree partition s false declared-workgroup-width claim
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [carry-the-tree-participant-cap-as-a-target-profile-row, bound-the-tree-cap-s-unmeasured-downward-direction]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, compiler, profiles]
+claimed_from: todo
+assignee: terra-capped
+lease_expires_at: 1786243732
 ---
 
 `capped_tree_partition`'s doc comment claims something about every profile in the repository that is false, and a sibling constant a few lines away states the same fact correctly. The two disagree in the same file.
