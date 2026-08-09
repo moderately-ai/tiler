@@ -29,3 +29,11 @@ The two conclusions [the measured-feedback tuning loop](../docs/research/cost-mo
 ## Non-goals
 
 Re-opening any decision the design record made on evidence it did have. If a source contradicts one, that is a finding to record and a follow-up to file, not an edit to make in passing.
+
+## Outcome
+
+Completed 2026-08-07. Markl et al. and Cole/Graefe were retrieved by plain `curl` from corrected public routes; the original attempts had been incomplete or misdirected. Graefe/Ward remained inaccessible to this host because every legitimate route ended at the ACM Digital Library bot wall, so Tom supplied the paper from a normal browser session. All three byte streams were identified, digested, read, and entered into the 14-record source population; `docs/research/cost-model/sources/verify-sources.sh` now reports 0 pending acquisition.
+
+Both conclusions identified above survived and gained direct evidence. Progressive Optimization derives a conservative validity range from intersections between the optimizer's own cost functions while pruning alternatives. That does not safely derive the validity region of a machine observation: it bounds the wrong authority, deliberately admits a range wider than true optimality because POP can re-optimize, and depends on alternatives Tiler discards. Tiler's declared-region rule therefore remains.
+
+The 1994 `choose-plan` design re-evaluates analytic costs at start-up and requires every potentially optimal alternative in the shipped DAG; its measured ten-way-join plan had 14,090 operator nodes versus 21. The 1989 origin precomputes break-even decisions and is cheaper at start-up, but still ships the alternatives and carries no optimality guarantee. Neither is a measured-feedback mechanism or a cheaper substitute for the existing `AvailabilityPhase` ladder. No design verdict changed; the two formerly thin conclusions were strengthened. The complete provenance, reading bounds, and secondary-source corrections live under the source-record anchors `markl-pop-sigmod-2004`, `graefe-ward-sigmod-1989`, and `cole-graefe-sigmod-1994`, and the integrated conclusions are recorded under `Sources and evidence gaps` in the measured-feedback design.
