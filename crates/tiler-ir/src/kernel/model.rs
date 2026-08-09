@@ -120,11 +120,16 @@ pub enum KernelType {
     /// A `Bf16`-typed value is now produced: a region whose scalar program is
     /// [`ScalarProgram::PointwiseBf16`](crate::schedule::ScalarProgram::PointwiseBf16)
     /// lowers to a kernel whose buffers, constants, arithmetic, and NaN
-    /// canonicalization are all `Bf16`. What is still absent is a *backend* that
-    /// can emit one: `crates/tiler-metal` refuses this type by name rather than
-    /// spelling `bfloat`, because it carries no BF16 constant reinterpretation,
-    /// canonicalization helper, or dispatch route. Verified and emittable are
-    /// separate claims, and only the first holds here.
+    /// canonicalization are all `Bf16`. `crates/tiler-metal` emits this type as
+    /// `bfloat`: its exact sixteen-bit constants are reinterpreted through
+    /// `ushort`, its multiply and add use `bfloat` arithmetic, and its NaNs use
+    /// a separate `bfloat` canonicalization helper.
+    ///
+    /// The evidence is deliberately bounded. Those are the three supported
+    /// operations, and backend execution has been checked only on the declared
+    /// macOS Apple9 profile row. This type does not imply support on another
+    /// target family, for conversion or contraction, or through a complete
+    /// `compile()`/artifact/routing path.
     Bf16,
 }
 
