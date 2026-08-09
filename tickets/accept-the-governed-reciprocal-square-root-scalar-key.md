@@ -44,3 +44,5 @@ Tom accepts or rejects the exact surface above. On acceptance the draft label at
 ## Accepted 2026-08-06
 
 **Tom accepted the key at the live session's decision round, relayed and executed by the coordinator.** The surface follows the established scalar-key pattern (tenth key, exp/divide shape), with two-sided perturbation evidence and a live consumer (the normalization law in flight). The code-side label flip was routed to the law-widening worker's branch (which holds `implementation/ir`) so the sweep lands whole with that merge; this node records the acceptance and its provenance.
+
+**Current-state correction — 2026-08-09.** The routed code half landed. [`widen-the-staged-realization-law-to-the-registered-elementary-families`](widen-the-staged-realization-law-to-the-registered-elementary-families.md), source anchor `The rsqrt acceptance's code half`, records the carried rewrite, and `rsqrt_f32_scalar_op` now carries the `Accepted boundary` paragraph naming this node. No label-flip work remains here.

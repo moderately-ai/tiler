@@ -42,3 +42,5 @@ Either accept the surface as landed, or record the requested amendment here. Ame
 ## Outcome — accepted
 
 **Accepted by Tom on 2026-08-06, as-is with no exclusion, at the live session's decision round (presented by the orchestrator, explain-then-recommend, relay source this ticket).** The licence-keyed family, its four exclusions, and the empty-row restraint on the macOS profile are accepted public surface exactly as landed. The two closing measurements remain unauthorized and stay with the authority ledger's deferral; the in-code draft labels rewrite to the accepted-surface form with the next branch holding `implementation/compiler` and `implementation/build`.
+
+**Current-state correction — 2026-08-09.** The source-label handoff is complete. `crates/tiler-compiler/src/target.rs`, source anchors `The **evaluation-order-preservation** family carries an acceptance of its own` and `**Accepted public surface.** The key half of the evaluation-order fact`, now records this acceptance across the module header and the accepted items. The two measurements remain unauthorized exactly as above; only the stale source-label obligation is retired.

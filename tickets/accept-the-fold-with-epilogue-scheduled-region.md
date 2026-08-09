@@ -63,3 +63,5 @@ Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on thi
 ## Outcome — accepted
 
 **Accepted by Tom on 2026-08-06, as-is with no exclusion, at the live session's decision round (presented by the orchestrator, explain-then-recommend, relay source this ticket).** The variant, its sibling-per-combiner grain, the identity-epilogue and one-leaf refusals, and the no-split refusal are accepted public surface exactly as landed. The in-code draft label rewrite rides with [`account-for-a-staged-realization-stage-in-the-kernel-program`](account-for-a-staged-realization-stage-in-the-kernel-program.md)'s branch, which holds `implementation/ir`.
+
+**Current-state correction — 2026-08-09.** That handoff landed. The follow-on's Outcome, source anchor `Two acceptance doc-comment rewrites landed`, records the carried change, and `ScalarProgram::SquaredSerialSumThenEpilogue` now carries an `Accepted public surface` paragraph naming this acceptance node. No draft-label work remains for this surface.
