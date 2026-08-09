@@ -107,6 +107,19 @@ decision 2 is Tom's decision. Decision 4 requires no supersession, but it confir
 that a new run-time or identity contract would also need Tom's authority. Do not
 disguise either decision as implementation detail.
 
+## Decision packet — 2026-08-09
+
+The stop condition fired before the vertical comparison could select a representation. Both candidates require consequential public authoring, inspection, validation, and identity choices. More importantly, neither candidate can turn an arbitrary dispatch-time `u32` tensor value into timeless index-domain proof under current ADR 0109 decision 2. A host check can establish one dispatch's semantic precondition, but the repository has no accepted object that carries that result into executable coverage without mislabelling it as program proof.
+
+Tom chooses the authority under which the revision continues:
+
+1. **Keep ADR 0109 decision 2 unchanged and constrain the revision to static proof (recommended).** Complete the two-representation comparison, but select neither form unless it can prove every retained obligation before executable coverage. If neither can, ADR 0108 remains proposed with a non-circular trigger naming the first statically provable indirect-access vertical.
+2. **Authorize a dispatch-bound validation design.** Expand the revision to propose the run-time evidence object, its lifetime and identity relation, the exact point before executable coverage where it is consumed, and the explicit supersession of ADR 0109 decision 2. This is an architecture decision, not an implementation shortcut.
+
+The choice does not accept either nested-expression or tagged-access public spelling. Their exact public surfaces still return separately after the comparison. **Strongest counterpoint to option 1:** it may leave gather permanently semantic-only even though `decide_gather_index` was deliberately factored for host validation; option 2 can unlock the real workload, but only by adding the missing run-time and identity authority honestly.
+
+After Tom answers, return this node to `todo` under the selected authority. The dependent ADR 0108 acceptance node remains blocked until the revised proposal is complete.
+
 ## Closes when
 
 The complete comparison and revised proposal are coherent, source-audited, and

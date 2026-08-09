@@ -1,14 +1,14 @@
 ---
 id: name-a-host-process-availability-phase
 title: Name a host-process availability phase
-status: awaiting-decision
+status: deferred
 priority: p3
 dependencies: []
 related: []
 scopes: [implementation/ir, implementation/compiler, contracts/artifacts, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [target-profiles, artifacts, cpu, vocabulary, decision, needs-tom, public-boundary]
+tags: [target-profiles, artifacts, cpu, vocabulary, decision, needs-tom, public-boundary, deferred]
 ---
 ## User-visible outcome
 
@@ -38,3 +38,7 @@ Tom's decision must accept one meaning and, for Option A, the exact placement an
 ## Closes when
 
 Either a phase exists with its tag, order, and encoding consequences recorded and every match updated, or the question is closed with the reasoning for why the borrow is correct.
+
+## Trigger check log
+
+- 2026-08-09 — **not fired.** ADR 0092 names the trigger as the first CPU ISA row. The current CPU vector realization ticket explicitly excludes scalable vector length from target facts and records that its tier does not fire this phase ticket. No current target profile needs to distinguish a bound host process from a live device, so the complete packet above remains deferred until a qualifying row arrives.

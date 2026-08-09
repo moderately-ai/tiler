@@ -70,8 +70,18 @@ A labelled draft under ADR 0075; Tom accepts the exact included and excluded set
 
 **Rendered text changed.** `ExtentSourceError`'s three pre-existing variants moved prefix `index-extent.` → `sourced-extent.` and "this region's shape environment" → "this program's". Both were stale after the vocabulary's relocation to `tiler_ir::shape`, and this ticket makes the semantic layer a live producer of them; nothing asserts the old strings.
 
+## Decision packet — 2026-08-09
+
+The implementation and its failure-path evidence are complete; only acceptance of the exact included, changed, removed, and excluded public surface above remains. **Recommendation: accept the draft as built.** It keeps proof of symbolic equality in `ExtentSources`, carries a not-proved result through the existing typed shape-environment error boundary, and avoids creating a second `BuildError` spelling or a second equality authority. **Strongest counterpoint:** changing `ValueFact::shape` and the inference request surface makes sourced shape a durable public concept even though every non-elementwise standard family still refuses symbolic operands; Tom may prefer to accept only the error vocabulary and keep the wider inference surface private until a second family consumes it.
+
+Tom's answer is acceptance or a precise revision of the enumerated surface; it does not reopen the already-tested left-operand result-shape rule or authorize the unsupported families below.
+
 ## Unsupported cases
 
 - **Only the elementwise binary families decide the symbolic question.** `multiply-f32`, `add-f32` and their `bf16` siblings. Every other family in the standard profile — broadcast, concatenate, contraction, gather, reindex, slice, softmax, rms-norm, silu, the three strict-affine quantization keys, and the strict serial sum — declines a symbolic operand by name through `OperationInferenceRequest::static_operand_shape`, returning `ExtentSourceError::SymbolicExtentUnsupported`. Several are shape-*preserving* and would survive a symbolic operand on the shape rule alone; they still decline, because their normative definitions, reference evaluation, and numerical conformance are stated over fixed extents and admitting a boundary none of those can evaluate would move the refusal downstream to a layer with no name for it.
 - **An out-of-crate provider that has not been taught the question compares `SourcedShape`s structurally.** `SourcedShape: PartialEq` is spelling equality, which is *sound but incomplete* against `proves_equal`: it admits two occurrences of one symbol (agreeing with reflexivity) and refuses everything else, including a pair the environment does prove equal. No such provider can receive a symbolic operand today, because nothing outside `tiler-ir` constructs a symbolic program.
 - **`OBLIGATION_DOMAIN`'s step is unguarded, and so is every other identity domain in the tree.** Reverting it to `v1` and running `cargo nextest run --workspace` is green: 3181 passed. No test in the repository pins `tiler.semantic-graph.v3` or `tiler.index-region.v11` either, so this is the existing convention rather than a gap this change opened. Introducing domain pins is a repository-wide convention decision and is left to Tom.
+
+## Closes when
+
+Tom accepts or revises the exact public boundary, the accepted inclusion and exclusion list is recorded with provenance, and any requested revision is implemented without weakening the sourced-equality authority or the typed refusal evidence.

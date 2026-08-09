@@ -118,6 +118,8 @@ New surface, all of it a labelled ADR 0075 draft in `tiler_metal::direct_require
 - **In `tiler_ir::schedule`:** `IndexArithmetic` (exhaustive, `CompleteU64`), `IndexArithmetic::of`, and the new public field `ResourceRequirements::index_arithmetic`. `REGION_INDEX_ARITHMETIC` is `pub(crate)` and is not surface.
 - **Unchanged:** `MetalGpuFamily` and everything in `tiler_metal::applicability`.
 
+**Recommendation: accept the draft as built.** The non-optional neutral `CompleteU64` requirement states the one arithmetic every scheduled region already derives, while `AppleFamilyFloor` keeps Apple vocabulary in the Metal-owned comparison and prevents callers from minting their own threshold. The private witness makes removal of the pre-pipeline discharge a compile error. **Strongest counterpoint:** the single-variant public vocabularies reserve names before a second arithmetic or floor is reachable, and `AppleFamilyFloor` sits beside an observation vocabulary that begins at Apple5; Tom may prefer a private comparison until a second floor exists. That would require revising the public included set without removing the carried artifact requirement or the pre-commit check.
+
 ## Support-matrix rung
 
 This advances **no** support-matrix or dtype row. It moves one row of the *maturity* ladder for the derived-requirement class only: index arithmetic goes from **reserved type** (a compiler-internal `CapabilityAxis` with no artifact carrier) to **tested guarantee** for the producer-to-decoder carry and the device comparison, and to **empirical evidence** bounded to one Apple9 host row for the positive live case. The negative device case has **`Unknown`** authority and no measurement, by construction: no device below Apple3 is reachable.
@@ -126,6 +128,10 @@ This advances **no** support-matrix or dtype row. It moves one row of the *matur
 
 This step does **not** touch `tiler.semantic-graph`, so `remove-the-workload-shapes-from-the-concatenate-normative-definition`'s `v3`→`v4` is independent of it. What that ticket must account for is that the artifact and manifest domains have moved underneath it: it will rebaseline `tiler.artifact-program.v16` and manifest schema `16.0`, not `v15`/`15.0`, and its own recomputation of `DIFFERING_CARRIER_POSITIONS` starts from **68**, not 67.
 
-## Out of scope, and needing a ticket
+## Out-of-scope drift — corrected by its owners
 
-`docs/dtype-support.md` (scope `contracts/navigation`, not this ticket's) states artifact byte lengths — `97,060`, `90,806`, `45,457`, `73,556`, `36,832` — for the BF16 producer path. No test asserts them, so nothing went red, but every one is now stale by this step's per-record growth. `docs/artifact-abi.md:283`'s copies of the forged-pair figures are in scope and were left as the historical measurements they are labelled as. A narrow ticket should recompute the `dtype-support.md` figures on the merged tree.
+The original outcome found unasserted BF16 byte lengths in `docs/dtype-support.md` and requested a narrow owner. That owner already landed: [`recompute-the-unasserted-bf16-byte-lengths-in-the-dtype-support-matrix`](recompute-the-unasserted-bf16-byte-lengths-in-the-dtype-support-matrix.md) and [`replace-the-stale-artifact-abi-byte-figures-with-the-properties-tests-pin`](replace-the-stale-artifact-abi-byte-figures-with-the-properties-tests-pin.md) are both `done`. The old digits remain searchable only inside struck historical measurements and ticket evidence; the live dtype-support contract now states checked length and identity relationships rather than unpinned absolute sizes. No new owner is needed.
+
+## Closes when
+
+Tom accepts or revises the exact draft surface, the acceptance provenance is recorded, and any requested revision preserves the one-authority and pre-routing-discharge invariants.

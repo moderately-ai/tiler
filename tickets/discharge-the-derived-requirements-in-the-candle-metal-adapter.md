@@ -70,5 +70,5 @@ This ticket is therefore `awaiting-decision`, not complete implementation work. 
 
 ## Graph maintenance
 
-- **Out of scope, needs a ticket:** `resolve_prepared_route`'s doc comment in `prototypes/serial-sum-run/src/proof.rs` states "the requirements the verified program itself derived, which need only the bound device; then the live-device rows the artifact carried" — the reverse of what the function does. That file is `implementation/runtime`, which this ticket does not hold. It is the source of the false Fact audited above and should be corrected there.
+- **Corrected outside this ticket.** [`correct-the-reversed-requirement-order-in-the-serial-sum-run-doc-comment`](correct-the-reversed-requirement-order-in-the-serial-sum-run-doc-comment.md) is `done`. `resolve_prepared_route` now states the actual live-device → direct-requirement → pipeline-preparation order and preserves the retired wording only inside its dated correction, so a grep hit is not evidence that the reversed claim remains live.
 - The new `RouteRefusal` variants are an additive-to-the-crate but **breaking** change to an enum deliberately not `#[non_exhaustive]`; nothing outside `refusal.rs` matches it exhaustively, so no other site changed.

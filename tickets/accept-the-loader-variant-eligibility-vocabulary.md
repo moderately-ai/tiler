@@ -38,6 +38,10 @@ Read from `crates/tiler-runtime/src/load.rs` at this base rather than copied fro
 2. **Are `VariantIneligibility`'s four classes the right cut?** Each names a different repair. The counterpoint is `UndispatchableDType`, whose necessity rests on both consumer paths restating the producer's declaration rather than the host's own — a tautology the loader documents but does not fix.
 3. **Should `FilteredVariant`'s fields be public**, or accessors as the rest of this crate uses?
 
+## Recommendation
+
+Accept removal of the three superseded broad classes and accept the four current ineligibility classes: they preserve the filtered-versus-failed distinction and give each current refusal a different repair. Keep `FilteredVariant` immutable but replace its public fields with accessors for consistency with the rest of the loader surface. **Strongest counterpoint:** the two fields are plain immutable evidence and public access is simpler; changing them now adds ceremony without changing invariants. [`declare-host-dtype-dispatchability-at-the-consumer-boundary`](declare-host-dtype-dispatchability-at-the-consumer-boundary.md) already records why the current frontend and Candle rows remain producer-declared and what a host-earned row would require, so accept `UndispatchableDType` as the fail-closed class for that explicitly bounded state rather than filing a duplicate gap ticket.
+
 ## Closes when
 
 Tom accepts or revises each, the provisional-acceptance paragraph in the originating ticket is annotated with what superseded it, and the acceptance provenance — who, date, venue, relay source — is recorded.

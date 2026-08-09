@@ -1,14 +1,14 @@
 ---
 id: accept-the-public-route-requirement-answer-boundary
 title: Accept or revise the public route-requirement answer boundary
-status: awaiting-decision
+status: deferred
 priority: p1
 dependencies: []
 related: [land-the-backend-scoped-route-requirement-answer-adr, design-the-adapter-owned-route-requirement-answer-channel, accept-the-public-backend-provider-composition-boundary]
 scopes: [contracts/foundation, contracts/decisions, contracts/integrations]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
-tags: [decision, needs-tom, public-boundary]
+tags: [decision, needs-tom, public-boundary, deferred]
 ---
 ## User-visible outcome
 
@@ -40,6 +40,7 @@ This node is not research or implementation work. When it ripens, the packet pre
 
 Tom answers each of the seven items; `docs/architecture.md` (anchor: `the one crate an inline-frontend consumer names`) is amended or explicitly left; ADR 0092's status paragraph stops listing unaccepted items as outstanding; and any surface he accepts is released to its own implementation ticket rather than landed under this node.
 
-## Ripeness check log
+## Trigger check log
 
 - 2026-08-07 — **not ripened.** Both named arrival conditions re-tested at base `ee858197` rather than relayed. The compiler mints no route requirement: `grep -rn "RouteRequirement" crates/tiler-build/src/` returns no match, unchanged from the `0017345` observation this node was filed on. No consumer dispatches: the producer that would supply the first minted requirement, [`emit-a-route-requirement-from-the-build-producer-so-a-family-authority-refusal-is-drivable`](emit-a-route-requirement-from-the-build-producer-so-a-family-authority-refusal-is-drivable.md), reads `status: deferred` and holds only an expired claim, so nothing is in flight toward it either. The seven items therefore stay prospective and are deliberately **not** put to Tom this cycle — the node's own reasoning is that unbuilt shapes spend his time on interfaces the tree cannot exercise, and that reasoning is intact. Recheck: `grep -rn "RouteRequirement" crates/tiler-build/src/` and `grep -m1 '^status:' tickets/emit-a-route-requirement-from-the-build-producer-so-a-family-authority-refusal-is-drivable.md`.
+- 2026-08-09 — **not fired.** Re-read this ticket and its producer owner in full at `17c1945361b9f1bb13ae41969ad87fde899cca62`. `rg -n 'RouteRequirement' crates/tiler-build/src` still returns no match, and the producer ticket remains `deferred` on the absence of any additional, non-derived payload capability. No dispatching consumer has arrived. The seven prospective public shapes therefore belong in the deferred trigger queue, not the current Tom-decision queue.
