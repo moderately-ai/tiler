@@ -13,39 +13,34 @@
 //! # The cost that decision did not name
 //!
 //! **A restated table drifts.** A lint added, tightened, or removed
-//! workspace-wide reaches every other member through inheritance and does not
-//! reach this one, and nothing failed when the two diverged.
+//! workspace-wide reaches the fourteen inheriting members and neither this
+//! crate nor the prototype, and nothing failed when this test was introduced.
 //! [ADR 0079](../../../docs/decisions/0079-permit-unsafe-code-case-by-case-at-named-sites.md)
 //! records the same gap and how it opened: `scripts/check_workspace.py` pinned
 //! the diverging member's exact table until `e197176` deleted it with the rest
-//! of the Python tooling, and since then this crate's `deny` could be widened
-//! to `allow`, or a lint added or dropped from either side, with no check
-//! failing. `AGENTS.md` asks a reviewer to inspect `[lints]` changes, which is
-//! an obligation rather than an instrument.
+//! of the Python tooling. This module closes the exact-table half; the
+//! workspace check described below closes the member-set half.
 //!
-//! # What this module holds, and the larger property it does not
+//! # What this module holds, and where the larger property lives
 //!
 //! It reads both manifests and compares them, so **this crate's** table
 //! diverging from the workspace's by anything other than the one intended lint
 //! level is a red test.
 //!
-//! It is not the workspace-wide pin that `UNINHERITED_LINT_MEMBERS` was, and
-//! must not be read as one. Two properties stay unheld, both of them
-//! workspace-scoped and neither reachable from inside one member's test:
+//! This module is not the workspace-wide member-set pin and must not be read as
+//! one. `crates/tiler/tests/workspace_lint_inheritance.rs` owns that property:
+//! it derives the member manifests, holds the exception set to exactly this
+//! crate and `prototypes/serial-sum-run`, and requires both exceptions to name
+//! an in-member check. The prototype's `tests/lint_table.rs` loads this exact
+//! reader through `#[path]`, so its table is compared against the root by the
+//! same parser and expectation. A third member dropping inheritance, either
+//! exception widening to `allow`, or either copy drifting in any other entry
+//! is therefore a red test.
 //!
-//! - **A third member dropping `[lints] workspace = true`** still goes
-//!   unlinted with nothing failing. Two members diverge today — this crate and
-//!   `prototypes/serial-sum-run` — and a member that stops inheriting is
-//!   visible only in the diff that does it.
-//! - **`prototypes/serial-sum-run`'s own table** has no check of any kind. Its
-//!   divergence is the same shape as this one and its `deny` may still be
-//!   widened to `allow` silently.
-//!
-//! Both belong to a check over the member set, which is
-//! `crates/tiler/tests/workspace_population.rs`'s neighbourhood rather than
-//! this crate's: what this crate owns is cross-layer executed evidence, and
-//! policing every member's manifest from here would make it the place a test
-//! goes when nobody decided where it belongs.
+//! The ownership split remains deliberate: the facade test owns the workspace
+//! partition, while this module owns the one exact comparison both exceptions
+//! execute. Cross-layer conformance does not become the owner of every member's
+//! manifest merely because this crate supplies the shared reader.
 //!
 //! # Derived rather than restated
 //!
@@ -105,10 +100,11 @@ type LintTables = BTreeMap<String, BTreeMap<String, String>>;
 /// The one difference between the two tables that is not drift.
 ///
 /// The section-qualified lint name, the workspace's level, and this crate's,
-/// each as the text a manifest spells it in. The name is assembled from two
-/// pieces so that `crate::bf16_vertical::tests::the_unsafe_site_population_is_the_two_named_ones`,
-/// which scans this crate's sources for the attribute token, cannot match this
-/// file — the same reason `crate::portability` assembles its needles.
+/// each as the text a manifest spells it in. The name remains assembled from
+/// two pieces so its source shape stays independent from the policy check;
+/// `crates/tiler/tests/workspace_unsafe_sites.rs` now lexically discards comments
+/// and strings before it looks for permissions, so this is no longer needed to
+/// hide from a substring census.
 fn permitted_divergence() -> (String, String, String) {
     (
         format!("rust.{}{}", "unsafe", "_code"),
@@ -206,7 +202,8 @@ fn this_crates_lint_table_differs_from_the_workspace_by_exactly_one_level() {
         "this crate restates the workspace lint table because it cannot inherit one entry of it, \
          and the difference must stay that one entry. What the two manifests differ by is on the \
          left and what they may differ by is on the right.\n\nAn *extra* difference is drift: \
-         inheritance carried a workspace lint change to every other member and not to this one. \
+         inheritance carried a workspace lint change to the fourteen inheriting members and \
+         neither checked exception. \
          Copy the change across rather than recording it here, and do not make the tables match \
          by weakening a lint — matching by weakening is the failure this check exists to \
          prevent.\n\nA *missing* difference means the exception itself moved. If this crate no \

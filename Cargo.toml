@@ -47,6 +47,7 @@ num-traits = "0.2.19"
 # `deny` instead, and neither is this one. Bytes are identical by specification
 # and pinned by test.
 sha2 = "0.11.0"
+serde_json = "1.0.151"
 # `tiler` sorts here and is deliberately absent. It is the consumer-facing
 # facade, so nothing in this workspace may depend on it, and an entry here would
 # only make that edge easy to add by accident.
@@ -67,6 +68,9 @@ tiler-metal-aot = { path = "crates/tiler-metal-aot" }
 tiler-reference = { path = "crates/tiler-reference" }
 tiler-runtime = { path = "crates/tiler-runtime" }
 trybuild = "1.0.114"
+# The workspace unsafe-site test's Rust lexer must use Rust's Unicode XID
+# identifier grammar; `char`'s alphabetic/alphanumeric categories are narrower.
+unicode-ident = "1.0.24"
 
 # Keep useful file/line backtraces without paying for full variable debug data.
 #
@@ -117,7 +121,7 @@ opt-level = 1
 # this table can reach it; a difference named at one end only reads as an
 # oversight from the other.
 #
-# Three checks hold the arrangement, and none of them restates this table:
+# Four checks hold the arrangement, and none of them restates this table:
 #
 # - `crates/tiler/tests/workspace_lint_inheritance.rs` reads the member list
 #   above and fails on any member that is not one of those two and does not
@@ -133,6 +137,49 @@ opt-level = 1
 #   running that same module from the prototype's root. One reader, two roots --
 #   a second parser of these tables would drift against the first exactly as the
 #   tables drift without either.
+#
+# The per-site half is held separately by
+# `crates/tiler/tests/workspace_unsafe_sites.rs`. It cross-checks the explicit
+# member roots above against Cargo's actual metadata package set, enumerates all
+# metadata target roots, walks the member source trees, and follows literal
+# local source-loading attributes/macros before pinning the four admitted
+# permissions by workspace-relative path, complete item signature, and exact
+# reason. Its lexer discards comments and strings, recognizes wrapped direct
+# attributes, and fails closed on unsupported permission or source-loading
+# syntax. Across all sixteen member trees it separately closes workspace-owned
+# and source-generating macro authority: fifteen private local `macro_rules!`
+# definitions with duplicate multiplicity refused, the guarded `tensor!`
+# procedural exporter and its sole facade
+# re-export, the exact facade-owned compiler `compile_error!` re-export used by
+# both producer streams, exact source-path/multiplicity identities for 73 fixture
+# invocations plus one rustdoc invocation, and the exact
+# compiler/std macro, attribute, and derive vocabularies currently used.
+# Custom/path-qualified invocations, workspace-owned local declarative macro
+# exports or re-exports, extra procedural exporters, aliases of the exact
+# `tiler`, `tiler_macros`, `std`, and `core` macro namespaces, dynamic
+# macro/attribute names, and unclassified derives or
+# attributes fail closed. A direct proc-macro dependency from either `deny`
+# package is an early diagnostic, not the closure argument: transitive and
+# re-exported macros need not be direct edges. Cargo metadata separately pins
+# the facade's `tiler_macros` dependency spelling to the workspace producer and
+# refuses facade Cargo bindings named `core` or `std`, because either would
+# retarget the compiler-builtin diagnostic re-export at its definition site.
+# A second test invokes rustc with
+# `--force-warn=unsafe-code` through Cargo JSON over every target in those two
+# packages and pins the six visible diagnostics by package, target, target
+# root, operation source, and multiplicity. It catches active includes and
+# source reuse that a lexical file inventory cannot identify.
+#
+# Every metadata target Cargo marks `doctest = true` carries
+# `#![doc(test(attr(forbid(unsafe_code))))]`, because rustdoc compiles extracted
+# examples as separate crates that do not inherit this table. The inventory
+# also classifies macros, attributes, derives, hidden lines, literal generated
+# docs, and unsupported source loads in extracted Rust. Identifier tokens use
+# Rust's Unicode XID grammar, while opaque raw-string forwarding and
+# stringification composed into executable rustdoc fail closed. The compiler
+# and the three lint-table checks above remain the lint-level authority; dependency
+# internals and compiler-builtin generated implementation details are outside
+# ADR 0079's workspace-authored source-authority inventory.
 [workspace.lints.rust]
 missing_docs = "warn"
 unsafe_code = "forbid"

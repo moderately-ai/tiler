@@ -8,8 +8,6 @@
 //! host-visible half. The measured runs report their boundary — or its absence
 //! — rather than skipping.
 
-use std::path::Path;
-
 use tiler_compiler::session::{
     CompileFailureClass, CompileRequest, NumericalContract, NumericalContractBuilder,
     TargetCompileRefusal, TargetNumericalRefusalDisposition, TargetNumericalRequirement, compile,
@@ -31,7 +29,6 @@ use super::{
     region_under, scheduled_region, semantic_program, unpack,
 };
 use crate::measurement::{measured_half, require_or_report};
-use crate::portability::collect_rust_sources;
 
 /// Corpus positions this file names, so a reordering is a failure rather than a
 /// silently different claim.
@@ -678,71 +675,6 @@ fn the_composition_perturbation_is_observed_failing_on_the_measured_row() {
         differing.len() >= 5,
         "the perturbation moved only {} element(s)",
         differing.len(),
-    );
-}
-
-/// The unsafe site population is the two named ones, and nothing else.
-///
-/// Tom's rule requires the population to be named and counted where a reader
-/// will find it, so that a later addition is visible rather than absorbed. This
-/// is the check that makes a third site a red test: it walks every Rust source
-/// file under `src/`, so a *new file* containing `unsafe` is caught as well as a
-/// new site in an existing one.
-///
-/// The needle is assembled at run time from two pieces, because a literal
-/// spelling of it in this file would be a match against this scanner's own
-/// source.
-#[test]
-fn the_unsafe_site_population_is_the_two_named_ones() {
-    let needle = format!("{}{}", "unsafe", " {");
-    let allow = format!("{}{}", "unsafe", "_code,");
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-
-    let mut files = Vec::new();
-    collect_rust_sources(&root, &mut files);
-    files.sort();
-    assert!(
-        files.len() >= 12,
-        "the scan found {} source file(s), which is fewer than this crate has; a walk that \
-         stopped finding files would report an empty population as a clean one. The floor rises \
-         with the crate rather than tracking it exactly, so adding a module is not an edit here \
-         and losing most of them still is.",
-        files.len(),
-    );
-
-    let mut blocks = 0_usize;
-    let mut allows = 0_usize;
-    for path in &files {
-        let text = std::fs::read_to_string(path).expect("a crate source file is readable");
-        let file_blocks = text.matches(needle.as_str()).count();
-        let file_allows = text.matches(allow.as_str()).count();
-        let owner = path.file_name().and_then(|name| name.to_str()) == Some("device_buffer.rs");
-        assert!(
-            owner || file_blocks == 0,
-            "{}: unsafe belongs in device_buffer.rs alone, and this file has {file_blocks} \
-             block(s)",
-            path.display(),
-        );
-        assert!(
-            owner || file_allows == 0,
-            "{}: an unsafe-code allow outside device_buffer.rs",
-            path.display(),
-        );
-        blocks += file_blocks;
-        allows += file_allows;
-    }
-
-    assert_eq!(
-        blocks, 2,
-        "the admitted population is two sites — device_buffer::write_bytes and \
-         device_buffer::read_bytes — and this scan found {blocks}. A third site needs Tom's \
-         decision under the rule on \
-         `decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access`, not an \
-         updated number here.",
-    );
-    assert_eq!(
-        allows, 2,
-        "each unsafe site carries its own reasoned allow; found {allows}",
     );
 }
 

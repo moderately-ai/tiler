@@ -1,3 +1,4 @@
+#![doc(test(attr(forbid(unsafe_code))))]
 //! The one governed content-digest algorithm every Tiler identity hashes under.
 //!
 //! `docs/artifact-abi.md` requires every digest use to name an explicit governed

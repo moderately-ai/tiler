@@ -99,7 +99,7 @@ fn main() {
 
     let result = {
 #[cfg(all(target_os = "ios", target_abi = "sim"))]
-const _: () = { ::core::compile_error!("xcrun: error: unable to find utility \"metal\""); };
+::tiler::__private::__tiler_compile_error!("xcrun: error: unable to find utility \"metal\"");
 const __TILER_ARTIFACT: &[u8] = b"tiler-artifact-envelope";
 #[cfg(all(target_os = "ios", target_abi = ""))]
 const __TILER_SELECTED_PAYLOAD: ::core::option::Option<usize> = ::core::option::Option::Some(0usize);

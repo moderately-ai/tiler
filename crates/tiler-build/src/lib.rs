@@ -1,3 +1,4 @@
+#![doc(test(attr(forbid(unsafe_code))))]
 //! Build-time compilation, artifact, and cache orchestration for Tiler.
 //!
 //! This crate sits downstream of compiler, backend, artifact, AOT-driver, and

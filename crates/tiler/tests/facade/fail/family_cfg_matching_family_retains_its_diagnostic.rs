@@ -22,7 +22,7 @@
 fn main() {
     let _ = {
 #[cfg(all(target_os = "macos", target_abi = ""))]
-const _: () = { ::core::compile_error!("xcrun: error: unable to find utility \"metal\""); };
+::tiler::__private::__tiler_compile_error!("xcrun: error: unable to find utility \"metal\"");
         "the semantic fallback this consumer must not silently receive"
     };
 }

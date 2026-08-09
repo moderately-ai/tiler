@@ -7,6 +7,7 @@
 // `test` because `fault` is a `cfg(test)` module, so an ordinary build of this
 // crate needs no unstable feature.
 #![cfg_attr(test, feature(variant_count))]
+#![doc(test(attr(forbid(unsafe_code))))]
 //! The cross-process expansion cache protocol ADR 0050 accepts.
 //!
 //! Expanding an inline Tiler region runs an external compiler, which is the

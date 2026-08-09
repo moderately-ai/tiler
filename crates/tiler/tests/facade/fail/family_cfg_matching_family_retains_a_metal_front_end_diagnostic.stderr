@@ -2,7 +2,7 @@ error: `tiler::tensor!` could not compile this region's artifact on this build h
        kernel void tiler_injected_defect() { tiler_no_such_identifier(); }
                                              ^
        1 error generated.
-  --> tests/facade/fail/family_cfg_matching_family_retains_a_metal_front_end_diagnostic.rs:48:17
+  --> tests/facade/fail/family_cfg_matching_family_retains_a_metal_front_end_diagnostic.rs:48:1
    |
-48 | ... { ::core::compile_error!("`tiler::tensor!` coul...                      ^\n1 error generated."); };
-   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^...^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+48 | ::tiler::__private::__tiler_compile_error!("`...                      ^\n1 error generated.");
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^...^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

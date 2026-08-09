@@ -1,5 +1,6 @@
 #![feature(generic_const_parameter_types)]
 #![feature(min_adt_const_params)]
+#![doc(test(attr(forbid(unsafe_code))))]
 // `variant_count` is what makes an exhaustive-injectivity test's domain
 // enumeration a *proof* rather than a sample: it sizes the enumerating array
 // from the enum itself, so a variant added to a vocabulary and not to the

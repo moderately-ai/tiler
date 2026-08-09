@@ -9,6 +9,7 @@
 // public but the lists of their inhabitants are not, so an unconditional
 // declaration would widen this crate's nightly surface for nothing.
 #![cfg_attr(test, feature(variant_count))]
+#![doc(test(attr(forbid(unsafe_code))))]
 //! Target-neutral artifact, ABI, validation, and routing contracts for Tiler.
 //!
 //! This crate depends on `tiler-ir` for the shared target-neutral

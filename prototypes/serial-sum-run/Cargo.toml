@@ -36,12 +36,13 @@ metal.workspace = true
 
 # This crate does not inherit `[workspace.lints]`, and the difference is exactly
 # one lint. The workspace sets `unsafe_code = "forbid"`, which cannot be relaxed
-# by an inner attribute at any scope; this crate sets `deny` instead so the
-# single function that must call an Objective-C buffer API can carry a narrow,
-# reasoned `#[allow(unsafe_code)]`. Every other member keeps `forbid`.
+# by an inner attribute at any scope; this crate sets `deny` instead so the two
+# functions that must reach Objective-C buffer storage can each carry a narrow,
+# reasoned `#[allow(unsafe_code)]`. `tiler-conformance` is the other checked
+# `deny` exception; the remaining fourteen members keep `forbid`.
 #
 # `deny` rather than `allow`: unsafe stays a hard error everywhere in this crate
-# except at the one site that opts in by name.
+# except at the two sites that opt in by name.
 [lints.rust]
 missing_docs = "warn"
 unsafe_code = "deny"
