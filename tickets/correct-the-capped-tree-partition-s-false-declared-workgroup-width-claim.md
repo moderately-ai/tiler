@@ -1,6 +1,6 @@
 ---
 id: correct-the-capped-tree-partition-s-false-declared-workgroup-width-claim
-title: Correct the capped tree partition s false declared-workgroup-width claim
+title: Correct the capped tree partition's false declared-workgroup-width claim
 status: done
 priority: p2
 dependencies: []

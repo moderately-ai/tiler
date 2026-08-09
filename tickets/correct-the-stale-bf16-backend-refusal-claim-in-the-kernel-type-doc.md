@@ -13,7 +13,7 @@ tags: [doc-claim, bf16, kernel]
 
 ## The defect (navigation re-read 2026-08-06, coordinator-verified)
 
-`KernelType::Bf16`'s doc comment said "`crates/tiler-metal` refuses this type by name rather than spelling `bfloat`, because it carries no BF16 constant reinterpretation, canonicalization helper, or dispatch route. Verified and emittable are separate claims, and only the first holds here." All three named absences have since landed: the Metal spelling is anchored at `` `Bf16` spells `bfloat`, and it did not before``; `fn canonicalize_bf16_helper` supplies the BF16 helper; and `BinaryOp::Bf16Add` / `BinaryOp::Bf16Multiply` supply the arithmetic.
+`KernelType::Bf16`'s doc comment said "`crates/tiler-metal` refuses this type by name rather than spelling `bfloat`, because it carries no BF16 constant reinterpretation, canonicalization helper, or dispatch route. Verified and emittable are separate claims, and only the first holds here." The spelling and numerical machinery have since landed: the Metal spelling is anchored at `` `Bf16` spells `bfloat`, and it did not before``; `fn bf16_literal` supplies exact constant reinterpretation; `fn canonicalize_bf16_helper` supplies the BF16 helper; and `BinaryOp::Bf16Add` / `BinaryOp::Bf16Multiply` supply the arithmetic. Dispatch is separate target-profile evidence, not a route owned by the emitter.
 
 The former line-only locations in this historical navigation record are retired: their old offsets now describe unrelated source. The dated audit below uses current literal source anchors, each verified with `rg -F`, as the authoritative navigation.
 
@@ -21,7 +21,7 @@ A doc comment is a claim the next worker acts on; this one makes a landed capabi
 
 ## The work
 
-Rewrite the paragraph to describe current behaviour: the backend spells `bfloat` with its canonicalization helper and dispatch route, and state what boundary actually remains for this type (read `lower-bf16-to-metal`'s outcome and the BF16 support-matrix row for the current residual — the offline-vs-dispatch and profile-row boundaries — rather than asserting from this ticket). Verify each claim at source before writing, per the corpus rule.
+Rewrite the paragraph to describe current behaviour: the backend spells `bfloat` with exact constant reinterpretation, BF16 arithmetic, and its canonicalization helper; state the separately bounded target-profile execution evidence and what boundary actually remains for this type (read `lower-bf16-to-metal`'s outcome and the BF16 support-matrix row rather than asserting from this ticket). Verify each claim at source before writing, per the corpus rule.
 
 ## Fact audit and repair (2026-08-08, `c383e86d`)
 
@@ -34,6 +34,12 @@ Rewrite the paragraph to describe current behaviour: the backend spells `bfloat`
 and add, and the dispatched evidence is one program on the declared macOS
 Apple9 profile row. It does not establish another target family, conversion,
 contraction, or an end-to-end `compile()`/artifact/routing path.
+
+**Board audit correction — 2026-08-09.** The opening defect description and
+work item still said or implied that a dispatch route had “landed” in the
+emitter, contradicting this ticket's own 2026-08-08 Fact audit. They now keep
+emission machinery and target-profile execution evidence separate. No source,
+support-row, or delivered Outcome changed.
 
 ## Closes when
 

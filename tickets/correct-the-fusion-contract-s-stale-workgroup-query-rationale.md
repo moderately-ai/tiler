@@ -105,3 +105,24 @@ must find the new phase-qualified rationale. For the required subject
 perturbation, temporarily restore the stale phrase in the document; the first
 search must print its location and violate the closure condition. Restore the
 correct text before commit.
+
+## Outcome — delivered 2026-08-08
+
+The fusion contract now separates the intrinsic representation bound from
+target feasibility. It states that the selected width never exceeds 509 and
+therefore introduces no `Unrepresentable` decline against the independent
+4,096-participant schedule limit. It then leaves workgroup-width feasibility to
+each prepared entry's `PreparedKernelPreflight` query.
+
+The retained calibration evidence remains scoped to its subject: that prepared
+entry admitted 1,024 threads per workgroup. The neighbouring 521-participant
+residue statement now names the same query and phase instead of presenting the
+measurement as a compile-profile fact or repository-wide declaration. No
+compiler source, target profile, rule, measurement, identity, or numerical
+value changed.
+
+The source correction landed in `5753813c3051e02daade3ed4312b03e09f584046`.
+The two retired phrases are absent, while the source-safe anchors
+`Workgroup-width feasibility remains a \`PreparedKernelPreflight\` query` and
+`the rule introduces no \`Unrepresentable\` decline` remain present in the
+current contract.
