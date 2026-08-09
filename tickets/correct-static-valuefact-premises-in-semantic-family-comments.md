@@ -87,3 +87,15 @@ source-safe anchors. Package check, nextest, doctests, Clippy and rustdoc with
 warnings denied, formatting, `make citations`, `tkt lint`, `git diff --check`,
 and exact-base `tkt guard` pass. If any edited string reaches identity, stop and
 map it instead of recomputing pins under this ticket.
+
+## Completion record — 2026-08-09 reconciliation
+
+The imperative Outcome above describes the worker boundary, not remaining
+work. Commit `ae10b9bd` corrected exactly the audited population: both
+Concatenate comment clusters now state that the family requires
+`OperationInferenceRequest::static_operand_shape`, and the Contraction test
+comment names the same family-specific narrowing before binding or equality.
+No normative-definition bytes, inference code, schema, public surface, or
+identity changed. The identity-bearing Slice wording was already correct and
+remained untouched. The ticket was closed by `aadeeb24`; its linked Slice
+identity correction is also complete.

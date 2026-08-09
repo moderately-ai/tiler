@@ -4,7 +4,7 @@ title: Date or regenerate the six kernel identity lengths in the artifact ABI
 status: done
 priority: p2
 dependencies: []
-related: [replace-the-stale-artifact-abi-byte-figures-with-the-properties-tests-pin]
+related: [replace-the-stale-artifact-abi-byte-figures-with-the-properties-tests-pin, pin-the-serial-sum-kernel-identitys-crossing-of-the-opaque-identity-bound, correct-the-artifact-abis-claim-that-nothing-asserts-the-kernel-identity-crossing]
 scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
@@ -88,3 +88,14 @@ Enumerated mechanically, then every survivor resolved by reading its site. `[0-9
 - **Unowned — 0 sites.**
 
 **One reconciliation the ticket's "last unowned quantity" claim needs, and it is not this paragraph.** The sibling's repair left the forged pair's *equal identity length* and its *count of four differing positions* asserted by nothing, and said so in the document, naming the constant that should carry them. That is a measurement with no pin, no date, and no commit. It is not *unowned* in the class sense — the document states its own gap and proposes the assertion, which is the resolution the sibling ticket prescribed for exactly that case — but a reader counting bare unpinned numbers will find it, and it is the only one left. It belongs to the sibling's proposed `crates/**` pin, not to this ticket.
+
+## Later follow-through — 2026-08-09
+
+The proposed two-sided kernel-identity crossing is now executable under
+[`pin-the-serial-sum-kernel-identitys-crossing-of-the-opaque-identity-bound`](pin-the-serial-sum-kernel-identitys-crossing-of-the-opaque-identity-bound.md),
+and the artifact ABI's temporary claim that no assertion existed was repaired by
+[`correct-the-artifact-abis-claim-that-nothing-asserts-the-kernel-identity-crossing`](correct-the-artifact-abis-claim-that-nothing-asserts-the-kernel-identity-crossing.md).
+The forged BF16-versus-F32 identity-length and differing-position remainder was
+also pinned separately. Consequently the proposals and last-unpinned-property
+discussion above are historical handoff evidence; every named follow-up is
+`done`, and this ticket has no live implementation or documentation remainder.
