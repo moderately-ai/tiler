@@ -1,14 +1,14 @@
 ---
 id: retain-the-selected-semantic-candidate-for-the-conformance-oracle
 title: Retain the selected semantic candidate for the conformance oracle
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: [decide-how-a-pinned-pointwise-grouping-becomes-evaluable, compose-a-declared-reduction-topology-into-a-semantic-program-evaluation, accept-the-composed-realization-evaluation-surface]
-scopes: [implementation/compiler]
+scopes: [implementation/compiler, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, conformance, reference]
+tags: [implementation, conformance, reference, decision, needs-tom, public-boundary]
 ---
 ## User-visible outcome
 
@@ -26,6 +26,15 @@ The semantic candidate the portfolio selected is retained where a conformance or
 ## Non-goals
 
 The driver and the `ValueId`-keyed reference primitive — those are [`accept-the-composed-realization-evaluation-surface`](accept-the-composed-realization-evaluation-surface.md)'s items A and B, parked for Tom; re-deciding the settled fork.
+
+## Decision packet — 2026-08-09
+
+The completed design ticket selected retention but explicitly left its public boundary to Tom; it did not settle an exact accessor or owner. This node was therefore not implementation-ready.
+
+- **Option A — retain `P'` on each public plan alternative and expose a read-only semantic-program accessor (recommended).** This follows the selected design directly and makes the oracle's subject explicit, but adds a labelled public compiler surface that must name its lifetime and exclusion from artifact identity.
+- **Option B — retain `P'` in an internal conformance side table keyed by the selected alternative.** This avoids a public accessor initially, but creates a second ownership/indexing relation and cannot support external conformance consumers without a later boundary and migration.
+
+Tom needs to accept the exact siting. The design-1 choice itself is not reopened; this decision is only where the retained candidate lives and who may read it.
 
 ## Closes when
 

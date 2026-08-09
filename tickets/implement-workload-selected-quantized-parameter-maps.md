@@ -1,14 +1,14 @@
 ---
 id: implement-workload-selected-quantized-parameter-maps
 title: Implement the workload-selected quantized parameter maps
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: [prototype-quantized-value-vertical, scope-first-quantized-lm-profile, admit-a-strict-affine-index-realization-law]
 related: [implement-first-quantized-backend-profile, implement-first-runtime-semantic-value-precondition-enforcement]
-scopes: [implementation/ir, implementation/reference, implementation/compiler, implementation/artifact, contracts/numerics]
+scopes: [implementation/ir, implementation/reference, implementation/compiler, implementation/artifact, contracts/numerics, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, quantization, parameter-maps, dtype]
+tags: [implementation, quantization, parameter-maps, dtype, decision, needs-tom, public-boundary]
 ---
 ## User-visible outcome
 
@@ -40,6 +40,10 @@ The first workload-selected per-axis or per-block quantized format carries an ex
 - Validate component role completeness and parameter tensor shapes before dependent work. Runtime payload values remain operands and do not become static type fields; constant producers and specialization facts still participate in semantic and artifact identity.
 - Derive ABI component bindings from the verified logical value and map. Never infer a role from slot position, shape, element width, or resemblance to another component.
 - Add exact reference fixtures, transform-preservation fixtures, packed/unaligned access fixtures, unsupported-map refusals, and identity perturbations. Perturb every new check once and observe it fail.
+
+## Decision packet — 2026-08-09
+
+The workload selected the map, but it did not accept the public extension of opaque `ParameterIndexMap`. Recommendation: add one public per-axis constructor carrying the logical axis ordinal, derive the rank-one parameter shape from that axis, and keep per-block/group forms absent. The canonical map must distinguish axes and reject an out-of-rank axis at construction. Tom must accept that exact constructor/identity surface before the cross-layer implementation begins.
 
 ## Closes when
 

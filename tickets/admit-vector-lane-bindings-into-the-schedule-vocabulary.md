@@ -1,14 +1,14 @@
 ---
 id: admit-vector-lane-bindings-into-the-schedule-vocabulary
 title: Admit vector-lane bindings and their tail policies into the schedule vocabulary
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: [accept-adr-0093-cpu-vector-lane-tier]
 related: [design-the-cpu-vector-lane-tier, represent-cooperative-workgroup-reduction-dataflow]
-scopes: [implementation/ir, implementation/compiler]
+scopes: [implementation/ir, implementation/compiler, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [scheduling, ir, cpu, simd, execution-hierarchy, public-boundary]
+tags: [scheduling, ir, cpu, simd, execution-hierarchy, public-boundary, decision, needs-tom]
 ---
 ## User-visible outcome
 
@@ -36,6 +36,10 @@ Each of these must be run against a case that must fail and observed failing, ag
 ## Non-goals
 
 Kernel-IR constructs (its own ticket). Target profile declarations (its own ticket). Emission of any kind. Any threading construct. Any performance claim.
+
+## Decision packet — 2026-08-09
+
+ADR 0093 accepted the vector-tier model, not the exact public Rust spellings listed here. Tom must accept the `ExecutionBinding`, `TailPolicy`, lane-partition topology, and padding-identity surface as one boundary. Recommendation: accept the record-derived shape, including distinct fixed/scalable bindings and the stated padding identity; merging or defaulting those concepts would erase obligations the verifier must name.
 
 ## Closes when
 

@@ -1,14 +1,14 @@
 ---
 id: admit-subgroup-bindings-into-the-schedule-vocabulary
 title: Admit subgroup bindings and their reduction topology into the schedule vocabulary
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: [accept-adr-0094-subgroup-execution-tier]
 related: [design-the-subgroup-execution-tier, admit-vector-lane-bindings-into-the-schedule-vocabulary, compose-the-two-level-subgroup-and-workgroup-reduction]
-scopes: [implementation/ir, implementation/compiler]
+scopes: [implementation/ir, implementation/compiler, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [scheduling, ir, metal, subgroup, execution-hierarchy, public-boundary]
+tags: [scheduling, ir, metal, subgroup, execution-hierarchy, public-boundary, decision, needs-tom]
 ---
 ## User-visible outcome
 
@@ -37,6 +37,10 @@ Each observed failing against an accepted neighbour: a subgroup partition whose 
 ## Non-goals
 
 Kernel-IR constructs (`admit-subgroup-typed-values-and-collectives-into-the-kernel-ir`). Target profile declarations (`declare-metal-subgroup-realization-facts-in-the-target-profile`). Emission of any kind. The two-level subgroup-to-workgroup composition, which the ADR explicitly excludes and [`compose-the-two-level-subgroup-and-workgroup-reduction`](compose-the-two-level-subgroup-and-workgroup-reduction.md) owns. Any performance claim.
+
+## Decision packet — 2026-08-09
+
+ADR 0094 accepted the model, but the research record explicitly left the exact schedule-side public items for Tom. This ticket is awaiting acceptance of the listed `ExecutionBinding`, reduction-topology, `CombineTree`, lane-identity, and coordinate-source surface as one coherent boundary. Recommendation: accept the record-derived surface without adding a second subgroup-specific identity vocabulary; its exclusions above remain binding.
 
 ## Closes when
 

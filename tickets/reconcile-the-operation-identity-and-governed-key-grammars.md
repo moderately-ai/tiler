@@ -1,14 +1,14 @@
 ---
 id: reconcile-the-operation-identity-and-governed-key-grammars
 title: Reconcile the operation-identity and governed-key grammars
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: [reconcile-the-two-target-profile-key-grammars]
-scopes: [implementation/ir, implementation/compiler]
+scopes: [implementation/ir, implementation/compiler, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [identity, validation, extensions]
+tags: [identity, validation, extensions, decision, needs-tom, public-boundary]
 ---
 ## User-visible outcome
 
@@ -35,6 +35,13 @@ Every in-tree operation key is lowercase and at most 66 bytes, so nothing in the
 - A lowercase *fold* is not a third option and must be eliminated explicitly: folding makes `Acme` and `acme` mint one capability key for two operations, which is a silent identity collision — strictly worse than the refusal.
 - The length half is independent of the alphabet half and is live today. Nothing between the composition and the wrap bounds the composed length, and two of the three wrap sites panic.
 - Whichever shape wins, the `.expect()` at the two spike/prototype wrap sites is a panic on a producer-side input and should become a typed refusal.
+
+## Decision packet — 2026-08-09
+
+- **Option A — narrow every operation/type identity component to the governed lowercase grammar.** This prevents invalid composition at the source but rejects public inputs legal today across more identities than capability keys.
+- **Option B — make capability-key composition fallible (recommended).** Preserve the broader operation grammar, add a typed `LoweringRegistryError` for noncanonical or overlong composed keys, and remove downstream `.expect()` panics. This localizes the restriction to the consumer that actually has it.
+
+Lowercasing is excluded because it collides distinct operation identities. Tom must select the public-boundary change before implementation.
 
 ## Closes when
 

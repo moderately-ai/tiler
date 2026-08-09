@@ -1,14 +1,14 @@
 ---
 id: declare-cpu-vector-realization-facts-in-the-target-profile
 title: Declare CPU vector realization facts as atomic target facts
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: [accept-adr-0093-cpu-vector-lane-tier]
 related: [design-the-cpu-vector-lane-tier, name-a-host-process-availability-phase]
-scopes: [implementation/compiler, implementation/ir]
+scopes: [implementation/compiler, implementation/ir, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [target-profiles, feasibility, cpu, simd, provenance, public-boundary]
+tags: [target-profiles, feasibility, cpu, simd, provenance, public-boundary, decision, needs-tom]
 ---
 ## User-visible outcome
 
@@ -35,6 +35,10 @@ A profile declaring a subject differing in exactly one dimension from the requir
 ## Non-goals
 
 Constructing a real CPU profile, taking any measurement, any emission, any backend crate, and any threading or cache axis.
+
+## Decision packet — 2026-08-09
+
+The atomic equality-matched subject and builder declaration are consequential public target-profile API. Recommendation: accept the whole-subject `VectorRealizationSubject` plus one atomic declaration method, with no per-field setters and no compile-host feature inference. The optional execution-path widening remains excluded and would require its own identity decision.
 
 ## Closes when
 

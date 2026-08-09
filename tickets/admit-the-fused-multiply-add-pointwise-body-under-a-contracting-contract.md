@@ -1,14 +1,14 @@
 ---
 id: admit-the-fused-multiply-add-pointwise-body-under-a-contracting-contract
 title: Admit a fused multiply-then-add pointwise body under a contraction-permitting contract
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: [admit-multi-input-tensors-in-the-scheduled-region-vocabulary]
 related: [admit-multi-input-elementwise-programs-at-the-compiler-boundary, prototype-inline-aot-integration-proof]
-scopes: [implementation/compiler, implementation/ir]
+scopes: [implementation/compiler, implementation/ir, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, compiler, numerics]
+tags: [implementation, compiler, numerics, decision, needs-tom, architecture]
 ---
 ## Why this exists
 
@@ -40,6 +40,16 @@ A caller stating `RelaxedF32` over a recognized pointwise body holding a multipl
 - Do not relax `ArithmeticContraction` to discharge on a permitting contract without new evidence. The elimination above is recorded with a measurement, and reopening it needs a measurement that contradicts it — not an argument that permission is not obligation.
 - Whichever route lands, `crates/tiler-compiler/tests/multi_input_elementwise_boundary.rs` carries the executable statement of the current boundary and its `the_contraction_permitting_contract_declines_a_mixed_body_at_any_input_count` pair is what must flip. Flip both halves together, or the file stops proving the refusal was ever about the adjacency.
 - A third outcome is legitimate and must be stated rather than assumed away: that a contraction-permitting contract *should* refuse this body until a declaring physical form exists, in which case the refusal wants a typed reason naming the contraction obligation instead of a bare `NoFeasiblePlan`, and the frontend's `compile_error!` question in `crates/tiler-macros/src/region.rs` resolves against that.
+
+## Decision packet — 2026-08-09
+
+This is an architecture fork, not an implementation-ready ticket. The two positive routes move different boundaries and neither is correctness-dominant without Tom choosing what capability the first vertical is meant to prove.
+
+- **Option A — add a physical pointwise form that explicitly declares contraction (recommended).** It directly represents the permission the contract grants, keeps the current fused cover, and makes artifact/backend obligations inspectable. It adds a physical vocabulary and identity surface.
+- **Option B — implement singleton materialized pointwise regions.** It preserves the current fused-form vocabulary and gives the planner a non-contracting fallback, but widens planning from whole-request providers to per-region implementations and is the larger architectural change.
+- **Option C — retain refusal, but classify the unmet contraction realization by a typed reason.** This is smallest and honest, but intentionally leaves a public permissive contract unable to compile the mixed body.
+
+Tom needs to select the intended capability boundary. No worker should weaken `ArithmeticContraction` or silently select one architecture under this node.
 
 ## Closes when
 

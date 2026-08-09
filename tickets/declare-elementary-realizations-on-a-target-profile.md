@@ -1,14 +1,14 @@
 ---
 id: declare-elementary-realizations-on-a-target-profile
 title: Declare elementary realizations on a target profile
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: [admit-the-registered-unary-families-at-the-compiler-request-boundary]
 related: [carry-the-elementary-numerical-dimensions-in-the-region-realization]
-scopes: [implementation/compiler]
+scopes: [implementation/compiler, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, compiler-api, numerics, feasibility, public-boundary]
+tags: [implementation, compiler-api, numerics, feasibility, public-boundary, decision, needs-tom]
 ---
 ## User-visible outcome
 
@@ -34,6 +34,10 @@ A caller that builds its own `TargetProfile` can state which elementary-function
 ## Boundaries
 
 Acceptance of the public method and the public refusal variant is Tom's. A tested implementation is a concrete draft, not implicit approval of its interface.
+
+## Decision packet — 2026-08-09
+
+The exact public boundary is already specified above and should not remain hidden in the implementation queue. Recommendation: accept one whole-subject `TargetProfileBuilder` declaration plus the structured refusal variant, with no per-dimension setters and no governed-profile shortcut. This accepts the declaration/reporting surface only; it does not accept new elementary contracts or target evidence.
 
 ## Closes when
 

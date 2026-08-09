@@ -1,14 +1,14 @@
 ---
 id: retire-or-re-document-the-now-consumerless-expr-key-in-tiler-ir
 title: Retire or re-document the now-consumerless expr_key in tiler-ir
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: [replace-the-codec-arena-content-key-with-the-existing-comparator, encode-artifact-abi-identity-in-linear-space]
-scopes: [implementation/ir]
+scopes: [implementation/ir, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [artifact, identity, cleanup]
+tags: [artifact, identity, cleanup, decision, needs-tom, public-boundary]
 ---
 After `replace-the-codec-arena-content-key-with-the-existing-comparator`, `tiler_ir::program::abi::expr_key` has **no production consumer anywhere in the workspace**. `tiler-ir` stopped calling it at `encode-abi-expression-identity-in-linear-space`; `tiler-artifact` stopped at the artifact identity flattening and, for the codec, at the `14.0` manifest step. The one remaining caller is a `tiler-artifact` codec test, `the_canonical_arena_order_follows_the_comparator_where_the_content_key_disagrees`, which uses it precisely to assert that the key order and `compare_expr_nodes` are *different relations* on a constructed pair.
 
@@ -28,6 +28,10 @@ Removing a `pub` item from `tiler-ir` is a public crate surface change and belon
 - **Retire it.** Nothing in production reaches it. The artifact test would then have to restate the key encoding locally, which reintroduces the second authority the test exists to avoid, or be rewritten to assert the divergence some other way.
 
 The first is the recommendation: a public item with one deliberate test consumer and an accurate docstring is cheaper than a duplicated encoder, and this crate already keeps `expr_key`'s cost paragraph as reference material for why the flat form exists.
+
+## Decision packet — 2026-08-09
+
+The ticket already contains the complete two-option comparison and a recommendation, but was incorrectly left in the implementation queue. Tom must choose whether the public item is retained as the one historical relation used by the cross-crate regression, or removed with an independently truthful replacement for that regression. No worker should remove or re-ratify the public item before that choice.
 
 ## Closes when
 

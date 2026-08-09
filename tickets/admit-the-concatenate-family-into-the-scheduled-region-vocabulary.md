@@ -1,14 +1,14 @@
 ---
 id: admit-the-concatenate-family-into-the-scheduled-region-vocabulary
 title: Admit the concatenate family into the scheduled region vocabulary
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: [scope-the-concatenate-fusion-role-and-lowering, admit-the-structural-families-into-the-scheduled-region-vocabulary]
-scopes: [implementation/compiler, implementation/ir]
+scopes: [implementation/compiler, implementation/ir, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [semantics, regions]
+tags: [semantics, regions, decision, needs-tom, public-boundary]
 ---
 ## The gap, and why it was unowned
 
@@ -30,6 +30,15 @@ So the family can be recognized, has a realization law, has lowering capabilitie
 `tiler::slice-f32@1` is also registered and unplanned, but it holds **no governed lowering at all** — an uninstalled-provider case rather than this one. Do not bundle it; the two have different obstacles and different evidence.
 
 Do not re-open the partitioned write-ownership contract, the sub-range write domains, or the concatenate realization law. All three are landed and separately accepted; this consumes them.
+
+## Decision packet — 2026-08-09
+
+The accepted law proves several partitioned write roots, but no accepted schedule/kernel construct carries them. That missing construct is a consequential public IR boundary and cannot be selected inside an implementation ticket.
+
+- **Option A — admit one multi-root scheduled/kernel copy construct for the whole concatenate occurrence (recommended).** It preserves the accepted occurrence/law as one semantic unit and carries the already-proved disjoint ownership directly.
+- **Option B — split the occurrence into one existing single-root region/kernel per operand.** This avoids a multi-root construct but introduces stage ordering, shared-output ownership, occurrence-accounting, and coverage relations that do not exist today.
+
+Tom must choose the schedule/kernel boundary. The accepted partitioned law is not reopened by either answer.
 
 ## Identity
 

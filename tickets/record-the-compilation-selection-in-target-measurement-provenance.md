@@ -1,14 +1,14 @@
 ---
 id: record-the-compilation-selection-in-target-measurement-provenance
 title: Record the compilation selection in target measurement provenance
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: [construct-and-bind-the-first-authoritative-metal-compile-profile, declare-the-bf16-rows-on-the-authoritative-metal-profile, measure-macos-apple9-bf16-under-unified-msl4-profile]
-scopes: [implementation/compiler]
+scopes: [implementation/compiler, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [target-profiles, provenance, identity, numerics]
+tags: [target-profiles, provenance, identity, numerics, decision, needs-tom, public-boundary]
 ---
 ## User-visible outcome
 
@@ -43,6 +43,13 @@ The first nine agree; only `requested_target` differs. A row sourced from either
 - If it belongs: it must be backend-opaque. The compiler may not learn what `-std` means, and a typed `MslLanguageVersion` reaching `tiler-compiler` would violate the consumer-neutrality invariant.
 - Any new field is identity-bearing and moves every pinned descriptor. Enumerate the moved pins and recompute them on the tree the step lands into.
 - Do not widen `TargetFactSource::external_guarantee`'s normative-reference route to stand in for this. A normative reference names a document; a compilation selection names an invocation.
+
+## Decision packet — 2026-08-09
+
+- **Option A — add one backend-opaque compilation-selection identity to each measurement context (recommended).** The producing backend hashes or keys its complete invocation selection; the compiler preserves and compares opaque bytes without learning Metal flags. This distinguishes the two measured records and keeps consumer neutrality.
+- **Option B — leave compiler provenance silent and make the bound backend declaration the sole owner.** This preserves descriptor identity but accepts that a profile descriptor alone cannot distinguish rows produced by different compilation selections.
+
+Tom must choose which authority owns the distinction. Option A is an identity-bearing public provenance field and must move every descriptor pin coherently.
 
 ## Required evidence
 

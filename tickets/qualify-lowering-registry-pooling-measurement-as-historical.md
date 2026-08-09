@@ -17,26 +17,29 @@ for interning. That measurement is useful historical evidence, but the governed
 population and current byte sizes have since moved enough that an undated
 reader can mistake it for the live profile.
 
-## Starting evidence, stale until re-read at this ticket's base
+## Per-Fact audit — 2026-08-09
 
-- The comment records five governed capabilities, a 1,496-byte semantic
+- **Verified historical Fact.** The comment under source anchor `Why a pool and not an inline copy` records five governed capabilities, a 1,496-byte semantic
   registry snapshot repeated five times, and a 15,583-byte lowering-registry
   identity.
-- [`intern-the-lowering-registry-s-shared-authority-identities`](intern-the-lowering-registry-s-shared-authority-identities.md)
+- **Verified historical Fact.** [`intern-the-lowering-registry-s-shared-authority-identities`](intern-the-lowering-registry-s-shared-authority-identities.md)
   records those figures as the **before** measurement that justified the v2
   pooled encoding; they should not be silently replaced as though the original
   experiment had produced today's population.
-- The audit for
+- **False as a current measurement.** The audit for
   [`correct-the-slice-normative-definition-and-recompute-compiler-identities`](correct-the-slice-normative-definition-and-recompute-compiler-identities.md)
   reported twenty current governed capabilities, a 43,741-byte standard
   semantic-registry snapshot, and a 137,779-byte lowering-registry identity on
-  its exact base. These are discovery evidence only: re-run the owning byte
-  budget and population checks before using them.
+  its exact base. Those byte values had already moved on a later audit and are
+  not current authority. The population and byte-budget test must be rerun at
+  the implementation base; no replacement number belongs in this source
+  comment.
 
 ## Outcome
 
-Qualify the source comment so the five-capability numbers are unmistakably the
-pre-pooling landing measurement, while preserving why the pool exists and its
+Qualify the source comment as **Historical measurement — before the v2 pool,
+2026-07-27**, so the five-capability numbers are unmistakably the pre-pooling
+landing measurement, while preserving why the pool exists and its
 injectivity argument. If current figures add durable value, record them as a
 separate dated measurement produced by the owning checks; do not substitute
 them into the historical result or change identity bytes, budgets, or pooling

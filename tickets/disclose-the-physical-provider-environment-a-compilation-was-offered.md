@@ -1,14 +1,14 @@
 ---
 id: disclose-the-physical-provider-environment-a-compilation-was-offered
 title: Disclose the physical-provider environment a compilation was offered
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: [drive-an-external-physical-implementation-provider-through-compilation, expose-explicit-backend-provider-and-selection-policy-composition, audit-backend-authoring-against-all-thirteen-responsibilities]
-scopes: [implementation/compiler, implementation/build]
+scopes: [implementation/artifact, implementation/build, contracts/artifacts, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [backend-providers, identity, explainability, compiler]
+tags: [backend-providers, identity, explainability, compiler, decision, needs-tom, public-boundary]
 ---
 ## User-visible outcome
 
@@ -37,6 +37,15 @@ Read this before the section above. Nothing there is deleted, so a grep for a re
 - Do not widen `offered_providers` itself to include physical providers as a shortcut. ADR 0090 item 5's whole ground is that "this provider was available and lost on cost" and "this provider was never installed" are the two findings a composition failure most needs to tell apart, and merging the sets into one accessor destroys exactly that distinction.
 - Decide explicitly whether the artifact's `CompilationEnvironment` is a lowering-only subject or a whole-provider-environment subject, and record the answer where the type is defined rather than in this ticket. That choice, not the accessor, is what the artifact identity consequence turns on.
 - Any new accessor is a public boundary and goes to Tom under ADR 0075 rather than being self-accepted.
+
+## Decision packet — 2026-08-09
+
+The compiler-side disclosure work is complete; the remaining question is an artifact identity contract and was incorrectly left under `implementation/compiler`.
+
+- **Option A — make `CompilationEnvironment` the whole offered provider environment (recommended).** Encode lowering and physical providers as separately tagged sets so the artifact distinguishes availability from selection without conflating responsibilities.
+- **Option B — keep it lowering-only and rename/document the subject accordingly.** This preserves current bytes but makes physical-provider availability intentionally absent from artifact provenance; the owning artifact contract must state where that distinction is retained instead.
+
+Tom must choose the artifact subject. Any encoding movement then lands as one complete identity step under the corrected artifact/build scopes.
 
 ## Closes when
 

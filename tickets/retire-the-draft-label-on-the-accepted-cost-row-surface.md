@@ -5,7 +5,7 @@ status: todo
 priority: p3
 dependencies: []
 related: [accept-the-measured-cost-row-public-surface]
-scopes: [implementation/compiler]
+scopes: [implementation/compiler, contracts/optimizer]
 shared_scopes: [project/tickets, research/embedding]
 paths: []
 tags: [docs, public-boundary]
@@ -14,9 +14,11 @@ tags: [docs, public-boundary]
 
 **Two records the cost-row landing left behind, both stating something no longer true.**
 
-**1. The draft label.** `crates/tiler-compiler/src/target.rs`'s header labels the measured cost row's surface a draft, saying the acceptance covered the model and not the spelling. **Tom accepted the spelling on 2026-08-07** under [`accept-the-measured-cost-row-public-surface`](accept-the-measured-cost-row-public-surface.md), so the marker is now a stale disclosure — the exact class of drift this repository keeps finding. Retire it for `TargetCostRowResolution`, `declare_saturated_parallel_fold_steps`, `declare_measured_saturated_parallel_fold_steps`, `TargetProfile::saturated_parallel_fold_steps`, and `TargetProfileBuildError::DuplicateCostRow`.
+**1. The draft label.** `crates/tiler-compiler/src/target.rs`'s header labels the measured cost row's surface a draft, saying the acceptance covered the model and not the spelling. **Tom accepted the spelling on 2026-08-07** under [`accept-the-measured-cost-row-public-surface`](accept-the-measured-cost-row-public-surface.md), so the marker is now a stale disclosure — the exact class of drift this repository keeps finding. The header covers all five accepted items. Four items also carry their own `Draft public surface` block: `TargetCostRowResolution`, `declare_saturated_parallel_fold_steps`, `declare_measured_saturated_parallel_fold_steps`, and `TargetProfile::saturated_parallel_fold_steps`; `TargetProfileBuildError::DuplicateCostRow` has no separate marker. Retire the complete header-plus-four population without inventing a fifth per-item block.
 
 Remove the marker only. **Do not reword the surrounding rationale** — why the measured constructor carries a `TargetCompileProfileMeasurementSource`, and why silence resolves `Unknown` rather than making a profile unexecutable, both survive their acceptance and are the reasons the shape is what it is.
+
+**The owning optimizer contract moved too.** `docs/compiler/optimizer.md`, source anchor `the exact public spelling of the declaration pair remains a reviewed draft boundary`, still calls the accepted spelling a draft. Correct that live contract sentence in the same carrier; otherwise the source and durable contract remain contradictory after the labels disappear.
 
 **2. A dated measurement quoting a descriptor length that moved.** `docs/research/embedding/self-contained-embedding.md:67` quotes the canonical descriptor at **1,999 bytes**. The cost row's section moved it to **2,099**. The paragraph is a dated measurement and was correct at its commit, so the repair is **not** to overwrite the number: date it and state what moved it, the way the repository's other superseded measurements are handled. A reader reconciling an older record needs to see both values and the step between them.
 
@@ -36,7 +38,7 @@ Do not touch the measurement boundary the acceptance preserved: the sweep dispat
 
 ## Closes when
 
-No draft marker remains on the five accepted items, the embedding record carries both descriptor values with the step between them, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p tiler-compiler` passes, and no pin moved.
+No draft marker remains in the header-plus-four source population, the optimizer contract calls the spelling accepted, the embedding record carries both descriptor values with the step between them, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p tiler-compiler` passes, and no pin moved.
 
 ## Graph maintenance
 

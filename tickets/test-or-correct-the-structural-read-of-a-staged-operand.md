@@ -11,21 +11,20 @@ paths: []
 tags: [implementation, correctness, doc-claim, structural, tests]
 ---
 
-## The claim, and why it is currently unearned
+## The claim, and what the source actually does
 
-**Fact.** The doc comment on `recognize_structural_read` (`crates/tiler-compiler/src/request.rs:4775-4779`) makes a positive admission claim: "An epilogue's staged operand is a different case and is admitted: another region already materialized it, so the rounding boundary is the cover's rather than one this occurrence introduced, and the read binds the materialization edge the cover hands the region." The check backing it is `leaves.is_leaf(*operand)` at `:4803`, which a staged operand plausibly satisfies — but whether `ElementwiseLeaves` actually marks a staged value as a leaf on the epilogue walk has not been read to construction, and **no test exercises the combination**: `rg -n 'fn .*epilogue' crates/tiler-compiler/src/pipeline/tests.rs crates/tiler-compiler/tests/materialized_intermediate_epilogue_wall.rs` lists nine epilogue tests and none contains a structural occurrence, and `rg -ln 'structural.*epilogue|epilogue.*structural' crates/tiler-compiler/` returns nothing. Found by the 2026-08-06 navigation batch, coordinator-verified by direct read the same day.
+**Fact — corrected 2026-08-09.** The positive admission sentence is still present under source anchor `The operand must be a value this walk reads rather than computes`, but it is false as a user-visible admission. A mapped-only `reverse(folded)` reaches `recognize_structural_read` on the first walk before any staged leaf has been discovered, so `if !leaves.is_leaf(*operand)` returns `structural-operand`. If a dense occurrence first discovers the materialized producer, replay does mark it as a staged leaf, but the mapped occurrence is then a second read of that staged value and `record_leaf` returns `structural-access-conflict`.
+
+**Fact — corrected 2026-08-09.** The combination is not wholly untested. The request regression under anchor `let staged = |mapped: bool|` builds `s * reverse(s)` with `s = sum(a, axis 1)`: the dense neighbour recognizes as an epilogue, while the mapped second read returns `structural-access-conflict`. What remains unpinned at the public compile boundary is the first case: a direct mapped-only structural occurrence over one materialized result returns `structural-operand`.
 
 A doc comment is a claim the next worker acts on (AGENTS.md), and this one makes unreached work look reachable: a reader planning `reverse(matmul(a, b))` would conclude the region vocabulary admits it today.
 
 ## The work
 
-Read `ElementwiseLeaves` to construction on the epilogue path and determine which of the two worlds is real:
+Correct the source comment to name both current refusal paths rather than claiming admission. Add a public `compile()` regression beside `contraction_with_epilogue`: a direct reindex such as `reverse(contract(a, b))` must refuse under `UnsupportedCapability { rule: "structural-operand" }`, while the bare contraction remains admitted. This is a refusal regression, so it does not need a bit comparison.
 
-- **The admission is real.** Then it needs a test before the doc may say so: a structural occurrence (reindex or broadcast) over a staged value — e.g. an epilogue reversing a materialized contraction result — compiled through the ordinary `compile()` entry point and bit-compared against `tiler-reference`, beside the refusal test for a structural occurrence over a value the *same* region computes (`a_structural_occurrence_over_a_computed_value_refuses_by_name`), so the boundary between the two cases is pinned from both sides.
-- **The admission is not real** (the walk refuses or misclassifies a staged structural operand). Then the doc comment is the defect: narrow it to what the tests carry, and file or widen the admission as its own owned wall if the capability is wanted.
-
-Do not decide which world by the doc — decide by tracing the staged operand through `ElementwiseLeaves` and, if ambiguous, by writing the program and observing the verdict.
+Perturb the subject, not the expectation: replace the reindex with one `F32Silu` occurrence over the same contraction result. That neighbour is an admitted epilogue and must make the refusal assertion fail with `left: Ok(())`; restore it before the final gates.
 
 ## Closes when
 
-Either a passing bit-compared test exercises the structural-read-of-a-staged-operand admission and the doc's claim is test-backed, or the doc comment states only the tested behaviour and the wanted widening (if any) has a named owner.
+The doc comment states both tested refusal paths, the direct mapped-only public regression pins `structural-operand` with its admitted bare-contraction neighbour, and any desired admission remains separate from this correctness repair.

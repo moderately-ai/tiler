@@ -1,14 +1,14 @@
 ---
 id: name-a-host-process-availability-phase
 title: Name a host-process availability phase
-status: todo
+status: awaiting-decision
 priority: p3
 dependencies: []
 related: []
-scopes: [implementation/ir, implementation/compiler, contracts/artifacts]
+scopes: [implementation/ir, implementation/compiler, contracts/artifacts, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [target-profiles, artifacts, cpu, vocabulary]
+tags: [target-profiles, artifacts, cpu, vocabulary, decision, needs-tom, public-boundary]
 ---
 ## User-visible outcome
 
@@ -25,6 +25,15 @@ A capability fact that becomes readable once a host *process* is bound has a pha
 - Decide first whether the distinction is real or whether a CPU host *is* a live device for this vocabulary's purposes; a defensible "no phase is needed" outcome closes this ticket.
 - If a phase is added, it changes a governed wire tag vocabulary with a total order. Place it by what it can *see*, not by narrative order, and treat the encoding as a versioned subject rather than an insertion.
 - Every `AvailabilityPhase` match in `crates/` is exhaustive by convention 3; a new variant must be a build error at each, not absorbed by a wildcard.
+
+## Decision packet — 2026-08-09
+
+This is not implementation-ready: either answer changes or ratifies a governed public phase vocabulary, and adding a variant changes its tag, total order, artifact encoding, and identity consequences.
+
+- **Option A — add `HostProcessPreflight` between `ArtifactEvidence` and `LiveDevicePreflight` (recommended).** Architecture, pointer width, byte order, and host floating-point behaviour exist once the process is bound and before any live device is available. Giving them their own phase prevents CPU facts from borrowing a device concept and keeps later device facts strictly later.
+- **Option B — define the CPU host process as a live device for this vocabulary.** This avoids a tag and identity step, but permanently makes `LiveDevicePreflight` mean two different availability boundaries and weakens the phase names as explanations.
+
+Tom's decision must accept one meaning and, for Option A, the exact placement and versioned encoding consequence. No worker should add the variant or ratify the borrowed phase before that answer.
 
 ## Closes when
 

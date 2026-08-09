@@ -1,14 +1,14 @@
 ---
 id: declare-metal-subgroup-realization-facts-in-the-target-profile
 title: Declare Metal subgroup realization facts as atomic target facts
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: [accept-adr-0094-subgroup-execution-tier]
 related: [design-the-subgroup-execution-tier, declare-cpu-vector-realization-facts-in-the-target-profile, correct-the-subgroup-threads-route-dimension-meaning]
-scopes: [implementation/compiler, implementation/metal]
+scopes: [implementation/compiler, implementation/metal, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [target-profiles, metal, subgroup, execution-hierarchy, feasibility, public-boundary]
+tags: [target-profiles, metal, subgroup, execution-hierarchy, feasibility, public-boundary, decision, needs-tom]
 ---
 ## User-visible outcome
 
@@ -40,6 +40,10 @@ Each observed failing against an accepted neighbour: a subgroup schedule whose w
 ## Non-goals
 
 Schedule bindings and kernel-IR constructs (their own tickets). Emission. The `RouteResourceDimension::SubgroupThreads` correction. Any measured subgroup performance claim — this ticket declares facts, it does not benchmark them.
+
+## Decision packet — 2026-08-09
+
+The research record explicitly reserved the `SubgroupRealization` subject and builder method for Tom. Recommendation: accept separate atomic declared facts rather than a bundled `supports subgroups` flag, preserving equality-based subgroup width and named `Unknown` outcomes. This decision accepts only the target-profile declaration surface, not schedule bindings, kernel constructs, or measurements.
 
 ## Closes when
 

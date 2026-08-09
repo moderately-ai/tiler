@@ -199,3 +199,7 @@ Four assertions pinned refusals this landing lifts, and each was rewritten rathe
 ### Scope
 
 `crates/tiler-compiler/**` (exclusive `implementation/compiler`) and `tickets/**` (shared `project/tickets`) only. No `crates/tiler-ir/**` file was edited, and the two tickets filed above are why.
+
+## Current-boundary correction, 2026-08-09
+
+The Outcome's historical statement that the published-and-consumed copy stage remained undelivered was true at this ticket's landing and is no longer current. [`lift-the-four-published-and-consumed-walls-together`](lift-the-four-published-and-consumed-walls-together.md) subsequently admitted the exact overlap, and `pipeline::conformance::a_published_and_consumed_intermediate_compiles_and_agrees` now compiles it and bit-compares both outputs. Preserve the refusal name above as measurement history; it is not the current test or boundary.

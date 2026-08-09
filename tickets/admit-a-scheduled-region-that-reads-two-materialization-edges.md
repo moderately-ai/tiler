@@ -1,9 +1,9 @@
 ---
 id: admit-a-scheduled-region-that-reads-two-materialization-edges
 title: Admit a scheduled region that reads two materialization edges
-status: todo
+status: blocked
 priority: p3
-dependencies: []
+dependencies: [admit-a-second-read-of-one-materialized-intermediate-in-an-elementwise-region]
 related: [admit-a-staged-family-that-reads-a-materialized-intermediate, admit-a-second-read-of-one-materialized-intermediate-in-an-elementwise-region]
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
@@ -27,6 +27,10 @@ tags: [implementation, planner]
 This is the sibling of [`admit-a-second-read-of-one-materialized-intermediate-in-an-elementwise-region`](admit-a-second-read-of-one-materialized-intermediate-in-an-elementwise-region.md), which that ticket explicitly excludes ("different-edge pairs still refused by name"). Both need the same thing and neither may take it alone: **an ordinal on `TensorRole::Intermediate` is a public boundary** (ADR 0074 5b total maps in three compiler files) — draft plus acceptance node, never self-accepted — **and an identity step**: `push_tensor_role` writes a bare tag today, so any payload moves every intermediate-touching region, `tiler.schedule.v5` steps, and every pin recomputes, executed completely or not started. Decide with that ticket whether one step carries both widenings or whether one lands first; two independent steps of the same domain cannot compose.
 
 The cover side is unread and must be read before the shape is chosen: whether cover enumeration places two edges into one region at all, and whether `region.rs`'s synthetic-intermediate record can name a second producer for one consuming stage — the same record [`carry-a-multi-reader-intermediate-through-region-formation`](carry-a-multi-reader-intermediate-through-region-formation.md) widens from the other direction.
+
+## Blocker correction — 2026-08-09
+
+This ticket was incorrectly dependency-ready while its own boundary section prohibited an independent implementation. It now depends on the sibling decision that owns the public intermediate-edge ordinal and the single coherent `tiler.schedule` identity step. Once that boundary is accepted and implemented, this ticket may consume it for the different-edge staged-family case; until then it is blocked rather than parallel work.
 
 ## Closes when
 

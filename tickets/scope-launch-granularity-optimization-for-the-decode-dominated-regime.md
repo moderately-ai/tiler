@@ -14,7 +14,7 @@ tags: [research, performance, runtime, trigger-fired]
 
 The launch economics that dominate LLM decode — many small kernels, per-launch overhead, cross-stage synchronization — become a scoped optimization surface: persistent/mega-kernel forms, command-buffer reuse, and program-level fusion across stages, decided at the kernel-program layer where the stage DAG already lives.
 
-## Why this exists, and why it is deferred
+## Why this exists, and what the fired trigger now permits
 
 **Fact.** The decoder-layer assembly measured 62 occurrences per decode step across three programs executed 28× per token; the kernel-program model owns the stage DAG and cross-stage dependencies. **Inference.** At decode batch sizes the per-launch cost plausibly exceeds any single kernel's arithmetic, making launch granularity worth more than further intra-kernel optimization — but that is an inference, and the scoping's first obligation is the measurement that confirms or refutes it (launch overhead on the Metal runtime, measured on the designated host, against a decode step's actual kernel population). Literature when fired: persistent-kernel and megakernel work, CUDA Graphs as the cross-vendor precedent for replayable command capture, and Metal's own indirect command buffers as the platform primitive. Deferred behind the multi-layer execution work: scoping launch fusion before a multi-stage program executes end-to-end would scope against a simulation.
 
