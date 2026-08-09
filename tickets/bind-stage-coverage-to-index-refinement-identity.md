@@ -115,3 +115,13 @@ Both stage encoders write the occurrence and then the length-framed evidence: `s
 ## Resolved history — strict-affine receipt authority
 
 Static reconstruction previously found that governed strict-affine U4 dequantization lacked an `IndexRealizationLaw` row and compiler lowering registration. `admit-a-strict-affine-index-realization-law` has since landed, and the preserved artifact builder/component test plus all three codec tests now use a real verifier-minted strict-affine receipt. That historical stop is resolved; it does not unblock the active ADR 0072 identity conflict above.
+
+## Acceptance correction — 2026-08-09
+
+The “awaiting Tom” language in the built-draft section is historical.
+[`accept-the-proof-bound-stage-coverage-public-boundary`](accept-the-proof-bound-stage-coverage-public-boundary.md)
+records Tom's 2026-08-05 acceptance of `CoveredOccurrence`, its receipt-only
+construction and readers, the `push_stage`/`StageRef::coverage` surface,
+`ForeignCoverageGraph`, and the cross-referenced identity step. The acceptance
+carried no exclusion. Later program and artifact domain steps do not reopen
+that item-level boundary.

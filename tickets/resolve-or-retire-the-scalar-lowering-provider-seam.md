@@ -189,3 +189,15 @@ Nothing here changes the index-access seam, the semantic registry seam, the refe
 **Defer the question again with a trigger.** Rejected because the question is answerable by reading, which AGENTS.md classifies as research rather than escalation, and it has now been read. A trigger would defer a settled finding, and the one genuine unknown — whether the byte-for-byte law comparison stays — is already recorded as this record's reconsideration trigger.
 
 ---
+
+## Current resolution — 2026-08-09
+
+The proposed body above landed as [ADR 0105](../docs/decisions/0105-retire-the-scalar-lowering-provider-seam.md),
+Tom accepted it on 2026-08-06, and
+[`remove-the-scalar-lowering-family-from-the-compiler`](remove-the-scalar-lowering-family-from-the-compiler.md)
+completed the removal. The current compiler exposes only
+`LoweringCapabilityRegistryBuilder::register_index_access`; the scalar provider,
+registration, resolution, context, results, and `WrongFamily` population are
+absent. The registry-mechanics coverage was ported to the surviving family and
+the reserved single-variant types were not collapsed. This is the final
+disposition of the elimination recorded here.

@@ -149,3 +149,15 @@ The portability floor moved **67 → 72** with the population, by the same five,
 ### One graph edge that was missing
 
 `bound-the-tree-cap-s-unmeasured-downward-direction` (`todo`, `implementation/compiler`) proposes changing `capped_tree_partition`'s rule. If it lands first the discriminating counts move — 12 probably survives, since the cap picks the widest there, which is the direction that ticket argues for, but **the count set as a whole is not stable**. Now `related`, along with `complete-the-tree-cap-audit-sweep-inside-the-compiler-crate`, which already cross-references this ticket. Neither is a hard dependency; re-derive the count on the branch's own base rather than trusting this section's 12 if either has landed.
+
+## Current-rule correction — 2026-08-09
+
+[`bound-the-tree-cap-s-unmeasured-downward-direction`](bound-the-tree-cap-s-unmeasured-downward-direction.md)
+has now landed. As the worker record anticipated, twelve remains the smallest
+separating count and the delivered device measurement remains valid: the tree
+takes 6 partitions of 2 while the split takes 4 of 3. The wider census did
+move. Under the current nearest-to-256 rule, 3,530 counts below 4,096 admit a
+width and **2,350**, not the historical 2,561, choose different tree and split
+partitions. `the_tree_takes_the_capped_participant_count_where_the_balanced_split_differs`
+pins the current population. This correction changes neither the retained
+measurement nor its host/toolchain boundary.

@@ -221,4 +221,26 @@ Accepted by Tom on 2026-08-06 at the live decision review in the coordination se
 
 ## Current-boundary correction, 2026-08-09
 
-The packet's four-open-bounds list is retained as the state Tom reviewed, but its first item is no longer current. [`lift-the-four-published-and-consumed-walls-together`](lift-the-four-published-and-consumed-walls-together.md) admitted the exact published-and-consumed overlap, and `a_published_and_consumed_intermediate_compiles_and_agrees` is the live positive test. This correction changes no accepted facade item; it prevents an acceptance record from presenting the retired `a_published_and_consumed_intermediate_refuses_by_name` test as current evidence.
+The packet's four-open-bounds list is retained as the state Tom reviewed, but
+all four entries need a current disposition:
+
+1. [`lift-the-four-published-and-consumed-walls-together`](lift-the-four-published-and-consumed-walls-together.md)
+   admitted the exact published-and-consumed overlap, and
+   `a_published_and_consumed_intermediate_compiles_and_agrees` is the live
+   positive test.
+2. [`admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs`](admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs.md)
+   admitted the disjoint-input subset. The live positive row is
+   `outputs_reading_input_subsets_compile_and_bind_the_inputs_they_read`.
+3. [`resolve-or-retire-the-scalar-lowering-provider-seam`](resolve-or-retire-the-scalar-lowering-provider-seam.md)
+   retired that unused provider family. `LoweringCapabilityRegistryBuilder`
+   now exposes `register_index_access`; it no longer exposes
+   `register_scalar_lowering` or a `ScalarLoweringProvider` trait.
+4. The admitted subject remains bounded, but it is no longer the packet's
+   `f32`-throughout population. The live correctness record now includes the
+   bounded BF16 constant/multiply/add vertical and later admitted staged-family
+   shapes, and it names their remaining limits rather than treating the packet's
+   old census as current.
+
+These later changes alter no item in the accepted facade. This correction
+prevents an acceptance record from presenting retired negative tests, a removed
+extension seam, or the packet's old admitted-subject census as current evidence.

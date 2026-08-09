@@ -478,3 +478,16 @@ stage/program/artifact receipt binding.
 ## Graph maintenance
 
 `bind-stage-coverage-to-index-refinement-identity` already depends on this ticket and remains blocked. That dependent owns `CoveredOccurrence`, program-builder receipt-domain/staleness validation, and program/artifact identity domains. Do not claim that evidence here or change those identities before this authority is accepted. Update ADR 0071 and artifact contracts only after the exact authority move is accepted.
+
+## Current graph correction — 2026-08-09
+
+The paragraph above is the integration boundary at this ticket's acceptance,
+not the current board state. [`bind-stage-coverage-to-index-refinement-identity`](bind-stage-coverage-to-index-refinement-identity.md)
+is now `done`. It rejected the early complete-receipt spelling, derived the
+reached-only `IndexRefinementExecutableCoverageIdentity`, and landed
+`CoveredOccurrence::from_receipt` plus the program/artifact identity and
+stale-domain validation its completed Outcome records. Current program source
+explicitly states that coverage folds the reached-only projection, never the
+complete `IndexRefinementReceiptIdentity`; artifact program identity is now
+`tiler.artifact-program.v16` with manifest schema 16.0. This later consumption
+does not change the verifier boundary accepted here.
