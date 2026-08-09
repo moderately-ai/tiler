@@ -52,3 +52,17 @@ The sentence naming the real authority, and the "crate-private" clause corrected
 **New finding, same file, same defect class.** The governed-key subject list read "…which capability, which target property." That list is one-to-one with the `governed_key!` invocations and was exact at `d5b63819` (2026-07-24). It decayed twice: `d1a95e18` (2026-07-25) moved `TargetPropertyKey` to `tiler_ir::program::abi`, and `d715d5da` (2026-07-31) added `RouteFeatureKey` without extending the sentence. So the doc named a key this module no longer defines and omitted one it does. Corrected to "which backend-scoped route requirement" with a dated note, since it too was true when written.
 
 Verified-correct and left alone: ADR 0074 §2 and ADR 0090 item 10 both say what they are cited for; the alphabet equality with `tiler_compiler::target` (identical predicate at `target.rs`); 256 versus `MAX_TARGET_PROFILE_KEY_BYTES = 128`; the absent mutual dependency (neither `Cargo.toml` names the other); `CanonicalArtifactProgramIdentity` exposing only `as_bytes`; `super::codec::budget`'s reuse-rather-than-restate rule; and the `MAX_KERNEL_IDENTITY_BYTES` bound on `BackendEntryKey`. The constant's own doc and the `TargetProfileDescriptorDigest` type doc were **already correct** and are unchanged.
+
+## Outcome — delivered
+
+Commit `2cc29f0c` corrected the complete `keys.rs` module documentation. The
+target-profile descriptor now names this crate's own
+`MAX_TARGET_PROFILE_DESCRIPTOR_BYTES` and its `opaque_identity!` use as the
+governing bound; the dated correction preserves the former shared-bound state
+without presenting it as current. The compiler clause now says that the
+compiler independently owns a crate-private constant rather than implying it
+is the only holder. The neighbouring governed-key list was also brought back
+into agreement with the module by naming the backend-scoped route requirement
+instead of the relocated target-property key. Commit `a4739a41` recorded the
+closure. No constant, visibility, public type, identity bytes, or codec behavior
+changed.

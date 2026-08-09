@@ -53,3 +53,19 @@ ADR 0092 asserts 17 distinct things about `docs/research/runtime/backend-scoped-
 The remaining fifteen include the two most load-bearing: the span is byte-identical to the ADR's Context-through-Traceability once its `###` headings are demoted to `##`, so "transferred verbatim … unreworded" holds across all nine decisions, the consequences, all six alternatives entries, and the traceability paragraph; and the record does list exactly seven public-boundary items under the heading the ADR names, matching the ADR's enumeration item for item.
 
 **The ADR does not carry the false AGENTS.md grounding that `91f67cc5` struck from the record.** Its note attributes the convention to "That record's own convention" and never to canonical guidance. `grep -c 'span\|repoint' AGENTS.md` returns 0, confirmed at this base, and nothing in the ADR depends on it.
+
+## Outcome — delivered
+
+Commit `accaed84` replaced the live item-8 claim with a dated correction: the
+pre-rename spelling was true for one day, then the 2026-08-06 re-transfer made
+the source span byte-identical to ADR 0092 again. The retired sentence remains
+quoted only as history, and the note points at the source-safe
+`ResourceFloor|RouteResourceRequirement` census.
+
+The required neighbouring read found one second stale cross-document claim.
+Commit `6228b085` corrected ADR 0092's measurement boundary to distinguish the
+original uncompiled derivation from the two observation shapes that later
+became implemented, while preserving the still-unimplemented decision half and
+the accepted boundary. Commit `1fab9547` closed the ticket after both repairs.
+No decision item, public surface, route vocabulary, identity, or behavior
+changed.
