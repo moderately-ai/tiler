@@ -51,3 +51,14 @@ The shape is *an array that enumerates a fieldless enum's variants one-to-one, s
 **18 same-shape sites remain, in seven crates, none in scope here.** `tiler-metal-aot` 4 — `AppleSdk::ALL` `[Self; 9]`, `ApplePlatform::ALL` `[Self; 10]`, `MslVersion::ALL` `[Self; 12]` (`src/input.rs`), `CompileStage::ALL` `[Self; 2]` (`src/diagnostic.rs`); `tiler-compiler` 4 — `CANONICAL_PROPERTIES`, `CANONICAL_COMPONENTS`, `CallFailureStage::ALL`, `CANONICAL_AXES`; `tiler-ir` 3 — `ArithmeticType::ALL`, `ConformanceEvidenceClass::ALL`, `CompositionStep::ORDER`; `tiler-cache` 2 — `SubjectFacet::ORDER`, `BundleSection::ORDER`; `tiler-macros` 2 — `DeliveredFamily::ALL`, `NamedProfile::ALL`; `tiler-artifact` 1 — `RouteResourceDimension::ALL`; `tiler-build` 1 — `Variant::ALL` in `examples/identity_join_producer.rs`; `tiler-runtime` 1 — `COMPLETE_ROUTE` in `tests/adapter_route/main.rs`. No `tiler-conformance` site has the shape: `grep -rn --include='*.rs' -E ':[[:space:]]*\[Self;' crates/tiler-conformance` returns nothing, and its literal-sized arrays are operand corpora and a foreign `MTLGPUFamily` binding table.
 
 **The `tiler-metal-aot` three are the highest-value follow-up**, because `ApplePlatform` and `MslVersion` are the paired counterparts of the `MetalPlatform` and `MslLanguageVersion` fixed here, and `crate::target_correspondence` couples them by `const _: [(); FAMILY_COUNT] = [(); ApplePlatform::COUNT];`. That coupling does **not** rescue the driver side: a family added to `ApplePlatform` and omitted from its `ALL` leaves `ApplePlatform::COUNT` at 10 and the equality still holds. Fixing it needs `#![feature(variant_count)]` at that crate's root, which it does not currently carry.
+
+## Current sweep correction — 2026-08-09
+
+The 18-site remainder above is the worker's census at `c0829b41`, not the
+current population. [`size-the-metal-aot-all-arrays-whose-count-coupling-does-not-rescue-them`](size-the-metal-aot-all-arrays-whose-count-coupling-does-not-rescue-them.md)
+subsequently repaired all four named `tiler-metal-aot` declarations and added
+that crate's `variant_count` feature gate. Their live declarations are sized
+from `core::mem::variant_count::<Self>()`; the count coupling remains only a
+cross-crate correspondence check. The other fourteen reported sites remain
+outside this ticket and are not reclassified by that follow-up. This correction
+updates the sweep count without changing the four-site `tiler-metal` outcome.

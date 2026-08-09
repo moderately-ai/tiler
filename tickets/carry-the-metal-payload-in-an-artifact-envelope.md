@@ -138,3 +138,18 @@ The blocker read `encode`/`decode` as `pub(crate)` and concluded the capability 
 - `expose-the-built-artifact-canonical-identity` (p2). `build` derives an identity and stores it in a private field with no accessor, so a producer cannot state "the artifact I built is the artifact these bytes name". The round trip is provable without it — decode compares the re-derivation to the manifest, and byte-identical re-encode pins the manifest to that re-derivation — but the direct comparison a cache key needs is not reachable.
 
 **Maturity, stated apart.** An artifact that assembles, encodes, and re-validates from its own bytes is not an artifact that has run. `route-the-runtime-proof-through-the-artifact-envelope` still owns removing the direct-`metallib` bypass, and it remains blocked on `prototype-runtime-artifact-validation`.
+
+## Current delivery correction — 2026-08-09
+
+The maturity sentence above is the boundary at this ticket's landing, not the
+current delivery state. [`prototype-runtime-artifact-validation`](prototype-runtime-artifact-validation.md)
+and [`route-the-runtime-proof-through-the-artifact-envelope`](route-the-runtime-proof-through-the-artifact-envelope.md)
+are both `done`. The runtime proof now reads envelope bytes, validates their
+recorded identity and section digests, classifies compatibility, commits the
+route, and loads `RoutedDispatch::object()` rather than the producer's in-memory
+`CompiledArtifact`. The later
+[`bound-the-backend-entry-key-by-the-identity-it-carries`](bound-the-backend-entry-key-by-the-identity-it-carries.md)
+repair also restored the three-contributor program: both direct and envelope
+paths now execute the same `4 by 3` subject and agree bit for bit with the
+reference. This later hardware delivery does not change this ticket's original
+artifact-round-trip outcome.
