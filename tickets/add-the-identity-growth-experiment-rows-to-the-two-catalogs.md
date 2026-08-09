@@ -47,3 +47,14 @@ No generator, no gate, no schema change. Not repairing the pre-existing `deliver
 ## Closes when
 
 Both rows render the experiment, and the reconciliation check reports only the pre-existing discrepancies over a named population.
+
+## Outcome — delivered 2026-08-05
+
+`55dda5c8` added both derived views. `spikes/README.md` now carries **How
+kernel-program identity grows against its 64 MiB bound** in the physical
+planning and lowering group with its `supports` link, and the **Complete model
+ingestion and execution** row in `docs/research/README.md` carries the inverse
+`experiments:` link. The commit restored the reconciliation baseline recorded
+by the measuring ticket; it did not absorb the separately owned
+delivered-realization row or introduce a generator, schema, or gate. Both rows
+remain present at the current tree.
