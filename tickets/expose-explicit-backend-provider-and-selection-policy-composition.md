@@ -6,7 +6,7 @@ priority: p1
 dependencies: [drive-an-external-physical-implementation-provider-through-compilation, produce-a-custom-backend-payload-through-the-build-orchestrator, select-executable-variants-across-registered-backend-families, route-a-custom-backend-through-an-independently-selected-adapter]
 related: [prototype-public-compiler-api, admit-the-tiler-facade-and-proc-macro-crate-boundary]
 scopes: [implementation/compiler, implementation/build, implementation/runtime, implementation/artifact, contracts/foundation, contracts/artifacts, contracts/integrations]
-shared_scopes: [project/tickets]
+shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [backend-providers, pluggability, implementation, api]
 ---
@@ -37,3 +37,13 @@ The consumer-facing API composes the proven seams without duplicating ownership,
 - Make the cross-process identity join and final multi-provider portfolio depend on this exact facade.
 - ~~If the facade requires the not-yet-admitted `tiler` crate, sequence behind its admission and review rather than bypassing it.~~ **Stale 2026-08-08:** the crate is admitted. `crates/tiler` is a workspace member in the root `Cargo.toml` and [`admit-the-tiler-facade-and-proc-macro-crate-boundary`](admit-the-tiler-facade-and-proc-macro-crate-boundary.md) is `done`. The live constraint is the opposite one and is a scope fact rather than a sequencing one: `crates/tiler` is `implementation/frontend`, which this ticket does **not** declare, so a facade change reaching `crates/tiler/src/route.rs` or `crates/tiler/src/value.rs` needs that scope added before it is edited. The same holds for the other two consumers of `tiler_runtime::load::ExecutionEnvironment` — `crates/tiler-conformance` (`implementation/conformance`) and `prototypes/candle-metal-adapter` (`implementation/candle`).
 - Keep shared-library loading and stable plugin ABI deferred.
+
+## Outcome audit — 2026-08-09
+
+This parent is `done` because its corrected, still-admissible composition work landed and its one surviving undelivered key was split onto an explicit blocked path; it is not a claim that the original pre-ADR-0090 bundle-and-registry design landed.
+
+- The compiler-side composition seams, governed cost identity, duplicate-identity refusal, and governed-identity refusal described above are delivered. ADR 0090 eliminates the proposed complete-backend bundle and independent build/runtime registries, so those original keys have no implementation remainder.
+- The backend-family policy is **not** delivered. [`express-the-typed-backend-family-selection-policy`](express-the-typed-backend-family-selection-policy.md) owns it and depends on [`decide-whether-a-loading-host-may-state-several-backend-families`](decide-whether-a-loading-host-may-state-several-backend-families.md), because the current `ExecutionEnvironment` still states one backend and one representation. Tom must decide whether the loader accepts several environments or the consumer facade owns the policy before that public surface is built.
+- The standard-Metal/custom-Metal/CPU and Metal-or-CPU examples are likewise not being rounded up as delivered. [`exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio`](exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio.md) depends on the policy successor and owns the end-to-end proof; [`publish-the-backend-provider-conformance-suite`](publish-the-backend-provider-conformance-suite.md) depends on that portfolio.
+
+The split preserves the original user-visible goal while making the board truthful: this node records the delivered per-responsibility composition boundary, the decision node owns the unresolved host model, the implementation successor owns the typed policy, and the portfolio ticket owns the examples. None of those successors should be bypassed by reopening this terminal parent.
