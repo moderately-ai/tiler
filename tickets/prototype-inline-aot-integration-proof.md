@@ -166,3 +166,24 @@ Symbolic extents with a selected family; several families in one selection; any 
 - **`admit-multi-input-elementwise-programs-at-the-compiler-boundary` was not closed.** Its stated outcome is supported at this base — `crates/tiler-compiler/tests/multi_input_elementwise_boundary.rs` shows the approved three-input region compiling — but workers do not close tickets, and `tkt claim` refused this ticket for exactly that unfinished dependency, so no claim is recorded.
 
 **Provisional boundary acceptance (2026-07-31, overnight mode).** The coordinator provisionally accepted the eleven observable changes under Tom's stated bar, headlined by the macOS 26.0 governed floor (the authoritative declaration compiles at `-std=metal4.0`/`macos26.0`; a 14.0 promise over a 26.0-requiring payload would be a lie behind a `#[cfg]` that cannot check minimums) and the four `__private` route items with the `tiler` → `tiler-runtime`/`tiler-artifact` outward edges. Recorded for Tom's morning review with one-revert isolation.
+
+## Current delivery correction (2026-08-09)
+
+The second-attempt outcome above is historical rather than the repository's
+terminal inline-AOT state. The two bounded follow-ons it identified are now
+`done`:
+
+- `route-an-embedded-artifact-through-a-consumer-storage-seam` added the
+  consumer storage/dispatch seam, a real committed route outcome, and an
+  out-of-tree facade consumer that reaches the routed symbol, metallib bytes,
+  and bindings before deliberately refusing its own payload pre-commit; and
+- `dispatch-a-tiler-region-on-metal-hardware` composes that seam with Metal in
+  `spikes/runtime/inline-dispatch/`, reaches `RouteOutcome::Dispatched`, compares
+  the device bytes bit-for-bit with consumer-authored arithmetic, and proves a
+  post-commit halt surfaces as `BindError::DispatchFailed` without returning a
+  fallback value.
+
+The parent proof is therefore complete across the repository's delivered
+chain. Its earlier statements that dispatch and the storage seam are missing
+remain useful measurements of the 2026-07-31 base, but they are not current
+Facts and must not be used to reopen this `done` ticket.
