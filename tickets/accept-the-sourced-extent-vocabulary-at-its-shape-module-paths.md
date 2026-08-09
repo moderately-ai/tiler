@@ -59,3 +59,7 @@ Tom accepts the five paths, accepts with a named exclusion, or rejects. Nothing 
 **The counterpoint accepted alongside it.** `ExtentSources` is consumed almost entirely by index-region construction and proof, so the five now live away from nearly every one of their callers. That navigability cost was stated and accepted; the layering the crate can now state was judged worth it. The reasoning assumes shape-level consumers arrive — the symbolic-shape thread is the expected one — so if that thread stalls indefinitely, this trade reads worse in hindsight and is worth revisiting rather than treating as settled forever.
 
 **Reverting is no longer nearly free.** It was cheap only while nothing had been built on the new paths, which was true at the moment of acceptance and stops being true with each new consumer.
+
+## Current adjacent-surface correction — 2026-08-09
+
+The statement above that `SourcedIndexInteger` keeps a pending acceptance is historical. [`accept-the-symbolic-index-coefficient-surface`](accept-the-symbolic-index-coefficient-surface.md) is `done`: Tom accepted `SourcedIndexInteger`, its readers and conversions, `IndexRegionBuilder::sourced_linear_combination`, and the `LinearTermRef::coefficient` widening on 2026-08-07. It correctly remains in `tiler_ir::index`; this ticket's accepted five-item relocation and its layering argument are unchanged. The interval-bound follow-on named by that acceptance is also `done`, while the accepted normalization rule continues to refuse writing environment-derived values into canonical nodes.
