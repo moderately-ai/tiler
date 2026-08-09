@@ -69,3 +69,14 @@ The tree was restored from backups after each and `git status` confirmed before 
 - **Filed:** [`correct-the-dtype-ledger-bf16-abi-cell-for-the-landed-producer-path`](correct-the-dtype-ledger-bf16-abi-cell-for-the-landed-producer-path.md) (`todo`, p2, `contracts/navigation`). `docs/dtype-support.md:136` still states "no producer can build a BF16 artifact — no BF16 index-realization law or refinement contract exists", every clause of which this ticket and its dependency falsify. Out of scope here; the two tickets that previously moved that cell are both `done`, so nothing live owned the correction.
 - [`correct-the-artifact-abi-contracts-bf16-producer-wall-paragraph`](correct-the-artifact-abi-contracts-bf16-producer-wall-paragraph.md) (`todo`, `contracts/artifacts`) is now fully dischargeable: its own body noted the heading's claim was "narrowly still true only because the artifact-layer packaging evidence is separate work", and that work is this ticket. A dated fact recording the discharge was appended to it.
 - No dependent was released by this landing beyond those two doc corrections. `validate-bf16-at-the-runtime-routing-boundary` needs a producer-built artifact and now has the fixture pattern for one, but its own dependency edges are unchanged and it stays where the graph puts it.
+
+## Current documentation correction (2026-08-09)
+
+The two documentation owners filed above are no longer `todo`.
+`correct-the-dtype-ledger-bf16-abi-cell-for-the-landed-producer-path` is `done`
+and the dtype ledger now states a tested producer-path round trip with execution
+and conformance as the remaining bound. The artifact-ABI correction is also
+`done`; its first refinement-only correction was superseded the same day by the
+producer-built artifact, and its final dated note preserves the forged-pair
+measurements while removing the producer-wall claim. The Graph maintenance
+section remains the landing-time handoff, not the board's current state.
