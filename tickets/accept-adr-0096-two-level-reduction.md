@@ -51,3 +51,17 @@ Tom accepts or rejects it.
 **Fact — the provenance.** Tom accepted ADR 0096 on 2026-08-01 at the live session, presented by the coordinator with the decision-8 stale-ground finding stated first, and chose "accept with correction" over holding for re-derivation. The coordinator witnessed the acceptance directly and executed it: `decision_status` to `accepted`, both catalog rows moved, the research record's `disposition` to `adopted` with `adopted_by: ["ADR-0096"]`, and this node closed. If the relay were wrong the repair is bounded: those four moves reversed, this node reopened — nothing else was released on it, because no ticket depends on this node.
 
 **What was accepted.** The model's eight decisions, with decision 8 read under the recorded correction: one staging round is an initial-profile scope choice, not a vocabulary impossibility, and the multi-round composition is an owned open question. None of the seven public-boundary items is accepted; each arrives under ADR 0075 with its implementation ticket.
+
+## Current follow-on correction — 2026-08-09
+
+The acceptance still releases no dependent directly, and ADR 0096 remains
+`implementation_status: "not-started"`: the schedule has no two-level topology,
+subgroup coordinate pair, or target subgroup-width declaration. Two later
+decisions nevertheless advance the context this ticket originally recorded.
+[ADR 0097](../docs/decisions/0097-admit-a-two-dimensional-cooperative-staging-relation.md)
+implemented `LocalWorkgroupPosition`, a stated participant space, and schedule
+identity v5; that work supplies shared coordinate vocabulary but not ADR 0096's
+subgroup pair. [ADR 0100](../docs/decisions/0100-admit-the-multi-round-two-level-reduction-composition.md)
+subsequently superseded decision 8 alone by accepting the multi-round model.
+Neither acceptance implements the seven concrete ADR 0096 boundary items, and
+neither changes this node's historical no-dependent closure.
