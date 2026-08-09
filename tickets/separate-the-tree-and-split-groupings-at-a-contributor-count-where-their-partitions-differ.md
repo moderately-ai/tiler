@@ -8,6 +8,7 @@ related: [drive-a-grouping-sensitive-numerical-case-through-the-parallel-reducti
 scopes: [implementation/runtime, implementation/conformance, contracts/numerics]
 shared_scopes: [project/tickets]
 tags: [numerics, reductions, evidence-gap]
+paths: []
 ---
 ## The activation trigger fired on 2026-08-07; this is now open work
 

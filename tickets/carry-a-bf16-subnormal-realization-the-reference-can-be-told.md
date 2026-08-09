@@ -8,6 +8,7 @@ related: [apply-the-declared-numerical-conformance-on-every-reference-evaluation
 scopes: [implementation/reference, implementation/ir]
 shared_scopes: [project/tickets]
 tags: [numerics, reference, conformance, bf16]
+paths: []
 ---
 ## User-visible outcome
 

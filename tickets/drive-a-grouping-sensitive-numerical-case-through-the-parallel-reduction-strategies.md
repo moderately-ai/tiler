@@ -8,6 +8,7 @@ related: [realize-parallel-reduction-strategies-on-metal, calibrate-and-activate
 scopes: [implementation/runtime, contracts/numerics]
 shared_scopes: [project/tickets]
 tags: [numerics, reductions, evidence-gap, measurement]
+paths: []
 ---
 ## User-visible outcome
 

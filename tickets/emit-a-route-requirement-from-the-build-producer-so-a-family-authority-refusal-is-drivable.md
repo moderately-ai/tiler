@@ -8,6 +8,7 @@ related: [realize-parallel-reduction-strategies-on-metal, declare-a-required-gpu
 scopes: [implementation/build, implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 tags: [implementation, artifacts, build, route-requirements, evidence-gap]
+paths: []
 ---
 ## User-visible outcome
 

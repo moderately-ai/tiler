@@ -1,2 +1,14 @@
+[views.actionable-backlog]
+where = "(status:todo OR status:ready)"
+
+[views.active-work]
+where = "(status:in-progress OR status:review)"
+
+[views.open-board]
+where = "NOT status:done AND NOT status:closed"
+
 [views.open-tiler-research]
 where = "tag:tiler-research AND NOT status:done"
+
+[views.parked-work]
+where = "(status:blocked OR status:awaiting-decision OR status:deferred)"

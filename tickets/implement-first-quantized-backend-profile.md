@@ -8,6 +8,7 @@ related: [implement-workload-selected-quantized-parameter-maps, own-the-dtype-su
 scopes: [implementation/compiler, implementation/artifact, implementation/reference, implementation/runtime, implementation/metal]
 shared_scopes: [project/tickets]
 tags: [implementation, quantization, backend, metal, language-model, class-generic-capability]
+paths: []
 ---
 Activate only after a concrete quantized format, operation set, target backend,
 storage layout, numerical contract, and conformance corpus are selected. Then

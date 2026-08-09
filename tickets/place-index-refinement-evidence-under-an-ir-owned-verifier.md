@@ -19,6 +19,8 @@ scopes:
   - implementation/workspace
 shared_scopes:
   - project/tickets
+paths: []
+tags: []
 ---
 
 ## User-visible outcome

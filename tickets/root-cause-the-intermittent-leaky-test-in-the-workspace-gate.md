@@ -8,6 +8,7 @@ related: [package-a-multi-entry-bundle-from-one-expansion, prototype-inline-aot-
 scopes: [implementation/workspace, implementation/ir]
 shared_scopes: [project/tickets]
 tags: [testing, gate, determinism, process-lifetime]
+paths: []
 ---
 ## User-visible outcome
 

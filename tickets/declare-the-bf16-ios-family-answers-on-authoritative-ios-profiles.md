@@ -8,6 +8,7 @@ related: [declare-the-bf16-rows-on-the-authoritative-metal-profile, measure-appl
 scopes: [implementation/build, implementation/metal]
 shared_scopes: [project/tickets]
 tags: [implementation, dtype, bf16, target-profiles, metal, apple-targets, ios]
+paths: []
 ---
 ## User-visible outcome
 
