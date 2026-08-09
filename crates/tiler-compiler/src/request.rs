@@ -1694,7 +1694,8 @@ pub(crate) struct NormalizedPointwise {
     pub(crate) reads: Vec<(u32, LogicalAccess)>,
 }
 
-/// A verified two-input, one-output binary tensor-contraction `f32` program.
+/// A verified binary tensor-contraction `f32` shape over exactly two declared
+/// inputs and one semantic result.
 ///
 /// **The structure is carried whole, not projected.** ADR 0087 makes the
 /// canonical index structure the operation's identity, so a normalization that
@@ -1703,7 +1704,12 @@ pub(crate) struct NormalizedPointwise {
 /// *declared input ordinal* to the structure operand it supplies, so a caller
 /// whose declaration order differs from its operand order is admitted rather
 /// than refused for a spelling — and every downstream binding indexes by
-/// declaration order, which is what the ABI binds in.
+/// declaration order, which is what the ABI binds in. The current
+/// `contraction-input-arity` guard makes the two operand ordinals and the
+/// complete declared-input ordinal set coincide densely at zero and one.
+/// [`admit-a-contraction-over-a-subset-of-the-declared-inputs`](../../../tickets/admit-a-contraction-over-a-subset-of-the-declared-inputs.md)
+/// owns replacing that coincidence with an explicit ordinal map through the IR
+/// verifier, physical consumers, and request-subject identity.
 ///
 /// `output_shape` and `contracted_shape` are derived from the structure and the
 /// operand shapes rather than read from the graph, and the derived output shape
@@ -1712,6 +1718,8 @@ pub(crate) struct NormalizedPointwise {
 /// and is refused rather than resolved in favour of either side.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NormalizedContraction {
+    /// The complete declared-input list, which is also the operand list only
+    /// because `contraction-input-arity` requires exactly two declarations.
     pub(crate) input_keys: [InputKey; 2],
     pub(crate) output_key: OutputKey,
     /// Operand shapes, indexed by declared input ordinal.
@@ -7052,7 +7060,7 @@ enum StagedOperandAdmission {
 /// **One operand may be a value another region materializes, and that is this
 /// function's own admission rather than a later stage's derivation.** The
 /// recognized shape carries a [`BoundaryRead`] per operand and the producer's
-/// recognized shape beside them, so `rms_norm(matmul(a, b), w)` is a partition
+/// recognized shape beside them, so `rms_norm(matmul(a, b), a)` is a partition
 /// this output owns end to end — the producer's occurrence included, which is
 /// what [`check_output_cover`] requires and what makes the *producing* region
 /// spellable from a shape this partition holds. The alternative considered and
@@ -7342,11 +7350,15 @@ fn normalize_contraction(
     result: ValueId,
     output_key: OutputKey,
 ) -> Result<NormalizedContraction, RequestError> {
-    // Both declared inputs are this contraction's operands, checked below, and
-    // the region binds them by *declaration* ordinal — so a program declaring a
-    // third input has no ordinal for this strategy's two reads to occupy.
+    // The fixed arrays and every physical consumer of this normalized form
+    // index the complete declared-input set densely at zero and one. The
+    // semantic operation is independently binary; this guard makes that
+    // operand set coincide with the program's declaration set. The subset
+    // widening must install an explicit operand-to-declaration ordinal map
+    // through normalization, scheduling, verification, and identity rather
+    // than merely remove this check.
     if program.input_count() != 2 {
-        return mismatch("input-arity");
+        return mismatch("contraction-input-arity");
     }
     // An elementwise epilogue over a contraction result is a two-region chain
     // this profile assembles as a two-region chain, and this normalization is
@@ -8361,12 +8373,12 @@ mod tests {
     /// the shape the normalization publishes and the *first* declared input can
     /// serve as the weight. **Two declared inputs rather than three, and that is
     /// forced rather than stylistic**: `normalize_contraction` refuses a program
-    /// declaring a third input under `input-arity`, so `rms_norm(matmul(a, b), w)`
+    /// declaring a third input under `contraction-input-arity`, so
+    /// `rms_norm(matmul(a, b), w)`
     /// spelled with its own weight tensor is refused by the *contraction*
     /// recognizer's declared-arity rule rather than by anything this ticket
     /// touched. That wall's owner is
-    /// [`name-the-contraction-operand-arity-wall-and-separate-its-rule`](../../../tickets/name-the-contraction-operand-arity-wall-and-separate-its-rule.md),
-    /// which files the admission itself as its follow-on.
+    /// [`admit-a-contraction-over-a-subset-of-the-declared-inputs`](../../../tickets/admit-a-contraction-over-a-subset-of-the-declared-inputs.md).
     fn contraction_fed_normalization(passed: bool, doubly_staged: bool) -> SemanticProgram {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let shape = Shape::from_dims([2, 2]);
