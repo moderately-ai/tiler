@@ -1,9 +1,9 @@
 ---
 id: share-identical-constants-in-the-pointwise-expression-canonical-form
 title: Share identical constants in the pointwise expression canonical form
-status: todo
+status: awaiting-decision
 priority: p2
-dependencies: []
+dependencies: [determine-whether-compiler-lowering-mints-duplicate-pointwise-constants]
 related: [implement-the-realization-witness-vocabulary, enumerate-the-freedom-sites-a-physical-plan-must-pin-for-a-permissive-conformance-oracle]
 scopes: [implementation/ir]
 shared_scopes: [project/tickets]
@@ -14,9 +14,9 @@ tags: [numerics, identity, conformance]
 
 **Measurement — [`implement-the-realization-witness-vocabulary`](implement-the-realization-witness-vocabulary.md) at base `61414b91`.** [The freedom-sites record's](../docs/research/reference/plan-freedom-sites.md) Part 5 claims that `PointwiseF32ExpressionBuilder`'s canonicalization makes "the canonical form a function of the program rather than of the spelling", on two named mitigations: one leaf per input ordinal shared on repeat request, and a deterministic root-first topological order. That ticket tested the claim, as it was required to before building a witness on it.
 
-It **holds** for exactly those two mitigations, and **fails** for a third spelling neither reaches. Nothing shares an identical constant: `PointwiseF32ExpressionBuilder::constant` (`crates/tiler-ir/src/schedule/pointwise.rs:322-327`) pushes a draft node unconditionally, and `canonicalize_nodes` (`:551`) maps draft ordinals to canonical ones with no hash-consing. So `x * 2.0 + 2.0` spelled with one constant value and spelled with two `constant()` calls produces a four-node and a five-node expression, two different `RealizationWitness::pointwise_f32` values, and two different `CanonicalScheduledRegionIdentity` values for one binary32 function. `a_duplicated_constant_is_a_spelling_the_canonical_form_does_not_collapse` in `crates/tiler-ir/src/schedule/witness/tests.rs` is the standing evidence, and it asserts the *current* behaviour so this ticket's fix must flip it.
+It **holds** for exactly those two mitigations, and **fails** for a third spelling neither reaches. Nothing shares an identical constant: `PointwiseF32ExpressionBuilder::constant` pushes a draft node unconditionally, and `canonicalize_nodes` maps draft ordinals to canonical ones with no hash-consing. So `x * 2.0 + 2.0` spelled with one constant value and spelled with two `constant()` calls produces a four-node and a five-node expression, two different `RealizationWitness::pointwise_f32` values, and two different `CanonicalScheduledRegionIdentity` values for one binary32 function. `a_duplicated_constant_is_a_spelling_the_canonical_form_does_not_collapse` in `crates/tiler-ir/src/schedule/witness/tests.rs` is the standing evidence, and it asserts the *current* behaviour so this ticket's fix must flip it if sharing is accepted.
 
-`PointwiseBf16ExpressionBuilder` has the identical structure (`crates/tiler-ir/src/schedule/pointwise_bf16.rs:326`) and is presumed to carry the same gap; it was not separately exercised.
+`PointwiseBf16ExpressionBuilder::constant` and its `canonicalize_nodes` have the same append-and-retain structure. Compiler reachability at that width is intentionally left to the prerequisite rather than inferred from builder symmetry.
 
 ## Why it is filed rather than fixed
 
@@ -26,17 +26,20 @@ Two reasons, and the second is the one that needs a decision.
 
 **Sharing constants moves canonical schedule identity.** Every region whose scalar program mints a repeated constant would encode different bytes, which reaches the schedule identity domain and everything downstream of it — request subjects, artifact identity, cache subjects, and the checked-in Metal goldens. Whether that is a `tiler.schedule.v6` step or an unversioned change to a population that is provably empty in the retained corpus is the question this ticket has to answer, and it is an identity-domain decision the implementing ticket had no evidence for.
 
-## What is not established
+## Correction — 2026-08-09
 
-**Whether the compiler can produce the duplicated spelling.** `recognize_elementwise` (`crates/tiler-compiler/src/request.rs`) states that "two operands naming one value share the node already minted", so one `tiler.constant-f32` occurrence read twice mints one node. Two *distinct* occurrences carrying the same payload are two `ValueId`s and would mint two nodes — but no compiled counterexample was produced, and the semantic layer may or may not already share identical constant occurrences. That reading is what this ticket must settle first: if the compiler cannot mint the spelling, the retained population is empty and the repair is cheap.
+**Fact — this ticket combined research with an identity decision.** `mint_into` reuses the value already associated with one semantic `ValueId`, while two distinct planned constant steps call the sink twice. Whether semantic construction and elementwise planning can preserve two equal-payload occurrences is not established. The prerequisite [`determine-whether-compiler-lowering-mints-duplicate-pointwise-constants`](determine-whether-compiler-lowering-mints-duplicate-pointwise-constants.md) now owns that bounded source-and-compiled-pair question.
+
+**Decision boundary.** Even if the compiler population is empty today, changing the builder's canonical form changes the schedule spelling admitted through a public builder. If the compiler population is nonempty it also moves downstream identities. Choosing whether to share constants, and whether any affected schedule identity domain must step or may hold, is consequential identity authority retained by Tom. This ticket therefore remains `awaiting-decision`; the prerequisite supplies evidence but does not authorize implementation.
 
 ## What this ticket must produce
 
-1. A compiled pair, or a proof that none exists: build two semantic programs computing one binary32 function that differ only in whether an identical constant is one occurrence or two, and compare their minted `ScalarProgram::PointwiseF32` payloads. If none exists, say so with the rule that forbids it and close on that.
-2. If one exists, enumerate the pinned identity population it moves — schedule identities, request subjects, artifact identity, cache subject, Metal goldens — before editing, and recompute every moved pin on the merged tree.
-3. The fix, if it is one: share a draft constant node on repeat request, at both widths, exactly as the input-leaf sharing already does.
-4. Flip `a_duplicated_constant_is_a_spelling_the_canonical_form_does_not_collapse` and the corresponding paragraph of the record's Part 7.5 and Part 5.
+1. Read the prerequisite's result and decide whether builder-level equal-constant sharing is the canonical schedule contract.
+2. Derive `step` or `hold` for every affected identity domain from the chosen byte-evolution rule; do not assume either answer from reachability alone.
+3. If sharing is accepted and a live compiler population exists, enumerate the exact moved pins — schedule identities, request subjects, artifact identities, cache subjects, and Metal goldens — before editing and recompute them on the merged tree.
+4. Implement equal-bit constant sharing at both widths, exactly as input-leaf sharing already does, only after the decision authorizes it.
+5. Flip `a_duplicated_constant_is_a_spelling_the_canonical_form_does_not_collapse` and reconcile the freedom-sites record with the accepted answer.
 
 ## Closes when
 
-The compiler-reachability question is answered from source or from a compiled pair; the identity population is enumerated; and either the canonical form shares identical constants at both widths with every moved pin recomputed, or the ticket records why the spelling is unreachable and the gap is a builder-only one.
+Tom has answered the canonical-form and identity-evolution questions using the prerequisite's reachability evidence, and the accepted answer is implemented with every moved pin and dependent record reconciled — or the ticket records the accepted decision to retain distinct constant occurrences.

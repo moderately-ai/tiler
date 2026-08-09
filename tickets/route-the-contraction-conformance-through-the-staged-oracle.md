@@ -1,7 +1,7 @@
 ---
 id: route-the-contraction-conformance-through-the-staged-oracle
 title: Route the compiler's contraction conformance through the staged oracle
-status: todo
+status: done
 priority: p2
 dependencies: [reclassify-language-model-work-as-a-conformance-track]
 related: [bound-the-reference-contraction-comparison-for-the-profile-cells, realize-the-contraction-through-the-appendable-direct-path]
@@ -31,3 +31,7 @@ Whether this crate's conformance file compares four more cells at roughly 10 s, 
 ## Closes when
 
 The file's boundary statement matches what the reference can now do, its cell partition is the current one, and its choice about the four cells is stated with its cost.
+
+## Outcome audit — 2026-08-09
+
+Already delivered; no new source edit is owed. `crates/tiler-compiler/src/governed/contraction_conformance.rs`, anchor `The reference's four-cell boundary was settled`, states that the unstaged evaluator still refuses the four oversized folds and the staged evaluator reaches them. `the_four_prefill_cells_are_refused_by_the_unstaged_fold_and_reached_by_the_staged_one` drives both halves and compares the cheapest staged cell with its retained digest. `ADMITTED_CELLS` and `REFUSED_CELLS` are now explicitly the **unstaged** partition rather than a claim about total reference reach. The module also records why it does not pay for all four here: the four together are 1.1 × 10⁹ steps, while `tiler-reference` owns the full six-cell comparison. The ticket's closure conditions are therefore met and the stale ready node is closed as `done`.

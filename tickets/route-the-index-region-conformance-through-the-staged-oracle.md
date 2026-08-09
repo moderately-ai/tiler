@@ -1,7 +1,7 @@
 ---
 id: route-the-index-region-conformance-through-the-staged-oracle
 title: Route the index-region conformance through the staged oracle
-status: todo
+status: done
 priority: p2
 dependencies: [reclassify-language-model-work-as-a-conformance-track]
 related: [decide-the-index-region-oracle-route-past-its-step-budget, route-the-contraction-conformance-through-the-staged-oracle]
@@ -29,3 +29,7 @@ So this file's section "The index-region oracle reaches the smaller of the two" 
 ## Closes when
 
 The file's reach statements cite accepted decisions rather than open ownership, and every cell it does not compare has a stated reason with its measured cost.
+
+## Outcome audit — 2026-08-09
+
+Already delivered; no new source edit is owed. `crates/tiler-compiler/src/governed/contraction_conformance.rs`, anchor `What is still uncompared here, and what bounds it`, keeps the whole-region `w_vocab_slice` refusal as the standing budget watcher, compares the emitted region at `w_decode_kv`, and explicitly declines the staged host walk: the region oracle spends about 516 ns per budget step and the six-cell population would take hours. The module names [`integrate-the-contraction-vertical-into-the-runtime`](integrate-the-contraction-vertical-into-the-runtime.md) as the dispatched-device owner instead of treating another host implementation as missing evidence. That is the recorded choice this ticket required, so the duplicate ready node is closed as `done`.

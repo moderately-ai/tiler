@@ -1,7 +1,7 @@
 ---
 id: retain-contraction-conformance-evidence
 title: Retain contraction conformance evidence for the profile's cells and corpus
-status: todo
+status: done
 priority: p2
 dependencies: [integrate-the-contraction-vertical-into-the-runtime]
 related: [design-model-level-qualification-and-optimization, retain-the-qwen-conformance-reference-logit-fixture]
@@ -16,7 +16,7 @@ A later change to the contraction's schedule, emitter, or toolchain is a *failur
 
 ## What to retain, and why each part
 
-**Fact — the evidence already exists in a spike and is not a gate.** [The realization probe](../spikes/scheduling/metal_contraction_vertical/README.md) retains eight adversarial cases with every named topology's exact bits, and six workload cells with per-cell `result_sha256`. No `make` target reaches `spikes/`, so only re-running that spike by hand detects drift from it. This ticket moves the part that is a *guarantee about Tiler* into the repository's own conformance surface, and leaves the part that is a measurement about Metal where it is.
+**Historical Fact — the evidence began in a spike rather than a gate.** [The realization probe](../spikes/scheduling/metal_contraction_vertical/README.md) retains eight adversarial cases with every named topology's exact bits, and six workload cells with per-cell `result_sha256`. The ordinary test surface described below now retains the parts that are guarantees about Tiler while the Metal measurement remains bounded to its environment row.
 
 **Proposal — the two halves, kept apart.**
 
@@ -32,3 +32,11 @@ A model-level tolerance, which [`design-model-level-qualification-and-optimizati
 ## Closes when
 
 Both halves exist in the ordinary test surface, each was watched failing under a deliberate perturbation, the realization half declines rather than passes on a non-matching environment row, and the coverage statement says exactly which of the reduction contract's adversarial cells are covered and which are not.
+
+## Outcome audit — 2026-08-09
+
+**Fact — the two implementation halves landed.** `crates/tiler-reference/tests/contraction_conformance.rs` now retains the eight exact-bit cases through the public semantic and reference boundary. Its source states the independent spike provenance, the strict numerical contract, the target-independent boundary, and the named-case rather than whole-domain extent. The ordinary conformance surface pins the six retained `direct` workload digests, checks that the executed and embedded bytes agree, compares against the retained digest only on the matching environment row, and exercises the mismatch and decline paths. The source anchors `the_pinned_cells_are_the_retained_records_own_direct_rows`, `a_retained_comparison_separates_the_executed_bytes_from_the_published_record`, and `the_contraction_members_route_and_the_gates_cells_carry_their_retained_digests` are the current evidence.
+
+**Fact — one documentation remainder stays open.** Neither half is a complete ledger against the governing record's `Required adversarial tests` population. That bounded remainder is now [`state-the-contraction-conformance-corpus-coverage-against-the-reduction-contract`](state-the-contraction-conformance-corpus-coverage-against-the-reduction-contract.md). It must not duplicate the delivered corpus or widen the evidence claim while stating coverage.
+
+The implementation outcome this ticket requested is complete. The coverage ledger is split so dependents no longer treat already-retained tests as missing work.
