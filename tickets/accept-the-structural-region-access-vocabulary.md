@@ -43,3 +43,11 @@ Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on thi
 ## Decided — accepted
 
 Accepted by Tom on 2026-08-06 at the morning decision review in the coordination session, witnessed first-hand by the coordinator, with the evidence packet this node carries. Acceptance is not stabilization; the surface is accepted pre-alpha vocabulary.
+
+## Current-state correction — 2026-08-09
+
+The source declarations now carry the accepted surface without a live draft
+marker: `AxisDecode`, the two `LogicalAccess` variants, both admission
+predicates, and `BinaryOp::IndexSubtract` retain exactly the shapes accepted
+above. This correction records the completed label sweep; it changes no
+vocabulary, encoding tag, identity domain, or behavior.
