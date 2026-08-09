@@ -5,7 +5,7 @@ status: done
 priority: p2
 dependencies: [land-the-subgroup-execution-tier-adr]
 related: [design-the-subgroup-execution-tier, compose-the-two-level-subgroup-and-workgroup-reduction]
-scopes: []
+scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [contracts, adr, scheduling, subgroup, decision]
@@ -55,3 +55,7 @@ Tom accepts or rejects it.
 **Four tickets depend on this node, not three, and closing it makes three of them ready.** The Outcome above names three implementation tickets; [`compose-the-two-level-subgroup-and-workgroup-reduction`](compose-the-two-level-subgroup-and-workgroup-reduction.md) is a fourth dependent and was not counted. All four sit in the `todo`-gated-by-a-parked-acceptance idiom, so no status edit was needed — `awaiting-decision` never satisfied a dependent and `done` does. Verified against the board rather than asserted: `tkt ready` named no subgroup ticket before this closure and names [`admit-subgroup-bindings-into-the-schedule-vocabulary`](admit-subgroup-bindings-into-the-schedule-vocabulary.md), [`declare-metal-subgroup-realization-facts-in-the-target-profile`](declare-metal-subgroup-realization-facts-in-the-target-profile.md), and [`compose-the-two-level-subgroup-and-workgroup-reduction`](compose-the-two-level-subgroup-and-workgroup-reduction.md) after it. [`admit-subgroup-typed-values-and-collectives-into-the-kernel-ir`](admit-subgroup-typed-values-and-collectives-into-the-kernel-ir.md) declares a second dependency on the schedule-vocabulary ticket and correctly stays out of `ready` until that lands — the same asymmetry [`accept-adr-0093-cpu-vector-lane-tier`](accept-adr-0093-cpu-vector-lane-tier.md) had to correct, where the node claimed three releases and delivered two.
 
 **Closed by:** [`land-the-subgroup-execution-tier-adr`](land-the-subgroup-execution-tier-adr.md), which carried the ADR file, both catalog rows, the research record's disposition move, the proposal-era sweep, and this closure. The rule that only Tom closes this node governed it for its whole life and is preserved unedited above; what changed is that the decision was taken, not that the rule relaxed.
+
+## Current board correction — 2026-08-09
+
+The closure-time ready-set account above is historical. ADR 0094's model remains accepted and its implementation remains not started. [`admit-subgroup-bindings-into-the-schedule-vocabulary`](admit-subgroup-bindings-into-the-schedule-vocabulary.md) and [`declare-metal-subgroup-realization-facts-in-the-target-profile`](declare-metal-subgroup-realization-facts-in-the-target-profile.md) are now `awaiting-decision` at their separate ADR 0075 public boundaries. [`admit-subgroup-typed-values-and-collectives-into-the-kernel-ir`](admit-subgroup-typed-values-and-collectives-into-the-kernel-ir.md) remains `todo` but is dependency-blocked by the schedule-vocabulary decision. The fourth dependent, [`compose-the-two-level-subgroup-and-workgroup-reduction`](compose-the-two-level-subgroup-and-workgroup-reduction.md), is `done`, and ADR 0096 accepted its representation. Acceptance released these questions from ADR 0094; it did not accept their later public spellings.
