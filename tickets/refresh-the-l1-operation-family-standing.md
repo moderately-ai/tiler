@@ -87,6 +87,13 @@ Verified against the roadmap rows and left untouched: the reductions-beyond-stri
 - **Filed:** [`refresh-the-l2-derivation-operation-family-standing`](refresh-the-l2-derivation-operation-family-standing.md) (`todo`, p2, scope `research/shapes`), naming every stale site by line — the status line at 19, the *Rung* cells at 61–67, the decision-dependent GQA disposition at 73, the slice/concatenate "not even at R2" at 118, and the closing "Nothing moved" at 189 — with what must survive (the BF16 ingestion recommendation at 77, the gather at 65, `Select` at 128, and the whole *Disposition* column). L2 contradicts itself today: line 76 was half-corrected on 2026-08-04 and line 118 was not.
 - **Checked and owes nothing: L8.** [`model-level-qualification.md`](../docs/research/program-planning/model-level-qualification.md) was read for restatements and carries none. Its lines 19 and 260 claim only that *it* moves no support-matrix row and that no family moved a rung on *its* evidence — true claims about what L8 delivers, not restatements of L1's standing.
 
+### Current handoff correction — 2026-08-09
+
+The filed L2 owner is now `done`. Its complete Outcome records the corrected
+family rungs and bounds in the L2 derivation, and the L1 *What remains open*
+pointer now carries a dated forward correction rather than presenting that
+work as pending. L8 remains unaffected for the reason recorded above.
+
 ### Checks
 
 - `tkt lint` — clean.

@@ -101,6 +101,13 @@ Line 77's BF16→F32 ingestion recommendation (cast-and-convert still R2, no `Ca
 
 **Fact.** L1's *What remains open* names this ticket as the owner of L2's superseded standing. That standing is now corrected, so the reference is dischargeable; L1 lives under `research/program-planning`, which this ticket does not hold, so no edit to L1 was made and the coordinator owns whether L1's sentence is rewritten or left as the pointer it is.
 
+### Current graph correction — 2026-08-09
+
+The coordinator has discharged that forward reference. L1 now records that
+this ticket is `done` and that the L2 derivation carries the corrected bounded
+standing. This changes no L2 research conclusion; it completes the graph
+maintenance explicitly left to coordination above.
+
 ### Checks
 
 `tkt lint`, `git diff --check`, and `tkt guard` against the true base. No `crates/`, `prototypes/`, `Cargo.*`, `.config/`, `Makefile`, `rust-toolchain.toml`, `rustfmt.toml`, or `deps.sh` path is touched, so the workspace gate is untouched by this delta.
