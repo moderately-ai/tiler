@@ -4,7 +4,7 @@ title: Prove the exhaustible encoder-injectivity claims natively
 status: done
 priority: p2
 dependencies: []
-related: [spike-kani-bounded-verification-on-one-inexhaustible-encoder]
+related: [spike-kani-bounded-verification-on-one-inexhaustible-encoder, prove-the-governed-tag-tables-injective, derive-the-artifact-numerical-and-fenced-space-populations, derive-the-metal-fenced-space-population]
 scopes: [implementation/ir, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
@@ -112,3 +112,15 @@ Tables reached by an exhaustible encoder are already covered by the tests above.
 ### Pinned identities
 
 **None moved.** No encoding was changed; the whole diff is tests, test-local enumerations, two `cfg(test)` feature declarations, and doc comments. Verified by `cargo nextest run --workspace` on this branch's tree: 3085 tests run, 3085 passed, 7 skipped — including every checked-in identity hex, golden, and digest pin in `tiler-ir`, `tiler-artifact`, `tiler-cache`, `tiler-metal`, and `tiler-conformance`.
+
+## Current follow-through — 2026-08-09
+
+The artifact correction named above is now `done`: its numerical payload and
+fenced-space populations are derived from their types, with the workspace macro
+authority reconciled. Its audit also found a separate hand-sized Metal
+`FencedSpaces` copy; that live remainder is explicitly owned by
+[`derive-the-metal-fenced-space-population`](derive-the-metal-fenced-space-population.md)
+under `implementation/metal`. This ticket's nineteen encoder classifications
+and identity non-movement remain unchanged. The distinction matters: the Metal
+ticket is a test-population repair, not unfinished artifact work under this
+completed encoder sweep.

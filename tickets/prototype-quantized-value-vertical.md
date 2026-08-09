@@ -4,7 +4,7 @@ title: Prove a quantized compound-value vertical
 status: done
 priority: p2
 dependencies: [implement-first-profile-numerical-policies]
-related: [implement-workload-selected-quantized-parameter-maps, implement-first-runtime-semantic-value-precondition-enforcement, admit-a-caller-declared-target-profile, scope-first-quantized-lm-profile, implement-first-quantized-backend-profile, enforce-resolved-encoded-value-binding-conformance]
+related: [implement-workload-selected-quantized-parameter-maps, group-internal-compound-materializations-by-logical-value, implement-first-runtime-semantic-value-precondition-enforcement, admit-a-caller-declared-target-profile, scope-first-quantized-lm-profile, implement-first-quantized-backend-profile, enforce-resolved-encoded-value-binding-conformance]
 scopes: [implementation/ir, implementation/reference, implementation/compiler, implementation/artifact, contracts/numerics, contracts/artifacts, implementation/metal, implementation/build, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []

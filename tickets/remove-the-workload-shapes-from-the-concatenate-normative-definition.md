@@ -4,7 +4,7 @@ title: Remove the workload shapes from the concatenate normative definition
 status: done
 priority: p1
 dependencies: []
-related: []
+related: [correct-the-roadmap-s-zero-extent-prefill-shape-after-the-concatenate-change]
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -121,3 +121,13 @@ and taking the `left` value. **The recomputed value coincides with the pre-rebas
 ## Closes when
 
 No normative definition in `crates/tiler-ir/src/semantic/` contains a concrete tensor shape — re-run the scan above and report the table; the concatenate rule reads as generally as its five siblings; every pinned identity is recomputed on the merged tree with moved/unmoved stated per pin; and the identity-domain step is coherent with whatever `carry-a-sourced-shape-on-semantic-values` did.
+
+## Current follow-through — 2026-08-09
+
+The one out-of-scope documentation remainder is complete.
+[`correct-the-roadmap-s-zero-extent-prefill-shape-after-the-concatenate-change`](correct-the-roadmap-s-zero-extent-prefill-shape-after-the-concatenate-change.md)
+corrected the roadmap after `ab64f334` removed the workload instance from the
+normative definition. The final closing sentence above is historical planning:
+the audited implementation established that no semantic-graph domain step was
+required and exactly one compiler request pin moved. The Worker outcome records
+that measured result; no identity or documentation remainder remains live here.
