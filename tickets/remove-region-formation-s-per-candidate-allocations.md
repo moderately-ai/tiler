@@ -6,7 +6,7 @@ priority: p1
 dependencies: []
 related: []
 scopes: [implementation/compiler]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [performance]
 ---
@@ -24,3 +24,17 @@ tags: [performance]
 **Whether removing the allocations can change a plan.** If it can, this is not a performance ticket at all and the framing must change before anyone starts.
 
 Until those are written, the honest state is that nobody knows what this ticket asks for.
+
+## Current-state correction — 2026-08-09
+
+The 2026-08-08 dispatch warning above audited the originally bodyless ticket as though it still represented pending work. It did not: commit `dfe909f4f7f7a1bc4b52d070f66c1d2065ea3b70` (`Carry region membership as sorted vectors and share identity bytes`) had already delivered the requested allocation-churn repair on 2026-07-27, and `6ca0e1cb9d1bb06c70a92a43e0268d7dad7851cf` then closed this ticket. The warning remains as a historical account of the filing defect, not as the ticket's current state or a reason to dispatch it again.
+
+The landed implementation is source-verifiable at the following current anchors:
+
+- `form_candidate` requires the candidate member slice to be ascending and distinct, which lets region formation preserve set semantics without constructing a `BTreeSet` for every candidate;
+- `is_member` uses binary search over that bounded canonical slice, and `local_position` scans the immediately constructed bounded order instead of allocating a `BTreeMap` for each encoding;
+- cover enumeration mutates one `covered` mask in place and undoes it on backtracking instead of cloning an uncovered set for every branch;
+- `derive_materializations` uses sorted vectors rather than per-cover maps and sets; and
+- `RegionCoverIdentity` and immutable region labels share their bytes behind `Arc` while retaining content-based equality, ordering, and the same `as_bytes()` result.
+
+Those changes preserve the relevant observable semantics: canonical ordering and the ascending/distinct member invariant replace set canonicalization, verification recomputes and compares the same identity bytes, and cover search still explores the same disjoint candidates under the same budgets. This audit records the implementation and makes `status: done` truthful. It does **not** claim a new benchmark, a current allocation count, or a measured speedup beyond the implementation evidence recorded in the landing commit.
