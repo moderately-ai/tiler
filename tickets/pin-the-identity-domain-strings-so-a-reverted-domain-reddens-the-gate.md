@@ -4,7 +4,7 @@ title: Pin the identity domain strings so a reverted domain reddens the gate
 status: done
 priority: p1
 dependencies: []
-related: [resolve-semantic-shape-inference-over-symbolic-extents, size-the-four-hand-written-metal-all-arrays-from-their-types]
+related: [resolve-semantic-shape-inference-over-symbolic-extents, size-the-four-hand-written-metal-all-arrays-from-their-types, pin-the-tiler-compiler-identity-domain-spellings-the-ir-census-does-not-reach, pin-the-tiler-artifact-identity-domain-bytes-the-existing-census-does-not-fix]
 scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
@@ -76,3 +76,14 @@ An assertion over the domain strings that fails when one changes. **Prefer a cen
 `tiler-artifact` already carries `src/domains.rs`, but its guarantee is a different one: it establishes completeness against its own sources and the no-prefix property, and it never compares a domain against an expected *value*, so an artifact domain can still be reverted there with nothing to say so. The largest genuinely uncovered population is `tiler-compiler`, whose 25 include versioned subjects that step — `tiler.compiler.request-subject.v6`, `tiler.target-profile.declaration.v11`, `tiler.target-profile.descriptor.v10`, `tiler.compiler.boundary-property-set.v3`. `crates/tiler-build/src/metal_plan.rs` mentions `tiler.index-region.v11` only in prose, which no value pin reads in any case.
 
 Each of those crates needs its own copy of this module, because the population is per-crate source and `CARGO_MANIFEST_DIR` is what makes the scan reach it — the same reason `tiler-artifact` enumerates its subject separately from `tiler-ir`'s `exhaustive_injectivity`. That is a separate ticket per crate, not scope this one should have taken.
+
+## Outcome and graph completion — 2026-08-09
+
+Commit `2191c839` landed the private IR census and commit `4da9ef36` closed this
+ticket. The compiler remainder it filed subsequently landed and closed under
+[`pin-the-tiler-compiler-identity-domain-spellings-the-ir-census-does-not-reach`](pin-the-tiler-compiler-identity-domain-spellings-the-ir-census-does-not-reach.md).
+The distinct artifact exact-byte remainder named above had no graph node; it is
+now owned by
+[`pin-the-tiler-artifact-identity-domain-bytes-the-existing-census-does-not-fix`](pin-the-tiler-artifact-identity-domain-bytes-the-existing-census-does-not-fix.md).
+This completed ticket remains scoped to the IR census and does not imply either
+other crate's population was covered by it.

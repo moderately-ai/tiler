@@ -4,7 +4,7 @@ title: Pin the tiler-compiler identity domain spellings the ir census does not r
 status: done
 priority: p1
 dependencies: []
-related: [pin-the-identity-domain-strings-so-a-reverted-domain-reddens-the-gate]
+related: [pin-the-identity-domain-strings-so-a-reverted-domain-reddens-the-gate, pin-the-tiler-artifact-identity-domain-bytes-the-existing-census-does-not-fix]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []

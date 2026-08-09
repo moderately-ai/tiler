@@ -4,7 +4,7 @@ title: Reconcile the artifact ABIs four hashing sites with the fifth it names
 status: done
 priority: p2
 dependencies: []
-related: [date-the-two-v4-step-paragraphs-trailing-the-v5-block]
+related: [date-the-two-v4-step-paragraphs-trailing-the-v5-block, reconcile-the-artifact-abis-hashing-site-count-with-its-own-governed-digest-section, decide-whether-adr-0103-s-eight-domain-count-is-a-dated-record-or-a-stale-claim]
 scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
@@ -76,3 +76,20 @@ Three passages in `docs/artifact-abi.md` repaired; no code changed.
 - **`crates/tiler-artifact/src/program/codec/encode.rs` (`implementation/artifact`).** `IDENTITY_DIGEST_DOMAIN`'s doc comment opens "It is a fourth domain rather than a reuse of [`MANIFEST_DIGEST_DOMAIN`]". It is the envelope's fifth digest domain — the same ordinal defect, unrepaired.
 - **`reconcile-the-artifact-abis-hashing-site-count-with-its-own-governed-digest-section` (`todo`, p3).** Its site 1 is discharged by this ticket; only its site 2 and the ADR follow-up remain. Its Fact carries a **false anchor**: it quotes `"it is envelope framing like the other three rather than a layered digest"`, and `grep -cF` for that returns 0 because the source reads `this is envelope framing…`. Left unedited because the ticket is unclaimed.
 - **Not folded in, as instructed, and met.** The union-obligation Fact still carries "every domain the shared IR admits opens `tiler.ir.`" and the "first byte after the shared `tiler.`" variant in the same sentence. `crates/tiler-artifact/src/domains.rs` has already retired that exact premise in its own doc comment — "That claim is retired… It was never true at any commit" — and replaced it with the NUL-terminator argument, so the contract now lags its own source on this point.
+
+## Completion correction — 2026-08-09
+
+The three items above are no longer open coordinator work. The contract and
+encoder ordinal repairs landed under
+[`reconcile-the-artifact-abis-hashing-site-count-with-its-own-governed-digest-section`](reconcile-the-artifact-abis-hashing-site-count-with-its-own-governed-digest-section.md),
+which now records its exact delivery hash. ADR 0103's never-true population
+counts were repaired by
+[`decide-whether-adr-0103-s-eight-domain-count-is-a-dated-record-or-a-stale-claim`](decide-whether-adr-0103-s-eight-domain-count-is-a-dated-record-or-a-stale-claim.md).
+Its remaining "other three hashing sites" phrase is explicitly bounded in the
+same record as a claim about the three sites the 2026-07-27 decision block
+enumerated, not a live census of the codec, so it is retained historical prose
+rather than an unowned repair.
+
+The separate cross-crate no-prefix explanation is now owned by
+[`repair-the-artifact-abis-stale-cross-crate-no-prefix-argument`](repair-the-artifact-abis-stale-cross-crate-no-prefix-argument.md).
+Nothing remains unfiled from this completed hashing-site reconciliation.
