@@ -51,3 +51,20 @@ The filing claim is a coordinator-visible one that four other repair tickets inh
 One option is chosen and recorded, and the two repair tickets above are rewritten to apply it. `make citations` reports no link failure in either record.
 
 The applying change needs `research/runtime` and `research/numerics` under option 1, additionally `implementation/workspace` under option 2, and additionally `contracts/decisions` under option 3.
+
+## Outcome — option 1 applied
+
+The repository chose the whole-span fence. Commit `b118a4af` fenced the runtime
+record's retained ADR 0092 body and commit `6ddcb305` fenced the numerics
+record's retained ADR 0102 body. In each file the fence covers the complete
+transferred span rather than only the failing links, so the transferred bytes
+remain byte-identical and later destination-relative links cannot silently
+reopen the same defect. The rendering cost is explicit: the transferred body is
+literal text rather than rendered Markdown.
+
+Both applying tickets demonstrated that removing the opening fence restores the
+named link failures, and that a broken link after the closing fence is still
+caught. `make citations` is green with neither span contributing unresolved
+links. Commit `2aa69bfe` then closed this decision and the numerics carrier; this
+note records the choice that status-only transition omitted. No checker
+exclusion and no fork of either accepted ADR was introduced.

@@ -50,3 +50,22 @@ The premise restated so it says what actually separates the domains — the sibl
 **Cite by searchable anchor and run its grep before committing to it.** The sibling had an anchor fail because it spanned an 80-column break and caught it before shipping; doc comments here wrap.
 
 Check the neighbouring claims and **name the count** — every sweep of these files this week found more than it was sent for.
+
+## Outcome and bounded remainder — 2026-08-09
+
+Commit `f9b0b67d` delivered the `implementation/artifact` half. The complete
+`crates/tiler-artifact/src/domains.rs` argument now retires both false namespace
+premises, explains why dependency direction would permit rather than prevent a
+union check, names the missing exported IR enumeration as the actual obstacle,
+and rests the cross-crate separation argument on the unique NUL terminator. The
+crate-owned population and prefix tests remain type-sized and count-free in the
+prose that can drift.
+
+The second site was deliberately outside this ticket's scope and is still a
+live defect: `docs/artifact-abi.md`, under the governed-digest union obligation,
+still says every shared-IR domain opens `tiler.ir.` and that the sets diverge at
+the first byte after `tiler.`. The follow-up
+`repair-the-artifact-abis-stale-cross-crate-no-prefix-argument` now owns that
+accepted-contract correction. This completed ticket therefore records a
+bounded source repair plus a mapped contract remainder; it does not claim both
+sites were changed here.
