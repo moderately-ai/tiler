@@ -73,3 +73,18 @@ The comment naming the live domain. **Check whether the sentence is still true o
 Claims 3, 4, and 6 were not covered as domain-name claims by the sibling's eight-claim cross-crate census and are checked here independently; all three hold.
 
 **The source census does not and should not cover this comment.** `crates/tiler-ir/src/domains.rs` pins `b"tiler.semantic-graph.v3\0"` and scans *literals*: its header records that "a literal inside a `//` comment is skipped, because prose quotes domains constantly and a doc comment is not a declaration". This edit changes prose *about* a domain and no domain spelling, so the census is silent on it by design — correctly, because extending it to prose would flag every dated correction that quotes a retired spelling verbatim, which is the convention these repairs follow.
+
+## Outcome
+
+Commit `b6e425ba` corrected the live `IndexRefinementExecutableCoverageIdentity`
+comment to `tiler.semantic-graph.v3` and dated the previously accurate `v2`
+wording beside it. The full identity derivation was re-read: the `v3` graph still
+writes the operation key, host-canonical attributes, ordered operand and result
+signature, and result boundary shapes in canonical traversal order, so only the
+domain spelling moved.
+
+Commit `c507f5b6` closed this ticket and filed the separately scoped ADR-note
+remainder. That remainder landed in `b332156e`; ADR 0104 now preserves its
+historical quotation while explicitly recording that the source comment has
+been repaired. No identity bytes, domain declaration, public API, or behavior
+changed in this ticket.

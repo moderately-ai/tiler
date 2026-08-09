@@ -60,7 +60,7 @@ A negative fixture refuses an entry requiring a subject the backend does not dec
 
 ## Worker outcome
 
-`tiler_metal::synchronization_requirement` decides whether this backend realizes an entry's required subject, and `prototypes/serial-sum-run`'s `check_direct_requirements` runs it over every entry before any pipeline is prepared — one stage ahead of the live-device rows, and well before the commit. The discharge witness `DirectRequirementsDischarged` already gated `prepare_pipelines`, so the new check inherits the compile-time ordering guarantee rather than adding a convention.
+`tiler_metal::synchronization_requirement` decides whether this backend realizes an entry's required subject, and `prototypes/serial-sum-run`'s `check_direct_requirements` runs it over every entry after the live-device rows and before any pipeline is prepared, well before the commit. The discharge witness `DirectRequirementsDischarged` already gated `prepare_pipelines`, so the new check inherits the compile-time ordering guarantee rather than adding a convention.
 
 **One authority, not a table beside emission.** `barrier_call` was split into `barrier_realization` (the decision, returning `BarrierRejection`) and the statement formatting. Both emission and the delivery-time check now consult the same function, which is demonstrated rather than asserted: perturbing `barrier_realization` to admit device-wide visibility reddens the pre-existing emission test `no_metal_barrier_establishes_device_wide_visibility` **and** the new `a_device_wide_publication_is_refused_and_names_the_whole_subject` together.
 
@@ -76,3 +76,18 @@ The module's own work is the *inversion* — the neutral schedule vocabulary is 
 - The two unreachable `BarrierRejection` arms stay unreachable and untested; see the corrected Fact above.
 - **Remainder, not done here:** `prototypes/candle-metal-adapter` discharges *no* derived requirement — neither the new synchronization check nor the pre-existing `evaluate_index_arithmetic`. That gap predates this ticket and sits in `implementation/candle`, which this ticket does not hold. It needs its own ticket.
 - **Unmeasured:** the wiring in `prototypes/serial-sum-run` is exercised only by a device-bound run, which this coordination host cannot perform. The authority itself is fully covered device-free.
+
+## Completion correction — 2026-08-09
+
+Commit `8084d9bf` landed the shared synchronization decision and the
+serial-sum-run discharge witness; commit `5c9c3831` closed this ticket. The
+later Candle adapter implementation is recorded by
+[`discharge-the-derived-requirements-in-the-candle-metal-adapter`](discharge-the-derived-requirements-in-the-candle-metal-adapter.md),
+which is currently awaiting Tom's decision on its public refusal and witness
+surface rather than awaiting implementation.
+
+The durable stage order is live-device requirements, then derived direct
+requirements, then pipeline preparation. The earlier Worker outcome repeated
+the reversed "ahead of the live-device rows" wording even after the correction
+above had disproved it; that sentence is corrected here. No routing behavior,
+requirement vocabulary, or public surface changed in this ticket-record repair.

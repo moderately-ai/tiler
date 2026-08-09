@@ -71,3 +71,11 @@ Each `ALL` sized from its type, matching the spelling now used in `tiler-metal`.
 **Public boundary:** if any `ALL` or `COUNT` is reachable outside the crate, it is a labelled draft under ADR 0075 — name included and excluded sets and **do not decide**. Values must not change; only their derivation.
 
 **One graph conflict to report, not resolve:** `state-the-search-constant-provenance-the-caps-audit-found-bare` names `MetalHostPredicate::ALL` in its outcome and closes-when, but that work has already landed in a crate that ticket does not scope. Flag it for the coordinator rather than editing it.
+
+## Outcome
+
+Implemented and closed in `b3cd69c5` (`Size the metal AOT ALL arrays from their types`, 2026-08-08). `AppleSdk::ALL`, `ApplePlatform::ALL`, `MslVersion::ALL`, and `CompileStage::ALL` now derive their declared lengths from `core::mem::variant_count::<Self>()`; the crate root carries the required nightly feature gate. The misleading `CompileStage` dummy-match guard was removed because it constrained only the pattern, not the array population. All four `ALL` and three `COUNT` values remain 9, 10, 12, 2 and 9, 10, 12 respectively.
+
+The independent widen-and-omit perturbations above each reached `E0308` at its own declaration after the repair and were restored. No enum, public value, compiler-driver behaviour, tag, or identity changed. The public constants remain the same existing reviewed-draft surface; this derivation repair did not accept or widen them.
+
+The reported graph conflict was resolved in `cb127f79`: the stale `MetalHostPredicate::ALL` closes-when clause in [`state-the-search-constant-provenance-the-caps-audit-found-bare`](state-the-search-constant-provenance-the-caps-audit-found-bare.md) is struck as completed work. No unresolved ticket edge or closure condition remains from this repair.
