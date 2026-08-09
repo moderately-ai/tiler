@@ -12,19 +12,19 @@ tags: [implementation, inline-dx, artifacts]
 ---
 ## Why this exists
 
-Tom decided on 2026-07-25 that one selection produces **one envelope carrying one payload per built family**, and `tiler_macros::delivery::DeliveryPlan` implements the emission half completely: positional outcomes, a total `#[cfg]` selector, and one byte-string literal. Nothing produces a multi-payload envelope for it.
+Tom decided on 2026-07-25 that one selection produces **one envelope carrying one payload per built family**, and `tiler_macros::delivery::DeliveryPlan` implements the emission half completely: positional outcomes, a total `#[cfg]` selector, and one byte-string literal.
 
-**Fact.** `tiler_build::accept_or_publish_single_payload_metal_artifact` refuses anything but exactly one payload (`MetalArtifactProtocolError::PayloadPortfolio`), and `accept_or_publish_metal_plan` reads position 0 alone.
+**Fact correction — the N-payload machinery has landed.** `crates/tiler-build/src/metal_plan.rs`, anchors `pub fn accept_or_publish_metal_plan`, `One emitted unit and one prepared compilation per delivery position`, and `for delivery in 0..declarations.len()`, accepts a bound declaration per delivery position, emits and compiles each one, and assembles the payloads in delivery order. `crates/tiler-build/src/payload_cache.rs` validates the same declaration/payload population. The dependency [`carry-one-payload-per-artifact-family-in-one-envelope`](carry-one-payload-per-artifact-family-in-one-envelope.md) is `done`; the former single-payload Facts below are historical evidence, not the current blocker.
 
 **Fact.** `tiler_build::BoundMetalCompileDeclaration` publishes one constructor, `first_macos_apple9`, and its documentation states that widening to another Apple family is "a new measurement rather than a new argument". So a second family has no compile-time declaration to be compiled against even if the envelope could carry it.
 
-**Consequence, today.** `deliver ios;` and `deliver macos-and-ios;` are refused by `tiler_macros::aot::require_buildable`, naming the one target the frontend builds. `crates/tiler/tests/facade/fail/deliver_selects_an_artifact_family.rs` and its golden pin both refusals.
+**Consequence, today.** `deliver ios;` and `deliver macos-and-ios;` remain refused by `tiler_macros::aot::require_buildable`, but the binding constraint is now only the missing authoritative iOS Metal compile declaration. [`first-authoritative-ios-metal-compile-declaration`](first-authoritative-ios-metal-compile-declaration.md) remains deferred; the completed envelope path must not be described as absent.
 
 ## Closes when
 
 A selection naming several families compiles each against its own bound declaration, produces one envelope carrying one payload per built family in canonical order, and the emitted selector routes each consumer target to its own payload — with a test that a wrong-family payload position is a build error rather than a wrong artifact. The measured second declaration is a prerequisite and may be its own ticket.
 
-## Outcome
+## Historical outcome before the envelope dependency landed
 
 **Not closed.** Two prerequisites were established as facts rather than estimated, and both are now their own tickets and this one's dependencies. What landed is the honest determination, the measurement behind it, and the corrected consumer-visible refusal.
 
@@ -66,6 +66,10 @@ That work lives in `tiler-artifact` and `tiler-runtime`, neither of which this t
 
 Still a refusal, at the `deliver` token, now reading: names `ios-device 26.0 at MSL 4.0, ios-simulator 26.0 at MSL 4.0`, "and no measured Metal compile-time declaration exists for it. One does exist, for macos 26.0 at MSL 4.0, and it is the only one … the retained MSL 4.0 measurement covers macOS alone … `first-authoritative-ios-metal-compile-declaration` is the work that measures a second one."
 
-### Deliberately not done
+### Deliberately not done at that historical boundary
 
 No N-payload `accept_or_publish_metal_plan`, no N-payload cache subject, no per-family compilation loop in `tiler_macros::aot`. Each would be machinery with no artifact able to receive it and no test able to exercise it, which is the speculative abstraction the architectural contract forbids. They belong to `carry-one-payload-per-artifact-family-in-one-envelope`, where the model change makes them checkable.
+
+## Current correction — 2026-08-09
+
+The dependency named above subsequently landed the artifact model and the build path now exercises it. Preserve the historical determination because it explains why the work was split, but do not dispatch this ticket to rebuild N-payload assembly or caching. Its remaining delivery is the end-to-end several-family selection after a second authoritative declaration exists, including the wrong-position refusal named in `Closes when`.

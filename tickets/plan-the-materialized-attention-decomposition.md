@@ -16,7 +16,7 @@ The attention block gets a complete physical plan whose region cover, materializ
 
 ## Evidence prerequisite
 
-**Fact — no family the block needs has a fusion role today.** `FusionNumericalCapabilities::governed` in `crates/tiler-compiler/src/fusion_legality.rs` registers exactly four: `ValueSource` for `constant-f32`, `ElementwiseArithmetic` for `multiply-f32` and `add-f32`, and `OrderedReduction` for `strict-serial-sum-f32`. Contraction, softmax, RMS normalization, `Reindex`, and `Broadcast` have none, and a family with no role yields no fusion legality at all. **Inference — so the first realizable plan is one dispatch per operation**, and every fusion below is an alternative that becomes enumerable only as roles are registered. The plan that exists is not the plan that is wanted, and the difference must be visible in explain output rather than absorbed.
+**Fact correction — the role-registration premise has been discharged.** `FusionNumericalCapabilities::governed` in `crates/tiler-compiler/src/fusion_legality.rs`, anchor `The table below is the complete set of families the governed provider declares a role for`, now registers the block's RMS normalization, softmax, structural reindex/broadcast/concatenate/slice, and strict tensor-contraction families in addition to the earlier source, elementwise, and ordered-reduction roles. The former four-role census and its inferred one-dispatch-per-operation baseline are false at this base. This ticket consumes those roles; it does not re-register them. A complete attention plan still does not exist: the Metal contraction realization is an unfinished dependency, and the block-specific cover, schedule, residency, and handoff feasibility decisions below remain this ticket's work. The difference between a role being registered and a whole plan being executable must stay visible in explain output.
 
 **Fact — the transient requirement is `n · 16 · T · S · 4` bytes and `n` is a plan property.** From the [L4 design](../docs/research/program-planning/first-attention-program-vertical.md): `n = 4` with no fusion (`scores`, `scaled`, `masked`, `probs`); `n = 2` with the scale and mask fused as the contraction's epilogue; `n = 1` with a `StorageHandoff` additionally retiring the first tensor before the second is written.
 
@@ -43,7 +43,7 @@ The attention block gets a complete physical plan whose region cover, materializ
 
 ## Non-goals
 
-The recomputing decomposition, which is filed separately and must not be started before this one's numbers exist. The online single-pass form, which consumes distributivity and is rejected as a settled legality position. Any opaque provider. In-place execution, which [Q-PLAN-015](../docs/open-questions.md#q-plan-015--advanced-buffer-reuse-and-in-place-execution) defers — the allocation handoff above is reuse after last use, which is a different mechanism. Registering the fusion roles themselves, which belongs with each family's admission.
+The recomputing decomposition, which is filed separately and must not be started before this one's numbers exist. The online single-pass form, which consumes distributivity and is rejected as a settled legality position. Any opaque provider. In-place execution, which [Q-PLAN-015](../docs/open-questions.md#q-plan-015--advanced-buffer-reuse-and-in-place-execution) defers — the allocation handoff above is reuse after last use, which is a different mechanism. Re-registering or redesigning the already-landed fusion roles.
 
 ## Closes when
 

@@ -23,10 +23,10 @@ tags: [research, cost-model, measurement, performance, calibration, language-mod
 ## Required work
 
 - Write the protocol against the L8 measurement harness rather than beside it: the same bench host, the same interleaved-A/B and settled-minimum procedure, and the same amendment that a model-level A/B interleaves whole forward passes and never shares one weight allocation between variants.
-- Map each of the analytical model's nine components to what the model-level workload can and cannot supply. Eight are `Unknown` today and `Allocation` is exact; state per component whether this workload produces a usable observation, a bounded one, or none — and where none, say what would.
+- Map each of the analytical model's nine components to what the model-level workload can and cannot supply. **Fact correction:** `crates/tiler-compiler/src/component_cost.rs`, anchor `CostComponent::ResourcePressure | CostComponent::CompileTime => CostValue::Unknown`, leaves only those two components unknown in the governed analytical model. Allocation, dispatch, synchronization, indexing, redundant work, memory traffic, and threadgroup memory already have exact, bounded, or conditional analytical answers. For each component, state whether this workload produces a usable observation, a bounded observation, or none; distinguish validating an existing analytical answer from fitting a missing one, and where the workload supplies none, say what would.
 - **Require that the candidates stay separately costed.** The prefill decomposition alternatives, the final-position projection, the quantized weight-decode alternatives, and the per-execution variant guard over `S` are four places where collapsing to a presumed winner would be selecting on an unmeasured assumption.
 - Preserve the boundary the cost plan already fixes: compile time and artifact size are separate objectives with their own budgets and are never converted into GPU nanoseconds; hard feasibility never enters the cost; and an estimate may never rank two plans that resolved different numerical contracts.
-- State what a calibration run may not claim while eight components are `Unknown`, so that the first measured number does not become a device-optimal claim by proximity.
+- State what a calibration run may not claim while `ResourcePressure` and `CompileTime` remain `Unknown` and while the other seven components have only their stated exact, bounded, or conditional authority, so that the first measured number does not become a device-optimal claim by proximity.
 
 ## Explicit non-goals
 
