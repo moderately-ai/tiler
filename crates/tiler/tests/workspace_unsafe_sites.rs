@@ -1085,6 +1085,23 @@ fn unsupported_rustdoc_code_containers_and_forwarded_doc_sources_fail_closed() {
         "fragmented forwarded-doc failure: {errors:?}",
     );
 
+    let raw_template_doc = doc_attribute_markdown(
+        "crates/tiler-artifact/src/program/handles.rs",
+        concat!(
+            "macro_rules! draft_handle {\n",
+            "    () => { #[doc = concat!(r#\"```rust\\nevil::emit!();\\n```\"#)] pub struct Item; };\n",
+            "}\n",
+            "draft_handle!();\n",
+        ),
+    );
+    let errors = raw_template_doc.expect_err("raw template docs are opaque to the lexer");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("dynamic documentation source is unsupported")),
+        "raw template-doc failure: {errors:?}",
+    );
+
     let cross_arm = doc_attribute_markdown(
         "crates/tiler-artifact/src/program/handles.rs",
         concat!(
