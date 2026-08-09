@@ -1,7 +1,7 @@
 ---
 id: retire-the-draft-labels-on-the-accepted-witness-surface
 title: Retire the draft labels on the accepted witness surface
-status: in-progress
+status: done
 priority: p3
 dependencies: [accept-the-realization-witness-surface-as-built]
 related: [accept-the-realization-witness-surface-as-built, implement-the-realization-witness-vocabulary]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, research/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, public-boundary]
-claimed_from: todo
-assignee: sol-witness-retirement
-lease_expires_at: 1786245873
 ---
 ## Fact audit — 2026-08-08 at `4be35e12`
 

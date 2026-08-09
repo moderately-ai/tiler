@@ -1,7 +1,7 @@
 ---
 id: name-the-contraction-operand-arity-wall-and-separate-its-rule
 title: Name the contraction declared-input arity wall and separate its rule
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, research/program-planning, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: sol-contraction-arity
-lease_expires_at: 1786245873
 ---
 ## User-visible outcome
 
@@ -40,3 +37,29 @@ The contraction recognizer's exactly-two-declared-input refusal carries its own 
 ## Closes when
 
 The rule is separated, both sides of the declared-input wall are pinned, the program-wide zero-input row remains distinct, the complete widening owner is `todo`, both corpus claims carry dated corrections, and all identity pins remain unchanged. Restore only the contraction rule string to `input-arity`; require both contraction tests to fail with the actual/expected keys while the zero-input row stays green, then restore.
+
+## Outcome — implemented 2026-08-08
+
+`normalize_contraction` now reports `contraction-input-arity` for the existing
+exactly-two-declared-input wall. The program-wide zero-input check continues to
+report `input-arity`. The one-declaration case and a binary contraction beside
+a retained third declaration both pin the new public diagnostic key under all
+five numerical contracts; the latter keeps its third input live through a
+second named output. The normalizer documentation and the two durable corpus
+records now state that this is a declaration-to-operand ordinal coincidence,
+not a change to ADR 0087's binary semantic family.
+
+The widening remains wholly owned by
+[`admit-a-contraction-over-a-subset-of-the-declared-inputs`](admit-a-contraction-over-a-subset-of-the-declared-inputs.md).
+No admitted program, plan, numerical result, request-subject byte, identity pin,
+public type, or signature changed.
+
+The subject perturbation restored only the production rule string to
+`input-arity`: both contraction cases failed with actual `input-arity` against
+expected `contraction-input-arity`, while the zero-input row stayed green. The
+change was restored before the clean run. Package verification passed 809
+compiler tests; the completed branch's fresh `make full` passed 3,249 workspace
+tests, all doctests, and 1,117 release tests. Independent exact-hash review found
+no remaining P0–P2 defects after correcting the one-input fixture's prose to
+describe its actual `mk,nk->mn` structure with the same declared value supplied
+to both operands.
