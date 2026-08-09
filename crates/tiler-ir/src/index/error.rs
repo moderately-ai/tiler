@@ -302,10 +302,10 @@ pub enum IndexRegionDiagnostic {
     /// An output root's value varies along a parallel dimension its write does
     /// not iterate.
     ///
-    /// **Draft surface, not yet accepted.** Added with the relaxation that lets
-    /// a write declare a subset of the region's parallel dimensions; the
-    /// variant, its name, and its fields are a concrete draft pending Tom's
-    /// acceptance of the boundary.
+    /// **Accepted boundary** (Tom, 2026-08-06). Added with the relaxation that
+    /// lets a write declare a subset of the region's parallel dimensions; the
+    /// variant, its name, and its fields were accepted as one boundary. The
+    /// acceptance record is `accept-the-sub-domain-write-domain-surface`.
     ///
     /// The value-side counterpart of
     /// [`IndexBuildError::CoordinateOutsideAccessDomain`]. A coordinate has

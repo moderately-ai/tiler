@@ -42,3 +42,11 @@ Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on thi
 ## Decided — accepted
 
 Accepted by Tom on 2026-08-06 at the morning decision review in the coordination session, witnessed first-hand by the coordinator, with the evidence packet this node carries. Acceptance is not stabilization; the surface is accepted pre-alpha vocabulary.
+
+## Current-state correction — 2026-08-09
+
+The remaining source draft marker on
+`IndexRegionDiagnostic::ValueDimensionOutsideWriteDomain` has been retired.
+The subset-domain behavior of `IndexRegionBuilder::write` and the narrowed
+meaning of `IndexBuildError::InvalidWriteDomain` remain exactly those accepted
+above. No diagnostic shape, identity, or behavior changes in the label repair.
