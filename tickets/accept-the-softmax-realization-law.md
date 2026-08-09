@@ -85,3 +85,10 @@ Registering the law moves the count-prefixed law sidecar, hence `FrozenIndexReal
 **The ground, and its fence.** A law is interpreted against a *subject*, not against the inferencer that produced it, so a hand-built or re-read subject can reach these rules even though no construction path does. That is a **reinterpretation boundary**, and it is what distinguishes these from a construction-path refusal — the mixed-width refusal proposed for the BF16 reference on the same day was **rejected** precisely because no constructible program could ever reach it, making it a maturity claim the evidence could not support. The two are not in tension: state a refusal a re-read subject can reach; do not state one nothing can.
 
 Carried to where law authors will read it by [`state-the-unreachable-refusal-convention-where-law-authors-read-it`](state-the-unreachable-refusal-convention-where-law-authors-read-it.md), because a convention recorded only in two closed acceptance nodes is one the next law will not find.
+
+## Current-state correction — 2026-08-09
+
+That carrier is complete. `IndexRealizationLaw` now states the reinterpretation
+boundary, its reachability fence, and the non-relaxation of watched reachable
+refusals; the four named unreachable rules carry their local reasons. The
+accepted softmax law and its identity consequence are unchanged.
