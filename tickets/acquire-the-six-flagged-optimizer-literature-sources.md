@@ -36,3 +36,11 @@ For each acquired document: move its manifest row's class, fill its digest, upda
 ## Closes when
 
 Every one of the six is either read and reported against its question, or has its row updated with an exhausted route and the reason it cannot be obtained. `verify-sources.sh` passes with counts that match.
+
+## Outcome
+
+Completed 2026-08-06. Tom manually acquired all six flagged documents on 2026-08-05. Five became read provenance records that day; the sixth search request remained open after its first real candidate proved to be an unevaluated ongoing-work survey, then closed on 2026-08-06 when the peer-reviewed FMCAD 2024 publication of colored e-graphs was located and read. The final source census is 30 records: 10 vendored, 20 metadata-only, and 0 pending acquisition.
+
+Reading changed the pre-acquisition account rather than merely filling it in. Sparse extraction strengthened the inapproximability evidence and carried limitations that exclude Tiler's acyclic extraction case. Denali saturates to quiescence and puts goal direction in SAT-based selection, contrary to item 3 above. MetaFlow confirmed the cost-regressing enabling relation while also demonstrating the infeasibility-as-infinite-cost collapse Tiler forbids. Elevate supplied the hand-written comparison, and Columbia supplied both the memo calibration and a measured quality-loss curve for epsilon pruning. The final conditional-equality-saturation document was not a successor: it was the peer-reviewed edition of the existing colored-egraph work, raising its evidence class and narrowing its applicability without changing the selected rewrite-search formalism.
+
+The complete per-source provenance, reading bounds, corrections, and reproducible population check live under the source-record anchors `Acquisition note for the six formerly-flagged documents` and `The search request that closed`; the synthesis and unchanged formalism verdict are recorded under `What the six turned out to say` in the rewrite-search record. `docs/research/region-search/sources/verify-sources.sh` currently reports `OK: 30 records verified (10 vendored, 20 metadata-only, 0 pending-acquisition).`
