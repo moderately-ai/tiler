@@ -112,14 +112,12 @@ impl<'a> RealizationWitness<'a> {
 
     /// The contributor combination order, for a topology that states one.
     ///
-    /// **Drift correction against the drafted surface, and the reason is a
-    /// mirror.** [The record](../../../../docs/research/reference/plan-freedom-sites.md)
-    /// Part 7.2 drafts this as a total `ContributorOrder`. A region whose
-    /// topology is [`ReductionTopology::None`] combines no contributors, so a
-    /// total accessor would have to return the vocabulary's single variant for a
-    /// sequence that does not exist — a value two plans agree on for no reason
-    /// about either, which is exactly the failure the enumeration's mirror class
-    /// names. `None` states the absence instead.
+    /// Optional for the mirror reason
+    /// [the record](../../../../docs/research/reference/plan-freedom-sites.md)
+    /// names. A region whose topology is [`ReductionTopology::None`] combines no
+    /// contributors, so a total accessor would have to return the vocabulary's
+    /// single variant for a sequence that does not exist — a value two plans
+    /// agree on for no reason about either. `None` states the absence instead.
     #[must_use]
     pub const fn order(&self) -> Option<ContributorOrder> {
         match self.reduction {
@@ -133,9 +131,9 @@ impl<'a> RealizationWitness<'a> {
 
     /// The reduced axes the topology folds, in canonical ascending order.
     ///
-    /// **Draft surface, not yet accepted.** The record's Part 2 names `axes` as
-    /// half of site 4.1's field set and its Part 7.2 draft has no accessor for
-    /// it, so this is a concrete draft pending Tom's acceptance, alongside
+    /// The record's Part 2 names `axes` as half of site 4.1's field set while its
+    /// Part 7.2 draft has no accessor for it. This accessor carries that named
+    /// field, alongside
     /// [`Self::pass`], [`Self::contracted_shape`], [`Self::fold_epilogue`], and
     /// [`Self::unpinned_freedom_site`].
     ///
@@ -154,9 +152,9 @@ impl<'a> RealizationWitness<'a> {
 
     /// The contracted iteration space a contraction folds, if the region is one.
     ///
-    /// **Draft surface, not yet accepted**, for the reason [`Self::reduced_axes`]
-    /// states: the record names `contracted_shape` as half of site 4.4's field
-    /// set and drafts no accessor for it.
+    /// For the reason [`Self::reduced_axes`] states: the record names
+    /// `contracted_shape` as half of site 4.4's field set and drafts no accessor
+    /// for it.
     ///
     /// Site 4.4's *spend* population is empty by the variant's own contract — the
     /// fold is the declared contributor sequence itself, so it consumes no
@@ -188,8 +186,7 @@ impl<'a> RealizationWitness<'a> {
 
     /// Which pass of a multi-dispatch split this region realizes.
     ///
-    /// **Draft surface, not yet accepted**, for the reason [`Self::reduced_axes`]
-    /// states.
+    /// Present for the reason [`Self::reduced_axes`] states.
     ///
     /// The record names `pass` in site 4.2's field set and it is load-bearing
     /// rather than descriptive: a partial pass folds original contributors and a
@@ -279,8 +276,8 @@ impl<'a> RealizationWitness<'a> {
 
     /// The chain a fold applies to its folded value before committing it.
     ///
-    /// **Draft surface, not yet accepted**, and this one is a *new* site rather
-    /// than a drafted field the record omitted an accessor for.
+    /// This is a *new* site rather than a drafted field the record omitted an
+    /// accessor for.
     /// [`ScalarProgram::SquaredSerialSumThenEpilogue`] did not exist when the
     /// enumeration was written at `c335bb5b`, and it pins a second
     /// [`PointwiseF32Expression`] inside a reduction. Its class is site 4.5's —
@@ -305,12 +302,11 @@ impl<'a> RealizationWitness<'a> {
 
     /// Returns the first freedom site this witness does not pin, if any.
     ///
-    /// **Draft surface, not yet accepted.** The record drafts
+    /// The record originally drafted
     /// [`UnpinnedFreedomSite`] as the refusal of a `ReferenceNumericalConformance`
     /// constructor; Tom's redirection of that item to the plain-scalar form left
     /// the refusal without a producer, so the decision it encodes is sited here
-    /// beside the aggregation it is about. The enum itself is accepted; this
-    /// accessor is the draft.
+    /// beside the aggregation it is about.
     ///
     /// `None` is deliberately not a conformance claim, and this returns an
     /// [`Option`] rather than a `Result` for that reason: it says the enumeration
