@@ -4,7 +4,7 @@ title: Refresh the L2 derivation's operation-family standing against the current
 status: done
 priority: p2
 dependencies: []
-related: [refresh-the-l1-operation-family-standing]
+related: [refresh-the-l1-operation-family-standing, refresh-the-l2-derivation-s-symbolic-index-profile-source-claims, refresh-the-roadmap-softmax-cells-remaining-prerequisite-clause]
 scopes: [research/shapes]
 shared_scopes: [project/tickets]
 paths: []
@@ -111,3 +111,13 @@ maintenance explicitly left to coordination above.
 ### Checks
 
 `tkt lint`, `git diff --check`, and `tkt guard` against the true base. No `crates/`, `prototypes/`, `Cargo.*`, `.config/`, `Makefile`, `rust-toolchain.toml`, `rustfmt.toml`, or `deps.sh` path is touched, so the workspace gate is untouched by this delta.
+
+## Current remainder correction — 2026-08-09
+
+Both defects filed from this Outcome are now `done`.
+[`refresh-the-l2-derivation-s-symbolic-index-profile-source-claims`](refresh-the-l2-derivation-s-symbolic-index-profile-source-claims.md)
+reconciled the public symbolic-index profile source claims, and
+[`refresh-the-roadmap-softmax-cells-remaining-prerequisite-clause`](refresh-the-roadmap-softmax-cells-remaining-prerequisite-clause.md)
+updated the roadmap after the realization law and earlier prerequisites landed.
+They are now explicit graph relations above rather than body-only handoffs. No
+remaining correction is owned by this completed L2 refresh.

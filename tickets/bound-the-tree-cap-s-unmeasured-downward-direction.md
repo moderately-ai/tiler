@@ -4,7 +4,7 @@ title: Bound the tree cap's unmeasured downward direction
 status: done
 priority: p2
 dependencies: []
-related: [cap-the-tree-reduction-participants-at-the-measured-256, activate-measured-reduction-selection-from-a-target-cost-row]
+related: [cap-the-tree-reduction-participants-at-the-measured-256, activate-measured-reduction-selection-from-a-target-cost-row, correct-the-two-participant-residue-s-smallest-count]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -109,3 +109,15 @@ Smallest count at which the two strategies' groupings differ is still **twelve**
 ### Out of scope, and filed
 
 This ticket held `implementation/compiler` only. Sites outside `crates/tiler-compiler/**` that restate the superseded rule are collected in [`restate-the-tree-width-rule-outside-the-compiler-crate`](restate-the-tree-width-rule-outside-the-compiler-crate.md), which also carries a defect that predates this work: `docs/compiler/fusion-and-scheduling.md` says "2,561 of the 3,530 admitting counts below 4,096 differ while the remaining 964 still agree", and `3,530 - 2,561` is 969.
+
+## Later residue correction — 2026-08-09
+
+The Outcome's sentence `The smallest is 1,042` conflates two populations. Four
+is the smallest of the 1,133 contributor counts that take two participants,
+and two is its only admissible participant count. The first count at which the
+rule takes two while *declining a wider admissible count* is 1,042 (`2 * 521`).
+The counts and distance arithmetic remain correct. The live compiler comment is
+owned by
+[`correct-the-two-participant-residue-s-smallest-count`](correct-the-two-participant-residue-s-smallest-count.md);
+this dated note corrects the completed record without rewriting its historical
+Outcome.

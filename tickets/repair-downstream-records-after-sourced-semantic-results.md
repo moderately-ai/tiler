@@ -100,3 +100,13 @@ Every live fixed-`ValueFact`/general-symbolic-refusal premise in the three full
 records is counted and corrected or supported; conclusions are separately
 classified; all source anchors are literal fixed-string fragments; `make
 citations`, `tkt lint`, `git diff --check`, and exact-base `tkt guard` pass.
+
+## Completion record — 2026-08-09 reconciliation
+
+Commit `228aaa28` delivered the five dated corrections across the three audited
+research records, and `704f8712` closed the ticket. The corrections preserve
+the family-specific conclusions while replacing the false global fixed-shape
+premise with the actual `static_operand_shape`, frontend, broadcast-attribute,
+artifact, and identity boundaries. No implementation, identity, schema, public
+surface, or support rung changed. The imperative Outcome above is therefore the
+completed worker boundary, not current pending work.
