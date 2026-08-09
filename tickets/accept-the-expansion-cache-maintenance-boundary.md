@@ -6,7 +6,7 @@ priority: p2
 dependencies: [accept-the-tiler-cache-public-boundary]
 related: [design-bounded-expansion-cache-garbage-collection, decide-the-expansion-cache-collection-schedule]
 scopes: [implementation/cache]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [cache, api, decision, needs-tom]
 ---
@@ -32,3 +32,14 @@ One narrowing against the packet as asked: the public `collect` takes only a bou
 Tom accepts the public maintenance types and call-site boundary, reports do not
 overstate durability or removal, and the collection-scheduling ticket can name
 the accepted caller surface.
+
+## Current-surface correction — 2026-08-09
+
+The accepted 2026-07-31 surface above is historical authority, not the complete
+current maintenance vocabulary. [`admit-an-age-bounded-automatic-eviction-into-the-expansion-cache`](admit-an-age-bounded-automatic-eviction-into-the-expansion-cache.md)
+later added and accepted `CollectionBound::max_entry_age`, the
+`MaxEntryAge` bound, and removal-reason reporting through
+`RemovedEntry::reason` and `RemovalReason`. That extension is additive: it does
+not reopen the decision that maintenance remains on `ExpansionCache`, that
+collection is explicit, or that one unbounded/default-free bound vocabulary
+governs the call.
