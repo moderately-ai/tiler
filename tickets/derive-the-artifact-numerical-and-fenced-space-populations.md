@@ -1,7 +1,7 @@
 ---
 id: derive-the-artifact-numerical-and-fenced-space-populations
 title: Derive the artifact numerical and fenced-space populations
-status: todo
+status: in-progress
 priority: p2
 dependencies: [derive-the-payload-carrying-enum-populations-in-the-injectivity-module]
 related: [derive-the-payload-carrying-enum-populations-in-the-injectivity-module, pin-the-admitted-unsafe-sites-in-the-workspace-gate, derive-the-metal-fenced-space-population]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, implementation/frontend, implementation/worksp
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: sol-artifact-population
+lease_expires_at: 1786245873
 ---
 ## The artifact repeats all three under-sized populations
 

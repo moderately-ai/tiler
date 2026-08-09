@@ -1,7 +1,7 @@
 ---
 id: name-the-contraction-operand-arity-wall-and-separate-its-rule
 title: Name the contraction declared-input arity wall and separate its rule
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, research/program-planning, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: sol-contraction-arity
+lease_expires_at: 1786245873
 ---
 ## User-visible outcome
 
