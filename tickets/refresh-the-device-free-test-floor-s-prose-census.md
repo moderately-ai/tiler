@@ -48,3 +48,9 @@ Demonstrate the guard is load-bearing by temporarily putting an actual two-test 
 **`crates/**` is gated, so run `make full`** and report its exit — **read the log tail rather than trusting a reported code**; a worker this session had exit 2 reported as 0 because the exit line went through `tee`.
 
 Cite by searchable anchor, run its grep before committing, and use `grep -F`.
+
+## Outcome and later population correction — 2026-08-09
+
+This ticket delivered its then-current repair in `8c5579c90b382851a3eef9fcf7eaec26a8e70b92`: 74 device-free tests, a floor raised from 72 to 73, corrected historical prose, and a demonstrated two-test gate loss that failed at 72 versus 73.
+
+That population changed later on 2026-08-08 under `pin-the-admitted-unsafe-sites-in-the-workspace-gate`. The conformance-local unsafe-token scan was policy machinery rather than conformance evidence and moved to the workspace-wide inventory under `crates/tiler/tests/`; removing that one local test reduced this crate to 73 device-free tests, and the floor deliberately returned from 73 to 72 to preserve the same one-below sensitivity. The current source records both steps. A fresh focused run on 2026-08-09 printed `20 source file(s); 73 device-free test(s) and 3 in the macOS-gated module(s)` and passed with `DEVICE_FREE_TEST_FLOOR = 72`. Thus `status: done` remains correct, but the ticket's original 74/73 closure is dated evidence rather than today's census.

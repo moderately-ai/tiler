@@ -48,3 +48,7 @@ tr '\n' ' ' < docs/architecture.md | tr -s ' ' | grep -o "the one crate a[^\"]\{
 Both occurrences quoting `docs/architecture.md` accurately, with the qualifier, cited by searchable anchor rather than by line number — the line pin is exactly what rotted here. Where the record's argument depended on the flat reading, say what the qualified sentence does and does not support; do not quietly re-attach the qualifier to a sentence whose conclusion needed the flat version.
 
 **Do not treat this as the only instance.** It survived because it reads plausibly and resolves cleanly. Grep the record — and its siblings — for other quotations attributed to `docs/architecture.md` and verify each against the source with whitespace collapsed. Report the census either way, so "no others" is distinguishable from "did not look".
+
+## Outcome audit — 2026-08-09
+
+Delivered by `2a7a5de1306629aa5daf649b51e8beb41923dae8`. The two live quotations in the backend-scoped route-answer record now carry the source's `inline-frontend` qualifier and cite the architecture sentence by the searchable anchor `is the one crate an inline-frontend consumer names` instead of a line number. Their surrounding reasoning now distinguishes the frontend axis from the dispatch axis and preserves the separate facade question. The genuine neighbouring `crates/tiler` quotation defect was repaired with the same source read; ADR 0092's transferred item-6 shorthand was reported rather than edited out of this research scope and was subsequently repaired by its own completed tickets.
