@@ -50,3 +50,7 @@ Tom accepts, accepts with a named exclusion, rejects, or takes the collapse name
 ## Outcome — accepted
 
 **Accepted by Tom on 2026-08-06, as-is with no exclusion, at the live session's decision round (presented by the orchestrator, explain-then-recommend, relay source this ticket).** Both methods stand: the previously accepted `family_realizes_region_sequence` for recognition and this law query for physical planning — the collapse was presented as the live alternative and declined in favour of keeping the recognizer's minimal dependency; it remains available later if the duplication warrants it. The in-code draft label rewrite rides with [`account-for-a-staged-realization-stage-in-the-kernel-program`](account-for-a-staged-realization-stage-in-the-kernel-program.md)'s branch, which holds `implementation/ir`.
+
+## Current source correction — 2026-08-09
+
+The deferred label rewrite landed. `FrozenIndexRealizationLawRegistry::family_realization_law` now carries an **Accepted public surface** paragraph naming this ticket and the 2026-08-06 decision; no draft label remains. The method's surface and the decision to keep the two queries separate are unchanged.

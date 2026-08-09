@@ -49,3 +49,7 @@ Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on thi
 **Accepted by Tom on 2026-08-06, as-is with no exclusion, at the live session's decision round (presented by the orchestrator, explain-then-recommend, relay source this ticket).** The exact surface above — `family_realizes_region_sequence(&OpKey) -> bool`, `false` for an unregistered operation — is accepted public surface on `FrozenIndexRealizationLawRegistry`.
 
 **One alignment deliberately deferred, with its trigger.** The method's own doc-comment still opens "**Labelled draft.**" and points here; rewriting it to record this acceptance is a `crates/tiler-ir` edit, and `implementation/ir` is exclusively held by the in-flight [`admit-a-scheduled-region-for-a-staged-elementary-family`](admit-a-scheduled-region-for-a-staged-elementary-family.md) worker. The coordinator applies the doc-comment update at that ticket's integration, and this ticket's closure is complete when that lands.
+
+## Current source correction — 2026-08-09
+
+That integration handoff is complete. `FrozenIndexRealizationLawRegistry::family_realizes_region_sequence` now carries an **Accepted public surface** paragraph naming this ticket and the 2026-08-06 decision; the former labelled-draft paragraph is gone. The method's exact accepted signature and its `false` answer for an unregistered operation are unchanged.

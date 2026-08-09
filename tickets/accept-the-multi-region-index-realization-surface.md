@@ -77,3 +77,7 @@ Tom accepts, accepts with a named exclusion, or rejects — the compiler-side de
 ## Decided — accepted
 
 Accepted by Tom on 2026-08-06 at the morning decision review in the coordination session, witnessed first-hand by the coordinator, with the evidence packet this node carries. Acceptance is not stabilization; the surface is accepted pre-alpha vocabulary.
+
+## Current follow-on correction — 2026-08-09
+
+The IR-side accessor rename filed in the compiler delta is complete. [`name-the-index-receipt-final-stage-accessors-for-what-they-return`](name-the-index-receipt-final-stage-accessors-for-what-they-return.md) renamed the four receipt readers to `final_stage()` and `final_scalar_authority()` without changing signatures, return values, identity bytes, or verification behaviour; the compiler's `single_region()` refusal remains the explicit route for consumers that cannot evaluate a chain. The independent multi-value handoff remains `deferred` on its own trigger and was not absorbed by this rename.
