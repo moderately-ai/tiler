@@ -25,3 +25,24 @@ Cover the real positive end-to-end hit that ADR 0082 explicitly leaves unmeasure
 ## Graph maintenance
 
 When both publication and hit acceptance run through the correspondence check and the positive real-artifact hit is measured, close this ticket and release `drive-the-build-orchestrator-from-a-checked-compiler-plan`. Update ADR 0082's consequence that currently says the end-to-end hit belongs to the orchestrator.
+
+## Outcome — delivered
+
+`a465bd32` closed the named Metal boundary. `tiler-build` composes the cache
+subject from the prepared compilation and pending artifact identities, runs
+external compilation only on a miss, validates the produced artifact before
+publication, and revalidates a hit against the current prepared operation.
+Correspondence and artifact-identity disagreement are typed protocol failures;
+neither becomes a miss, replacement, or rebuild. The positive two-call fixture
+publishes once and then accepts the cached envelope with the compilation
+counter still at one, and ADR 0082 records that measured orchestrator path.
+
+The later backend-composition work retained and generalized the same boundary.
+At the current tree, `accept_or_publish_delivered_payload_artifact` is the
+backend-neutral seam: it handles one declared payload per delivery position,
+validates each produced object before publication, and repeats descriptor,
+backend-correspondence, subject, and artifact-identity checks after every
+resolution. Metal is one caller rather than the owner. The completed dependent
+[`drive-the-build-orchestrator-from-a-checked-compiler-plan`](drive-the-build-orchestrator-from-a-checked-compiler-plan.md)
+then connected checked compiler plans to this accepted path. No outstanding
+graph release remains on this ticket.
