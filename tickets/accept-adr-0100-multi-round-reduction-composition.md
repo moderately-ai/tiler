@@ -17,3 +17,7 @@ tags: []
 ## Decided — accepted
 
 Accepted by Tom on 2026-08-05 at the third live decision review in the coordination session, witnessed first-hand by the coordinator. Sweep executed in the same change: `decision_status` flipped, both catalog views gained the 0100 rows, the research record's catalog row landed (executing `catalogue-adr-0100-and-the-multi-round-composition-record` in the same change), and ADR 0096's decision-8 correction paragraph records the supersession — decision 8 alone, in prose on both records, because a whole-record frontmatter edge would overstate it.
+
+## Current-state audit — 2026-08-09
+
+The acceptance and sweep remain current, and `implementation_status` remains `not-started`. ADR 0100's carrier-era statements that its acceptance node was not yet filed and that it decided nothing until acceptance are now explicitly qualified in the record; they describe the pre-acceptance boundary rather than the current board.

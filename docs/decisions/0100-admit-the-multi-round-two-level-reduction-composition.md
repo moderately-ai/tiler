@@ -72,9 +72,13 @@ Two further landings changed what a multi-round derivation may assume. [ADR 0097
 
 **Work record.** [`derive-the-multi-round-two-level-reduction-composition`](../../tickets/derive-the-multi-round-two-level-reduction-composition.md) produced the research record and this draft from the fired trigger ADR 0096's open questions record. **Its acceptance node is not yet filed**, and filing it is the coordinator's step under the convention every proposed record here follows; until it exists, no ticket in the graph is blocked on this record's status, which is the gap that step closes.
 
+**Correction — 2026-08-09.** The sentence immediately above records the carrier-time graph state. [`accept-adr-0100-multi-round-reduction-composition`](../../tickets/accept-adr-0100-multi-round-reduction-composition.md) was subsequently filed and Tom accepted this record on 2026-08-05; the node is `done` and the acceptance sweep described in the status paragraph is complete.
+
 ## Implementation boundary
 
 **This record decides nothing until Tom accepts it, and it implements nothing in either case.** `implementation_status` is `not-started`, and the tree state below is read at `1d918b67`.
+
+**Current-status correction — 2026-08-09.** Tom has accepted the record, so it now decides the model above. The second half remains current: it still implements nothing, `implementation_status` remains `not-started`, and the source inventory below is the acceptance-era implementation boundary rather than a claim that acceptance is pending.
 
 No crate gains an item under this record. `ReductionTopology` has exactly five variants and the two-level variant ADR 0096 argues for is unclaimed rather than reserved, so every field this record's decisions describe sits on a topology that does not exist. `LocalCoordinateSource` has `LocalLinearInvocation` and `LocalWorkgroupPosition`, and neither names a subgroup coordinate — its doc says in as many words that a subgroup-derived source "must be a variant of its own when it lands" — so the block index decision 1 states has no spelling. The exact check that no subgroup construct exists is `grep -rn 'SubgroupWidth\|lane_identity\|SubgroupThenWorkgroup' crates/`, which returns nothing.
 
