@@ -70,6 +70,10 @@ The composition question has a derived answer with its evaluated population and 
 - [Composing a declared reduction topology into a semantic evaluation](reference/composed-realization-evaluation.md) — pending; primary-source-synthesis, sound-proof; informs: [Correctness and testing](../correctness-and-testing.md), [Numerical semantics](../numerical-semantics.md)
 ```
 
+## Current correction — 2026-08-09
+
+The terminal handoff above is historical. [`accept-the-composed-realization-evaluation-surface`](accept-the-composed-realization-evaluation-surface.md) is `done`: Tom accepted item A as the sole public composition entry and kept item B crate-internal on 2026-08-06. The research record now states that decision consistently in its status, traceability, roll-up, and non-claims. The navigation row is also present in `docs/research/README.md`. Implementation remains not started because [`retain-the-selected-semantic-candidate-for-the-conformance-oracle`](retain-the-selected-semantic-candidate-for-the-conformance-oracle.md) is still `awaiting-decision`; `CandidateProgramNotRetained` remains the interim refusal.
+
 ## Graph maintenance
 
 Filed by [`decide-how-a-pinned-pointwise-grouping-becomes-evaluable`](decide-how-a-pinned-pointwise-grouping-becomes-evaluable.md) as the bounded residue its surviving design does not reach. Not a blocker for that design: a pure pointwise region carries `ReductionTopology::None`, so site 4.5 is answered without this.
