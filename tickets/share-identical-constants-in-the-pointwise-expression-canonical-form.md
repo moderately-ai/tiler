@@ -5,7 +5,7 @@ status: awaiting-decision
 priority: p2
 dependencies: [determine-whether-compiler-lowering-mints-duplicate-pointwise-constants]
 related: [implement-the-realization-witness-vocabulary, enumerate-the-freedom-sites-a-physical-plan-must-pin-for-a-permissive-conformance-oracle]
-scopes: [implementation/ir]
+scopes: [implementation/ir, research/reference, implementation/compiler, implementation/artifact, implementation/build, implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, identity, conformance]
@@ -43,3 +43,7 @@ Two reasons, and the second is the one that needs a decision.
 ## Closes when
 
 Tom has answered the canonical-form and identity-evolution questions using the prerequisite's reachability evidence, and the accepted answer is implemented with every moved pin and dependent record reconciled — or the ticket records the accepted decision to retain distinct constant occurrences.
+
+## Scope repair — 2026-08-09
+
+The accepted-sharing branch explicitly requires reconciling the reference freedom-sites record and any moved compiler request, artifact, build/cache, and Metal-golden pins. `research/reference`, `implementation/compiler`, `implementation/artifact`, `implementation/build`, and `implementation/metal` are therefore declared now rather than left for an implementation worker to discover after the decision.

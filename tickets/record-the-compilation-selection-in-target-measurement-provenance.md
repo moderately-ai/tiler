@@ -5,7 +5,7 @@ status: awaiting-decision
 priority: p2
 dependencies: []
 related: [construct-and-bind-the-first-authoritative-metal-compile-profile, declare-the-bf16-rows-on-the-authoritative-metal-profile, measure-macos-apple9-bf16-under-unified-msl4-profile]
-scopes: [implementation/compiler, contracts/decisions]
+scopes: [implementation/compiler, contracts/decisions, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [target-profiles, provenance, identity, numerics, decision, needs-tom, public-boundary]
@@ -16,7 +16,7 @@ Two target-profile rows measured under compilations that differ in language stan
 
 ## The gap, exactly located
 
-**Fact.** `TargetCompileProfileMeasurementSource::new` (`crates/tiler-compiler/src/target.rs:653`) takes a producer identity and a set of `TargetMeasurementContext`. A context (`crates/tiler-compiler/src/target.rs:602`) is a set of `TargetCompilerBuild` plus one `TargetExecutionEnvironment`. `TargetCompilerBuild::new` (line 469) carries `role`, `implementation`, `version`, `build`. `TargetExecutionEnvironmentBuilder::build` (line 549) requires and carries exactly `platform`, `platform-version`, `platform-build`, `architecture`, `hardware`. **No field holds the language standard, the requested or emitted target triple, or the compilation flags.**
+**Fact.** `TargetCompileProfileMeasurementSource::new` (`crates/tiler-compiler/src/target.rs`, source anchor `pub struct TargetCompileProfileMeasurementSource`) takes a producer identity and a set of `TargetMeasurementContext`. The surrounding types are located by `pub struct TargetMeasurementContext`, `pub struct TargetCompilerBuild`, and `pub struct TargetExecutionEnvironmentBuilder`. `TargetCompilerBuild::new` carries `role`, `implementation`, `version`, and `build`; `TargetExecutionEnvironmentBuilder::build` requires and carries exactly `platform`, `platform-version`, `platform-build`, `architecture`, and `hardware`. **No field holds the language standard, the requested or emitted target triple, or the compilation flags.**
 
 **Measurement — the gap is reachable today, not hypothetical.** The two retained Apple records `2026-07-31-numerics-covering-xcode26.6-metal32023.883` and `2026-07-31-numerics-covering-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883` were produced on one host by one toolchain and differ in exactly `-std` (`metal3.1` against `metal4.0`) and `requested_target` (`air64-apple-macos13.0` against `air64-apple-macos26.0`). Every field the provenance vocabulary can hold is byte-identical:
 
@@ -65,3 +65,7 @@ Either the vocabulary distinguishes two compilations differing only in their sel
 
 - Discovered by `declare-the-bf16-rows-on-the-authoritative-metal-profile`, which hit the gap while trying to attribute an MSL 3.1 BF16 measurement to an MSL 4.0 profile. That ticket does **not** depend on this one: `measure-macos-apple9-bf16-under-unified-msl4-profile` removes its need by measuring on the profile's own compilation row, which is the correct repair for that ticket regardless of how this question is decided.
 - Related to `construct-and-bind-the-first-authoritative-metal-compile-profile`, whose ledger states the discipline this type cannot enforce.
+
+## Scope repair — 2026-08-09
+
+`implementation/build` is declared because the required perturbation, the authoritative Metal declaration, and the descriptor pins this decision may move are in `crates/tiler-build`; compiler-only scope could not deliver either option A's evidence or its complete identity accounting.

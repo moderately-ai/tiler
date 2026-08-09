@@ -22,7 +22,7 @@ The alternative is that the adapter synthesizes the missing storage: a one-byte 
 
 It moves the consumer boundary rather than an implementation detail. Today every buffer the Candle adapter binds is either the caller's own Candle allocation or storage the *route* declares (`Backing::Output`, `Backing::Internal`, a shared intermediate). A placeholder for an absent caller input is a fourth class: storage that stands in for a value the caller supplied no memory for, bound to a slot whose `BindingTarget` is `ProgramInput`. Deciding that an adapter may do this is deciding what a consumer's tensor means when it has no allocation, and it generalizes past this shape — every future zero-extent operand inherits the answer.
 
-Note the asymmetry with `prototypes/serial-sum-run`, which already allocates at `needed.max(1)` (`proof.rs:1655`, `:3415`, `:3467`). That prototype owns every buffer it binds, so its placeholder is its own storage and no boundary is crossed. The Candle case is a placeholder for a caller's value, which is the part that needs a decision.
+Note the asymmetry with `prototypes/serial-sum-run`, whose `proof.rs` allocations use the source-safe anchor `needed.max(1)`. That prototype owns every buffer it binds, so its placeholder is its own storage and no boundary is crossed. The Candle case is a placeholder for a caller's value, which is the part that needs a decision.
 
 ## What the answer must preserve either way
 

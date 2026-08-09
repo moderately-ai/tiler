@@ -16,7 +16,7 @@ tags: [decision, needs-tom, public-boundary, identity]
 
 ## Why this exists (vocabulary audit 2026-08-06; the reachable case and its widening were recorded in the closing two-reads ticket rather than filed)
 
-`reads_bind_boundary_tensors_in_order` (`crates/tiler-ir/src/schedule/builder.rs:789`) admits at most one `TensorRole::Intermediate` read — correctly, because the role carries no ordinal so a second read cannot be attributed to a materialization edge. The declared-input precedent does not transfer unchanged: an intermediate's "ordinal" numbers edges of one cover, not values of one program.
+`reads_bind_boundary_tensors_in_order` (`crates/tiler-ir/src/schedule/builder.rs`, source anchor `fn reads_bind_boundary_tensors_in_order`) admits at most one `TensorRole::Intermediate` read — correctly, because the role carries no ordinal so a second read cannot be attributed to a materialization edge. The declared-input precedent does not transfer unchanged: an intermediate's "ordinal" numbers edges of one cover, not values of one program.
 
 ## Boundaries
 

@@ -5,7 +5,7 @@ status: awaiting-decision
 priority: p1
 dependencies: [drive-an-external-physical-implementation-provider-through-compilation]
 related: [accept-the-public-backend-provider-composition-boundary, disclose-offered-and-selected-physical-provider-sets-separately]
-scopes: [contracts/decisions]
+scopes: [contracts/decisions, implementation/compiler, implementation/build]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [backend-providers, public-boundary, decision, needs-tom]
@@ -16,7 +16,7 @@ Tom accepts or revises the exact included and excluded public surface of `tiler_
 
 ## Decision boundary
 
-[ADR 0090](../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md):19 routes this to Tom in terms — "every concrete public surface named here — **the provider registry and its installation method**, the offered-versus-selected disclosure accessors, the promoted `assemble_artifact` boundary — still comes to Tom at implementation time under [ADR 0075]". [`accept-the-public-backend-provider-composition-boundary`](accept-the-public-backend-provider-composition-boundary.md) accepted the *model* and explicitly did not accept any surface.
+[ADR 0090](../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md), anchor `the provider registry and its installation method`, routes this to Tom in terms: every concrete public surface still comes to Tom at implementation time under ADR 0075. [`accept-the-public-backend-provider-composition-boundary`](accept-the-public-backend-provider-composition-boundary.md) accepted the *model* and explicitly did not accept any surface.
 
 This node is not research or implementation work. Only Tom closes it.
 

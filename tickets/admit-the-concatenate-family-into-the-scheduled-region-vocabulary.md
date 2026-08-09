@@ -12,7 +12,7 @@ tags: [semantics, regions, decision, needs-tom, public-boundary]
 ---
 ## The gap, and why it was unowned
 
-**Fact.** `tiler::concatenate-f32@1` is a registered family with a landed `CoordinateRelation` fusion role and per-arity index-access lowerings — `scope-the-concatenate-fusion-role-and-lowering` delivered those at `a86fddc2` on 2026-08-07. It is nonetheless in `UNPLANNED_OPERATIONS` (`crates/tiler-compiler/src/policy.rs:1107-1123`), which states its own reason: **the request boundary refuses the family under `operation-set` because no kernel construct writes a partitioned output.**
+**Fact.** `tiler::concatenate-f32@1` is a registered family with a landed `CoordinateRelation` fusion role and per-arity index-access lowerings — `scope-the-concatenate-fusion-role-and-lowering` delivered those at `a86fddc2` on 2026-08-07. It is nonetheless in `UNPLANNED_OPERATIONS` (`crates/tiler-compiler/src/policy.rs`, source anchor `const UNPLANNED_OPERATIONS`), which states its own reason: **the request boundary refuses the family under `operation-set` because no kernel construct writes a partitioned output.**
 
 So the family can be recognized, has a realization law, has lowering capabilities at every admitted arity — and still cannot appear in a scheduled region.
 

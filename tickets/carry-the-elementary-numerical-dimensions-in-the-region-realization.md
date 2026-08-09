@@ -5,7 +5,7 @@ status: awaiting-decision
 priority: p2
 dependencies: []
 related: [admit-the-silu-activation-family, admit-the-rms-normalization-family, admit-the-softmax-family]
-scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/decisions]
+scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/decisions, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, identity, feasibility, decision, needs-tom, public-boundary]
@@ -46,3 +46,7 @@ Widening `MaterializationRounding`, which no admitted operation consumes. Changi
 ## Decision packet — 2026-08-09
 
 The trigger establishes need, but the work changes public `NumericalRealization`, target requirements, artifact facts, and several identity domains. Recommendation: add explicit reciprocal-transform permission and approximate-intrinsic envelope fields, using the already-governed typed behaviours rather than backend booleans, and carry them atomically through schedule, kernel, compiler, and artifact records. Tom must accept that exact cross-layer public shape and its identity step before implementation.
+
+## Scope repair — 2026-08-09
+
+`implementation/build` is declared because the required governed Metal profile declaration is owned by `crates/tiler-build`; the prior IR/compiler/artifact scopes could not complete that stated delivery.

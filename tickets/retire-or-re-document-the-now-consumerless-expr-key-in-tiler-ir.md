@@ -5,7 +5,7 @@ status: awaiting-decision
 priority: p2
 dependencies: []
 related: [replace-the-codec-arena-content-key-with-the-existing-comparator, encode-artifact-abi-identity-in-linear-space]
-scopes: [implementation/ir, contracts/decisions]
+scopes: [implementation/ir, contracts/decisions, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, identity, cleanup, decision, needs-tom, public-boundary]
@@ -18,7 +18,7 @@ After `replace-the-codec-arena-content-key-with-the-existing-comparator`, `tiler
 
 > `tiler-artifact` still derives per-node keys this way for envelope identity and for the canonical arena order its codec writes; moving it to the same flat form is `encode-artifact-abi-identity-in-linear-space`, which has to change all four of that crate's key derivations at once or they stop agreeing.
 
-Both clauses are false and the named ticket is `done`. `crates/tiler-ir/src/program/model.rs:1577` carries a second reference in the same spirit.
+Both clauses are false and the named ticket is `done`. `crates/tiler-ir/src/program/model.rs`, source anchor `` `v2` named each use site's expression ``, carries a second reference in the same spirit.
 
 ## The decision, which is not a worker's
 
@@ -36,3 +36,7 @@ The ticket already contains the complete two-option comparison and a recommendat
 ## Closes when
 
 `expr_key`'s documentation states its current consumer set truthfully, `program/model.rs`'s reference agrees with it, and either the item is retained on Tom's decision or it is removed with the artifact test's divergence assertion preserved by some other means.
+
+## Scope repair — 2026-08-09
+
+`implementation/artifact` is declared because the retire branch must replace the cross-crate codec regression that is the function's sole remaining consumer; IR-only scope could not preserve the ticket's own closing condition.
