@@ -32,3 +32,19 @@ Scope. The originating ticket holds `implementation/artifact` and `contracts/art
 ## Closes when
 
 The header names the current test path and the current population, and the reasoning around it is unchanged. `docs/artifact-abi.md` under "The governed digest" is the authority to reconcile against.
+
+## Outcome and later correction — 2026-08-09
+
+Commit `5d4a30eb` repointed the crate header from the deleted
+`proof::tests` symbol to
+`tiler_artifact::domains::no_governed_domain_of_this_crate_prefixes_another`
+and expanded the described artifact-owned set to include the envelope, sidecar,
+and artifact-program identity/key domains. Commit `95e0bb03` closed the bounded
+repair and filed the two neighbouring cross-crate defects it discovered.
+
+A later source-first audit found that carrying the then-current cardinal and a
+universal claim about the IR population merely rebuilt the same drift class.
+Commit `8fda6b34` removed both: the header now names
+`GovernedDomain` as the type-sized population, states no count, and limits the
+test authority to the artifact crate's own admitted set. The surrounding
+one-algorithm and per-authority domain-separation reasoning remains unchanged.

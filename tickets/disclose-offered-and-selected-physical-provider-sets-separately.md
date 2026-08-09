@@ -58,3 +58,21 @@ An installed physical-implementation provider that was consulted and not selecte
 2. **Done, with the failure observed rather than asserted.** Removing the installed identities from the offered environment makes that test fail with `left: NeverInstalled` against `right: OfferedAndNotSelected` — the conflation itself, in the check's own words. Removing the *governed* identity instead leaves that test green and reddens four others, which is what shows the two properties are guarded separately rather than by one assertion.
 3. **Done, and it needed more than the status paragraph.** Line 19's clause was already carrying a dated 2026-08-08 correction from [`record-the-landed-physical-provider-seam-in-adrs-0078-and-0090`](record-the-landed-physical-provider-seam-in-adrs-0078-and-0090.md) that recorded item 5 as *half* landed. Four sites in ADR 0090 asserted the offered half was open — the status correction, the four-obligation Fact, item 5's own correction, and the implementation boundary — and all four are corrected in this landing's commit, each quoting its retired string so a grep lands inside the correction.
 4. **Routed, not decided.** The accessor is added to [`accept-the-installed-physical-provider-public-surface`](accept-the-installed-physical-provider-public-surface.md)'s included set as an **additive** change, with `InstalledPhysicalProviders::offered_identities` excluded by stated reason, and a fourth question added for Tom: whether `offered_providers` should be renamed `offered_lowering_providers` for symmetry, which is **breaking** and therefore not an implementing agent's to do.
+
+## Outcome and current boundary — 2026-08-09
+
+Commit `788b0c03` delivered the missing offered half as
+`Compilation::offered_physical_providers`, populated from the same complete
+`InstalledPhysicalProviders` environment the frontier receives. It remains a
+different subject from the accepted lowering-only `offered_providers`; selected
+providers remain per-alternative through `selected_physical_providers`. The
+out-of-crate test distinguishes never installed, offered and not selected, and
+selected, and the count-neutral conflation perturbation failed with
+`NeverInstalled` versus `OfferedAndNotSelected`. ADR 0090 and the composition
+record were corrected in the same landing. Commit `059fedbd` closed this ticket.
+
+The public accessor is implemented and still a labelled draft. Its acceptance
+and the possible breaking rename remain correctly parked at
+`accept-the-installed-physical-provider-public-surface`, which is currently
+`awaiting-decision`; this completed implementation ticket does not imply that
+Tom accepted either spelling.
