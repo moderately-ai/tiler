@@ -29,3 +29,11 @@ This node exists as the record of the acceptance act rather than as a pending qu
 - Both views of [the decisions catalog](../docs/decisions/README.md) carry the 0105 row as accepted; 105 ADR files, 105 theme rows, 105 chronology rows.
 
 **What acceptance did not do.** No crate file was touched. [`remove-the-scalar-lowering-family-from-the-compiler`](remove-the-scalar-lowering-family-from-the-compiler.md) owns the removal and is unblocked by this node being `done`. [The architecture contract](../docs/architecture.md) needed no edit and was checked rather than assumed — `grep -n 'scalar-lowering\|ScalarLowering' docs/architecture.md` returns nothing.
+
+## Current implementation correction (2026-08-09)
+
+Acceptance itself still touched no crate file, but its implementation follow-on
+is no longer merely unblocked: `remove-the-scalar-lowering-family-from-the-compiler`
+is `done`, and ADR 0105 records the executed removal at implementation status
+`complete`. This note preserves the distinction between the acceptance act and
+the repository's current delivered state.

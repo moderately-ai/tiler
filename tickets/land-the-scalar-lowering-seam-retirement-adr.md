@@ -78,3 +78,13 @@ Every markdown link in all six touched files was resolved against the filesystem
 ### Scope and checks
 
 **Docs and tickets only.** No crate, prototype, spike, `Cargo.*`, `.config/`, `Makefile`, or toolchain file is touched, so no build, test, or lint gate applies and the delta is eligible for the latest green gate under AGENTS.md's carry rule. `tkt lint`, `git diff --check`, and `tkt guard` against the true base are the applicable checks and all pass.
+
+## Current implementation correction (2026-08-09)
+
+The removal ticket this carrier filed as `todo` is now `done`.
+`remove-the-scalar-lowering-family-from-the-compiler` removed the retired
+family, ported the ten registry-mechanics tests to `register_index_access`,
+left the two reserved single-variant types standing, and preserved canonical
+registry identity. ADR 0105 now correctly carries
+`implementation_status: "complete"`. The carrier's Outcome above remains the
+history of the acceptance/landing change, not the current implementation state.
