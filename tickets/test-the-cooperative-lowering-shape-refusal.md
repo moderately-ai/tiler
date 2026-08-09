@@ -5,7 +5,7 @@ status: todo
 priority: p3
 dependencies: []
 related: [implement-the-two-dimensional-staging-relation-and-step-the-schedule-domain-to-v5, record-adr-0097-as-implemented-and-correct-the-navigation-staging-claims]
-scopes: [implementation/ir]
+scopes: [implementation/ir, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, testing]
@@ -34,7 +34,7 @@ One case per refusal `cooperative_plan` states, each watched failing, and each p
 
 ## Closes when
 
-Every arm of `cooperative_plan`'s refusal has a test that fails without it, `grep -rn 'CooperativeLoweringShape' crates/` returns test sites as well as the definition and the binding, and the ADR 0097 implementation-boundary paragraph that records this as an untested refusal is corrected in the same wave or handed to a `contracts/decisions` ticket.
+Every arm of `cooperative_plan`'s refusal has a test that fails without it, `grep -rn 'CooperativeLoweringShape' crates/` returns test sites as well as the definition and the binding, and the ADR 0097 implementation-boundary paragraph that records this as an untested refusal receives a dated evidence correction in this same carrier. `contracts/decisions` is declared for that correction; preserve the accepted body rather than rewriting it.
 
 ## Graph maintenance
 

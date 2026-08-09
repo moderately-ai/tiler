@@ -5,14 +5,14 @@ status: todo
 priority: p2
 dependencies: [admit-the-sub-tensor-selection-family]
 related: [scope-the-sub-tensor-selection-fusion-role, admit-a-fusion-role-for-the-sub-tensor-selection-slice, lower-a-two-region-occurrence-through-one-index-access-capability, lower-the-concatenate-occurrence-through-partitioned-writes, admit-the-structural-families-into-the-scheduled-region-vocabulary, admit-the-sub-tensor-selection-family, decide-the-source-bearing-slice-offset-boundary]
-scopes: [implementation/compiler]
+scopes: [implementation/compiler, research/semantic-graph]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, lowering, indexing, slice]
 ---
 ## User-visible outcome
 
-`tiler::slice-f32@1` resolves an index-access lowering capability like the two structural families beside it, so the operation-family delivery graph's track **O-06** stops carrying an M5 cell that reads *owed* with no owner named anywhere in the corpus.
+`tiler::slice-f32@1` resolves an index-access lowering capability like the two structural families beside it, and the operation-family delivery graph's track **O-06** points at that owner instead of carrying an M5 cell that reads *owed* with no owner named anywhere in the corpus.
 
 ## Why this exists
 
@@ -51,4 +51,4 @@ The capability is registered and resolves for a slice occurrence, its emitted se
 ## Graph maintenance
 
 - `contracts/navigation` is deliberately **not** declared. This capability moves no support-matrix rung: the matrix's ladder puts the index-access lowering between R5 and R6, and the `Sub-tensor selection` row's text about it is the fusion-role ticket's to update when R5 lands.
-- The delivery graph cell this ticket answers lives in `research/semantic-graph`, which is a different owner's scope. Report the cell's new owner at integration rather than editing that table from here.
+- The delivery graph cell this ticket answers lives in `research/semantic-graph`. That scope is now declared on this ticket so the same carrier can replace the unowned *owed* cell with the landed capability's exact owner; do not leave the integration coordinator an undeclared follow-up edit.

@@ -16,7 +16,7 @@ A reduction family states its contributor tensor, empty-domain obligation, and r
 
 ## Why this exists (vocabulary audit 2026-08-06; the auditor hand-verified no serial/parallel divergence exists today — this is prophylactic, and saying so is the point)
 
-`SplitFamily`'s own doc states the law ("a family admitted by one admission and not the other would otherwise be a difference nobody states"); `multi_pass_family` and `cooperative_family` implement it; `verify_access_and_semantics`'s four serial arms (`crates/tiler-ir/src/schedule/builder.rs:955-1098`) do not — nine byte-identical conjuncts repeated, three genuinely differing facts inlined, and the empty-domain rule spelled a fourth time outside `empty_domain_is_satisfied` whose doc claims coverage "at each admission". VERIFY the nine-conjunct claim by reading the four arms before starting.
+`SplitFamily`'s own doc states the law ("a family admitted by one admission and not the other would otherwise be a difference nobody states"); `multi_pass_family` and `cooperative_family` implement it; the four serial arms under `fn verify_access_and_semantics` do not — nine byte-identical conjuncts repeated, three genuinely differing facts inlined, and the empty-domain rule spelled a fourth time outside `empty_domain_is_satisfied` whose doc claims coverage "at each admission". VERIFY the nine-conjunct claim by reading the four arms before starting.
 
 ## Boundaries
 

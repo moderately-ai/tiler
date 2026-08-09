@@ -22,7 +22,7 @@ Every governed `tag()` table reached only by an *inexhaustible* identity encoder
 
 **Historical starting population — must be reclassified, not copied into tests.** The filing inventory named the kernel, program/ABI, numerics, schedule, shape, semantic, index, and ten artifact tables, including `FactAuthority` and `FactValidityScope`. A current directory census is 12 kernel, 10 program/ABI, 7 numerics, 11 schedule, 5 shape, 7 semantic, and 2 index methods, plus the same ten artifact methods: 64 total. The historical `semantic/ 8` and `index/ 3` counts are false at this base. Before editing, produce an exact manifest that marks each of the 64 as (a) already covered by an exhaustive encoder, (b) covered by a complete left inverse, or (c) owed here, and read every table in category (c) in full. This classification—not the syntactic count—is the closing population.
 
-**Inference.** `FactAuthority` and `FactValidityScope` deserve first attention: both assign tags deliberately *out of declaration order* (`numerics.rs:1218` and `:1286`), which is exactly the shape where a hand-checked literal table is easiest to get wrong and hardest to spot in review.
+**Inference.** `FactAuthority` and `FactValidityScope` deserve first attention: both assign tags deliberately *out of declaration order*. The source anchors `The tags are deliberately not in declaration order` and `` `MeasuredEnvironment` carries `0x05` `` state why, and this is exactly the shape where a hand-checked literal table is easiest to get wrong and hardest to spot in review.
 
 ## The work
 

@@ -5,7 +5,7 @@ status: todo
 priority: p2
 dependencies: []
 related: [admit-the-indirect-access-class-into-the-index-layer, admit-an-indirect-gather-family-for-tied-embedding-lookup, accept-adr-0107-indirect-gather-semantic-family]
-scopes: [implementation/compiler]
+scopes: [implementation/compiler, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, gather, testing, fail-closed]
@@ -79,6 +79,8 @@ request-recognition route changed.
 ## Non-goals
 
 Changing the refusal, the family, or the policy inventory. Admitting anything into the index layer — [ADR 0108](../docs/decisions/0108-site-a-data-dependent-index-coordinate-on-the-expression.md) remains proposed and was returned for a complete representation comparison.
+
+`contracts/decisions` is declared only for the dated ADR 0107 evidence correction required below. Preserve the accepted record and append the test-backed correction; do not rewrite its accepted body.
 
 ## Closes when
 
