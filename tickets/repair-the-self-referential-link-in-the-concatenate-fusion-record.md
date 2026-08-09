@@ -59,3 +59,14 @@ FAIL  docs/research/indexing/concatenate-fusion-role-and-lowering.md
 ## Closes when
 
 `make citations` reports no link failure in this file.
+
+## Outcome — delivered
+
+Commit `e96e6aaa` fenced the complete destination-relative Q-SHAPE-006 transfer
+as `text`, preserving the transferred bytes while removing its link from the
+wrong source-relative resolution context. The opening-fence perturbation
+restored the exact doubled-path failure, and the measured citation cost is
+recorded above. Commit `c4c05e5e` closed this repair and routed the analogous
+retained-ADR spans through their shared decision ticket; that decision later
+selected the same whole-span-fence convention. The live navigation copy was not
+delinked or repointed.

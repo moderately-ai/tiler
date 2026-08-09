@@ -59,3 +59,14 @@ This holds `contracts/artifacts` and edits `docs/artifact-abi.md`, which has bee
 ## Closes when
 
 Each of the two trailing paragraphs states the step it records; no version pair is renumbered and no block is reordered; the reason a renumber would be wrong is recorded inline; and `make citations` is green.
+
+## Outcome — delivered
+
+Commit `c5a302ff` made both trailing paragraphs self-siting: the first now opens
+as an inference at the `tiler.schedule.v4` step, and the second as another fact
+at that same step. The `v5` comparison explicitly points forward to the earlier
+step's argument, while the historical `v6`/`v4`/`v3` identity relation remains
+unchanged and the chronology was not reordered. Commit `2bcc8622` closed the
+ticket and filed the unrelated hashing-site contradiction discovered by the
+required neighbouring read. `make citations` remained green; no identity,
+schema, golden, or version pair moved.
