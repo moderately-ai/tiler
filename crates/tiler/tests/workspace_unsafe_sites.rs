@@ -283,7 +283,7 @@ const REOPENABLE_BUILTIN_DERIVES: [&str; 9] = [
 const GUARDED_MACRO_NAMESPACES: [&str; 4] = ["core", "std", "tiler", "tiler_macros"];
 
 /// The exact private declarative-macro producer population in member source.
-const WORKSPACE_LOCAL_MACRO_RULES: [(&str, &str); 15] = [
+const WORKSPACE_LOCAL_MACRO_RULES: [(&str, &str); 16] = [
     (
         "crates/tiler-artifact/src/program/handles.rs",
         "draft_handle",
@@ -298,6 +298,10 @@ const WORKSPACE_LOCAL_MACRO_RULES: [(&str, &str); 15] = [
     ),
     ("crates/tiler-ir/src/kernel/handles.rs", "draft_handle"),
     ("crates/tiler-ir/src/kernel/handles.rs", "verified_handle"),
+    (
+        "crates/tiler-ir/src/exhaustive_injectivity.rs",
+        "exhaustive_enum_population",
+    ),
     ("crates/tiler-artifact/src/program/keys.rs", "governed_key"),
     (
         "crates/tiler-artifact/src/program/keys.rs",
@@ -938,21 +942,29 @@ fn the_workspace_macro_language_is_closed_over_classified_expansions() {
         );
     }
 
-    let duplicate_local = scan_text(
-        "crates/tiler-ir/src/index/handles.rs",
-        concat!(
-            "macro_rules! draft_handle { () => {} }\n",
-            "macro_rules! draft_handle { () => {} }\n",
+    for (path, name) in [
+        ("crates/tiler-ir/src/index/handles.rs", "draft_handle"),
+        (
+            "crates/tiler-ir/src/exhaustive_injectivity.rs",
+            "exhaustive_enum_population",
         ),
-    );
-    assert!(
-        duplicate_local.errors.iter().any(|error| error.contains(
-            "duplicate pinned macro_rules! definition `draft_handle`; producer identity includes \
-             exact multiplicity"
-        )),
-        "duplicate local producer failure: {:?}",
-        duplicate_local.errors,
-    );
+    ] {
+        let source =
+            format!("macro_rules! {name} {{ () => {{}} }}\nmacro_rules! {name} {{ () => {{}} }}\n");
+        let duplicate_local = scan_text(path, &source);
+        let expected = format!(
+            "duplicate pinned macro_rules! definition `{name}`; producer identity includes exact \
+             multiplicity"
+        );
+        assert!(
+            duplicate_local
+                .errors
+                .iter()
+                .any(|error| error.contains(&expected)),
+            "duplicate local producer `{path}:{name}` failure: {:?}",
+            duplicate_local.errors,
+        );
+    }
 
     let builtins = scan_text(
         "crates/planted/src/lib.rs",

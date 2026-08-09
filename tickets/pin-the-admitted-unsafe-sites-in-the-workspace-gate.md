@@ -845,3 +845,25 @@ with eight skipped, every workspace doctest, rustdoc with warnings denied,
 1,116 release tests with three skipped, ticket lint, and shellcheck. The
 workspace-authored/source-generating boundary and its compiler/dependency-
 internal exclusions are unchanged.
+
+### Integrated producer-population reconciliation, 2026-08-08
+
+The reviewed branch ended with fifteen private local `macro_rules!` producers.
+Before it was merged, a separately reviewed IR injectivity repair added one
+private, `cfg(test)` producer at source anchor
+`macro_rules! exhaustive_enum_population`. The first integrated `make full`
+stopped before publication and reported that exact unpinned definition plus its
+two same-file invocations. The inventory now pins
+`("crates/tiler-ir/src/exhaustive_injectivity.rs",
+"exhaustive_enum_population")`, making the current integrated population
+sixteen. The macro emits only type-derived test constants and adds no unsafe,
+attribute, source-load, nested-macro, public, or identity authority. All other
+inventoried populations remain unchanged.
+
+The integrated subject perturbation renamed the real definition and both calls
+to `exhaustive_enum_population_v2`. `cargo check --locked -p tiler-ir
+--all-targets` still passed, while the focused inventory failed with one
+``unpinned macro_rules! definition `exhaustive_enum_population_v2` `` and two
+``custom macro invocation `exhaustive_enum_population_v2!` is unsupported``
+diagnostics at the real definition and call sites. The original spelling was
+restored before the clean rerun.
