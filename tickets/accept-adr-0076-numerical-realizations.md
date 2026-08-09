@@ -63,10 +63,19 @@ paragraph above are historical. All four ordered implementation tickets named
 by this record are now `done`: the numerical vocabulary and identity encoding
 were widened together, the contract became a required stated request input,
 the Metal honourability declaration and its backend recheck were resolved, and
-the delivered-realization work produced its tested crate-private staged record
-while routing the later replacement and public wiring separately. ADR 0076 currently and deliberately
-reports `implementation_status: "partial"`; completion of those four tickets
-does not settle every open question or every later public boundary.
+the delivered-realization work first produced its tested crate-private staged
+record. That last clause is historical too:
+[`wire-the-delivered-realization-record-into-the-artifact`](wire-the-delivered-realization-record-into-the-artifact.md)
+subsequently made the record required and versioned in every executable
+artifact, added the profile/entry cross-checks and canonical codec, and folded
+it into identity; [`accept-the-delivered-realization-artifact-surface`](accept-the-delivered-realization-artifact-surface.md)
+accepted the exact artifact surface.
+[`construct-and-bind-the-first-authoritative-metal-compile-profile`](construct-and-bind-the-first-authoritative-metal-compile-profile.md)
+also completed the first authoritative Metal profile. ADR 0076 currently and
+deliberately reports `implementation_status: "partial"`; that status no longer
+means the delivered-realization record or its public wiring is pending. It
+retains the ADR's bounded support posture and unresolved questions rather than
+rounding those completed slices up to universal target support.
 
 Both named measurement gaps are also closed at their recorded bounds.
 `extend-the-numerical-probe-to-an-additive-path-kernel` added the isolated add
