@@ -118,3 +118,16 @@ Three corrections plus the new material. **The accepted spelling** is stated as 
 ### Not done, deliberately
 
 No ADR (out of scope, filed above). No `acceleration required` policy — the surface leaves room for it as its own statement and nothing here claims it. No change to `DeliveryPlan`, `items_source`, `family_cfg`, or any emission path: the delivery machinery was wired, not rebuilt, and the three existing fixture-comparison tests still pass unchanged.
+
+## Current-delivery correction — 2026-08-09
+
+The Outcome above accurately records the tree on which the syntax first
+landed, but its backend-refusal and dead-code conclusions are no longer current.
+The delivery work tracked by
+[`prototype-inline-aot-integration-proof`](prototype-inline-aot-integration-proof.md)
+and its completed follow-ons now compiles and delivers the selected macOS
+family end to end. `FamilyDelivery` is constructed and consumed by the live
+delivery path and carries no dead-code allowance, and the old
+`BackendCompilationUnavailable` source path is gone. The accepted grammar and
+profile-name vocabulary did not change. iOS and a general multi-family delivery
+remain deferred to their own authority; this correction does not imply them.
