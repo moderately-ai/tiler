@@ -66,3 +66,7 @@ Tom accepts both deltas, accepts with a named exclusion, or rejects either. Noth
 ## Released work
 
 [`retire-the-draft-labels-on-the-accepted-witness-surface`](retire-the-draft-labels-on-the-accepted-witness-surface.md) — the label removal this acceptance owes, released to its own ticket rather than landed here.
+
+## Correction — 2026-08-08, label population
+
+The accepted Delta-2 population above is seven, but only its five accessors — `reduced_axes`, `contracted_shape`, `pass`, `fold_epilogue`, and `unpinned_freedom_site` — landed with markers beginning `**Draft surface, not yet accepted`. The two payload enums, `UnrecordedFoldContraction` and `UnevaluableRealization`, landed unlabelled. The earlier statements that all seven landed or stayed labelled, and that all seven carried labels to remove, are population errors; the acceptance of all seven items without exclusion is unchanged.
