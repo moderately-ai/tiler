@@ -1,7 +1,7 @@
 ---
 id: correct-the-capped-tree-partition-s-false-declared-workgroup-width-claim
 title: Correct the capped tree partition s false declared-workgroup-width claim
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [carry-the-tree-participant-cap-as-a-target-profile-row, bound-the-tree-cap-s-unmeasured-downward-direction]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, compiler, profiles]
-claimed_from: todo
-assignee: terra-capped
-lease_expires_at: 1786243732
 ---
 
 `capped_tree_partition`'s doc comment claims something about every profile in the repository that is false. A sibling constant a few lines away avoids that declaration claim but does not state the query's phase, so the two comments need one current-authority spelling rather than competing conclusions.
