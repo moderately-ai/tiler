@@ -4,7 +4,7 @@ title: Qualify the lowering-registry pooling measurement as historical
 status: todo
 priority: p3
 dependencies: []
-related: [intern-the-lowering-registry-s-shared-authority-identities]
+related: [intern-the-lowering-registry-s-shared-authority-identities, correct-the-slice-normative-definition-and-recompute-compiler-identities]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []

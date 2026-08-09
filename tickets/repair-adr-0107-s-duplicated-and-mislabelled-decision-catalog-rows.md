@@ -76,3 +76,18 @@ Asked to break its new anchors and watch the check fail, the worker instead disc
 **Coordinator-confirmed independently**: planting `](9999-no-such-adr-…)` leaves the check at exit 0 with an unchanged count. Filed as `resolve-the-markdown-links-the-citation-check-cannot-see` (p1) — the population is **3,255 references**, including the entry points `AGENTS.md` directs every reader to.
 
 The worker resolved all **582 local links** with a one-off check that reported both dangling ones and exited 1, so the property is cheaply checkable; what is missing is that it runs. Reporting a blind gate as blind, rather than banking the green, is what made that finding possible.
+
+## Later correction — 2026-08-09
+
+The final paragraph above is historical discovery, not the current gate. Commit
+`6a0184a5` implemented
+[`resolve-the-markdown-links-the-citation-check-cannot-see`](resolve-the-markdown-links-the-citation-check-cannot-see.md),
+and `make citations` now resolves local Markdown links in tickets, live docs,
+and repository-root documents as a separately reported and floored population.
+The earlier **3,255** figure was false: it counted bare paths inside code spans;
+Markdown link targets were not parsed at all. The link ticket's own audited
+Outcome records the correct landing population and exclusions.
+
+The ADR 0107 catalog repair itself remains complete. Its links are now covered
+by the standing citation gate, so the one-off resolver is evidence from before
+that gate landed rather than the repository's current maintenance mechanism.

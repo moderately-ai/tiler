@@ -4,7 +4,7 @@ title: Correct the Slice normative definition and recompute compiler identities
 status: done
 priority: p1
 dependencies: [correct-the-symbolic-coefficient-era-index-vocabulary-claims, pin-the-tiler-compiler-identity-domain-spellings-the-ir-census-does-not-reach]
-related: [admit-a-position-selecting-slice-for-the-rotary-table]
+related: [admit-a-position-selecting-slice-for-the-rotary-table, qualify-lowering-registry-pooling-measurement-as-historical]
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -77,3 +77,13 @@ Package verification on the restored final tree:
 - `cargo nextest run -p tiler-compiler -E 'test(domains::)'`: five passed.
 
 The stale five-capability/measurement comment in `capability.rs` remains unchanged and is a coordinator follow-up, not hidden work in this identity correction.
+
+## Completion correction — 2026-08-09
+
+Commit `f2c52c37` delivered the normative-definition and identity recomputation;
+commit `2139feaa` closed this ticket. The stale pooling measurement it reported is
+now owned by
+[`qualify-lowering-registry-pooling-measurement-as-historical`](qualify-lowering-registry-pooling-measurement-as-historical.md),
+which preserves the original experiment as dated evidence rather than replacing
+it with another soon-stale byte count. No remainder from this completed identity
+correction is unfiled.

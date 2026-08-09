@@ -77,3 +77,15 @@ The public value-conformance evidence and adapter binding boundary needs Tom's i
 ## Acceptance — 2026-08-04
 
 The public value-conformance boundary (ValueConformanceSubject/Evidence as consumer-holdable values, the additive non-exhaustive error variants) is accepted as built, decided by the orchestrator under Tom's same-day delegation of internal API decisions after full-diff review: the capability-token alternative was eliminated on ADR 0081 grounds and on tiler-reference's inability to mint, leaving one survivor. The subject-to-reality honesty gap is deliberately assigned to implement-first-runtime-semantic-value-precondition-enforcement at the adapter seam. The dtype-support matrix corrections (positive-normal scale wording, the two new routes, the L148 host-path qualifier) are deferred integrator edits held until contracts/navigation frees.
+
+## Current graph — 2026-08-09
+
+The `Remaining before this ticket closes` section is historical: the interface
+review was completed by the Acceptance immediately below it, and this ticket is
+done. The direct runtime binding/enforcement vertical remains live under
+[`implement-first-runtime-semantic-value-precondition-enforcement`](implement-first-runtime-semantic-value-precondition-enforcement.md),
+which depends on this completed contract and on the static enforcement-plan
+carrier. That runtime ticket has been corrected to the selected direct U8
+per-axis input and does not silently inherit the older internally produced
+`Quantize`/`Assemble` subject. No implementation remainder from this ticket is
+unowned.
