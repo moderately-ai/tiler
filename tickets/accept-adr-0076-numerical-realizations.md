@@ -55,3 +55,24 @@ Tom accepted ADR 0076 on 2026-07-24 without modification: "yes accept, i have no
 **Two measurement refinements landed before acceptance** and are recorded inline in the ADR rather than as amendments, since neither changes a conclusion: the fast-math flag spellings hold only at `-ffp-contract=fast`, and the emitted-operation-count account of the arithmetic-deletion trap is complete at `-O2` and incomplete at `-O0`, where two operations survive into the readable IR and still do not execute. The second strengthens the record's central inference.
 
 **One claim in the ADR is still unreproduced** and is tracked rather than hidden: the re-verification asserts an additive-path input flush that the checked-in harness does not establish, because every probe kernel that adds does so after a multiply. `extend-the-numerical-probe-to-an-additive-path-kernel` owns closing it. Separately, `measure-numerics-across-apple-artifact-families` establishes whether the subnormal flush is Apple-wide or per-family — which `declare-metal-numerical-honourability` needs before it can decide whether honourability is declared once or per artifact family.
+
+## Current implementation and evidence correction (2026-08-09)
+
+The acceptance-time `not-started` account and the final unreproduced-evidence
+paragraph above are historical. All four ordered implementation tickets named
+by this record are now `done`: the numerical vocabulary and identity encoding
+were widened together, the contract became a required stated request input,
+the Metal honourability declaration and its backend recheck were resolved, and
+the delivered-realization work produced its tested crate-private staged record
+while routing the later replacement and public wiring separately. ADR 0076 currently and deliberately
+reports `implementation_status: "partial"`; completion of those four tickets
+does not settle every open question or every later public boundary.
+
+Both named measurement gaps are also closed at their recorded bounds.
+`extend-the-numerical-probe-to-an-additive-path-kernel` added the isolated add
+and reproduced the sign-preserving input flush. `measure-numerics-across-apple-artifact-families`
+found identical compile-side behaviour across all three artifact families and
+matching dispatched behaviour on macOS and the iOS Simulator, while retaining
+the physical-iOS-device leg as an explicit unmeasured boundary. These earlier
+paragraphs remain the dated acceptance and discovery history, not current
+outstanding work.
