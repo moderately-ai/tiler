@@ -17,13 +17,17 @@
 //! reject it anyway, with the named cause. The byte-level cases separately
 //! prove that an incompetent corruption cannot slip through either.
 
+use std::mem::variant_count;
 use std::time::Instant;
 
 use tiler_ir::identity::push_slice;
 use tiler_ir::kernel::{AddressSpace, BufferAccess, KernelType};
 use tiler_ir::program::abi::{TargetPropertyRequirementRelation, compare_expr_nodes, expr_key};
 use tiler_ir::program::{StorageEncoding, StorageScalar};
-use tiler_ir::schedule::{ExceptionalValueAssumption, NumericalPermission, ValueDomainProvenance};
+use tiler_ir::schedule::{
+    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
+    ValueDomainProvenance,
+};
 use tiler_ir::semantic::{
     InputKey, OutputKey, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
     STRICT_AFFINE_ZERO_POINT_ROLE,
@@ -94,6 +98,58 @@ fn envelope_of(artifact: &VerifiedArtifactProgram) -> ArtifactEnvelope {
 fn encoded(artifact: &VerifiedArtifactProgram) -> Vec<u8> {
     encode(&envelope_of(artifact)).expect("a verified artifact encodes")
 }
+
+/// Defines one payload-carrying enum's population from its exhaustive outer shape.
+macro_rules! exhaustive_enum_population {
+    ($name:ident: $ty:ty { $($pattern:pat => $contribution:expr),+ $(,)? }) => {
+        const $name: usize = {
+            const fn contribution(value: $ty) -> usize {
+                match value {
+                    $($pattern => $contribution),+
+                }
+            }
+
+            let _ = contribution;
+            0 $(+ $contribution)+
+        };
+    };
+}
+
+exhaustive_enum_population!(SUBNORMAL_MODE_POPULATION: SubnormalMode {
+    SubnormalMode::Preserve => 1,
+    SubnormalMode::FlushToZero { zero_sign: _ } => variant_count::<FlushedZeroSign>(),
+});
+
+/// Every subnormal treatment encoded by the governed tag table.
+const SUBNORMAL_MODES: [SubnormalMode; SUBNORMAL_MODE_POPULATION] = [
+    SubnormalMode::Preserve,
+    SubnormalMode::FlushToZero {
+        zero_sign: FlushedZeroSign::PreservesSign,
+    },
+    SubnormalMode::FlushToZero {
+        zero_sign: FlushedZeroSign::AlwaysPositive,
+    },
+];
+
+exhaustive_enum_population!(EXCEPTIONAL_ASSUMPTION_POPULATION: ExceptionalValueAssumption {
+    ExceptionalValueAssumption::MakeNoAssumption => 1,
+    ExceptionalValueAssumption::AssumeAbsent { provenance: _ } =>
+        variant_count::<ValueDomainProvenance>(),
+});
+
+/// Every exceptional-value assumption encoded by the governed tag table.
+const EXCEPTIONAL_ASSUMPTIONS: [ExceptionalValueAssumption; EXCEPTIONAL_ASSUMPTION_POPULATION] = [
+    ExceptionalValueAssumption::MakeNoAssumption,
+    ExceptionalValueAssumption::AssumeAbsent {
+        provenance: ValueDomainProvenance::CompilerProven,
+    },
+    ExceptionalValueAssumption::AssumeAbsent {
+        provenance: ValueDomainProvenance::RuntimeValidated,
+    },
+    ExceptionalValueAssumption::AssumeAbsent {
+        provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
+    },
+];
 
 /// Offsets of the fields the framing header derives from the manifest bytes.
 const TOTAL_LENGTH_AT: usize = 17;
@@ -555,7 +611,6 @@ fn the_derived_feature_set_names_what_a_reader_must_implement() {
 fn every_governed_tag_table_round_trips() {
     use tiler_ir::kernel::{AddressSpace, BufferAccess, KernelType};
     use tiler_ir::program::{StorageScalar, ValueRole};
-    use tiler_ir::schedule::{FlushedZeroSign, SubnormalMode};
 
     for value in [
         KernelType::Bool,
@@ -645,15 +700,7 @@ fn every_governed_tag_table_round_trips() {
     }
     // Both flush behaviours are enumerated: they name different zeros, so a
     // shared tag would decode one as the other.
-    for value in [
-        SubnormalMode::Preserve,
-        SubnormalMode::FlushToZero {
-            zero_sign: FlushedZeroSign::PreservesSign,
-        },
-        SubnormalMode::FlushToZero {
-            zero_sign: FlushedZeroSign::AlwaysPositive,
-        },
-    ] {
+    for value in SUBNORMAL_MODES {
         assert_eq!(subnormal_from_tag(subnormal_tag(value)), Some(value));
     }
     for value in [
@@ -662,18 +709,7 @@ fn every_governed_tag_table_round_trips() {
     ] {
         assert_eq!(permission_from_tag(permission_tag(value)), Some(value));
     }
-    for value in [
-        ExceptionalValueAssumption::MakeNoAssumption,
-        ExceptionalValueAssumption::AssumeAbsent {
-            provenance: ValueDomainProvenance::CompilerProven,
-        },
-        ExceptionalValueAssumption::AssumeAbsent {
-            provenance: ValueDomainProvenance::RuntimeValidated,
-        },
-        ExceptionalValueAssumption::AssumeAbsent {
-            provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
-        },
-    ] {
+    for value in EXCEPTIONAL_ASSUMPTIONS {
         assert_eq!(
             exceptional_assumption_from_tag(exceptional_assumption_tag(value)),
             Some(value),
