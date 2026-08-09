@@ -86,4 +86,18 @@ None. `validate_proposal_disclosure` fires on an inline link from a `kind: contr
 
 ## Current propagation correction — 2026-08-09
 
-The dependent handoff above is complete. [`propagate-extension-seam-classification-into-governed-contracts`](propagate-extension-seam-classification-into-governed-contracts.md) is `done`: `docs/operation-extensions.md` now states the intended seam inventory and negative-space rules, and `docs/architecture.md` states the permanently internal authorities and the explain/feasibility qualifications. ADR 0078 correctly remains `implementation_status: partial` because the physical-implementation provider and mature fusion numerical capability remain deliberately unassigned; propagation did not decide them.
+The dependent handoff above is complete. [`propagate-extension-seam-classification-into-governed-contracts`](propagate-extension-seam-classification-into-governed-contracts.md) is `done`: `docs/operation-extensions.md` now states the intended seam inventory and negative-space rules, and `docs/architecture.md` states the permanently internal authorities and the explain/feasibility qualifications.
+
+The original explanation for ADR 0078's `implementation_status: partial` is
+now historical. [ADR 0090](../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md)
+subsequently resolved the physical-provider participation question, and
+[`drive-an-external-physical-implementation-provider-through-compilation`](drive-an-external-physical-implementation-provider-through-compilation.md)
+landed the installed compile-path seam. Its exact trait and module surface is
+still a labelled draft awaiting Tom under
+[`accept-the-installed-physical-provider-public-surface`](accept-the-installed-physical-provider-public-surface.md),
+which is a public-boundary acceptance question rather than an unassigned seam.
+[ADR 0105](../docs/decisions/0105-retire-the-scalar-lowering-provider-seam.md)
+retired the scalar-lowering row and its removal has landed. The mature
+per-operation fusion numerical capability is the one extension-shaped surface
+that remains deliberately unassigned. ADR 0078's `partial` status therefore
+remains correct, but the earlier account of why was stale.
