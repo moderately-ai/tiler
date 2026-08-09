@@ -55,10 +55,10 @@ const CONTRACTS: [NumericalContract; 5] = [
 /// `ab,bc->ac` over two `[2, 2]` declared inputs, so the product's shape is the
 /// shape the normalization publishes and the first declared input serves as the
 /// weight. Two declared inputs rather than three because `normalize_contraction`
-/// refuses a program declaring a third under `input-arity` — a wall of the
-/// contraction recognizer's own, owned by
-/// `name-the-contraction-operand-arity-wall-and-separate-its-rule`, and not one
-/// this file is about.
+/// refuses a program declaring a third under `contraction-input-arity` — a wall
+/// of the contraction recognizer's own, owned by
+/// `admit-a-contraction-over-a-subset-of-the-declared-inputs`, and not one this
+/// file is about.
 fn staged_over_an_edge() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let shape = Shape::from_dims([2, 2]);

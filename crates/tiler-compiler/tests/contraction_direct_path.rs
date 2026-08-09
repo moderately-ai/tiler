@@ -53,7 +53,7 @@ use tiler_ir::shape::{Axis, Shape};
 ///
 /// Stated exhaustively rather than sampled. A contraction consumes no numerical
 /// permission — it is the declared contributor sequence itself — so the outcome
-/// must be identical under all four, and a contract that behaved differently
+/// must be identical under all five, and a contract that behaved differently
 /// would mean the realization is consuming something it does not declare.
 const CONTRACTS: [NumericalContract; 5] = [
     NumericalContract::STRICT_F32,
@@ -110,7 +110,7 @@ fn projection(m: u64, n: u64, k: u64) -> SemanticProgram {
 /// about the contraction would be consistent with a broken target profile
 /// rather than with anything about input cardinality or the contraction family.
 /// It is the same fixture `multi_input_elementwise_boundary.rs` uses for the
-/// same job, and it compiles under all four contracts because its two
+/// same job, and it compiles under all five contracts because its two
 /// operations share a family.
 fn one_input_control() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
@@ -228,11 +228,12 @@ fn an_empty_contracted_domain_is_refused_before_a_request_exists() {
 
 /// A contraction whose operands are one tensor read twice is not recognized.
 ///
-/// `aa,ab->b`-shaped programs are refused by input arity rather than being
-/// projected onto the two-operand region, whose second buffer would otherwise
-/// have nothing to bind. The refusal is typed and names the gate that fired,
-/// which is what keeps the widening "a two-operand contraction" rather than
-/// "anything carrying a contraction key".
+/// `projection_structure()` is equivalent to `mk,nk->mn`, and this fixture
+/// supplies the same declared `ValueId` for both logical operands. The program
+/// is refused by contraction declared-input arity rather than being projected
+/// onto the fixed two-declaration normalized form. The refusal is typed and
+/// names the gate that fired, which keeps an eventual widening explicit about
+/// how both operands map to the declaration.
 #[test]
 fn a_contraction_over_one_declared_input_refuses_with_a_typed_reason() {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
@@ -251,9 +252,56 @@ fn a_contraction_over_one_declared_input_refuses_with_a_typed_reason() {
         assert_eq!(
             compile_under(&program, contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "input-arity"
+                rule: "contraction-input-arity"
             }),
             "{contract:?} admitted a contraction the recognizer does not cover",
+        );
+    }
+}
+
+/// A binary contraction beside an independently retained third declaration.
+///
+/// The second output is load-bearing: it keeps `side` in the semantic program
+/// without making it a contraction operand, so this subject isolates the
+/// recognizer's declared-input wall from ADR 0087's independently binary
+/// operation family. The follow-up widening must map the contraction's two
+/// operands to their declaration ordinals instead of discarding this input.
+#[test]
+fn a_contraction_beside_a_retained_third_input_refuses_with_a_typed_reason() {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let activations = builder
+        .input::<F32>(
+            InputKey::new("activations").unwrap(),
+            Shape::from_dims([2, 3]),
+        )
+        .unwrap();
+    let weights = builder
+        .input::<F32>(InputKey::new("weights").unwrap(), Shape::from_dims([2, 3]))
+        .unwrap();
+    let side = builder
+        .input::<F32>(InputKey::new("side").unwrap(), Shape::from_dims([4]))
+        .unwrap();
+    let projected =
+        F32TensorContraction::apply(&mut builder, &projection_structure(), activations, weights)
+            .unwrap();
+    let retained = F32Multiply::apply(&mut builder, side, side).unwrap();
+    builder
+        .output(OutputKey::new("projected").unwrap(), projected)
+        .unwrap();
+    builder
+        .output(OutputKey::new("retained").unwrap(), retained)
+        .unwrap();
+    let program = builder.build().unwrap();
+    assert_eq!(program.input_count(), 3);
+    assert_eq!(program.output_count(), 2);
+
+    for contract in CONTRACTS {
+        assert_eq!(
+            compile_under(&program, contract),
+            Err(CompileFailureClass::UnsupportedCapability {
+                rule: "contraction-input-arity"
+            }),
+            "{contract:?} admitted a contraction over a subset of the declarations",
         );
     }
 }
