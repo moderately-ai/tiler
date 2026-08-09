@@ -100,3 +100,20 @@ ADR 0077 item 5's clause that this admission must not be cited as precedent for 
 ## Current follow-on correction — 2026-08-09
 
 The open-question statements above are historical. [`admit-the-device-free-runtime-validation-crate`](admit-the-device-free-runtime-validation-crate.md) is `done`: ADR 0081 admitted `tiler-runtime` as a device-free artifact loader by applying ADR 0077's own distinction, not by waiving its non-precedent clause. [`decide-the-expansion-cache-owner-and-digest-authority`](decide-the-expansion-cache-owner-and-digest-authority.md) is also `done`, and [`implement-the-expansion-cache-protocol`](implement-the-expansion-cache-protocol.md) delivered the dedicated `tiler-cache` crate under ADR 0082 while preserving `tiler-metal-aot`'s empty dependency closure. The cache ticket explicitly retains its complete-subject and process-crash/race follow-ups; this correction records ownership and admission, not closure of those narrower gaps.
+
+## Current packaging-profile qualification — 2026-08-09
+
+ADR 0077's six-library/two-executable restatement is an acceptance-time
+ordinal, not the live complete workspace population and not a cap. The live
+packaging profile in [`docs/architecture.md`](../docs/architecture.md) now
+contains twelve reusable libraries, one conformance member counted separately,
+and three non-published proof/integration executables. ADRs 0081, 0082, 0085,
+0088, and 0104 admitted the later reusable rows; ADR 0106 admitted the
+separately counted conformance member.
+
+Those later admissions do not weaken what ADR 0077 still governs:
+`tiler-metal-aot` owns offline Apple compiler invocation, keeps its empty
+complete dependency closure, and receives only a development edge from
+`tiler-metal`. The live architecture contract owns the current full population;
+this completed acceptance ticket records the smaller profile Tom accepted on
+2026-07-25 and the later records that extended it.
