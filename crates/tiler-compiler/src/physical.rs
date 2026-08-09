@@ -2213,11 +2213,12 @@ pub(crate) const MEASURED_TREE_PARTICIPANT_CAP: u64 = 256;
 /// square root, and so at most [`governed_partition`]'s own count.
 ///
 /// **That ceiling is what keeps the rule a preference rather than a feasibility
-/// decision.** 509 participants stage 2,036 `f32` bytes and sit inside both
-/// authorities that refuse a width: [`tiler_ir::schedule::MAX_COOPERATIVE_PARTICIPANTS`]
-/// is 4,096, and the widest workgroup any profile in this repository declares is
-/// the qualified Apple9 entry's 1,024. No contributor count offered a tree before
-/// this rule loses one because of it.
+/// decision.** 509 participants stage 2,036 `f32` bytes and sit inside the
+/// schedule authority: [`tiler_ir::schedule::MAX_COOPERATIVE_PARTICIPANTS`] is
+/// 4,096. The other feasibility authority is the qualified Apple9 prepared
+/// entry's workgroup capacity, an [`AvailabilityPhase::PreparedKernelPreflight`]
+/// query that decides whether its resolved value admits the selected tree width
+/// at that later phase.
 ///
 /// **Taking the wider of this rule and [`governed_partition`] would not have that
 /// property, and that is why it is not what happens.** At 8,198 contributors
