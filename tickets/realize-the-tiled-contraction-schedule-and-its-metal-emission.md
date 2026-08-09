@@ -45,3 +45,4 @@ A contraction of the profile's projection structure compiles through the ordinar
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** The activation trigger is [`admit-a-cooperative-tile-over-shared-operands`](admit-a-cooperative-tile-over-shared-operands.md) reaching `done`; it is still `deferred`, and this sweep found its own trigger only half fired — its dependency landed but the two public boundaries it needs are Tom's and unaccepted. Recheck: that ticket's status and its trigger-check log.
+- 2026-08-09 — **not fired.** The two-dimensional staging dependency is `done`, but `admit-a-cooperative-tile-over-shared-operands` is now correctly `awaiting-decision`: the second cooperative relation and its ownership-proof kind remain Tom's public-boundary decision. This implementation stays deferred behind that answer rather than appearing runnable merely because the lower dependency landed.

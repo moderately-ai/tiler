@@ -50,3 +50,4 @@ The family has all four attributes canonical, a pinned coordinate rounding, an e
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** No image, signal, or vision workload is filed; the roadmap's candidate-track table records that class as "Not filed", and the only live conformance track is language-model inference. Recheck: `rg -o -N --no-filename 'tiler::[a-z0-9-]+@[0-9]+' crates/tiler-ir/src/semantic/ | sort -u` — 46 governed keys today, comprising the dtype identities, the ULP metric key, and the eighteen registered operation keys; the family's key is absent from that list.
+- 2026-08-09 — **not fired.** The active consumer work remains language-model/conformance work; no image, signal, or vision workload names resize, grid sampling, or an affine warp. Gather/index representation work alone does not fire the workload half of this trigger.

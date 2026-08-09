@@ -1,6 +1,6 @@
 ---
 id: decide-the-unnameable-gpu-enumerator-channel
-title: Decide whether tiler-metal owns the unnameable-enumerator channel
+title: Add a fallible GPU-enumerator channel when a second binding needs it
 status: deferred
 priority: p3
 dependencies: []
@@ -8,7 +8,7 @@ related: [close-the-serial-sum-run-gpu-family-probe-table, close-the-metal-gpu-f
 scopes: [implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
-tags: [api-conventions, metal, adr-0074, decision]
+tags: [api-conventions, metal, adr-0074, deferred]
 ---
 ## The question, atomically
 
@@ -54,6 +54,8 @@ Tom accepts one of the two surviving candidates. If the channel is accepted, `ti
 ## Deferral (2026-08-01)
 
 Tom approved the recommendation: defer. The runner is fail-closed regardless, and the general fallible-probe channel activates on the recorded triggers — a second raw-value-less binding needing the same decision, or `widen-the-metal-gpu-family-vocabulary-to-apple10` firing the build error the counted-population assertion now guarantees.
+
+The decision is therefore complete. This node remains `deferred` only as the implementation carrier for the accepted trigger; its old “Decide whether” title and `decision` tag were stale and were repaired on 2026-08-09.
 
 ## Trigger check log
 

@@ -51,3 +51,4 @@ Q-SEM-011's five closure items — ordering, liveness, verification, ABI, and fa
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** No stateful, mutating, or hidden-random operation is proposed. Recheck: `rg -n 'enum OperationEffect' -A6 crates/tiler-ir/src/semantic/operation.rs` — the vocabulary still has exactly one variant, `Pure`, and is deliberately not `#[non_exhaustive]`.
+- 2026-08-09 — **not fired.** `OperationEffect` remains the closed one-variant `Pure` vocabulary. The live caller-retained append question is still explicitly physical buffer reuse with a recovery contract, and counter-based randomness remains pure explicit state; neither is the first semantic effectful operation proposal.

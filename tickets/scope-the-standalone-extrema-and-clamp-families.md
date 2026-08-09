@@ -48,3 +48,4 @@ The five identities exist with their own seeds and order contracts, the emission
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** No clamp or ReLU recognition and no standalone extrema reduction has entered a profile; the only extrema in the corpus is the softmax's embedded fold, which the matrix row records as not moving this rung. Recheck: `rg -o -N --no-filename 'tiler::[a-z0-9-]+@[0-9]+' crates/tiler-ir/src/semantic/ | sort -u` — 46 governed keys today, comprising the dtype identities, the ULP metric key, and the eighteen registered operation keys; the family's key is absent from that list.
+- 2026-08-09 — **not fired.** The exact extrema fixup remains exercised only inside the softmax family; no clamp/ReLU key or standalone extrema reduction has entered a selected profile. Parallelizing the embedded fold does not create a standalone semantic family.

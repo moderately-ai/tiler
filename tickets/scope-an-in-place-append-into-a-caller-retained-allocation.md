@@ -101,3 +101,4 @@ the ticket remains `deferred`.
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** Condition 1 is recorded fired above; conditions 2 and 3 remain unmet on the same day — no reproducible measurement shows the survivor's replacement traffic, allocation behaviour, or peak residency is a binding cost, and no recovery contract makes a post-commit partial write safely recoverable. All three must hold. Recheck: the three numbered conditions above.
+- 2026-08-09 — **not fired.** The dynamic layout authority remains settled, but the C1 stateful vertical is still `todo`; no named-host measurement demonstrates that replacement traffic/allocation/residency is the survivor's binding cost, and no shadow, undo, versioning, or equivalent recovery contract has landed. Conditions 2 and 3 remain independently unmet.

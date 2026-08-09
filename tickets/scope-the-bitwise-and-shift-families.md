@@ -50,3 +50,4 @@ Each operation has a signature naming its shift-amount field and its out-of-rang
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** The integer track's trigger is unfired and no bitwise or shift operation is named by any workload. Recheck: `rg -o -N --no-filename 'tiler::[a-z0-9-]+@[0-9]+' crates/tiler-ir/src/semantic/ | sort -u` — 46 governed keys today, comprising the dtype identities, the ULP metric key, and the eighteen registered operation keys; the family's key is absent from that list.
+- 2026-08-09 — **not fired.** U32 index operands and U8 quantized-code carriers now exist in bounded roles, but the integer numerical-contract track remains deferred and no named workload includes an integer bitwise or shift operation. Those carrier admissions are explicitly not the general integer arithmetic consumer this trigger requires.

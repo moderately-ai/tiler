@@ -50,3 +50,4 @@ Each of mean, variance, and log-sum-exp is classified atomic or composition agai
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** No workload requires a general mean, variance, norm, or log-sum-exp; the three delivered composite families each mint no general key and name that as an explicit non-goal. Recheck: `rg -o -N --no-filename 'tiler::[a-z0-9-]+@[0-9]+' crates/tiler-ir/src/semantic/ | sort -u` — 46 governed keys today, comprising the dtype identities, the ULP metric key, and the eighteen registered operation keys; the family's key is absent from that list.
+- 2026-08-09 — **not fired.** RMS normalization and softmax now have deeper staged realization support, but their mean/squared-sum/log-sum-exp pieces remain internal to those exact composite keys. No general mean, variance, norm, or log-sum-exp consumer is named.

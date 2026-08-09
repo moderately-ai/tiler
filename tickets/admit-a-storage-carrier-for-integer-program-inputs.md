@@ -1,14 +1,14 @@
 ---
 id: admit-a-storage-carrier-for-integer-program-inputs
 title: Admit a storage carrier for integer program inputs
-status: blocked
+status: todo
 priority: p1
 dependencies: [admit-an-indirect-gather-family-for-tied-embedding-lookup, reclassify-language-model-work-as-a-conformance-track]
 related: [design-model-ingestion-and-complete-execution, enumerate-the-mature-tensor-dtype-taxonomy, route-an-embedded-artifact-through-a-consumer-storage-seam, admit-the-bf16-type-and-carrier-into-every-total-map]
 scopes: [implementation/ir, implementation/artifact, implementation/frontend, contracts/artifacts, implementation/compiler, implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, dtype, abi, frontend, gather, language-model, class-generic-capability]
+tags: [implementation, dtype, abi, frontend, gather, language-model, class-generic-capability, trigger-fired]
 ---
 ## User-visible outcome
 
@@ -102,3 +102,7 @@ The worker asked whether `msl_type(KernelType::U32)` should spell `uint` or refu
 Recheck with `tkt claims` plus a scope scan of live `tkt/` branches. At the original audit, `implementation/compiler` was held by an exclusive claim on `answer-input-element-counts-as-the-declared-tensors-own-count`; on 2026-08-09 `tkt claims --format json` reported no live claims after expired claim metadata was released.
 
 The redispatch brief must carry: the corrected `StorageScalar` Fact (**three** variants at `enum StorageScalar`, not two — the ticket's own repro command was self-falsifying, printing `Bf16` inside its own `-A 6` window), the append-not-move finding for both tag encoders, the two tripwires to retarget, and the `msl_type` decision above.
+
+## Unblocked 2026-08-09
+
+Both declared dependencies are `done`: [`admit-an-indirect-gather-family-for-tied-embedding-lookup`](admit-an-indirect-gather-family-for-tied-embedding-lookup.md) and [`reclassify-language-model-work-as-a-conformance-track`](reclassify-language-model-work-as-a-conformance-track.md). `tkt claims --format json` reports no live claim, all six required scopes are already declared, and the only implementation choice this record left open — `msl_type(KernelType::U32)` — was resolved above as a named refusal until a backend consumer exists. Moved `blocked` → `todo`; the widening remains one coherent cross-scope landing with the stated trybuild audit and perturbations, not a partial carrier edit.

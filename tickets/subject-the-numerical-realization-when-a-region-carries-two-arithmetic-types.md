@@ -35,3 +35,4 @@ Recheck: `grep -n "fn region_arithmetic_type" -A 15 crates/tiler-ir/src/schedule
 ## Trigger check log
 
 - 2026-08-07 — **not fired, and filed in this state.** `region_arithmetic_type` maps every `ScalarProgram` variant to exactly one `ArithmeticType`; `ScalarProgram::PointwiseBf16` yields `Bf16` and every other variant yields `F32`. No fused mixed-arithmetic variant exists. ADR 0091 reads `decision_status: "accepted"` with `implementation_status: "not-started"`, and no conversion key is registered.
+- 2026-08-09 — **not fired.** `region_arithmetic_type` remains a total one-type answer: `PointwiseBf16` yields `Bf16`, while the pointwise F32, strict-affine dequantize, fold, contraction, and maximum variants yield `F32`. The registered conversion work has not introduced a `ScalarProgram` variant carrying two arithmetic types in one region, so the three-field identity migration described above is still unnecessary.

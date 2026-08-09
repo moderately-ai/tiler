@@ -50,3 +50,4 @@ The family has a key, a serial oracle, a stated legality table separating the se
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** No workload requires a cumulative reduction; the pinned workload's only axis-wise accumulations are the contraction's fold, the normalization's squared sum, and the softmax's two folds, none of which retains a prefix. Recheck: `rg -o -N --no-filename 'tiler::[a-z0-9-]+@[0-9]+' crates/tiler-ir/src/semantic/ | sort -u` — 46 governed keys today, comprising the dtype identities, the ULP metric key, and the eighteen registered operation keys; the family's key is absent from that list.
+- 2026-08-09 — **not fired.** No selected workload requires a cumulative prefix result. The additional staged reduction and tree-topology work still produces one reduced result rather than retaining every prefix, so it does not activate this semantic family.

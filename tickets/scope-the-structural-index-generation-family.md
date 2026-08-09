@@ -46,3 +46,4 @@ A named producer requires a materialized coordinate, the five obligations above 
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** No named producer requires a materialized coordinate: the workload binds its rotary tables and its mask as program inputs, and the one candidate occurrence is owned as a slice rather than a generator. Recheck: `rg -o -N --no-filename 'tiler::[a-z0-9-]+@[0-9]+' crates/tiler-ir/src/semantic/ | sort -u` — 46 governed keys today, comprising the dtype identities, the ULP metric key, and the eighteen registered operation keys; the family's key is absent from that list.
+- 2026-08-09 — **not fired.** Sourced symbolic coordinate expressions now exist inside the index layer, but no semantic program needs a materialized coordinate tensor. Rotary position remains a slice/table binding question, not an arange/identity-matrix operation.

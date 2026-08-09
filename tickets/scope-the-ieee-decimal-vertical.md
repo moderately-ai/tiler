@@ -37,3 +37,4 @@ The trigger has fired and the vertical is stated including which storage encodin
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** Track D-7's trigger is checked in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md):187: no named frontend or accelerator consumer requires a decimal tensor element, and backend availability is explicitly not a trigger.
+- 2026-08-09 — **not fired.** Decimal32/64/128 remain recognized catalog identities only. No named frontend, model, or accelerator consumer requires a decimal tensor element, and no DPD/BID storage-carrier choice has been requested.

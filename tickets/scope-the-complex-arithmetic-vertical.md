@@ -39,3 +39,4 @@ The trigger has fired and the vertical is stated with its component oracle, its 
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** Track D-6's trigger is checked in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md):179: no named operation and component type has arrived, and F-40 spectral transforms — the first family that would require it — is unadmitted.
+- 2026-08-09 — **not fired.** The governed `tiler::complex@1` constructor still admits the same f16/f32/f64 component identities, but no operation accepts a complex value and no named workload supplies the branch-cut, storage, ABI, target, and conformance choices the trigger requires. Catalog recognition is not operation admission.

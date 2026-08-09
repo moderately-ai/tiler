@@ -42,3 +42,4 @@ The trigger has fired and a bounded conformance profile exists that names its un
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** Track D-3's trigger is checked in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md):155: no named workload selects `f16`, `f64`, or `f128`, and a second target measurement alone does not fire it. The dependency [`conform-the-bf16-vertical-end-to-end`](conform-the-bf16-vertical-end-to-end.md) is also `todo`, so the pattern this would derive from has not run end to end.
+- 2026-08-09 — **not fired, although the dependency is now complete.** [`conform-the-bf16-vertical-end-to-end`](conform-the-bf16-vertical-end-to-end.md) is `done`, so the pattern this work would study now exists. No named workload selects `f16`, `f64`, or `f128`, however, and the trigger explicitly requires that workload selection rather than BF16 completion or another measurement row.

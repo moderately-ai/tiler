@@ -1,14 +1,14 @@
 ---
 id: shape-the-conformance-corpus-for-target-multiplication
 title: Shape the conformance corpus for target multiplication
-status: deferred
+status: awaiting-decision
 priority: p2
-dependencies: []
+dependencies: [conform-the-bf16-vertical-end-to-end]
 related: [survey-what-belongs-in-the-conformance-crate, admit-the-conformance-crate-to-the-workspace, publish-the-backend-provider-conformance-suite]
-scopes: [research/verification]
+scopes: [research/verification, implementation/conformance, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [research, conformance, target-profiles, architecture]
+tags: [research, conformance, target-profiles, architecture, decision, needs-tom, public-boundary, trigger-fired]
 ---
 ## Question
 
@@ -18,7 +18,7 @@ Filed 2026-08-07 by [`survey-what-belongs-in-the-conformance-crate`](survey-what
 
 ## Why it is not urgent yet, and why it will not stay that way
 
-**Fact — the corpus is single-family today.** Every profile key `crates/tiler-build/src/metal_declaration.rs` mints names the same target family: `tiler.metal.first-macos-apple9-msl4.measured.v1`, `...normative.v1`, `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1` and `.v2`, plus the two offline-toolchain sub-keys. Those are authority variants and versions of one row, not a second family. Every executed comparison in the tree is bounded to one host row — Apple M4 Max, macOS 27.0 build `26A5388g`, Xcode 26.6, SDK 26.5, offline compiler `Apple metal version 32023.883`.
+**Fact — the target-family axis is still singular, but the dtype-family axis is not.** Every profile key `crates/tiler-build/src/metal_declaration.rs` mints names the same target family: `tiler.metal.first-macos-apple9-msl4.measured.v1`, `...normative.v1`, `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1` and `.v2`, plus the offline-toolchain sub-keys. Those are authority variants and versions of one row, not a second target family. Since this ticket was filed, however, [`conform-the-bf16-vertical-end-to-end`](conform-the-bf16-vertical-end-to-end.md) has executed a pure-BF16 multiply/add vertical on the measured Apple9 row alongside the existing F32 evidence. The corpus therefore has two executed dtype families even though it still has one measured target family.
 
 **Fact — the deferred work already names four more axis values.** An iOS profile row (no such row exists; `docs/dtype-support.md` records BF16's measurement as "macOS Apple9 profile rows only" and the retained Apple record's iOS-Simulator row as a separate measurement), a CPU vector tier (`docs/research/target-profiles/cpu-vector-realization-facts.md`), a subgroup execution tier (`docs/research/scheduling/subgroup-execution-tier.md`), and CUDA (`ticketsplease.toml` declares a `research/cuda-transfers` scope whose `docs/research/cuda-transfers/` directory does not yet exist). Each multiplies the matrix rather than adding to it.
 
@@ -34,9 +34,15 @@ Filed 2026-08-07 by [`survey-what-belongs-in-the-conformance-crate`](survey-what
 
 **What the survey does not recommend**: a combinatorial generator over the five axes. The population is sparse and non-monotone by design (`docs/dtype-support.md` says so outright), so enumeration would produce mostly refusals and would put the burden of knowing which combinations are meaningful into the harness instead of into the declaration.
 
-## What a build would have to decide
+## Decision Tom needs to make
 
-The case declaration's shape is a public boundary under ADR 0075 even if it stays `pub(crate)` at first, and [`publish-the-backend-provider-conformance-suite`](publish-the-backend-provider-conformance-suite.md) is the ticket that would consume it from outside. Whether these are one surface or two is the first question, not a detail.
+The case declaration's shape is a consequential conformance boundary under ADR 0075 even if its first implementation stays `pub(crate)`, and [`publish-the-backend-provider-conformance-suite`](publish-the-backend-provider-conformance-suite.md) is the ticket that would consume a validated suite from outside. The trigger has fired, so the first question can no longer be deferred: whether these are one surface or two.
+
+**Option A — one validated case model, internal first (recommended).** Define one target-neutral case declaration and executor boundary inside `tiler-conformance`, keep it non-public while the F32/BF16 population proves validation and refusal semantics, then publish the same validated representation through the provider suite when that ticket fires. This minimizes duplicate authorities and makes the later public boundary evidence-driven, but it commits the internal model to being the candidate external representation.
+
+**Option B — separate internal execution cases and provider-facing declarations.** Keep a narrow private executor input optimized for the current test crate, and later translate provider declarations into it through an explicit validation seam. This avoids prematurely shaping the public representation around two current dtype families, but creates two representations and a translation whose identity, validation, and drift controls must be owned.
+
+**Recommendation.** Accept Option A's one validated model with an explicitly non-public first landing. It preserves one semantic authority and lets the existing F32/BF16 cases expose mistakes before any external surface is accepted. Tom's decision here authorizes only that boundary direction; exact public names and visibility remain separately reviewable when the provider-suite trigger fires.
 
 ## Trigger
 
@@ -53,3 +59,4 @@ Every line it prints today contains `macos-apple9`, or is one of the two `tiler.
 ## Trigger check log
 
 - 2026-08-07 — **not fired.** Six keys, all macOS Apple9 Metal or offline-toolchain sub-keys of it. `crates/tiler-conformance/src/lib.rs` holds no items, so there is no executed run at any profile inside the crate.
+- 2026-08-09 — **fired by the second-dtype arm.** [`conform-the-bf16-vertical-end-to-end`](conform-the-bf16-vertical-end-to-end.md) is `done` and records a pure-BF16 multiply/add program dispatched and compared against the exact-rational oracle on the measured Apple9 row. The target-family axis remains one row, but F32 and BF16 now make the dtype axis real. Moved to `awaiting-decision` because the ticket itself identifies the one-versus-two case-declaration surface as its first consequential choice.

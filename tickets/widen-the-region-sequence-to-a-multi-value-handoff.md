@@ -40,3 +40,4 @@ The trigger fires and the vocabulary lands, or the trigger is re-evaluated and t
 ## Trigger check log
 
 - **2026-08-06 — not fired.** No registered family has a multi-value stage. Reproduce: `grep -n 'realizes_region_sequence' -A 8 crates/tiler-ir/src/index/law.rs` names the two staged variants, and both publish one value per non-final stage; `cargo nextest run -p tiler-ir -E 'test(a_non_final_stage_publishing_two_values_refuses)'` passes, which is the refusal still standing.
+- **2026-08-09 — not fired.** RMS normalization and softmax now register region-sequence laws, but neither has a non-final stage publishing multiple values. `a_non_final_stage_publishing_two_values_refuses` still exercises `NotChained { stage: 0 }`; no registered sum-and-sum-of-squares single-pass family requires the wider publication identity.

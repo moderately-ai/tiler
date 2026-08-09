@@ -37,3 +37,4 @@ Each member has either an extension provider carrying it end to end, or a record
 ## Trigger check log
 
 - 2026-08-04 — **not fired**, per member. Track D-12's trigger is checked in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md):225: no member has an exact producer and consumer, and the route additionally needs the registration governance [`govern-external-dtype-namespace-registration-and-equivalence`](govern-external-dtype-namespace-registration-and-equivalence.md) owes, which this sweep also found unfired.
+- 2026-08-09 — **not fired**, per member. The registration-governance dependency remains `deferred`, and no exact producer/consumer pair has appeared for wide or arbitrary-width integers, fixed-point, decimal fixed-point, UNORM/SNORM, posit/quire, or the other reserved families. Built-in U8/BF16 and strict-affine quantization work do not fire this extension-only track and must not be treated as equivalent evidence.

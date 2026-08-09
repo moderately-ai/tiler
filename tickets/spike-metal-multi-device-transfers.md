@@ -43,3 +43,4 @@ being inferred from one configuration.
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** No host in this project has more than one independently addressable Metal device — every retained measurement is a single Apple-silicon unified-memory GPU — and the multi-device scope gate has not activated. Recheck: the gate's own two conditions.
+- 2026-08-09 — **not fired.** The retained measurements still name one independently addressable Apple-silicon GPU per host, and [`multi-device-and-sharding-scope-gate`](multi-device-and-sharding-scope-gate.md) remains deferred. Unified memory and multiple command queues on one device do not satisfy this ticket's two-device prerequisite.

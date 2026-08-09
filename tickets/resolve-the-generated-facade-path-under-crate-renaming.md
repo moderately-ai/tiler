@@ -16,7 +16,7 @@ A consumer that renames its Tiler dependency — `tensor = { package = "tiler", 
 
 ## Implementation keys
 
-**Fact.** A procedural macro has no `$crate`. `crates/tiler-macros/src/lib.rs` therefore emits one fixed absolute path, `FACADE_ANCHOR_PATH = "::tiler::__private::expansion_anchor()"`, which resolves only while the consumer's dependency is literally named `tiler`.
+**Fact.** A procedural macro has no `$crate`. `crates/tiler-macros/src/lib.rs` therefore emits fixed absolute facade paths headed by `FACADE_ENTRY_PATH = "::tiler::__private::bind_and_build"` and `FACADE_ROUTE_ENTRY_PATH = "::tiler::__private::bind_route_and_build"`; retained diagnostics also route through the exact `::tiler::__private::__tiler_compile_error!` authority. Every route still resolves only while the consumer's dependency is literally named `tiler`.
 
 **Fact.** The failure is loud, not silent: renaming produces `error[E0433]: failed to resolve: use of unresolved module or unlinked crate 'tiler'` at the invocation. Nothing is silently wrong, which is why this is p2 and not a defect.
 
@@ -41,9 +41,10 @@ One candidate is chosen with its reasoning recorded, or the question is explicit
 ## Graph maintenance
 
 - Only `crates/tiler-macros/src/lib.rs` and the facade's fixtures are in scope; a cache-key change is a separate ticket against `implementation/cache`.
-- `crates/tiler-macros/src/lib.rs` cites this ticket id by name at `FACADE_ANCHOR_PATH`. Renaming this ticket orphans that reference.
+- `crates/tiler-macros/src/lib.rs` cites this ticket id by name immediately above `FACADE_ENTRY_PATH`. Renaming this ticket orphans that reference.
 
 ## Trigger check log
 
 - 2026-08-04 — **not fired, and trigger 2's premise is refuted rather than merely unmet.** Trigger 1 is unmet: no consumer renames its Tiler dependency. Trigger 2 named "the first artifact-identity work that must decide what the expansion-time compilation key contains", and that work **landed** — `crates/tiler-cache/src/expansion/key.rs` derives the key from a `ComposedSubject`, and `SubjectFacets` is exactly `{ backend_compilations, artifact_program }` (`crates/tiler-cache/src/expansion/subject.rs:155-166`). It decided the key's complete contents **without needing the resolved-name question answered**, because a consumer's dependency spelling changes no byte of either facet. So the prediction that the question "must be answered anyway" is false, and the surviving trigger is trigger 1 alone. Recheck: `grep -n 'struct SubjectFacets' -A 12 crates/tiler-cache/src/expansion/subject.rs`.
 - 2026-08-04 — **stale citation corrected.** Graph maintenance above says `crates/tiler-macros/src/lib.rs` cites this ticket at `FACADE_ANCHOR_PATH`. That constant no longer exists; the anchor is now four constants — `FACADE_ENTRY_PATH` (`:105`), `FACADE_ROUTE_ENTRY_PATH` (`:113`), `FACADE_FACTS_TYPE` (`:116`), `FACADE_ROUTE_FACTS_TYPE` (`:119`) — plus a literal `::tiler::__private::RouteFacts` in `crates/tiler-macros/src/aot.rs:270`. The ticket id is still cited by name, at `crates/tiler-macros/src/lib.rs:103`, so renaming this ticket still orphans a reference; the file is out of this sweep's scopes, so the correction is recorded here rather than made there.
+- 2026-08-09 — **not fired.** The unsafe-authority repair added another exact generated facade route for retained diagnostics, but it deliberately kept the same absolute `::tiler` namespace and did not add a renamed-dependency consumer. The repository manifests contain no dependency declared with `package = "tiler"` under another local name. Trigger 1 remains the first real renamed consumer; the compilation-key trigger remains retired as explained above.

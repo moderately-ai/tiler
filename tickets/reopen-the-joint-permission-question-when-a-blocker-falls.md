@@ -28,3 +28,4 @@ On either, present the joint admission question to Tom with the reassessment pac
 ## Trigger check log
 
 - 2026-08-06 — **not fired.** Blocker 1: `grep -m1 '^status:' tickets/derive-the-value-precondition-the-online-softmax-bound-needs-for-its-subnormal-clause.md` returns `status: todo`. Blocker 2: the rule-object record's obligation 3 stands as derived; no schedule type carries the merge topology.
+- 2026-08-09 — **not fired; the first blocker's old status is retired.** `derive-the-value-precondition-the-online-softmax-bound-needs-for-its-subnormal-clause` is now `deferred`, not `todo`, because no governed precondition vocabulary can discharge the subnormal clause yet. No schedule type carries the required `(m, d)` pair-merge topology either. Both substantive blockers therefore remain even though the ticket-state spelling changed.

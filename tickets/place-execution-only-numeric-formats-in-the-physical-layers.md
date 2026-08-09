@@ -38,3 +38,4 @@ The trigger has fired and the physical fact is stated at the layer that owns it 
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** Track D-11's trigger is checked in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md):217: no selected backend operation needs TF32, `.ue4m3`, `.ue8m0`, `x86_fp80`, or `ppc_fp128`, and none could yet state its conversion boundaries, delivered behaviour, target detection, artifact identity, and refusal.
+- 2026-08-09 — **not fired.** A fresh source and ledger read still finds these names only in the research taxonomy, the support ledger, and the semantic-catalog negative census; no selected backend operation, target-profile fact, kernel type, or physical carrier names one. The trigger therefore remains a real selected physical consumer, not the existence of the taxonomy row.

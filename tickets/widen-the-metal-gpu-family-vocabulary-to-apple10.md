@@ -58,3 +58,4 @@ Whichever way it goes, the `MetalGpuFamily` doc comment currently points here by
 ## Trigger check log
 
 - 2026-08-04 — **not fired**, re-confirmed by the deferred sweep hours after the deferral above was recorded. No retained measurement observes a device reporting `MTLGPUFamilyApple10`, and the `prototypes/serial-sum-run` binding gap is unresolved, so the stated precondition is also unmet.
+- 2026-08-09 — **not fired.** `MetalGpuFamily` still ends at `Apple9`; the retained runtime and conformance measurements still report Apple9; and `prototypes/serial-sum-run` still records that `metal` 0.33.0 cannot name Apple10. The SDK constant's existence is already documented, but the measurement and binding prerequisites for widening remain absent.

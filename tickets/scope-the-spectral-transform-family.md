@@ -50,3 +50,4 @@ The family has signatures for its real and complex variants, a canonical normali
 ## Trigger check log
 
 - 2026-08-05 — **not fired, on either half.** The complex vertical's trigger is unfired — no operation admits `tiler::complex@1` and its constructor refuses every component but f16, f32, and f64 — and no workload names a spectral transform. Recheck: read the `Trigger check log` or activation section of [`scope-the-complex-arithmetic-vertical`](scope-the-complex-arithmetic-vertical.md) and re-run the command it names.
+- 2026-08-09 — **not fired, on either half.** `tiler::complex@1` remains recognition-only with no complex operation, and no workload names a Fourier or related transform. Neither catalog identity nor a host library's FFT availability satisfies the two-part trigger.

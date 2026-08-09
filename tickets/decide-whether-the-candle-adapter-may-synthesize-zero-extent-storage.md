@@ -1,14 +1,14 @@
 ---
 id: decide-whether-the-candle-adapter-may-synthesize-zero-extent-storage
 title: Decide whether the Candle adapter may synthesize storage for a zero-extent tensor
-status: deferred
+status: awaiting-decision
 priority: p3
 dependencies: []
 related: [route-a-zero-extent-program-through-candle-metal-storage, prototype-candle-metal-adapter]
 scopes: [implementation/candle]
 shared_scopes: [project/tickets]
 paths: []
-tags: [candle, runtime, decision]
+tags: [candle, runtime, decision, needs-tom, public-boundary]
 ---
 ## The decision
 
@@ -38,6 +38,14 @@ Either of these:
 - **Candle's Metal allocator admits a zero-length allocation** (or rounds one up to a minimum) so a zero-element tensor exists at the pinned revision. The placeholder question then becomes moot for this shape and this ticket closes without needing the decision — `prototypes/candle-metal-adapter`'s proof detects that transition itself and fails rather than reporting a routable member as refused, so the trigger announces itself.
 
 Do not implement the placeholder before the trigger. A half-taken placeholder — storage synthesized without the accessible-range invariant, or a route that stops refusing without a decision behind it — is worse than either endpoint.
+
+## Decision packet — 2026-08-09
+
+The first trigger is this ticket's purpose, not a reason to hide it from the decision queue. The worked `1 x 0` input, current typed refusal, zero-length accessible-range invariant, and consumer-boundary consequence are all present. The node is therefore `awaiting-decision`.
+
+**Recommendation: keep the typed refusal until Candle itself can represent the zero-element tensor.** Synthesizing storage for an absent caller allocation creates a new input-backing class whose lifetime and aliasing contract every adapter would otherwise have to rediscover. **Strongest counterpoint:** the artifact proves the input is unread and declares a zero accessible range, so a one-byte address-only placeholder can preserve memory safety while enabling a semantically valid empty-domain program today.
+
+Tom may accept the refusal as the standing Candle rule, accept the bounded placeholder with the invariants above, or require a cross-adapter ADR before either implementation changes. A “no placeholder” answer closes this ticket; a “yes” answer returns it to `todo` with the accepted exact boundary.
 
 ## Trigger check log
 

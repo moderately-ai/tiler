@@ -47,3 +47,4 @@ Either a demonstrating prompt exists and `A-tie` carries exact inputs and a requ
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** Trigger 1 is unmet: [`drive-the-complete-forward-pass-over-three-artifacts`](drive-the-complete-forward-pass-over-three-artifacts.md) is `todo`, so no tie-resolving implementation exists that a demonstrating row could fail. Trigger 2 is unmet: no workload with a narrower runner-up margin than C1's 0.266 has been named. Recheck: that ticket's status.
+- 2026-08-09 — **not fired.** `drive-the-complete-forward-pass-over-three-artifacts` remains `todo`, and no replacement corpus row with a narrower runner-up margin has been named. The conformance corpus being `done` fixes the unknown A-tie row; it does not create the executable tie-policy subject this search requires.

@@ -44,3 +44,4 @@ The trigger has fired and the selected format's nine obligations are stated toge
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** Track D-5's trigger is checked in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md):171: no selected model or kernel names an exact OCP format with its operations, conversion and accumulation policy, physical representation, refusal rules, dispatchability, and corpus.
+- 2026-08-09 — **not fired.** The six OCP identities remain catalog-only. The selected quantized workload names strict-affine U8/F32 rather than one of these formats, and no kernel supplies the complete operation, conversion/accumulation, carrier, refusal, target, and corpus bundle.

@@ -1,14 +1,14 @@
 ---
 id: measure-whether-a-targets-exponential-is-exact-at-zero
 title: Measure whether a target's exponential is exact at zero
-status: deferred
+status: todo
 priority: p3
 dependencies: []
 related: [derive-the-tree-fold-form-of-the-online-softmax-rescaling-bound, expose-the-numeric-elementary-accuracy-a-parametric-bound-can-instantiate]
-scopes: [research/numerics]
+scopes: [research/numerics, research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
-tags: [tiler-research, numerics, accuracy, transcendentals]
+tags: [tiler-research, numerics, accuracy, transcendentals, measurement, trigger-fired]
 ---
 ## User-visible outcome
 
@@ -39,3 +39,4 @@ The first target profile that declares a numeric elementary accuracy a parametri
 ## Trigger check log
 
 - 2026-08-06 — not fired. No target authority yields a numeric `eps_exp`; [`expose-the-numeric-elementary-accuracy-a-parametric-bound-can-instantiate`](expose-the-numeric-elementary-accuracy-a-parametric-bound-can-instantiate.md) is the ticket that would change that and is open. Reproduce with `tkt show expose-the-numeric-elementary-accuracy-a-parametric-bound-can-instantiate`.
+- 2026-08-09 — **fired.** The named dependency is `done`. `elementary_relative_accuracy` now obtains an exact rational from the governed target/requirement authority, including `24u` for the registered softmax and SiLU requirements and a typed magnitude domain. A real target row can therefore instantiate the parametric quantity this zero-point measurement sharpens. The measurement is no longer speculative and moves to `todo`; `research/apple-targets` is added because the required device result and environment row belong in the Apple target record, not only in the generic numerical derivation.

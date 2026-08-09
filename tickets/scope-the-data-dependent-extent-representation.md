@@ -50,3 +50,4 @@ One representation is chosen against a named workload with its allocation, ABI, 
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** No workload requires a data-dependent result extent; the pinned workload's every extent is either static or a bound symbol under the sourced-extent profile, and its one growing extent `S` is related additively to `C` and `T` rather than derived from values. Recheck: `rg -n 'Q-SHAPE-004|Q-SHAPE-005' docs/open-questions.md` — both triggers remain stated and unfired.
+- 2026-08-09 — **not fired.** Sourced and additive symbolic extents have widened substantially, but every governed extent still derives from declarations rather than tensor contents. No workload names `NonZero`, `Compress`, `Unique`, or operand-valued `k`; no device-produced extent or bounded-validity-count representation has been selected.

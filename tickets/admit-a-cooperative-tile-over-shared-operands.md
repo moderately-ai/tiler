@@ -1,14 +1,14 @@
 ---
 id: admit-a-cooperative-tile-over-shared-operands
 title: Admit a cooperative tile whose participants share operands rather than one output
-status: deferred
+status: awaiting-decision
 priority: p1
 dependencies: [admit-a-two-dimensional-cooperative-staging-relation]
 related: [realize-the-strict-contraction-on-metal, realize-the-tiled-contraction-schedule-and-its-metal-emission, implement-the-single-workgroup-synchronized-reduction-strategy]
 scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, ir, physical-planning, deferred]
+tags: [implementation, ir, physical-planning, public-boundary, decision, needs-tom]
 ---
 ## User-visible outcome
 
@@ -30,9 +30,22 @@ A workgroup whose invocations each own **their own** output position, and cooper
 
 The staged relation the tile's reads need ([`admit-a-two-dimensional-cooperative-staging-relation`](admit-a-two-dimensional-cooperative-staging-relation.md), a hard dependency: without it the tile's reads are unstatable and this relation would be verified over an access it cannot express), the contraction topology and its Metal body ([`realize-the-tiled-contraction-schedule-and-its-metal-emission`](realize-the-tiled-contraction-schedule-and-its-metal-emission.md)), and any cost model that would make the tile win.
 
-## Activation triggers
+## Activation history
 
-Deferred behind its dependency and behind Tom's acceptance of two public boundaries — a second cooperative tile relation and a new `OwnershipProofKind`. It becomes work when [`admit-a-two-dimensional-cooperative-staging-relation`](admit-a-two-dimensional-cooperative-staging-relation.md) is `done` **and** Tom has accepted those two boundaries.
+This was deferred behind its dependency and Tom's acceptance of two public boundaries — a second cooperative tile relation and a new `OwnershipProofKind`. [`admit-a-two-dimensional-cooperative-staging-relation`](admit-a-two-dimensional-cooperative-staging-relation.md) is now `done`; only the acceptance condition remains.
+
+## Decision boundary — 2026-08-09
+
+The implementation dependency is `done`; the only remaining activation condition is Tom's answer. This ticket therefore belongs in `awaiting-decision`, not `deferred`.
+
+Tom decides whether the next cooperative-tile vertical may add both of these public schedule concepts:
+
+1. a second cooperative relation in which every participant owns one output while sharing staged operands; and
+2. an ownership-proof kind that proves the blocked invocation-to-output map is a bijection over the declared output block.
+
+**Recommendation: accept the pair as one bounded vertical.** The existing one-committer relation proves a different ownership theorem and cannot be weakened without invalidating the workgroup-reduction contract; a separate relation and proof keep both statements checkable. **Strongest counterpoint:** the blocked map, tail policy, and exact proof payload have not yet been implemented, so Tom may prefer a smaller research spike that fixes their spelling before accepting public enum variants.
+
+If accepted, return this ticket to `todo` and implement the exact accepted spelling. If revised, record the replacement boundary here before dispatch. Acceptance does not authorize the Metal body or cost model owned by the related tickets.
 
 ## Closes when
 

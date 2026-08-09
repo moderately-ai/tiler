@@ -1,14 +1,14 @@
 ---
 id: scope-launch-granularity-optimization-for-the-decode-dominated-regime
 title: Scope launch-granularity optimization for the decode-dominated regime
-status: deferred
+status: todo
 priority: p3
-dependencies: []
+dependencies: [prototype-metal-runtime-proof]
 related: [decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode]
-scopes: [research/program-planning]
+scopes: [research/program-planning, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
-tags: []
+tags: [research, performance, runtime, trigger-fired]
 ---
 ## User-visible outcome
 
@@ -25,3 +25,4 @@ A multi-stage program executing end-to-end through the runtime (the contraction 
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** The runtime dispatches single proof members; no multi-stage end-to-end execution exists. Recheck: `grep -rn "prove_contraction\|proof_member" prototypes/serial-sum-run/src/proof.rs | head -3` still showing the per-member proof shape as the only route.
+- 2026-08-09 — **fired.** `prototype-metal-runtime-proof` is `done` and records the first device execution of the multi-stage path: the materialized program ran two dispatches over one shared allocation and agreed bit-for-bit with the selected one-dispatch program across the proof matrix. That is an end-to-end multi-stage runtime subject, so this scoping work is now runnable. The decode-dominated claim remains an inference to measure; the proof fires the trigger without supplying the decoder-layer measurement.

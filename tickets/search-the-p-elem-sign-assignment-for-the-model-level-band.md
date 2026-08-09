@@ -36,3 +36,4 @@ No threshold: this widens or confirms a measured band and decides nothing about 
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** Triggers 1, 2, and 3 all require a *Tiler* result at a C1 position, and no Tiler execution of the workload exists ([`prove-the-c1-complete-model-execution`](prove-the-c1-complete-model-execution.md) is `todo`). Trigger 4 is unmet: no accuracy contract subordinate to `tiler::softmax-f32@1`, `tiler::silu-f32@1`, or `tiler::rms-norm-f32@1` has widened and no fourth subordinate has joined them.
+- 2026-08-09 — **not fired.** `prove-the-c1-complete-model-execution` remains `todo`, so no Tiler C1 result can satisfy triggers 1–3. The governed subordinate accuracy contracts have gained typed explain and target rows, but none widened and no fourth subordinate elementary family joined the three, so trigger 4 also remains unmet.

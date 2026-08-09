@@ -1,6 +1,6 @@
 ---
 id: decide-whether-heading-anchors-in-markdown-links-can-be-resolved
-title: Decide whether heading anchors in markdown links can be resolved
+title: Resolve heading anchors when a Markdown renderer is pinned
 status: deferred
 priority: p3
 dependencies: []
@@ -8,7 +8,7 @@ related: []
 scopes: [implementation/workspace]
 shared_scopes: []
 paths: []
-tags: []
+tags: [deferred, documentation, tooling]
 ---
 ## The deferred question
 

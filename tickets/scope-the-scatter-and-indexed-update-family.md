@@ -5,7 +5,7 @@ status: deferred
 priority: p2
 dependencies: []
 related: [admit-an-indirect-gather-family-for-tied-embedding-lookup, scope-the-effect-signature-opening, scope-the-data-dependent-extent-representation, derive-the-operation-family-and-signature-delivery-graph]
-scopes: [research/semantic-graph, research/indexing]
+scopes: [research/semantic-graph, research/indexing, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, operations, indexing, scatter, deferred]
@@ -16,7 +16,7 @@ Q-SHAPE-007's unfired half acquires an owner: a scatter is scoped as a **pure** 
 
 ## Why this is deferred rather than open
 
-**Fact — the question names this half as unowned.** [Q-SHAPE-007](../docs/open-questions.md#q-shape-007--indirect-gatherscatter-relations) records: "Trigger, for the half that has **not** fired: scatter. The gather ticket's non-goals exclude scatter and any data-dependent output shape, and no ticket proposes one, so duplicate-write and write-determinism rules stay reserved."
+**Historical Fact — the question named this half as unowned when this ticket was filed.** [Q-SHAPE-007](../docs/open-questions.md#q-shape-007--indirect-gatherscatter-relations) said no ticket proposed scatter. That became false as soon as this ticket landed; the 2026-08-09 board audit repairs the durable question to name this ticket as the deferred owner while preserving that the workload trigger has not fired.
 
 **Fact — the purity claim is the corpus's position and is mechanically enforced.** [the mature operation and signature taxonomy](../docs/research/semantic-graph/mature-operation-and-signature-taxonomy.md)'s F-35 marks it: "**Pure at the semantic level and this is the load-bearing claim**: a scatter produces a new value rather than mutating one." `OperationEffect` has exactly one variant and is deliberately not `#[non_exhaustive]`, so a second effect class is a compile error at three encoders — mutation is unrepresentable rather than merely unimplemented. Every ecosystem spelling that reads as mutation — `index_put_`, `scatter_`, `dynamic_update_slice` — resolves to the pure form or is out of scope.
 
@@ -50,3 +50,4 @@ The family is scoped as pure with a stated collision order, a declared uniquenes
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** No workload requires an indexed update as a graph operation; the one candidate, the KV cache append, is a concatenation whose retained tensors are consumer-owned. Recheck: `rg -n 'scatter' docs/open-questions.md` — Q-SHAPE-007's scatter clause still reads that no ticket proposes one, which this ticket's landing is what changes.
+- 2026-08-09 — **not fired, and the owner drift is repaired.** No workload requires an indexed update; KV growth remains concatenation/caller-owned state. `docs/open-questions.md` now names this deferred ticket as the scatter owner instead of retaining the false statement that no ticket proposes one.

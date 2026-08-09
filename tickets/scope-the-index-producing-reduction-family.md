@@ -50,3 +50,4 @@ The tie-break and NaN policy are stated, `RQ-OP-07`'s arity follows from them ra
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** No workload requires an in-graph index-producing reduction; the pinned workload samples its logits on the consumer side by the L6 record's own boundary. Recheck: `rg -o -N --no-filename 'tiler::[a-z0-9-]+@[0-9]+' crates/tiler-ir/src/semantic/ | sort -u` — 46 governed keys today, comprising the dtype identities, the ULP metric key, and the eighteen registered operation keys; the family's key is absent from that list.
+- 2026-08-09 — **not fired.** The language-model conformance work still keeps greedy selection outside the program, and no routing or sampling workload requires in-graph ArgMin/ArgMax. The embedded softmax maximum remains a value fold without an index result.

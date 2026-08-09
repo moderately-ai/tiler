@@ -1,14 +1,14 @@
 ---
 id: derive-the-conformance-evidence-ledger-cells-from-executed-runs
 title: Derive the conformance-evidence ledger cells from executed runs
-status: deferred
+status: todo
 priority: p2
 dependencies: []
 related: [survey-what-belongs-in-the-conformance-crate, decide-whether-the-bf16-conformance-evidence-cell-overstates, own-the-dtype-support-maturity-matrix, conform-the-bf16-vertical-end-to-end]
-scopes: [research/verification]
+scopes: [research/verification, implementation/conformance, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
-tags: [research, conformance, documentation, ledger]
+tags: [research, conformance, documentation, ledger, trigger-fired]
 ---
 ## Question
 
@@ -57,3 +57,4 @@ grep -rln "result_sha256\|ReferenceEvaluator" crates/tiler-conformance/src crate
 ## Trigger check log
 
 - 2026-08-07 — **not fired.** `crates/tiler-conformance` contains exactly two files, `Cargo.toml` and `src/lib.rs`, and `src/lib.rs` holds a module header and no items. The command above returns `0`.
+- 2026-08-09 — **fired.** The crate is no longer an empty shell: it carries the dispatched `f32` serial-sum/contraction evidence and the separate pure-BF16 vertical, with retained result hashes, reference evaluation, exact environment qualification, and distinct ledger claims. The ticket's own reproduction now returns eight files rather than zero, including `serial_sum.rs`, `bf16_vertical.rs`, `envelope.rs`, and `publication/proof.rs`. Two distinct conformance cells therefore exist and the comparison/derivation question is no longer speculative. The ticket moves to `todo`; `implementation/conformance` and `contracts/navigation` are declared because the executable evidence and `docs/dtype-support.md` are the actual work surface. Any reconciliation of the public evidence enums remains a Tom-reviewed boundary and must stop before an unaccepted API edit.

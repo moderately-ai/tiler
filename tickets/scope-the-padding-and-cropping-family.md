@@ -50,3 +50,4 @@ The family has a signed per-axis attribute schema, a materializing oracle, a gua
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** No named workload needs explicit padding or cropping; the pinned workload's only padding-shaped concern is the additive causal mask, which is a bound `f32` program input rather than a pad. Recheck: `rg -o -N --no-filename 'tiler::[a-z0-9-]+@[0-9]+' crates/tiler-ir/src/semantic/ | sort -u` — 46 governed keys today, comprising the dtype identities, the ULP metric key, and the eighteen registered operation keys; the family's key is absent from that list.
+- 2026-08-09 — **not fired.** No convolution, pooling, or explicit pad/crop workload is selected. The causal mask remains ordinary bound tensor data, and physical tile-boundary questions remain schedule obligations rather than a semantic padding occurrence.

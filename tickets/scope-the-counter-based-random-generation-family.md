@@ -50,3 +50,4 @@ The family has a key carrying its algorithm as identity, an exact oracle, two or
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** No workload requires in-graph randomness; the pinned track is inference and samples on the consumer side. Recheck: `rg -o -N --no-filename 'tiler::[a-z0-9-]+@[0-9]+' crates/tiler-ir/src/semantic/ | sort -u` — 46 governed keys today, comprising the dtype identities, the ULP metric key, and the eighteen registered operation keys; the family's key is absent from that list.
+- 2026-08-09 — **not fired.** The selected language-model workload still has `attention_dropout = 0.0`, and token sampling remains outside the semantic program. No stochastic-rounding or in-graph sampling consumer exists, and no counter-based generator key is registered.

@@ -50,3 +50,4 @@ The value-kind half and the region half are scoped separately, each against a na
 ## Trigger check log
 
 - 2026-08-05 — **not fired, on either route.** No workload requires graph functions, recursion, or structured control flow, and neither identified value-kind consumer is live: `RQ-OP-11`'s comparator region is deferred under [`scope-the-ordering-and-rank-selection-families`](scope-the-ordering-and-rank-selection-families.md) and the collective token under [`multi-device-and-sharding-scope-gate`](multi-device-and-sharding-scope-gate.md). Recheck: `rg -n 'Q-SEM-012' -A4 docs/open-questions.md`.
+- 2026-08-09 — **not fired, on either route.** Multi-result tensor values and staged intermediates have widened, but they remain tensor values rather than tuples/tokens/futures. No graph function, comparator region, effect token, recursion, or structured-control-flow workload has arrived.

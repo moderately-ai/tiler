@@ -48,3 +48,4 @@ The family has a key, a binary-search oracle, and a sortedness precondition rout
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** No workload requires an ordered search. Recheck: `rg -o -N --no-filename 'tiler::[a-z0-9-]+@[0-9]+' crates/tiler-ir/src/semantic/ | sort -u` — 46 governed keys today, comprising the dtype identities, the ULP metric key, and the eighteen registered operation keys; the family's key is absent from that list.
+- 2026-08-09 — **not fired.** No bucketing, interpolation-table, quantile, or other ordered-search consumer has entered a semantic program. The newer value-domain provenance machinery still has no sortedness predicate or validation route.

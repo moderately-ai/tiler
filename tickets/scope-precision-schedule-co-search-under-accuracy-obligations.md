@@ -1,14 +1,14 @@
 ---
 id: scope-precision-schedule-co-search-under-accuracy-obligations
 title: Scope precision-schedule co-search under accuracy obligations
-status: deferred
+status: todo
 priority: p3
-dependencies: []
+dependencies: [define-the-model-level-conformance-corpus, implement-analytical-component-cost-model, emit-analytical-costs-through-the-typed-cost-vocabulary]
 related: [implement-workload-selected-quantized-parameter-maps]
-scopes: [research/numerics]
+scopes: [research/numerics, research/cost-model, research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
-tags: []
+tags: [research, numerics, cost-model, trigger-fired]
 ---
 ## User-visible outcome
 
@@ -25,3 +25,4 @@ Precision becomes a search dimension jointly with the schedule — the SageAtten
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** The corpus ticket is not `done` and no cost authority exists in `crates/`. Recheck: `grep -m1 '^status:' tickets/define-the-model-level-conformance-corpus.md` and the cost-type grep from the tuning-loop ticket's log.
+- 2026-08-09 — **fired.** `define-the-model-level-conformance-corpus`, `implement-analytical-component-cost-model`, and `emit-analytical-costs-through-the-typed-cost-vocabulary` are all `done`. The corpus supplies named permitted-divergence/refusal rows, while the compiler now carries structural and analytical cost authorities with typed cost assessments. Calibration is still future work, but the trigger asked for *any* cost authority, not calibrated device truth; this ticket is therefore `todo` and must decide how uncalibrated versus measured costs constrain the first co-search scope.

@@ -32,3 +32,4 @@ Until then the redundancy is a stated cost of an implemented capability, recorde
 ## Trigger check log
 
 - 2026-08-04 — **not fired.** Trigger 2 is unmet: `OperationKind::Predicated { predicate, body }` still carries no results (`crates/tiler-ir/src/kernel/model.rs:755`, `:1289`), so no value-producing predicated region has been accepted. Trigger 1 is unmet: the only multi-round cooperative consumer is the tiled contraction, whose realization is still `deferred`, so no multi-round kernel has been measured on device. Recheck: `grep -n 'Predicated {' crates/tiler-ir/src/kernel/model.rs`.
+- 2026-08-09 — **not fired.** `OperationKind::Predicated { predicate, body }` and `OperationView::Predicated { predicate, body }` still carry no result or else value, and the tiled contraction realization remains deferred behind the cooperative-tile public decision. No measured multi-round device kernel exists, so neither trigger has fired.

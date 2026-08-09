@@ -50,3 +50,4 @@ Answer `RQ-OP-12` against the named realization's published guarantee: state whi
 ## Trigger check log
 
 - 2026-08-05 — **not fired, on either half.** No workload names a decomposition, and the corpus's one measured vendor-library candidate went the other way: `MPSMatrixMultiplication` was refuted against all twenty-two named topologies, which is a weaker operation than a decomposition and still published nothing admissible. Recheck: `rg -n 'MPSMatrixMultiplication' docs/research/scheduling/first-metal-contraction-realizations.md`.
+- 2026-08-09 — **not fired, on either half.** The selected workloads name contractions and normalizations, not a factorization or decomposition, and no vendor or governed realization publishes a numerical guarantee refining a Tiler decomposition contract. A callable library routine without that guarantee remains an inadmissible fallback rather than evidence for activation.

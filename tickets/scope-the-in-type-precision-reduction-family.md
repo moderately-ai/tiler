@@ -50,3 +50,4 @@ The family has a key whose attributes are part of identity, an exact round-trip 
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** No named producer requires precision reduction within one type; the corpus's only in-type transformation is `ConvertOp::CanonicalizeF32Nan`, an `f32`-to-`f32` NaN canonicalization, which changes no exponent or significand width. Recheck: `rg -o -N --no-filename 'tiler::[a-z0-9-]+@[0-9]+' crates/tiler-ir/src/semantic/ | sort -u` — 46 governed keys today, comprising the dtype identities, the ULP metric key, and the eighteen registered operation keys; the family's key is absent from that list.
+- 2026-08-09 — **not fired.** No producer asks for an in-type exponent/significand reduction. BF16 widening and exact BF16 constant reinterpretation change type or physical spelling respectively; neither is a same-resolved-type `reduce_precision` operation.
