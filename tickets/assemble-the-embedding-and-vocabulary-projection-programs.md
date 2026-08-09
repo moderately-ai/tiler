@@ -3,7 +3,7 @@ id: assemble-the-embedding-and-vocabulary-projection-programs
 title: Assemble the embedding and vocabulary-projection programs
 status: todo
 priority: p1
-dependencies: [admit-a-storage-carrier-for-integer-program-inputs, admit-the-rms-normalization-family, reclassify-language-model-work-as-a-conformance-track]
+dependencies: [admit-a-storage-carrier-for-integer-program-inputs, admit-the-rms-normalization-family, reclassify-language-model-work-as-a-conformance-track, admit-an-indirect-gather-family-for-tied-embedding-lookup, admit-the-contraction-semantic-profile]
 related: [design-model-ingestion-and-complete-execution, admit-an-indirect-gather-family-for-tied-embedding-lookup, admit-the-contraction-semantic-profile, project-only-the-final-position-logits]
 scopes: [implementation/ir, implementation/reference]
 shared_scopes: [project/tickets]
@@ -17,6 +17,8 @@ The two ends of the model exist as programs: token IDs become a residual stream,
 ## Required content
 
 The two programs [the L6 record](../docs/research/program-planning/complete-model-ingestion-and-execution.md) calls P1 and P3.
+
+**Graph correction — 2026-08-09.** The ticket originally left the gather and contraction semantic families under `related` even though P1 and P3 cannot be constructed without them. Both have landed and are now dependencies: [`admit-an-indirect-gather-family-for-tied-embedding-lookup`](admit-an-indirect-gather-family-for-tied-embedding-lookup.md) owns P1's operation and bounds refusal, and [`admit-the-contraction-semantic-profile`](admit-the-contraction-semantic-profile.md) owns P3's projection operation. The outstanding integer-storage decision remains the only non-terminal family/carrier dependency.
 
 - **P1 — embedding gather.** Inputs `token_ids [T]` at the admitted integer identity and `W_embed [151936, 1024]` F32; output `x0 [T, 1024]`; one operation.
 - **P3 — final norm and vocabulary projection.** Inputs `h [T, 1024]`, `w_norm [1024]`, and the same `W_embed`; output `logits [T, 151936]` F32; two operations, `model.norm` then `Contract td,od->to`.

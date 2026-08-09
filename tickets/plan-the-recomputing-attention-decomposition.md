@@ -12,7 +12,7 @@ tags: [implementation, physical-planning, fusion, feasibility, attention, langua
 ---
 ## User-visible outcome
 
-A second complete decomposition of the attention chain that materializes **no** `[8, 2, T, S]` tensor — only two `[8, 2, T]` statistics — so that the long benchmark rows become feasible without consuming any numerical permission. At the B1-d prefill row it needs 1,150,287,880 bytes where the reachable materialized plan needs 18,329,108,488.
+A second complete decomposition of the attention chain that materializes **no** `[8, 2, T, S]` tensor — only two `[8, 2, T]` statistics — so that the long benchmark rows become feasible without consuming any numerical permission. At the B1-d prefill row its design arithmetic is 1,150,287,880 bytes, against 18,329,108,488 for the historical unfused materialized design and 5,444,206,600 for that design's one-tensor handoff case. The materialized implementation ticket must supply the actual current comparison; this ticket does not keep calling the proposal-era unfused form the reachable plan after its fusion roles landed.
 
 ## What it is, precisely
 
@@ -26,7 +26,7 @@ A second complete decomposition of the attention chain that materializes **no** 
 
 **Fact — the transient requirement, from the design's arithmetic.** The statistics are `2 · 16 · T · 4` bytes: 1,280 at C1 prefill and 1,048,576 at B1-d, against the 4,294,967,296-byte tensor they replace.
 
-| Row | `T = S` | Materialized, unfused | Materialized, best case | This plan | Ratio against reachable |
+| Row | `T = S` | Materialized, historical unfused | Materialized, design best case | This plan | Ratio against historical unfused |
 | --- | --- | --- | --- | --- | --- |
 | C1 prefill | 10 | 1,101,208 | 1,082,008 | 1,076,888 | 1.02× |
 | B1-b prefill | 512 | 123,207,688 | 72,876,040 | 56,164,360 | 2.2× |

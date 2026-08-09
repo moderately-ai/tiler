@@ -3,7 +3,7 @@ id: calibrate-device-cost-models
 title: Calibrate analytical costs for selected device profiles
 status: deferred
 priority: p2
-dependencies: [implement-analytical-component-cost-model, emit-analytical-costs-through-the-typed-cost-vocabulary]
+dependencies: [implement-analytical-component-cost-model, emit-analytical-costs-through-the-typed-cost-vocabulary, supply-the-model-level-benchmark-protocol-to-cost-calibration]
 related: [supply-the-model-level-benchmark-protocol-to-cost-calibration, define-first-metal-lm-workload]
 scopes: [implementation/compiler, research/cost-model]
 shared_scopes: [project/tickets]
@@ -39,7 +39,7 @@ Any consequential public or cross-crate crate, module, trait, type, or call-site
 
 **Who acts.** Whoever writes the first device measurement owns reopening this ticket; it is not a coordinator decision and does not wait for a sweep. **Until it is reopened and closed, nothing may describe the analytical model as calibrated or claim device-optimal latency from it** — the model's own documentation is the current authority on what it does and does not state, and it says two of nine components are `Unknown`.
 
-**Corrected 2026-08-01 — trigger 3 has fired, and the fourth input is another ticket's rather than this one's.** [`define-first-metal-lm-workload`](define-first-metal-lm-workload.md) delivered its selection, so representative kernels, the exact target profile, and the device all exist. Trigger 3's closing clause — "leaving only the benchmark protocol, which is this ticket's own work" — is the part that is now stale: rung L8 of the language-model ladder derived the protocol's shape from the workload's own residency and host discipline, and [`supply-the-model-level-benchmark-protocol-to-cost-calibration`](supply-the-model-level-benchmark-protocol-to-cost-calibration.md) owns writing it, because the protocol is a property of the workload while the fitting, provenance, uncertainty, and drift policy remain properties of the model and stay here. This ticket's deferral is otherwise unchanged, and the "who acts" rule above still governs its reopening.
+**Corrected 2026-08-01, with the graph edge added 2026-08-09 — trigger 3 has fired, and the fourth input is another ticket's rather than this one's.** [`define-first-metal-lm-workload`](define-first-metal-lm-workload.md) delivered its selection, so representative kernels, the exact target profile, and the device all exist. Trigger 3's closing clause — "leaving only the benchmark protocol, which is this ticket's own work" — is the part that is now stale: rung L8 of the language-model ladder derived the protocol's shape from the workload's own residency and host discipline, and [`supply-the-model-level-benchmark-protocol-to-cost-calibration`](supply-the-model-level-benchmark-protocol-to-cost-calibration.md) owns writing it, because the protocol is a property of the workload while the fitting, provenance, uncertainty, and drift policy remain properties of the model and stay here. It is now a dependency rather than only a related link, because calibration cannot start without it. This ticket's deferral is otherwise unchanged, and the "who acts" rule above still governs its reopening.
 
 ## Trigger check log
 

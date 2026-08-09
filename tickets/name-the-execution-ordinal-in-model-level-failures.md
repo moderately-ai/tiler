@@ -5,7 +5,7 @@ status: todo
 priority: p2
 dependencies: [drive-the-complete-forward-pass-over-three-artifacts, reclassify-language-model-work-as-a-conformance-track]
 related: [design-model-ingestion-and-complete-execution, scope-tiler-numerical-claims-across-the-candle-kernel-boundary, retain-the-c1-model-attribution-fixture]
-scopes: [implementation/runtime, contracts/integrations]
+scopes: [contracts/integrations, implementation/candle]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, diagnostics, runtime, explain, language-model, class-conformance-fixture]
@@ -18,11 +18,13 @@ A failed forward pass says which of its thirty executions failed, in which phase
 
 **Classified as consumer conformance work on 2026-08-04 under [`reclassify-language-model-work-as-a-conformance-track`](reclassify-language-model-work-as-a-conformance-track.md).** This ticket reads as a generic runtime-diagnostics capability and is not one, and the distinction decides where its code lands.
 
-**Fact.** `route_with_adapter` at `crates/tiler-runtime/src/adapter.rs:496`–`555` takes one program and one adapter and returns `Result<A::Completion, AdapterRouteFailure<A::Refusal, A::Failure>>` synchronously to its caller. Every stage that can refuse or fail returns through that one value; nothing is reported out of band and nothing is retained across calls. Reproduce with `grep -n 'pub fn route_with_adapter' -A 6 crates/tiler-runtime/src/adapter.rs`.
+**Fact.** `crates/tiler-runtime/src/adapter.rs`, anchor `pub fn route_with_adapter`, takes one program and one adapter and returns `Result<A::Completion, AdapterRouteFailure<A::Refusal, A::Failure>>` synchronously to its caller. Every stage that can refuse or fail returns through that one value; nothing is reported out of band and nothing is retained across calls.
 
 **Inference.** The consumer therefore already knows which of its thirty invocations failed, because it is the one whose call returned the error — the ordinal is determined by the call site rather than carried by a value. Adding an execution ordinal, a phase, or a token-in-flight to a `tiler-runtime` type would put a caller's loop position into a consumer-agnostic runtime's public surface, which is the same class of workload vocabulary [`supersede-the-runtime-owned-kv-state-design`](supersede-the-runtime-owned-kv-state-design.md) removed when it withdrew the cursor and the generation. What Tiler owes generically is what `AdapterRouteFailure` already does: carry each stage's own typed reason whole rather than flattening it, and say on which side of the routing commit the failure fell.
 
 **So the work splits.** The five classes below are a *consumer driver's* obligation — the driver pairs each returned refusal with the ordinal, phase, and token it already holds and reports the pair. Any residue that is genuinely Tiler's is a named gap in a stage's own typed reason (for example, whether a bind refusal names the interface key and the axis), and each such residue is stated as its own generic requirement in this ticket's delivery rather than satisfied by attaching an ordinal.
+
+**Scope correction — 2026-08-09.** Because the delivered ordinal/report composition belongs to the consumer driver, this ticket now claims `implementation/candle`, not `implementation/runtime`. If implementation discovers that a generic stage reason itself lacks required structured data, file that runtime boundary as a separate ticket rather than smuggling a driver ordinal into the generic adapter surface.
 
 ## Required content
 
