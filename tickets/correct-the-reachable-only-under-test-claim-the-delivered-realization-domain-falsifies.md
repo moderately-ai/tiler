@@ -56,3 +56,18 @@ Cite by searchable anchor, not line number, and run the anchor's grep before com
 7. Block `[\`DimensionBehaviour\`]'s own payloads, and the arithmetic type a subject` (3 claims, 2 verified, **1 defective**): every artifact does carry a delivered-realization record (`ArtifactVerificationError::MissingDeliveredRealization`), and the ADR 0081 closure claim holds, but **"[`DecodedNumerical`]'s accessors already returned four of them" is wrong by one**. That impl block returns exactly three of the re-exported types — `SubnormalMode`, `NumericalPermission`, `ExceptionalValueAssumption` — plus `&str` and `u32`, which are not among them. It returned the same three at `002b1d63`, the commit that authored the sentence, so this was never true.
 
 Both defects are one-line repairs in the same file and the same `implementation/artifact` scope, deliberately left for the coordinator to ticket rather than folded into a p3 whose brief says not to expand it.
+
+## Outcome and neighbour disposition — 2026-08-09
+
+Commit `08ecf9c5` corrected the subject clause in `program/mod.rs`: the envelope
+and program-identity populations remain unchanged, thirteen domain constants
+are test-only, and `DELIVERED_REALIZATION_DOMAIN` is named as the one publicly
+reachable, still-reviewed-draft constant. Commit `25604880` closed this bounded
+repair and created `reattach-the-scalar-arithmetic-block-and-correct-its-accessor-count`
+for the two neighbouring defects rather than hiding them in this p3.
+
+That follow-up landed at `6b63c278`. The scalar-arithmetic rationale now sits on
+the numerics re-export it describes, and the `DecodedNumerical` note names its
+three returned vocabulary types instead of repeating the false count of four.
+No domain bytes, visibility, accepted public surface, identity, or codec
+behavior changed in either repair.

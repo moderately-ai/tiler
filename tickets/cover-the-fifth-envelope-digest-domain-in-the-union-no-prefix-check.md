@@ -56,3 +56,23 @@ Every domain the crate hashes appears in the union check; the population is deri
 ## Scheduling note — one file, two live claims
 
 `date-the-artifact-abis-metal-golden-enumeration-to-its-step` also holds `contracts/artifacts` and also edits `docs/artifact-abi.md`, for an unrelated subject (the Metal golden corpus named at the `tiler.schedule.v5` step). The subjects do not overlap but the scope and the file do, so the two must be sequenced rather than run concurrently.
+
+## Outcome and later correction — 2026-08-09
+
+Commit `96dfe333` replaced the incomplete hand-written union with the
+type-sized `GovernedDomain` population, its container split, the pairwise
+no-prefix check, and a source census that catches an admitted constant omitted
+from the enum. The five required population/count sites and the three ordinal
+sites in `docs/artifact-abi.md` were reconciled against the envelope, sidecar,
+and artifact-program constructions. The planted prefix collision failed by
+name, and commit `fd0c63ac` closed the ticket. The digest-crate note and ADR
+0103 historical count were carried by their separately scoped follow-ups.
+
+The population and local check remain current. A later full-source audit found
+that the accepted contract's *cross-crate explanation* introduced by this
+landing was false even though the checked property holds: the IR namespace is
+not disjoint and dependency direction was described backwards. The source-side
+argument was corrected at `f9b0b67d`; the remaining contract correction is now
+owned by `repair-the-artifact-abis-stale-cross-crate-no-prefix-argument`. That
+remainder changes no conclusion of this completed population repair and is not
+silently treated as delivered here.

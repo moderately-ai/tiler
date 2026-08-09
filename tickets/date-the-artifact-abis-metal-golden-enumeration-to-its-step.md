@@ -56,3 +56,14 @@ A narrow reader hazard, not a false claim. The paragraph is written in a tense t
 ## Closes when
 
 The enumeration states the population it is about and the step it belongs to; no golden that postdates the step is claimed to have moved at it; the reason a recount would be wrong is recorded inline; and `make citations` is green.
+
+## Outcome — delivered
+
+Commit `52e9999d` dated the paragraph beside the `tiler.schedule.v5` step. It
+states that the cooperative reduction plus the five named non-staging fixtures
+were the complete six-golden corpus when that step landed, names the four later
+fixtures as later additions, and explicitly refuses a recount that would claim
+those later identities moved before they existed. The current population is
+left to the `GOLDENS` table and its directory-equality test rather than restated
+as another prose count. Commit `b1bd20d9` closed the ticket. No golden, identity,
+domain, or test expectation changed.
