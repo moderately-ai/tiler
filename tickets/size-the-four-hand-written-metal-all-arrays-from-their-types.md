@@ -62,3 +62,11 @@ from `core::mem::variant_count::<Self>()`; the count coupling remains only a
 cross-crate correspondence check. The other fourteen reported sites remain
 outside this ticket and are not reclassified by that follow-up. This correction
 updates the sweep count without changing the four-site `tiler-metal` outcome.
+
+## Outcome
+
+The four-site repair landed in `b7badba8` (`Size the four hand-written Metal ALL arrays from their types`, 2026-08-08) and the ticket closed in `4f277d67`. `MslLanguageVersion::ALL`, `MetalPlatform::ALL`, `MetalFloatArithmeticType::ALL`, and `MetalHostPredicate::ALL` now derive their declared lengths from `core::mem::variant_count::<Self>()`. The tautological `MetalGpuFamily::ALL.len() == variant_count` assertion was removed; its independent ascending-order assertion remains.
+
+Each enum was widened separately while its list was left short, and each perturbation stopped at the declaration with `E0308` before being restored. The audit also demonstrated the old false-green boundary: after repairing exhaustive matches, a short `MetalHostPredicate::ALL` still let the package check and all 122 then-current package tests pass. No enum variant, ordering, public value, tag, identity, or runtime behaviour changed.
+
+The later dated corrections above keep the remainder honest: the payload-carrying IR/artifact populations were separate defects, and the four `tiler-metal-aot` siblings subsequently landed under their own ticket. The fourteen other reported same-shape sites remain only the historical sweep population recorded here; this ticket did not silently absorb them.

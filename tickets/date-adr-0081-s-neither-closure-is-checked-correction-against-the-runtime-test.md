@@ -62,3 +62,9 @@ It was **true when written**, so date beside rather than substitute. Verify with
 **Cite by searchable anchor, run its grep before committing, and use `grep -F`.** Anchors fail as absence three ways: a line break inside them, an emphasis marker the source lacks, and unescaped brackets read as a character class.
 
 **Check this ADR's other claims about the tree and name the count.** Sweeps of two sibling ADRs this week found 9 of 17 and 11 of 18 tree-claim clusters false, most predating the landing that prompted the review — so assume the neighbours are unexamined rather than clean.
+
+## Outcome
+
+Landed in `b74e9d31` (`Correct ADR 0081 runtime closure history`, 2026-08-08) and closed in `5d9384dc`. ADR 0081 now preserves the 2026-07-26 statement as historical and adds a dated correction naming exactly what `the_consumer_links_no_compiler_emitter_or_build_provider` enforces: dev-inclusive negative reachability from `tiler-runtime` to the five compiler/emitter/build-side packages. The correction expressly does not claim an exact normal dependency set or an empty `tiler-metal-aot` closure. The same sweep dated the later envelope route, current workspace population and omissions, and implemented byte-offset route without rewriting the accepted record's historical observations.
+
+The two cross-scope remainders above were subsequently completed in `d6fcb5b4` (`Align runtime dependency records`, 2026-08-08). `crates/tiler-runtime/Cargo.toml` now distinguishes its one normal direct dependency from its dev-inclusive resolved closure, and `docs/architecture.md` names the frontend and runtime checks as two bounded checked slices rather than one exhaustive dependency-table authority. No ADR 0077 change was required.
