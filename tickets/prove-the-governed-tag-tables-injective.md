@@ -3,7 +3,7 @@ id: prove-the-governed-tag-tables-injective
 title: Prove the governed tag tables injective
 status: todo
 priority: p2
-dependencies: []
+dependencies: [derive-the-artifact-numerical-and-fenced-space-populations]
 related: [prove-the-exhaustible-encoder-injectivity-claims-natively]
 scopes: [implementation/ir, implementation/artifact]
 shared_scopes: [project/tickets]

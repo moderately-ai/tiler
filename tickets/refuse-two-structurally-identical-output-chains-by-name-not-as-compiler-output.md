@@ -1,9 +1,9 @@
 ---
 id: refuse-two-structurally-identical-output-chains-by-name-not-as-compiler-output
 title: Refuse two structurally identical output chains by name, not as invalid compiler output
-status: todo
+status: awaiting-decision
 priority: p2
-dependencies: []
+dependencies: [reproduce-the-identical-output-chain-stage-key-collision]
 related: [bound-the-assembled-region-count-and-derive-the-multi-output-budget-actuals]
 scopes: [implementation/compiler, implementation/ir]
 shared_scopes: [project/tickets]
@@ -16,15 +16,19 @@ A program declaring two ordered named outputs whose producer chains are structur
 
 ## Why this exists
 
-**Measurement, 2026-08-06, on `tkt/bound-the-assembled-region-count-and-derive-the-multi-output-budget-actuals` at base `afdac9c9`.** Two independent epilogue chains over two declared inputs — `sum(x * x, axis 1) * 2.0` published as `sx` and `sum(y * y, axis 1) * 3.0` published as `sy`, both at `[1, 4]` — fail `compile` with:
+**Historical Measurement, 2026-08-06, on `tkt/bound-the-assembled-region-count-and-derive-the-multi-output-budget-actuals` at base `afdac9c9`.** Two independent epilogue chains over two declared inputs — `sum(x * x, axis 1) * 2.0` published as `sx` and `sum(y * y, axis 1) * 3.0` published as `sy`, both at `[1, 4]` — failed `compile` with:
 
 ```
 InvalidCompilerOutput(Program(CoreVerification(AmbiguousCanonicalKey { entity: Stage })))
 ```
 
-Reproduced with the same fixture differing only in the prologue expression (`x * x` against `y + y`), which also fails, and *not* reproduced when the two chains fold different extents (`[1, 4]` and `[1, 2]`), which compiles and retains six- and seven-dispatch alternatives. So the discriminator is the assembled stages' canonical keys and not the declaration: two chains over different declared inputs at the same shape assemble stages the shared program layer cannot tell apart.
+It was reproduced with the same fixture differing only in the prologue expression (`x * x` against `y + y`), and was *not* reproduced when the two chains folded different extents (`[1, 4]` and `[1, 2]`). The current compiler test source preserves that distinction under the anchor `two chains of identical shape assemble two stages carrying one canonical key`, but its executable fixture uses different extents and therefore does not re-prove the collision at this base. [`reproduce-the-identical-output-chain-stage-key-collision`](reproduce-the-identical-output-chain-stage-key-collision.md) now owns that current-boundary evidence.
 
-**Inference — the error class is wrong whatever the remedy is.** `AmbiguousCanonicalKey` is a `tiler_ir::program` core-verification refusal, reported through `CompilerOutputError::Program`. Nothing about the submitted program is invalid: both outputs are independently recognized, their walks partition the occurrences, and each publishes its own value. Either the program layer's stage key must distinguish two structurally identical stages (a `tiler-ir` change), or the compiler must refuse the shape by name before assembly, or the plan must reuse one stage for both. Which of the three is right is the research this ticket owns.
+**Inference — the public error class is wrong if the historical failure remains.** `AmbiguousCanonicalKey` is a `tiler_ir::program` core-verification refusal reported through `CompilerOutputError::Program`. The old measurement established that both outputs had passed recognition and assembly far enough to create the collision, but only the prerequisite can establish that current path. If it remains, either the program layer's stage key must distinguish the two stages, the compiler must refuse the request by name before assembly, or an actually equivalent stage must be shared.
+
+## Decision boundary — corrected 2026-08-09
+
+The three remedies are not interchangeable implementation details. `stage_key` currently derives identity from the bound kernel and proof-bound coverage; `verify_unambiguous` makes its pairwise distinctness a program invariant; and program identity orders stages and value definitions through that key. Widening its subject or merging instances changes program identity and cross-reference semantics. A new request refusal changes the caller-visible stable diagnostic boundary. After the prerequisite reproduces or retires the issue, Tom must choose the semantic owner and identity evolution. This ticket therefore belongs in `awaiting-decision`, not the executable ready queue.
 
 ## Scope note
 
@@ -32,4 +36,4 @@ Reproduced with the same fixture differing only in the prologue expression (`x *
 
 ## Closes when
 
-The measured two-chain program either compiles or is refused under a named rule whose error class attributes the refusal to the request, with a regression test carrying the fixture, and the chosen remedy's derivation recorded.
+The prerequisite has established the current behavior, Tom has chosen the stage-identity, sharing, or request-refusal contract, and the chosen remedy is implemented with its identity/domain and diagnostic consequences derived, a regression carrying the same-shaped pair, and the different-extent and one-chain controls preserved.
