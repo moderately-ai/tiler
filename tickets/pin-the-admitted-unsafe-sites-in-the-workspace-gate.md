@@ -1,7 +1,7 @@
 ---
 id: pin-the-admitted-unsafe-sites-in-the-workspace-gate
 title: Pin the admitted unsafe sites in the workspace gate
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [record-the-case-by-case-unsafe-boundary, prototype-metal-runtime-execution]
@@ -9,9 +9,6 @@ scopes: [implementation/workspace, contracts/navigation, contracts/decisions, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, workspace, gate, rust-api, deferred]
-claimed_from: todo
-assignee: sol-unsafe
-lease_expires_at: 1786241110
 ---
 ADR 0079 permits unsafe code only at individually admitted sites. The current
 compiler lint enforces that an unsafe block needs a local allow in the two
