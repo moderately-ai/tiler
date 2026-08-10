@@ -1,7 +1,7 @@
 ---
 id: retire-the-operation-extension-contract-s-stale-forkless-provider-rerun-future-tense
 title: Retire the operation-extension contract’s stale forkless-provider rerun future tense
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [refresh-the-forkless-physical-provider-spike-against-the-landed-seam, retire-adr-0078s-stale-physical-provider-standing-clauses, accept-the-installed-physical-provider-public-surface]
@@ -9,6 +9,9 @@ scopes: [contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, backend-providers]
+claimed_from: todo
+assignee: sol-provider-rerun-contract
+lease_expires_at: 1786407548
 ---
 
 ## User-visible outcome
