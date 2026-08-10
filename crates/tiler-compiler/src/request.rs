@@ -9518,6 +9518,176 @@ mod tests {
         );
     }
 
+    /// Constant occurrence identity reaches the initial recognizer and mint.
+    ///
+    /// Each pair computes `x * 2 + 2` in its own arithmetic. The only authored
+    /// difference is whether the add reuses the exact constant value consumed by
+    /// the multiply or consumes a second constant occurrence with the same
+    /// payload. Semantic construction, elementwise planning, and minting all
+    /// preserve that difference for both arithmetic widths the compiler
+    /// currently recognizes. This drives `recognize` directly: ordinary
+    /// compilation normalizes equal pure constants before candidate readmission,
+    /// as the normalization and pipeline regressions assert separately.
+    ///
+    #[test]
+    fn equal_constant_occurrences_remain_distinct_through_initial_recognition() {
+        fn f32_program(repeat_occurrence: bool) -> SemanticProgram {
+            let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+            let input = builder
+                .input::<F32>(InputKey::new("x").unwrap(), Shape::from_dims([2, 3]))
+                .unwrap();
+            let two = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+            let scaled = F32Multiply::apply(&mut builder, input, two).unwrap();
+            let addend = if repeat_occurrence {
+                F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap()
+            } else {
+                two
+            };
+            let root = F32Add::apply(&mut builder, scaled, addend).unwrap();
+            builder
+                .output(OutputKey::new("out").unwrap(), root)
+                .unwrap();
+            builder.build().unwrap()
+        }
+
+        fn bf16_program(repeat_occurrence: bool) -> SemanticProgram {
+            let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+            let input = builder
+                .input::<Bf16>(InputKey::new("x").unwrap(), Shape::from_dims([2, 3]))
+                .unwrap();
+            let two = Bf16Constant::apply(&mut builder, 0x4000).unwrap();
+            let scaled = Bf16Multiply::apply(&mut builder, input, two).unwrap();
+            let addend = if repeat_occurrence {
+                Bf16Constant::apply(&mut builder, 0x4000).unwrap()
+            } else {
+                two
+            };
+            let root = Bf16Add::apply(&mut builder, scaled, addend).unwrap();
+            builder
+                .output(OutputKey::new("out").unwrap(), root)
+                .unwrap();
+            builder.build().unwrap()
+        }
+
+        fn recognized_pointwise(program: &SemanticProgram) -> RecognizedPointwise {
+            let NormalizedOutput::Pointwise(recognized) =
+                recognize(program).expect("the compiler recognizes the elementwise program")
+            else {
+                panic!("an elementwise output recognizes as an elementwise program");
+            };
+            assert_eq!(
+                recognized.members.len(),
+                program.operation_count(),
+                "the expression must cover every semantic occurrence",
+            );
+            recognized.expression
+        }
+
+        let shared_f32 = f32_program(false);
+        let repeated_f32 = f32_program(true);
+        assert_eq!(shared_f32.operation_count(), 3);
+        assert_eq!(repeated_f32.operation_count(), 4);
+        let RecognizedPointwise::F32(shared_f32_expression) = recognized_pointwise(&shared_f32)
+        else {
+            panic!("an f32 program must mint the f32 pointwise vocabulary");
+        };
+        let RecognizedPointwise::F32(repeated_f32_expression) = recognized_pointwise(&repeated_f32)
+        else {
+            panic!("an f32 program must mint the f32 pointwise vocabulary");
+        };
+        assert_eq!(shared_f32_expression.nodes().len(), 4);
+        assert_eq!(repeated_f32_expression.nodes().len(), 5);
+        assert_eq!(
+            shared_f32_expression
+                .nodes()
+                .iter()
+                .filter_map(|node| match node {
+                    PointwiseF32Node::Constant { bits } => Some(*bits),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            [2.0_f32.to_bits()],
+        );
+        assert_eq!(
+            repeated_f32_expression
+                .nodes()
+                .iter()
+                .filter_map(|node| match node {
+                    PointwiseF32Node::Constant { bits } => Some(*bits),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            [2.0_f32.to_bits(), 2.0_f32.to_bits()],
+            "the extra node is a second equal-payload constant occurrence",
+        );
+        assert_ne!(shared_f32_expression, repeated_f32_expression);
+
+        let shared_bf16 = bf16_program(false);
+        let repeated_bf16 = bf16_program(true);
+        assert_eq!(shared_bf16.operation_count(), 3);
+        assert_eq!(repeated_bf16.operation_count(), 4);
+        let RecognizedPointwise::Bf16(shared_bf16_expression) = recognized_pointwise(&shared_bf16)
+        else {
+            panic!("a bf16 program must mint the bf16 pointwise vocabulary");
+        };
+        let RecognizedPointwise::Bf16(repeated_bf16_expression) =
+            recognized_pointwise(&repeated_bf16)
+        else {
+            panic!("a bf16 program must mint the bf16 pointwise vocabulary");
+        };
+        assert_eq!(shared_bf16_expression.nodes().len(), 4);
+        assert_eq!(repeated_bf16_expression.nodes().len(), 5);
+        assert_eq!(
+            shared_bf16_expression
+                .nodes()
+                .iter()
+                .filter_map(|node| match node {
+                    tiler_ir::schedule::PointwiseBf16Node::Constant { bits } => Some(*bits),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            [0x4000],
+        );
+        assert_eq!(
+            repeated_bf16_expression
+                .nodes()
+                .iter()
+                .filter_map(|node| match node {
+                    tiler_ir::schedule::PointwiseBf16Node::Constant { bits } => Some(*bits),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            [0x4000, 0x4000],
+            "the extra node is a second equal-payload constant occurrence",
+        );
+        assert_ne!(shared_bf16_expression, repeated_bf16_expression);
+
+        let VerifiedRequest::Refused(refusals) =
+            verify_request(CompilationRequest::governed_under(
+                &repeated_bf16,
+                crate::session::NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16.resolve(),
+            ))
+            .expect("the governed target refusal is a target-local outcome")
+        else {
+            panic!("the governed target declares no bf16 dispatch row");
+        };
+        let [refusal] = refusals.as_slice() else {
+            panic!("the governed request carries one target and one refusal");
+        };
+        let VerifiedTargetResolution::Rejected(refusal) = &refusal.resolution else {
+            panic!("the governed target slot is refused");
+        };
+        assert_eq!(
+            *refusal,
+            RequestError::DTypeNotDispatchable {
+                target_profile: TargetProfile::governed().profile_key().clone(),
+                resolved_type: Box::new(Bf16::resolved_type()),
+                disposition: DTypeDispatchRefusalDisposition::Unknown,
+            },
+            "the governed request stops at dtype dispatch before target-specific recognition",
+        );
+    }
+
     /// The two refusals the `dtype-f32` rule split into name different findings.
     ///
     /// **`dtype-recognized` and `dtype-uniform` are not one rule renamed.** The
