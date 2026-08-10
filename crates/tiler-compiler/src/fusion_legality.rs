@@ -1960,9 +1960,23 @@ mod tests {
         BroadcastAxisMapping, BroadcastAxisSource, F32, F32Add, F32Broadcast, F32Constant,
         F32Multiply, F32Reindex, InputKey, OpKey, OutputKey, ReindexForm, SemanticProgram,
         SemanticProgramBuilder, StrictSerialF32Sum, add_f32_op, broadcast_f32_op, constant_f32_op,
-        reindex_f32_op,
+        gather_f32_op, reindex_f32_op,
     };
     use tiler_ir::shape::{Axis, Extent, Shape};
+
+    /// Gather has no governed fusion role and therefore derives no legality.
+    ///
+    /// This names the exact authority ADR 0107 relies on, independently of the
+    /// policy inventory and request recognizer. Watched failing under a
+    /// deliberate subject perturbation: inserting the Gather key as a coordinate
+    /// relation changes this result to `Some(CoordinateRelation)`.
+    #[test]
+    fn gather_is_absent_from_the_governed_fusion_roles() {
+        assert_eq!(
+            FusionNumericalCapabilities::governed().classify(&gather_f32_op()),
+            None,
+        );
+    }
 
     fn serial_sum_program() -> SemanticProgram {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();

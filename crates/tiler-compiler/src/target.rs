@@ -3793,6 +3793,27 @@ impl TargetProfile {
             .expect("the sparse test profile is intrinsically valid")
     }
 
+    /// Returns the governed profile plus the exact gather-index dispatch row.
+    ///
+    /// Test-only because this is a diagnostic-layering probe, not a production
+    /// claim that the governed target can dispatch integer tensors. Building it
+    /// through the ordinary profile builder retains every governed declaration
+    /// and recomputes the complete canonical descriptor with the added row.
+    #[cfg(test)]
+    pub(crate) fn governed_with_gather_index_dispatch_for_test() -> Self {
+        let mut builder = TargetProfileBuilder::governed();
+        builder
+            .declare_dtype_dispatchability(
+                tiler_ir::semantic::gather_index_resolved_type(),
+                DTypeDispatchability::Dispatchable,
+                TargetFactSource(governed_profile_source()),
+            )
+            .expect("the exact gather-index test dispatch declaration is valid");
+        builder
+            .build()
+            .expect("the widened test target profile is intrinsically valid")
+    }
+
     #[cfg(test)]
     pub(crate) fn governed_with_grid_axis_limit(limit: u64) -> Self {
         let mut builder = TargetProfileBuilder::governed();
