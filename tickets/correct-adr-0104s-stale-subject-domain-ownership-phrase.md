@@ -1,7 +1,7 @@
 ---
 id: correct-adr-0104s-stale-subject-domain-ownership-phrase
 title: Correct ADR 0104's stale statement that tiler-digest owns subject domains
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [correct-the-two-source-comments-that-repeat-the-reversed-domain-dependency-premise, repair-the-artifact-abis-stale-cross-crate-no-prefix-argument]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, identity]
-claimed_from: todo
-assignee: sol-adr0104-domain-ownership
-lease_expires_at: 1786404386
 ---
 
 ## Why this exists
