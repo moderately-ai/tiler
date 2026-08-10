@@ -1,31 +1,27 @@
 # Manifest — ticket audit 2026-08-10
 
-- Generated: 2026-08-10T13:53:04Z
 - Audit base: `c99ac54950f242d88d8dfe8335332bef0cf75f2d`
 - Window: 2026-08-03 .. 2026-08-11
-
-## Population
-
-- In scope: 700
-- Out of scope: 602
 
 ## Audit state (in-scope)
 
 - `audited-clean`: 12
-- `audited-repair-required`: 31
-- `claimed`: 1
-- `pending`: 656
+- `audited-repair-required`: 29
+- `claimed`: 20
+- `pending`: 639
 
 ## Repair state (in-scope)
 
 - `integrated`: 3
-- `not-needed`: 669
-- `pending`: 28
+- `not-needed`: 668
+- `pending`: 29
 
 ## Progress
 
-- Waves 1–3 open-board accepted (44 tickets)
-- Phase B repair batch running for first three repair-required tickets
+- Open-board waves 1–3 accepted (~44 tickets)
+- Phase B batch 1 integrated (3 tickets); re-audit in wave 4
+- Wave 4: 20 claimed (includes 3 re-audits + remaining todo)
+- Phase B batch 2 running (5 tickets)
 
 ## Completion criteria
 
