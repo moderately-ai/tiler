@@ -1,7 +1,7 @@
 ---
 id: classify-a-vocabulary-gap-refusal-as-an-unsupported-capability
 title: Classify a vocabulary-gap refusal as an unsupported capability
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [admit-the-registered-elementary-families-as-recognizable-program-stages]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, diagnostics]
+claimed_from: todo
+assignee: sol-vocabulary-gap-classification
+lease_expires_at: 1786409566
 ---
 ## User-visible outcome
 
