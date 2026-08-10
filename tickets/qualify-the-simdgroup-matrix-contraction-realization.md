@@ -12,7 +12,7 @@ tags: [implementation, metal, numerics, contraction, target-facts, decision, nee
 ---
 ## User-visible outcome
 
-The fastest hand-written realization measured — `simdgroup_float8x8` — is about 1.6–1.7x faster than the tiled strict kernel on the four prefill cells whose `M` extent admits it, and about 3.6–4.4x slower than the library route on those cells. The 4.4x endpoint is the `t_prefill_mlp_512` cell; the `M = 10` C1 cell refuses the realization. The realization either needs a distinct declared numerical contract a caller can ask for, or must be refused for the current registered contraction with a reason a reader can act on. Today it is neither: it is measured to disagree with that registered operation, and no durable target or realization record says what the measurement permits.
+The fastest hand-written realization measured — `simdgroup_float8x8` — is about 1.6–1.7x faster than the tiled strict kernel on the four prefill cells whose `M` extent admits it, and about 3.6–4.5x slower than the library route on those cells. The 4.5x endpoint is the `t_prefill_mlp_512` cell; the `M = 10` C1 cell refuses the realization. The realization either needs a distinct declared numerical contract a caller can ask for, or must be refused for the current registered contraction with a reason a reader can act on. Today it is neither: it is measured to disagree with that registered operation, and no durable target or realization record says what the measurement permits.
 
 ## What was measured, and what it eliminates
 
@@ -29,6 +29,8 @@ A separate structural limitation: it refuses `M = 1` and `M = 10` on its own `M,
 ## Source-audit correction and decision boundary — 2026-08-10
 
 The former Qualification branch assumed a versioned target fact stating contraction permission and `+0.0` seed would be enough to make this realization caller-selectable. That is false at the current tree. Target honourability cannot substitute for the operation contract under [ADR 0076](../docs/decisions/0076-declare-target-honourable-numerical-realizations.md), and the sole registered keyed contraction family under [ADR 0087](../docs/decisions/0087-model-contraction-as-one-keyed-family-with-an-index-structure.md) is unseeded and carries the per-combine canonicalization rule.
+
+**Review correction — 2026-08-10.** The retained `t_prefill_mlp_512` minima are 3733.667 µs for simdgroup and 838.750 µs for the library route; `3733.667 / 838.750 = 4.451465872`, which rounds to the 4.5x endpoint above.
 
 Qualification therefore requires a consequential semantic expansion before any Metal implementation: a new keyed operation (or accepted revision) that defines the fused per-contributor step, explicit `+0.0` seed, permitted result/order and NaN behaviour; matching reference semantics and validation; a public dtype-keyed target-realization vocabulary; and coherent target-profile, delivered-artifact schema/domain/version, cache/artifact identity, rejection, and conformance population. The retained record can supply bounded empirical provenance for that work, but not the missing normative order or canonicalization guarantee. Tom retains that public, identity, and research-to-implementation decision.
 
