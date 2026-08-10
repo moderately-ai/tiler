@@ -1,7 +1,7 @@
 ---
 id: correct-the-two-participant-residue-s-smallest-count
 title: Correct the two-participant residue's smallest count
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [restate-the-tree-width-rule-outside-the-compiler-crate, bound-the-tree-cap-s-unmeasured-downward-direction, measure-the-tree-width-excursion-past-the-cap, complete-the-tree-cap-audit-sweep-inside-the-compiler-crate]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [reductions, documentation]
-claimed_from: todo
-assignee: terra-two-participant-residue
-lease_expires_at: 1786411317
 ---
 ## Per-Fact audit — 2026-08-10, at base `7b2e245190f9b680c7825041252030ead602e71a`
 
