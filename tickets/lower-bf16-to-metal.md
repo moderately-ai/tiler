@@ -14,6 +14,8 @@ tags: [implementation, dtype, bf16, metal, lowering, apple-targets]
 
 A verified BF16 kernel emits `bfloat` MSL, compiles, dispatches on the measured macOS row, and returns results that agree with `tiler-reference` within the target's declared numerical realization. The same kernel is refused before submission on the iOS Simulator.
 
+**Correction — 2026-08-10.** The dispatch, reference-agreement, and pre-submission dispatchability clauses above are the *original* close picture, not unmet conditions on this ticket. This ticket closed on 2026-08-06 at the offline emission/compilation boundary (`## Closed at the revised boundary`); device dispatch, flush-applied reference comparison, the execution witness, and the dispatchability refusal are owned by done dependents `validate-bf16-at-the-runtime-routing-boundary` and `conform-the-bf16-vertical-end-to-end`.
+
 ## What the target already fixes
 
 **Fact.** `MetalFloatArithmeticType::Bf16` exists in `crates/tiler-metal/src/target.rs` and already carries the measured BF16 flush in its own slot, inheriting nothing from `f32`.
@@ -47,6 +49,8 @@ A verified BF16 kernel emits `bfloat` MSL, compiles, dispatches on the measured 
 
 A BF16 kernel dispatches on the measured macOS row and agrees with the reference under the declared realization, the simulator refusal happens before submission, every refusal above is observed failing, the execution witness is present, and the `Backend lowering` and `Backend execution` cells for BF16 move with their host/toolchain boundary stated.
 
+**Correction — 2026-08-10.** Superseded as this ticket's close condition by `## Closed at the revised boundary` (2026-08-06): offline `bfloat` emission, compilation, and every emission-side refusal on the measured row. The dispatch, flush-applied comparison, witness, and pre-submission dispatchability items named above were never absorbable from `implementation/metal` + `implementation/metal-aot` and shipped under the two dependents named there.
+
 ## Graph maintenance
 
 - Depends on the kernel vocabulary and on the profile carrying the BF16 rows; emission consults the target fact and would fail closed without it.
@@ -72,13 +76,13 @@ A BF16 kernel dispatches on the measured macOS row and agrees with the reference
 
 ### Fact — the helper name matches the Apple harness recognizer
 
-The harness derives `tiler_canonicalize_nan_bf16_7fc0` (`spikes/apple-targets/numerical_probe.py:587`, BF16 row at `:753`) and its recognizer pins the C++-mangled `_ZL32tiler_canonicalize_nan_bf16_7fc0DF16b` (`spikes/apple-targets/test_numerical_probe.py:1031`), whose `32` is the identifier's length and whose `DF16b` is the `bfloat` parameter. The emitted symbol is that identifier character for character, and the test asserts its length is 32 from the string itself rather than from a copied number. **This is a name-shape agreement, not a run**: nothing here dispatches, and nothing here shows the harness classifying a module this backend emitted.
+The harness derives `tiler_canonicalize_nan_bf16_7fc0` (property `canonicalizer` returning `f"tiler_canonicalize_nan_{self.name}_{…}"` in `spikes/apple-targets/numerical_probe.py`, BF16 row `BF16 = BrainFloat(`) and its recognizer pins the C++-mangled `_ZL32tiler_canonicalize_nan_bf16_7fc0DF16b` (string in `spikes/apple-targets/test_numerical_probe.py`), whose `32` is the identifier's length and whose `DF16b` is the `bfloat` parameter. The emitted symbol is that identifier character for character, and the test asserts its length is 32 from the string itself rather than from a copied number. **This is a name-shape agreement, not a run**: nothing here dispatches, and nothing here shows the harness classifying a module this backend emitted.
 
 ### Measurement — offline compilation
 
 Apple M4 Max, macOS 27.0 build 26A5388g, Xcode 27.0 build 27A5228h, Metal 32023.921 (`metalfe-32023.921`, AIR-LLD 32023.921), macOS SDK 27.0 build 26A5388f. Under `-target air64-apple-macos14.0 -std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off`, all seven goldens compile and link; the BF16 fixture links 3,635 bytes and the library names `tiler_kernel_7c905e3938dc8d91`.
 
-**The compile row and the numerical row are different rows, deliberately.** The golden family's governed target is MSL 3.1 / macOS 14.0; the authoritative profile's measured BF16 subnormal row is MSL 4.0 / `air64-apple-macos26.0` (`crates/tiler-build/src/metal_declaration.rs:281`). Finding 24's original table was also taken at `-std=metal3.1`, so `bfloat` compiling there is not an extrapolation — but nothing here re-measures the numerical row, and the module documentation says so.
+**The compile row and the numerical row are different rows, deliberately.** The golden family's governed target is MSL 3.1 / macOS 14.0; the authoritative profile's measured BF16 subnormal row is MSL 4.0 / `air64-apple-macos26.0` (profile key `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1` and `requested_target air64-apple-macos26.0` in `crates/tiler-build/src/metal_declaration.rs`). Finding 24's original table was also taken at `-std=metal3.1`, so `bfloat` compiling there is not an extrapolation — but nothing here re-measures the numerical row, and the module documentation says so.
 
 ### Measurement — the carrier is load-bearing, observed failing
 
@@ -113,8 +117,8 @@ Exact checks, each reproducible in one line:
 
 - `crates/tiler-metal/Cargo.toml`: dependencies are `tiler-artifact` and `tiler-ir`; the only dev-dependency is `tiler-metal-aot`. No Metal runtime, no `tiler-reference`.
 - `crates/tiler-metal-aot/Cargo.toml` has no `[dependencies]` section at all — its empty dependency closure is the property `crates/tiler-metal/src/target.rs:31` records as the reason the vocabulary is owned twice.
-- `grep -rn 'metal.workspace' --include=Cargo.toml`: the `metal` crate is used by `prototypes/serial-sum-run` alone, which `ticketsplease.toml` maps to `implementation/runtime`.
-- `DTypeDispatchability` is `crates/tiler-compiler/src/target.rs:1415` (`implementation/compiler`); `ReferenceNumericalConformance` is `crates/tiler-reference/src/conformance.rs:123` (`implementation/reference`).
+- `rg -n '^metal\.workspace' --glob 'Cargo.toml'`: the crates.io `metal` package is used by `prototypes/serial-sum-run` (`implementation/runtime`) and `crates/tiler-conformance` — not by `tiler-metal` or `tiler-metal-aot`. (At Outcome write this ticket said `serial-sum-run` alone; the second consumer does not change the scope argument.)
+- `DTypeDispatchability` is `pub enum DTypeDispatchability` in `crates/tiler-compiler/src/target.rs` (`implementation/compiler`); `ReferenceNumericalConformance` is `pub struct ReferenceNumericalConformance` in `crates/tiler-reference/src/conformance.rs` (`implementation/reference`).
 
 So the dispatch evidence needs `implementation/runtime`, `implementation/reference`, and `implementation/compiler`. Acquiring a dispatch capability inside the two scopes held instead would mean adding a Metal runtime dependency to a crate documented as owning no live device APIs, or to the one whose whole value is an auditable empty closure — an architectural change, which is Tom's.
 
@@ -135,3 +139,10 @@ The `Backend lowering` cell for BF16 in `docs/roadmap.md` / `docs/dtype-support.
 ## Closed at the revised boundary
 
 The integrator closes this at the offline boundary on 2026-08-06: the `Closes when` above required dispatch, the flush-applied reference comparison, the execution witness, and the pre-submission dispatchability refusal, and none of those is reachable from this ticket's scopes — the worker's dependency-graph derivation in the Outcome shows `tiler-metal` reaches neither the runtime, the reference conformance machinery, nor the compiler's dispatchability type. Those four items were never absorbable here; they are owned, verbatim, by the two live dependents this ticket already names: `validate-bf16-at-the-runtime-routing-boundary` (dispatch and both pre-commit refusals) and `conform-the-bf16-vertical-end-to-end` (the flush-applied comparison with named moved elements, and the witness). With the remainder live, the revised outcome — offline `bfloat` emission, compilation, and every emission-side refusal, on the measured row — is fully supported by the merged diff, and the `Backend lowering` cell moved with exactly that qualifier while `Backend execution` did not move.
+
+## Fact audit — 2026-08-10
+
+- **`metal_declaration.rs:281`.** Outcome's offline-measurement paragraph had pinned the MSL 4.0 / `air64-apple-macos26.0` BF16 numerical row at that line number; the line is unrelated fence commentary. Substance kept: compile golden row ≠ measured numerical row. Live anchors: profile key `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1` and `requested_target air64-apple-macos26.0` in `crates/tiler-build/src/metal_declaration.rs`.
+- **`metal.workspace` sole consumer.** Outcome's derivation said the crates.io `metal` package was used by `prototypes/serial-sum-run` alone. Current exact-key consumers are `serial-sum-run` and `tiler-conformance`. Scope argument unchanged: neither `tiler-metal` nor `tiler-metal-aot` depends on it, so device dispatch is still outside this ticket's scopes.
+- **Line pins for harness / `DTypeDispatchability` / `ReferenceNumericalConformance`.** Bare `:587` / `:753` / `:1031` / `:1415` / `:123` citations replaced with searchable fragments (`canonicalizer`, `BF16 = BrainFloat(`, `_ZL32tiler_canonicalize_nan_bf16_7fc0DF16b`, `pub enum DTypeDispatchability`, `pub struct ReferenceNumericalConformance`).
+- **Status / graph.** `done` under the 2026-08-06 offline boundary remains correct; dependents named above are `done`; no new remainder.

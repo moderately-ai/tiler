@@ -36,7 +36,7 @@ Any implementation; any timing collected before the trigger fires; committing a 
 
 ## Trigger — fired, retained for provenance
 
-The trigger was: the first analytic cost-model landing in `crates/` (the `bootstrap-cost-model` thread reaching implementation), or `calibrate-device-cost-models` firing — whichever arrives first. **The first disjunct fired on 2026-08-07** and the ticket is `todo`; the log entry below records the verification and the corrected recheck command. Nothing here is still waiting on a condition.
+The trigger was: the first analytic cost-model landing in `crates/` (the `bootstrap-cost-model` thread reaching implementation), or `calibrate-device-cost-models` firing — whichever arrives first. **The first disjunct fired on 2026-08-07** and the ticket was activated to `todo`; the log entry below records the verification and the corrected recheck command. Nothing here is still waiting on a condition.
 
 ## Trigger check log
 

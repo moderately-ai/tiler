@@ -4,7 +4,7 @@ title: Pin lint inheritance across the workspace member set
 status: done
 priority: p2
 dependencies: []
-related: [stop-the-conformance-crate-s-lint-table-drifting-from-the-workspace, decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access]
+related: [stop-the-conformance-crate-s-lint-table-drifting-from-the-workspace, decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access, pin-the-admitted-unsafe-sites-in-the-workspace-gate]
 scopes: [implementation/workspace, implementation/frontend, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
@@ -71,7 +71,9 @@ Three checks, none of which restates the workspace lint table.
 
 ## Remainder, not closed here
 
-`prototypes/serial-sum-run` still has **no per-site unsafe check**. This ticket closed its *table*; the site census in `tiler-conformance` remains rooted at its own `CARGO_MANIFEST_DIR`, so a third `#[allow(unsafe_code)]` site added under `prototypes/serial-sum-run/src/` still compiles and still passes the complete gate, exactly as ADR 0079's Consequences record. Fact 2 bundles the two gaps in one paragraph and only the table half is discharged. This wants its own ticket.
+At ticket close (2026-08-07), `prototypes/serial-sum-run` still had **no per-site unsafe check**. This ticket closed its *table*; the site census in `tiler-conformance` remained rooted at its own `CARGO_MANIFEST_DIR`, so a third `#[allow(unsafe_code)]` site added under `prototypes/serial-sum-run/src/` still compiled and still passed the complete gate, exactly as ADR 0079's Consequences then recorded. Fact 2 bundles the two gaps in one paragraph and only the table half is discharged by this ticket. This wanted its own ticket.
+
+**Correction — 2026-08-10.** The site half was **closed later**, not left open: [`pin-the-admitted-unsafe-sites-in-the-workspace-gate`](pin-the-admitted-unsafe-sites-in-the-workspace-gate.md) (`status: done`) closed it workspace-wide on 2026-08-08 via `crates/tiler/tests/workspace_unsafe_sites.rs` (ADR 0079 Consequences: **Closed workspace-wide 2026-08-08**). That inventory admits both prototype sites under `prototypes/serial-sum-run/src/buffer.rs` beside the conformance pair. Do not reopen this ticket or file a new site-census ticket for this remainder.
 
 ## Outcome — done, 2026-08-07
 
@@ -95,6 +97,8 @@ Seven perturbations, each reddening exactly one assertion and leaving the rest g
 
 ### Remainder, deliberately not closed
 
-`prototypes/serial-sum-run` still has **no per-site unsafe check**. Fact 2 bundled two gaps and only the table half is closed; the site census stays rooted at `tiler-conformance`'s manifest dir, so a third `#[allow(unsafe_code)]` under the prototype's `src/` still compiles and passes the complete gate — exactly as ADR 0079 records. Recorded on the ticket rather than quietly folded in.
+At close (2026-08-07), `prototypes/serial-sum-run` still had **no per-site unsafe check**. Fact 2 bundled two gaps and only the table half was closed here; the site census stayed rooted at `tiler-conformance`'s manifest dir, so a third `#[allow(unsafe_code)]` under the prototype's `src/` still compiled and passed the complete gate — exactly as ADR 0079 then recorded. Recorded on the ticket rather than quietly folded in.
+
+**Correction — 2026-08-10.** Closed later by [`pin-the-admitted-unsafe-sites-in-the-workspace-gate`](pin-the-admitted-unsafe-sites-in-the-workspace-gate.md) on 2026-08-08 via `crates/tiler/tests/workspace_unsafe_sites.rs` (ADR 0079: **Closed workspace-wide 2026-08-08**). Same graph link as under `## Remainder, not closed here`; do not treat either remainder as live open work.
 
 The ADR 0079 citation drift this work surfaced (+199 lines) is filed as `extend-the-citation-check-to-docs-and-repair-adr-0079-s-drifted-test-citation`.

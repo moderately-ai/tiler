@@ -53,7 +53,7 @@ An assertion over the domain strings that fails when one changes. **Prefer a cen
 
 **The census is over source literals, not over a type, and that is a deliberate departure from the precedent.** `crates/tiler-artifact/src/domains.rs` sizes its set with `variant_count` because every domain that crate admits is a constant a variant can name. That does not hold in `tiler-ir`. Domains here are spelled three ways: named `_DOMAIN` constants, named constants that are not called `_DOMAIN` (`RECEIPT_IDENTITY_TAG`, `EXHAUSTIVE_DERIVATION`, `SUBJECT_IDENTITY_TAG`), and **inline literals no constant names** — `tiler.schedule.v5` is written directly into `schedule::model::encode_identity`, and `tiler.resolved-value-type.v3` appears at three sites in `semantic/types.rs`. A `variant_count`-sized enum cannot reach a literal no constant names, so it would have enumerated a strict subset while reporting a complete population, which is the failure it exists to prevent. The scan reads all 131 `.rs` files under `src/` and `tests/`, finds 185 `tiler.`-spelled literals in 120 distinct spellings, and requires each to be either pinned (60 rows) or admitted by a classified non-domain namespace (11 prefixes). `AGENTS.md`'s rule for a population that cannot be typed — "assert a floor and print the census" — is the one that applies.
 
-**Perturbations, each applied alone, each with the assertion's own text.** Six independent properties, six separate perturbations of the subject:
+**Perturbations, each applied alone, each with the assertion's own text.** Nine separate perturbations covering six assertion properties:
 
 | perturbation | which assertion said *no* | failure text |
 | --- | --- | --- |

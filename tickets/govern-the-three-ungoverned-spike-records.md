@@ -44,3 +44,19 @@ No generator, no gate, no schema change, and no re-running of any spike. The mea
 ## Closes when
 
 The reconciliation check in [`reconcile-the-research-and-experiment-catalogs-with-their-frontmatter`](reconcile-the-research-and-experiment-catalogs-with-their-frontmatter.md) reports `0 ungoverned` and zero discrepancies over its counted population, and the two mis-rendered `supports` claims above are each resolved by a recorded reading rather than by matching the row to the frontmatter or the frontmatter to the row.
+
+## Outcome — 2026-08-05
+
+Delivered at **`7c213bfa`** (frontmatter on the three READMEs, both catalogs, supports readings). Closed **`b63dd5d0`** (status `review` → `done`). Each `supports` list is derived from what the research record claims, not from the catalog row under repair.
+
+**Grid-axis ladder → authority ledger only.** [`spikes/target-profiles/metal-grid-axis-extent/`](../spikes/target-profiles/metal-grid-axis-extent/README.md) supports `tiler.research.target-profiles.first-macos-metal-compile-profile-authority-ledger`. The ledger's grid-axis row is sourced `Measurement` from this spike by name (run 2026-08-04, 6,294 dispatched rows), and the spike's own "What consumes it" names the ledger and `crates/tiler-build`'s declaration and nothing else.
+
+**Reduction-crossover → authority ledger, not the fusion-and-scheduling contract.** The pre-delivery catalog row named [`docs/compiler/fusion-and-scheduling.md`](../docs/compiler/fusion-and-scheduling.md), which the metadata contract forbids: `supports` is typed experiment-to-research and that path is a contract. The claim lives in the authority ledger (the sweep's result as its own evidence — 24 of 36 shapes retaining all three strategies and no grid-axis refusal). No other research record carries it. The edge goes to the ledger; the contract keeps reaching the harness by the ordinary body link it already carries — the mechanism [`docs/document-metadata.md`](../docs/document-metadata.md) prescribes for a non-research document citing an experiment.
+
+**Corpus-reachability probe → two of three targets; the third rejected.** Restores `model-level-qualification` and `first-metal-lm-workload` from [`list-the-corpus-reachability-spike-in-the-spike-index`](list-the-corpus-reachability-spike-in-the-spike-index.md); that ticket's list is wrong on the third. model-level-qualification cites the probe (A-tie search, corrected subnormal ground, stored-value census); first-metal-lm-workload's 2026-08-02 correction attributes the non-finite census over all 596,049,920 elements of all 310 tensors to it. `complete-model-ingestion-and-execution` does not: path-string count for `qwen3-corpus-reachability` is 0, and its I-B correction rests on the BF16 conversion record's exhaustive stage 5 rather than on this probe. The non-finite check the probe's third question serves belongs to `ingest-the-checkpoint-as-f32-program-inputs`, a ticket, not to L6's record.
+
+`evidence_classes: ["measurement"]` was not a contract value on either pre-existing partial block and becomes `bounded-measurement`; the grid-axis ladder keeps `exhaustive-finite` for the extents below 2,049. Both hand-maintained catalogs (`spikes/README.md` and `docs/research/README.md`) moved with the frontmatter in the same change; rows take the frontmatter titles (H1s).
+
+At delivery the reconciliation check reported **0 UNGOVERNED and 0 DISCREPANCIES** over 83 research rows against 83 records and 36 experiment rows against 36 records, after three watched failing perturbations (mistyped title, dropped supports edge, removed `kind`).
+
+**Remainder filed, not absorbed:** four sibling mistyped typed-frontmatter edges across the corpus, filed as [`repair-the-four-mistyped-typed-frontmatter-edges`](repair-the-four-mistyped-typed-frontmatter-edges.md) (now `done`).

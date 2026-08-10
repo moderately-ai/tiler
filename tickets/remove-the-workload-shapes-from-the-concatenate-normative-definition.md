@@ -126,8 +126,4 @@ No normative definition in `crates/tiler-ir/src/semantic/` contains a concrete t
 
 The one out-of-scope documentation remainder is complete.
 [`correct-the-roadmap-s-zero-extent-prefill-shape-after-the-concatenate-change`](correct-the-roadmap-s-zero-extent-prefill-shape-after-the-concatenate-change.md)
-corrected the roadmap after `ab64f334` removed the workload instance from the
-normative definition. The final closing sentence above is historical planning:
-the audited implementation established that no semantic-graph domain step was
-required and exactly one compiler request pin moved. The Worker outcome records
-that measured result; no identity or documentation remainder remains live here.
+corrected the roadmap after `3948ca3c` removed the workload instance from the normative definition. **Correction — 2026-08-10.** An earlier wording of this sentence named `ab64f334` as the removal; that commit only closed tickets (`Close the concatenate shape removal` — this ticket's follow-through and the related roadmap remainder ticket). The IR edit, registry guard, and explain pin recompute landed at `3948ca3c` (`Remove the workload shapes from the concatenate normative definition`). The final closing sentence above is historical planning: the audited implementation established that no semantic-graph domain step was required and exactly one compiler request pin moved. The Worker outcome records that measured result; no identity or documentation remainder remains live here.

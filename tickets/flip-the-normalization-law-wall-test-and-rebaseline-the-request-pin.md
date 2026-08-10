@@ -40,7 +40,7 @@ The file's module doc (lines 24-30 and its `admit-the-rms-normalization-family` 
 
 `deterministic_trace_is_sealed_and_rendered_separately` (assertion around line 3769) pins the request qualifier. It must move: the request subject binds the frozen semantic-realization authority, whose identity folds the count-prefixed law sidecar, and the sidecar gained a row. This is the ledger sentence that comment already carries ("even this unrelated multiply request must miss an authority snapshot that predates the new row") being kept, not a surprise. Only the law half of the subject moves — the semantic snapshot identity is computed without the sidecar and is unchanged, which is why no artifact, cache, or kernel-program pin moved with it.
 
-Observed on the widening branch alone: `b88654bff9b673c1` becomes `ce6f9106c1c5933b`.
+Observed on the widening branch alone: `ce6f9106c1c5933b` becomes `b88654bff9b673c1`.
 
 **Do not copy that value.** Recompute it on the merged tree — this pin has been rebaselined by two branches independently before, and its own comment records that both were stale on the merge. Regenerate with:
 
@@ -60,7 +60,7 @@ Both sites are updated, the wall test is flipped rather than deleted, the reques
 
 ## Outcome — 2026-08-06, executed by the coordinator on the merged tree
 
-Both sites repaired at the merge of `d88ebdb8`; `cargo nextest run --workspace` green (2847 passed, 7 skipped — the population grew by the widening branch's own tests plus the flipped one).
+Both sites repaired at `f33fa86eee6c2b77f97076175b88557557b1fb70` (parent merge `bdb3ae40`); `cargo nextest run --workspace` green (2847 passed, 7 skipped — the population grew by the widening branch's own tests plus the flipped one).
 
 **The wall test** is flipped and renamed `the_normalization_resolves_its_law_and_is_held_by_what_a_provider_emits`: `laws.resolve(&subject).is_ok()` pins that the refusal is not the law's absence, the refusal is `Emit { stage: 0, source: Occurrence { rule: "fixture-never-reached" } }`, and `driven == 1`. The module doc's stale bullet and closing paragraph were rewritten in place.
 

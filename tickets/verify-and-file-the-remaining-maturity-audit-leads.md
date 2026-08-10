@@ -60,6 +60,8 @@ Convention 5b's Measurement closes "the record's fail-closed channel comparison 
 
 Every `until <ticket>` construction in `docs/` was extracted and its target's status read. Six distinct tickets, **all `done`**. Four are past-tense records of work that landed and are correct as written; the Q-SEM-015 planning gate in `docs/open-questions.md` explicitly states "All three are `done`, so the gate is open". Lead 6's two cells are the only live-tense pointers of this class in the repository, so that class is now closed rather than sampled.
 
+**Correction — 2026-08-10.** The closed-class claim above is false. The 2026-08-07 census missed at least the live-tense construction in `docs/research/reference/composed-realization-evaluation.md` Part 7: `unchanged until [`retain-the-selected-semantic-candidate-for-the-conformance-oracle`](…) lands`. That target was `todo` at verification base `7c371155` and is non-terminal (`awaiting-decision`) at this base, so neither "all done" nor "Lead 6's two cells are the only live-tense pointers" holds as an exhaustive class result. The six-ticket sample and Q-SEM-015 gate prose stand as partial observations; the class is not closed. This ticket does not own a repair of that pointer.
+
 ## Outcome — done, 2026-08-08
 
 Landed at merge `982a3f9e` (worker commit `58f19f2b`). `tickets/` only, carries the green gate. **Nothing was repaired**, which was the ticket's whole shape.
@@ -78,7 +80,7 @@ This is exactly the conclusion-versus-ground split the brief asked for, and it i
 - **Lead 2** — the coordinator's suspicion was right **in both directions**: all eight of D-4's owners are `done`, and the 16 non-terminal tickets the dtype file references are integer, quantized and sub-byte owners with **zero BF16**. Narrow claim holds, broad reading false.
 - **Lead 3** — verified and **larger**: the count sites are **five, not three**. Not filed separately; folded into the existing digest-domain ticket, whose `Closes when` phrase would otherwise have let two survive.
 - **Lead 4** — **larger than reported**: 32 "gate" occurrences across 22 lines, and the record cited as *agreeing* with the correction is the biggest source of the same false claim. Two occurrences use "gate" in an unrelated sense and were named so they are not swept.
-- **Lead 6** — verified exactly, and a **sibling sweep closed the class**: every `until <ticket>` construction in `docs/` resolves to six tickets, **all `done`**; four are correct past-tense records and one explicitly says the gate is open. Lead 6's two cells are the only live-tense pointers. A negative result recorded so the class is closed rather than sampled.
+- **Lead 6** — verified exactly, and a **sibling sweep closed the class**: every `until <ticket>` construction in `docs/` resolves to six tickets, **all `done`**; four are correct past-tense records and one explicitly says the gate is open. Lead 6's two cells are the only live-tense pointers. A negative result recorded so the class is closed rather than sampled. **Correction — 2026-08-10.** That closed-class restatement is false for the same counterexample as under Sibling sweep: the census missed `composed-realization-evaluation.md`'s live `until … retain-the-selected-semantic-candidate-for-the-conformance-oracle … lands` pointer (target non-terminal at verification and now). Lead 6 itself remains verified; only the exhaustive "class closed" negative result is retracted.
 
 ### Four tickets filed, with two deliberate mergers
 

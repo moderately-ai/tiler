@@ -4,7 +4,7 @@ title: Register the softmax realization law
 status: done
 priority: p1
 dependencies: []
-related: [admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold, admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence, widen-the-staged-realization-law-to-the-registered-elementary-families, admit-the-softmax-family]
+related: [admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold, admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence, widen-the-staged-realization-law-to-the-registered-elementary-families, admit-the-softmax-family, accept-the-softmax-realization-law]
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -48,6 +48,8 @@ Stated so the elimination starts from what is missing rather than from a templat
 
 Making the compiler *recognize* the softmax as a program stage. Region formation's synthetic-intermediate record carries one consumer stage per handed value and needs widening first — [`carry-a-multi-reader-intermediate-through-region-formation`](carry-a-multi-reader-intermediate-through-region-formation.md). A registered law is useful without it: it lets refinement verify an emitted sequence.
 
+**Correction — 2026-08-10.** That carry ticket is `status: done`. Region formation's multi-reader intermediate wall is no longer open. Whole-program softmax still fails under `UnsupportedCapability { rule: "missing-capability" }` for all five numerical contracts; the measured ceiling is the missing installed lowering provider / physical staged plan, not the named carry ticket.
+
 ## Closes when
 
 `tiler::softmax-f32@1` resolves to a registered law that realizes a verified `VerifiedIndexRegionSequence` whose stages match the pinned reference step for step — the extrema family, the maximum subtraction, the exponential, the sum's seeding and order, the single reciprocal division, and the reciprocal multiplication — the new encoding tag is proved append-only and injective, every declared attribute is consumed or refused by name, every existing chain's identity is unchanged byte for byte, and the acceptance node is filed.
@@ -59,6 +61,8 @@ Making the compiler *recognize* the softmax as a program stage. Region formation
 ### The variant and its tag
 
 `IndexRealizationLaw::StagedSoftmaxF32 { axes_attribute: AttributeFieldId }`, constructed by `pub const fn staged_softmax_f32()` naming `SOFTMAX_REDUCED_AXES_ATTRIBUTE`, encoded under **tag 11**. It is a labelled draft at its definition, pointing at the acceptance node [`accept-the-softmax-realization-law`](accept-the-softmax-realization-law.md) (`awaiting-decision`, parked for Tom). Registered in the standard provider transaction beside the normalization's row.
+
+**Correction — 2026-08-10.** That acceptance node is no longer `awaiting-decision`. [`accept-the-softmax-realization-law`](accept-the-softmax-realization-law.md) closed **Accepted — 2026-08-07** (Tom, without exclusion; `status: done`). The parked-draft wording above is the 2026-08-06 landing snapshot, not live acceptance status.
 
 **Tag-11 injectivity, recorded at the encoding site.** The first byte discriminates, which is the whole of the separation from tags 4, 5, 6, and 7 — each writes the same payload shape this one does, one fixed-width attribute identifier and nothing else. Within the tag that payload is a single injection on a fixed offset, so two rows differing in the axes identifier differ in the four bytes it owns; there is no second field, so no ordering question arises of the kind tag 10 has to answer for its pair. `the_softmax_law_tag_is_append_only_and_distinct` asserts the tag, distinctness from all fourteen constructible rows of tags 1..=10, and payload separation.
 
@@ -110,6 +114,8 @@ So the scalar chain the accepted refusal keeps out of law data is **46 of 697 co
 - **New pins for the softmax chain**, computed on this tree: `softmax-3x4-axis1` 5589 bytes / `5f091f6d2421d119f661c6cb2af8a8e66495324b49e3d29d362a670af280638a`; `softmax-rank1-4-axis0` 4887 / `65f06df9750048397fddbdf751610684a77af203072c7dd1d067695a4a84116b` (`the_softmax_chain_identity_is_pinned`).
 - **One pin moved, and it is the sidecar's.** Registering a law moves the count-prefixed realization-law sidecar and therefore `FrozenIndexRealizationLawRegistry`'s identity, which moves `explain::tests::deterministic_trace_is_sealed_and_rendered_separately`'s request digest from `9478647f38ab8df5` to `7bba54bcb59ec2cc`, recomputed on this tree by that pin's own documented mechanics. `implementation/compiler` was added to this ticket's scopes for it. The semantic snapshot identity is computed without the sidecar and does not move, so no artifact or kernel-program identity is touched.
 
+**Correction — 2026-08-10.** The byte lengths and digests above are the 2026-08-06 landing pins on commit `28c6e380`, not live constants. After later `tiler.index-region.v10` and `.v11` encoding steps (documented on `the_softmax_chain_identity_is_pinned`), the live pins in `crates/tiler-ir/src/index/law.rs` are: softmax `softmax-3x4-axis1` **5635** / `5ae4e45344efb4eceeb9436347aa2ab2ea37d1d2b246811026d38e861f57c22a`, `softmax-rank1-4-axis0` **4909** / `c596a5cefa760cd69ccf44078df097f553c62880a8a7610b3550af6473d9b011`; one-reader chains `rms-norm-3x4-axis1` **4099** / `76251765b9ab0938a554c914c346bce51dea05e134cacf7853307fe53c679a29`, `rms-norm-rank1-4-axis0` **3662** / `f0e20e547666d2a62d906d8e87af97e957896da1d08141091eea8a12f26daea6`, `staged-template-rank1-4-axis0` **2034** / `08353da8f68dd1bbd894a35fa9b6f284dac0f291a7603df8691c7e434b1b3d6c`. The explain request digest has moved past landing's `7bba54bcb59ec2cc`; the sole live pin in `crates/tiler-compiler/src/explain.rs` is `request=7ba3d77a66f04638` (`deterministic_trace_is_sealed_and_rendered_separately`).
+
 ### Every declared attribute consumed or refused by name
 
 The occurrence's field set must be exactly the one field the law names (`softmax-attributes`), which is what stops `reduction_axes`' tolerance for a wider record from letting a payload go unread. Refusals, all watched except where noted: `softmax-arity` (an occurrence with two operands), `softmax-value-type` (a one-operand occurrence of another element type), `softmax-shape` (a one-operand `f32` occurrence whose result drops the axis — a reduction), `softmax-attributes` (a law naming a field the record does not carry), `fold-empty-domain-without-identity` (a zero-length reduced axis), `staged-law-requires-region-sequence` (the single-region API). **`softmax-reduced-axis-rank` has no watched perturbation** and is stated as such in the acceptance node: a multi-axis reduced-axes sequence is unreachable from a verified occurrence because the family's own inferencer refuses it before a subject exists, and the check is kept because a law is interpreted against a subject rather than against the inferencer that produced it.
@@ -132,9 +138,13 @@ In `crates/tiler-ir/src/index/law.rs`: `the_softmax_law_realizes_the_pinned_refe
 - `index::refinement::tests::the_family_region_sequence_query_agrees_with_the_resolved_law` used the softmax as its "registered operation the authority carries no law for" row. That row is now `tiler::slice-f32@1`, and the softmax joined the normalization as a `true` row.
 - `crates/tiler-compiler/tests/softmax_recognizer_boundary.rs` claimed the softmax "carries no law at all, so the same arm answers `false` for it". **Measurement:** on base `f0132c88` the softmax program refuses under `UnsupportedCapability { rule: "operation-set" }` — the recognizer had no shape for it; on this tree it refuses under `UnsupportedCapability { rule: "missing-capability" }` — it is recognized, and nothing installed lowers what its realization needs. Both are the same *class*, so the test's `is_err()` could not tell them apart; it now asserts the exact class-and-rule and the header states where the wall moved to and what still stands in front of it ([`carry-a-multi-reader-intermediate-through-region-formation`](carry-a-multi-reader-intermediate-through-region-formation.md)). This is a boundary *moving*, not the ticket's non-goal being done: the compiler still compiles no softmax program.
 
+**Correction — 2026-08-10.** [`carry-a-multi-reader-intermediate-through-region-formation`](carry-a-multi-reader-intermediate-through-region-formation.md) is `status: done`. Naming that ticket as the remaining wall is stale; the live refusal remains `missing-capability` (installed lowering capabilities / physical staged plan). Boundary-file header text that still cites the carry ticket is residual product debt outside this ticket-only repair.
+
 ### Support matrix
 
 Advances `tiler::softmax-f32@1` from "registered operation with no realization law" to "registered law realizing a verified four-stage region sequence"; it does not advance the row to whole-program compilation or dispatch, which remain behind region formation's multi-reader carry and a lowering provider.
+
+**Correction — 2026-08-10.** Multi-reader region formation has landed. Whole-program compilation and dispatch remain behind the measured `missing-capability` ceiling (installed lowering provider and physical staged plan), not the carry ticket.
 
 ### Commands
 

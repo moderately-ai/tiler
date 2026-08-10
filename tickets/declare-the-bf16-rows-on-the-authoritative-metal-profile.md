@@ -107,7 +107,7 @@ matrix and the end-to-end BF16 contract refusal remain with their split tickets.
 - Depends on `admit-a-bf16-scalar-arithmetic-subject`: without a BF16 subject the honourability half is unstatable, and this ticket lands both halves at once. That dependency is satisfied — the subject is statable and no BF16 fact was declared.
 - Depends on `measure-macos-apple9-bf16-under-unified-msl4-profile`, added 2026-08-02. The macOS half is unstatable until BF16 is measured on the profile's own compilation row; see the blocked section above.
 - `measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes` owns the MSL 3.1 BF16 measurement and is `done`. **Do not re-measure it here**; the new dependency re-measures the same dimensions at MSL 4.0 rather than superseding that record, which remains correct evidence for its own row.
-- The two iOS answers are gated on `first-authoritative-ios-metal-compile-declaration`, which is `deferred`. It is deliberately **not** a dependency — a parked state never satisfies a dependent — so this ticket's reachable outcome once the MSL 4.0 BF16 measurement lands is the macOS half alone. Splitting the iOS half into its own ticket, or narrowing this one's stated outcome to macOS, is the coordinator's call and is not assumed here.
+- The two iOS answers are gated on `first-authoritative-ios-metal-compile-declaration`, which is `deferred`. It is deliberately **not** a dependency — a parked state never satisfies a dependent — so this ticket's reachable outcome once the MSL 4.0 BF16 measurement lands is the macOS half alone. **Correction — 2026-08-10.** The iOS half was split and this ticket narrowed to macOS on 2026-08-02 (see Required evidence); [`declare-the-bf16-ios-family-answers-on-authoritative-ios-profiles`](declare-the-bf16-ios-family-answers-on-authoritative-ios-profiles.md) owns the iOS answers. The open-coordinator-call wording that previously closed this bullet is struck.
 - `measure-apple-numerics-on-physical-ios-device` is `deferred` and must not be a dependency — `deferred` never satisfies a dependent. It is the only route to closing the iOS-device `Unknown`, and it stays `related`.
 - A differing physical-iOS result would reopen `declare-metal-numerical-honourability`; say so rather than assuming the family agrees.
 - `state-and-check-a-bf16-numerical-contract` depends on this ticket and owns the
@@ -134,24 +134,22 @@ BF16 subject plus the measured producer, compiler build, and execution build.
 **Identity step.** The F32-only endpoint was
 `tiler.metal.macos-apple9.msl4-0.f32.v1`, 1,963 bytes. The new content receives
 the truthful new key `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1` rather than a
-revision whose `.f32` component would be false; its descriptor is 2,149 bytes.
-The standard Metal artifact test digest moved
+revision whose `.f32` component would be false; at the BF16 landing its descriptor was 2,149 bytes. Subsequent profile steps (grid-axis measured shrink, then saturated-parallel-fold cost row) moved length without revising BF16 measurement content; `the_declared_profile_states_one_barrier_realization` now pins 2,099 bytes. The standard Metal artifact test digest moved
 `3daf11256423c683a75f6aeb6b1e3578b1425d46e0899664ab5df156ca600db6` →
 `949841c610fef13473e4a4d14ee57a62b39ba09c5ed27a9c7ff16679853827d1`,
 and the cache-subject test digest moved
 `0d09c0da9db85c70bb2270cbed3a67859b7718b07c605c45ca5d1a9f6adfa905` →
 `3bc5f57f3b3e2e07849a3830ec56a89e4332245685fa23c9db4da8a4f71c34d0`.
 Those were the complete observed targeted-test blast radius after the descriptor
-pin moved; all three pins were recomputed on this branch.
+pin moved at the BF16 landing; all three pins were recomputed on this branch.
 
 **Later merged-tree movement.** Those values remain the historical BF16
 transition. The canonical-occurrence identity step subsequently moved the
-current standard Metal artifact pin to
-`124981346c0bd593f19154f7ec3df26588179e0c7b446a995bbe4a7a92ba25bd` and
-the current cache-subject pin to
-`94dfde30611c9021da8e4a71f9b6824f3af1ff09ec68daa4c65d05bfc63e6370`.
-Both were recomputed by the pin assertion on that step's merged tree rather
-than copied from either branch.
+standard Metal artifact pin through an intermediate pair
+`124981346c0bd593f19154f7ec3df26588179e0c7b446a995bbe4a7a92ba25bd` /
+`94dfde30611c9021da8e4a71f9b6824f3af1ff09ec68daa4c65d05bfc63e6370` (recomputed on that step's merged tree). Further encoding and profile steps moved both digests again; this ticket does not freeze a live "current" pair. Sole live authority for the standard Metal artifact and cache-subject pins is `the_standard_metal_path_publishes_its_recorded_identities` in `crates/tiler-build/src/metal_plan.rs`, with the authority ledger's pin ladder as the prose mirror — not any intermediate pair recorded here.
+
+**Correction — 2026-08-10.** Post-landing identity and descriptor-length authority is `metal_plan.rs` + the authority ledger pin ladder, not this ticket's frozen intermediate pins or landing-time lengths.
 
 **Measurement boundary.** The ledger now cites the retained 2026-08-02
 covering/exhaustive `apple9-f32-bf16-unified-msl4-macos26` records: Apple M4

@@ -4,7 +4,7 @@ title: Preserve the float-to-integer conversion precedent sources
 status: done
 priority: p3
 dependencies: []
-related: [land-the-conversion-pair-decomposition-adr, test-the-directional-conversion-pair-generalization]
+related: [land-the-conversion-pair-decomposition-adr, test-the-directional-conversion-pair-generalization, preserve-the-pytorch-conversion-platform-variation-source]
 scopes: [research/numerics]
 shared_scopes: [project/tickets]
 paths: []
@@ -16,7 +16,7 @@ Every primary source behind [ADR 0041](../docs/decisions/0041-separate-float-to-
 
 ## The defect, stated so it can be reproduced or refuted in one line
 
-**Fact.** [Float-to-integer conversion precedents](../docs/research/numerics/float-to-integer-conversion-precedents.md) is `disposition: adopted` and is the sole `evidence` record for ADRs 0010 and 0041. Its `Primary sources` list is seven bare URLs — LLVM `fptosi`, LLVM saturating conversions, WebAssembly numeric execution, the Rust reference's numeric casts, the C++ draft's `conv.fpint`, StableHLO `convert`, and the PTX conversion instructions — and it names no preserved-source id at all:
+**Fact.** [Float-to-integer conversion precedents](../docs/research/numerics/float-to-integer-conversion-precedents.md) is `disposition: adopted` and is the sole `evidence` record for ADR 0041 and co-evidence (with `tiler.research.numerics.dtype-resolution-precedents`) for ADR 0010. Its `Primary sources` list is seven bare URLs — LLVM `fptosi`, LLVM saturating conversions, WebAssembly numeric execution, the Rust reference's numeric casts, the C++ draft's `conv.fpint`, StableHLO `convert`, and the PTX conversion instructions — and it names no preserved-source id at all:
 
 ```sh
 rg -n 'https?://' docs/research/numerics/float-to-integer-conversion-precedents.md
@@ -24,7 +24,7 @@ rg -n 'https?://' docs/research/numerics/float-to-integer-conversion-precedents.
 
 **Fact — three of the seven already have a pinned identity in the manifest that the record does not use.** `llvm-langref-llvmorg-22.1.8` is `LangRef.rst` at `llvm/llvm-project` commit `ca7933e47d3a3451d81e72ac174dcb5aa28b59d1`, and it carries both cited LLVM claims — `fptosi` appears 32 times and the section "Saturating floating-point to integer conversions" begins at line 21556, with `llvm.fptosi.sat` documented from line 21617. `stablehlo-spec-v1.18.0` carries the `convert` section. `nvidia-ptx-isa-cuda-13.3.0` is metadata-only with a recorded digest and a version-qualified archive URL. So the LLVM and StableHLO claims are re-derivable from bytes in this repository today and the record sends a reader to a live page instead.
 
-**Inference.** This is the exact failure the [preservation record](../docs/research/numerics/sources/README.md) exists to prevent, and it states the lesson from a case where the moving citation also turned out to be wrong: "a citation to a moving path is not re-derivable, and here it was also not correct." The array API record is the worked precedent for repairing one — re-check every claim against the preserved bytes, record which held and which did not, and say so rather than asserting a clean pass.
+**Inference.** This is the exact failure the [preservation record](../docs/research/numerics/sources/README.md) exists to prevent, and the lesson it exists to enforce — stated in the [mature-operation taxonomy](../docs/research/semantic-graph/mature-operation-and-signature-taxonomy.md) after the array-API re-check, where the moving citation also turned out to be wrong — is: "a citation to a moving path is not re-derivable, and here it was also not correct." The array API record is the worked precedent for repairing one — re-check every claim against the preserved bytes, record which held and which did not, and say so rather than asserting a clean pass.
 
 ## What the work is
 

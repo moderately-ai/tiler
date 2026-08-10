@@ -4,7 +4,7 @@ title: Size the four hand-written metal ALL arrays from their types
 status: done
 priority: p1
 dependencies: []
-related: [cover-the-fifth-envelope-digest-domain-in-the-union-no-prefix-check]
+related: [size-the-metal-aot-all-arrays-whose-count-coupling-does-not-rescue-them, derive-the-payload-carrying-enum-populations-in-the-injectivity-module, derive-the-artifact-numerical-and-fenced-space-populations]
 scopes: [implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
@@ -70,3 +70,5 @@ The four-site repair landed in `b7badba8` (`Size the four hand-written Metal ALL
 Each enum was widened separately while its list was left short, and each perturbation stopped at the declaration with `E0308` before being restored. The audit also demonstrated the old false-green boundary: after repairing exhaustive matches, a short `MetalHostPredicate::ALL` still let the package check and all 122 then-current package tests pass. No enum variant, ordering, public value, tag, identity, or runtime behaviour changed.
 
 The later dated corrections above keep the remainder honest: the payload-carrying IR/artifact populations were separate defects, and the four `tiler-metal-aot` siblings subsequently landed under their own ticket. The fourteen other reported same-shape sites remain only the historical sweep population recorded here; this ticket did not silently absorb them.
+
+**Correction — 2026-08-10.** Frontmatter `related` dropped `cover-the-fifth-envelope-digest-domain-in-the-union-no-prefix-check` (envelope digest domain coverage; no shared scopes or outcome with this metal enumeration repair) and now lists the natural peer `size-the-metal-aot-all-arrays-whose-count-coupling-does-not-rescue-them` plus the injectivity and artifact derive tickets that absorbed the payload-carrying IR correction. Outcome and four-site metal delivery are unchanged.

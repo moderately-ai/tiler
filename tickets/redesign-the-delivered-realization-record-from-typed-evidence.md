@@ -4,7 +4,7 @@ title: Redesign the delivered-realization record from typed evidence
 status: done
 priority: p1
 dependencies: [carry-the-honourability-fact-provenance-into-the-artifact-record, express-metal-honourability-in-the-shared-form]
-related: [record-delivered-numerical-realization, drive-the-build-orchestrator-from-a-checked-compiler-plan, widen-the-region-realization-to-consumable-dimensions]
+related: [record-delivered-numerical-realization, drive-the-build-orchestrator-from-a-checked-compiler-plan, widen-the-region-realization-to-consumable-dimensions, accept-the-delivered-realization-artifact-surface, wire-the-delivered-realization-record-into-the-artifact, derive-per-locus-numerical-obligations, key-numerical-requirements-by-the-contract-s-own-resolved-type]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/build, contracts/numerics, contracts/artifacts, contracts/decisions, research/numerics]
 shared_scopes: [project/tickets]
 paths: []
@@ -16,12 +16,14 @@ Tom receives a compile-checked private, review-ready design packet for a require
 
 ## Why the staged draft must be replaced
 
-- **Fact:** `crates/tiler-artifact/src/program/realization.rs` declares a second `NumericalDimension` with four cases and fixed fields. The compiler authority has eleven cases, while the widened scheduled realization and artifact codec carry the eight dimensions currently consumable by admitted operations.
-- **Fact:** compiler honourability is keyed by `(NumericalDimension, ArithmeticType)`. The measured Apple profile preserves `f16` input subnormals and flushes `f32` input subnormals, so `honoured(dimension)` cannot return one correct answer.
-- **Fact:** `HonouringMeans::SupportedOnlyUnderDeclaredRelaxation` carries a specific relaxation subject, but `HonouringMeans::key()` collapses every such value to the same text. Opaque key bytes therefore cannot tell a reader which relaxation made a requirement honourable.
-- **Fact:** ADR 0076 requires availability phase, authority, validity scope, declaring profile, compiler build, and execution environment. The draft carries only phase and one record-level profile.
-- **Fact:** `DeliveredRealizationBuilder::declare` accepts arbitrary bytes and a caller-selected phase. It validates framing, not that a checked compiler plan selected the claim.
-- **Inference:** publishing the draft would freeze an incomplete and already-contradicted contract. The dtype key, structured means, provenance, dimension authority, constructor, readers, canonical encoding, and identity all require a coherent replacement.
+**Correction — 2026-08-10.** The Facts below are the filing-time problem statement about the staged draft at base `6544d4f` (Outcome pins each defect there). They are **not** live claims about production. Downstream [`accept-the-delivered-realization-artifact-surface`](accept-the-delivered-realization-artifact-surface.md) and [`wire-the-delivered-realization-record-into-the-artifact`](wire-the-delivered-realization-record-into-the-artifact.md) (both `status: done`) landed the redesigned production surface: shared eleven-dimension `NumericalDimension` in `tiler_ir::numerics`, typed `declare_scalar_arithmetic` / `require`, structured provenance, and domain `delivered-realization.v2`. Reproduce: `rg -n "declare_scalar_arithmetic|delivered-realization.v2" crates/tiler-artifact/src/program/realization.rs`; `rg -n "DIMENSION_COUNT|pub enum PolicyLocus" crates/tiler-ir/src/numerics.rs`.
+
+- **~~Fact~~ — historical at `6544d4f` (struck as a live claim 2026-08-10):** `crates/tiler-artifact/src/program/realization.rs` then declared a second `NumericalDimension` with four cases and fixed fields. The compiler authority had eleven cases, while the widened scheduled realization and artifact codec carried the eight dimensions then consumable by admitted operations.
+- **~~Fact~~ — historical at filing (struck as a live claim 2026-08-10):** compiler honourability was keyed by `(NumericalDimension, ArithmeticType)`. The measured Apple profile preserves `f16` input subnormals and flushes `f32` input subnormals, so `honoured(dimension)` cannot return one correct answer. Outcome already upgrades the key to complete resolved type and bounds the two-dtype fixture: no in-tree profile declares an `f16` honourability row (`F16 is deliberately absent` in `crates/tiler-build/src/metal_declaration.rs`).
+- **~~Fact~~ — historical at `6544d4f` (struck as a live claim 2026-08-10):** `HonouringMeans::SupportedOnlyUnderDeclaredRelaxation` carries a specific relaxation subject, but the then-named `HonouringMeans::key()` collapsed every such value to the same text. Opaque key bytes therefore cannot tell a reader which relaxation made a requirement honourable. **Correction — 2026-08-10.** Production renames that non-injective presentation API to `HonouringMeans::label`; identity and wire carry the relaxation via `encode` / `canonical_key`. Reproduce: `rg -n "fn label|fn encode|fn canonical_key" crates/tiler-ir/src/numerics.rs` on the `HonouringMeans` impl.
+- **~~Fact~~ — historical at `6544d4f` (struck as a live claim 2026-08-10):** ADR 0076 requires availability phase, authority, validity scope, declaring profile, compiler build, and execution environment. The staged draft carried only phase and one record-level profile. Production provenance types (`FactSourceProvenance`, …) live in shared `tiler_ir::numerics`.
+- **~~Fact~~ — historical at `6544d4f` (struck as a live claim 2026-08-10):** `DeliveredRealizationBuilder::declare` then accepted arbitrary bytes and a caller-selected phase, validating framing not that a checked compiler plan selected the claim. Production API is `declare_scalar_arithmetic` / `require` with typed subjects; ordinary production path is `tiler_build::realization::translate` from `DeliveredRealizationView`.
+- **Inference (filing-time design consequence; not a live inventory claim):** publishing the staged draft would have frozen an incomplete and already-contradicted contract. The dtype key, structured means, provenance, dimension authority, constructor, readers, canonical encoding, and identity all required a coherent replacement — the packet and later accept/wire landings.
 
 ## Implementation keys
 
@@ -88,7 +90,7 @@ The review packet eliminates the stale draft, defines the exact signatures and c
 
 The compile-checked private design packet is `spikes/numerics/delivered-realization-record/`, its own workspace carrying no `rust-toolchain.toml` of its own. Exact invocation, from that directory: `CARGO_TARGET_DIR=./target cargo run`. Ten stages, ending in **38 perturbations covering all 25 distinct rule identifiers** the two proposed error vocabularies define; `cargo clippy` and `cargo fmt --check` are clean.
 
-**Production is untouched.** `git diff --name-only <base>..HEAD` reaches nothing under `crates/`; `crates/tiler-artifact/src/program/realization.rs` is byte-identical.
+**Production is untouched.** `git diff --name-only <base>..HEAD` reaches nothing under `crates/`; `crates/tiler-artifact/src/program/realization.rs` is byte-identical. **Correction — 2026-08-10.** That claim is ticket-local (this redesign delivered only the spike packet). It is not a tree-global reading: [`accept-the-delivered-realization-artifact-surface`](accept-the-delivered-realization-artifact-surface.md) and [`wire-the-delivered-realization-record-into-the-artifact`](wire-the-delivered-realization-record-into-the-artifact.md) both `status: done` and landed the redesigned production surface.
 
 ### The five cited defects, each verified at source
 
@@ -96,7 +98,7 @@ All hold at base `6544d4f`. The packet README carries the line-level derivation:
 
 1. The artifact's second `NumericalDimension` has four cases against the compiler's eleven — **and** its doc comment claims those four are what `NumericalRealization` carries, which has been **eight** since `widen-the-region-realization-to-consumable-dimensions`. The comment is false in the direction that makes the draft look complete.
 2. Honourability is keyed by more than `(dimension, arithmetic)`: the **complete resolved type** is the third coordinate (`NumericalRequirement::subject`), and `tiler_compiler::target::ScalarArithmetic` is already the public validated subject.
-3. `HonouringMeans::key` collapses every declared relaxation to one constant string while `encode` carries the payload. This is the decisive defect: opaque key bytes cannot carry the record even for comparison, which is what reopens the elimination `record-delivered-numerical-realization` recorded.
+3. `HonouringMeans::key` collapses every declared relaxation to one constant string while `encode` carries the payload. This is the decisive defect: opaque key bytes cannot carry the record even for comparison, which is what reopens the elimination `record-delivered-numerical-realization` recorded. **Correction — 2026-08-10.** Production presents that non-injective string as `HonouringMeans::label`; structured identity is `encode` / `canonical_key` (no `fn key` on `HonouringMeans` in `tiler_ir::numerics`).
 4. Authority, validity scope, compiler build, and execution environment are absent; the vocabulary now exists in `tiler-compiler` and is `pub(crate)`.
 5. `declare` validates framing, not that a checked plan selected the claim.
 
@@ -106,8 +108,8 @@ The ticket says "the measured Apple profile preserves `f16` input subnormals and
 
 ### Two defects found while verifying, filed rather than absorbed
 
-- `derive-per-locus-numerical-obligations` — the compiler has no locus vocabulary at all (`grep -rni "locus" --include="*.rs" crates/` is empty), so it cannot yet produce the obligation rows the record is shaped to carry. The shape is derived from ADR 0011 and is not blocked by this; the producer is, and a single-locus producer is admissible meanwhile.
-- `key-numerical-requirements-by-the-contract-s-own-resolved-type` — `policy::dimension_requirements` hard-codes `F32::resolved_type()` while reading `contract.arithmetic`, so no non-`f32` contract can ever be honoured. It fails closed, so it is a structural refusal rather than a wrong answer.
+- [`derive-per-locus-numerical-obligations`](derive-per-locus-numerical-obligations.md) — at filing, the compiler had no locus vocabulary at all (`grep -rni "locus" --include="*.rs" crates/` was empty), so it could not yet produce the obligation rows the record is shaped to carry. The shape is derived from ADR 0011 and was not blocked by this; the producer was, and a single-locus producer was admissible meanwhile. **Correction — 2026-08-10.** That ticket is `status: done`; `PolicyLocus` is public in `tiler_ir::numerics`. Reproduce: `rg -n "pub enum PolicyLocus" crates/tiler-ir/src/numerics.rs`.
+- [`key-numerical-requirements-by-the-contract-s-own-resolved-type`](key-numerical-requirements-by-the-contract-s-own-resolved-type.md) — at filing, `policy::dimension_requirements` hard-coded `F32::resolved_type()` while reading `contract.arithmetic`, so no non-`f32` contract could ever be honoured. It failed closed, so it was a structural refusal rather than a wrong answer. **Correction — 2026-08-10.** That ticket is `status: closed` (defect already fixed); current `dimension_requirements` derives the subject from `contract.arithmetic` and uses `subject.resolved_type().clone()`.
 
 ### Boundaries held
 
@@ -115,7 +117,7 @@ No production edit, no identity or schema advance, no pinned rebaseline, no cont
 
 ### Remainder
 
-The top-level `spikes/README.md` catalog entry is deliberately not made: that file maps to `contracts/navigation`, which the live ticket `cite-adr-0095-in-the-milestone-6-distributivity-framing` holds. `spikes/numerics/README.md` — inside this ticket's `research/numerics` scope — lists the packet and also corrects a pre-existing omission of the BF16 spike from that portal.
+~~The top-level `spikes/README.md` catalog entry is deliberately not made: that file maps to `contracts/navigation`, which the live ticket `cite-adr-0095-in-the-milestone-6-distributivity-framing` holds.~~ **Correction — 2026-08-10.** The catalog entry now exists (`spikes/README.md` links `numerics/delivered-realization-record/README.md`); [`cite-adr-0095-in-the-milestone-6-distributivity-framing`](cite-adr-0095-in-the-milestone-6-distributivity-framing.md) is `status: done` — this remainder was delivered outside this ticket. `spikes/numerics/README.md` — inside this ticket's `research/numerics` scope — lists the packet and also corrects a pre-existing omission of the BF16 spike from that portal.
 
 ## Graph maintenance
 
@@ -127,4 +129,4 @@ The top-level `spikes/README.md` catalog entry is deliberately not made: that fi
 - Qualify `record-delivered-numerical-realization` as historical evidence: its staged four-dimension outcome was valid for its tree and is not the current candidate. **Done 2026-08-05** — its `## Outcome` now carries a confirmed-historical note re-verifying every qualifying claim at source, plus the two corrections to that ticket's own text (the false "four dimensions `NumericalRealization` carries" comment, and the overstated "measured `f16`/`f32` divergence" that no profile declares).
 - `derive-per-locus-numerical-obligations` and `key-numerical-requirements-by-the-contract-s-own-resolved-type` were filed from this work; neither blocks acceptance.
 - Keep the caller-profile declaration and checked Metal adapter visible as explicit upstream gates rather than relying on prose or a reversed provenance edge.
-- Leave removing the stale four-dimension production module, applying accepted contract text, advancing schema/identity domains, and recomputing production goldens to `wire-the-delivered-realization-record-into-the-artifact` after public acceptance.
+- Leave removing the stale four-dimension production module, applying accepted contract text, advancing schema/identity domains, and recomputing production goldens to `wire-the-delivered-realization-record-into-the-artifact` after public acceptance. **Correction — 2026-08-10.** Accept and wire both `status: done`; that production integration is no longer open work owned by this ticket.

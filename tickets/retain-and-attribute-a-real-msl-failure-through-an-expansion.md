@@ -4,7 +4,7 @@ title: Retain a real MSL front-end failure through an expansion and attribute it
 status: done
 priority: p3
 dependencies: []
-related: [prototype-inline-aot-integration-proof, generate-cfg-gated-artifact-family-delivery]
+related: [prototype-inline-aot-integration-proof, generate-cfg-gated-artifact-family-delivery, carry-a-source-correspondence-from-region-text-to-emitted-msl, retain-canonical-msl-under-a-debug-expansion-cache-entry]
 scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
@@ -12,15 +12,17 @@ tags: [implementation, frontend, diagnostics, macro-aot]
 ---
 ## User-visible outcome
 
-When `xcrun metal` rejects the MSL an expansion emitted, the consumer sees the compiler's own text attributed to the region construct that produced it, rather than to the invocation as a whole.
+When `xcrun metal` rejects the MSL an expansion emitted, the consumer sees the compiler's own retained text in a family-scoped `#[cfg]`-gated `compile_error!` at the invocation span. Attribution of that text to a region construct was answered as wrong-construct and deferred (`carry-a-source-correspondence-from-region-text-to-emitted-msl`), not delivered.
 
 ## Why this exists
 
-**Fact — the retention machinery exists and is exercised, but only by the wrong failure.** `DriverError::ToolFailure` carries the failing tool's stderr as bounded bytes (`MAX_RETAINED_OUTPUT_BYTES`, 16 KiB, truncation recorded), `tiler_macros::aot::retained` renders it into the family-scoped `#[cfg]`-gated `compile_error!`, and `crates/tiler/tests/facade/fail/family_cfg_matching_family_retains_its_diagnostic.rs` pins the result byte for byte. The failure that fixture induces is `ToolchainUnavailable` — `aot.rs` says so in the doc comment on `deliver`'s `toolchain` parameter: "pointing it at a path that is not there reaches the same `DriverError::ToolchainUnavailable` a host with no Apple tools produces, which is how the retained-diagnostic path below is exercised on a machine that does have them." No test drives `CompileStage::Metal` to a nonzero exit through an expansion.
+**Correction — 2026-08-10.** The three Facts below are the filing-time problem statement. Outcome 2026-08-04 supersedes them as live inventory: a real `metal` front-end rejection is exercised through an expansion (injection and host language-standard routes); attribution to a region construct was deferred because it would name the wrong construct on both reachable routes; and the cache-retention permission was split to `retain-canonical-msl-under-a-debug-expansion-cache-entry` (later delivered). Do not read the present-tense sentences below as claims about this base.
 
-**Fact — the span is the invocation's, not the construct's.** `docs/integration/frontends.md`'s remaining-checks list asked for "source-spanned retained MSL diagnostics". What is delivered is a diagnostic at the invocation span carrying MSL text verbatim; nothing maps an MSL line and column back to the `out` sub-expression, operand, or `deliver` token that caused it.
+**~~Fact~~ — historical at filing: the retention machinery exists and is exercised, but only by the wrong failure.** `DriverError::ToolFailure` carries the failing tool's stderr as bounded bytes (`MAX_RETAINED_OUTPUT_BYTES`, 16 KiB, truncation recorded), `tiler_macros::aot::retained` renders it into the family-scoped `#[cfg]`-gated `compile_error!`, and `crates/tiler/tests/facade/fail/family_cfg_matching_family_retains_its_diagnostic.rs` pins the result byte for byte. The failure that fixture induces is `ToolchainUnavailable` — `aot.rs` says so in the doc comment on `deliver`'s `toolchain` parameter: "pointing it at a path that is not there reaches the same `DriverError::ToolchainUnavailable` a host with no Apple tools produces, which is how the retained-diagnostic path below is exercised on a machine that does have them." No test drives `CompileStage::Metal` to a nonzero exit through an expansion. **Superseded by Outcome 2026-08-04:** `a_real_metal_front_end_rejection_is_retained_under_its_family` and `family_cfg_matching_family_retains_a_metal_front_end_diagnostic` exercise a real metal nonzero exit.
 
-**Fact — the cache half is permission, not delivery.** The same contract says "debug configuration may retain canonical MSL and tool diagnostics under the cache entry." `crates/tiler-cache/src/expansion.rs` mentions neither MSL nor source; no entry carries either.
+**~~Fact~~ — historical at filing as an open gap; the span half remains live.** `docs/integration/frontends.md`'s remaining-checks list asked for "source-spanned retained MSL diagnostics". What is delivered is a diagnostic at the invocation span carrying MSL text verbatim; nothing maps an MSL line and column back to the `out` sub-expression, operand, or `deliver` token that caused it. **Correction — 2026-08-10.** The open-gap framing is historical; Outcome deferred region-construct attribution rather than delivering it. The live claim that the retained diagnostic sits at the invocation span, not a region construct, still holds.
+
+**~~Fact~~ — historical at filing: the cache half is permission, not delivery.** The same contract says "debug configuration may retain canonical MSL and tool diagnostics under the cache entry." `crates/tiler-cache/src/expansion.rs` mentions neither MSL nor source; no entry carries either. **Superseded:** split ticket `retain-canonical-msl-under-a-debug-expansion-cache-entry` delivered cache-side retention; `expansion.rs` documents `DebugRetention` and envelope-carried canonical source.
 
 **Inference — reachability is the hard part and belongs in the ticket, not in the fix.** A region that reaches the driver has already passed Tiler's own verifier and emitter, so a genuine `metal` rejection means a defect in the emitter. Deciding whether such a failure is reachable at all — and if it is only reachable by injection, saying so — is the first deliverable, because a diagnostic path nothing can reach is a different obligation from one a consumer can hit.
 
@@ -46,4 +48,4 @@ A real `metal` front-end rejection is reached through an expansion and its retai
 
 **Fact — the cache-retention permission is split out, not absorbed.** `retain-canonical-msl-under-a-debug-expansion-cache-entry` owns it. Two reasons, both structural: it changes what a bundle stores, which needs its own decision about key participation, digest participation, and absent-section behaviour on a hit; and every file it touches is under `crates/tiler-cache/**` and `crates/tiler-build/**`, which this ticket's `implementation/frontend` scope does not reach.
 
-**Boundary — `docs/integration/frontends.md` was not edited here.** A live docs worker held `contracts/integrations` during this wave, so the remaining-checks replacement text was handed to the integrator rather than written from this branch.
+**Boundary — `docs/integration/frontends.md` was not edited here.** A live docs worker held `contracts/integrations` during this wave, so the remaining-checks replacement text was handed to the integrator rather than written from this branch. **Correction — 2026-08-10.** That handoff is branch history only; at this base the contract's Landed and Parked lists carry the metal-refusal, attribution, and cache-retention outcomes, so the close condition is satisfied on the tree.

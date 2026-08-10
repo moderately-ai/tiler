@@ -110,6 +110,8 @@ Cross-layer executed evidence **moves**. Layer-local evidence **stays**. Oracle 
 | `crates/tiler/tests/facade/pass/inline_region_executes.rs` and siblings | Layer-local | **Stays** — already decided by ADR 0106 item 3 |
 | `prototypes/serial-sum-compile/tests/determinism.rs` | Layer-local (producer) | **Stays** |
 
+**Correction — 2026-08-10.** The classification row for `prototypes/serial-sum-run/src/proof.rs` `#[cfg(test)] mod tests` said "**Stays out**; relocates to `crates/tiler-runtime/tests/`". The "stays out of `tiler-conformance`" half still holds; the **destination** does not. Carry's Outcome on [`carry-the-device-executed-value-proof-into-the-conformance-crate`](carry-the-device-executed-value-proof-into-the-conformance-crate.md) (done) records that the fixture compiles through `tiler_compiler::session::compile` and reaches `tiler_build::realization::translate`, `tiler_metal::applicability`, and `metal`; `identity_join`'s `the_consumer_links_no_compiler_emitter_or_build_provider` reads `Cargo.lock` (which merges normal, build, and development edges) and asserts the runtime consumer's closure contains none of those packages — adding them as runtime dev-dependencies turns that test red. The fixture therefore **cannot** move to `crates/tiler-runtime/tests/` and **stays in the prototype**, where the device-free half still runs in the gate. A compiler-free rewrite onto `adapter_route/fixture.rs` remains a separate ticket if wanted.
+
 ### The "stays" population, and why it is not a default
 
 Eighteen of the twenty-one rows stay, and the arguments are not interchangeable.
@@ -186,6 +188,8 @@ Plus a comment on [`route-the-two-hand-rolled-test-hashes-through-the-digest-cra
 - Did not edit `retain-contraction-conformance-evidence` to narrow it to its reference half. That is outcome mutation on another open ticket and belongs to the coordinator; the recommendation is recorded in the filed ticket that supersedes its other half.
 
 ## Outcome — 21 candidates classified, 3 move, 18 stay, 2026-08-07 at `3f073476`
+
+**Correction — 2026-08-10.** The three **Moves** rows (the `proof.rs` `run()` narrative, `buffer.rs` FFI half, and L3 retained digests against executed results) were subsequently delivered by [`carry-the-device-executed-value-proof-into-the-conformance-crate`](carry-the-device-executed-value-proof-into-the-conformance-crate.md) and [`route-the-realization-conformance-half-into-the-conformance-crate`](route-the-realization-conformance-half-into-the-conformance-crate.md) (both done). The prototype tree was retained (Tom's fork on carry); the loader fixture remains there per the classification correction above.
 
 **The "stays" population is the majority and it is argued, not defaulted.** The four `*_conformance.rs` reference tests each state their own exclusion — "not evidence about any schedule, any lowering, any compiled kernel, any device" — and their import sets confirm it. `custom_backend/` executes nothing: it has no dev-dependencies at all and reaches `tiler_reference` nowhere. `adapter_route/` would be **destroyed** by moving, since `tiler-runtime`'s dev-dependency comment records that its tests must not reach `tiler-compiler`, which `tiler-conformance` depends on normally.
 

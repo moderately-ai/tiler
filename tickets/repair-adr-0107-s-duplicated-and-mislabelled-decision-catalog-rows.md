@@ -4,7 +4,7 @@ title: Repair ADR 0107's duplicated and mislabelled decision catalog rows
 status: done
 priority: p2
 dependencies: []
-related: []
+related: [resolve-the-markdown-links-the-citation-check-cannot-see]
 scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
@@ -59,7 +59,7 @@ All four defects verified at base `209013bdecda631f37d1aff7f2c575f8c19cca3e` bef
 
 ## Outcome — done, 2026-08-08
 
-Landed at merge `cb56bf8e` (worker commit `23b09e62`). `docs/` + `tickets/` only, carries the green gate.
+Landed at merge `f1760a42` (worker commit `23b09e62`). `docs/` + `tickets/` only, carries the green gate.
 
 **Populations, both now equal to the 107 ADR files:** topic rows **108 → 107**, chronology rows **106 → 107**.
 
@@ -91,3 +91,7 @@ Outcome records the correct landing population and exclusions.
 The ADR 0107 catalog repair itself remains complete. Its links are now covered
 by the standing citation gate, so the one-off resolver is evidence from before
 that gate landed rather than the repository's current maintenance mechanism.
+
+## Fact audit — 2026-08-10
+
+**Correction — 2026-08-10.** The Outcome above originally named merge `cb56bf8e`. That hash is the *next* linear commit after the repair (`File the markdown links the citation check cannot see`); its parent is `f1760a42`. The true land is merge `f1760a42` (`Merge: 209013bd 23b09e62`, subject "Repair ADR 0107's duplicated and mislabelled catalog rows"); worker `23b09e62` was already correct. The Outcome sentence now carries `f1760a42`. Status, close condition, and catalog repair claims are unchanged.

@@ -4,7 +4,7 @@ title: Stop the conformance crate's lint table drifting from the workspace
 status: done
 priority: p2
 dependencies: []
-related: [carry-the-device-executed-value-proof-into-the-conformance-crate, decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access]
+related: [carry-the-device-executed-value-proof-into-the-conformance-crate, decide-the-conformance-crate-s-unsafe-lint-level-for-device-buffer-access, pin-lint-inheritance-across-the-workspace-member-set]
 scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
@@ -18,7 +18,9 @@ That is the correct mechanism for the decision Tom made on 2026-08-07 — `deny`
 
 `AGENTS.md` already names the general hazard — "crates should inherit workspace Rust and Clippy lints; inspect `[lints]` changes because inheritance is not enforced" — which is guidance to a reviewer rather than a check.
 
-**Corrected 2026-08-07 — this crate is the *second* member that cannot inherit, not the first.** The sentence here read "the first member that *cannot* inherit, so it is the first place that guidance has no fallback", and it is false at both ends. `prototypes/serial-sum-run` dropped `[lints] workspace = true` first, at `43f685f` on 2026-07-25, and carries a byte-identical divergence: the same restated table with the same one entry at `deny`. `for f in crates/*/Cargo.toml prototypes/*/Cargo.toml; do grep -q '^\[lints\]' "$f" || echo "$f"; done` returns both members and nothing else. [ADR 0079](../docs/decisions/0079-permit-unsafe-code-case-by-case-at-named-sites.md) records the same thing twice — "**Superseded — 2026-08-07, on 'the diverging crate' being one crate**" and "A second member did drop `[lints] workspace = true`: `crates/tiler-conformance`" — and this crate's own manifest calls `prototypes/serial-sum-run` "the precedent it matches in shape". What is true is the narrower claim the rest of this ticket rests on, which the correction does not disturb: the guidance has no fallback in either diverging member, and neither had a check.
+**Corrected 2026-08-07 — this crate is the *second* member that cannot inherit, not the first.** The sentence here read "the first member that *cannot* inherit, so it is the first place that guidance has no fallback", and it is false at both ends. `prototypes/serial-sum-run` dropped `[lints] workspace = true` first, at `a56bff8c` on 2026-07-25, and carries a byte-identical divergence: the same restated table with the same one entry at `deny`. `for f in crates/*/Cargo.toml prototypes/*/Cargo.toml; do grep -q '^\[lints\]' "$f" || echo "$f"; done` returns both members and nothing else. [ADR 0079](../docs/decisions/0079-permit-unsafe-code-case-by-case-at-named-sites.md) records the same thing twice — "**Superseded — 2026-08-07, on 'the diverging crate' being one crate**" and "A second member did drop `[lints] workspace = true`: `crates/tiler-conformance`" — and this crate's own manifest calls `prototypes/serial-sum-run` "the precedent it matches in shape". What is true is the narrower claim the rest of this ticket rests on, which the correction does not disturb: the guidance has no fallback in either diverging member, and neither had a check.
+
+**Correction — 2026-08-10.** The 2026-08-07 correction and the Outcome "False Fact repaired" pin named `43f685f` as the commit that dropped `[lints] workspace = true` on `prototypes/serial-sum-run`. That is wrong: the inheritance drop and restated `deny` table land in `a56bff8c` ("Execute the serial-Sum program on the GPU and verify its bits", 2026-07-25). `43f685f` is the same-day ADR 0079 unsafe-extent measurement pin (`Record the seam evidence the first widening pass produced`) and does not touch that `Cargo.toml`. Day and "first" ordering stand; only the drop commit hash was wrong.
 
 ## What this owes
 
@@ -68,7 +70,7 @@ Three properties are workspace-scoped and unreachable from `crates/tiler-conform
 
 ### False Fact repaired
 
-The ticket called this crate "the **first** member that cannot inherit". It is the **second** — `prototypes/serial-sum-run` diverged at `43f685f` on 2026-07-25, and ADR 0079 records the correction. The ticket's argument survives unchanged.
+The ticket called this crate "the **first** member that cannot inherit". It is the **second** — `prototypes/serial-sum-run` diverged at `a56bff8c` on 2026-07-25, and ADR 0079 records the correction. The ticket's argument survives unchanged.
 
 ### Two perturbations that were informative rather than clean, flagged honestly
 

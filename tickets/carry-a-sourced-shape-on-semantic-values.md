@@ -16,7 +16,9 @@ A semantic value's shape may name a declared `ShapeEnv` symbol, so a program who
 
 ## Why this exists
 
-**Fact.** `ValueFact` and `ValueDefinition` hold a `Shape`, and `SemanticProgramBuilder::input`/`input_resolved` take one by value; `SemanticProgram::shape` returns `Result<&Shape, HandleError>`. Reproduce with `grep -n "pub fn shape" -A 3 crates/tiler-ir/src/semantic/program.rs`.
+**Correction — 2026-08-10.** The opening Fact below is the filing-time gap this ticket closed. It is **not** live inventory. At this base `ValueFact` holds `SourcedShape` (`pub const fn shape(&self) -> &SourcedShape`); `ValueDefinition` holds no shape and never has (holder is `ValueData`; public readers are `ValueRef::shape` and `SemanticProgram::shape`); `SemanticProgram::shape` returns `Result<&SourcedShape, HandleError>`. The `ValueDefinition` half was already false at filing (repair §2 / 2026-08-07 audit); the rest was delivered by this unit's landing. Outcome pin values and the landing-time public-boundary claim that `ValueFact::shape` still returned `&Shape` are historical at Outcome write, not tip-of-tree — later work moved `ValueFact` to sourced shapes and rebaselined pins (artifact-program.v16, `FIXED_CONTENT_BYTES`, `DIFFERING_CARRIER_POSITIONS`). Reproduce: `rg -n 'shape: SourcedShape|fn shape\(&self\)' crates/tiler-ir/src/semantic/operation.rs crates/tiler-ir/src/semantic/program.rs`.
+
+**~~Fact~~ — historical at filing (struck as a live claim 2026-08-10).** `ValueFact` and `ValueDefinition` hold a `Shape`, and `SemanticProgramBuilder::input`/`input_resolved` take one by value; `SemanticProgram::shape` returns `Result<&Shape, HandleError>`. (Original reproduce: `grep -n "pub fn shape" -A 3 crates/tiler-ir/src/semantic/program.rs`.)
 
 **Fact.** The accepted contract already admits symbolic semantic extents: "Each axis extent may be a static integer or a scoped symbolic expression evaluated later" ([the shape environment contract](../docs/research/shapes/shape-environment-contract.md)), and `docs/ir.md` records that completing the static profile "will not complete the symbolic contract above".
 

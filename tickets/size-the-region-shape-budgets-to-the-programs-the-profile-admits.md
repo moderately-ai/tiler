@@ -4,7 +4,7 @@ title: Decide whether the three region-shape budgets move with semantic_operatio
 status: done
 priority: p2
 dependencies: []
-related: [region-expansion-exhaustion-loses-the-only-feasible-plan, carry-the-thirty-two-operation-ladder-into-the-five-records, assemble-the-decoder-layer-program]
+related: [region-expansion-exhaustion-loses-the-only-feasible-plan, carry-the-thirty-two-operation-ladder-into-the-five-records, assemble-the-decoder-layer-program, derive-the-region-shape-budgets-from-the-declaration, state-the-rule-that-a-deterministic-budget-is-a-derivation, decide-whether-a-derived-budget-belongs-in-the-request-subject]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -12,9 +12,9 @@ tags: [budgets, identity, decision]
 ---
 ## The decision
 
-`DeterministicBudgets::governed`'s `semantic_operations` is **62**, sized on 2026-08-05 "to the complete decoder-layer program, which is the largest program shape this profile may be asked to admit". `region_members` is **32**, and it was not moved with it. Should it and its two siblings — `region_boundary_outputs` (8) and `region_live_values` (64) — move too, and to what?
+**Historical open-decision framing (pre-derive).** At filing, `DeterministicBudgets::governed`'s `semantic_operations` was **62**, sized on 2026-08-05 "to the complete decoder-layer program, which is the largest program shape this profile may be asked to admit". `region_members` was **32**, and it had not moved with it. Should it and its two siblings — `region_boundary_outputs` (8) and `region_live_values` (64) — move too, and to what?
 
-Only Tom decides this. Every budget is written into the canonical request subject (`VerifiedRequestSubject::canonical_explain_subject_bytes` writes all fourteen), so a widening moves every governed compilation's qualifier and the one pinned identity that encodes it — `explain`'s `deterministic_trace_is_sealed_and_rendered_separately` request qualifier. No encoding version moves with a value change: the field set, widths, and order are untouched, so the subject stays injective inside `tiler.compiler.request-subject.v5`.
+Only Tom decides this. Every budget is written into the canonical request subject (`VerifiedRequestSubject::canonical_explain_subject_bytes` writes all fourteen), so a widening moves every governed compilation's qualifier and the one pinned identity that encodes it — `explain`'s `deterministic_trace_is_sealed_and_rendered_separately` request qualifier. No encoding version moves with a *budget value* change: the field set, widths, and order are untouched, so the subject stays injective inside the request-subject domain. **Correction — 2026-08-10.** At decision time that domain was `tiler.compiler.request-subject.v5`; the live encoder now tags `tiler.compiler.request-subject.v6` because `SemanticIdentity` gained a shape-environment subject — an unrelated domain step, not a consequence of this budget derivation. Budget value changes still do not step the encoding.
 
 ## Why it is open, and why it was not open before
 
@@ -65,3 +65,5 @@ A wider admissible region may raise per-candidate cost. The shape bounds are not
 - [`derive-the-region-shape-budgets-from-the-declaration`](derive-the-region-shape-budgets-from-the-declaration.md) — the change itself.
 - [`state-the-rule-that-a-deterministic-budget-is-a-derivation`](state-the-rule-that-a-deterministic-budget-is-a-derivation.md) — the general rule, so the next constant does not drift into a ceiling.
 - [`decide-whether-a-derived-budget-belongs-in-the-request-subject`](decide-whether-a-derived-budget-belongs-in-the-request-subject.md) — the structural question underneath all of it.
+
+**Correction — 2026-08-10.** Implementation of this decision landed under [`derive-the-region-shape-budgets-from-the-declaration`](derive-the-region-shape-budgets-from-the-declaration.md). Live `DeterministicBudgets::governed` region-shape budgets are derivations, not the filing-time bare constants 32 / 8 / 64: `region_members` is **62** (`semantic_operations`), `region_boundary_outputs` is **3** (declared output count), `region_live_values` is **80** (`semantic_values`). Reproduce: `rg -n 'region_members: 62|region_boundary_outputs: 3|region_live_values: 80' crates/tiler-compiler/src/request.rs`. The request-subject domain tag is `tiler.compiler.request-subject.v6` for the unrelated shape-environment subject step; budget value changes still do not step encoding. The Decided section above records the decision-time defect and derivation argument and is left standing for that history.

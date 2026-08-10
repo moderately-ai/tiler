@@ -20,7 +20,7 @@ The module headers state the general subject correctly; this propagates the fram
 
 ## Non-goals
 
-Renaming tests or fixtures (roadmap.md:374 permits workload names in fixtures freely); adding assertions; the three mostly-documented files beyond their gaps.
+Renaming tests or fixtures (`docs/roadmap.md` consumer-conformance-fixture classification: "may name the workload freely"); adding assertions; the three mostly-documented files beyond their gaps.
 
 ## Closes when
 
@@ -43,7 +43,9 @@ Delivered doc-only at commit `7399212c` on `tkt/state-the-general-property-in-ea
 
 Verified by `awk '/^#\[test\]$/{if (prev !~ /^\/\/\//) print NR} {prev=$0}'` over each file, which reports no line in any of the five.
 
-`serial_sum_slice.rs` (1 test, undocumented) was evaluated and deliberately excluded: it is named after IR operations rather than a workload and its header calls it a downstream-style proof of the public path, so it is not one of the five workload-named fixtures this ticket's population names. It remains the one undocumented test under `tests/` among the workload-adjacent files.
+`serial_sum_slice.rs` (1 test, undocumented at delivery) was evaluated and deliberately excluded: it is named after IR operations rather than a workload and its header calls it a downstream-style proof of the public path, so it is not one of the five workload-named fixtures this ticket's population names.
+
+**Correction — 2026-08-10.** Commit `df1219d7` documented that test the same day (`A program is its built graph, never its construction history.`); the delivery Outcome's residual "remains undocumented" inventory voice no longer describes the tree.
 
 **Evidence that no assertion moved.** `git diff --stat` is 293 insertions, 0 deletions, across four files; `git diff -U0` filtered for any changed line not beginning `+///` returns nothing. `cargo nextest run -p tiler-reference` reports **285 tests run: 285 passed, 2 skipped** both at the stashed base and after the change.
 

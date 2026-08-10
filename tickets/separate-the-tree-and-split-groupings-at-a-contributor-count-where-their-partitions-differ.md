@@ -10,11 +10,13 @@ shared_scopes: [project/tickets]
 tags: [numerics, reductions, evidence-gap]
 paths: []
 ---
-## The activation trigger fired on 2026-08-07; this is now open work
+## The activation trigger fired on 2026-08-07 — deferred → todo (historical)
 
-**Filed `deferred` because the case could not be constructed at any shape the profile admitted. That ceased to be true when the tree took its measured participant cap** — see the dated entry at the end of this ticket for the verification. Discriminating contributor counts are now reachable, so the ticket is `todo`.
+**Correction — 2026-08-10.** This opening was left in present-tense open-work framing after the ticket closed. Frontmatter `status: done` is the live board state; the Worker record, 2026-08-07, discharges all four owed bullets. Read the rest of this section as the 2026-08-07 deferred→todo transition — parallel to "### The trigger log is spent" — not as live work.
 
-**What it still owes is narrower than what it was filed for.** The compiler now *produces* the divergence; what remains missing is the **case**, not the count. No grouping-sensitive operand set has been driven through both strategies at a discriminating shape on hardware, so the four-contributor run remains the corpus's only device observation of a different-but-permitted answer, and it still does not separate the tree from the split. Everything under "What this ticket would then owe" stands unchanged. "The gap, stated precisely" and "Trigger for reconsideration" below are retained as the dated record of what deferred this and how it was eliminated; read them as history, not as current truth.
+**Filed `deferred` because the case could not be constructed at any shape the profile admitted. That ceased to be true when the tree took its measured participant cap** — see the dated entry at the end of this ticket for the verification. Discriminating contributor counts became reachable, so the ticket moved to `todo` on 2026-08-07.
+
+**What it then owed was narrower than what it was filed for.** The compiler already *produced* the divergence; what remained missing was the **case**, not the count. At activation, no grouping-sensitive operand set had been driven through both strategies at a discriminating shape on hardware, so the four-contributor run remained the corpus's only device observation of a different-but-permitted answer, and it still did not separate the tree from the split. Everything under "What this ticket would then owe" stood as the owed surface at that transition. "The gap, stated precisely" and "Trigger for reconsideration" below are retained as the dated record of what deferred this and how it was eliminated; read them as history, not as current truth. The four bullets and the docs measurement claim were later discharged — see the Worker record, 2026-08-07.
 
 ## The gap, stated precisely
 
@@ -39,6 +41,8 @@ Each matched **its own** declared grouping bit for bit, which is what made it th
 **Neither named route is what fired it.** A third arrived that this ticket did not anticipate: the two strategies stopped reading the same function. The trigger's wording above — phrased as `governed_partition` yielding different partitions for the tree and the split — presumes one function serves both, which is exactly the premise that has now gone. Read the trigger by its intent, which the body states throughout: *a reachable contributor count at which the two declared partitions differ*. `rounds` is still fixed at one and the multi-round route remains unexplored; it is simply no longer the only way here.
 
 ## What this ticket would then owe
+
+**Discharged 2026-08-07** (see Worker record). The four bullets below were the owed surface at activation; each is present in `crates/tiler-conformance` and the docs measurement.
 
 - A contributor count where the two declared partitions genuinely differ, **read from each plan's own published launch geometry** rather than assumed — the existing case established that discipline and it is not to be relaxed.
 - Operands grouping-sensitive at *that* count, stated as exact `f32` bit patterns.
@@ -87,11 +91,11 @@ A grouping-sensitive operand set at 12 exists: the current four-contributor oper
 
 ### The trigger log is spent
 
-This ticket is `todo`. Its `## Trigger check log` and the instruction "do **not** convert this to `todo`" are **spent** and must be read as history — the recheck now permanently returns the fired state, which is a check that can never say no. Kept for provenance, binding on nobody.
+This ticket was `todo` at the 2026-08-07 activation (and is `done` now). Its `## Trigger check log` and the instruction "do **not** convert this to `todo`" are **spent** and must be read as history — the recheck now permanently returns the fired state, which is a check that can never say no. Kept for provenance, binding on nobody.
 
 ## Closes when
 
-The ticket had no closing gate; its de facto conditions sat under "What this ticket would then owe", written in the subjunctive while it was `deferred`. It closes when all four of those are discharged **in `crates/tiler-conformance`** (the gated home, not only the prototype), `docs/correctness-and-testing.md:219`'s claim is corrected to name what was driven and on what host, and the report states the contributor count, both declared partitions, both returned values, and the host and toolchain row the run is bounded to.
+The ticket had no closing gate; its de facto conditions sat under "What this ticket would then owe", written in the subjunctive while it was `deferred`. It closed when all four of those were discharged **in `crates/tiler-conformance`** (the gated home, not only the prototype), the standing claim in the `docs/correctness-and-testing.md` paragraph beginning "**Measurement, and the boundary it does not exceed.**" was corrected to name what was driven and on what host, and the report stated the contributor count, both declared partitions, both returned values, and the host and toolchain row the run is bounded to. **Met** — see Worker record, 2026-08-07.
 
 ## Worker record, 2026-08-07 — all four owed bullets discharged in `crates/tiler-conformance`
 

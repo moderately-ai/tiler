@@ -80,7 +80,7 @@ keys, small at this fixture and manifest-sized at the governed bound.
 `the_canonicity_backstop_refuses_every_run_it_walks` perturbs one byte in each of
 the four runs the comparison walks plus both length disagreements; each of the
 four comparisons was neutered in turn and watched failing at its own offset — 0,
-69, 74343, 97077.
+69, and the then-fixture-specific 74343 and 97077 (0 and `HEADER_BYTES` 69 remain live constants; the latter two are historical watch-fail positions for that envelope, not re-pinned source constants).
 
 **Adversarial inputs remain bounded.** Seven malformed inputs per shape, each
 asserted to be a refusal and reported with its own verdict. The five that carry a
@@ -95,22 +95,24 @@ valid decode.
 filed with their measured tables rather than absorbed:
 
 - [`replace-the-codec-arena-content-key-with-the-existing-comparator`](replace-the-codec-arena-content-key-with-the-existing-comparator.md)
-  (p1). A **226,214-byte** envelope carrying a 4,000-node ABI expression chain
-  makes a decode allocate **1,569,620,906 bytes**, 6,939x the envelope, and a
-  forged envelope that is *rejected* allocates the identical peak. The growth is
+  (p1). At filing, a **226,214-byte** envelope carrying a 4,000-node ABI expression chain
+  made a decode allocate **1,569,620,906 bytes**, 6,939x the envelope, and a
+  forged envelope that is *rejected* allocated the identical peak. The growth was
   quadratic in arena depth, pinned at each of five doublings, with the last point
-  at `MAX_ABI_EXPRESSIONS` rather than extrapolated to. The cause is
+  at `MAX_ABI_EXPRESSIONS` rather than extrapolated to. The cause was
   `expr_key`'s nested subtree framing; the fix is
   `tiler_ir::program::abi::compare_expr_nodes`, which is public, already used by
-  the identity encoder, and documented with this exact rationale. It is filed
-  rather than done because switching changes which byte string is *the* canonical
+  the identity encoder, and documented with this exact rationale. It was filed
+  rather than done under this ticket because switching changes which byte string is *the* canonical
   encoding: a `MANIFEST_SCHEMA` major step and every pinned envelope byte in the
   workspace, across scopes this ticket does not hold.
 - [`stop-copying-the-carried-payload-through-the-envelope-projection`](stop-copying-the-carried-payload-through-the-envelope-projection.md)
-  (p2). `VerifiedArtifactProgram::encode` peaks at **4.99x** the envelope,
+  (p2). At filing, `VerifiedArtifactProgram::encode` peaked at **4.99x** the envelope,
   because `ArtifactEnvelope::project` copies each carried object four times
   before the encoder writes it a fifth. That is the producer path, not the
   decoder this ticket names.
+
+**Correction — 2026-08-10.** The two remainder bullets above record discovery-time peaks and the split-out filings; they are not unannotated live peaks. At audit base `c99ac54950f2`, both successors are `status: done`: (1) [`replace-the-codec-arena-content-key-with-the-existing-comparator`](replace-the-codec-arena-content-key-with-the-existing-comparator.md) landed the arena comparator path — the same 226,214-byte / 4,000-node envelope now peaks at **670,658** bytes (2.96×) in `decoder-allocation-macos-27.0-2026-08-06-comparator.tsv`, not 1,569,620,906; live program-codec `MANIFEST_SCHEMA` is `(16, 0)`, past the 14.0 step that ticket took. (2) [`stop-copying-the-carried-payload-through-the-envelope-projection`](stop-copying-the-carried-payload-through-the-envelope-projection.md) reduced `VerifiedArtifactProgram::encode` on the 64 MiB shape from 4.99× to **2.00×** (spike projection table / `projection.tsv`: 134,558,207 peak). Reproduce: related ticket frontmatter `status: done`; `rg -n 'const MANIFEST_SCHEMA' crates/tiler-artifact/src/program/codec/encode.rs`; comparator and projection TSV decode/encode rows under `spikes/artifacts/decoder-allocation/results/`.
 
 **No contract text changed, and that is a finding rather than an omission.**
 `docs/artifact-abi.md`'s statement that the decoder "re-encodes the validated

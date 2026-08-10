@@ -85,6 +85,8 @@ No test mutates the ambient process environment. Every one supplies an `Eviction
 
 `docs/integration/frontends.md` is `contracts/integrations`, held by a live sibling ticket, so this branch did not edit it. The complete section — variable, default, opt-out, spellings, refusal behaviour, trigger, amortization, and report disposition — is in this worker's report under **Integrator edits**, ready to paste into the *Compiler cache* section after the ADR 0089 paragraph.
 
+**Correction — 2026-08-10.** The present-tense residual above is historical, not live work. At audit base `c99ac54950f2` the *Compiler cache* section of `docs/integration/frontends.md` already documents the variable `TILER_EXPANSION_CACHE_MAX_ENTRY_AGE`, the default (`MaxEntryAge::DEFAULT` / thirty days), the exact `off` opt-out, accepted spellings, refusal behaviour (typed refusal of eviction only, once per process on stderr), the post-publication trigger, at-most-once-per-process amortization, and deliberate non-surfacing of `CollectionReport`. The "live sibling / Integrator edits paste" claim is therefore not an open debt on this ticket; Q-ART-004's collection half closed into that contract. Reproduce: read the paragraphs starting at `The cache trims itself` and `An expansion reads one further variable, \`TILER_EXPANSION_CACHE_MAX_ENTRY_AGE\``.
+
 ### Found while implementing, not fixed here
 
 - `crates/tiler-cache/src/expansion/collect.rs`'s module documentation says the frontend "invokes this operation off the hit path" as a statement about a caller that did not exist when it was written. It is true as of this branch, and no edit was needed; `implementation/cache` is not this ticket's scope in any case.

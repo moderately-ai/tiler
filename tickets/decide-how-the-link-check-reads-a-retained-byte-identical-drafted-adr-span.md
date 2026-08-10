@@ -17,7 +17,9 @@ The first run of the markdown-link resolution in `check-citations.sh` reported 1
 - `docs/research/runtime/backend-scoped-route-requirement-answers.md` — 8 links, span drafted for [ADR 0092](../docs/decisions/0092-answer-backend-scoped-route-requirements-in-the-owning-backends-vocabulary.md).
 - `docs/research/numerics/conversion-family-decomposition-across-pairs.md` — 2 links, span drafted for [ADR 0102](../docs/decisions/0102-key-conversion-families-by-the-ordered-pair-and-derive-their-fields.md).
 
-Both records state the condition beside their span and refuse to repoint, in those words. The runtime record: `"Repointing them here is still refused, and now for two reasons rather than one: it would trade a reader's inconvenience for the byte-identity that makes this span quotable at all"`. The numerics record: `"This is stated here rather than repointed, because repointing would break the byte-identity the transfer depends on and a transfer that edits is a fork"`.
+Both records state the condition beside their span and refuse to repoint. At filing base `db3f4d07` the continuous wording was: runtime `"Repointing them here is still refused, and now for two reasons rather than one: it would trade a reader's inconvenience for the byte-identity that makes this span quotable at all"`; numerics `"This is stated here rather than repointed, because repointing would break the byte-identity the transfer depends on and a transfer that edits is a fork"`.
+
+**Correction — 2026-08-10.** Those continuous strings are not live. After the whole-span fence the runtime record reads `"Repointing them here is still refused, and the reason is a scope fact rather than a preference: it would spend the byte-identity that makes this span quotable…"` (rewritten with the fence at `91f67cc5`), and the numerics record reads `"Repointing them here is refused, and the reason is a scope fact rather than a preference: it would spend the byte-identity the transfer depends on…"` (left at `6ddcb305`). Refusal-to-repoint and byte-identity grounds remain; only the "in those words" present-tense claim was false against the live tree.
 
 **Both destination ADRs are accepted and record the same refusal as their own rationale.** ADR 0102's Work record asserts as present-tense fact that `"the byte-identity the landing established still holds after acceptance"`. Repointing either record therefore falsifies an accepted ADR, and cannot be done from a research scope alone.
 
@@ -54,17 +56,6 @@ The applying change needs `research/runtime` and `research/numerics` under optio
 
 ## Outcome — option 1 applied
 
-The repository chose the whole-span fence. Commit `b118a4af` fenced the runtime
-record's retained ADR 0092 body and commit `6ddcb305` fenced the numerics
-record's retained ADR 0102 body. In each file the fence covers the complete
-transferred span rather than only the failing links, so the transferred bytes
-remain byte-identical and later destination-relative links cannot silently
-reopen the same defect. The rendering cost is explicit: the transferred body is
-literal text rather than rendered Markdown.
+The repository chose the whole-span fence. Merge `b118a4af` (content parent `91f67cc5`) fenced the runtime record's retained ADR 0092 body and commit `6ddcb305` fenced the numerics record's retained ADR 0102 body. In each file the fence covers the complete transferred span rather than only the failing links, so the transferred bytes remain byte-identical and later destination-relative links cannot silently reopen the same defect. The rendering cost is explicit: the transferred body is literal text rather than rendered Markdown.
 
-Both applying tickets demonstrated that removing the opening fence restores the
-named link failures, and that a broken link after the closing fence is still
-caught. `make citations` is green with neither span contributing unresolved
-links. Commit `2aa69bfe` then closed this decision and the numerics carrier; this
-note records the choice that status-only transition omitted. No checker
-exclusion and no fork of either accepted ADR was introduced.
+The conversion-pair applying ticket demonstrated both fence perturbations: removing the opening fence restores the named link failures, and a broken link after the closing fence is still caught. The runtime applying ticket recorded the fence, the AGENTS.md overstatement repair, and a green check at `91f67cc5` / `c8c3da05`, without ticket text for those subject perturbations. `make citations` is green with neither span contributing unresolved links. Commit `2aa69bfe` then closed this decision and the numerics carrier; this note records the choice that status-only transition omitted. No checker exclusion and no fork of either accepted ADR was introduced.

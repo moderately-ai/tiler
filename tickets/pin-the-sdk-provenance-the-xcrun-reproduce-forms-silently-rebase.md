@@ -4,7 +4,7 @@ title: Pin the SDK provenance the xcrun reproduce forms silently rebase
 status: done
 priority: p2
 dependencies: []
-related: []
+related: [pin-the-sdk-provenance-on-the-compile-profile-ledger-reproduce-block]
 scopes: [contracts/navigation, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
@@ -15,6 +15,8 @@ tags: []
 Six citations across `docs/` spell an Apple SDK header as `$(xcrun --sdk macosx --show-sdk-path)/System/Library/Frameworks/Metal.framework/Headers/MTLDevice.h:<line>`. That form is **host-resolved**, so it names no version at all — it re-runs against whatever SDK the machine happens to carry.
 
 **Coordinator-verified today:** the host resolves `--show-sdk-version` **27.0**, build **26A5388f**. Five records name macOS SDK **26.5**, build **`25F70`** — two mentions in `docs/status.md`, three in `docs/research/runtime/backend-scoped-route-requirement-answers.md`.
+
+**Correction — 2026-08-10.** The "Five records… two… three…" split above is filing-time census, not a live count. At the audit base a `25F70` string census is three hits in `docs/status.md` and four in `docs/research/runtime/backend-scoped-route-requirement-answers.md`. Those files still name 26.5/`25F70` as dated measurement provenance without a live `$(xcrun …)` form; only the two/three partition is imprecise.
 
 **Nothing asserted is currently wrong**, which is why this is a p2 and not a correctness defect: the header's line numbers happen to be unchanged across the two SDKs (the constants `MTLGPUFamilyApple1 = 1001` through `Apple10 = 1010` sit at the same lines), so the dated corrections remain reproducible. That is luck, not a mechanism — `AGENTS.md` requires dependency versions or commits to be recorded, and a form that resolves differently per host records neither.
 
@@ -48,7 +50,9 @@ Every `$(xcrun …)` citation carries an explicit SDK provenance or is rooted at
 
 ## Outcome — done, 2026-08-07
 
-Landed at merge `58cfe3d9` (worker commit `a050b0b5`). Three files, `docs/` + `tickets/` only, carries the green gate.
+Landed at merge `806d421b` (worker commit `a050b0b5`). Three files, `docs/` + `tickets/` only, carries the green gate.
+
+**Correction — 2026-08-10.** The Outcome previously named merge `58cfe3d9`, which is the next mainline commit after this work ("Record the sourced-shape carrier outcome" on an unrelated ticket). The integrate merge that parents `a050b0b5` is `806d421b`. Outcome prose for this ticket was recorded at `12825292`.
 
 ### This ticket's premise was false, and the falsity changed the answer
 
