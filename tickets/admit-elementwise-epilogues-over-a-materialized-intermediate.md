@@ -16,13 +16,13 @@ A program whose output is an elementwise expression over a *contraction's* or a 
 
 ## Why this exists
 
-**Fact — the recognizer refuses it deliberately.** `normalize_contraction` requires the contraction occurrence to cover the program exactly (`CONTRACTION_OPERATIONS`), and `recognize_elementwise` classifies every operand as a declared input, a constant, or another elementwise occurrence — so an operand produced by a fold or a contraction refuses. `select_supported_strategy`'s documentation names this ticket for the widening.
+**~~Fact~~ — pre-delivery filing premise; superseded by Outcome — delivered whole, 2026-08-06 (correction 2026-08-10).** At filing, `normalize_contraction` required the contraction occurrence to cover the program exactly (`CONTRACTION_OPERATIONS`, itself already retired — see Corrected budget facts below), and `recognize_elementwise` classified every operand as a declared input, a constant, or another elementwise occurrence — so an operand produced by a fold or a contraction refused. That refusal is no longer the live boundary: `plan_elementwise` returns `ElementwiseRefusal::Folded` naming the materialization edge, and `recognize_epilogue` / `NormalizedOutput::Epilogue` build the chain; both shapes in the user-visible outcome compile (see Outcome — delivered whole).
 
 **~~Fact~~ — refuted 2026-08-06; see the falsification section below. The wall is the physical layer's, not the schedule IR's.** `TensorRole::Intermediate` is a *per-region* role, so nothing in `tiler-ir` forbids a chain that stages a second temporary; `partial_reduction_region` already writes an intermediate that `final_reduction_region` reads. What is missing in `tiler-compiler` is: an elementwise region that reads an intermediate (`pointwise_region` builds every read as `TensorRole::Input { ordinal }`), a contraction region that writes one (`contraction_region` hard-codes `TensorRole::Output`), the program assembly for the resulting chain, and the request-subject binding arms for both.
 
 The three `tiler-compiler` citations in that paragraph are all still accurate at `fd1716c4` and were re-read rather than trusted. What does not follow is the conclusion: the role is per-region, and the thing that forbids the chain is the access contract each scalar-program family declares around the role.
 
-**Inference — this is what makes the recognizer's generality reach the families it already knows.** The elementwise walk is general over its own vocabulary; what it cannot yet do is compose *across* a materialization boundary, which is the composition every fused-epilogue workload needs.
+**~~Inference~~ — pre-delivery; superseded by Outcome — delivered whole, 2026-08-06 (correction 2026-08-10).** The elementwise walk is general over its own vocabulary; composing *across* a materialization boundary is exactly what `NormalizedOutput::Epilogue` delivers for a single boundary (chains more than one materialization deep remain refused under `operation-set` and are owned elsewhere).
 
 ## Boundaries
 
@@ -82,6 +82,8 @@ Nothing that changes behaviour. No recognizer, encoder, region builder, or budge
 **Scope.** `crates/tiler-compiler/**` (exclusive `implementation/compiler`) and `tickets/**` (shared `project/tickets`) only. No `crates/tiler-ir/**` file was edited — which is the finding, not an omission.
 
 **Recommended board move after integration.** This ticket is set to `review` so the branch can be integrated, but `review` misrepresents it: the stated outcome is not delivered and the ticket now carries an unmet dependency. Once the diff is merged, move it to `blocked` — the parked category the unmet `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary` edge actually describes — so the scheduler stops treating it as work in flight. Do not mark it `done`; nothing it promised compiles yet.
+
+**Correction — 2026-08-10.** The board recommendation above ("Do not mark it done; move to blocked") is superseded by Outcome — delivered whole, 2026-08-06; frontmatter `status: done` is the terminal state.
 
 ## Unblocking note, 2026-08-06 — two of this ticket's three shapes are reachable and the third is not
 

@@ -12,7 +12,7 @@ tags: []
 ---
 ## User-visible outcome
 
-`VerifiedIndexRegionSequence` can express a realization in which one stage's published value is read by more than one later stage, so `tiler::softmax-f32@1` has a chain its law could be written as. Today it does not, and this is the second wall holding the softmax's law — not the one the graph currently records.
+`VerifiedIndexRegionSequence` can express a realization in which one stage's published value is read by more than one later stage, so `tiler::softmax-f32@1` has a chain its law could be written as. Before this ticket landed it could not, and that was the second wall holding the softmax's law — not the one the graph then recorded. The multi-reader arm is landed, checked, and accepted (see Outcome and [`accept-the-multi-reader-index-realization-retention`](accept-the-multi-reader-index-realization-retention.md)).
 
 ## Why this exists: the softmax is unrealizable under the current chain rules, with or without the maximum key
 
@@ -92,9 +92,13 @@ Four perturbations, each run and read:
 
 The sequence surface is public and accepted, so this widening lands as a labelled draft with its own acceptance node, [`accept-the-multi-reader-index-realization-retention`](accept-the-multi-reader-index-realization-retention.md), parked at `awaiting-decision`. Nothing is self-accepted. The module header now points at both nodes.
 
+**Correction — 2026-08-10.** That acceptance node is no longer `awaiting-decision`. It closed Accepted 2026-08-06 (Tom, accept as offered; status `done`), and the `sequence.rs` module header states **Accepted boundary, in two rulings**, citing that closed node rather than a draft pointer. The parked-draft wording above is the close-time snapshot, not live public-boundary status.
+
 ### Also filed
 
 [`carry-a-multi-reader-intermediate-through-region-formation`](carry-a-multi-reader-intermediate-through-region-formation.md) — `crates/tiler-compiler/src/region.rs` synthesizes one `GraphValue` per `StagedIntermediate`, so a value read twice would become two independent synthetic values. Nothing is wrong today (per-read and per-value coincide for every registered law, and the workspace suite is green); the gap opens with the first multi-reader law.
+
+**Correction — 2026-08-10.** That carry ticket is `done`. Region formation now groups per published value: one `SyntheticIntermediate` with a `readers` list and carried `retained_through`, refusing identity/span drift. The "gap opens with the first multi-reader law" remainder is closed rather than live.
 
 ### Checks
 

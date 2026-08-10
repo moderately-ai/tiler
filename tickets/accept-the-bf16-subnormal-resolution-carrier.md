@@ -4,7 +4,7 @@ title: Accept the carrier that tells the BF16 reference its subnormal resolution
 status: done
 priority: p2
 dependencies: []
-related: [carry-a-bf16-subnormal-realization-the-reference-can-be-told, conform-the-bf16-vertical-end-to-end, declare-the-bf16-rows-on-the-authoritative-metal-profile, state-and-check-a-bf16-numerical-contract, land-the-bf16-conversion-and-accumulator-adr]
+related: [carry-a-bf16-subnormal-realization-the-reference-can-be-told, conform-the-bf16-vertical-end-to-end, declare-the-bf16-rows-on-the-authoritative-metal-profile, state-and-check-a-bf16-numerical-contract, land-the-bf16-conversion-and-accumulator-adr, wire-the-bf16-reference-to-the-realization-it-is-told, subject-the-numerical-realization-when-a-region-carries-two-arithmetic-types, give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject]
 scopes: []
 shared_scopes: [project/tickets]
 paths: []
@@ -17,6 +17,8 @@ Tom picks which of two carriers supplies the BF16 reference's subnormal resoluti
 ## Why this node exists
 
 **Fact — the machinery is landed and neither arm is built into it.** [`carry-a-bf16-subnormal-realization-the-reference-can-be-told`](carry-a-bf16-subnormal-realization-the-reference-can-be-told.md) delivered `Bf16SubnormalRealization` and the two application sites in `crates/tiler-reference/src/bf16.rs` on 2026-08-07, with a seven-case counterexample population watched failing in both directions. Every registered capability is constructed under `Bf16SubnormalRealization::preserving()`, so **nothing supplies a flushing realization**. The one line that would is `Bf16BinaryReference::evaluate`, and what it should read there is this node's question.
+
+> **Correction — 2026-08-10.** The `preserving()` / "nothing supplies a flushing realization" claim was true when this node opened and at decision time. Arm A wiring has landed under [`wire-the-bf16-reference-to-the-realization-it-is-told`](wire-the-bf16-reference-to-the-realization-it-is-told.md): `Bf16BinaryReference::evaluate` builds `Bf16SubnormalRealization::new` from `request.conformance_for(ArithmeticType::Bf16)` modes and applies them via `combine_under`. There is no `preserving()` shorthand (module documents "There is no `preserving()` shorthand for the same reason there is no default"). Flushing is reachable whenever those modes say so.
 
 **Fact — the question is which subject a `SubnormalMode` speaks about, and it is a public boundary.** `NumericalRealization`'s `input_subnormals` and `result_subnormals` (`crates/tiler-ir/src/schedule/numerics.rs`) name no format. Every consumer today reads them as binary32 — `ReferenceNumericalConformance::apply_to_operand` and `apply_to_result` are `f32` functions. A BF16 evaluation that read those same two fields would be reading a binary32 statement as a BF16 one, or would be relying on a caller never to mean two formats at once.
 
@@ -32,7 +34,7 @@ The BF16 capability knows its own format by construction, so `Bf16BinaryReferenc
 
 ### Arm B — declared as a subject on the realization
 
-`NumericalRealization`'s two subnormal fields acquire a subject, the way the target profile's rows already do: `declare_metal_bf16_subnormal_behaviour` (`crates/tiler-build/src/metal_declaration.rs:848`) declares its input and result rows against `ScalarArithmetic::new(ArithmeticType::Bf16, Bf16::resolved_type())`, and `NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16` (`crates/tiler-compiler/src/session.rs:1522`) is a registered contract that already resolves the dimensions per format on the caller side. The realization is the one place in the chain where the subject is still absent.
+`NumericalRealization`'s two subnormal fields acquire a subject, the way the target profile's rows already do: `declare_metal_bf16_subnormal_behaviour` (`crates/tiler-build/src/metal_declaration.rs`) declares its input and result rows against `ScalarArithmetic::new(ArithmeticType::Bf16, Bf16::resolved_type())`, and `NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16` (`crates/tiler-compiler/src/session.rs`) is a registered contract that already resolves the dimensions per format on the caller side. The realization is the one place in the chain where the subject is still absent.
 
 - **Enables:** survives ADR 0091's first conversion by construction, and closes the asymmetry that a *profile* row and a *contract* both name their arithmetic type while the realization between them does not. A BF16 evaluation asks for the BF16 subject and gets a typed absence rather than a binary32 answer.
 - **Prevents:** it is an identity-domain change. `NumericalRealization` is folded into artifact identity (ADR 0076 item 4, landed 2026-08-05 by `wire-the-delivered-realization-record-into-the-artifact`), so widening it moves the delivered-realization record, its cross-check against the packaged entries, and every identity pin derived from them.
@@ -67,7 +69,9 @@ Tom names an arm, or names the staged shape above, and the wiring is released to
 
 ## Graph maintenance
 
-Filed 2026-08-07 by the worker on [`carry-a-bf16-subnormal-realization-the-reference-can-be-told`](carry-a-bf16-subnormal-realization-the-reference-can-be-told.md), which delivered everything both arms share and was forbidden to self-accept the fork. That ticket now reads `blocked` on this node rather than `in-progress` — corrected 2026-08-07 by the coordinator against the file, which carries `status: blocked` and `dependencies: [accept-the-bf16-subnormal-resolution-carrier]`. The edge is the accurate shape: its branch is integrable and its close gates on this decision, because the [Correctness and testing](../docs/correctness-and-testing.md#semantic-authority) exception paragraph it must retire stays true until a route supplies the value. [`conform-the-bf16-vertical-end-to-end`](conform-the-bf16-vertical-end-to-end.md) is the dependent that needs the answer.
+Filed 2026-08-07 by the worker on [`carry-a-bf16-subnormal-realization-the-reference-can-be-told`](carry-a-bf16-subnormal-realization-the-reference-can-be-told.md), which delivered everything both arms share and was forbidden to self-accept the fork. That ticket then read `blocked` on this node rather than `in-progress` — corrected 2026-08-07 by the coordinator against the file, which then carried `status: blocked` and `dependencies: [accept-the-bf16-subnormal-resolution-carrier]`. The edge was the accurate shape at that time: its branch was integrable and its close gated on this decision, because the [Correctness and testing](../docs/correctness-and-testing.md#semantic-authority) exception paragraph it had to retire stayed true until a route supplied the value. [`conform-the-bf16-vertical-end-to-end`](conform-the-bf16-vertical-end-to-end.md) was the dependent that needed the answer.
+
+> **Correction — 2026-08-10.** Carry is `status: done` with `dependencies: [accept-the-bf16-subnormal-resolution-carrier]`. The blocked present-tense above is historical only.
 
 ## Decided — arm A, 2026-08-07
 
@@ -79,15 +83,19 @@ This node recommended the staged shape: accept arm B's subject, land arm A's wir
 
 **1. Arm B's consumer does not exist.** `ReferenceNumericalConformance::from_realization` — the designed bridge from a region's declared realization to a reference conformance, and the only thing that would ever carry a subject — has **no caller anywhere** in `crates/` or `prototypes/`. Every construction site in the workspace is `strict()` or a test's `new()`. So no production path derives a reference conformance from a realization at all, and arm B would spend an identity-domain migration on a field that nothing reads. `NumericalRealization` is folded into artifact identity, so that migration is irreversible; this node's own text calls arm B's cost real, and the ground for not paying it now is that the path which would exercise it is unbuilt.
 
-**2. Arm B would not inoculate against the hazard it was chosen for.** The hazard is two arithmetic types under one `NumericalRealization`. What prevents that today is `region_arithmetic_type` (`crates/tiler-ir/src/schedule/model.rs:1333`), a total function from `ScalarProgram` to exactly one `ArithmeticType` — reaching the hazard requires a new fused mixed-arithmetic variant. At that moment `canonical_arithmetic_nan_bits` breaks in the same instant, because it is one `u32` per region. Arm B would have subject-tagged two of the three format-bearing fields and left the third, so the same decision would still arrive, now with a migration already spent.
+> **Correction — 2026-08-10 (decision-time only).** At this base `from_realization` has production callers (`bf16_vertical`, publication `proof.rs`, and tests). The "no caller" claim is historical decision rationale, not live tree state.
 
-**3. The identical question was already answered in this struct, the other way.** `canonical_arithmetic_nan_bits` (`crates/tiler-ir/src/schedule/numerics.rs:238`) faced "does this field need to name its format?" on 2026-08-06 and answered no in two layers independently — schedule and artifact ABI — because "the arithmetic type that fixes how many of these bits are significant is already a total function of the region's scalar program", with agreement enforced by the schedule verifier at `crates/tiler-ir/src/schedule/builder.rs:664`. Arm B would make one record carry its subject two different ways.
+**2. Arm B would not inoculate against the hazard it was chosen for.** The hazard is two arithmetic types under one `NumericalRealization`. What prevents that today is `region_arithmetic_type` (`crates/tiler-ir/src/schedule/model.rs`, `pub(super) const fn region_arithmetic_type`), a total function from `ScalarProgram` to exactly one `ArithmeticType` — reaching the hazard requires a new fused mixed-arithmetic variant. At that moment `canonical_arithmetic_nan_bits` breaks in the same instant, because it is one `u32` per region. Arm B would have subject-tagged two of the three format-bearing fields and left the third, so the same decision would still arrive, now with a migration already spent.
+
+**3. The identical question was already answered in this struct, the other way.** `canonical_arithmetic_nan_bits` (`crates/tiler-ir/src/schedule/numerics.rs`) faced "does this field need to name its format?" on 2026-08-06 and answered no in two layers independently — schedule and artifact ABI — because "the arithmetic type that fixes how many of these bits are significant is already a total function of the region's scalar program", with agreement enforced by the schedule verifier (`verify_pointwise_bf16` in `crates/tiler-ir/src/schedule/builder.rs`). Arm B would make one record carry its subject two different ways.
 
 **The refusal this node recommended is dropped.** A multi-format region cannot be constructed, so a "single-format region" refusal is unreachable and can never be watched failing. This repository treats an unfireable check as a defect in its own right — both realization-law acceptance nodes flag exactly that as the thing to object to — so adding one buys no safety and makes a maturity claim the evidence cannot support.
 
 ### Where the guard goes instead
 
-`from_realization` **discards the subject deliberately**: its destructuring reads `canonical_arithmetic_nan_bits: _` (`crates/tiler-reference/src/conformance.rs:171`). That is the boundary at which format information is lost, and `crates/tiler-reference/src/registry.rs:181` then documents the resulting object as being for "a capability that performs host binary32 arithmetic" — structurally format-agnostic, documented as binary32. The mismatch is there, not inside the BF16 family.
+`from_realization` **discards the subject deliberately**: its destructuring reads `canonical_arithmetic_nan_bits: _` (`crates/tiler-reference/src/conformance.rs`). That is the boundary at which format information is lost, and `crates/tiler-reference/src/registry.rs` then documents the resulting object as being for "a capability that performs host binary32 arithmetic" — structurally format-agnostic, documented as binary32. The mismatch is there, not inside the BF16 family.
+
+> **Correction — 2026-08-10.** The discard and binary32-only registry claims are historical. After [`give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject`](give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject.md), `from_realization` takes `(realization, arithmetic)`, **reads** `canonical_arithmetic_nan_bits` against the stated `ArithmeticType` (refusing `DeclaredNanPayloadMismatch` / `ArithmeticNotEvaluable`), and returns `ConformanceSubject::Arithmetic(arithmetic)`. Registry `conformance_for` documents three cases (host binary32, other-format arithmetic including BF16, no arithmetic), not binary32-only.
 
 So the obligation is recorded where it can actually fire: **when `from_realization` gains its first caller, that call must carry the arithmetic subject, and each capability must check the conformance it was handed matches its own format.** Handing a BF16 capability an `f32`-derived conformance is constructible in a test, so that check is watchable — which the refusal this node proposed is not. Recorded on [`give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject`](give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject.md), which is the node that owns `from_realization`'s first caller.
 
@@ -97,7 +105,18 @@ So the obligation is recorded where it can actually fire: **when `from_realizati
 
 Between arm A's wiring landing and the subject check landing, the BF16 family could in principle be told a resolution stated for another format. That window is real. It is currently **unreachable**: every conformance in the tree is `strict()`, so there is no other format's rule to be told. It closes when the reference path lands with its subject check.
 
+> **Correction — 2026-08-10.** The "currently unreachable" window description is obsolete. The subject check and production bridge have landed (`give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject` and the route/vertical close path). What survives is narrower: the `Unstated` population from `strict`/`new`, which names no format and is accepted by design — already documented under [Correctness and testing](../docs/correctness-and-testing.md#semantic-authority) ("What survives is narrower, and it is the `Unstated` population.").
+
 ### Released work
 
 - The wiring: [`wire-the-bf16-reference-to-the-realization-it-is-told`](wire-the-bf16-reference-to-the-realization-it-is-told.md), per this node's rule that accepted work lands under its own ticket rather than here.
 - Arm B, closed against a trigger: [`subject-the-numerical-realization-when-a-region-carries-two-arithmetic-types`](subject-the-numerical-realization-when-a-region-carries-two-arithmetic-types.md).
+
+## Fact audit — 2026-08-10
+
+- Opening `preserving()` / no-flush claim: historical only; arm A evaluate path derives `Bf16SubnormalRealization` from `conformance_for(ArithmeticType::Bf16)`.
+- Decision-time `from_realization` has no caller / discards `canonical_arithmetic_nan_bits: _` / binary32-only registry: historical; bridge carries subject and production callers exist.
+- Window "currently unreachable": closed for realization-bridged paths; residual is the named `Unstated` population.
+- Graph maintenance: carry is `done`, not `blocked`.
+- Stale line pins retired in retouched paragraphs (`metal_declaration`, `session`, `model` `region_arithmetic_type`, `numerics` nan-bits field, `builder` `verify_pointwise_bf16`, `conformance` `from_realization`, `registry`) in favour of symbol/phrase anchors.
+- Status `done` remains correct; decision close condition met; no reopen; arm B deferred ticket and Unstated residual already owned elsewhere.

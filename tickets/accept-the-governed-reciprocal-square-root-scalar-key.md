@@ -23,7 +23,7 @@ Registered into `ScalarRegistryBuilder::standard()` as the eleventh governed key
 
 **Included.** The key, its name, its arity, its fact record, and its presence in the governed standard profile.
 
-**Excluded.** No realization law names it yet, so no region can be built that carries it; that is [`widen-the-staged-realization-law-to-the-registered-elementary-families`](widen-the-staged-realization-law-to-the-registered-elementary-families.md)'s work. No `bf16` sibling, and no square-root key beside it.
+**Excluded.** No `bf16` sibling, and no square-root key beside it. Realization of the key is not this acceptance's surface: it was owned by [`widen-the-staged-realization-law-to-the-registered-elementary-families`](widen-the-staged-realization-law-to-the-registered-elementary-families.md) and has landed — `IndexRealizationLaw::StagedRootMeanSquareScaleF32` applies `rsqrt_f32_scalar_op` on the biased mean.
 
 ## Why this shape and not another
 
@@ -43,6 +43,8 @@ Tom accepts or rejects the exact surface above. On acceptance the draft label at
 
 ## Accepted 2026-08-06
 
-**Tom accepted the key at the live session's decision round, relayed and executed by the coordinator.** The surface follows the established scalar-key pattern (tenth key, exp/divide shape), with two-sided perturbation evidence and a live consumer (the normalization law in flight). The code-side label flip was routed to the law-widening worker's branch (which holds `implementation/ir`) so the sweep lands whole with that merge; this node records the acceptance and its provenance.
+**Tom accepted the key at the live session's decision round, relayed and executed by the coordinator.** The surface follows the established scalar-key pattern (eleventh governed key at admission against the pre-rsqrt ten-key profile; elementary-unary / exp shape), with two-sided perturbation evidence and a live consumer (the normalization law in flight). The code-side label flip was routed to the law-widening worker's branch (which holds `implementation/ir`) so the sweep lands whole with that merge; this node records the acceptance and its provenance.
 
 **Current-state correction — 2026-08-09.** The routed code half landed. [`widen-the-staged-realization-law-to-the-registered-elementary-families`](widen-the-staged-realization-law-to-the-registered-elementary-families.md), source anchor `The rsqrt acceptance's code half`, records the carried rewrite, and `rsqrt_f32_scalar_op` now carries the `Accepted boundary` paragraph naming this node. No label-flip work remains here.
+
+**Correction — 2026-08-10.** The Excluded sentence that no realization law names the key yet was left standing after the 2026-08-09 code-half correction; it is false in present tense and is restated above. The Accepted ordinal "tenth key" contradicted the surface section's "eleventh governed key" and the pre-admission ten-key census; it is corrected to the admission-time eleventh-key wording. Later `standard()` registration added a twelfth key (`maximum-f32`); that does not change the admission-time ordinal.

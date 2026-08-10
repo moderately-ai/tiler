@@ -18,7 +18,9 @@ A widening of the region-sequence surface [`accept-the-multi-region-index-realiz
 
 **Added to `tiler_ir::index`:**
 
-- **`StagedIntermediate::retained_through() -> usize`** — the last ordered stage across which this published value stays live, so its lifetime is `producer()..=retained_through()`. Equal to `consumer()` on every record of a value with one reader, which is every record any registered law produces today.
+- **`StagedIntermediate::retained_through() -> usize`** — the last ordered stage across which this published value stays live, so its lifetime is `producer()..=retained_through()`. Equal to `consumer()` on every record of a value with one reader, which was every record any registered law produced at acceptance (2026-08-06). The equality rule is unchanged; registered laws may since emit multi-reader chains (for example the softmax staging) where some intermediate records have `retained_through` past their `consumer`.
+
+**Correction — 2026-08-10.** The prior present-tense population claim that one-reader equality covered "every record any registered law produces today" is false once a multi-reader law is registered. The one-reader equality rule itself remains true; only the population claim was scoped to acceptance-day laws.
 
 **Changed in `tiler_ir::index`, behaviourally rather than in signature:**
 

@@ -38,11 +38,11 @@ Nothing else moves. No type, no variant, no existing signature, and no encoding:
 
 ## Evidence
 
-`the_family_region_sequence_query_agrees_with_the_resolved_law` (`crates/tiler-ir/src/index/refinement.rs`): `tiler::rms-norm-f32@1` true, `tiler::multiply-f32@1` false, `tiler::softmax-f32@1` (a registered operation with no law) false, and agreement with `resolve(...).realizes_region_sequence()` for a two-occurrence program holding both families. Watched failing under a deliberate perturbation: weakening the body to `is_some()` fails the multiply row.
+`the_family_region_sequence_query_agrees_with_the_resolved_law` (`crates/tiler-ir/src/index/refinement.rs`), test docblock **"Four rows and one agreement"**: `tiler::rms-norm-f32@1` true (staged law), `tiler::softmax-f32@1` true (staged law `StagedSoftmaxF32`), `tiler::multiply-f32@1` false (single-region law), `tiler::slice-f32@1` false (registered operation the authority carries no law for), and agreement with `resolve(...).realizes_region_sequence()` for a two-occurrence program holding rms-norm and multiply. Watched failing under a deliberate perturbation: weakening the body to `is_some()` fails the multiply row.
 
 ## Closes when
 
-Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on this node meanwhile; the method is in use from `tiler-compiler` and labelled a draft at its definition.
+**Historical terminal focus — superseded by Outcome and the 2026-08-09 source correction.** Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on this node meanwhile; the method is in use from `tiler-compiler` and labelled a draft at its definition. Acceptance closed the node; the draft label is gone from the method definition.
 
 ## Outcome — accepted
 
@@ -53,3 +53,7 @@ Tom accepts, accepts with a named exclusion, or rejects. Nothing releases on thi
 ## Current source correction — 2026-08-09
 
 That integration handoff is complete. `FrozenIndexRealizationLawRegistry::family_realizes_region_sequence` now carries an **Accepted public surface** paragraph naming this ticket and the 2026-08-06 decision; the former labelled-draft paragraph is gone. The method's exact accepted signature and its `false` answer for an unregistered operation are unchanged.
+
+## Evidence correction — 2026-08-10
+
+**Correction — 2026-08-10.** The original Evidence paragraph named `tiler::softmax-f32@1` as "a registered operation with no law" answering `false`. That was accurate when this ticket was written; after the softmax staged law registered (`StagedSoftmaxF32`), the same test's four rows answer rms-norm true, softmax true, multiply false, and **slice** false as the no-law exemplar. Softmax answering true is law-registry growth under the same accepted predicate, not a change to this surface. Live Evidence above matches the test docblock "Four rows and one agreement".

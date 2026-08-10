@@ -4,7 +4,7 @@ title: Admit a publishing copy stage in the kernel-program vocabulary
 status: done
 priority: p2
 dependencies: []
-related: [admit-elementwise-epilogues-over-a-materialized-intermediate, recognize-several-ordered-named-outputs-at-the-compiler-request-boundary]
+related: [admit-elementwise-epilogues-over-a-materialized-intermediate, recognize-several-ordered-named-outputs-at-the-compiler-request-boundary, lift-the-four-published-and-consumed-walls-together]
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -20,7 +20,7 @@ tags: [implementation, optimizer]
 
 **~~Fact~~ — refuted 2026-08-06; necessary but not sufficient, see the Outcome. Every *region* the shape needs is now built.** `admit-elementwise-epilogues-over-a-materialized-intermediate` admitted an elementwise region reading `TensorRole::Intermediate` and writing `TensorRole::Output`: that is exactly the copy stage, and `crates/tiler-compiler/tests/materialized_intermediate_epilogue_wall.rs` measures the schedule vocabulary admitting it. Landing that ticket nevertheless left `a_published_and_consumed_intermediate_refuses_by_name` green, which is the fact this ticket exists for.
 
-**Fact — the remaining wall is program-scope coverage, read from the verifier rather than inferred.** A stage that publishes a value another region computed claims *no* occurrence: the occurrence belongs to the producing region's walk, and claiming it twice would double-cover the semantic graph. `verify_partial_reductions` in `crates/tiler-ir/src/program/verify.rs` refuses every stage whose `coverage` is empty unless it is the declared combiner of a split:
+**~~Fact~~ — historical at the 2026-08-06 measurement; superseded by [`lift-the-four-published-and-consumed-walls-together`](lift-the-four-published-and-consumed-walls-together.md). The remaining wall was program-scope coverage, read from the verifier rather than inferred.** A stage that publishes a value another region computed claims *no* occurrence: the occurrence belongs to the producing region's walk, and claiming it twice would double-cover the semantic graph. At measurement the empty-coverage gate lived in the shape below under `verify_partial_reductions` and admitted only a declared split combiner:
 
 ```rust
 if stage.coverage.is_empty()
@@ -30,11 +30,11 @@ if stage.coverage.is_empty()
 }
 ```
 
-So the kernel-program vocabulary admits exactly one account for an uncovering dispatch, and a publishing copy is not it.
+So at filing the kernel-program vocabulary admitted exactly one account for an uncovering dispatch, and a publishing copy was not it. **After the successor:** empty-coverage admission lives in `verify_stage_accounts` and accepts three declaration accounts — split combiner, publishing-copy publisher, and staged-realization consumer — with `verify_publishing_copies` (and later `verify_staged_realizations`) as sibling phases. Undeclared uncovering still refuses as `UncoveringStage`.
 
-**Fact — the two compiler-side routes around it are both closed, checked by reading.** `crate::program::attribute_named_outputs` refuses a region that both materializes an edge and publishes a declared output (`AttributionFailure::MaterializesAndPublishes`), so the producing region cannot publish as a second stage without that widening too. And a *duplicating* cover — one region computing the value for the edge and another recomputing it for the publication — is refused by `CoverPolicy::governed`'s `CoverDuplicationAdmission::Forbidden` before it reaches assembly, which is a policy decision with its own owner.
+**~~Fact~~ — historical at filing for the attribution arm; half retired after the successor.** The two compiler-side routes around the program-scope wall were both closed at measurement, checked by reading. `crate::program::attribute_named_outputs` then refused a region that both materializes an edge and publishes a declared output (`AttributionFailure::MaterializesAndPublishes`), so the producing region could not publish as a second stage without that widening too. **Correction — 2026-08-10.** That variant is gone: a region that materializes an edge and publishes is admitted, and assembly mints a declared publishing copy. The *duplicating* cover route — one region computing the value for the edge and another recomputing it for the publication — remains refused by `CoverPolicy::governed`'s `CoverDuplicationAdmission::Forbidden` before it reaches assembly, which is a policy decision with its own owner.
 
-**Inference — the widening is a declaration, not a relaxation.** The account a split declares is `PartialReduction`; the account a publishing copy needs is the analogous "this stage republishes value `v`, which stage `p` already covered". Adding it as a typed program-scope declaration keeps `UncoveringStage` refusing everything else, which is what makes the check still able to say no.
+**~~Inference~~ — design derivation delivered by the successor; obsolete as open work.** The widening is a declaration, not a relaxation. The account a split declares is `PartialReduction`; the account a publishing copy needs is the analogous "this stage republishes value `v`, which stage `p` already covered". Adding it as a typed program-scope declaration keeps `UncoveringStage` refusing everything else, which is what makes the check still able to say no.
 
 ## Boundaries
 
@@ -82,4 +82,11 @@ Nothing that changes behaviour. No recognizer, verifier, region builder, encoder
 
 **Scope.** `crates/tiler-compiler/**` (exclusive `implementation/compiler`) and `tickets/**` (shared `project/tickets`) only. No `crates/tiler-ir/**` file was edited — which is the finding, not an omission, and is why `implementation/ir` stayed declared but unused.
 
-**Recommended board move after integration.** `done`, not `blocked`: the revised outcome above is fully supported and the remainder is a live ticket, so holding this one open would deadlock nothing but would misreport it. Do not read this as the published-and-consumed row being discharged — the gate still refuses, by name, and the successor owns the flip.
+**Recommended board move after integration.** `done`, not `blocked`: the revised outcome above is fully supported and the remainder is a live ticket, so holding this one open would deadlock nothing but would misreport it. Do not read this as the published-and-consumed row being discharged *by this ticket* — at close the gate still refused, by name, and the successor owned the flip.
+
+## Fact audit — 2026-08-10
+
+- **Empty-coverage account.** The Why-section claim that only a declared split combiner may uncover, with the gate under `verify_partial_reductions` and the pre-widening code quote, is historical. Live path: `verify_stage_accounts` admits split combiners, publishing-copy publishers, and staged-realization consumers; `verify_publishing_copies` / `verify_staged_realizations` prove the declared obligations. Undeclared empty coverage still fails as `UncoveringStage` (`an_undeclared_uncovering_stage_still_refuses_by_name`).
+- **`MaterializesAndPublishes`.** The live claim that attribution still refuses a region that materializes and publishes is retired after [`lift-the-four-published-and-consumed-walls-together`](lift-the-four-published-and-consumed-walls-together.md). The variant is gone; two-dispatch publishing regions assemble under a declared `PublishingCopy`.
+- **Outcome close / gate.** "The gate still refuses, by name" was accurate at this ticket's close. The successor (and acceptance surface) are `done`; `pipeline::conformance::a_published_and_consumed_intermediate_compiles_and_agrees` is the positive row. This ticket stays `done` for its revised discovery outcome — measure walls, correct overstated docs, file successor — and does not re-claim the IR or compile flip.
+- **Measurement table wall-4 site.** Row 4 still cites `verify_partial_reductions` as the 2026-08-06 measurement site name; live empty-coverage admission is `verify_stage_accounts`. Leave the table as historical measurement text.

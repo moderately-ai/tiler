@@ -172,7 +172,7 @@ The bounds rule is an **empirical** guarantee at the reference boundary and `Unk
 
 The pre-dispatch repair block framed this as "supersedes or extends an accepted ADR". The audit above found ADR 0046's *Consequences* already state that "indirect operations remain addable without weakening the verifier for the initial direct-access language", and its Decision defers "data-dependent gather … to later explicit IR contracts". So [ADR 0107](../docs/decisions/0107-admit-an-indirect-gather-as-a-semantic-family-above-the-index-language.md) **supplies that deferred contract** and leaves ADR 0046 `accepted` with its index-expression rejection intact. That also fixed what the record may not do: it admits **no** tensor-read form into `IndexNode`, because doing so is exactly the weakening ADR 0046 conditions on.
 
-ADR 0107 is `proposed`. `accept-adr-0107-indirect-gather-semantic-family` is `awaiting-decision` and is Tom's.
+~~ADR 0107 is `proposed`. `accept-adr-0107-indirect-gather-semantic-family` is `awaiting-decision` and is Tom's.~~ **Correction — 2026-08-10.** Those statuses were true only at this Outcome's landing base. ADR 0107 is `decision_status: "accepted"` (Tom, 2026-08-07); [`accept-adr-0107-indirect-gather-semantic-family`](accept-adr-0107-indirect-gather-semantic-family.md) is `done`. Post-landing graph motion is recorded under *Owed onward* below.
 
 ### Public boundary — a labelled draft under ADR 0075
 
@@ -229,6 +229,14 @@ Six perturbations, each on the subject: clamping instead of refusing returns row
 
 ### Owed onward
 
-**ADR 0107 is `proposed`** and `accept-adr-0107-indirect-gather-semantic-family` is `awaiting-decision` — Tom's, under ADR 0075, with the included and excluded surface enumerated. The remainder is mapped, not landed: `admit-the-indirect-access-class-into-the-index-layer` (itself a decision bounded by ADR 0046's condition) and `emit-the-indirect-gather-on-metal`, blocked on it. `model-level-qualification.md`'s stale key count is filed separately.
+~~**ADR 0107 is `proposed`** and `accept-adr-0107-indirect-gather-semantic-family` is `awaiting-decision` — Tom's, under ADR 0075, with the included and excluded surface enumerated. The remainder is mapped, not landed: `admit-the-indirect-access-class-into-the-index-layer` (itself a decision bounded by ADR 0046's condition) and `emit-the-indirect-gather-on-metal`, blocked on it. `model-level-qualification.md`'s stale key count is filed separately.~~
 
-The audit's `path:line` entries are evidence about base `411e09bf` and predate `make citations`; they should be re-pinned against the merged tree if reused.
+**Correction — 2026-08-10 (post-landing graph).** Live remainder mapping after this ticket closed:
+
+- **ADR 0107** is `decision_status: "accepted"` (Tom, 2026-08-07). [`accept-adr-0107-indirect-gather-semantic-family`](accept-adr-0107-indirect-gather-semantic-family.md) is `done`. The public surface stays a labelled draft under ADR 0075 until Tom accepts its exact included and excluded surface.
+- **[`admit-the-indirect-access-class-into-the-index-layer`](admit-the-indirect-access-class-into-the-index-layer.md)** is `done` as research that drafted proposed ADR 0108; it did **not** admit an IR form. Its corrected outcome (2026-08-08) names the live successor as [`revise-adr-0108-with-a-complete-data-dependent-index-vertical`](revise-adr-0108-with-a-complete-data-dependent-index-vertical.md) (`awaiting-decision`).
+- **[`emit-the-indirect-gather-on-metal`](emit-the-indirect-gather-on-metal.md)** remains `blocked`, now on the revised ADR/IR admission chain and the independent integer-storage carrier rather than on the completed index-layer research ticket.
+- **[`pin-the-gather-request-boundary-refusal-with-a-test`](pin-the-gather-request-boundary-refusal-with-a-test.md)** is `todo` — pins the compile-time request-boundary refusal that ADR 0107's fail-closed mitigation overstates as tested.
+- **`model-level-qualification.md` A-token-out** already records 27 registered keys including `tiler::gather-f32@1` and this ticket as `done`; the "filed separately" remainder is discharged.
+
+This ticket's authorized boundary (semantic family + reference + matrix row + ADR body) is unchanged; no reopen. The audit's `path:line` entries are evidence about base `411e09bf` and predate `make citations`; they should be re-pinned against the merged tree if reused.

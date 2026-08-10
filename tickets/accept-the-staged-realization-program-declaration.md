@@ -42,7 +42,7 @@ pub struct StagedRealizationRef<'a> { /* producer(), consumer(), handed(), occur
 pub const MAX_PROGRAM_STAGED_REALIZATIONS: usize = 4_096;
 ```
 
-Two new `KernelProgramBuildError` variants' worth of insertion behaviour, one of them reusing an existing variant: `DuplicateStagedRealization` is new, `SelfDependency` and `CoverageOutOfRange` are reused. Four new `KernelProgramDiagnostic` variants — `HandedValueNotInitializedByProducer`, `HandedValueNotReadByConsumer`, `HandedValueNotMaterialized`, `StagedRealizationChainBroken` — and one new `ProgramLimitKind::StagedRealizations`. `KernelProgramDiagnostic::UncoveringStage` gains a third admitting account; its spelling and rule identifier are unchanged.
+Insertion returns one new `KernelProgramBuildError` variant (`DuplicateStagedRealization`) and reuses two existing ones (`SelfDependency`, `CoverageOutOfRange`). Four new `KernelProgramDiagnostic` variants — `HandedValueNotInitializedByProducer`, `HandedValueNotReadByConsumer`, `HandedValueNotMaterialized`, `StagedRealizationChainBroken` — and one new `ProgramLimitKind::StagedRealizations`. `KernelProgramDiagnostic::UncoveringStage` gains a third admitting account; its spelling and rule identifier are unchanged.
 
 Nothing else in the public surface moves. `PartialReduction` and `PublishingCopy` keep their shapes, their obligations, and their encodings.
 
@@ -64,7 +64,7 @@ A registered elementary family whose `IndexRealizationLaw` realizes a region *se
 
 ## Evidence
 
-Landed with six tests in `crates/tiler-ir/src/program/tests.rs` and the end-to-end compile in `crates/tiler-compiler/src/pipeline/tests.rs`, each watched failing under a named deliberate perturbation: the account arm, the chain walk, the identity section, and the compiler's emission were each removed in turn and the naming test failed.
+Landed with five tests in `crates/tiler-ir/src/program/tests.rs` — `an_uncovering_stage_is_admitted_as_a_declared_staged_realizations_consumer`, `a_declared_staged_realization_changes_program_identity`, `the_staged_realization_row_obligations_can_each_say_no`, `a_staged_realization_chain_must_start_where_its_occurrence_is_covered`, and `a_malformed_staged_realization_declaration_is_rejected_at_insertion` — and the end-to-end compile in `crates/tiler-compiler/src/pipeline/tests.rs`, each watched failing under a named deliberate perturbation: the account arm, the chain walk, the identity section, and the compiler's emission were each removed in turn and the naming test failed.
 
 `pipeline::tests::a_staged_family_program_compiles_and_computes_the_normalization_bit_for_bit` compiles `rms_norm(value, weight) * value` over `[2, 2]` through `compile()`, dispatches its three kernels through the structured-kernel interpreter in the program's own execution order, and agrees with `tiler-reference`'s evaluation of the same semantic program bit for bit.
 
