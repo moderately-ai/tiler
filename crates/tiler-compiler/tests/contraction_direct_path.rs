@@ -229,11 +229,9 @@ fn an_empty_contracted_domain_is_refused_before_a_request_exists() {
 /// A contraction whose operands are one tensor read twice is not recognized.
 ///
 /// `projection_structure()` is equivalent to `mk,nk->mn`, and this fixture
-/// supplies the same declared `ValueId` for both logical operands. The program
-/// is refused by contraction declared-input arity rather than being projected
-/// onto the fixed two-declaration normalized form. The refusal is typed and
-/// names the gate that fired, which keeps an eventual widening explicit about
-/// how both operands map to the declaration.
+/// supplies the same declared `ValueId` for both logical operands. The binary
+/// family still requires two distinct declared-input reads, so the refusal is
+/// the operand-binding rule rather than the width of the declared interface.
 #[test]
 fn a_contraction_over_one_declared_input_refuses_with_a_typed_reason() {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
@@ -252,7 +250,7 @@ fn a_contraction_over_one_declared_input_refuses_with_a_typed_reason() {
         assert_eq!(
             compile_under(&program, contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "contraction-input-arity"
+                rule: "contraction-operands"
             }),
             "{contract:?} admitted a contraction the recognizer does not cover",
         );
@@ -263,11 +261,11 @@ fn a_contraction_over_one_declared_input_refuses_with_a_typed_reason() {
 ///
 /// The second output is load-bearing: it keeps `side` in the semantic program
 /// without making it a contraction operand, so this subject isolates the
-/// recognizer's declared-input wall from ADR 0087's independently binary
-/// operation family. The follow-up widening must map the contraction's two
-/// operands to their declaration ordinals instead of discarding this input.
+/// ADR 0087's independently binary operation family. The contraction maps its
+/// two operands to their program declaration ordinals without reading or
+/// discarding the independently retained input.
 #[test]
-fn a_contraction_beside_a_retained_third_input_refuses_with_a_typed_reason() {
+fn a_contraction_beside_a_retained_third_input_compiles() {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let activations = builder
         .input::<F32>(
@@ -298,10 +296,8 @@ fn a_contraction_beside_a_retained_third_input_refuses_with_a_typed_reason() {
     for contract in CONTRACTS {
         assert_eq!(
             compile_under(&program, contract),
-            Err(CompileFailureClass::UnsupportedCapability {
-                rule: "contraction-input-arity"
-            }),
-            "{contract:?} admitted a contraction over a subset of the declarations",
+            Ok(()),
+            "{contract:?} must admit the binary contraction and its independent sibling",
         );
     }
 }

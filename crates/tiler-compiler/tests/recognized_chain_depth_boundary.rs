@@ -32,7 +32,7 @@
 //! Handing `recognize_epilogue_producer`'s call site
 //! `StagedOperandAdmission::OneEdge` instead of `NoEdge` was run and observed:
 //!
-//! - `rms_norm(matmul(a, b), a) * a` **is** recognized, into a well-formed
+//! - `rms_norm(matmul(a, b), w) * w` **is** recognized, into a well-formed
 //!   `Epilogue { producer: Staged { producer: Some(Contraction) } }`. The nesting
 //!   the widening would need already exists — `NormalizedEpilogue::producer`,
 //!   `NormalizedStaged::producer`, every accessor over them, and both subject
@@ -61,7 +61,7 @@
 //! materialization edges. `staged_family_over_a_materialized_intermediate.rs`'s
 //! `a_staged_family_over_an_edge_is_recognized_and_stops_at_the_region_vocabulary`
 //! is what says so: it asserts the *one*-boundary chain
-//! `rms_norm(matmul(a, b), a)` still refuses `NoFeasiblePlan`, and it is that
+//! `rms_norm(matmul(a, b), w)` still refuses `NoFeasiblePlan`, and it is that
 //! file's assertion rather than this file's so one measurement keeps one owner.
 //! When [`admit-a-scheduled-region-that-reads-two-materialization-edges`] lands,
 //! that test fails, and
@@ -96,14 +96,7 @@ const CONTRACTS: [NumericalContract; 5] = [
     NumericalContract::FLUSH_AND_REASSOCIATE_F32,
 ];
 
-/// `ab,bc->ac` over two `[2, 2]` declared inputs.
-///
-/// Two declared inputs rather than three because `normalize_contraction` refuses
-/// a program declaring a third under `contraction-input-arity` — a wall of the
-/// contraction recognizer's own, owned by
-/// `admit-a-contraction-over-a-subset-of-the-declared-inputs`, and not one this
-/// file is about. It is why the normalization below reuses the first declared
-/// input as its weight.
+/// `ab,bc->ac` over two `[2, 2]` contraction operands.
 fn product(
     builder: &mut SemanticProgramBuilder,
     left: tiler_ir::semantic::Value<F32>,
@@ -120,10 +113,11 @@ fn product(
     F32TensorContraction::apply(builder, &structure, left, right).expect("the product")
 }
 
-/// Declares the two `[2, 2]` inputs both fixtures share.
+/// Declares the three `[2, 2]` inputs both fixtures share.
 fn inputs(
     builder: &mut SemanticProgramBuilder,
 ) -> (
+    tiler_ir::semantic::Value<F32>,
     tiler_ir::semantic::Value<F32>,
     tiler_ir::semantic::Value<F32>,
 ) {
@@ -132,12 +126,15 @@ fn inputs(
         .input::<F32>(InputKey::new("a").unwrap(), shape.clone())
         .unwrap();
     let right = builder
-        .input::<F32>(InputKey::new("b").unwrap(), shape)
+        .input::<F32>(InputKey::new("b").unwrap(), shape.clone())
         .unwrap();
-    (left, right)
+    let weight = builder
+        .input::<F32>(InputKey::new("w").unwrap(), shape)
+        .unwrap();
+    (left, right, weight)
 }
 
-/// `rms_norm(matmul(a, b), a) * a`: a chain two materialization boundaries deep.
+/// `rms_norm(matmul(a, b), w) * w`: a chain two materialization boundaries deep.
 ///
 /// The contraction writes an edge the normalization's producing stage reads, and
 /// the normalization writes an edge the trailing multiply reads. Each region
@@ -145,36 +142,36 @@ fn inputs(
 /// than the width question `sum(a, 1) * sum(b, 1)` asks.
 fn two_boundary_chain() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-    let (left, right) = inputs(&mut builder);
+    let (left, right, weight) = inputs(&mut builder);
     let matmul = product(&mut builder, left, right);
     let normalized = F32RmsNorm::apply(
         &mut builder,
         matmul,
-        left,
+        weight,
         Axis::new(1),
         1.0e-6_f32.to_bits(),
     )
     .expect("the normalization");
-    let root = F32Multiply::apply(&mut builder, normalized, left).expect("the trailing pass");
+    let root = F32Multiply::apply(&mut builder, normalized, weight).expect("the trailing pass");
     builder
         .output(OutputKey::new("result").unwrap(), root)
         .unwrap();
     builder.build().unwrap()
 }
 
-/// `matmul(a, b) * a`: the same chain one boundary shallower.
+/// `matmul(a, b) * w`: the same chain one boundary shallower.
 ///
 /// The neighbour that makes the refusal above attributable, and it is written to
 /// differ by *one* thing. Same declared inputs, same contraction, same trailing
-/// multiply against the same first declared input; the only edit is that the
+/// multiply against the same independent weight input; the only edit is that the
 /// normalization between them is gone, taking the second materialization
 /// boundary with it. So a caller can see the depth being refused rather than the
 /// epilogue, the contraction, the operand, or the request.
 fn one_boundary_chain() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-    let (left, right) = inputs(&mut builder);
+    let (left, right, weight) = inputs(&mut builder);
     let matmul = product(&mut builder, left, right);
-    let root = F32Multiply::apply(&mut builder, matmul, left).expect("the trailing pass");
+    let root = F32Multiply::apply(&mut builder, matmul, weight).expect("the trailing pass");
     builder
         .output(OutputKey::new("result").unwrap(), root)
         .unwrap();

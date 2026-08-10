@@ -41,3 +41,21 @@ Stop for any public signature or semantic-family change, or if the identity dete
 ## Fact audit — 2026-08-10
 
 **Correction — 2026-08-10.** The Trigger originally said the `rms_norm(matmul(a, b), w)` chain "needs exactly that shape," equating it with multi-output coexistence of a binary contraction beside an independent retained-third-input output. Those are two distinct subjects; both still refuse under `contraction-input-arity` at this tree: (a) multi-output binary contraction beside an independent output that retains a skipped declaration; (b) single-output staged chain that retains the third declaration in the staged consumer. Only (a) is multi-output coexistence; the chain does not need multi-output. Fixtures still spell `rms_norm(matmul(a, b), a)` over two declared inputs to dodge this wall (`staged_family_over_a_materialized_intermediate`, `recognized_chain_depth_boundary`, `request.rs` contraction-fed-normalization comments). Boundary prose "ADR 0087's binary family" means the reserved multi-operand question / fifth structural rule (`no index in more than two operands`), not a second family key.
+
+## Worker evidence — 2026-08-10
+
+The implementation keeps the complete declared interface and records exactly two normalized reads, each with its program ordinal, shape, element count, semantic value, and structure operand position. Normalization orders the pair by strictly ascending program ordinal; scheduled-region construction, request binding, read predicates, and element lookup consume that map without local renumbering. The IR verifier now accepts a gap while refusing repeat and descent independently with `[NumericalOrAccessRefinement]`.
+
+The `contraction-f32.v1` identity is unchanged for the admitted population. Before this widening, a contraction could have exactly two declarations and its verified distinct ascending ordinal pair was therefore recoverably `0, 1`. The encoder writes the two ordinals only when the framed declaration count is wider than the two-read run, a branch that the retired `contraction-input-arity` guard made impossible. The declaration count selects the branch, and the fixed two-`u32` run makes every pair in a wider interface injective before the existing shape fields. `a_two_declaration_contraction_keeps_its_v1_subject_bytes` reconstructs the old arm and compares every byte; `contraction_subjects_separate_all_two_input_subsets_of_three_declarations` drives the contraction arm directly and distinguishes `0,1`, `0,2`, and `1,2` without enclosing semantic identity.
+
+The multi-output `a,c` contraction plus independent `b+b` output compiles, exposes physical reads `[Input(0), Input(2)]` and `[Input(1)]`, and bit-agrees with the reference evaluator. The staged fixtures now spell `rms_norm(matmul(a,b),w)` over three declarations: recognition reaches the existing scheduled-region two-edge vocabulary wall and retains its typed `NoFeasiblePlan` refusal. Multi-operand contraction and a repeated one-input contraction remain unsupported; the latter refuses under `contraction-operands`.
+
+Each required perturbation was applied to the subject and restored:
+
+- restoring the verifier's exact `0,1` predicate failed the `0,2` positive case with `diagnostics: [NumericalOrAccessRefinement]`;
+- dense renumbering only in `contraction_region` failed with `Intrinsic { rule: "request-binding", region: RegionId(0) }`;
+- dense renumbering only in `contraction_accesses_match` failed with `Intrinsic { rule: "request-binding", region: RegionId(0) }`;
+- dense renumbering in both physical derivations failed with `InvalidCompilerOutput(Program(CoreVerification(UnusedValue)))` because the falsely substituted declaration left `c` unused;
+- dense indexing in `input_elements_at` failed with `assertion left == right failed; left: None; right: Some(4)`;
+- the declaration-length predicate in `reads_declared_input` failed with `assertion failed: !recognized.outputs()[0].reads_declared_input(skipped)`;
+- removing the wider-interface ordinal run failed with `two declared-input subsets collided`.
