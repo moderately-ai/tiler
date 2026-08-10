@@ -19,7 +19,7 @@ Residuals not applied (docs/crates/new tickets/authority):
 
 Verification:
   - ````text
-    - files read: full audit report; full ticket pre-edit; schedule/builder.rs DeclaredDomain => Intermediate || FIRST_INPUT; StrictSerialSum serial arm uses DeclaredDomain; multi_pass Final Exactly(Intermediate); sole crates/ ```ignore at index/builder.rs Ordinary transactional call site
+    files read: full audit report; full ticket pre-edit; schedule/builder.rs DeclaredDomain => Intermediate || FIRST_INPUT; StrictSerialSum serial arm uses DeclaredDomain; multi_pass Final Exactly(Intermediate); sole crates/ ```ignore at index/builder.rs Ordinary transactional call site
     ````
   - checks: shasum -a 256 post-edit; present-tense Intermediate-only refusal no longer live claim; 1922 only inside dated correction; metadata unaltered
 

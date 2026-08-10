@@ -25,7 +25,7 @@ Residuals not applied (docs/crates/new tickets/authority):
 Verification:
   - files read: audit report; full ticket (pre/post); ADR 0039 (checked + Required-no-overflow Decision bullets); parent ticket status/non-goal; gather.rs index-identity anchor; taxonomy RQ-OP-01 row.
   - ````text
-    - checks: parent `status: deferred`; anchors `plus an overflow predicate as explicit results`, `Returns the one admitted index-operand identity`, `Does a checked-overflow integer operation return one result`, `RQ-OP-01`'s arity question for a checked-overflow operation`; content hash via `shasum -a 256`.
+    checks: parent `status: deferred`; anchors `plus an overflow predicate as explicit results`, `Returns the one admitted index-operand identity`, `Does a checked-overflow integer operation return one result`, `RQ-OP-01`'s arity question for a checked-overflow operation`; content hash via `shasum -a 256`.
     ````
 
 Recommended next ledger state:
