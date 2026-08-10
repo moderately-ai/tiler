@@ -1,3 +1,5 @@
+#![feature(variant_count)]
+
 //! The exceptional-value corpus for `tiler::strict-tensor-contraction-f32@1`,
 //! through the public semantic and reference boundary.
 //!
@@ -50,6 +52,20 @@
 //! lowering, any compiled kernel, any device, or any model-level tolerance; no
 //! such thing is exercised. Nor is it a universal claim: this is an exhaustive
 //! pass over eight named exceptional cases, not a proof over the binary32 domain.
+//!
+//! # Coverage against the general reduction checklist
+//!
+//! [`REDUCTION_CONTRACT_LEDGER`] maps every subject under `Required adversarial
+//! tests` in the governing reduction research record into exactly one current
+//! classification. The decomposition is intentionally finer than its prose:
+//! for example, the retained qNaN case exercises one payload in one contributor
+//! position, so it does not discharge “qNaN in every contributor position” or
+//! “several NaN payloads.” The ledger keeps both rows admitted and uncovered.
+//!
+//! This ledger is target-independent. The compiler's host-side comparison of
+//! selected workload cells, the six retained `direct` digests, and the Apple
+//! live-device envelope remain separate realization evidence. None can turn a
+//! target-independent uncovered row below into a covered one.
 
 use tiler_ir::semantic::{
     ContractionIndex, ContractionIndexStructure, F32, F32TensorContraction, InputKey, OutputKey,
@@ -163,6 +179,554 @@ fn pad(prefix: &[u32]) -> [u32; K] {
     padded[..prefix.len()].copy_from_slice(prefix);
     padded
 }
+
+/// One atomic subject derived from the governing `Required adversarial tests`.
+///
+/// Broad phrases are split wherever this admitted profile gives their members
+/// different answers. In particular, rank zero is outside a contraction (which
+/// must contract at least one index) while the admitted positive ranks remain a
+/// wider unexercised population; the F16/BF16 and verifier clauses are split for
+/// the same reason.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReductionContractSubject {
+    SupportedCellPositiveAndNegative,
+    RankZero,
+    EveryAdmittedPositiveRank,
+    FirstContractedAxis,
+    MiddleContractedAxis,
+    LastContractedAxis,
+    MultipleContractedAxes,
+    AllAxesContracted,
+    DuplicateAxes,
+    OutOfRangeAxes,
+    DynamicallyBoundAxes,
+    ZeroReducedExtent,
+    ZeroSurvivingExtent,
+    NoSeed,
+    NeutralSeed,
+    NonNeutralSeed,
+    RuntimeSeed,
+    SeedConversionHalfway,
+    SeedConversionOverflow,
+    SingletonPositiveZero,
+    SingletonNegativeZero,
+    PositiveThenNegativeZero,
+    NegativeThenPositiveZero,
+    Subnormals,
+    Infinities,
+    QuietNanEveryContributorPosition,
+    SignallingNanEveryContributorPosition,
+    SeveralNanPayloads,
+    ThreeElementReassociationWitness,
+    ThreeElementPermutationWitness,
+    SerialTree,
+    BalancedTree,
+    SkewedTree,
+    SimdTree,
+    ThreadgroupTree,
+    ContiguousMultiPassTree,
+    NoncontiguousLaneTree,
+    AtomicArrivalTree,
+    MaskedEmptyPartials,
+    HasValueEmptyPartials,
+    InvalidReplicatedEmptyValues,
+    InvalidReplicatedSeeds,
+    IntegerWrappingBoundary,
+    IntegerSaturatingBoundary,
+    IntegerCheckedBoundary,
+    IntegerWideningBoundary,
+    F16InputF32AccumulatorSameResult,
+    F16InputF32AccumulatorNarrowerResult,
+    Bf16InputF32AccumulatorSameResult,
+    Bf16InputF32AccumulatorNarrowerResult,
+    ScratchNormalRoundTrip,
+    ScratchSubnormalRoundTrip,
+    ScratchNanCanonicalization,
+    RepeatedPlanIdentityExecution,
+    MissingPermissionRejection,
+    MissingAlgebraicCapabilityRejection,
+    MissingTargetCapabilityRejection,
+    MissingNonemptyProofRejection,
+    MissingLosslessScratchRejection,
+}
+
+impl ReductionContractSubject {
+    /// The complete typed population, sized from the type rather than by hand.
+    const ALL: [Self; core::mem::variant_count::<Self>()] = [
+        Self::SupportedCellPositiveAndNegative,
+        Self::RankZero,
+        Self::EveryAdmittedPositiveRank,
+        Self::FirstContractedAxis,
+        Self::MiddleContractedAxis,
+        Self::LastContractedAxis,
+        Self::MultipleContractedAxes,
+        Self::AllAxesContracted,
+        Self::DuplicateAxes,
+        Self::OutOfRangeAxes,
+        Self::DynamicallyBoundAxes,
+        Self::ZeroReducedExtent,
+        Self::ZeroSurvivingExtent,
+        Self::NoSeed,
+        Self::NeutralSeed,
+        Self::NonNeutralSeed,
+        Self::RuntimeSeed,
+        Self::SeedConversionHalfway,
+        Self::SeedConversionOverflow,
+        Self::SingletonPositiveZero,
+        Self::SingletonNegativeZero,
+        Self::PositiveThenNegativeZero,
+        Self::NegativeThenPositiveZero,
+        Self::Subnormals,
+        Self::Infinities,
+        Self::QuietNanEveryContributorPosition,
+        Self::SignallingNanEveryContributorPosition,
+        Self::SeveralNanPayloads,
+        Self::ThreeElementReassociationWitness,
+        Self::ThreeElementPermutationWitness,
+        Self::SerialTree,
+        Self::BalancedTree,
+        Self::SkewedTree,
+        Self::SimdTree,
+        Self::ThreadgroupTree,
+        Self::ContiguousMultiPassTree,
+        Self::NoncontiguousLaneTree,
+        Self::AtomicArrivalTree,
+        Self::MaskedEmptyPartials,
+        Self::HasValueEmptyPartials,
+        Self::InvalidReplicatedEmptyValues,
+        Self::InvalidReplicatedSeeds,
+        Self::IntegerWrappingBoundary,
+        Self::IntegerSaturatingBoundary,
+        Self::IntegerCheckedBoundary,
+        Self::IntegerWideningBoundary,
+        Self::F16InputF32AccumulatorSameResult,
+        Self::F16InputF32AccumulatorNarrowerResult,
+        Self::Bf16InputF32AccumulatorSameResult,
+        Self::Bf16InputF32AccumulatorNarrowerResult,
+        Self::ScratchNormalRoundTrip,
+        Self::ScratchSubnormalRoundTrip,
+        Self::ScratchNanCanonicalization,
+        Self::RepeatedPlanIdentityExecution,
+        Self::MissingPermissionRejection,
+        Self::MissingAlgebraicCapabilityRejection,
+        Self::MissingTargetCapabilityRejection,
+        Self::MissingNonemptyProofRejection,
+        Self::MissingLosslessScratchRejection,
+    ];
+
+    /// The retained test relationship independently expected for covered rows.
+    const fn expected_exact_test(self) -> Option<&'static str> {
+        match self {
+            Self::LastContractedAxis | Self::SerialTree => {
+                Some("the_execution_witness_is_exactly_six")
+            }
+            Self::NoSeed => {
+                Some("the_accumulator_is_seeded_from_the_first_product_and_not_from_positive_zero")
+            }
+            Self::Subnormals => Some("a_subnormal_product_is_preserved_rather_than_flushed"),
+            Self::Infinities => Some("a_nan_the_reduction_forms_itself_is_canonicalized_too"),
+            _ => None,
+        }
+    }
+}
+
+/// A named ordinary test outside the eight retained exact-bit cases.
+#[derive(Clone, Copy)]
+struct OrdinaryTest {
+    source: OrdinaryTestSource,
+    name: &'static str,
+}
+
+/// The two target-independent source files the ledger may cite.
+///
+/// A device or digest source is deliberately unrepresentable here. That keeps
+/// target realization evidence from silently satisfying a reference row.
+#[derive(Clone, Copy)]
+enum OrdinaryTestSource {
+    ReferenceContractionUnit,
+    SemanticContraction,
+}
+
+impl OrdinaryTestSource {
+    const fn path(self) -> &'static str {
+        match self {
+            Self::ReferenceContractionUnit => "crates/tiler-reference/src/contraction/tests.rs",
+            Self::SemanticContraction => "crates/tiler-ir/src/semantic/contraction/tests.rs",
+        }
+    }
+
+    const fn source(self) -> &'static str {
+        match self {
+            Self::ReferenceContractionUnit => include_str!("../src/contraction/tests.rs"),
+            Self::SemanticContraction => {
+                include_str!("../../tiler-ir/src/semantic/contraction/tests.rs")
+            }
+        }
+    }
+}
+
+/// Exactly one evidence classification for one checklist subject.
+enum Coverage {
+    /// Exercised by one of this file's eight exact-bit retained cases.
+    ExactBit {
+        test_name: &'static str,
+        run: fn(),
+        scope: &'static str,
+    },
+    /// Exercised by another named target-independent ordinary test.
+    Ordinary(&'static [OrdinaryTest]),
+    /// Not a constructible member of the admitted strict F32 contraction profile.
+    Outside(&'static str),
+    /// Constructible or required by the admitted profile, but not fully covered.
+    AdmittedUncovered(&'static str),
+}
+
+struct LedgerEntry {
+    subject: ReductionContractSubject,
+    coverage: Coverage,
+}
+
+const fn exact_bit(
+    subject: ReductionContractSubject,
+    test_name: &'static str,
+    run: fn(),
+    scope: &'static str,
+) -> LedgerEntry {
+    LedgerEntry {
+        subject,
+        coverage: Coverage::ExactBit {
+            test_name,
+            run,
+            scope,
+        },
+    }
+}
+
+const REFERENCE_UNIT: OrdinaryTestSource = OrdinaryTestSource::ReferenceContractionUnit;
+const SEMANTIC: OrdinaryTestSource = OrdinaryTestSource::SemanticContraction;
+
+/// Current coverage of every atomic subject in `Required adversarial tests`.
+///
+/// This is a slice so deleting one row reaches the runtime census and reports
+/// the missing typed subject by name. [`ReductionContractSubject::ALL`] is the
+/// independently type-sized population against which it is checked.
+const REDUCTION_CONTRACT_LEDGER: &[LedgerEntry] = &[
+    LedgerEntry {
+        subject: ReductionContractSubject::SupportedCellPositiveAndNegative,
+        coverage: Coverage::Ordinary(&[
+            OrdinaryTest {
+                source: REFERENCE_UNIT,
+                name: "the_governed_signature_decodes_to_the_unseeded_binary32_fold",
+            },
+            OrdinaryTest {
+                source: REFERENCE_UNIT,
+                name: "a_declaration_this_reference_does_not_compute_is_refused_by_field",
+            },
+        ]),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::RankZero,
+        coverage: Coverage::Outside(
+            "a contraction must name at least one contracted index appearing in both operands",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::EveryAdmittedPositiveRank,
+        coverage: Coverage::AdmittedUncovered(
+            "ordinary tests exercise selected ranks, not every positive rank through the structural bound",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::FirstContractedAxis,
+        coverage: Coverage::AdmittedUncovered(
+            "the retained structure contracts the last axis of both operands",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::MiddleContractedAxis,
+        coverage: Coverage::AdmittedUncovered(
+            "the retained structure contracts the last axis of both operands",
+        ),
+    },
+    exact_bit(
+        ReductionContractSubject::LastContractedAxis,
+        "the_execution_witness_is_exactly_six",
+        the_execution_witness_is_exactly_six,
+        "the retained td,od->to structure contracts the last axis of both operands",
+    ),
+    LedgerEntry {
+        subject: ReductionContractSubject::MultipleContractedAxes,
+        coverage: Coverage::AdmittedUncovered(
+            "all retained exact-bit cases have one contracted index",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::AllAxesContracted,
+        coverage: Coverage::AdmittedUncovered(
+            "all retained exact-bit cases preserve one free axis from each operand",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::DuplicateAxes,
+        coverage: Coverage::Outside(
+            "contraction has typed index tuples rather than a reduction-axis list",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::OutOfRangeAxes,
+        coverage: Coverage::Outside(
+            "contraction indices are labels bound by tuples, not numeric axis selectors",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::DynamicallyBoundAxes,
+        coverage: Coverage::Outside(
+            "this contraction family accepts only static operand shapes and index bindings",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::ZeroReducedExtent,
+        coverage: Coverage::Ordinary(&[OrdinaryTest {
+            source: SEMANTIC,
+            name: "an_empty_contracted_domain_is_refused_because_the_fold_is_unseeded",
+        }]),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::ZeroSurvivingExtent,
+        coverage: Coverage::Ordinary(&[OrdinaryTest {
+            source: SEMANTIC,
+            name: "an_empty_contracted_domain_is_refused_because_the_fold_is_unseeded",
+        }]),
+    },
+    exact_bit(
+        ReductionContractSubject::NoSeed,
+        "the_accumulator_is_seeded_from_the_first_product_and_not_from_positive_zero",
+        the_accumulator_is_seeded_from_the_first_product_and_not_from_positive_zero,
+        "one sixteen-contributor negative-zero vector distinguishes first-product from positive-zero seeding",
+    ),
+    LedgerEntry {
+        subject: ReductionContractSubject::NeutralSeed,
+        coverage: Coverage::Outside("the registered contraction declares no explicit seed"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::NonNeutralSeed,
+        coverage: Coverage::Outside("the registered contraction declares no explicit seed"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::RuntimeSeed,
+        coverage: Coverage::Outside("the registered contraction declares no explicit seed"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::SeedConversionHalfway,
+        coverage: Coverage::Outside(
+            "there is no seed and every admitted arithmetic role is already F32",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::SeedConversionOverflow,
+        coverage: Coverage::Outside(
+            "there is no seed and every admitted arithmetic role is already F32",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::SingletonPositiveZero,
+        coverage: Coverage::AdmittedUncovered(
+            "the signed-zero retained case folds sixteen negative-zero products, not one positive zero",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::SingletonNegativeZero,
+        coverage: Coverage::AdmittedUncovered(
+            "the signed-zero retained case folds sixteen products rather than a singleton",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::PositiveThenNegativeZero,
+        coverage: Coverage::AdmittedUncovered(
+            "no retained case folds the two zero signs in this order",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::NegativeThenPositiveZero,
+        coverage: Coverage::AdmittedUncovered(
+            "no retained case folds the two zero signs in this order",
+        ),
+    },
+    exact_bit(
+        ReductionContractSubject::Subnormals,
+        "a_subnormal_product_is_preserved_rather_than_flushed",
+        a_subnormal_product_is_preserved_rather_than_flushed,
+        "one positive subnormal product is preserved; no other sign, boundary, or position is claimed",
+    ),
+    exact_bit(
+        ReductionContractSubject::Infinities,
+        "a_nan_the_reduction_forms_itself_is_canonicalized_too",
+        a_nan_the_reduction_forms_itself_is_canonicalized_too,
+        "positive infinity times positive zero forms NaN in the first contributor; no other sign or position is claimed",
+    ),
+    LedgerEntry {
+        subject: ReductionContractSubject::QuietNanEveryContributorPosition,
+        coverage: Coverage::AdmittedUncovered(
+            "one retained qNaN payload appears in the first position only",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::SignallingNanEveryContributorPosition,
+        coverage: Coverage::AdmittedUncovered("no retained case supplies an sNaN contributor"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::SeveralNanPayloads,
+        coverage: Coverage::AdmittedUncovered(
+            "one noncanonical input payload does not satisfy several payloads",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::ThreeElementReassociationWitness,
+        coverage: Coverage::AdmittedUncovered(
+            "the retained order discriminators use longer padded sequences, not three elements",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::ThreeElementPermutationWitness,
+        coverage: Coverage::AdmittedUncovered(
+            "the retained reversed-order checks use longer padded sequences, not three elements",
+        ),
+    },
+    exact_bit(
+        ReductionContractSubject::SerialTree,
+        "the_execution_witness_is_exactly_six",
+        the_execution_witness_is_exactly_six,
+        "one sixteen-contributor canonical serial left fold",
+    ),
+    LedgerEntry {
+        subject: ReductionContractSubject::BalancedTree,
+        coverage: Coverage::Outside("the operation permits no reassociation"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::SkewedTree,
+        coverage: Coverage::AdmittedUncovered(
+            "the canonical left fold is maximally skewed, but the governing list names serial and skewed separately and no distinct skewed-family test is identified",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::SimdTree,
+        coverage: Coverage::Outside("the operation permits no reassociation or permutation"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::ThreadgroupTree,
+        coverage: Coverage::Outside("the operation permits no reassociation or permutation"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::ContiguousMultiPassTree,
+        coverage: Coverage::Outside("the operation permits no reassociation"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::NoncontiguousLaneTree,
+        coverage: Coverage::Outside("the operation permits neither reassociation nor permutation"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::AtomicArrivalTree,
+        coverage: Coverage::Outside(
+            "timing-dependent arrival is outside strict order and plan determinism",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::MaskedEmptyPartials,
+        coverage: Coverage::Outside("the admitted serial fold forms no parallel partials or masks"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::HasValueEmptyPartials,
+        coverage: Coverage::Outside("the admitted serial fold forms no parallel partial state"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::InvalidReplicatedEmptyValues,
+        coverage: Coverage::Outside("the admitted serial fold injects no empty value"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::InvalidReplicatedSeeds,
+        coverage: Coverage::Outside("the admitted fold is unseeded and forms no partials"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::IntegerWrappingBoundary,
+        coverage: Coverage::Outside("the registered contraction is F32 throughout"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::IntegerSaturatingBoundary,
+        coverage: Coverage::Outside("the registered contraction is F32 throughout"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::IntegerCheckedBoundary,
+        coverage: Coverage::Outside("the registered contraction is F32 throughout"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::IntegerWideningBoundary,
+        coverage: Coverage::Outside("the registered contraction is F32 throughout"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::F16InputF32AccumulatorSameResult,
+        coverage: Coverage::Outside("the registered contraction accepts only F32 operands"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::F16InputF32AccumulatorNarrowerResult,
+        coverage: Coverage::Outside("the registered contraction accepts and returns only F32"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::Bf16InputF32AccumulatorSameResult,
+        coverage: Coverage::Outside("the registered contraction accepts only F32 operands"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::Bf16InputF32AccumulatorNarrowerResult,
+        coverage: Coverage::Outside("the registered contraction accepts and returns only F32"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::ScratchNormalRoundTrip,
+        coverage: Coverage::Outside("the admitted serial reference uses no scratch boundary"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::ScratchSubnormalRoundTrip,
+        coverage: Coverage::Outside("the admitted serial reference uses no scratch boundary"),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::ScratchNanCanonicalization,
+        coverage: Coverage::Outside(
+            "the retained NaN cases exercise arithmetic canonicalization, not a scratch round trip",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::RepeatedPlanIdentityExecution,
+        coverage: Coverage::AdmittedUncovered(
+            "the operation declares plan determinism, but this target-independent corpus has no artifact, variant, or target identity",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::MissingPermissionRejection,
+        coverage: Coverage::AdmittedUncovered(
+            "no target-independent contraction test proposes a tree requiring a forbidden permission",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::MissingAlgebraicCapabilityRejection,
+        coverage: Coverage::AdmittedUncovered(
+            "the operation declares no algebraic capability, but this corpus does not drive a consuming rule's refusal",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::MissingTargetCapabilityRejection,
+        coverage: Coverage::AdmittedUncovered(
+            "target capability is outside the reference oracle and no target-independent relationship is claimed here",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::MissingNonemptyProofRejection,
+        coverage: Coverage::AdmittedUncovered(
+            "semantic construction refuses an empty contracted extent, but no verifier test names a missing nonempty proof",
+        ),
+    },
+    LedgerEntry {
+        subject: ReductionContractSubject::MissingLosslessScratchRejection,
+        coverage: Coverage::Outside("the admitted serial reference has no scratch contract"),
+    },
+];
 
 // --- the eight cases --------------------------------------------------------
 
@@ -335,6 +899,91 @@ fn each_output_cell_folds_its_own_contributor_pair() {
     for cross in [zero_one, one_zero] {
         assert_ne!(*cross, 0x40c0_0000);
         assert_ne!(*cross, 0xbb1d_0482);
+    }
+}
+
+/// Every governing checklist subject has exactly one current classification.
+///
+/// This check reaches three independently removable things:
+///
+/// - a ledger row, through the typed full-population census;
+/// - an exact-bit relationship, through both its independently expected name and
+///   its function pointer, which executes the named test body; and
+/// - an ordinary-test relationship, through the named `#[test] fn` in the
+///   included target-independent source.
+///
+/// The first failure names the missing typed subject. The latter two name both
+/// subject and relationship, so deleting evidence cannot degrade into an
+/// unexplained count mismatch.
+#[test]
+fn every_reduction_contract_subject_has_one_live_evidence_classification() {
+    for subject in ReductionContractSubject::ALL {
+        let mut entries = REDUCTION_CONTRACT_LEDGER
+            .iter()
+            .filter(|entry| entry.subject == subject);
+        let Some(entry) = entries.next() else {
+            panic!("reduction-contract subject {subject:?} has no ledger entry");
+        };
+        assert!(
+            entries.next().is_none(),
+            "reduction-contract subject {subject:?} has more than one ledger entry"
+        );
+
+        match &entry.coverage {
+            Coverage::ExactBit {
+                test_name,
+                run,
+                scope,
+            } => {
+                assert_eq!(
+                    subject.expected_exact_test(),
+                    Some(*test_name),
+                    "reduction-contract subject {subject:?} names the wrong exact-bit test relationship"
+                );
+                assert!(
+                    !scope.is_empty(),
+                    "reduction-contract subject {subject:?} has an unbounded exact-bit classification"
+                );
+                run();
+            }
+            Coverage::Ordinary(relationships) => {
+                assert!(
+                    subject.expected_exact_test().is_none(),
+                    "reduction-contract subject {subject:?} lost its required exact-bit relationship"
+                );
+                assert!(
+                    !relationships.is_empty(),
+                    "reduction-contract subject {subject:?} names no ordinary test relationship"
+                );
+                for relationship in *relationships {
+                    let function = format!("fn {}(", relationship.name);
+                    let source = relationship.source.source();
+                    let Some(position) = source.find(&function) else {
+                        panic!(
+                            "reduction-contract subject {subject:?} names missing ordinary test {} in {}",
+                            relationship.name,
+                            relationship.source.path(),
+                        );
+                    };
+                    assert!(
+                        source[..position].trim_end().ends_with("#[test]"),
+                        "reduction-contract subject {subject:?} relationship {} in {} is not an ordinary #[test]",
+                        relationship.name,
+                        relationship.source.path(),
+                    );
+                }
+            }
+            Coverage::Outside(reason) | Coverage::AdmittedUncovered(reason) => {
+                assert!(
+                    subject.expected_exact_test().is_none(),
+                    "reduction-contract subject {subject:?} lost its required exact-bit relationship"
+                );
+                assert!(
+                    !reason.is_empty(),
+                    "reduction-contract subject {subject:?} has an unexplained classification"
+                );
+            }
+        }
     }
 }
 
