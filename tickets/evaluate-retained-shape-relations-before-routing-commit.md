@@ -1,7 +1,7 @@
 ---
 id: evaluate-retained-shape-relations-before-routing-commit
 title: Evaluate retained shape relations against invocation bindings before routing commit
-status: in-progress
+status: blocked
 priority: p1
 dependencies: [admit-an-additive-extent-relation, reclassify-language-model-work-as-a-conformance-track]
 related: [bind-repeated-invocations-over-caller-retained-tensors, design-autoregressive-state-and-kv-cache, execute-the-decode-step-path, test-the-autoregressive-state-failure-cases, construct-a-symbolic-region-as-a-semantic-program, admit-symbolic-extents-at-the-compiler-request-boundary, deliver-an-artifact-family-from-a-symbolic-region]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/artifact, implementation/runtime, imp
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, validation, shapes, runtime, consumer-neutral, fail-closed, class-generic-capability]
-claimed_from: todo
-assignee: sol-shape-relations
-lease_expires_at: 1786388862
 ---
 ## User-visible outcome
 

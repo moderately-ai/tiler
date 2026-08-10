@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-first-attention-planning-record-with-landed-fusion-roles-and-budgets
 title: Reconcile the first attention planning record with landed fusion roles and budgets
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [plan-the-materialized-attention-decomposition, implement-general-dag-partitioning, plan-the-recomputing-attention-decomposition, realize-the-attention-contractions-on-metal, correct-the-records-the-derived-region-shape-budgets-falsify]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, attention, doc-drift, planning]
-claimed_from: todo
-assignee: sol-attention-record
-lease_expires_at: 1786388862
 ---
 ## User-visible outcome
 
@@ -39,3 +36,13 @@ No compiler, IR, schedule, target-profile, identity, or support-matrix change. D
 ## Closes when
 
 Every current-looking role, budget, maturity, reachability, schedule-synchronization, and multi-dimension refusal statement in the complete record is classified and corrected (including zero-synchronization live premises versus landed CooperativeWorkgroup/SynchronizationPoint vocabulary, incomplete D-C online-softmax ground, and "only D-A plan reachable today" fusion-role reachability drift); the historical design remains readable; all source anchors are source-safe; `tkt lint`, `make citations`, `git diff --check`, and the exact-base guard pass.
+
+## Outcome — 2026-08-10
+
+Delivered and independently reviewed through `bd596dbc`. The record now
+separates historical role and zero-synchronization assumptions from current
+authority, states the exact `54` formation members / `3` retained outputs /
+`66` live values, distinguishes whole-program retention from bounded
+intermediate growth, and gives D-A, D-C, and whole-block candidates their
+current reachability, numerical, and physical-feasibility grounds. The related
+materialized-planning ticket carries the same corrected construction.

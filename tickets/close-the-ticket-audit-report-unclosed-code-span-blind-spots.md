@@ -1,7 +1,7 @@
 ---
 id: close-the-ticket-audit-report-unclosed-code-span-blind-spots
 title: Close the ticket-audit report unclosed-code-span blind spots
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [repair-the-ticket-audit-report-citation-and-link-breakage]
@@ -9,9 +9,6 @@ scopes: [research/documentation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, verification]
-claimed_from: todo
-assignee: terra-code-span-audit
-lease_expires_at: 1786388862
 ---
 ## User-visible outcome
 
@@ -33,3 +30,12 @@ Balance or replace the malformed inline-code delimiters while preserving every r
 - `make citations` exits 0 and reports `parse warn 0 file(s)` or omits the warning section because the count is zero.
 - A subject perturbation places a dangling link after a repaired delimiter, and the gate fails with that exact path before the subject is restored.
 - `tkt lint --format json` reports `ok: true` and `git diff --check` passes.
+
+## Outcome — 2026-08-10
+
+Delivered and independently reviewed through `2d7a9be5`. All 65 warned files
+now parse to EOF: 79 malformed inline-code excerpts became list-contained
+CommonMark code blocks, preserving their anchors and verdicts. The citation
+census increased from 1,171 to 1,192 and emits no parse-warning section. A
+dangling link planted after a repaired span failed with its exact path before
+the perturbation was restored.
