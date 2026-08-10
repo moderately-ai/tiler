@@ -31,3 +31,14 @@ Re-read the domain block and the `domains.rs` `Program*` docs at the worker base
 ## Closes when
 
 The live comment no longer calls all five model re-exports "key domains", the four key separators and the identity separator remain named accurately, and a re-read of `domains.rs` still agrees.
+
+## Worker audit (2026-08-10)
+
+**Fact verdicts at `313afe61758a62f7ca5672ee430a1dddb279fae1`: verified.**
+
+- The `program/mod.rs` comment anchored `five key domains re-exported from \`model\`` preceded a `#[cfg(test)]` model re-export of exactly `ARTIFACT_DOMAIN`, `DEFERRED_KEY_DOMAIN`, `PAYLOAD_KEY_DOMAIN`, `PROVIDER_KEY_DOMAIN`, and `STAGE_KEY_DOMAIN`; five is therefore the correct count.
+- In `domains.rs`, `ProgramArtifact` is anchored by `Separator opening the canonical artifact-program identity.`, while `ProgramStageKey`, `ProgramPayloadKey`, `ProgramProviderKey`, and `ProgramDeferredKey` are each documented as a separator for one canonical key. The original collective noun was consequently imprecise, not a basis to change values, visibility, or the re-export population.
+
+## Outcome
+
+The comment now distinguishes the one artifact-identity separator from the four key domains. No model constants, identity bytes, values, visibility, or re-export list changed.
