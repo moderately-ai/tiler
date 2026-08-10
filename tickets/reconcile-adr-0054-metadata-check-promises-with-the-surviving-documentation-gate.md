@@ -1,7 +1,7 @@
 ---
 id: reconcile-adr-0054-metadata-check-promises-with-the-surviving-documentation-gate
 title: Reconcile ADR 0054 metadata-check promises with the surviving documentation gate
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [re-reconcile-document-metadata-with-make-citations-link-resolution, reconcile-the-document-metadata-validator-claim-with-its-own-validation-section, resolve-the-markdown-links-the-citation-check-cannot-see]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: sol-adr0054-metadata-checks
-lease_expires_at: 1786411875
 ---
 
 ## User-visible outcome
