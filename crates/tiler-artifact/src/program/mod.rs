@@ -558,8 +558,9 @@ pub use codec::{DIGEST_BYTES, Digest, DigestAlgorithm};
 // this module.
 pub(crate) use codec::envelope_digest;
 // The envelope's seven governed domains and this module's seven identity
-// domains. Thirteen are crate-visible only under `cfg(test)`: these seven, the
-// five key domains re-exported from `model`, and `ROUTE_REQUIREMENT_DOMAIN`.
+// domains. Thirteen are crate-visible only under `cfg(test)`: these seven,
+// the artifact-identity separator and four key domains re-exported from `model`,
+// and `ROUTE_REQUIREMENT_DOMAIN`.
 // `DELIVERED_REALIZATION_DOMAIN` is the exception — it is `pub`, re-exported
 // below beside the record whose canonical bytes it opens, so its value is
 // observable to a consumer. Observable is not accepted: it carries this
