@@ -144,6 +144,7 @@ The rows below are **maintained by hand**, and nothing checks them. A renderer o
 - [Blank-agent documentation acceptance audit](documentation/blank-agent-acceptance-audit.md) — informational; unknown; informs: [Documentation metadata and traceability](../document-metadata.md)
 - [Information architecture and provenance audit](documentation/information-architecture-audit.md) — adopted; primary-source-synthesis; informs: [Documentation metadata and traceability](../document-metadata.md), [Use typed documentation metadata and derived backlinks](../decisions/0054-use-typed-documentation-metadata.md)
 - [Open-ticket accuracy, scope, and outcome-language audit](documentation/open-ticket-audit-2026-07-27.md) — pending; primary-source-synthesis
+- [Scoped ticket semantic audit (2026-08-10)](documentation/ticket-audit-2026-08-10/README.md) — in progress; primary-source-synthesis
 - [Production crate architecture and maintainability audit](documentation/production-crate-codebase-audit.md) — pending; primary-source-synthesis; informs: [System architecture](../architecture.md)
 <!-- END RESEARCH CATALOG -->
 
