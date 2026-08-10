@@ -1,7 +1,7 @@
 ---
 id: resolve-the-provisional-normal-scale-discharge-public-surface
 title: Resolve the provisionally accepted normal-scale discharge public surface
-status: in-progress
+status: done
 priority: p1
 dependencies: [admit-a-normal-scale-precondition-for-target-honourable-strict-affine-decode]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [public-api, numerics, decision]
-claimed_from: todo
-assignee: sol-normal-scale
-lease_expires_at: 1786391757
 ---
 ## User-visible outcome
 
