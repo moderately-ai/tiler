@@ -1,7 +1,7 @@
 ---
 id: determine-whether-compiler-lowering-mints-duplicate-pointwise-constants
 title: Determine whether compiler lowering mints duplicate pointwise constants
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [share-identical-constants-in-the-pointwise-expression-canonical-form]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, identity, research]
-claimed_from: todo
-assignee: sol-pointwise-constants
-lease_expires_at: 1786391757
 ---
 ## Why this evidence is separate
 
