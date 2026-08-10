@@ -48,10 +48,25 @@ Filed 2026-08-07 by [`survey-what-belongs-in-the-conformance-crate`](survey-what
 
 **Fires when at least two independently machine-retained cross-layer executions live in the repository and name different ledger cells.** Each retained record must bind its operation/corpus population, device-observed outputs or digests, exact historical environment, and composition boundary. One source transcription and one unrelated retained probe cannot demonstrate a derivation; two machine records naming two cells is the smallest population where a comparison beats a hand edit.
 
-Reproduce the check:
+The original trigger used this **insufficient historical source census**. It counts files that mention result hashes or invoke the reference evaluator; it does not establish that any execution record exists:
 
 ```sh
 grep -rln "result_sha256\|ReferenceEvaluator" crates/tiler-conformance/src crates/tiler-conformance/tests 2>/dev/null | wc -l
+```
+
+No single accepted retained-record schema or path exists for the two missing authorities, so no command can yet prove the strengthened trigger true. This current-tree stop check instead fails loudly as `UNEVALUABLE` while either machine record is absent. The BF16 half requires the governed run identity in a machine artifact; the F32 half requires one machine file binding the later SDK row to the adversarial corpus rather than finding those facts in unrelated files:
+
+```sh
+bf16_record=$(rg -l 'pure-bf16-vertical@b7c01815' crates/tiler-conformance spikes -g '*.tsv' -g '*.json' -g '*.sha256' -g '*.bin' || true)
+test -n "$bf16_record" || { echo 'UNEVALUABLE: no machine-retained BF16 vertical record' >&2; exit 1; }
+
+f32_record=$(
+  rg -l '26A5388f' crates/tiler-conformance spikes -g '*.tsv' -g '*.json' |
+  while IFS= read -r record_path; do
+    rg -q 'contraction-sensitive' "$record_path" && printf '%s\n' "$record_path"
+  done
+)
+test -n "$f32_record" || { echo 'UNEVALUABLE: no later routed F32 record binds environment and adversarial corpus' >&2; exit 1; }
 ```
 
 ## Trigger check log
