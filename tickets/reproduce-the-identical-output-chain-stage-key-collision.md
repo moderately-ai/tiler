@@ -1,7 +1,7 @@
 ---
 id: reproduce-the-identical-output-chain-stage-key-collision
 title: Reproduce the identical-output-chain stage-key collision at the current compiler boundary
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [refuse-two-structurally-identical-output-chains-by-name-not-as-compiler-output]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, multi-output, identity, research]
-claimed_from: todo
-assignee: sol-stage-key-collision
-lease_expires_at: 1786402510
 ---
 ## Why this evidence is separate
 
