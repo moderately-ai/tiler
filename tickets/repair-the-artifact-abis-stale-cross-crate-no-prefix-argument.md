@@ -55,3 +55,12 @@ The accepted contract no longer presents either namespace premise or the reverse
 - IR population still test-only private: `#[cfg(test)] mod domains` in `crates/tiler-ir/src/lib.rs`; `const PINNED_IDENTITY_DOMAINS` is non-`pub`.
 - Dependency edge still `tiler-artifact` → `tiler-ir` (`tiler-ir.workspace = true` in artifact Cargo.toml); reverse edge absent.
 - Predecessor `correct-the-every-ir-domain-opens-tiler-ir-premise-in-two-places` is `done` and maps this ticket as the accepted-contract remainder; source half landed at `f9b0b67d`. Graph (`todo`, that dependency, empty `related`, scopes `contracts/artifacts`) remains correct. Close condition unmet until `docs/artifact-abi.md` is repaired.
+
+## Review residual — 2026-08-10
+
+Independent review of the accepted-contract repair found two pre-existing source comments that still present the reversed dependency explanation as live. Both are outside this ticket's contract-only scope and are recorded rather than edited here:
+
+- `crates/tiler-artifact/src/program/codec/tests.rs`, source anchor `since neither depends on the other`, says no cross-crate check can exist on that ground even though `tiler-artifact` depends on `tiler-ir`.
+- `crates/tiler-ir/src/index/refinement.rs`, source anchor `so neither crate can enumerate the union`, likewise treats the dependency direction as the blocker; the actual obstacle on the depending side is the private, test-only IR pin population and absence of an exported enumeration.
+
+Repairing the first requires `implementation/artifact`; repairing the second requires `implementation/ir`. This branch deliberately edits neither source file. The accepted-contract remainder recorded above was delivered on this branch at `8cc23ae3`; the review correction makes its terminator-free premise explicit without adding a population count.
