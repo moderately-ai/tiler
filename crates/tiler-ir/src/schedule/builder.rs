@@ -527,18 +527,23 @@ fn verify_contraction(
     {
         return Err(ScheduledRegionDiagnostic::AccessContract);
     }
-    // The two operands bind the program's first two input tensors positionally,
-    // in the order the structure names them. Without this a region could read
-    // one tensor twice while the second buffer went unread, and every consumer
-    // that binds buffers positionally would bind the wrong one.
-    if left.tensor
-        != (TensorRole::Input {
-            ordinal: InputOrdinal::new(0),
-        })
-        || right.tensor
-            != (TensorRole::Input {
-                ordinal: InputOrdinal::new(1),
-            })
+    // The operands bind two distinct program inputs in canonical declaration
+    // order. They need not be the first two: a contraction may read a subset of
+    // a wider declared interface. Strict ascent separately refuses a repeated
+    // tensor and a descending spelling of the same pair, so every admitted
+    // region has one access order and keeps the program's ABI ordinals.
+    let (
+        TensorRole::Input {
+            ordinal: left_ordinal,
+        },
+        TensorRole::Input {
+            ordinal: right_ordinal,
+        },
+    ) = (left.tensor, right.tensor)
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    if left_ordinal.get() >= right_ordinal.get()
         || left.component_role.is_some()
         || right.component_role.is_some()
     {
@@ -3721,6 +3726,132 @@ mod tests {
             })
             .unwrap();
         builder
+    }
+
+    /// Builds a valid `mk,nk->mn` contraction over the named program inputs.
+    fn contraction_builder(left_ordinal: u32, right_ordinal: u32) -> ScheduledRegionBuilder {
+        let operand = Shape::from_dims([2, 3]);
+        let output = Shape::from_dims([2, 2]);
+        let contracted = Shape::from_dims([3]);
+        let left = TensorRole::Input {
+            ordinal: InputOrdinal::new(left_ordinal),
+        };
+        let right = TensorRole::Input {
+            ordinal: InputOrdinal::new(right_ordinal),
+        };
+        let operand_map = |free_position| LogicalAccess::ContractionOperand {
+            operand_shape: operand.clone(),
+            output_shape: output.clone(),
+            contracted_shape: contracted.clone(),
+            sources: vec![
+                ContractionAxisSource::Output {
+                    position: free_position,
+                },
+                ContractionAxisSource::Contracted { position: 0 },
+            ],
+            order: ContributorOrder::OriginalAxisLexicographic,
+        };
+        let mut builder = ScheduledRegionBuilder::new(RegionId::new(42));
+        builder.iteration_shape(output.clone()).unwrap();
+        for (witness, tensor, map) in [(0, left, operand_map(0)), (1, right, operand_map(1))] {
+            builder
+                .push_access(Access {
+                    tensor,
+                    component_role: None,
+                    mode: AccessMode::Read,
+                    map,
+                    bounds: BoundsWitnessId::new(witness),
+                    ownership: None,
+                })
+                .unwrap();
+            builder
+                .push_bounds_proof(BoundsProof {
+                    id: BoundsWitnessId::new(witness),
+                    tensor,
+                    component_role: None,
+                    kind: BoundsProofKind::LinearRange { element_count: 6 },
+                })
+                .unwrap();
+        }
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Output,
+                component_role: None,
+                mode: AccessMode::Write,
+                map: LogicalAccess::LinearIdentity,
+                bounds: BoundsWitnessId::new(2),
+                ownership: Some(OwnershipWitnessId::new(0)),
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(2),
+                tensor: TensorRole::Output,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange { element_count: 4 },
+            })
+            .unwrap();
+        builder
+            .ownership_proof(OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: TensorRole::Output,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 4 },
+            })
+            .unwrap();
+        builder
+            .scalar_program(ScalarProgram::StrictTensorContraction {
+                contracted_shape: contracted.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: 0x7fc0_0000,
+            })
+            .unwrap();
+        builder.numerical(strict_numerical()).unwrap();
+        builder
+            .schedule(KernelSchedule {
+                reduction: ReductionTopology::Contraction {
+                    contracted_shape: contracted,
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    permits_reassociation: false,
+                    permits_permutation: false,
+                },
+                ..linear_schedule(4, OwnershipWitnessId::new(0))
+            })
+            .unwrap();
+        builder
+    }
+
+    /// Contraction reads retain program ordinals and require strict ascent.
+    ///
+    /// Repeat and descent are perturbed independently, with their proof tensor
+    /// changed beside the access so each malformed fixture fails only the
+    /// canonical-ordinal rule rather than proof/reference agreement.
+    #[test]
+    fn contraction_input_ordinals_may_skip_but_may_not_repeat_or_descend() {
+        let skipped = contraction_builder(0, 2)
+            .build()
+            .expect("two distinct ascending program ordinals need not be dense");
+        let dense = contraction_builder(0, 1)
+            .build()
+            .expect("the dense control verifies");
+        assert_ne!(
+            skipped.canonical_identity(),
+            dense.canonical_identity(),
+            "the program input ordinals participate in schedule identity",
+        );
+
+        let repeated = contraction_builder(0, 0).build().unwrap_err();
+        assert_eq!(
+            repeated.diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "a contraction read the same declared input twice",
+        );
+
+        let descending = contraction_builder(2, 0).build().unwrap_err();
+        assert_eq!(
+            descending.diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "a contraction encoded one input pair in descending order",
+        );
     }
 
     /// The scale a root-mean-square normalization's producing stage computes.

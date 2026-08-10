@@ -1694,22 +1694,33 @@ pub(crate) struct NormalizedPointwise {
     pub(crate) reads: Vec<(u32, LogicalAccess)>,
 }
 
-/// A verified binary tensor-contraction `f32` shape over exactly two declared
+/// One declared-input read of a verified binary tensor contraction.
+///
+/// The declaration ordinal is the ABI binding, while `operand_position` is the
+/// position in the contraction occurrence and its canonical index structure.
+/// Keeping both beside the operand's value, shape, and count prevents a
+/// region-local renumbering from silently changing which program tensor a
+/// structure operand reads.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NormalizedContractionRead {
+    pub(crate) input_ordinal: u32,
+    pub(crate) shape: Shape,
+    pub(crate) elements: u64,
+    pub(crate) value: ValueId,
+    pub(crate) operand_position: usize,
+}
+
+/// A verified binary tensor-contraction `f32` shape over two distinct declared
 /// inputs and one semantic result.
 ///
 /// **The structure is carried whole, not projected.** ADR 0087 makes the
 /// canonical index structure the operation's identity, so a normalization that
 /// kept only the extents it happened to need would let two different structures
-/// over the same shapes share a request subject. `operand_positions` maps each
-/// *declared input ordinal* to the structure operand it supplies, so a caller
-/// whose declaration order differs from its operand order is admitted rather
-/// than refused for a spelling — and every downstream binding indexes by
-/// declaration order, which is what the ABI binds in. The current
-/// `contraction-input-arity` guard makes the two operand ordinals and the
-/// complete declared-input ordinal set coincide densely at zero and one.
-/// [`admit-a-contraction-over-a-subset-of-the-declared-inputs`](../../../tickets/admit-a-contraction-over-a-subset-of-the-declared-inputs.md)
-/// owns replacing that coincidence with an explicit ordinal map through the IR
-/// verifier, physical consumers, and request-subject identity.
+/// over the same shapes share a request subject. `reads` is ordered by strictly
+/// ascending declared-input ordinal. Each entry names the structure operand it
+/// supplies; the complete declaration remains in `input_keys` so those ordinals
+/// keep their program-wide meaning when another output reads an input this
+/// contraction does not.
 ///
 /// `output_shape` and `contracted_shape` are derived from the structure and the
 /// operand shapes rather than read from the graph, and the derived output shape
@@ -1718,25 +1729,18 @@ pub(crate) struct NormalizedPointwise {
 /// and is refused rather than resolved in favour of either side.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NormalizedContraction {
-    /// The complete declared-input list, which is also the operand list only
-    /// because `contraction-input-arity` requires exactly two declarations.
-    pub(crate) input_keys: [InputKey; 2],
+    /// The complete declared-input list, in program declaration order.
+    pub(crate) input_keys: Vec<InputKey>,
     pub(crate) output_key: OutputKey,
-    /// Operand shapes, indexed by declared input ordinal.
-    pub(crate) input_shapes: [Shape; 2],
+    /// The two distinct operand reads, ordered by declared input ordinal.
+    pub(crate) reads: [NormalizedContractionRead; 2],
     pub(crate) output_shape: Shape,
     /// Row-major shape of the contracted iteration space, ascending by
     /// canonical contracted index.
     pub(crate) contracted_shape: Shape,
     pub(crate) structure: ContractionIndexStructure,
-    /// Structure operand position supplying each declared input ordinal.
-    pub(crate) operand_positions: [usize; 2],
     pub(crate) members: Vec<SemanticStage>,
-    /// Operand values, indexed by declared input ordinal.
-    pub(crate) inputs: [ValueId; 2],
     pub(crate) output: ValueId,
-    /// Operand element counts, indexed by declared input ordinal.
-    pub(crate) input_elements: [u64; 2],
     pub(crate) output_elements: u64,
     /// Points of the contracted iteration space; the fold length per output.
     pub(crate) contracted_elements: u64,
@@ -1867,7 +1871,7 @@ pub(crate) struct NormalizedEpilogue {
 /// formation actually minted.
 ///
 /// **One operand may be a value another region materializes, and the shape says
-/// which.** `rms_norm(matmul(a, b), a)` reads its first operand across a
+/// which.** `rms_norm(matmul(a, b), w)` reads its first operand across a
 /// materialization edge rather than from a declared buffer, so
 /// [`Self::operand_reads`] carries a per-operand [`BoundaryRead`] and
 /// [`Self::producer`] carries the recognized shape whose regions write it. Both
@@ -2187,12 +2191,14 @@ impl NormalizedOutput {
                     .map(|(_, map)| read_tensor_elements(map, normalized.elements)),
             )
             .flatten(),
-            // A contraction's region binds one access per declared input
-            // ordinal, so the operand run is both the read list and the count
-            // list and no separate gate is needed.
-            Self::Contraction(normalized) => usize::try_from(ordinal)
-                .ok()
-                .and_then(|ordinal| normalized.input_elements.get(ordinal).copied()),
+            // A contraction's two explicit reads are a subset of the complete
+            // declared interface, so the ordinal map — not declaration length
+            // or read position — gates the count.
+            Self::Contraction(normalized) => normalized
+                .reads
+                .iter()
+                .find(|read| read.input_ordinal == ordinal)
+                .map(|read| read.elements),
             // A chain reads a declared input from its producer, from its
             // epilogue, or from both. Whether each half reads it is asked before
             // what it answers, so a half that reads the ordinal without being
@@ -2274,12 +2280,10 @@ impl NormalizedOutput {
                         .iter()
                         .any(|(read, _)| *read == ordinal)
             }
-            // A contraction's region binds one access per declared input
-            // ordinal, so it reads every ordinal the declaration holds; the
-            // recognizer proved both operands are declared inputs.
-            Self::Contraction(normalized) => {
-                usize::try_from(ordinal).is_ok_and(|ordinal| ordinal < normalized.input_keys.len())
-            }
+            Self::Contraction(normalized) => normalized
+                .reads
+                .iter()
+                .any(|read| read.input_ordinal == ordinal),
             Self::Epilogue(chain) => {
                 chain
                     .reads
@@ -2350,9 +2354,9 @@ impl NormalizedOutput {
                 .max()
                 .unwrap_or_default(),
             Self::Contraction(normalized) => normalized
-                .input_elements
+                .reads
                 .iter()
-                .copied()
+                .map(|read| read.elements)
                 .max()
                 .unwrap_or_default(),
             // The epilogue's declared-input reads only: a chain whose epilogue
@@ -3388,8 +3392,19 @@ fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubje
                 push_slice(bytes, key.as_str().as_bytes());
             }
             push_slice(bytes, normalized.output_key.as_str().as_bytes());
-            for shape in &normalized.input_shapes {
-                encode_explain_shape(bytes, shape);
+            // Exactly two declarations made every previously admitted subject's
+            // distinct, ascending read ordinals recoverably `0, 1`. Keep that
+            // branch byte-for-byte unchanged. A wider declaration was refused
+            // before this change, and its earlier framed key count selects this
+            // fixed two-ordinal run unambiguously; the run separates every
+            // two-input subset without moving `contraction-f32.v1`'s old bytes.
+            if normalized.input_keys.len() > normalized.reads.len() {
+                for read in &normalized.reads {
+                    bytes.extend_from_slice(&read.input_ordinal.to_be_bytes());
+                }
+            }
+            for read in &normalized.reads {
+                encode_explain_shape(bytes, &read.shape);
             }
             encode_explain_shape(bytes, &normalized.output_shape);
             encode_explain_shape(bytes, &normalized.contracted_shape);
@@ -3397,15 +3412,15 @@ fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubje
             // index tuples are what ADR 0087 makes the operation's identity,
             // and two structures over one set of shapes are two programs.
             push_slice(bytes, normalized.structure.canonical_encoding().as_bytes());
-            for position in normalized.operand_positions {
-                push_len(bytes, position);
+            for read in &normalized.reads {
+                push_len(bytes, read.operand_position);
             }
             push_len(bytes, normalized.members.len());
             for atom in &normalized.members {
                 bytes.extend_from_slice(&atom.member().0.to_be_bytes());
             }
-            for elements in normalized.input_elements {
-                bytes.extend_from_slice(&elements.to_be_bytes());
+            for read in &normalized.reads {
+                bytes.extend_from_slice(&read.elements.to_be_bytes());
             }
             bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
             bytes.extend_from_slice(&normalized.contracted_elements.to_be_bytes());
@@ -5113,7 +5128,7 @@ fn resolve_numerical_contract(
 ///   is where the last of this rule's rows moved.
 ///   [`admit-a-staged-family-that-reads-a-materialized-intermediate`](../../../tickets/admit-a-staged-family-that-reads-a-materialized-intermediate.md)
 ///   gave the recognized staged shape a per-operand [`BoundaryRead`] and the
-///   producer whose regions write the edge, so `rms_norm(matmul(a, b), a)` is one
+///   producer whose regions write the edge, so `rms_norm(matmul(a, b), w)` is one
 ///   output's partition rather than a `staged-operand` refusal. It stops one
 ///   layer down instead: the consuming stage would read that edge *and* the value
 ///   the producing stage handed it, which is two `TensorRole::Intermediate`
@@ -7060,7 +7075,7 @@ enum StagedOperandAdmission {
 /// **One operand may be a value another region materializes, and that is this
 /// function's own admission rather than a later stage's derivation.** The
 /// recognized shape carries a [`BoundaryRead`] per operand and the producer's
-/// recognized shape beside them, so `rms_norm(matmul(a, b), a)` is a partition
+/// recognized shape beside them, so `rms_norm(matmul(a, b), w)` is a partition
 /// this output owns end to end — the producer's occurrence included, which is
 /// what [`check_output_cover`] requires and what makes the *producing* region
 /// spellable from a shape this partition holds. The alternative considered and
@@ -7350,16 +7365,6 @@ fn normalize_contraction(
     result: ValueId,
     output_key: OutputKey,
 ) -> Result<NormalizedContraction, RequestError> {
-    // The fixed arrays and every physical consumer of this normalized form
-    // index the complete declared-input set densely at zero and one. The
-    // semantic operation is independently binary; this guard makes that
-    // operand set coincide with the program's declaration set. The subset
-    // widening must install an explicit operand-to-declaration ordinal map
-    // through normalization, scheduling, verification, and identity rather
-    // than merely remove this check.
-    if program.input_count() != 2 {
-        return mismatch("contraction-input-arity");
-    }
     // An elementwise epilogue over a contraction result is a two-region chain
     // this profile assembles as a two-region chain, and this normalization is
     // the producer half of it: [`recognize_epilogue`] reaches here with the
@@ -7388,47 +7393,70 @@ fn normalize_contraction(
         return mismatch("contraction-operand-count");
     }
 
-    // Each structure operand must be one distinct declared input, and the two
-    // together must be both of them. Recorded as declaration ordinal -> operand
-    // position, because declaration order is what the ABI binds buffers in and
-    // is stable under any reordering of the occurrence's operands.
-    let operands: Vec<ValueId> = operation.operands().collect();
+    // Each structure operand must be one distinct declared input. The complete
+    // declaration may be wider: a sibling output or a later stage can read an
+    // input this contraction does not. Each read therefore carries both the
+    // program ordinal the ABI binds and the structure operand position it
+    // supplies, then the pair is canonicalized by ascending program ordinal.
+    let operands: [ValueId; 2] = operation
+        .operands()
+        .collect::<Vec<_>>()
+        .try_into()
+        .map_err(|_| RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "contraction-operand-count",
+        })?;
     let declared: Vec<ValueId> = program.inputs().map(|input| input.value()).collect();
-    let mut operand_positions = [usize::MAX; 2];
-    for (position, operand) in operands.iter().enumerate() {
-        let Some(declaration) = declared.iter().position(|declared| declared == operand) else {
+    let shape_of = |value: ValueId| static_shape(program, value, "input-handle");
+    let mut reads = Vec::with_capacity(2);
+    for (position, operand) in operands.into_iter().enumerate() {
+        let Some(declaration) = declared.iter().position(|declared| *declared == operand) else {
             return mismatch("contraction-operands");
         };
-        let Some(slot) = operand_positions.get_mut(declaration) else {
-            return mismatch("contraction-operands");
-        };
-        if std::mem::replace(slot, position) != usize::MAX {
-            return mismatch("contraction-operands");
-        }
+        let input_ordinal =
+            u32::try_from(declaration).map_err(|_| RequestError::UnsupportedCapability {
+                phase: "strategy",
+                rule: "input-ordinal",
+            })?;
+        let shape = shape_of(operand)?;
+        let elements = element_count_u64(&shape, "input")?;
+        reads.push(NormalizedContractionRead {
+            input_ordinal,
+            shape,
+            elements,
+            value: operand,
+            operand_position: position,
+        });
     }
-    if operand_positions.contains(&usize::MAX) {
+    reads.sort_by_key(|read| read.input_ordinal);
+    let reads: [NormalizedContractionRead; 2] =
+        reads
+            .try_into()
+            .map_err(|_| RequestError::UnsupportedCapability {
+                phase: "strategy",
+                rule: "contraction-operand-count",
+            })?;
+    if reads[0].input_ordinal >= reads[1].input_ordinal {
         return mismatch("contraction-operands");
     }
 
-    let shape_of = |value: ValueId| static_shape(program, value, "input-handle");
-    let input_shapes = [shape_of(declared[0])?, shape_of(declared[1])?];
     // One extent per index, bound by the first operand axis naming it. The
     // semantic inferencer already proved agreement at construction, so a
     // disagreement here is invalid state and is refused rather than preferred
     // one way.
     let mut extents: Vec<(ContractionIndex, Extent)> = Vec::new();
-    for (declaration, shape) in input_shapes.iter().enumerate() {
-        let tuple = structure.operand(operand_positions[declaration]).ok_or(
+    for read in &reads {
+        let tuple = structure.operand(read.operand_position).ok_or(
             RequestError::UnsupportedCapability {
                 phase: "strategy",
                 rule: "contraction-structure",
             },
         )?;
-        if shape.rank() != tuple.len() {
+        if read.shape.rank() != tuple.len() {
             return mismatch("contraction-rank");
         }
         for (axis, index) in tuple.iter().enumerate() {
-            let extent = shape.extents()[axis];
+            let extent = read.shape.extents()[axis];
             match extents.iter().find(|(bound, _)| bound == index) {
                 Some((_, bound)) if *bound != extent => return mismatch("contraction-extent"),
                 Some(_) => {}
@@ -7464,10 +7492,6 @@ fn normalize_contraction(
         return mismatch("contraction-output-shape");
     }
 
-    let input_elements = [
-        element_count_u64(&input_shapes[0], "input")?,
-        element_count_u64(&input_shapes[1], "input")?,
-    ];
     let output_elements = element_count_u64(&output_shape, "output")?;
     let contracted_elements = element_count_u64(&contracted_shape, "input")?;
     // `direct`'s one precondition, and its only one. The semantic inferencer
@@ -7480,36 +7504,14 @@ fn normalize_contraction(
     }
 
     Ok(NormalizedContraction {
-        input_keys: [
-            program
-                .inputs()
-                .next()
-                .ok_or(RequestError::UnsupportedCapability {
-                    phase: "strategy",
-                    rule: "missing-input",
-                })?
-                .key()
-                .clone(),
-            program
-                .inputs()
-                .nth(1)
-                .ok_or(RequestError::UnsupportedCapability {
-                    phase: "strategy",
-                    rule: "missing-input",
-                })?
-                .key()
-                .clone(),
-        ],
+        input_keys: program.inputs().map(|input| input.key().clone()).collect(),
         output_key,
-        input_shapes,
+        reads,
         output_shape,
         contracted_shape,
         structure,
-        operand_positions,
         members: vec![SemanticStage::first(SemanticMemberId(ordinal))],
-        inputs: [declared[0], declared[1]],
         output: result,
-        input_elements,
         output_elements,
         contracted_elements,
     })
@@ -8369,16 +8371,10 @@ mod tests {
     /// A normalization over a materialized contraction result, optionally with
     /// a trailing elementwise pass and optionally normalizing that result twice.
     ///
-    /// `ab,bc->ac` over two `[2, 2]` declared inputs, so the product's shape is
-    /// the shape the normalization publishes and the *first* declared input can
-    /// serve as the weight. **Two declared inputs rather than three, and that is
-    /// forced rather than stylistic**: `normalize_contraction` refuses a program
-    /// declaring a third input under `contraction-input-arity`, so
-    /// `rms_norm(matmul(a, b), w)`
-    /// spelled with its own weight tensor is refused by the *contraction*
-    /// recognizer's declared-arity rule rather than by anything this ticket
-    /// touched. That wall's owner is
-    /// [`admit-a-contraction-over-a-subset-of-the-declared-inputs`](../../../tickets/admit-a-contraction-over-a-subset-of-the-declared-inputs.md).
+    /// `ab,bc->ac` over `a` and `b`, with an independent third `[2, 2]` input
+    /// `w` serving as the normalization weight. The contraction's two reads are
+    /// therefore a strict subset of the complete interface in the ordinary
+    /// `rms_norm(matmul(a, b), w)` spelling.
     fn contraction_fed_normalization(passed: bool, doubly_staged: bool) -> SemanticProgram {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let shape = Shape::from_dims([2, 2]);
@@ -8386,7 +8382,10 @@ mod tests {
             .input::<F32>(InputKey::new("a").unwrap(), shape.clone())
             .unwrap();
         let right = builder
-            .input::<F32>(InputKey::new("b").unwrap(), shape)
+            .input::<F32>(InputKey::new("b").unwrap(), shape.clone())
+            .unwrap();
+        let independent_weight = builder
+            .input::<F32>(InputKey::new("w").unwrap(), shape)
             .unwrap();
         let structure = ContractionIndexStructure::new(
             [
@@ -8399,7 +8398,11 @@ mod tests {
         let product =
             tiler_ir::semantic::F32TensorContraction::apply(&mut builder, &structure, left, right)
                 .unwrap();
-        let weight = if doubly_staged { product } else { left };
+        let weight = if doubly_staged {
+            product
+        } else {
+            independent_weight
+        };
         let normalized = tiler_ir::semantic::F32RmsNorm::apply(
             &mut builder,
             product,
@@ -8409,7 +8412,7 @@ mod tests {
         )
         .unwrap();
         let root = if passed {
-            F32Multiply::apply(&mut builder, normalized, left).unwrap()
+            F32Multiply::apply(&mut builder, normalized, independent_weight).unwrap()
         } else {
             normalized
         };
@@ -8422,7 +8425,7 @@ mod tests {
     /// A staged family reading a materialized intermediate is recognized, and
     /// the operand's boundary role is the recognized shape's.
     ///
-    /// **The admission this ticket exists for.** `rms_norm(matmul(a, b), a)`
+    /// **The admission this ticket exists for.** `rms_norm(matmul(a, b), w)`
     /// reads its first operand across a materialization edge, which used to be
     /// refused under `staged-operand` because nothing in the recognized staged
     /// shape could record that operand zero is served by an edge rather than by a
@@ -8451,10 +8454,10 @@ mod tests {
             panic!("a normalization output recognizes as a staged family")
         };
         // The operand's source, carried by the recognized shape: operand zero is
-        // the edge and operand one is the first declared input.
+        // the edge and operand one is the independent third declared input.
         assert_eq!(
             staged.operand_reads,
-            [BoundaryRead::Staged, BoundaryRead::Input(0)]
+            [BoundaryRead::Staged, BoundaryRead::Input(2)]
         );
         assert_eq!(staged.member, SemanticMemberId(1));
         // The producer, recognized as the shape a standalone contraction output
@@ -8494,14 +8497,14 @@ mod tests {
         // read by the occurrence's own operand run *and* by the producer, and
         // the two agree at `[2, 2]`, so the accessor answers rather than
         // refusing.
-        for ordinal in [0, 1] {
+        for ordinal in [0, 1, 2] {
             assert!(recognized.reads_declared_input(ordinal));
             assert_eq!(
                 recognized.input_elements_at(InputOrdinal::new(ordinal)),
                 Some(4),
             );
         }
-        assert!(!recognized.reads_declared_input(2));
+        assert!(!recognized.reads_declared_input(3));
         assert_eq!(recognized.max_input_elements(), 4);
 
         // **The boundary this widening does not move, asserted rather than
@@ -8817,7 +8820,7 @@ mod tests {
     ///   reads, and that role carries no ordinal, so nothing says which edge each
     ///   binds. `staged-operand-conflict`.
     /// - *An occurrence already at the far side of an edge reading its own.*
-    ///   `rms_norm(matmul(a, b), a) * a` makes the normalization an epilogue
+    ///   `rms_norm(matmul(a, b), w) * w` makes the normalization an epilogue
     ///   chain's producer, so admitting its operand edge would be a recognized
     ///   chain two materialization boundaries deep. `staged-operand-depth`, the
     ///   depth rule's one guard, stated at [`StagedOperandAdmission`].
@@ -8834,7 +8837,7 @@ mod tests {
     /// assertion cannot see. Handing `recognize_epilogue_producer`'s call site
     /// `OneEdge` recognizes the program as
     /// `Epilogue { producer: Staged { producer: Some(Contraction), operand_reads:
-    /// [Staged, Input(0)] } }` — a well-formed nesting — and this row is the
+    /// [Staged, Input(2)] } }` — a well-formed nesting — and this row is the
     /// *only* one of the crate's 784 tests that moves. End to end the program
     /// then refuses `NoFeasiblePlan` rather than compiling.
     /// `crates/tiler-compiler/tests/recognized_chain_depth_boundary.rs` holds
@@ -10804,6 +10807,160 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), root)
             .unwrap();
         builder.build().unwrap()
+    }
+
+    /// A contraction over one of the three two-input subsets of one declaration.
+    ///
+    /// The independent output retains the skipped input without entering the
+    /// contraction walk. All input shapes and occurrence positions are equal
+    /// across fixtures, so the read ordinals are the only contraction-subject
+    /// field that changes.
+    fn contraction_subset_program(pair: [usize; 2]) -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let shape = Shape::from_dims([2, 2]);
+        let inputs: Vec<_> = ["a", "b", "c"]
+            .into_iter()
+            .map(|key| {
+                builder
+                    .input::<F32>(InputKey::new(key).unwrap(), shape.clone())
+                    .unwrap()
+            })
+            .collect();
+        let structure = ContractionIndexStructure::new(
+            [
+                vec![ContractionIndex::new(0), ContractionIndex::new(1)],
+                vec![ContractionIndex::new(1), ContractionIndex::new(2)],
+            ],
+            [ContractionIndex::new(0), ContractionIndex::new(2)],
+        )
+        .expect("ab,bc->ac is an admitted structure");
+        let product = tiler_ir::semantic::F32TensorContraction::apply(
+            &mut builder,
+            &structure,
+            inputs[pair[0]],
+            inputs[pair[1]],
+        )
+        .unwrap();
+        let skipped = (0..3)
+            .find(|ordinal| !pair.contains(ordinal))
+            .expect("two of three inputs leave one skipped");
+        let retained = F32Add::apply(&mut builder, inputs[skipped], inputs[skipped]).unwrap();
+        builder
+            .output(OutputKey::new("product").unwrap(), product)
+            .unwrap();
+        builder
+            .output(OutputKey::new("retained").unwrap(), retained)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    /// The three subsets are distinguished by the contraction arm itself.
+    ///
+    /// This drives [`encode_output_subject`] directly, excluding the enclosing
+    /// semantic graph identity that would distinguish separately built programs
+    /// whatever this arm encoded. It also pins both read predicates for the
+    /// skipped ordinal, so restoring dense indexing or a declaration-length
+    /// predicate makes the first non-prefix subset fail independently.
+    #[test]
+    fn contraction_subjects_separate_all_two_input_subsets_of_three_declarations() {
+        let pairs = [[0_u32, 1_u32], [0, 2], [1, 2]];
+        let mut subjects = Vec::new();
+        for pair in pairs {
+            let program = contraction_subset_program([
+                usize::try_from(pair[0]).unwrap(),
+                usize::try_from(pair[1]).unwrap(),
+            ]);
+            let recognized = recognize_outputs(&program).expect("both outputs are recognized");
+            let NormalizedOutput::Contraction(contraction) = &recognized.outputs()[0] else {
+                panic!("the first output is the contraction");
+            };
+            assert_eq!(contraction.input_keys.len(), 3);
+            assert_eq!(
+                contraction
+                    .reads
+                    .iter()
+                    .map(|read| read.input_ordinal)
+                    .collect::<Vec<_>>(),
+                pair,
+            );
+            let skipped = (0..3).find(|ordinal| !pair.contains(ordinal)).unwrap();
+            for ordinal in pair {
+                assert!(recognized.outputs()[0].reads_declared_input(ordinal));
+                assert_eq!(
+                    recognized.outputs()[0].input_elements_at(InputOrdinal::new(ordinal)),
+                    Some(4),
+                );
+            }
+            assert!(!recognized.outputs()[0].reads_declared_input(skipped));
+            assert_eq!(
+                recognized.outputs()[0].input_elements_at(InputOrdinal::new(skipped)),
+                None,
+            );
+
+            let mut bytes = Vec::new();
+            encode_output_subject(&mut bytes, &output_subject(&recognized.outputs()[0]));
+            subjects.push(bytes);
+        }
+        for (position, first) in subjects.iter().enumerate() {
+            for second in &subjects[position + 1..] {
+                assert!(first != second, "two declared-input subsets collided");
+            }
+        }
+    }
+
+    /// The conditional ordinal run does not move an old contraction subject.
+    ///
+    /// The helper is the exact pre-widening `contraction-f32.v1` arm, projected
+    /// through the new read records. Equality therefore checks every byte of an
+    /// already-admitted two-declaration subject, not merely its tag or digest.
+    #[test]
+    fn a_two_declaration_contraction_keeps_its_v1_subject_bytes() {
+        let program = contraction_program(false);
+        let recognized = recognize(&program).expect("the contraction is recognized");
+        let NormalizedOutput::Contraction(normalized) = &recognized else {
+            panic!("the output is a contraction");
+        };
+        assert_eq!(
+            normalized
+                .reads
+                .iter()
+                .map(|read| read.input_ordinal)
+                .collect::<Vec<_>>(),
+            [0, 1],
+        );
+
+        let mut legacy = Vec::new();
+        push_slice(&mut legacy, b"contraction-f32.v1");
+        push_len(&mut legacy, normalized.input_keys.len());
+        for key in &normalized.input_keys {
+            push_slice(&mut legacy, key.as_str().as_bytes());
+        }
+        push_slice(&mut legacy, normalized.output_key.as_str().as_bytes());
+        for read in &normalized.reads {
+            encode_explain_shape(&mut legacy, &read.shape);
+        }
+        encode_explain_shape(&mut legacy, &normalized.output_shape);
+        encode_explain_shape(&mut legacy, &normalized.contracted_shape);
+        push_slice(
+            &mut legacy,
+            normalized.structure.canonical_encoding().as_bytes(),
+        );
+        for read in &normalized.reads {
+            push_len(&mut legacy, read.operand_position);
+        }
+        push_len(&mut legacy, normalized.members.len());
+        for atom in &normalized.members {
+            legacy.extend_from_slice(&atom.member().0.to_be_bytes());
+        }
+        for read in &normalized.reads {
+            legacy.extend_from_slice(&read.elements.to_be_bytes());
+        }
+        legacy.extend_from_slice(&normalized.output_elements.to_be_bytes());
+        legacy.extend_from_slice(&normalized.contracted_elements.to_be_bytes());
+
+        let mut current = Vec::new();
+        encode_output_subject(&mut current, &output_subject(&recognized));
+        assert_eq!(current, legacy, "an existing v1 subject moved bytes");
     }
 
     #[test]

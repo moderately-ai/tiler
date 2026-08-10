@@ -904,6 +904,129 @@ fn outputs_reading_input_subsets_compile_and_bind_the_inputs_they_read() {
     assert_ne!(folded, vec![8.0, 26.0]);
 }
 
+/// A binary contraction and an independent output split a three-input interface.
+///
+/// The contraction reads `a` and `c` at program ordinals `0` and `2`; the
+/// independent output retains `b`. All three tensors have the same shape, so a
+/// region-local dense renumbering to `0, 1` remains intrinsically valid and
+/// computes a different answer rather than failing structurally.
+fn contraction_input_subset_program() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let shape = Shape::from_dims([2, 2]);
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), shape.clone())
+        .unwrap();
+    let b = builder
+        .input::<F32>(InputKey::new("b").unwrap(), shape.clone())
+        .unwrap();
+    let c = builder
+        .input::<F32>(InputKey::new("c").unwrap(), shape)
+        .unwrap();
+    let structure = tiler_ir::semantic::ContractionIndexStructure::new(
+        [
+            [
+                tiler_ir::semantic::ContractionIndex::new(19),
+                tiler_ir::semantic::ContractionIndex::new(3),
+            ],
+            [
+                tiler_ir::semantic::ContractionIndex::new(14),
+                tiler_ir::semantic::ContractionIndex::new(3),
+            ],
+        ],
+        [
+            tiler_ir::semantic::ContractionIndex::new(19),
+            tiler_ir::semantic::ContractionIndex::new(14),
+        ],
+    )
+    .unwrap();
+    let projected =
+        tiler_ir::semantic::F32TensorContraction::apply(&mut builder, &structure, a, c).unwrap();
+    let retained = tiler_ir::semantic::F32Add::apply(&mut builder, b, b).unwrap();
+    builder
+        .output(OutputKey::new("projected").unwrap(), projected)
+        .unwrap();
+    builder
+        .output(OutputKey::new("retained").unwrap(), retained)
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// A contraction over a declaration subset compiles and agrees bit for bit.
+///
+/// Both outputs are compared. `projected` catches either physical derivation
+/// renumbering `c` to `b`; `retained` proves the skipped declaration still has
+/// its independent program meaning. The payloads make every wrong substitution
+/// visible, and the direct expected contraction is stated beside the reference
+/// result so two agreeing evaluators cannot hide it.
+#[test]
+fn a_contraction_over_an_input_subset_compiles_and_matches_the_reference() {
+    use crate::physical::{InputOrdinal, TensorRole};
+
+    let shape = Shape::from_dims([2, 2]);
+    let a: [f32; 4] = [1.0, 2.0, 4.0, 8.0];
+    let b: [f32; 4] = [16.0, 32.0, 64.0, 128.0];
+    let c: [f32; 4] = [256.0, 512.0, 1024.0, 4096.0];
+    let program = contraction_input_subset_program();
+    assert_eq!(program.input_count(), 3);
+    assert_eq!(program.output_count(), 2);
+
+    let compiled = compile(CompilationRequest::governed(&program))
+        .expect("a binary contraction may read a subset of the declaration");
+    let retained: Vec<&ProgramAlternative> =
+        compiled.targets[0].portfolio.alternatives.iter().collect();
+    let [alternative] = retained.as_slice() else {
+        panic!(
+            "expected one retained alternative, found {}",
+            retained.len()
+        );
+    };
+    assert_eq!(alternative.scheduled_regions.len(), 2);
+    assert_eq!(alternative.kernels.len(), 2);
+
+    let input = |ordinal| TensorRole::Input {
+        ordinal: InputOrdinal::new(ordinal),
+    };
+    let reads: Vec<Vec<TensorRole>> = alternative
+        .scheduled_regions
+        .iter()
+        .map(read_tensors)
+        .collect();
+    let find = |expected: &[TensorRole]| {
+        reads
+            .iter()
+            .position(|actual| actual == expected)
+            .unwrap_or_else(|| panic!("no region reads {expected:?}; regions read {reads:?}"))
+    };
+    let contraction_region = find(&[input(0), input(2)]);
+    let retained_region = find(&[input(1)]);
+    let projected = interpret_fused_inputs(&alternative.kernels[contraction_region], &[&a, &c]);
+    let doubled = interpret_fused(&alternative.kernels[retained_region], &b);
+
+    let keys: Vec<InputKey> = ["a", "b", "c"]
+        .into_iter()
+        .map(|key| InputKey::new(key).unwrap())
+        .collect();
+    let tensors = [
+        f32_tensor(shape.clone(), &a),
+        f32_tensor(shape.clone(), &b),
+        f32_tensor(shape, &c),
+    ];
+    let bindings: Vec<InputBinding<'_>> = keys
+        .iter()
+        .zip(&tensors)
+        .map(|(key, tensor)| InputBinding::new(key, tensor))
+        .collect();
+    let expected = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(&program, &bindings)
+        .unwrap();
+    assert_eq!(bits_of(&projected), tensor_bits(&expected[0]));
+    assert_eq!(bits_of(&doubled), tensor_bits(&expected[1]));
+    assert_eq!(projected, vec![1280.0, 9216.0, 5120.0, 36864.0]);
+    assert_eq!(doubled, vec![32.0, 64.0, 128.0, 256.0]);
+    assert_ne!(projected, vec![80.0, 320.0, 320.0, 1280.0]);
+}
+
 /// ADR 0072 identity conformance for a provider-only revision change.
 ///
 /// The same graph admitted by two revisions of the same external provider

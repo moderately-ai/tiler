@@ -27,10 +27,10 @@ use tiler_ir::schedule::{
 
 use crate::region::SemanticStage;
 use crate::request::{
-    BoundaryRead, NormalizedContraction, NormalizedEpilogue, NormalizedOutput,
-    NormalizedOutputSubject, NormalizedSerialSum, NormalizedStaged, NumericalPermission,
-    RecognizedPointwise, StrictF32NumericalContract, TargetProfile, VerifiedRequestSubject,
-    VerifiedTargetRequest,
+    BoundaryRead, NormalizedContraction, NormalizedContractionRead, NormalizedEpilogue,
+    NormalizedOutput, NormalizedOutputSubject, NormalizedSerialSum, NormalizedStaged,
+    NumericalPermission, RecognizedPointwise, StrictF32NumericalContract, TargetProfile,
+    VerifiedRequestSubject, VerifiedTargetRequest,
 };
 use crate::target::feasibility::UnrealizableSynchronization;
 use crate::target::feasibility::{
@@ -294,7 +294,7 @@ pub(crate) fn staged_plan(normalized: &NormalizedStaged) -> Option<StagedPlan> {
 /// the verifier would reject as invalid compiler output.
 ///
 /// **The same refusal covers an operand supplied by a materialization edge**,
-/// which the recognizer now admits (`rms_norm(matmul(a, b), a)`) and this
+/// which the recognizer now admits (`rms_norm(matmul(a, b), w)`) and this
 /// vocabulary still cannot spell: the consuming pass would read that edge *and*
 /// the value the producing stage handed it, and `TensorRole::Intermediate`
 /// carries no ordinal, so nothing says which of the two each access binds. It is
@@ -898,7 +898,7 @@ fn spell_output(
         // A member set the occurrence's stages do not cover falls through to the
         // producer across its staged operand's materialization edge, exactly as
         // an epilogue chain falls through to its own. That recursion is what
-        // spells the contraction in `rms_norm(matmul(a, b), a)`, and it is a
+        // spells the contraction in `rms_norm(matmul(a, b), w)`, and it is a
         // fall-through rather than a decision because a member set outside both
         // is another output's.
         NormalizedOutput::Staged(normalized) => {
@@ -1681,13 +1681,12 @@ pub(crate) fn publishing_copy_region(
 
 /// Derives one contraction operand's coordinate map from the index structure.
 ///
-/// `declaration` is the *declared input ordinal*, which is what binds the
-/// region's buffers, and the structure operand it reads is the one the
-/// recognizer bound to it. Each operand axis takes the position of its index in
-/// the output tuple, or — when the index is contracted rather than free — in the
-/// ascending contracted set. Those are the two spaces a `direct` realization
-/// walks, and the structure's own derivation guarantees every operand index is
-/// in exactly one of them.
+/// `read` ties the *declared input ordinal* that binds the region's buffer to the
+/// structure operand it supplies. Each operand axis takes the position of its
+/// index in the output tuple, or — when the index is contracted rather than free
+/// — in the ascending contracted set. Those are the two spaces a `direct`
+/// realization walks, and the structure's own derivation guarantees every
+/// operand index is in exactly one of them.
 ///
 /// # Panics
 ///
@@ -1696,12 +1695,12 @@ pub(crate) fn publishing_copy_region(
 /// proved they do not.
 fn contraction_operand_sources(
     normalized: &NormalizedContraction,
-    declaration: usize,
+    read: &NormalizedContractionRead,
 ) -> Vec<ContractionAxisSource> {
     let structure = &normalized.structure;
     let tuple = structure
-        .operand(normalized.operand_positions[declaration])
-        .expect("the recognizer bound every declared input to a structure operand");
+        .operand(read.operand_position)
+        .expect("the recognizer bound every contraction read to a structure operand");
     tuple
         .iter()
         .map(|index| {
@@ -1748,20 +1747,20 @@ pub(crate) fn contraction_region(
     // numbering so two accesses cannot prove against one witness.
     let mut accesses = Vec::with_capacity(3);
     let mut bounds_proofs = Vec::with_capacity(3);
-    for declaration in 0..normalized.input_keys.len() {
-        let witness = u32::try_from(declaration).unwrap_or(u32::MAX);
+    for (position, read) in normalized.reads.iter().enumerate() {
+        let witness = u32::try_from(position).unwrap_or(u32::MAX);
         let tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(witness),
+            ordinal: InputOrdinal::new(read.input_ordinal),
         };
         accesses.push(Access {
             tensor,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::ContractionOperand {
-                operand_shape: normalized.input_shapes[declaration].clone(),
+                operand_shape: read.shape.clone(),
                 output_shape: normalized.output_shape.clone(),
                 contracted_shape: normalized.contracted_shape.clone(),
-                sources: contraction_operand_sources(normalized, declaration),
+                sources: contraction_operand_sources(normalized, read),
                 order: ContributorOrder::OriginalAxisLexicographic,
             },
             bounds: BoundsWitnessId::new(witness),
@@ -1772,7 +1771,7 @@ pub(crate) fn contraction_region(
             tensor,
             component_role: None,
             kind: BoundsProofKind::LinearRange {
-                element_count: normalized.input_elements[declaration],
+                element_count: read.elements,
             },
         });
     }
@@ -3700,31 +3699,33 @@ fn verify_workgroup_tree_subject_binding(
 
 /// Requires both operand reads to realize the recognized structure exactly.
 ///
-/// Checked per declared input ordinal rather than as a set: the ordinal is the
-/// buffer position, so two accesses carrying the right pair of maps in the wrong
-/// order would bind each operand to the other's tensor and still look complete.
+/// Checked per normalized read rather than as a set: the ordinal is the buffer
+/// position, so a dense local renumbering or a pair of maps in the wrong order
+/// would bind an operand to another program tensor and still look complete.
 fn contraction_accesses_match(accesses: &[Access], normalized: &NormalizedContraction) -> bool {
     let Some((_, reads)) = accesses.split_last() else {
         return false;
     };
-    if reads.len() != normalized.input_shapes.len() {
+    if reads.len() != normalized.reads.len() {
         return false;
     }
-    reads.iter().enumerate().all(|(declaration, read)| {
-        u32::try_from(declaration).is_ok_and(|ordinal| {
-            read.tensor
+    reads
+        .iter()
+        .zip(&normalized.reads)
+        .all(|(access, normalized_read)| {
+            access.tensor
                 == TensorRole::Input {
-                    ordinal: InputOrdinal::new(ordinal),
+                    ordinal: InputOrdinal::new(normalized_read.input_ordinal),
                 }
-        }) && read.map
-            == LogicalAccess::ContractionOperand {
-                operand_shape: normalized.input_shapes[declaration].clone(),
-                output_shape: normalized.output_shape.clone(),
-                contracted_shape: normalized.contracted_shape.clone(),
-                sources: contraction_operand_sources(normalized, declaration),
-                order: ContributorOrder::OriginalAxisLexicographic,
-            }
-    })
+                && access.map
+                    == LogicalAccess::ContractionOperand {
+                        operand_shape: normalized_read.shape.clone(),
+                        output_shape: normalized.output_shape.clone(),
+                        contracted_shape: normalized.contracted_shape.clone(),
+                        sources: contraction_operand_sources(normalized, normalized_read),
+                        order: ContributorOrder::OriginalAxisLexicographic,
+                    }
+        })
 }
 
 /// The contributor tensor one recognized fold's own region must bind.

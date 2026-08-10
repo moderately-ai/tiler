@@ -2,7 +2,7 @@
 //!
 //! `admit-a-staged-family-that-reads-a-materialized-intermediate` moved one
 //! wall and not the one below it, and this file is what keeps the pair honest.
-//! **The recognizer admits `rms_norm(matmul(a, b), a)`**: the recognized staged
+//! **The recognizer admits `rms_norm(matmul(a, b), w)`**: the recognized staged
 //! shape carries a boundary role per operand and the producer whose regions
 //! write the edge, so the occurrence and the contraction are one output's
 //! partition. **The scheduled-region vocabulary still cannot spell it**, and the
@@ -52,13 +52,9 @@ const CONTRACTS: [NumericalContract; 5] = [
 
 /// A normalization whose value operand is a materialized contraction result.
 ///
-/// `ab,bc->ac` over two `[2, 2]` declared inputs, so the product's shape is the
-/// shape the normalization publishes and the first declared input serves as the
-/// weight. Two declared inputs rather than three because `normalize_contraction`
-/// refuses a program declaring a third under `contraction-input-arity` — a wall
-/// of the contraction recognizer's own, owned by
-/// `admit-a-contraction-over-a-subset-of-the-declared-inputs`, and not one this
-/// file is about.
+/// `ab,bc->ac` over `a` and `b`, with a distinct third declared tensor `w` as
+/// the normalization weight. This is the ordinary staged chain whose
+/// contraction reads a subset of the program interface.
 fn staged_over_an_edge() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let shape = Shape::from_dims([2, 2]);
@@ -66,7 +62,10 @@ fn staged_over_an_edge() -> SemanticProgram {
         .input::<F32>(InputKey::new("a").unwrap(), shape.clone())
         .unwrap();
     let right = builder
-        .input::<F32>(InputKey::new("b").unwrap(), shape)
+        .input::<F32>(InputKey::new("b").unwrap(), shape.clone())
+        .unwrap();
+    let weight = builder
+        .input::<F32>(InputKey::new("w").unwrap(), shape)
         .unwrap();
     let structure = ContractionIndexStructure::new(
         [
@@ -81,7 +80,7 @@ fn staged_over_an_edge() -> SemanticProgram {
     let normalized = F32RmsNorm::apply(
         &mut builder,
         product,
-        left,
+        weight,
         Axis::new(1),
         1.0e-6_f32.to_bits(),
     )
