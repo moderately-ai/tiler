@@ -286,3 +286,75 @@ pub(crate) fn assert_injective_fixed_width<T: Copy + Debug>(
     }
     assert_injective(values, push);
 }
+
+/// Asserts that one exhaustively enumerated vocabulary has distinct tag bytes.
+///
+/// Callers size their arrays with [`variant_count`]. This helper counts the
+/// values actually walked and names the table and colliding pair, so a duplicate
+/// production literal fails at the governed subject rather than as an opaque
+/// deduplication mismatch.
+pub(crate) fn assert_tag_table<T: Copy + Debug>(table: &str, values: &[T], tag: impl Fn(T) -> u8) {
+    assert!(!values.is_empty(), "{table} walked no variants");
+    let mut seen = HashMap::with_capacity(values.len());
+    for &value in values {
+        let byte = tag(value);
+        if let Some(previous) = seen.insert(byte, value) {
+            panic!("{table} tag {byte:#04x} is shared by {value:?} and {previous:?}");
+        }
+    }
+    assert_eq!(
+        seen.len(),
+        values.len(),
+        "{table} walked a different population than its exhaustive array",
+    );
+}
+
+/// Borrowing form of [`assert_tag_table`] for payload-carrying vocabularies.
+pub(crate) fn assert_tag_table_ref<T: Debug>(table: &str, values: &[T], tag: impl Fn(&T) -> u8) {
+    assert!(!values.is_empty(), "{table} walked no variants");
+    let mut seen = HashMap::with_capacity(values.len());
+    for value in values {
+        let byte = tag(value);
+        if let Some(previous) = seen.insert(byte, value) {
+            panic!("{table} tag {byte:#04x} is shared by {value:?} and {previous:?}");
+        }
+    }
+    assert_eq!(
+        seen.len(),
+        values.len(),
+        "{table} walked a different population than its exhaustive array",
+    );
+}
+
+/// Asserts [`assert_tag_table`], a left-inverse round trip, and fail-closed bytes.
+pub(crate) fn assert_tag_table_with_inverse<T: Copy + Debug + Eq>(
+    table: &str,
+    values: &[T],
+    tag: impl Fn(T) -> u8,
+    from_tag: impl Fn(u8) -> Option<T>,
+) {
+    assert_tag_table(table, values, &tag);
+    let mut claimed = [false; 256];
+    for &value in values {
+        let byte = tag(value);
+        claimed[usize::from(byte)] = true;
+        assert_eq!(
+            from_tag(byte),
+            Some(value),
+            "{table} tag {byte:#04x} does not round-trip",
+        );
+    }
+    let mut refused = 0_usize;
+    for byte in u8::MIN..=u8::MAX {
+        if claimed[usize::from(byte)] {
+            continue;
+        }
+        assert_eq!(
+            from_tag(byte),
+            None,
+            "{table} accepts unclaimed tag {byte:#04x}",
+        );
+        refused += 1;
+    }
+    assert_eq!(refused, 256 - values.len());
+}

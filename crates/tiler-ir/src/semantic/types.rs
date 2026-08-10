@@ -1600,6 +1600,21 @@ fn validate_argument_at(
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_canonical_integer_width_tag_table_is_injective_over_its_variant_set() {
+        const WIDTHS: [CanonicalIntegerWidth; std::mem::variant_count::<CanonicalIntegerWidth>()] = [
+            CanonicalIntegerWidth::Bits8,
+            CanonicalIntegerWidth::Bits16,
+            CanonicalIntegerWidth::Bits32,
+            CanonicalIntegerWidth::Bits64,
+        ];
+        crate::exhaustive_injectivity::assert_tag_table(
+            "CanonicalIntegerWidth::tag",
+            &WIDTHS,
+            CanonicalIntegerWidth::tag,
+        );
+    }
+
     fn key(name: &str) -> TypeKey {
         TypeKey::new("tiler", name, 1).unwrap()
     }

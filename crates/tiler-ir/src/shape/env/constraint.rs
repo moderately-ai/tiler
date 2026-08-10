@@ -1528,3 +1528,42 @@ fn report_empty_domain(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tag_injectivity_tests {
+    use std::mem::variant_count;
+    use std::num::NonZeroU64;
+
+    use super::{ExtentRelation, ExtentTerm};
+
+    #[test]
+    fn the_extent_constraint_tag_tables_are_injective_over_their_variant_sets() {
+        let symbol = crate::shape::ShapeSymbol::new(
+            crate::shape::SymbolScope::new("tag").unwrap(),
+            "extent",
+        )
+        .unwrap();
+        let terms: [ExtentTerm; variant_count::<ExtentTerm>()] =
+            [ExtentTerm::Symbol(symbol), ExtentTerm::Constant(1)];
+        let one = ExtentTerm::Constant(1);
+        let two = ExtentTerm::Constant(2);
+        let relations: [ExtentRelation; variant_count::<ExtentRelation>()] = [
+            ExtentRelation::equal(one.clone(), two.clone()),
+            ExtentRelation::additive_equality(two.clone(), one.clone(), one.clone()),
+            ExtentRelation::divisible(two.clone(), NonZeroU64::new(1).unwrap()),
+            ExtentRelation::non_negative_difference(two.clone(), one.clone()),
+            ExtentRelation::interval(one.clone(), 0, 1).unwrap(),
+            ExtentRelation::factorization(two, vec![one.clone(), one]).unwrap(),
+        ];
+        crate::exhaustive_injectivity::assert_tag_table_ref(
+            "ExtentTerm::tag",
+            &terms,
+            ExtentTerm::tag,
+        );
+        crate::exhaustive_injectivity::assert_tag_table_ref(
+            "ExtentRelation::tag",
+            &relations,
+            ExtentRelation::tag,
+        );
+    }
+}

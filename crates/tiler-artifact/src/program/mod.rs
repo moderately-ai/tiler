@@ -496,6 +496,8 @@ mod keys;
 mod model;
 mod realization;
 mod requirement;
+#[cfg(test)]
+mod tag_injectivity;
 mod verify;
 
 pub use builder::{

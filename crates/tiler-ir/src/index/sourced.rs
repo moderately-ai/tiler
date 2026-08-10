@@ -295,6 +295,7 @@ impl From<ShapeError> for SymbolicExtentError {
 
 #[cfg(test)]
 mod tests {
+    use std::mem::variant_count;
     use std::num::NonZeroU64;
     use std::sync::Arc;
 
@@ -320,6 +321,19 @@ mod tests {
         RootBinding, SemanticInputConstraint, Shape, ShapeEnv, ShapeEnvBuilder, ShapeSymbol,
         SourcedExtent, SourcedShape, SymbolScope, VariantGuard,
     };
+
+    #[test]
+    fn the_sourced_index_integer_tag_table_is_injective_over_its_variant_set() {
+        let values: [SourcedIndexInteger; variant_count::<SourcedIndexInteger>()] = [
+            SourcedIndexInteger::Literal(0_i128.into()),
+            SourcedIndexInteger::Symbol(symbol("tag-source")),
+        ];
+        crate::exhaustive_injectivity::assert_tag_table_ref(
+            "SourcedIndexInteger::tag",
+            &values,
+            SourcedIndexInteger::tag,
+        );
+    }
 
     struct Types;
     impl SemanticRegistryProvider for Types {
