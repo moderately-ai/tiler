@@ -1,7 +1,7 @@
 ---
 id: catalog-the-kani-push-slice-framing-research-and-spike
 title: Catalog the Kani push_slice framing research and spike
-status: todo
+status: in-progress
 priority: p3
 dependencies: [spike-kani-push-slice-framing-over-a-symbolic-byte-run]
 related: [catalog-the-kani-verification-research-and-spike]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: terra-kani-catalog
+lease_expires_at: 1786403885
 ---
 
 ## User-visible outcome
