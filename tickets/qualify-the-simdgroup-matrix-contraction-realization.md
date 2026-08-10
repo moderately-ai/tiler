@@ -1,7 +1,7 @@
 ---
 id: qualify-the-simdgroup-matrix-contraction-realization
 title: Qualify or refuse the simdgroup-matrix contraction realization
-status: todo
+status: in-progress
 priority: p2
 dependencies: [realize-the-contraction-through-the-appendable-direct-path]
 related: [realize-the-tiled-contraction-schedule-and-its-metal-emission, carry-the-dtype-on-the-metal-subnormal-flush-fact, declare-metal-numerical-honourability, exercise-opaque-admissions-downstream-of-the-frontier]
@@ -9,6 +9,9 @@ scopes: [implementation/metal, contracts/artifacts, research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, numerics, contraction, target-facts]
+claimed_from: todo
+assignee: sol-simdgroup-qualification
+lease_expires_at: 1786408615
 ---
 ## User-visible outcome
 
