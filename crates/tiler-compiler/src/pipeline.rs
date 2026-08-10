@@ -1904,15 +1904,37 @@ fn compile_target_with_explain(
         }
         // With no such rejection the portfolio is empty either because the
         // whole legal space was searched and held nothing, or because a
-        // declared budget stopped the search before it reached something. Only
-        // the first is a statement about the target, and `NoFeasiblePlan` "is a
-        // hard target rejection, never an exhausted analysis budget" — so the
+        // declared budget stopped the search before it reached something. The
         // second names the bound whose widening could change the answer.
         if let Some(truncation) = truncation {
             return Err(target_failure(
                 CompileError::from(truncation),
                 ExplainStage::Selection,
                 "portfolio-empty-after-budget-stop",
+                SubjectKind::KernelProgram,
+                "portfolio",
+                record_cause(region_root),
+            ));
+        }
+        // The complete cause census exists only while planning still holds
+        // every cover, frontier, and selection disposition. When an exhaustive
+        // non-empty enumeration contains a complete cover blocked solely by a
+        // non-partial `UnspellableRegion` decline, and every other cover adds at
+        // most partial-coverage search noise, the target disproved nothing: this
+        // build lacks a scheduled-region spelling. Report the existing
+        // capability class and keep the census private; the trace already owns
+        // the per-region typed declines and no identity gains a second copy.
+        if plans
+            .failure_census
+            .is_pure_vocabulary_gap(&plans.portfolio)
+        {
+            return Err(target_failure(
+                CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+                    phase: "planning",
+                    rule: "region-vocabulary",
+                }),
+                ExplainStage::Selection,
+                "portfolio-empty-with-vocabulary-gap",
                 SubjectKind::KernelProgram,
                 "portfolio",
                 record_cause(region_root),

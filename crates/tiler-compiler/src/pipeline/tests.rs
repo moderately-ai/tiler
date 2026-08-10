@@ -4587,8 +4587,9 @@ fn a_search_budget_costs_alternatives_and_never_the_only_plan() {
 /// profile admits, and a program whose only implementable cover needs a larger
 /// one has no plan under it. That is an exhausted deterministic budget and never
 /// a target's verdict, so it carries `BudgetExhausted` naming the bound to widen
-/// rather than `NoFeasiblePlan`, whose contract is that it "is a hard target
-/// rejection, never an exhausted analysis budget".
+/// rather than `NoFeasiblePlan`. That class retains hard target refusals and
+/// conservative mixed or structural empty portfolios, while neither class can
+/// turn a budget-truncated search into a verdict about the program.
 ///
 /// **The budget is stated rather than governed, and since
 /// `derive-the-region-shape-budgets-from-the-declaration` that is the only way

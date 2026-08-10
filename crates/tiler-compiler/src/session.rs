@@ -158,17 +158,24 @@ pub enum CompileFailureClass {
     },
     /// No plan was feasible for a requested target profile.
     ///
-    /// This is a hard target rejection, never an exhausted analysis budget.
+    /// This includes hard target rejections and mixed or structural planning
+    /// failures for which the compiler cannot attribute the empty portfolio
+    /// solely to missing installed vocabulary. A complete, non-empty search
+    /// with at least one complete cover blocked by a non-partial vocabulary
+    /// wall, and no cause beyond `UnspellableRegion` search noise, is instead
+    /// [`Self::UnsupportedCapability`]. This class is never an exhausted
+    /// analysis budget.
     NoFeasiblePlan,
     /// A deterministic budget stopped the compilation.
     ///
     /// **This is not [`Self::NoFeasiblePlan`] and must not be read as one.**
-    /// That class says a requested target profile disproved every plan; this
-    /// one says a bound *this build* declares refused a demand, and nothing was
-    /// proved about the program. Which of the two a budget refusal is within
-    /// itself — a bound no further search escapes, or a search stopped before
-    /// it finished — is [`BudgetResource::refusal`], and the same answer decides
-    /// whether `actual` is an exact quantity or a lower bound.
+    /// That class says an exhaustive plan search retained no valid plan for the
+    /// requested target; this one says a bound *this build* declares refused a
+    /// demand, and nothing was proved about the program. Which of the two a
+    /// budget refusal is within itself — a bound no further search escapes, or
+    /// a search stopped before it finished — is [`BudgetResource::refusal`],
+    /// and the same answer decides whether `actual` is an exact quantity or a
+    /// lower bound.
     ///
     /// The three fields are the refusal's own, carried rather than re-derived,
     /// so a caller names the exhausted resource without reading compiler source.

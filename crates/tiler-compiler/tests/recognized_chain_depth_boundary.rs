@@ -42,8 +42,8 @@
 //!   assertion of the refusal itself. The crate then held 784 tests — this file's
 //!   two did not yet exist — and no cover, cost, identity, or subject assertion
 //!   among the other 783 noticed.
-//! - The program still did not compile. It refused `NoFeasiblePlan` instead of
-//!   naming `staged-operand-depth`.
+//! - At that measurement's exact base, the program still did not compile. It
+//!   refused `NoFeasiblePlan` instead of naming `staged-operand-depth`.
 //!
 //! **So the widening buys no program and costs a rule name.** Every program the
 //! guard refuses contains a staged occurrence whose operand is an edge, and
@@ -60,9 +60,13 @@
 //! The reason above expires the moment a scheduled region can read two
 //! materialization edges. `staged_family_over_a_materialized_intermediate.rs`'s
 //! `a_staged_family_over_an_edge_is_recognized_and_stops_at_the_region_vocabulary`
-//! is what says so: it asserts the *one*-boundary chain
-//! `rms_norm(matmul(a, b), w)` still refuses `NoFeasiblePlan`, and it is that
-//! file's assertion rather than this file's so one measurement keeps one owner.
+//! is what says so: it asserts that the *one*-boundary chain
+//! `rms_norm(matmul(a, b), w)` remains uncompiled, with a class determined by
+//! the complete causes under each contract. Strict and flush-only isolate the
+//! region-vocabulary wall as `UnsupportedCapability`; reassociation-permitting
+//! contracts add fusion-legality `Unknown` and remain `NoFeasiblePlan`. It is
+//! that file's assertion rather than this file's so one measurement keeps one
+//! owner.
 //! When [`admit-a-scheduled-region-that-reads-two-materialization-edges`] lands,
 //! that test fails, and
 //! [`admit-a-recognized-chain-more-than-one-materialization-boundary-deep`]
@@ -85,9 +89,9 @@ use tiler_ir::shape::{Axis, Shape};
 /// Every numerical contract a caller can state.
 ///
 /// Stated exhaustively rather than sampled, for the reason
-/// `staged_family_over_a_materialized_intermediate.rs` states it: the outcome is
-/// structural, and no permission a caller can grant changes how many
-/// materialization boundaries a recognized shape carries.
+/// `staged_family_over_a_materialized_intermediate.rs` states it: the schedule
+/// wall and uncompiled outcome are structural, while the public class depends
+/// on whether a contract adds fusion-legality `Unknown` to the cause census.
 const CONTRACTS: [NumericalContract; 5] = [
     NumericalContract::STRICT_F32,
     NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
