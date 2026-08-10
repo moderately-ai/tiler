@@ -1,0 +1,366 @@
+{
+  "wave": "B1",
+  "count": 20,
+  "tickets": [
+    {
+      "ticket_id": "accept-the-bf16-subnormal-resolution-carrier",
+      "ticket_file": "tickets/accept-the-bf16-subnormal-resolution-carrier.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "27209ffd0a1af43870265933f987b1b28803a2dfcb3dc2e7d99af4c0156bd2f4",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/accept-the-bf16-subnormal-resolution-carrier/27209ffd0a1a_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/accept-the-bf16-subnormal-resolution-carrier.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "accept-the-governed-reciprocal-square-root-scalar-key",
+      "ticket_file": "tickets/accept-the-governed-reciprocal-square-root-scalar-key.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "8519fb8138256071ac360b5cd17dc78a17ea5332f99d20f7b8863e319b16e7ed",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/accept-the-governed-reciprocal-square-root-scalar-key/8519fb813825_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/accept-the-governed-reciprocal-square-root-scalar-key.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "accept-the-multi-reader-index-realization-retention",
+      "ticket_file": "tickets/accept-the-multi-reader-index-realization-retention.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "6f32a9c5065b4d8205239bd6e05ca5ee9696ded374f845df106378b9bf2a22dd",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/accept-the-multi-reader-index-realization-retention/6f32a9c5065b_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/accept-the-multi-reader-index-realization-retention.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "accept-the-registered-family-region-sequence-query",
+      "ticket_file": "tickets/accept-the-registered-family-region-sequence-query.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "5dd5676afd91aa5cf4c8db439113c4b2c980d1ba39f89940b6fcfe400828f77e",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/accept-the-registered-family-region-sequence-query/5dd5676afd91_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/accept-the-registered-family-region-sequence-query.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "accept-the-staged-realization-program-declaration",
+      "ticket_file": "tickets/accept-the-staged-realization-program-declaration.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "d8ac062da90523c3a908bb203e20f1e25cfbb538cd759bb9ce5622926dc5c380",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/accept-the-staged-realization-program-declaration/d8ac062da905_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/accept-the-staged-realization-program-declaration.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "account-for-a-staged-realization-stage-in-the-kernel-program",
+      "ticket_file": "tickets/account-for-a-staged-realization-stage-in-the-kernel-program.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "7197fd1239b9ed00b07224df53bdeeed149b2415dce76335a7c1d1eb8a318b49",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/account-for-a-staged-realization-stage-in-the-kernel-program/7197fd1239b9_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/account-for-a-staged-realization-stage-in-the-kernel-program.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "admit-a-fusion-role-for-the-sequence-extension-concatenate",
+      "ticket_file": "tickets/admit-a-fusion-role-for-the-sequence-extension-concatenate.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "d100da6fc513d31f4ddd2ae3fd68fd2db1011ad6dc485454729e27701e11cfba",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/admit-a-fusion-role-for-the-sequence-extension-concatenate/d100da6fc513_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/admit-a-fusion-role-for-the-sequence-extension-concatenate.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence",
+      "ticket_file": "tickets/admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "443510729c4974d31db0c4b2c795737c23aefea3031648881aa5fd9ded04667b",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence/443510729c49_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary",
+      "ticket_file": "tickets/admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "81735011c5dadf357c978d09e582ec6179354f470318a4bd7e372aa5a3ddf560",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary/81735011c5da_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "admit-a-multi-region-index-realization-law",
+      "ticket_file": "tickets/admit-a-multi-region-index-realization-law.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "4bb03e9368e0377fe8ce9fb5e349ac75d55a947d6ddbc700c119f409c83d87c5",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/admit-a-multi-region-index-realization-law/4bb03e9368e0_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/admit-a-multi-region-index-realization-law.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "admit-a-partitioned-write-ownership-contract",
+      "ticket_file": "tickets/admit-a-partitioned-write-ownership-contract.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "b3f66015ae3c9047f1d01972345b018010a98cb2972b03632bc71b5bf53ad26c",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/admit-a-partitioned-write-ownership-contract/b3f66015ae3c_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/admit-a-partitioned-write-ownership-contract.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "admit-a-publishing-copy-stage-in-the-kernel-program-vocabulary",
+      "ticket_file": "tickets/admit-a-publishing-copy-stage-in-the-kernel-program-vocabulary.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "72f1c7cc1365d5034a0f762b1efa4647507b8db5c98f20932f5a15986ca40789",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/admit-a-publishing-copy-stage-in-the-kernel-program-vocabulary/72f1c7cc1365_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/admit-a-publishing-copy-stage-in-the-kernel-program-vocabulary.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "admit-a-reduction-over-a-declared-input-tensor",
+      "ticket_file": "tickets/admit-a-reduction-over-a-declared-input-tensor.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "4ff7f64cab02e1c05c2de2b3793cc3b1d11b9d5d7a7d2e07e28b326bf817a791",
+      "report_path": "docs/research/documentation/ticket-audit-2026-08-10/reports/admit-a-reduction-over-a-declared-input-tensor/4ff7f64cab02_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/admit-a-reduction-over-a-declared-input-tensor.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "admit-a-scheduled-region-for-a-staged-elementary-family",
+      "ticket_file": "tickets/admit-a-scheduled-region-for-a-staged-elementary-family.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "66b1fa2f9481627dde91403de704f6079f9bd358b7f202f4de8a2c0db70992fb",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/admit-a-scheduled-region-for-a-staged-elementary-family/66b1fa2f9481_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/admit-a-scheduled-region-for-a-staged-elementary-family.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "admit-an-indirect-gather-family-for-tied-embedding-lookup",
+      "ticket_file": "tickets/admit-an-indirect-gather-family-for-tied-embedding-lookup.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "3f17a664ca06c64e050bd045c3eeca8a47460c5db40a0a4612e3031a37a23f3b",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/admit-an-indirect-gather-family-for-tied-embedding-lookup/3f17a664ca06_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/admit-an-indirect-gather-family-for-tied-embedding-lookup.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "admit-elementwise-epilogues-over-a-materialized-intermediate",
+      "ticket_file": "tickets/admit-elementwise-epilogues-over-a-materialized-intermediate.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "1c499c81895c3fa91f0f7fcfd7e9a19ad4380199656cbdb75f8f6978ed7e38d1",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/admit-elementwise-epilogues-over-a-materialized-intermediate/1c499c81895c_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/admit-elementwise-epilogues-over-a-materialized-intermediate.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "admit-sub-range-write-domains-for-unequal-partitions",
+      "ticket_file": "tickets/admit-sub-range-write-domains-for-unequal-partitions.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "687b89a95f8ddc20824ce2bcaa9e233a98092ae16eafe4396f751f933902b408",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/admit-sub-range-write-domains-for-unequal-partitions/687b89a95f8d_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/admit-sub-range-write-domains-for-unequal-partitions.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "admit-the-registered-unary-families-at-the-compiler-request-boundary",
+      "ticket_file": "tickets/admit-the-registered-unary-families-at-the-compiler-request-boundary.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "b382d709716c0ea8244577738454d19fade59a3df1fecc4a9db52c3a1a97d264",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/admit-the-registered-unary-families-at-the-compiler-request-boundary/b382d709716c_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/admit-the-registered-unary-families-at-the-compiler-request-boundary.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "admit-the-structural-families-into-the-scheduled-region-vocabulary",
+      "ticket_file": "tickets/admit-the-structural-families-into-the-scheduled-region-vocabulary.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "787723541879544bb9d9474c4552f82f1dfaee65ce93e43da9564478d02e15ec",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/admit-the-structural-families-into-the-scheduled-region-vocabulary/787723541879_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/admit-the-structural-families-into-the-scheduled-region-vocabulary.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "admit-two-reads-of-one-declared-input-in-an-elementwise-region",
+      "ticket_file": "tickets/admit-two-reads-of-one-declared-input-in-an-elementwise-region.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "004235c405c965ce1282983886776d15d330a5fa0af2b671472abd74a8a9a3bc",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/admit-two-reads-of-one-declared-input-in-an-elementwise-region/004235c405c9_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/admit-two-reads-of-one-declared-input-in-an-elementwise-region.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    }
+  ]
+}
