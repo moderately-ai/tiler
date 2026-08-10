@@ -6,27 +6,26 @@
 
 ## Population
 
-- Tickets total: 1302
 - In scope: 700
 - Out of scope: 602
 
 ## Audit state (in-scope)
 
-- `audited-clean`: 7
-- `audited-repair-required`: 17
-- `pending`: 676
+- `audited-clean`: 12
+- `audited-repair-required`: 31
+- `claimed`: 1
+- `pending`: 656
 
 ## Repair state (in-scope)
 
-- `not-needed`: 683
 - `integrated`: 3
-- `pending`: 14
+- `not-needed`: 669
+- `pending`: 28
 
 ## Progress
 
-- Waves 1–2 complete: 24 open-board tickets accepted into ledger
-- Phase B integrated 3 repair-required tickets at `cbce7419f52649d0e6513dc24584297d0e188458` (accept-adr-0108 scopes; reassociated-contraction graph; two-participant residue sequencing)
-- Shared RO worktree @ c99ac549
+- Waves 1–3 open-board accepted (44 tickets)
+- Phase B repair batch running for first three repair-required tickets
 
 ## Completion criteria
 
