@@ -99,6 +99,28 @@ impl OperandOrdinal {
     }
 }
 
+#[cfg(test)]
+mod tag_injectivity_tests {
+    use std::mem::variant_count;
+
+    use super::ReferenceResultClass;
+
+    #[test]
+    fn the_reference_result_class_tag_table_is_injective_over_its_variant_set() {
+        const CLASSES: [ReferenceResultClass; variant_count::<ReferenceResultClass>()] = [
+            ReferenceResultClass::Finite,
+            ReferenceResultClass::Nonzero,
+            ReferenceResultClass::Positive,
+            ReferenceResultClass::Negative,
+        ];
+        crate::exhaustive_injectivity::assert_tag_table(
+            "ReferenceResultClass::tag",
+            &CLASSES,
+            ReferenceResultClass::tag,
+        );
+    }
+}
+
 impl fmt::Display for OperandOrdinal {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)

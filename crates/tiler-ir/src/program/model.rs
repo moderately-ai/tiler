@@ -2474,13 +2474,43 @@ mod component_encoding_tests {
 mod injectivity_tests {
     use std::mem::variant_count;
 
-    use crate::exhaustive_injectivity::{assert_injective, assert_injective_fixed_width};
+    use crate::exhaustive_injectivity::{
+        assert_injective, assert_injective_fixed_width, assert_tag_table,
+    };
     use crate::kernel::KernelType;
 
     use super::{
-        BitPackedEncoding, PackedBitOrder, PackedTailRule, StorageEncoding, StorageScalar,
+        AllocationOwnership, BitPackedEncoding, MemorySpace, PackedBitOrder, PackedTailRule,
+        RoutingCommitState, StageAccessMode, StorageEncoding, StorageScalar, ValueRole,
         push_element_type, push_storage_encoding, push_storage_scalar,
     };
+
+    #[test]
+    fn every_remaining_program_tag_table_is_injective_over_its_variant_set() {
+        const ROLES: [ValueRole; variant_count::<ValueRole>()] =
+            [ValueRole::Input, ValueRole::Temporary, ValueRole::Output];
+        const SPACES: [MemorySpace; variant_count::<MemorySpace>()] = [MemorySpace::Device];
+        const OWNERS: [AllocationOwnership; variant_count::<AllocationOwnership>()] =
+            [AllocationOwnership::External, AllocationOwnership::Program];
+        const MODES: [StageAccessMode; variant_count::<StageAccessMode>()] =
+            [StageAccessMode::Read, StageAccessMode::Write];
+        const STATES: [RoutingCommitState; variant_count::<RoutingCommitState>()] = [
+            RoutingCommitState::Preflight,
+            RoutingCommitState::Committed,
+            RoutingCommitState::Executing,
+            RoutingCommitState::Published,
+        ];
+
+        assert_tag_table("ValueRole::tag", &ROLES, ValueRole::tag);
+        assert_tag_table("MemorySpace::tag", &SPACES, MemorySpace::tag);
+        assert_tag_table(
+            "AllocationOwnership::tag",
+            &OWNERS,
+            AllocationOwnership::tag,
+        );
+        assert_tag_table("StageAccessMode::tag", &MODES, StageAccessMode::tag);
+        assert_tag_table("RoutingCommitState::tag", &STATES, RoutingCommitState::tag);
+    }
 
     /// Every kernel element type a program value can carry.
     const ELEMENT_TYPES: [KernelType; variant_count::<KernelType>()] = [

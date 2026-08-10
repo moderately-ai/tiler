@@ -377,3 +377,21 @@ impl<'a> HardAccuracyDischarge<'a> {
         self.evidence
     }
 }
+
+#[cfg(test)]
+mod tag_injectivity_tests {
+    use std::mem::variant_count;
+
+    use super::ConformanceEvidenceClass;
+
+    #[test]
+    fn the_conformance_evidence_tag_table_is_injective_over_its_variant_set() {
+        const CLASSES: [ConformanceEvidenceClass; variant_count::<ConformanceEvidenceClass>()] =
+            ConformanceEvidenceClass::ALL;
+        crate::exhaustive_injectivity::assert_tag_table(
+            "ConformanceEvidenceClass::tag",
+            &CLASSES,
+            ConformanceEvidenceClass::tag,
+        );
+    }
+}

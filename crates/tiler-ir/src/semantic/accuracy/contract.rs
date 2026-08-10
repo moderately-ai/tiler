@@ -1114,3 +1114,91 @@ pub fn correctly_rounded_ulp_bound() -> AccuracyPredicate {
         ExactTolerance::from_ratio(1, 2).expect("one half is a nonnegative exact tolerance"),
     )
 }
+
+#[cfg(test)]
+mod tag_injectivity_tests {
+    use std::mem::variant_count;
+
+    use super::*;
+    use crate::semantic::NormativeDefinitionRef;
+    use crate::semantic::accuracy::{
+        AccuracyDomainClause, DomainInterval, OperandOrdinal, ReferenceResultClass,
+        ReferenceResultConstraint,
+    };
+
+    #[test]
+    fn the_accuracy_contract_tag_tables_are_injective_over_their_variant_sets() {
+        const ROUNDING: [ReferenceRoundingRule; variant_count::<ReferenceRoundingRule>()] =
+            [ReferenceRoundingRule::NearestTiesToEven];
+        const NAN: [NanReferenceRule; variant_count::<NanReferenceRule>()] =
+            [NanReferenceRule::CanonicalNan, NanReferenceRule::Refuse];
+        const INFINITE: [InfiniteReferenceRule; variant_count::<InfiniteReferenceRule>()] = [
+            InfiniteReferenceRule::SignedInfinity,
+            InfiniteReferenceRule::CanonicalNan,
+            InfiniteReferenceRule::Refuse,
+        ];
+        const DOMAIN_ERROR: [DomainErrorRule; variant_count::<DomainErrorRule>()] =
+            [DomainErrorRule::CanonicalNan, DomainErrorRule::Refuse];
+        const OVERFLOW: [FiniteOverflowRule; variant_count::<FiniteOverflowRule>()] = [
+            FiniteOverflowRule::SignedInfinity,
+            FiniteOverflowRule::LargestFinite,
+            FiniteOverflowRule::Refuse,
+        ];
+        crate::exhaustive_injectivity::assert_tag_table(
+            "ReferenceRoundingRule::tag",
+            &ROUNDING,
+            ReferenceRoundingRule::tag,
+        );
+        crate::exhaustive_injectivity::assert_tag_table(
+            "NanReferenceRule::tag",
+            &NAN,
+            NanReferenceRule::tag,
+        );
+        crate::exhaustive_injectivity::assert_tag_table(
+            "InfiniteReferenceRule::tag",
+            &INFINITE,
+            InfiniteReferenceRule::tag,
+        );
+        crate::exhaustive_injectivity::assert_tag_table(
+            "DomainErrorRule::tag",
+            &DOMAIN_ERROR,
+            DomainErrorRule::tag,
+        );
+        crate::exhaustive_injectivity::assert_tag_table(
+            "FiniteOverflowRule::tag",
+            &OVERFLOW,
+            FiniteOverflowRule::tag,
+        );
+
+        let clause = AccuracyDomainClause::new(
+            [(OperandOrdinal::new(0), DomainInterval::unbounded())],
+            ReferenceResultConstraint::new(
+                [ReferenceResultClass::Positive],
+                None,
+                Some(NormativeDefinitionRef::new("positive proof").unwrap()),
+            )
+            .unwrap(),
+            correctly_rounded_ulp_bound(),
+        )
+        .unwrap();
+        let forms: [AccuracyContractForm; variant_count::<AccuracyContractForm>()] = [
+            AccuracyContractForm::CorrectlyRounded {
+                rounding: ReferenceRoundingRule::NearestTiesToEven,
+            },
+            AccuracyContractForm::Faithful,
+            AccuracyContractForm::BoundedPiecewise(
+                AccuracyDomain::new([DomainInterval::unbounded()], [clause]).unwrap(),
+            ),
+            AccuracyContractForm::NamedElementary {
+                profile: NamedElementaryProfileKey::new("test", "elementary", 1).unwrap(),
+                descriptor_digest: NamedElementaryDescriptorDigest::new([1]).unwrap(),
+                descriptor_basis: NormativeDefinitionRef::new("elementary basis").unwrap(),
+            },
+        ];
+        crate::exhaustive_injectivity::assert_tag_table_ref(
+            "AccuracyContractForm::tag",
+            &forms,
+            AccuracyContractForm::tag,
+        );
+    }
+}

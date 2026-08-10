@@ -1091,6 +1091,7 @@ fn encode_environment(
 
 #[cfg(test)]
 mod tests {
+    use std::mem::variant_count;
     use std::num::NonZeroU64;
 
     use super::constraint::{ExtentTerm, GuardApplicability};
@@ -1100,6 +1101,39 @@ mod tests {
         ShapeEnvBuilder, ShapeEnvError, ShapeSymbol, SymbolScope, VariantGuard,
     };
     use crate::program::abi::{AvailabilityPhase, TargetPropertyKey};
+
+    #[test]
+    fn the_shape_environment_tag_tables_are_injective_over_their_variant_sets() {
+        const PROVENANCE: [FactProvenance; variant_count::<FactProvenance>()] = [
+            FactProvenance::StaticallyProven,
+            FactProvenance::FrontendRequired,
+            FactProvenance::RuntimeValidated,
+        ];
+
+        let sources: [BindingSource; variant_count::<BindingSource>()] = [
+            BindingSource::Static(Extent::new(1)),
+            BindingSource::InputDimension {
+                input: crate::semantic::InputKey::new("input").unwrap(),
+                axis: crate::shape::Axis::new(0),
+            },
+            BindingSource::InterfaceParameter {
+                key: InterfaceParameterKey::new("parameter").unwrap(),
+            },
+            BindingSource::TargetProperty {
+                key: TargetPropertyKey::new("tiler.target.test@1").unwrap(),
+            },
+        ];
+        crate::exhaustive_injectivity::assert_tag_table_ref(
+            "BindingSource::tag",
+            &sources,
+            BindingSource::tag,
+        );
+        crate::exhaustive_injectivity::assert_tag_table(
+            "FactProvenance::tag",
+            &PROVENANCE,
+            FactProvenance::tag,
+        );
+    }
 
     #[test]
     fn constraint_and_guard_wrapper_constructors_remain_const() {

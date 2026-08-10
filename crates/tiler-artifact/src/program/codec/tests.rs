@@ -99,6 +99,31 @@ fn encoded(artifact: &VerifiedArtifactProgram) -> Vec<u8> {
     encode(&envelope_of(artifact)).expect("a verified artifact encodes")
 }
 
+#[test]
+fn section_tag_tables_are_injective_and_inverse_complete() {
+    const KINDS: [SectionKind; variant_count::<SectionKind>()] = [
+        SectionKind::KernelProgramSubject,
+        SectionKind::BackendPayloadMetadata,
+        SectionKind::BackendPayloadCode,
+    ];
+    const DISPOSITIONS: [SectionDisposition; variant_count::<SectionDisposition>()] =
+        [SectionDisposition::Required, SectionDisposition::Optional];
+
+    super::super::tag_injectivity::assert_tag_table_with_inverse(
+        "SectionKind",
+        &KINDS,
+        SectionKind::tag,
+        SectionKind::from_tag,
+    );
+
+    super::super::tag_injectivity::assert_tag_table_with_inverse(
+        "SectionDisposition",
+        &DISPOSITIONS,
+        SectionDisposition::tag,
+        SectionDisposition::from_tag,
+    );
+}
+
 /// Defines one payload-carrying enum's population from its exhaustive outer shape.
 macro_rules! exhaustive_enum_population {
     ($name:ident: $ty:ty { $($pattern:pat => $contribution:expr),+ $(,)? }) => {

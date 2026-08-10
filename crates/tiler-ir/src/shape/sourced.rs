@@ -771,3 +771,25 @@ impl ExtentSources {
         }
     }
 }
+
+#[cfg(test)]
+mod tag_injectivity_tests {
+    use std::mem::variant_count;
+
+    use super::{Extent, ShapeSymbol, SourcedExtent};
+
+    #[test]
+    fn the_sourced_extent_tag_table_is_injective_over_its_variant_set() {
+        let values: [SourcedExtent; variant_count::<SourcedExtent>()] = [
+            SourcedExtent::Static(Extent::new(1)),
+            SourcedExtent::Symbol(
+                ShapeSymbol::new(super::super::SymbolScope::new("tag").unwrap(), "extent").unwrap(),
+            ),
+        ];
+        crate::exhaustive_injectivity::assert_tag_table_ref(
+            "SourcedExtent::tag",
+            &values,
+            SourcedExtent::tag,
+        );
+    }
+}

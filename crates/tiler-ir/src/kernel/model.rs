@@ -2228,15 +2228,100 @@ fn operation_encoded_len(data: &KernelData, operation: &OperationData) -> usize 
 
 #[cfg(test)]
 mod injectivity_tests {
+    use std::mem::variant_count;
+
     use crate::exhaustive_injectivity::{
         EXCEPTIONAL_ASSUMPTIONS, PERMISSIONS, SUBJECT_POPULATION, SUBNORMAL_MODES,
-        assert_injective, assert_injective_fixed_width, every_synchronization_subject,
+        assert_injective, assert_injective_fixed_width, assert_tag_table,
+        every_synchronization_subject,
     };
-    use crate::schedule::ExceptionalValueAssumption;
+    use crate::schedule::{ExceptionalValueAssumption, IndexArithmetic};
 
     use super::{
-        push_exceptional_assumption, push_permission, push_subnormal, push_synchronization,
+        AddressSpace, BarrierOrdering, BinaryOp, BufferAccess, Builtin, CompareOp, ConvertOp,
+        ExecutionScope, KernelType, MemoryScope, PackedExtractOp, UnaryOp,
+        push_exceptional_assumption, push_index_arithmetic, push_permission, push_subnormal,
+        push_synchronization,
     };
+
+    #[test]
+    fn every_kernel_tag_table_is_injective_over_its_variant_set() {
+        const TYPES: [KernelType; variant_count::<KernelType>()] = [
+            KernelType::Bool,
+            KernelType::U8,
+            KernelType::Index,
+            KernelType::F32,
+            KernelType::I32,
+            KernelType::Bf16,
+        ];
+        const SPACES: [AddressSpace; variant_count::<AddressSpace>()] = [
+            AddressSpace::Device,
+            AddressSpace::Workgroup,
+            AddressSpace::InvocationPrivate,
+            AddressSpace::Constant,
+        ];
+        const ACCESSES: [BufferAccess; variant_count::<BufferAccess>()] =
+            [BufferAccess::Read, BufferAccess::Write];
+        const BUILTINS: [Builtin; variant_count::<Builtin>()] = [
+            Builtin::GlobalInvocationIndex,
+            Builtin::LocalInvocationIndex,
+        ];
+        const BINARY: [BinaryOp; variant_count::<BinaryOp>()] = [
+            BinaryOp::IndexAdd,
+            BinaryOp::IndexMultiply,
+            BinaryOp::IndexDivide,
+            BinaryOp::IndexModulo,
+            BinaryOp::IndexSubtract,
+            BinaryOp::F32Add,
+            BinaryOp::F32Multiply,
+            BinaryOp::I32Subtract,
+            BinaryOp::F32Divide,
+            BinaryOp::F32Maximum,
+            BinaryOp::Bf16Add,
+            BinaryOp::Bf16Multiply,
+        ];
+        const COMPARES: [CompareOp; variant_count::<CompareOp>()] = [CompareOp::IndexLessThan];
+        const UNARY: [UnaryOp; variant_count::<UnaryOp>()] = [UnaryOp::F32Exp, UnaryOp::F32Rsqrt];
+        const CONVERTS: [ConvertOp; variant_count::<ConvertOp>()] = [
+            ConvertOp::CanonicalizeF32Nan,
+            ConvertOp::U8ToI32,
+            ConvertOp::I32ToF32,
+            ConvertOp::CanonicalizeBf16Nan,
+        ];
+        const EXTRACTS: [PackedExtractOp; variant_count::<PackedExtractOp>()] =
+            [PackedExtractOp::U4LsbZeroTail];
+        const EXECUTION_SCOPES: [ExecutionScope; variant_count::<ExecutionScope>()] =
+            [ExecutionScope::Subgroup, ExecutionScope::Workgroup];
+        const MEMORY_SCOPES: [MemoryScope; variant_count::<MemoryScope>()] =
+            [MemoryScope::Workgroup, MemoryScope::Device];
+        const ORDERINGS: [BarrierOrdering; variant_count::<BarrierOrdering>()] =
+            [BarrierOrdering::AcquireRelease];
+        const INDEX_ARITHMETIC: [IndexArithmetic; variant_count::<IndexArithmetic>()] =
+            [IndexArithmetic::CompleteU64];
+
+        assert_tag_table("KernelType::tag", &TYPES, KernelType::tag);
+        assert_tag_table("AddressSpace::tag", &SPACES, AddressSpace::tag);
+        assert_tag_table("BufferAccess::tag", &ACCESSES, BufferAccess::tag);
+        assert_tag_table("Builtin::tag", &BUILTINS, Builtin::tag);
+        assert_tag_table("BinaryOp::tag", &BINARY, BinaryOp::tag);
+        assert_tag_table("CompareOp::tag", &COMPARES, CompareOp::tag);
+        assert_tag_table("UnaryOp::tag", &UNARY, UnaryOp::tag);
+        assert_tag_table("ConvertOp::tag", &CONVERTS, ConvertOp::tag);
+        assert_tag_table("PackedExtractOp::tag", &EXTRACTS, PackedExtractOp::tag);
+        assert_tag_table(
+            "ExecutionScope::tag",
+            &EXECUTION_SCOPES,
+            ExecutionScope::tag,
+        );
+        assert_tag_table("MemoryScope::tag", &MEMORY_SCOPES, MemoryScope::tag);
+        assert_tag_table("BarrierOrdering::tag", &ORDERINGS, BarrierOrdering::tag);
+        assert_eq!(
+            INDEX_ARITHMETIC.len(),
+            1,
+            "push_index_arithmetic walked its whole type-derived population"
+        );
+        assert_injective_fixed_width(&INDEX_ARITHMETIC, 1, push_index_arithmetic);
+    }
 
     /// The kernel synchronization encoder is injective over all 649 inhabitants.
     ///

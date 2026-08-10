@@ -55,6 +55,8 @@ mod domains;
 /// Counted enumerations shared by this crate's exhaustive-injectivity tests.
 #[cfg(test)]
 mod exhaustive_injectivity;
+#[cfg(test)]
+mod tag_injectivity_tests;
 
 /// Canonical byte-encoding primitives shared by every identity derivation.
 pub mod identity;
