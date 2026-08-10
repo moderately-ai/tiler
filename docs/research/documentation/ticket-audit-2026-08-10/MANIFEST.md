@@ -14,11 +14,18 @@
 
 ## Audit state (in-scope)
 
-- `pending`: 700
+- `claimed`: 24
+- `pending`: 676
 
 ## Repair state (in-scope)
 
 - `not-needed`: 700
+
+## In flight
+
+- Wave 1: 12 todo/blocked claimed (wave1-00..11)
+- Wave 2: 12 todo/blocked claimed (wave2-00..11)
+- Shared RO worktree: `.worktrees/tiler/ticket-audit-2026-08-10-ro` @ c99ac549
 
 ## Completion criteria
 
