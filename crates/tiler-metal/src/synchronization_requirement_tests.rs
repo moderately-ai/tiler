@@ -56,13 +56,29 @@ const ORDERINGS: [MemoryOrdering; variant_count::<MemoryOrdering>()] = [
     MemoryOrdering::SequentiallyConsistent,
 ];
 
+/// Returns the number of bools in one exhaustive field census.
+const fn bool_field_count<const N: usize>(_: [bool; N]) -> usize {
+    N
+}
+
+/// The independent boolean fields carried by [`FencedSpaces`].
+///
+/// The exhaustive destructure makes a new field a build error here, at the
+/// population mechanism. Passing the fields through one bool array both checks
+/// their types and derives the count from that same list, so extending the
+/// census automatically grows the required product.
+const FENCED_SPACE_FIELD_COUNT: usize = {
+    let FencedSpaces { workgroup, device } = FencedSpaces::NONE;
+    bool_field_count([workgroup, device])
+};
+
 /// Every fence a subject can name.
 ///
-/// `FencedSpaces` is a struct, so [`variant_count`] does not apply; this is the
-/// product of `bool`'s two inhabitants over its two fields, exhaustive by the
-/// type's own definition. A third flag would leave this list at four entries and
-/// [`POPULATION`]'s assertion is what would then fail.
-const FENCES: [FencedSpaces; 4] = [
+/// `FencedSpaces` is a struct, so [`variant_count`] does not apply. Each field
+/// in the exhaustive census above is boolean, making the inhabitant count two to
+/// the power of the field count. A third field, once added to that census, makes
+/// this four-entry list fail its derived eight-entry array declaration.
+const FENCES: [FencedSpaces; 1 << FENCED_SPACE_FIELD_COUNT] = [
     FencedSpaces {
         workgroup: false,
         device: false,
