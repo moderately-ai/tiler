@@ -7737,13 +7737,14 @@ mod tests {
     use tiler_ir::schedule::FlushedZeroSign;
     use tiler_ir::semantic::{
         Bf16Add, Bf16Constant, Bf16Multiply, CanonicalValue, CanonicalValueKind, F32Add,
-        F32Constant, F32Multiply, NormativeDefinitionRef, OperationArity, OperationAttributeSchema,
-        OperationAttributes, OperationConformance, OperationDefinition, OperationDefinitionFacts,
-        OperationEffect, OperationInferenceError, OperationInferencer, OperationSchema,
-        ProviderDiagnosticCode, ProviderIdentity, RegistryError, ResolvedValueType,
-        SemanticProgramBuilder, SemanticRegistryBuilder, SemanticRegistryProvider,
-        SemanticRegistryRegistrar, StrictSerialF32Sum, TypeDefinitionFacts, ValueFact,
-        ValueTypeDefinition, ValueTypeDefinitionKey,
+        F32Constant, F32Gather, F32Multiply, NormativeDefinitionRef, OperationArity,
+        OperationAttributeSchema, OperationAttributes, OperationConformance, OperationDefinition,
+        OperationDefinitionFacts, OperationEffect, OperationInferenceError, OperationInferencer,
+        OperationSchema, ProviderDiagnosticCode, ProviderIdentity, RegistryError,
+        ResolvedValueType, SemanticProgramBuilder, SemanticRegistryBuilder,
+        SemanticRegistryProvider, SemanticRegistryRegistrar, StrictSerialF32Sum,
+        TypeDefinitionFacts, ValueFact, ValueTypeDefinition, ValueTypeDefinitionKey,
+        gather_index_resolved_type,
     };
 
     fn diagnostic_code(value: &str) -> ProviderDiagnosticCode {
@@ -8158,6 +8159,26 @@ mod tests {
 
     pub(super) fn program() -> SemanticProgram {
         program_with_builder(SemanticProgramBuilder::try_standard().unwrap())
+    }
+
+    /// One ordinary governed gather occurrence over the admitted F32/U32 signature.
+    fn gather_program() -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let source = builder
+            .input::<F32>(InputKey::new("source").unwrap(), Shape::from_dims([4, 2]))
+            .unwrap();
+        let index = builder
+            .input_resolved(
+                InputKey::new("index").unwrap(),
+                Shape::from_dims([3]),
+                gather_index_resolved_type(),
+            )
+            .unwrap();
+        let gathered = F32Gather::apply(&mut builder, source, index, Axis::new(0)).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), gathered)
+            .unwrap();
+        builder.build().unwrap()
     }
 
     fn program_with_builder(mut builder: SemanticProgramBuilder) -> SemanticProgram {
@@ -8946,6 +8967,84 @@ mod tests {
             )
         })
         .expect("a law authority over the fixture's own semantic authority coheres")
+    }
+
+    /// A gather stops first at exact target dispatch, then at arithmetic recognition.
+    ///
+    /// The second compile changes only the target's exact U32 dispatch fact. It
+    /// keeps the semantic program byte-for-byte identical, so advancing from the
+    /// target-local `DTypeNotDispatchable` refusal to `dtype-recognized` pins the
+    /// request boundary's ordered diagnostic layers without granting Gather a
+    /// production target claim or a planning route.
+    ///
+    /// Watched failing under a deliberate subject perturbation: removing the
+    /// U32 row from `governed_with_gather_index_dispatch_for_test` makes the
+    /// second compile return the same target-local refusal as the first.
+    #[test]
+    fn a_governed_gather_refuses_at_dispatch_before_arithmetic_recognition() {
+        let program = gather_program();
+        let product = crate::pipeline::compile(CompilationRequest::governed(&program))
+            .expect("a target-local refusal is an ordinary compilation product");
+        let [outcome] = product.targets.as_slice() else {
+            panic!("the governed request carries one target outcome");
+        };
+        assert_eq!(
+            outcome.failure(),
+            Some(&crate::pipeline::CompileError::NoFeasiblePlan(
+                crate::pipeline::NoFeasiblePlanError::Request(RequestError::DTypeNotDispatchable {
+                    target_profile: TargetProfile::governed().profile_key().clone(),
+                    resolved_type: Box::new(gather_index_resolved_type()),
+                    disposition: DTypeDispatchRefusalDisposition::Unknown,
+                })
+            )),
+            "the governed target answers for the exact U32 index type before recognition",
+        );
+
+        let mut widened = CompilationRequest::governed(&program);
+        widened.target_profiles =
+            vec![TargetProfile::governed_with_gather_index_dispatch_for_test()];
+        match crate::pipeline::compile(widened) {
+            Err(error) => assert_eq!(
+                error,
+                crate::pipeline::CompileError::UnsupportedCapability(
+                    RequestError::UnsupportedCapability {
+                        phase: "strategy",
+                        rule: "dtype-recognized",
+                    }
+                ),
+                "an exact U32 dispatch fact advances the same program to arithmetic recognition",
+            ),
+            Ok(product) => {
+                let [outcome] = product.targets.as_slice() else {
+                    panic!("the widened request carries one target outcome");
+                };
+                panic!(
+                    "the exact U32 dispatch row did not advance recognition: {:?}",
+                    outcome.failure()
+                );
+            }
+        }
+    }
+
+    /// The real output recognizer independently refuses Gather under `operation-set`.
+    ///
+    /// Supplying F32 deliberately bypasses whole-program arithmetic recognition;
+    /// the real realization-law authority and output walk then reach the later
+    /// operation-family boundary rather than an arbitrary test stub.
+    ///
+    /// Watched failing under a deliberate subject perturbation: classifying the
+    /// Gather key in `elementwise_family` advances this walk to its attribute
+    /// rule, so this exact `operation-set` expectation changes.
+    #[test]
+    fn gather_is_absent_from_the_real_request_recognition_operation_set() {
+        let program = gather_program();
+        assert_eq!(
+            recognize_program_outputs(&program, &laws_of(&program), ArithmeticType::F32),
+            Err(RequestError::UnsupportedCapability {
+                phase: "strategy",
+                rule: "operation-set",
+            }),
+        );
     }
 
     /// Recognizes one program through the whole boundary, or reports the rule.

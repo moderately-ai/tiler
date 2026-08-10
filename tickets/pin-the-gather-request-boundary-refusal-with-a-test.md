@@ -90,3 +90,15 @@ Changing the refusal, the family, or the policy inventory. Admitting anything in
 All three checks exist, each has been shown to fail under its own subject
 perturbation with the message quoted, and ADR 0107's dated correction is updated
 to point at them. The tests preserve the current no-admission behavior.
+
+## Outcome
+
+Worker evidence at exact base `1a716aeb1b523c520a985796b380d18343c1e0cc`:
+
+- `a_governed_gather_refuses_at_dispatch_before_arithmetic_recognition` compiles one real Gather program. The governed target returns exact-U32 `DTypeNotDispatchable`; retaining the same program and adding only the exact U32 dispatch row advances to `dtype-recognized`.
+- `gather_is_absent_from_the_real_request_recognition_operation_set` calls the real private output recognizer with the program-wide arithmetic check intentionally bypassed and receives `operation-set`.
+- `gather_is_absent_from_the_governed_fusion_roles` names `gather_f32_op()` against the governed fusion authority and receives `None`.
+
+Each subject was perturbed independently and restored. Removing the U32 dispatch row failed only the first check with `the exact U32 dispatch row did not advance recognition: Some(NoFeasiblePlan(Request(DTypeNotDispatchable { target_profile: TargetProfileKey("tiler.prototype-target-neutral-baseline.v1"), resolved_type: ResolvedValueType(Nominal(TypeKey(Key { namespace: "tiler", name: "u32", semantic_version: 1 }))), disposition: Unknown })))`. Teaching `elementwise_family` the Gather key failed only the second with `left: Err(UnsupportedCapability { phase: "strategy", rule: "elementwise-attributes" })` and `right: Err(UnsupportedCapability { phase: "strategy", rule: "operation-set" })`. Adding a Gather coordinate-relation role failed only the third with `left: Some(CoordinateRelation)` and `right: None`.
+
+The added profile constructor and all three checks are `#[cfg(test)]`; production dispatch rows, request recognition, fusion roles, public surfaces, and identity encodings are unchanged. The dated ADR correction records only this stronger evidence and preserves the accepted body.
