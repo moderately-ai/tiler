@@ -227,7 +227,7 @@ The score contraction, the scale, the mask add, the softmax, and the value contr
 | B1-c prefill | 2,048 | 268,435,456 | 236,978,184 | 1,310,720,008 | 773,849,096 | 505,413,640 | 237,240,328 |
 | B1-d prefill | 8,192 | 4,294,967,296 | 1,149,239,304 | **18,329,108,488** (17.070 GiB) | 9,739,173,896 (9.070 GiB) | 5,444,206,600 (5.070 GiB) | **1,150,287,880** (1.071 GiB) |
 
-**Inference — the spread is the planning result.** At C1 every plan is within 3% of every other and the choice is irrelevant; at B1-d the reachable D-A plan needs 15.9× what D-B needs, and even the best D-A plan needs 4.7×. A design that picked one decomposition for the whole workload would be choosing on a row where the choice does not matter and paying for it on the row where it does.
+**Inference — the spread is the planning result.** At C1 every plan is within 3% of every other and the choice is irrelevant; at B1-d D-A's fully unfused `n = 4` row needs 15.9× what D-B needs, and D-A's `n = 1` best-case row still needs 4.7×. A design that picked one decomposition for the whole workload would be choosing on a row where the choice does not matter and paying for it on the row where it does.
 
 ### D-B — materialize only the row statistics
 
