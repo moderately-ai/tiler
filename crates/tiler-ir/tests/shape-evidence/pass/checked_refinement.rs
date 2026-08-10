@@ -16,7 +16,6 @@ fn main() {
         .unwrap();
     let left: ShapedValue<F32, Matrix> = builder.refine(left).unwrap();
     let right: ShapedValue<F32, Matrix> = builder.refine(right).unwrap();
-    let result: ShapedValue<F32, Matrix> =
-        F32Add::apply_shaped(&mut builder, left, right).unwrap();
+    let result: ShapedValue<F32, Matrix> = F32Add::apply_shaped(&mut builder, left, right).unwrap();
     let _ = result.weaken();
 }

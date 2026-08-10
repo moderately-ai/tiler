@@ -29,27 +29,33 @@ check: citations fmt build lint test
 citations:
 	./check-citations.sh
 
-# The second and third commands exist because `cargo fmt` reaches cargo targets
-# and the facade's `trybuild` fixtures are not targets: they are source files a
-# test compiles as a separate crate at run time, so the first command never sees
-# them. The count is asserted rather than trusted — a glob that has stopped
-# matching produces no complaints, which is indistinguishable from a population
-# that is clean. Adding a fixture updates the number in the same commit; that is
-# the intended failure, not an obstacle.
+# The remaining commands exist because `cargo fmt` reaches cargo targets and
+# the `trybuild` fixtures are not targets: they are source files a test compiles
+# as a separate crate at run time, so the first command never sees them. The
+# count is asserted rather than trusted — a glob that has stopped matching
+# produces no complaints, which is indistinguishable from a population that is
+# clean. Adding a fixture updates the number in the same commit; that is the
+# intended failure, not an obstacle.
 #
 # `pass/` only. Every `fail/` fixture is paired with a `.stderr` golden that
-# `trybuild` compares byte for byte, and all nine goldens quote the fixture's own
-# source under `--> tests/facade/fail/<name>.rs:LINE:COL` headers with caret
-# columns beneath. Reformatting one moves a line number or a caret and breaks the
-# golden, which costs more than the blind spot it would close. The narrower
-# exclusions — spans inside a `pass/` fixture that are verbatim macro-emitter
-# output, which the macro crate's tests assert the file still contains — carry
-# `#[rustfmt::skip]` at the item itself, so each is stated where it applies
-# instead of turning into a second list here.
+# `trybuild` compares byte for byte. The nine facade goldens and all seventeen
+# `tiler-ir` goldens quote their fixture source under `--> tests/...:LINE:COL`
+# headers with caret columns beneath; reformatting one moves a line number or a
+# caret and breaks its golden, which costs more than the blind spot it would
+# close. The narrower exclusions — spans inside a facade `pass/` fixture that
+# are verbatim macro-emitter output, which the macro crate's tests assert the
+# file still contains — carry `#[rustfmt::skip]` at the item itself, so each is
+# stated where it applies instead of turning into a second list here.
 fmt:
 	cargo fmt --all --check
 	test $$(ls crates/tiler/tests/facade/pass/*.rs | wc -l) -eq 10
 	rustfmt --check crates/tiler/tests/facade/pass/*.rs
+	test $$(ls crates/tiler-ir/tests/index-region/pass/*.rs | wc -l) -eq 1
+	rustfmt --check crates/tiler-ir/tests/index-region/pass/*.rs
+	test $$(ls crates/tiler-ir/tests/shape-evidence/pass/*.rs | wc -l) -eq 2
+	rustfmt --check crates/tiler-ir/tests/shape-evidence/pass/*.rs
+	test $$(ls crates/tiler-ir/tests/typed-handles/pass/*.rs | wc -l) -eq 1
+	rustfmt --check crates/tiler-ir/tests/typed-handles/pass/*.rs
 
 build:
 	cargo check --workspace --all-targets --locked
@@ -83,10 +89,10 @@ lint:
 # name from `tiler-macros`; the other seven and all seventeen `tiler-ir`
 # compile-fail fixtures are held up by nothing but the count on their line.
 #
-# One floor per glob, stated next to the command that consumes it. The eighth,
-# `crates/tiler/tests/facade/pass`, is floored in `fmt` above instead, because
-# `rustfmt --check` reads it there and duplicating the count would only give it
-# two places to be wrong.
+# One floor per glob, stated next to the command that consumes it. The four pass
+# populations — facade plus the three `tiler-ir` directories — are floored in
+# `fmt` above because `rustfmt --check` reads them there; duplicating their
+# counts here would only give each count two places to be wrong.
 #
 # Two commands because nextest does not run doc-tests, at all. Dropping the
 # second would silently stop running the compile-fail doc-tests on
@@ -95,11 +101,8 @@ lint:
 # `.config/nextest.toml` is what makes the first quiet on a green run.
 test:
 	test $$(ls crates/tiler/tests/facade/fail/*.rs | wc -l) -eq 9
-	test $$(ls crates/tiler-ir/tests/index-region/pass/*.rs | wc -l) -eq 1
 	test $$(ls crates/tiler-ir/tests/index-region/fail/*.rs | wc -l) -eq 4
-	test $$(ls crates/tiler-ir/tests/shape-evidence/pass/*.rs | wc -l) -eq 2
 	test $$(ls crates/tiler-ir/tests/shape-evidence/fail/*.rs | wc -l) -eq 7
-	test $$(ls crates/tiler-ir/tests/typed-handles/pass/*.rs | wc -l) -eq 1
 	test $$(ls crates/tiler-ir/tests/typed-handles/fail/*.rs | wc -l) -eq 6
 	cargo nextest run --workspace --locked
 	cargo test --workspace --doc --locked --quiet
