@@ -1,7 +1,7 @@
 ---
 id: retire-the-false-unasserted-identity-difference-prose-after-the-pin
 title: Retire the false unasserted identity-difference prose after the pin
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [pin-the-differing-identity-positions-beside-the-carrier-positions-constant, replace-the-stale-artifact-abi-byte-figures-with-the-properties-tests-pin, recompute-the-unasserted-bf16-byte-lengths-in-the-dtype-support-matrix]
@@ -9,6 +9,9 @@ scopes: [contracts/artifacts, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, identity, docs]
+claimed_from: todo
+assignee: sol-identity-pin-prose
+lease_expires_at: 1786404265
 ---
 
 The implementation pin for the BF16-versus-F32 carrier-only identity difference has already landed. This ticket rewrites the live contract and ledger sentences that still claim nothing asserts it. **No crate change. No new pin. No reopening absolute lengths or offsets.**
