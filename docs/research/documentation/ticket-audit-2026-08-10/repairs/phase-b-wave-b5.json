@@ -1,0 +1,801 @@
+{
+  "wave": "B5",
+  "count": 36,
+  "tickets": [
+    {
+      "ticket_id": "accept-adr-0101-elementary-identity-dimension",
+      "ticket_file": "tickets/accept-adr-0101-elementary-identity-dimension.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "8cbf2fa226cfc75fbfad0dbb66aa9daa820ec6bd5d3a755ff245bbfccca7195d",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/accept-adr-0101-elementary-identity-dimension/8cbf2fa226cf_c99ac54950f2.md",
+      "class": "D",
+      "file_class": "ticket_plus_remainder",
+      "files": [
+        "tickets/accept-adr-0101-elementary-identity-dimension.md",
+        "tickets/<new-remainder>.md",
+        "docs/open-questions.md",
+        "possibly docs/decisions/0101-... Open questions"
+      ],
+      "kinds": {
+        "ticket": 1,
+        "new_ticket": 1,
+        "docs": 1,
+        "other": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "accept-the-proof-bound-stage-coverage-public-boundary",
+      "ticket_file": "tickets/accept-the-proof-bound-stage-coverage-public-boundary.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "3dea33c2ba34f61b6db8c4c90c9dac9864cf7ca2fa85a7799fd15c1d4c341249",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/accept-the-proof-bound-stage-coverage-public-boundary/3dea33c2ba34_c99ac54950f2.md",
+      "class": "D",
+      "file_class": "ticket_plus_remainder",
+      "files": [
+        "tickets/accept-the-proof-bound-stage-coverage-public-boundary.md",
+        "docs/ir.md",
+        "docs/decisions/0071-use-checked-builders-for-shared-compiler-ir.md",
+        "docs/research/documentation/production-crate-codebase-audit.md",
+        "possibly a new remainder ticket under tickets/"
+      ],
+      "kinds": {
+        "ticket": 1,
+        "docs": 3,
+        "new_ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "accept-the-public-compiler-facade-boundary",
+      "ticket_file": "tickets/accept-the-public-compiler-facade-boundary.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "e177798bd36178f245cfb8e68821b8f03534008fa749010d4c3019531ea69bbf",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/accept-the-public-compiler-facade-boundary/e177798bd361_c99ac54950f2.md",
+      "class": "E",
+      "file_class": "includes_code",
+      "files": [
+        "tickets/accept-the-public-compiler-facade-boundary.md",
+        "docs/status.md",
+        "docs/architecture.md",
+        "docs/roadmap.md",
+        "docs/dtype-support.md",
+        "crates/tiler/src/lib.rs"
+      ],
+      "kinds": {
+        "ticket": 1,
+        "docs": 4,
+        "code": 1
+      },
+      "public_none": false,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "admit-a-storage-carrier-for-integer-program-inputs",
+      "ticket_file": "tickets/admit-a-storage-carrier-for-integer-program-inputs.md",
+      "repository_status": "awaiting-decision",
+      "inclusion_reason": "nonterminal",
+      "ticket_content_hash": "99afe4fe32f2f9c84ab6d769c0f47e0ddeb4b35f9a952642ea3af06e443615a2",
+      "report_path": "docs/research/documentation/ticket-audit-2026-08-10/reports/admit-a-storage-carrier-for-integer-program-inputs/99afe4fe32f2_c99ac54950f2.md",
+      "class": "E",
+      "file_class": "includes_code",
+      "files": [
+        "tickets/admit-a-storage-carrier-for-integer-program-inputs.md \u2014 prose/table/dated correction only",
+        "On accepted implementation",
+        "crates/tiler-ir/src/program/model.rs",
+        "crates/tiler-ir/src/kernel/model.rs",
+        "crates/tiler-artifact/src/program/model.rs and codec validate/tests",
+        "crates/tiler-macros/src/binding.rs",
+        "crates/tiler-compiler/src/boundary.rs",
+        "crates/tiler-metal/src/emit.rs",
+        "any trybuild / frontend fixtures the nextest census surfaces",
+        "docs/artifact-abi.md only if a sentence becomes wrong"
+      ],
+      "kinds": {
+        "ticket": 1,
+        "other": 2,
+        "code": 6,
+        "docs": 1
+      },
+      "public_none": false,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "admit-an-additive-extent-relation",
+      "ticket_file": "tickets/admit-an-additive-extent-relation.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "0744f6e01fa7a09e9008c2f9e1b8de9c35bd1bbaff4ec3dada00c3802737d1eb",
+      "report_path": "docs/research/documentation/ticket-audit-2026-08-10/reports/admit-an-additive-extent-relation/0744f6e01fa7_c99ac54950f2.md",
+      "class": "C",
+      "file_class": "ticket_plus_docs",
+      "files": [
+        "if repair applied: `tickets/admit-an-additive-extent-relation.md` only",
+        "no code/docs/contract changes required for correctness of the delivered Outcome"
+      ],
+      "kinds": {
+        "other": 1,
+        "docs": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "admit-an-age-bounded-automatic-eviction-into-the-expansion-cache",
+      "ticket_file": "tickets/admit-an-age-bounded-automatic-eviction-into-the-expansion-cache.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "d5ffe21f5fcdee07f50044b166714ca28ad14115261e776a4eb24ad1f213150f",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/admit-an-age-bounded-automatic-eviction-into-the-expansion-cache/d5ffe21f5fcd_c99ac54950f2.md",
+      "class": "E",
+      "file_class": "includes_code",
+      "files": [
+        "crates/tiler-cache/src/expansion.rs",
+        "docs/research/cache/bounded-collection.md",
+        "ticket body: none required"
+      ],
+      "kinds": {
+        "code": 1,
+        "docs": 1,
+        "other": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "bind-repeated-invocations-over-caller-retained-tensors",
+      "ticket_file": "tickets/bind-repeated-invocations-over-caller-retained-tensors.md",
+      "repository_status": "todo",
+      "inclusion_reason": "nonterminal",
+      "ticket_content_hash": "e1e32eeca509187289d901c582f9fd186b2d0ccdde358bac1ed5abca2ad16096",
+      "report_path": "docs/research/documentation/ticket-audit-2026-08-10/reports/bind-repeated-invocations-over-caller-retained-tensors/e1e32eeca509_c99ac54950f2.md",
+      "class": "E",
+      "file_class": "includes_code",
+      "files": [
+        "tickets/bind-repeated-invocations-over-caller-retained-tensors.md \u2014 repair prose/deps as above; later Outcome on delivery",
+        "crates/tiler/src/route.rs and value.rs \u2014 StorageLengthMismatch policy if facade owns longer-pool binding",
+        "crates/tiler-artifact",
+        "crates/tiler-runtime and tests \u2014 multi-extent rebinding, identity pin, live-span oracle",
+        "crates/tiler-build tests as needed for assembly diagnostics",
+        "not: contracts/artifacts schema step; not: new Kv* types; not"
+      ],
+      "kinds": {
+        "ticket": 1,
+        "code": 4,
+        "other": 1
+      },
+      "public_none": false,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "call-the-expansion-cache-preflight-on-the-resolved-root",
+      "ticket_file": "tickets/call-the-expansion-cache-preflight-on-the-resolved-root.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "55fd1387a3e66f981f2bcd1b6125ba9c6c3b1a2be5a2cd9b266148f319b193c5",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/call-the-expansion-cache-preflight-on-the-resolved-root/55fd1387a3e6_c99ac54950f2.md",
+      "class": "D",
+      "file_class": "ticket_plus_remainder",
+      "files": [
+        "`tickets/call-the-expansion-cache-preflight-on-the-resolved-root.md`",
+        "optionally a new remainder ticket under `tickets/` plus edges, and edits to ADR 0089 + root-policy under the scopes that own them"
+      ],
+      "kinds": {
+        "other": 1,
+        "new_ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "correct-the-one-region-premise-in-the-concatenate-absence-check",
+      "ticket_file": "tickets/correct-the-one-region-premise-in-the-concatenate-absence-check.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "0b27b9a09c969f25c68dcf591fce0d64165879cd4257082d14a0999dc90812c8",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/correct-the-one-region-premise-in-the-concatenate-absence-check/0b27b9a09c96_c99ac54950f2.md",
+      "class": "D",
+      "file_class": "ticket_plus_remainder",
+      "files": [
+        "tickets/correct-the-one-region-premise-in-the-concatenate-absence-check.md",
+        "tickets/<new-or-connected-remainder>.md",
+        "docs/research/indexing/sub-tensor-selection-fusion-role.md",
+        "docs/research/indexing/concatenate-fusion-role-and-lowering.md"
+      ],
+      "kinds": {
+        "ticket": 1,
+        "new_ticket": 1,
+        "docs": 2
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "correct-the-recognizer-era-sentences-in-the-optimizer-contract",
+      "ticket_file": "tickets/correct-the-recognizer-era-sentences-in-the-optimizer-contract.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "3ec9ea853168732d15c1438b2a8badfd125a3c0148705a55e0e2b44223634ee5",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/correct-the-recognizer-era-sentences-in-the-optimizer-contract/3ec9ea853168_c99ac54950f2.md",
+      "class": "C",
+      "file_class": "ticket_plus_docs",
+      "files": [
+        "tickets/correct-the-recognizer-era-sentences-in-the-optimizer-contract.md",
+        "docs/compiler/optimizer.md",
+        "ticketsplease / frontmatter `related` only if graph edge is added"
+      ],
+      "kinds": {
+        "ticket": 1,
+        "docs": 1,
+        "other": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "correct-the-residual-floor-relation-prose-outside-the-artifact-scopes",
+      "ticket_file": "tickets/correct-the-residual-floor-relation-prose-outside-the-artifact-scopes.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "4c7d43f6d686d73e4fe2aef74b0201f3099e0187e3c90361f67176f723f092b0",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/correct-the-residual-floor-relation-prose-outside-the-artifact-scopes/4c7d43f6d686_c99ac54950f2.md",
+      "class": "D",
+      "file_class": "ticket_plus_remainder",
+      "files": [
+        "tickets/correct-the-residual-floor-relation-prose-outside-the-artifact-scopes.md",
+        "docs/research/runtime/backend-scoped-route-requirement-answers.md",
+        "optionally tickets graph for the new remainder id"
+      ],
+      "kinds": {
+        "ticket": 1,
+        "docs": 1,
+        "new_ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "correct-the-roadmap-s-milestone-0b-inline-composition-claim",
+      "ticket_file": "tickets/correct-the-roadmap-s-milestone-0b-inline-composition-claim.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "8e6b7663818d529651f74b4b0a7b02239f38348f6249455ba5767cb46b2abef4",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/correct-the-roadmap-s-milestone-0b-inline-composition-claim/8e6b7663818d_c99ac54950f2.md",
+      "class": "C",
+      "file_class": "ticket_plus_docs",
+      "files": [
+        "docs/status.md"
+      ],
+      "kinds": {
+        "docs": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "correct-the-write-domain-rule-in-the-indexing-corpus",
+      "ticket_file": "tickets/correct-the-write-domain-rule-in-the-indexing-corpus.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "15226ab71a9bcfc89665a9f3813084e51b031e029c8c618f4bbc138e1e21055c",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/correct-the-write-domain-rule-in-the-indexing-corpus/15226ab71a9b_c99ac54950f2.md",
+      "class": "C",
+      "file_class": "ticket_plus_docs",
+      "files": [
+        "docs/research/indexing/concatenate-fusion-role-and-lowering.md",
+        "tickets/correct-the-write-domain-rule-in-the-indexing-corpus.md only if a repair log entry is required by process; Outcome may stay as historical landing note."
+      ],
+      "kinds": {
+        "docs": 1,
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "decide-whether-the-l3-ladder-rung-moves-on-the-dispatched-contraction-cell",
+      "ticket_file": "tickets/decide-whether-the-l3-ladder-rung-moves-on-the-dispatched-contraction-cell.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "2cae989ac80dcdde6212fb9c1bc9af91d1627fb911755008aa7fddf3f561697f",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/decide-whether-the-l3-ladder-rung-moves-on-the-dispatched-contraction-cell/2cae989ac80d_c99ac54950f2.md",
+      "class": "C",
+      "file_class": "ticket_plus_docs",
+      "files": [
+        "docs/roadmap.md",
+        "optionally none for tickets/decide-whether-..."
+      ],
+      "kinds": {
+        "docs": 1,
+        "other": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "derive-the-multi-round-two-level-reduction-composition",
+      "ticket_file": "tickets/derive-the-multi-round-two-level-reduction-composition.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "a8cec39338eff0e83bba285ac1207d6d40be17351d94c665ba782eddb6a77680",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/derive-the-multi-round-two-level-reduction-composition/a8cec39338ef_c99ac54950f2.md",
+      "class": "C",
+      "file_class": "ticket_plus_docs",
+      "files": [
+        "tickets/derive-the-multi-round-two-level-reduction-composition.md",
+        "docs/decisions/0096-compose-the-subgroup-and-workgroup-reduction-levels.md",
+        "docs/research/scheduling/multi-round-two-level-reduction-composition.md",
+        "docs/research/README.md"
+      ],
+      "kinds": {
+        "ticket": 1,
+        "docs": 3
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "implement-first-runtime-semantic-value-precondition-enforcement",
+      "ticket_file": "tickets/implement-first-runtime-semantic-value-precondition-enforcement.md",
+      "repository_status": "todo",
+      "inclusion_reason": "nonterminal",
+      "ticket_content_hash": "3c3550e803895f929be7af4ff33c943c625b12b22059d67d61f0bf4c4f4c1e54",
+      "report_path": "docs/research/documentation/ticket-audit-2026-08-10/reports/implement-first-runtime-semantic-value-precondition-enforcement/3c3550e80389_c99ac54950f2.md",
+      "class": "E",
+      "file_class": "includes_code",
+      "files": [
+        "crates/tiler-runtime/src/load/route.rs",
+        "crates/tiler-runtime/tests/*: adversarial lifecycle tests.",
+        "crates/tiler-ir/src/semantic/conformance.rs",
+        "Host/Metal adapter seam",
+        "Possibly docs/artifact-abi.md, docs/numerical-semantics.md, docs/research/runtime/runtime-execution-contract.md when implemented support upgrades Inference language",
+        "tickets/* outcome updates for this ticket and graph consumers; dtype matrix only for exact proven runtime path cells.",
+        "Not expected here: static EnforcementPlan schema/identity"
+      ],
+      "kinds": {
+        "code": 3,
+        "other": 3,
+        "ticket": 1
+      },
+      "public_none": false,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "implement-parallel-reduction-strategies",
+      "ticket_file": "tickets/implement-parallel-reduction-strategies.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "8c25854c64489e3ad2cd20334d9792728405b3123496f2bd2e34c2556033abe7",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/implement-parallel-reduction-strategies/8c25854c6448_c99ac54950f2.md",
+      "class": "D",
+      "file_class": "ticket_plus_remainder",
+      "files": [
+        "`tickets/implement-parallel-reduction-strategies.md`",
+        "new remainder ticket",
+        "research docs that still assign open D-5/D-6 closure solely to this done id",
+        "`tickets/implement-boundary-property-enforcers.md` only if coordinator acts on restart restatement"
+      ],
+      "kinds": {
+        "other": 3,
+        "new_ticket": 1
+      },
+      "public_none": false,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "land-the-scalar-lowering-seam-retirement-adr",
+      "ticket_file": "tickets/land-the-scalar-lowering-seam-retirement-adr.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "1ab71dc3aeedc7061df413c9804459453b26325c98b6e44108b941abf9ed7a5b",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/land-the-scalar-lowering-seam-retirement-adr/1ab71dc3aeed_c99ac54950f2.md",
+      "class": "C",
+      "file_class": "ticket_plus_docs",
+      "files": [
+        "docs/decisions/0078-name-the-intended-public-extension-seams.md",
+        "tickets/land-the-scalar-lowering-seam-retirement-adr.md",
+        "optionally a new narrow remainder ticket if the ADR 0078 fix is not executed on an existing decisions-scope carrier"
+      ],
+      "kinds": {
+        "docs": 1,
+        "ticket": 1,
+        "other": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "pin-the-differing-identity-positions-beside-the-carrier-positions-constant",
+      "ticket_file": "tickets/pin-the-differing-identity-positions-beside-the-carrier-positions-constant.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "810f756c124ab6784a200b397403fdf8edc37cb4143171287a1431385a97c239",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/pin-the-differing-identity-positions-beside-the-carrier-positions-constant/810f756c124a_c99ac54950f2.md",
+      "class": "D",
+      "file_class": "ticket_plus_remainder",
+      "files": [
+        "tickets/pin-the-differing-identity-positions-beside-the-carrier-positions-constant.md",
+        "docs/artifact-abi.md",
+        "docs/dtype-support.md",
+        "possibly a new remainder ticket under tickets/ if the doc repair is not absorbed into an existing open contracts ticket"
+      ],
+      "kinds": {
+        "ticket": 1,
+        "docs": 2,
+        "new_ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "realign-the-result-side-display-strings-across-both-refinement-error-mirrors",
+      "ticket_file": "tickets/realign-the-result-side-display-strings-across-both-refinement-error-mirrors.md",
+      "repository_status": "todo",
+      "inclusion_reason": "nonterminal",
+      "ticket_content_hash": "6a62bb5d4f8b3efe12892b3813ec4f663dbf3784014b83ee989fa08e754a1d83",
+      "report_path": "docs/research/documentation/ticket-audit-2026-08-10/reports/realign-the-result-side-display-strings-across-both-refinement-error-mirrors/6a62bb5d4f8b_c99ac54950f2.md",
+      "class": "E",
+      "file_class": "includes_code",
+      "files": [
+        "crates/tiler-ir/src/index/refinement.rs",
+        "crates/tiler-compiler/src/legality.rs",
+        "tickets/realign-the-result-side-display-strings-across-both-refinement-error-mirrors.md"
+      ],
+      "kinds": {
+        "code": 2,
+        "ticket": 1
+      },
+      "public_none": false,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "reattach-the-scalar-arithmetic-block-and-correct-its-accessor-count",
+      "ticket_file": "tickets/reattach-the-scalar-arithmetic-block-and-correct-its-accessor-count.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "12145604c2c568bc41165a602b674094bc040177daae9b2cb76ad57b93b8d239",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/reattach-the-scalar-arithmetic-block-and-correct-its-accessor-count/12145604c2c5_c99ac54950f2.md",
+      "class": "D",
+      "file_class": "ticket_plus_remainder",
+      "files": [
+        "tickets/reattach-the-scalar-arithmetic-block-and-correct-its-accessor-count.md",
+        "optionally a new remainder ticket for the five-key-domains noun",
+        "optionally crates/tiler-artifact/src/program/mod.rs domain-block wording"
+      ],
+      "kinds": {
+        "ticket": 1,
+        "new_ticket": 1,
+        "other": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "reconcile-the-document-metadata-validator-claim-with-its-own-validation-section",
+      "ticket_file": "tickets/reconcile-the-document-metadata-validator-claim-with-its-own-validation-section.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "3ba16a5ac7404a3587fdd5bc0417456f74a20b1ed6536d0f9325435d156065eb",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/reconcile-the-document-metadata-validator-claim-with-its-own-validation-section/3ba16a5ac740_c99ac54950f2.md",
+      "class": "C",
+      "file_class": "ticket_plus_docs",
+      "files": [
+        "tickets/reconcile-the-document-metadata-validator-claim-with-its-own-validation-section.md",
+        "new ticket file for the re-rot remainder",
+        "docs/document-metadata.md"
+      ],
+      "kinds": {
+        "ticket": 1,
+        "other": 1,
+        "docs": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "record-adr-0097-as-implemented-and-correct-the-navigation-staging-claims",
+      "ticket_file": "tickets/record-adr-0097-as-implemented-and-correct-the-navigation-staging-claims.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "a2283be0ad1dffca66d3d1e87d2fec3250d3964bc7aab60c74e0ab2db4708577",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/record-adr-0097-as-implemented-and-correct-the-navigation-staging-claims/a2283be0ad1d_c99ac54950f2.md",
+      "class": "C",
+      "file_class": "ticket_plus_docs",
+      "files": [
+        "docs/status.md",
+        "docs/roadmap.md",
+        "docs/decisions/0097-admit-a-two-dimensional-cooperative-staging-relation.md",
+        "optionally tickets/record-adr-0097-as-implemented-and-correct-the-navigation-staging-claims.md"
+      ],
+      "kinds": {
+        "docs": 3,
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "record-the-conformance-crate-in-the-architecture-table-and-an-admission-adr",
+      "ticket_file": "tickets/record-the-conformance-crate-in-the-architecture-table-and-an-admission-adr.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "a26f988743b11d83414e1ac5671bf74d1481ab28e9ea2cf724f92e34841ec6fd",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/record-the-conformance-crate-in-the-architecture-table-and-an-admission-adr/a26f988743b1_c99ac54950f2.md",
+      "class": "C",
+      "file_class": "ticket_plus_docs",
+      "files": [
+        "tickets/record-the-conformance-crate-in-the-architecture-table-and-an-admission-adr.md",
+        "docs/architecture.md",
+        "docs/decisions/0106-admit-tiler-conformance-as-the-cross-layer-evidence-member.md",
+        "optionally a new narrow remainder ticket if repair is not applied on this ticket's branch"
+      ],
+      "kinds": {
+        "ticket": 1,
+        "docs": 2,
+        "other": 1
+      },
+      "public_none": false,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "record-the-landed-physical-provider-seam-in-adrs-0078-and-0090",
+      "ticket_file": "tickets/record-the-landed-physical-provider-seam-in-adrs-0078-and-0090.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "aaf7ced4528e6649f89a529f67367068b5cc61cdf84a8d36e382a3c6863de3bb",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/record-the-landed-physical-provider-seam-in-adrs-0078-and-0090/aaf7ced4528e_c99ac54950f2.md",
+      "class": "D",
+      "file_class": "ticket_plus_remainder",
+      "files": [
+        "docs/decisions/0078-name-the-intended-public-extension-seams.md",
+        "tickets/* only if a new remainder ticket is filed, or an optional dated note on this ticket"
+      ],
+      "kinds": {
+        "docs": 1,
+        "new_ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "refresh-the-l1-operation-family-standing",
+      "ticket_file": "tickets/refresh-the-l1-operation-family-standing.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "096e151c6cb1d84e1a88d097d9457df981d0f88bfede69ab95215cc487f3525c",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/refresh-the-l1-operation-family-standing/096e151c6cb1_c99ac54950f2.md",
+      "class": "D",
+      "file_class": "ticket_plus_remainder",
+      "files": [
+        "`docs/research/program-planning/first-metal-lm-workload.md`",
+        "`tickets/<new-remainder>.md`",
+        "`tickets/refresh-the-l1-operation-family-standing.md` only if adding `related` / Outcome note of post-close drift",
+        "if L2 is repaired in the same wave: `docs/research/shapes/transformer-operation-and-shape-surface.md` and/or L2 ticket Outcome note \u2014 otherwise leave to a shapes-scoped sibling"
+      ],
+      "kinds": {
+        "other": 3,
+        "new_ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "refresh-the-l2-derivation-operation-family-standing",
+      "ticket_file": "tickets/refresh-the-l2-derivation-operation-family-standing.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "e85db09a4e1370ed92fcaab349255c9996cffccf803ecd61d5a81d05e1ca0df3",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/refresh-the-l2-derivation-operation-family-standing/e85db09a4e13_c99ac54950f2.md",
+      "class": "D",
+      "file_class": "ticket_plus_remainder",
+      "files": [
+        "docs/research/shapes/transformer-operation-and-shape-surface.md",
+        "tickets/refresh-the-l2-derivation-operation-family-standing.md",
+        "tickets/<new-remainder-id>.md",
+        "possibly ticketsplease graph edges only via ticket frontmatter `related`"
+      ],
+      "kinds": {
+        "docs": 1,
+        "ticket": 1,
+        "new_ticket": 1,
+        "other": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "repair-downstream-records-after-sourced-semantic-results",
+      "ticket_file": "tickets/repair-downstream-records-after-sourced-semantic-results.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "a5bcc069e6171371f13f6498e43a02a61398d913292a8bddbcbbb6c9d24bdc10",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/repair-downstream-records-after-sourced-semantic-results/a5bcc069e617_c99ac54950f2.md",
+      "class": "C",
+      "file_class": "ticket_plus_docs",
+      "files": [
+        "docs/research/program-planning/complete-model-ingestion-and-execution.md",
+        "tickets/repair-downstream-records-after-sourced-semantic-results.md"
+      ],
+      "kinds": {
+        "docs": 1,
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "repair-the-artifact-abis-stale-cross-crate-no-prefix-argument",
+      "ticket_file": "tickets/repair-the-artifact-abis-stale-cross-crate-no-prefix-argument.md",
+      "repository_status": "todo",
+      "inclusion_reason": "nonterminal",
+      "ticket_content_hash": "0109a0998ec4f9fe5ebddcd170ef4f630306a3d601fda2b31f538b71b4333884",
+      "report_path": "docs/research/documentation/ticket-audit-2026-08-10/reports/repair-the-artifact-abis-stale-cross-crate-no-prefix-argument/0109a0998ec4_c99ac54950f2.md",
+      "class": "C",
+      "file_class": "ticket_plus_docs",
+      "files": [
+        "docs/artifact-abi.md",
+        "tickets/repair-the-artifact-abis-stale-cross-crate-no-prefix-argument.md"
+      ],
+      "kinds": {
+        "docs": 1,
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "reroute-the-dtype-ledgers-cells-that-point-at-terminal-tickets",
+      "ticket_file": "tickets/reroute-the-dtype-ledgers-cells-that-point-at-terminal-tickets.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "e525575bad67f4b1193888e7161350fc81339ad252832f95d5858466c4c21713",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/reroute-the-dtype-ledgers-cells-that-point-at-terminal-tickets/e525575bad67_c99ac54950f2.md",
+      "class": "C",
+      "file_class": "ticket_plus_docs",
+      "files": [
+        "docs/research/numerics/dtype-family-research-tracks.md",
+        "docs/dtype-support.md",
+        "optionally tickets/reroute-the-dtype-ledgers-cells-that-point-at-terminal-tickets.md"
+      ],
+      "kinds": {
+        "docs": 2,
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "restate-the-tree-width-rule-outside-the-compiler-crate",
+      "ticket_file": "tickets/restate-the-tree-width-rule-outside-the-compiler-crate.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "39b48f065b4026ef5714e43c8cf2da1a2ce2e40d821f39e2a1d75b0fe7d18bf4",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/restate-the-tree-width-rule-outside-the-compiler-crate/39b48f065b40_c99ac54950f2.md",
+      "class": "D",
+      "file_class": "ticket_plus_remainder",
+      "files": [
+        "If remainder is closed in-tree: `crates/tiler-conformance/src/serial_sum/tests.rs` and/or `prototypes/serial-sum-run/src/proof.rs`",
+        "Optional ticket metadata: `related` edge to the residue ticket; optional remainder ticket file under `tickets/`.",
+        "No change required to the two restated contracts or to metal_plan for this ticket's named Outcome."
+      ],
+      "kinds": {
+        "other": 2,
+        "new_ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "retire-the-corrected-softmax-fact-quotations",
+      "ticket_file": "tickets/retire-the-corrected-softmax-fact-quotations.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "6079ac66c8d21de92f91fae4474ae9d005b6beb1ce09672a63d19b0db547c1a4",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/retire-the-corrected-softmax-fact-quotations/6079ac66c8d2_c99ac54950f2.md",
+      "class": "C",
+      "file_class": "ticket_plus_docs",
+      "files": [
+        "tickets/retire-the-corrected-softmax-fact-quotations.md",
+        "tickets/name-the-elementary-identity-rewrite-dimension.md",
+        "tickets/correct-the-online-single-pass-softmax-fold-legality-fact.md",
+        "docs/research/numerics/elementary-identity-rewrite-dimension.md",
+        "docs/decisions/0101-treat-elementary-function-identities-as-a-fourth-numerical-dimension.md"
+      ],
+      "kinds": {
+        "ticket": 3,
+        "docs": 2
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "scope-the-non-tensor-value-kinds-and-control-constructs",
+      "ticket_file": "tickets/scope-the-non-tensor-value-kinds-and-control-constructs.md",
+      "repository_status": "deferred",
+      "inclusion_reason": "nonterminal",
+      "ticket_content_hash": "2d747bb909950836e447cf73860981a6f841367718588af02662907b2458a553",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/scope-the-non-tensor-value-kinds-and-control-constructs/2d747bb90995_c99ac54950f2.md",
+      "class": "C",
+      "file_class": "ticket_plus_docs",
+      "files": [
+        "tickets/scope-the-non-tensor-value-kinds-and-control-constructs.md",
+        "docs/open-questions.md only if a restatement of Q-SEM-012 is chosen when activating or repairing authority alignment"
+      ],
+      "kinds": {
+        "ticket": 1,
+        "docs": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "scope-the-standalone-extrema-and-clamp-families",
+      "ticket_file": "tickets/scope-the-standalone-extrema-and-clamp-families.md",
+      "repository_status": "deferred",
+      "inclusion_reason": "nonterminal",
+      "ticket_content_hash": "eaa27984d262a80ca0caddf25c283d1b52d37c59799a6b189d21240b2ce5cabb",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/scope-the-standalone-extrema-and-clamp-families/eaa27984d262_c99ac54950f2.md",
+      "class": "C",
+      "file_class": "ticket_plus_docs",
+      "files": [
+        "tickets/scope-the-standalone-extrema-and-clamp-families.md",
+        "tickets/scope-the-monoid-reducers-beyond-the-strict-sum.md",
+        "docs/research/semantic-graph/operation-family-delivery-graph.md",
+        "optionally docs/decisions/0022-reduction-identities-and-initial-values.md implementation-boundary stale \"no binary32 value is neutral\" sentence"
+      ],
+      "kinds": {
+        "ticket": 2,
+        "docs": 1,
+        "other": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "site-the-governed-digest-so-layered-identity-encoders-can-reach-it",
+      "ticket_file": "tickets/site-the-governed-digest-so-layered-identity-encoders-can-reach-it.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "d155db325690b9bdf52eb9fa14113dc55d0546139c700dca887ca9063b8e1f28",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/site-the-governed-digest-so-layered-identity-encoders-can-reach-it/d155db325690_c99ac54950f2.md",
+      "class": "D",
+      "file_class": "ticket_plus_remainder",
+      "files": [
+        "tickets/site-the-governed-digest-so-layered-identity-encoders-can-reach-it.md",
+        "optionally a new remainder ticket + related edge if the second-hashing observation is promoted"
+      ],
+      "kinds": {
+        "ticket": 1,
+        "new_ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    },
+    {
+      "ticket_id": "spike-kani-bounded-verification-on-one-inexhaustible-encoder",
+      "ticket_file": "tickets/spike-kani-bounded-verification-on-one-inexhaustible-encoder.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "664eff44c617067d778f8a6551714564b7466c0efe0225e22729f041de0c6096",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/spike-kani-bounded-verification-on-one-inexhaustible-encoder/664eff44c617_c99ac54950f2.md",
+      "class": "D",
+      "file_class": "ticket_plus_remainder",
+      "files": [
+        "`tickets/spike-kani-bounded-verification-on-one-inexhaustible-encoder.md`",
+        "Possibly a new remainder ticket file under `tickets/` for the `push_slice` experiment and/or spike re-sync.",
+        "No crate or spike source change required solely to repair this ticket's false \"Filed\" claim"
+      ],
+      "kinds": {
+        "other": 2,
+        "new_ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": false
+    }
+  ]
+}
