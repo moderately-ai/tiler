@@ -1,7 +1,7 @@
 ---
 id: restate-the-fusion-role-table-census-in-the-indexing-records
 title: Restate the fusion-role table census in the indexing fusion-role records
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [correct-the-one-region-premise-in-the-concatenate-absence-check, admit-a-fusion-role-for-the-sub-tensor-selection-slice, admit-a-fusion-role-for-the-sequence-extension-concatenate]
@@ -9,6 +9,9 @@ scopes: [research/indexing]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation]
+claimed_from: todo
+assignee: terra-indexing-fusion-census
+lease_expires_at: 1786412599
 ---
 ## What is stale
 
