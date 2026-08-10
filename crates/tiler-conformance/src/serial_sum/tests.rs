@@ -600,7 +600,8 @@ fn the_reassociating_contract_retains_both_strategies_and_the_fold() {
 
     // At four contributors both parallel rules return two partitions of two, and
     // that equality is a property of *this extent* rather than of the strategies
-    // — they diverge from twelve contributors upward. Stating it here is what
+    // — they first diverge at twelve contributors, but not at every admitting
+    // count thereafter. Stating it here is what
     // keeps the grouping-sensitive derivation attributable.
     for alternative in compilation.alternatives() {
         let strategy = super::classify_strategy(alternative).expect("a literal launch");

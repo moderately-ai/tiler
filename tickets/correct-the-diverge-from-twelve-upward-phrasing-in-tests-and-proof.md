@@ -39,3 +39,15 @@ Both residual "diverge from twelve contributors upward" phrases are gone or rewr
 ## How it was found
 
 Filed 2026-08-10 by the Phase B ticket-audit repair on [`restate-the-tree-width-rule-outside-the-compiler-crate`](restate-the-tree-width-rule-outside-the-compiler-crate.md). That ticket's own Fact audit already marked the `proof.rs` claim imprecise and never split a remainder; the audit report also found the same phrasing still live in the held-scope conformance test comment.
+
+## Fact audit and Outcome — 2026-08-10
+
+Read at `8ff1ebe64f23d264f0481c35fd339dc7c35acae2` before editing:
+
+| Fact | Verdict | Evidence |
+| --- | --- | --- |
+| The two universal-upward phrases are live | **verified** | Source-safe anchors `` they diverge from twelve contributors upward `` in `crates/tiler-conformance/src/serial_sum/tests.rs` and `` the two agree at four and diverge from twelve `` (wrapped before `contributors upward`) in `prototypes/serial-sum-run/src/proof.rs` were both present. |
+| The defect was repaired once already under the parent | **verified** | `restate-the-tree-width-rule-outside-the-compiler-crate`'s `## Fact audit at` and `## Fact audit — 2026-08-10` record the earlier `serial_sum.rs` repair and identify these exact residual sites. |
+| The four-contributor agreement remains true | **verified** | The conformance portfolio assertion beginning `` At four contributors both parallel rules return `` requires each published partition to equal `2 x 2`; the prototype `declared_partition` doc independently says the strategies declare the same split at its four contributors. |
+
+The current-rule authority is `tiler_compiler::pipeline::tests::the_tree_takes_the_capped_participant_count_where_the_balanced_split_differs`: it asserts 3,530 admitting and 2,350 differing counts below 4,096, leaving 1,180 agreeing. The two comments now say that twelve is the *first* divergence and explicitly reject universal divergence afterward. Assertions, rules, constants, identities, and cost claims are unchanged.

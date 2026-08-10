@@ -2059,8 +2059,9 @@ fn prove_parallel_strategies(
 ///
 /// They no longer declare the same split in general. Since the tree took its
 /// measured participant cap the split reads `governed_partition` and the tree
-/// reads `capped_tree_partition`; the two agree at four and diverge from twelve
-/// contributors upward. This prototype fixes `PARALLEL_COLUMNS = 4`, so the
+/// reads `capped_tree_partition`; the two agree at four and first diverge at
+/// twelve contributors, but not at every admitting count thereafter. This
+/// prototype fixes `PARALLEL_COLUMNS = 4`, so the
 /// equality below is a property of that extent rather than of the strategies,
 /// and reading each partition from its own published geometry — which is what
 /// the code does — is what keeps that distinction honest.
