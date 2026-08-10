@@ -9,23 +9,22 @@
 - Tickets total: 1302
 - In scope: 700
 - Out of scope: 602
-- Nonterminal in scope: 224
-- Terminal completed in window: 476
 
 ## Audit state (in-scope)
 
-- `claimed`: 24
+- `audited-clean`: 7
+- `audited-repair-required`: 17
 - `pending`: 676
 
 ## Repair state (in-scope)
 
-- `not-needed`: 700
+- `not-needed`: 683
+- `pending`: 17
 
-## In flight
+## Progress
 
-- Wave 1: 12 todo/blocked claimed (wave1-00..11)
-- Wave 2: 12 todo/blocked claimed (wave2-00..11)
-- Shared RO worktree: `.worktrees/tiler/ticket-audit-2026-08-10-ro` @ c99ac549
+- Waves 1–2 complete: 24 open-board tickets accepted into ledger
+- Shared RO worktree @ c99ac549
 
 ## Completion criteria
 
@@ -33,3 +32,4 @@
 - [ ] No in-scope record is pending, claimed, or stale
 - [ ] Every confirmed repair is integrated or blocked on a named authority decision
 - [ ] Final ledger + this manifest frozen on published main
+
