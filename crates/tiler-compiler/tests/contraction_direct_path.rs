@@ -261,9 +261,11 @@ fn a_contraction_over_one_declared_input_refuses_with_a_typed_reason() {
 ///
 /// The second output is load-bearing: it keeps `side` in the semantic program
 /// without making it a contraction operand, so this subject isolates the
-/// ADR 0087's independently binary operation family. The contraction maps its
-/// two operands to their program declaration ordinals without reading or
-/// discarding the independently retained input.
+/// registered schema's `OperationArity::exact(2)` and the compiler's fixed
+/// two-read form. ADR 0087 leaves multi-operand semantic contraction reserved;
+/// this fixture does not decide it. The contraction maps its two operands to
+/// their program declaration ordinals without reading or discarding the
+/// independently retained input.
 #[test]
 fn a_contraction_beside_a_retained_third_input_compiles() {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
