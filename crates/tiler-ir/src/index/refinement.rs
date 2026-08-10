@@ -82,16 +82,16 @@ const STAGED_EXECUTABLE_COVERAGE_IDENTITY_TAG: &[u8] =
 ///
 /// The no-prefix obligation `docs/artifact-abi.md` records normatively spans
 /// every domain the workspace admits, because one algorithm hashes them all in
-/// one process. It is discharged across crates by construction rather than by a
-/// check neither crate could hold — `tiler-artifact` depends on `tiler-ir` and
-/// not the reverse, so neither crate can enumerate the union. This domain opens
-/// `tiler.ir.`, and every domain `tiler-artifact` admits opens `tiler.artifact`
-/// or `tiler.proof-sidecar.`, which is what that crate's
-/// `no_governed_domain_of_this_crate_prefixes_another` asserts over its whole
-/// admitted set rather than leaving to prose. Those runs diverge at the first
-/// byte after `tiler.` — `i` here against `a` or `p` there — and every one of
-/// them is longer than that byte, so neither side can prefix the other whatever
-/// follows.
+/// one process. No crate owns a check over that union: `tiler-ir` cannot see
+/// `tiler-artifact`'s domains, while `tiler-artifact` could enumerate the union
+/// through its dependency on this crate if this crate exported its complete,
+/// private test-only pin population. `tiler-digest` deliberately owns no
+/// subject domains. The accepted artifact ABI contract instead establishes the
+/// cross-crate property from spellings and terminators: every terminated
+/// spelling has its sole NUL at the end, every unterminated IR spelling has no
+/// NUL, and the observed populations have no exact equality. This crate's
+/// `no_governed_domain_of_this_crate_prefixes_another` checks its own admitted
+/// set rather than leaving that half to prose.
 ///
 /// **The other set is sized by its type and not by a number here.**
 /// `GovernedDomain` in `crates/tiler-artifact/src/domains.rs` is that

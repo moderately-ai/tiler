@@ -192,12 +192,13 @@ fn reseal(bytes: &mut [u8]) {
 /// would report separation it had not established.
 /// `crate::domains::no_governed_domain_of_this_crate_prefixes_another` checks the
 /// union of this crate's eighteen and is the authority for the property; this
-/// test is the envelope-local half. `tiler-ir`'s coverage-graph domain opens
-/// `tiler.ir.` where every domain of this crate opens `tiler.artifact` or
-/// `tiler.proof-sidecar.`, so no prefix relation between the two crates' sets is
-/// expressible; that argument is what stands in for a check neither crate can
-/// hold, since neither depends on the other, and `crate::domains` asserts its
-/// premise rather than only stating it.
+/// test is the envelope-local half. Across crates, the accepted artifact ABI
+/// contract establishes the no-prefix property by a spelling-and-terminator
+/// argument over the observed IR population. `tiler-artifact` depends on
+/// `tiler-ir`, so this crate could check the union if that population were
+/// exported; the obstacle is that `tiler-ir` keeps its complete pin population
+/// private and test-only. `tiler-digest` deliberately owns no subject domains.
+/// `crate::domains` checks this crate's half rather than only stating it.
 ///
 /// **The population is derived rather than listed.** It is
 /// `GovernedDomain::of(DomainContainer::Envelope)`, so an envelope domain added
