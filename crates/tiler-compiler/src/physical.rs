@@ -2242,13 +2242,15 @@ pub(crate) const MEASURED_TREE_PARTICIPANT_CAP: u64 = 256;
 ///
 /// **The rule does not chase that direction to the end, and the residue is
 /// named rather than left to be rediscovered.** Below 20,000 contributors, 1,133
-/// counts still take two participants, against 1,176 before. The smallest is
-/// 1,042 (`2 * 521`), where 521 is admissible, representable, and inside the
-/// qualified entry's workgroup width, and the rule still declines it because 521
-/// is 265 above the cap while 2 is 254 below. Nothing measured says which of
-/// those costs less, so `measure-the-tree-width-excursion-past-the-cap` carries
-/// the excursion width as an open measurement rather than a threshold fitted to
-/// no data.
+/// counts still take two participants, against 1,176 before. Four is the
+/// smallest count taking two participants, where two is its only admissible
+/// count. The first count where the rule takes two while declining an admissible
+/// wider count is 1,042 (`2 * 521`), where 521 is admissible, representable, and
+/// inside the qualified entry's workgroup width; the rule still declines it
+/// because 521 is 265 above the cap while 2 is 254 below. Nothing measured says
+/// which of those costs less, so `measure-the-tree-width-excursion-past-the-cap`
+/// carries the excursion width as an open measurement rather than a threshold
+/// fitted to no data.
 ///
 /// **It does move one feasibility question, and deliberately does not answer
 /// it.** The rule chooses *within* what a target admits and decides nothing
