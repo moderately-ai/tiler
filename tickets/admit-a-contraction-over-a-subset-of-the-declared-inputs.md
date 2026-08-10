@@ -1,7 +1,7 @@
 ---
 id: admit-a-contraction-over-a-subset-of-the-declared-inputs
 title: Admit a contraction over a subset of the declared inputs
-status: todo
+status: in-progress
 priority: p2
 dependencies: [name-the-contraction-operand-arity-wall-and-separate-its-rule]
 related: [admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs, admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary, admit-a-staged-family-that-reads-a-materialized-intermediate]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, schedule, compiler-api]
+claimed_from: todo
+assignee: sol-contraction-subset
+lease_expires_at: 1786404386
 ---
 ## Trigger — fired 2026-08-08
 
