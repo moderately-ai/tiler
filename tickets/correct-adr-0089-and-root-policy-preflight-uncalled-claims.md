@@ -1,7 +1,7 @@
 ---
 id: correct-adr-0089-and-root-policy-preflight-uncalled-claims
 title: Correct ADR 0089 and root-policy claims that the cache-root preflight is uncalled
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [call-the-expansion-cache-preflight-on-the-resolved-root, correct-the-documents-that-still-say-the-cache-root-preflight-is-never-called]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions, research/cache]
 shared_scopes: [project/tickets]
 paths: []
 tags: [cache, frontend, diagnostics, documentation]
+claimed_from: todo
+assignee: terra-cache-preflight-prose
+lease_expires_at: 1786408090
 ---
 ## User-visible outcome
 
