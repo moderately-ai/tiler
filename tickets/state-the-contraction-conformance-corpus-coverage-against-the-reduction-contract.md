@@ -1,7 +1,7 @@
 ---
 id: state-the-contraction-conformance-corpus-coverage-against-the-reduction-contract
 title: State the contraction conformance corpus coverage against the reduction contract
-status: in-progress
+status: done
 priority: p2
 dependencies: [retain-contraction-conformance-evidence]
 related: [reduction-semantics-contract]
@@ -9,9 +9,6 @@ scopes: [implementation/reference, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [testing, conformance, contraction, numerics]
-claimed_from: todo
-assignee: sol-contraction-coverage
-lease_expires_at: 1786409092
 ---
 ## Current boundary
 
