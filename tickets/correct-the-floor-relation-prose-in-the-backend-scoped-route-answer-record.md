@@ -1,7 +1,7 @@
 ---
 id: correct-the-floor-relation-prose-in-the-backend-scoped-route-answer-record
 title: Correct residual floor and capacity-comparison relation prose in the backend-scoped route-answer research record
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [correct-the-residual-floor-relation-prose-outside-the-artifact-scopes, correct-the-runtime-route-requirement-relation-prose, correct-the-subgroup-threads-route-dimension-meaning, rename-the-route-resource-floor-vocabulary-for-its-corrected-relation]
@@ -9,6 +9,9 @@ scopes: [research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, runtime, naming]
+claimed_from: todo
+assignee: terra-floor-relation-prose
+lease_expires_at: 1786402510
 ---
 
 ## Why this exists
