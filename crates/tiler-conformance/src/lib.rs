@@ -1,4 +1,5 @@
 #![doc(test(attr(forbid(unsafe_code))))]
+#![cfg_attr(test, feature(variant_count))]
 //! Cross-layer executed conformance evidence for Tiler.
 //!
 //! A target profile is a set of claims, and conformance is what refutes them.
@@ -160,6 +161,7 @@
 //! | `device_preflight` | every obligation a host discharges before a routing commit, and how each refusal is classified |
 //! | `measurement` | whether this host could measure, and the exact row a measured result is bounded to |
 //! | `retained_record` | the realization probe's retained record, its `direct` digests, and how this host's row compares against it |
+//! | `ledger` | the private typed declarations compared with the ledger's manually owned conformance-evidence prose |
 //! | `portability` | the census that holds the non-Apple claim below to a population rather than to this paragraph |
 //! | `lints` | this crate's uninherited lint table, held against the workspace's |
 //! | `dispatch` | preparing, encoding, submitting, and classifying device dispatches (macOS only) |
@@ -236,6 +238,8 @@ mod device_preflight;
 mod dispatch;
 #[cfg(test)]
 mod envelope;
+#[cfg(test)]
+mod ledger;
 #[cfg(test)]
 mod lints;
 #[cfg(test)]

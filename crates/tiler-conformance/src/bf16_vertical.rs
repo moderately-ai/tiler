@@ -242,6 +242,20 @@ use tiler_reference::{
     ReferenceNumericalConformance, Tensor, TensorPayloadView, UnsupportedReferenceContract,
 };
 
+/// The executed record constraining BF16's conformance-evidence ledger cell.
+///
+/// This private declaration states the run's exact operation, corpus,
+/// environment, availability, and composition bounds. It assigns neither the
+/// manual maturity phrase nor one of the repository's evidence classes.
+pub(crate) const LEDGER_CELL: crate::ledger::CellDeclaration = crate::ledger::CellDeclaration {
+    cell: crate::ledger::ConformanceCell::Bf16,
+    run_ids: &["pure-bf16-vertical@b7c01815"],
+    operation_extent: "constant/multiply/add over fifteen hand-derived cases",
+    environment: crate::ledger::EnvironmentRow::APPLE9_2026_08_07,
+    measured_half: crate::ledger::MeasuredHalf::Ran,
+    composition: crate::ledger::CompositionExtent::HandAssembledBf16,
+};
+
 /// The scale constant, `1.5` in BF16.
 pub(crate) const SCALE_BITS: u16 = 0x3fc0;
 /// The bias constant, `+0.0` in BF16.
