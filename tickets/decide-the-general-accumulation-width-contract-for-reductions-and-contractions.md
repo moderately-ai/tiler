@@ -1,7 +1,7 @@
 ---
 id: decide-the-general-accumulation-width-contract-for-reductions-and-contractions
 title: Reconcile accumulation-width records with the accepted operation-fact contract
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [implement-parallel-reduction-strategies, admit-the-rms-normalization-family, admit-the-softmax-family, scope-transformer-nonlinear-normalization-and-reductions, design-the-bf16-computation-and-accumulator-contract]
@@ -9,9 +9,6 @@ scopes: [research/numerics, contracts/numerics, research/scheduling, research/pr
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, reduction, contraction, accumulator, widening]
-claimed_from: todo
-assignee: sol-accumulation-width-contract
-lease_expires_at: 1786404386
 ---
 ## User-visible outcome
 
