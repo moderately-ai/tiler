@@ -52,8 +52,158 @@ pub(super) struct CompletePlans {
     /// Every budget that stopped the partition search, retained so an empty
     /// portfolio can say whether the space it searched was the whole one.
     pub(super) cover_budget_stops: Vec<crate::cover::CoverBudgetStop>,
+    /// Exhaustive, private classification of every enumerated cover's planning
+    /// outcome. It is diagnostic state for the empty-portfolio class only and
+    /// enters neither plan nor explain identity.
+    pub(super) failure_census: PlanningFailureCensus,
     /// The complete-plan selection record every alternative is caused by.
     pub(super) selection_record: ExplainRecordId,
+}
+
+/// A fail-closed census of why each enumerated cover produced no complete plan.
+///
+/// The five counters are a partition of the cover enumeration: fusion legality
+/// can remove a cover before its frontiers exist; an empty frontier can be a
+/// pure schedule-vocabulary gap, partial-coverage-only search noise, or any
+/// other local refusal; and a cover whose frontiers all admit implementations
+/// reaches the boundary join. Keeping the partition here, while all outcomes
+/// are still in hand, avoids trying to reconstruct causes from the deliberately
+/// coarser empty portfolio later.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct PlanningFailureCensus {
+    covers: usize,
+    fusion_legality_declines: usize,
+    vocabulary_bearing_declines: usize,
+    partial_coverage_only_declines: usize,
+    other_frontier_declines: usize,
+    fully_implemented: usize,
+}
+
+impl PlanningFailureCensus {
+    fn new(covers: usize) -> Self {
+        Self {
+            covers,
+            ..Self::default()
+        }
+    }
+
+    /// Returns whether the exhaustive population contains a complete
+    /// vocabulary-only cover and otherwise only partial-coverage search noise.
+    ///
+    /// Boundary disagreement is checked from the selection authority rather
+    /// than copied into this census: only a fully implemented cover reaches that
+    /// join, and any such cover already makes the all-vocabulary predicate
+    /// false. The explicit rejection check is defence in depth against a forged
+    /// or later-widened selection result.
+    pub(super) fn is_pure_vocabulary_gap(&self, portfolio: &SelectedPortfolio) -> bool {
+        self.has_vocabulary_population()
+            && has_only_region_unimplemented_rejections(portfolio.rejections())
+    }
+
+    /// The census-only half of [`Self::is_pure_vocabulary_gap`].
+    ///
+    /// Kept separate so the direct negative controls can perturb each cover
+    /// category without forging a selection receipt. The production decision
+    /// still adds the independent boundary-rejection check above.
+    fn has_vocabulary_population(&self) -> bool {
+        let accounted = self
+            .fusion_legality_declines
+            .saturating_add(self.vocabulary_bearing_declines)
+            .saturating_add(self.partial_coverage_only_declines)
+            .saturating_add(self.other_frontier_declines)
+            .saturating_add(self.fully_implemented);
+        self.covers > 0
+            && accounted == self.covers
+            && self.vocabulary_bearing_declines > 0
+            && self
+                .vocabulary_bearing_declines
+                .saturating_add(self.partial_coverage_only_declines)
+                == self.covers
+            && self.fusion_legality_declines == 0
+            && self.other_frontier_declines == 0
+            && self.fully_implemented == 0
+    }
+}
+
+/// Returns whether selection retained no boundary-composition refusal.
+///
+/// Kept wildcard-free so a new complete-plan rejection cannot be absorbed into
+/// the vocabulary class without an explicit decision here.
+fn has_only_region_unimplemented_rejections(
+    rejections: &[crate::selection::PlanRejection],
+) -> bool {
+    rejections.iter().all(|rejection| match rejection {
+        crate::selection::PlanRejection::RegionUnimplemented { .. } => true,
+        crate::selection::PlanRejection::BoundaryDisagreement { .. } => false,
+    })
+}
+
+/// The fail-closed class of one empty frontier's complete retained answer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EmptyFrontierFailure {
+    /// Every retained cause is `UnspellableRegion` and at least one is non-partial.
+    NonPartialVocabulary,
+    /// Every retained cause is `region-partial-coverage` search noise.
+    PartialCoverageOnly,
+    /// Silence or a different typed cause.
+    Other,
+}
+
+/// Classifies one empty frontier's complete retained answer.
+///
+/// The match is exhaustive over every local disposition. A new rejection kind
+/// therefore fails compilation until it is classified, and every existing
+/// target, numerical, synchronization, opaque-call, reserved-body,
+/// applicability, shape, permission, representability, or silent outcome stays
+/// on the conservative side. `PartialCoverage` is separated so it can be search
+/// noise beside a complete vocabulary-only cover without allowing a
+/// partial-only portfolio to change class. `PartialFusedProgram` is another
+/// structural wall and remains `Other`.
+fn classify_empty_frontier(frontier: &ImplementationFrontier) -> EmptyFrontierFailure {
+    if !frontier.admitted().is_empty() || frontier.rejections().is_empty() {
+        return EmptyFrontierFailure::Other;
+    }
+    let mut partial = false;
+    let mut non_partial = false;
+    for rejection in frontier.rejections() {
+        match rejection {
+            crate::frontier::FrontierRejection::StrategyDeclined {
+                cause: crate::frontier::StrategyDeclineCause::UnspellableRegion { rule, .. },
+                ..
+            } => {
+                if *rule == crate::physical::RegionVocabularyWall::PartialCoverage.reason() {
+                    partial = true;
+                } else if *rule
+                    == crate::physical::RegionVocabularyWall::PartialFusedProgram.reason()
+                {
+                    return EmptyFrontierFailure::Other;
+                } else {
+                    non_partial = true;
+                }
+            }
+            crate::frontier::FrontierRejection::StrategyDeclined {
+                cause:
+                    crate::frontier::StrategyDeclineCause::NumericalPermissionRefused { .. }
+                    | crate::frontier::StrategyDeclineCause::NoAdmissibleShape { .. }
+                    | crate::frontier::StrategyDeclineCause::Unrepresentable { .. },
+                ..
+            }
+            | crate::frontier::FrontierRejection::Infeasible { .. }
+            | crate::frontier::FrontierRejection::Unhonourable { .. }
+            | crate::frontier::FrontierRejection::Unsynchronizable { .. }
+            | crate::frontier::FrontierRejection::SynchronizationUndeclared { .. }
+            | crate::frontier::FrontierRejection::OpaqueCall { .. }
+            | crate::frontier::FrontierRejection::UnsupportedVariant { .. }
+            | crate::frontier::FrontierRejection::NotApplicable { .. } => {
+                return EmptyFrontierFailure::Other;
+            }
+        }
+    }
+    match (partial, non_partial) {
+        (false | true, true) => EmptyFrontierFailure::NonPartialVocabulary,
+        (true, false) => EmptyFrontierFailure::PartialCoverageOnly,
+        (false, false) => EmptyFrontierFailure::Other,
+    }
 }
 
 /// Enumerates legal covers, proves their fusion legality, enumerates the local
@@ -242,17 +392,22 @@ pub(super) fn enumerate_complete_plans(
     // A linear scan beats a map at this size and asks only for `PartialEq`,
     // which the subject already has.
     let mut frontiers_by_subject: Vec<(FrontierRegionSubject, ImplementationFrontier)> = Vec::new();
+    let mut failure_census = PlanningFailureCensus::new(enumeration.covers().len());
     for cover in enumeration.covers() {
         if cover
             .regions()
             .iter()
             .any(|region| illegal.contains(region.occurrence()))
         {
+            failure_census.fusion_legality_declines += 1;
             continue;
         }
         let mut region_frontiers = Vec::with_capacity(cover.region_count());
         let mut proposed_everywhere = true;
         let mut refusal: Option<TerminalCause> = None;
+        let mut vocabulary_blocked = false;
+        let mut partial_coverage_blocked = false;
+        let mut other_frontier_blocked = false;
         for region in cover.regions() {
             let role = region_role(verified, region.members());
             // The tensor this region's owning write targets, decided by the
@@ -320,6 +475,15 @@ pub(super) fn enumerate_complete_plans(
             };
             if frontier.admitted().is_empty() && frontier.rejections().is_empty() {
                 proposed_everywhere = false;
+            }
+            if frontier.admitted().is_empty() {
+                match classify_empty_frontier(&frontier) {
+                    EmptyFrontierFailure::NonPartialVocabulary => vocabulary_blocked = true,
+                    EmptyFrontierFailure::PartialCoverageOnly => {
+                        partial_coverage_blocked = true;
+                    }
+                    EmptyFrontierFailure::Other => other_frontier_blocked = true,
+                }
             }
             // One region subject yields one explain subject, so its frontier and
             // any rejection it carries are recorded exactly once however many
@@ -417,6 +581,19 @@ pub(super) fn enumerate_complete_plans(
             }
             region_frontiers.push(RegionFrontier::new(subject, frontier));
         }
+        if other_frontier_blocked {
+            failure_census.other_frontier_declines += 1;
+        } else if vocabulary_blocked {
+            // A partial wall beside this one is search noise within the same
+            // all-Unspellable cover. The non-partial wall is the positive
+            // evidence; a cover carrying only the partial wall takes the next
+            // arm instead.
+            failure_census.vocabulary_bearing_declines += 1;
+        } else if partial_coverage_blocked {
+            failure_census.partial_coverage_only_declines += 1;
+        } else {
+            failure_census.fully_implemented += 1;
+        }
         if proposed_everywhere && let Some(cause) = refusal {
             refused_covers.push((cover.identity(), cause));
         }
@@ -456,6 +633,7 @@ pub(super) fn enumerate_complete_plans(
         numerical,
         rejections,
         cover_budget_stops: enumeration.budget_stops().to_vec(),
+        failure_census,
         selection_record,
     })
 }
@@ -1115,10 +1293,12 @@ pub(super) fn select_non_dominated<'alternatives>(
 #[cfg(test)]
 mod tests {
     use super::{
-        AssemblyRefusal, AssemblyRefusalClass, CompileError, ExplainStage, RequestError,
-        SubjectKind, assembly_failure, semantic_discharge_is_invalid,
+        AssemblyRefusal, AssemblyRefusalClass, CompileError, ExplainStage, PlanningFailureCensus,
+        RequestError, SubjectKind, assembly_failure, has_only_region_unimplemented_rejections,
+        semantic_discharge_is_invalid,
     };
     use crate::index_discharge::IndexDomainDischargeRefusalKind;
+    use crate::selection::{BoundaryDisagreement, PlanRejection};
 
     #[test]
     fn only_disproved_semantic_discharge_is_invalid_compiler_output() {
@@ -1128,6 +1308,103 @@ mod tests {
         assert!(!semantic_discharge_is_invalid(
             IndexDomainDischargeRefusalKind::Unknown
         ));
+    }
+
+    /// A partial-coverage-only population is search noise, not proof that an
+    /// installed vocabulary lacks a complete region spelling.
+    ///
+    /// The neighbouring positive subject carries the measured four-cover live
+    /// population: three covers bear a non-partial staged vocabulary wall (two
+    /// exclusively and one beside partial search noise), and one is partial
+    /// only. Removing the three vocabulary-bearing covers is the subject
+    /// perturbation; no assertion or expected class is edited to make it fail.
+    #[test]
+    fn a_partial_coverage_only_population_is_not_a_vocabulary_gap() {
+        let live_population = PlanningFailureCensus {
+            covers: 4,
+            vocabulary_bearing_declines: 3,
+            partial_coverage_only_declines: 1,
+            ..PlanningFailureCensus::default()
+        };
+        assert!(
+            live_population.has_vocabulary_population(),
+            "the measured live population has three vocabulary-bearing covers"
+        );
+
+        let partial_only = PlanningFailureCensus {
+            covers: 4,
+            vocabulary_bearing_declines: 0,
+            partial_coverage_only_declines: 4,
+            ..PlanningFailureCensus::default()
+        };
+        assert!(
+            !partial_only.has_vocabulary_population(),
+            "planning census has no non-partial vocabulary cover"
+        );
+    }
+
+    /// Every independent non-vocabulary cover category keeps the population on
+    /// `NoFeasiblePlan`'s conservative side.
+    #[test]
+    fn every_other_cover_cause_disqualifies_the_vocabulary_population() {
+        let assert_disqualified = |census: PlanningFailureCensus, cause| {
+            assert!(
+                !census.has_vocabulary_population(),
+                "{cause} was absorbed into a pure vocabulary population"
+            );
+        };
+        assert_disqualified(PlanningFailureCensus::default(), "empty cover population");
+        assert_disqualified(
+            PlanningFailureCensus {
+                covers: 4,
+                fusion_legality_declines: 1,
+                vocabulary_bearing_declines: 1,
+                partial_coverage_only_declines: 2,
+                ..PlanningFailureCensus::default()
+            },
+            "fusion rejection or unknown",
+        );
+        assert_disqualified(
+            PlanningFailureCensus {
+                covers: 4,
+                vocabulary_bearing_declines: 1,
+                partial_coverage_only_declines: 2,
+                other_frontier_declines: 1,
+                ..PlanningFailureCensus::default()
+            },
+            "target, mixed, silent, or other frontier decline",
+        );
+        assert_disqualified(
+            PlanningFailureCensus {
+                covers: 4,
+                vocabulary_bearing_declines: 1,
+                partial_coverage_only_declines: 2,
+                fully_implemented: 1,
+                ..PlanningFailureCensus::default()
+            },
+            "fully implemented cover awaiting boundary composition",
+        );
+    }
+
+    /// A boundary-composition refusal is an independent complete-plan cause and
+    /// cannot be inferred from the local frontier census.
+    #[test]
+    fn a_boundary_disagreement_disqualifies_the_vocabulary_population() {
+        let local_gap = PlanRejection::RegionUnimplemented {
+            region: "region".into(),
+            role: "unrecognized",
+            covers: 1,
+        };
+        assert!(has_only_region_unimplemented_rejections(&[local_gap]));
+
+        let boundary = PlanRejection::BoundaryDisagreement {
+            disagreement: BoundaryDisagreement::ProducerGuaranteeMissing { region: vec![1] },
+            cover: vec![2],
+        };
+        assert!(
+            !has_only_region_unimplemented_rejections(&[boundary]),
+            "boundary disagreement was absorbed into a pure vocabulary population"
+        );
     }
 
     /// **A cover the assembler cannot express is a missing capability, not a

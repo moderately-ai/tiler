@@ -38,10 +38,10 @@ use tiler_ir::shape::{Axis, Shape};
 
 /// Every numerical contract a caller can state.
 ///
-/// Stated exhaustively rather than sampled, because the outcome is structural:
-/// a contract under which the chain compiled would mean the ceiling is not where
-/// this file says it is, and no permission a caller can grant gives an
-/// unordinalled boundary role an ordinal.
+/// Stated exhaustively rather than sampled. The two strict-order contracts
+/// isolate the structural vocabulary wall. The three reassociation-permitting
+/// contracts make some multi-occurrence covers fusion-legality `Unknown`; that
+/// mixed cause is deliberately not absorbed into the pure vocabulary class.
 const CONTRACTS: [NumericalContract; 5] = [
     NumericalContract::STRICT_F32,
     NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
@@ -137,20 +137,35 @@ fn compile_under(
 ///
 /// **The class is what carries the claim.** A recognizer refusal is
 /// `UnsupportedCapability` naming a `strategy` rule — `staged-operand` is what
-/// this exact program reported before the widening — and this program now
-/// refuses under `NoFeasiblePlan` instead: it was recognized, covered, and
-/// offered to the physical provider, which declined every region of the
-/// occurrence's two stages by name. A bare `is_err` cannot tell those two apart,
-/// which is why the class is asserted rather than the failure.
+/// this exact program reported before the widening. Planning now reports the
+/// same class under `region-vocabulary`, but only after recognition and an
+/// exhaustive non-empty cover search prove at least one complete cover stopped
+/// at a non-partial `UnspellableRegion` wall and every other cover adds only
+/// `UnspellableRegion` search noise. A bare `is_err` cannot distinguish those
+/// phases, which is why the exact rule is asserted rather than only the class.
+///
+/// The contraction-permitting contract is the independent mixed-cause control:
+/// fusion-legality `Unknown` keeps it on `NoFeasiblePlan` even though the same
+/// non-partial vocabulary wall is present.
 #[test]
 fn a_staged_family_over_an_edge_is_recognized_and_stops_at_the_region_vocabulary() {
     let program = staged_over_an_edge();
     for contract in CONTRACTS {
+        let expected = if matches!(
+            contract,
+            NumericalContract::STRICT_F32 | NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32
+        ) {
+            CompileFailureClass::UnsupportedCapability {
+                rule: "region-vocabulary",
+            }
+        } else {
+            CompileFailureClass::NoFeasiblePlan
+        };
         assert_eq!(
             compile_under(&program, contract),
-            Err(CompileFailureClass::NoFeasiblePlan),
-            "the chain is recognized and no scheduled region spells its consuming stage, \
-             and {contract:?} is not what would change that"
+            Err(expected),
+            "the chain is recognized and the class reflects the complete cause census under \
+             {contract:?}"
         );
     }
 }
