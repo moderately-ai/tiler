@@ -3,8 +3,8 @@ id: admit-reassociated-contraction-schedule-alternatives
 title: Admit reassociated and permuted contraction schedule alternatives
 status: todo
 priority: p2
-dependencies: [implement-parallel-reduction-strategies, realize-the-tiled-contraction-schedule-and-its-metal-emission]
-related: [reduction-semantics-contract, implement-analytical-component-cost-model]
+dependencies: [implement-parallel-reduction-strategies, realize-the-contraction-through-the-appendable-direct-path]
+related: [reduction-semantics-contract, implement-analytical-component-cost-model, realize-the-tiled-contraction-schedule-and-its-metal-emission, enumerate-the-split-reduction-on-the-planning-frontier, admit-a-reassociating-contract-without-contraction]
 scopes: [implementation/compiler, implementation/ir, implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
@@ -30,6 +30,10 @@ A caller whose contract permits reassociation gets a contracted-axis-split contr
 ## Non-goals
 
 Distributivity, in either direction. Regrouping a contraction *chain* is a different dimension that no contract Tiler can express grants, and its rejection must name distributivity rather than reassociation.
+
+## Graph repair — 2026-08-10
+
+Hard dependency on [`realize-the-tiled-contraction-schedule-and-its-metal-emission`](realize-the-tiled-contraction-schedule-and-its-metal-emission.md) re-pointed to [`realize-the-contraction-through-the-appendable-direct-path`](realize-the-contraction-through-the-appendable-direct-path.md). Tiled Non-goals exclude the split alternatives; tiled parks on the cooperative free-index tile public boundary, which this K-split outcome does not name. The foundation is the landed direct contraction path plus the parallel-reduction portfolio patterns; free-index tiled emission is a sibling alternative, not a prerequisite. `multi_pass_family` / `cooperative_family` still return `None` for `StrictTensorContraction` — that remains this ticket's work. Tiled stays `related` for shared contraction-topology lessons only.
 
 ## Closes when
 

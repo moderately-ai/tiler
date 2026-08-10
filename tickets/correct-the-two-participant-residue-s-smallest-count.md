@@ -4,7 +4,7 @@ title: Correct the two-participant residue's smallest count
 status: todo
 priority: p3
 dependencies: []
-related: [restate-the-tree-width-rule-outside-the-compiler-crate, bound-the-tree-cap-s-unmeasured-downward-direction, measure-the-tree-width-excursion-past-the-cap]
+related: [restate-the-tree-width-rule-outside-the-compiler-crate, bound-the-tree-cap-s-unmeasured-downward-direction, measure-the-tree-width-excursion-past-the-cap, complete-the-tree-cap-audit-sweep-inside-the-compiler-crate]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -30,7 +30,7 @@ tags: [reductions, documentation]
 
 ## Sequencing
 
-[`complete-the-tree-cap-audit-sweep-inside-the-compiler-crate`](complete-the-tree-cap-audit-sweep-inside-the-compiler-crate.md) also edits `physical.rs`. Land these sequentially rather than dispatching them together. This ticket owns the residue paragraph; the completed-record corrections are already present. The sweep owns the prime fallback-loop subject and the private target-domain naming.
+[`complete-the-tree-cap-audit-sweep-inside-the-compiler-crate`](complete-the-tree-cap-audit-sweep-inside-the-compiler-crate.md) owns the prime fallback-loop subject in `pipeline/tests.rs` and the private target-domain naming in `target.rs`, and only verifies (does not re-edit) the upward/downward wording already on `capped_tree_partition`. Land these sequentially rather than dispatching them together as `implementation/compiler` scope-collision hygiene, not as a shared-file edit race on the residue paragraph. This ticket owns the residue paragraph; the completed-record corrections are already present.
 
 ## Closes when
 
