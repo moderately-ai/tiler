@@ -2109,11 +2109,11 @@
       "assignment_time": "2026-08-10T13:53:55Z",
       "report_path_or_id": "docs/research/documentation/ticket-audit-2026-08-10/reports/assemble-the-embedding-and-vocabulary-projection-programs/6243f44c7217_c99ac54950f2.md",
       "report_hash": "f0e4206857e3ea6f971be5771b56875f531c962e87459f998d97af28ff6efa08",
-      "repair_state": "pending",
-      "repair_owner": null,
-      "repair_commit": null,
+      "repair_state": "integrated",
+      "repair_owner": "phase-b-integrator",
+      "repair_commit": "8cb4de75c62b26939199ed4b1520c5046f098418",
       "validation_commit": null,
-      "notes": ""
+      "notes": "content changed by repair; re-audit required"
     },
     {
       "ticket_id": "attribute-the-canonical-manifest-growth-and-decide-whether-the-encoding-owes-a-budget",
@@ -3459,11 +3459,11 @@
       "assignment_time": "2026-08-10T13:55:14Z",
       "report_path_or_id": "docs/research/documentation/ticket-audit-2026-08-10/reports/construct-a-symbolic-region-as-a-semantic-program/0fff4f344ebb_c99ac54950f2.md",
       "report_hash": "89d21b5cfb87aa05fb6c6c3a133455929e8362b562f7f013103c01477264ac74",
-      "repair_state": "pending",
-      "repair_owner": null,
-      "repair_commit": null,
+      "repair_state": "integrated",
+      "repair_owner": "phase-b-integrator",
+      "repair_commit": "8cb4de75c62b26939199ed4b1520c5046f098418",
       "validation_commit": null,
-      "notes": ""
+      "notes": "content changed by repair; re-audit required"
     },
     {
       "ticket_id": "convert-the-remaining-accuracy-predicate-shapes-to-a-relative-bound",
@@ -5565,11 +5565,11 @@
       "assignment_time": "2026-08-10T13:55:14Z",
       "report_path_or_id": "docs/research/documentation/ticket-audit-2026-08-10/reports/define-the-model-level-regression-policy/3c2e7c36d26d_c99ac54950f2.md",
       "report_hash": "f7c086226120eb0a0c4f1f78f4461b56de833702025c9fb2e07170cae82c4045",
-      "repair_state": "pending",
-      "repair_owner": null,
-      "repair_commit": null,
+      "repair_state": "integrated",
+      "repair_owner": "phase-b-integrator",
+      "repair_commit": "8cb4de75c62b26939199ed4b1520c5046f098418",
       "validation_commit": null,
-      "notes": ""
+      "notes": "content changed by repair; re-audit required"
     },
     {
       "ticket_id": "define-the-model-weight-binding-manifest",
@@ -5637,11 +5637,11 @@
       "assignment_time": "2026-08-10T14:01:25Z",
       "report_path_or_id": "docs/research/documentation/ticket-audit-2026-08-10/reports/deliver-an-artifact-family-from-a-symbolic-region/1760b6330f0a_c99ac54950f2.md",
       "report_hash": "0d30079fa259bf0d2950aa226b0f4b424604c0589b7c1a130c95eef08d0c2e1a",
-      "repair_state": "pending",
-      "repair_owner": null,
-      "repair_commit": null,
+      "repair_state": "integrated",
+      "repair_owner": "phase-b-integrator",
+      "repair_commit": "8cb4de75c62b26939199ed4b1520c5046f098418",
       "validation_commit": null,
-      "notes": ""
+      "notes": "content changed by repair; re-audit required"
     },
     {
       "ticket_id": "deliver-several-artifact-families-from-one-expansion",
@@ -5979,11 +5979,11 @@
       "assignment_time": "2026-08-10T14:01:25Z",
       "report_path_or_id": "docs/research/documentation/ticket-audit-2026-08-10/reports/derive-the-serial-reduction-admission-from-the-split-family-law/3d0b15030e1f_c99ac54950f2.md",
       "report_hash": "5ebcd581d7980d2189c02ce23b9b212062fc6b9c590dc35e65b07c98f4a04d5c",
-      "repair_state": "pending",
-      "repair_owner": null,
-      "repair_commit": null,
+      "repair_state": "integrated",
+      "repair_owner": "phase-b-integrator",
+      "repair_commit": "8cb4de75c62b26939199ed4b1520c5046f098418",
       "validation_commit": null,
-      "notes": ""
+      "notes": "content changed by repair; re-audit required"
     },
     {
       "ticket_id": "derive-the-tree-fold-form-of-the-online-softmax-rescaling-bound",
