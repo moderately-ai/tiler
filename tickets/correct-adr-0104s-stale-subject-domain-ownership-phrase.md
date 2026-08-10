@@ -44,3 +44,7 @@ The correction explicitly preserves Tom's acceptance and relay provenance, the b
 `make citations` passed with 1,189 pinned citations and 6,443 local links resolved; `tkt lint --format json` returned `ok: true` with no diagnostics; and `git diff --check` passed. The green `make full` published at `447c24923dca4294c6c5afaa2837423d9063f33c` carries: it is an ancestor of the exact base, and the exact-base delta contains only this accepted decision and ticket, touching none of the gate-invalidating paths. Fresh citation and ticket lint gates were run as the repository's carry rule requires.
 
 The correction and audit are committed at `e6984925d36de780fe9018609532c7c176eafe3d`. Exact-base `tkt guard` with both `--base` and `--config-ref` set to `d5d5136eab64161533b61158a63d78a5a02cb5a5` reports `conflict: false`, no under-declared scope, and exactly the two declared affected scopes: direct `contracts/decisions` and shared `project/tickets`. Its overlap report is warning-only; the two other live claims are parallel-safe by pairwise `tkt why` and have no committed branch diff against this base.
+
+## Review correction — 2026-08-10
+
+Independent review found that the new preservation paragraph spelled the Rust crate path as the hyphenated package name `tiler-artifact::program`. The accepted ABI and owning source use `tiler_artifact::program`; the ADR path is corrected to match them. This notation repair changes no ownership, identity, domain, API, or other preserved decision.
