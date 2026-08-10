@@ -1,7 +1,7 @@
 ---
 id: close-the-ticket-audit-report-unclosed-code-span-blind-spots
 title: Close the ticket-audit report unclosed-code-span blind spots
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [repair-the-ticket-audit-report-citation-and-link-breakage]
@@ -9,6 +9,9 @@ scopes: [research/documentation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, verification]
+claimed_from: todo
+assignee: terra-code-span-audit
+lease_expires_at: 1786388862
 ---
 ## User-visible outcome
 

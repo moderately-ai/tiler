@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-first-attention-planning-record-with-landed-fusion-roles-and-budgets
 title: Reconcile the first attention planning record with landed fusion roles and budgets
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [plan-the-materialized-attention-decomposition, implement-general-dag-partitioning, plan-the-recomputing-attention-decomposition, realize-the-attention-contractions-on-metal, correct-the-records-the-derived-region-shape-budgets-falsify]
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, attention, doc-drift, planning]
+claimed_from: todo
+assignee: sol-attention-record
+lease_expires_at: 1786388862
 ---
 ## User-visible outcome
 
