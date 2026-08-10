@@ -112,9 +112,10 @@ use tiler_compiler::target::{TargetProfile, TargetRequest};
 use tiler_ir::program::{MaterializedOrigin, StageAccessMode, ValueRole};
 use tiler_ir::schedule::{InputOrdinal, TensorRole};
 use tiler_ir::semantic::{
-    F32, F32Add, F32Multiply, InputKey, OutputKey, SemanticProgram, SemanticProgramBuilder,
+    F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
+    SemanticProgramBuilder, StrictSerialF32Sum,
 };
-use tiler_ir::shape::Shape;
+use tiler_ir::shape::{Axis, Shape};
 
 /// Every numerical contract a caller can state.
 ///
@@ -220,6 +221,44 @@ fn disjoint_input_two_output_program() -> SemanticProgram {
     builder
         .output(OutputKey::new("squared").unwrap(), squared)
         .unwrap();
+    builder.build().unwrap()
+}
+
+/// Adds `sum(input * input, axis 1) * scale` as one named output.
+fn epilogue_chain_output(
+    builder: &mut SemanticProgramBuilder,
+    input: &str,
+    output: &str,
+    columns: u64,
+    scale_bits: u32,
+) {
+    let input = builder
+        .input::<F32>(
+            InputKey::new(input).unwrap(),
+            Shape::from_dims([1, columns]),
+        )
+        .unwrap();
+    let squared = F32Multiply::apply(builder, input, input).unwrap();
+    let reduced = StrictSerialF32Sum::apply(builder, squared, [Axis::new(1)]).unwrap();
+    let scale = F32Constant::apply(builder, scale_bits).unwrap();
+    let scaled = F32Multiply::apply(builder, reduced, scale).unwrap();
+    builder
+        .output(OutputKey::new(output).unwrap(), scaled)
+        .unwrap();
+}
+
+/// One `[1, 4]` reduction/epilogue chain, used as the admission control.
+fn one_epilogue_chain_program() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    epilogue_chain_output(&mut builder, "x", "sx", 4, 2.0_f32.to_bits());
+    builder.build().unwrap()
+}
+
+/// Two independent reduction/epilogue chains over distinct inputs and outputs.
+fn two_epilogue_chain_program(second_columns: u64) -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    epilogue_chain_output(&mut builder, "x", "sx", 4, 2.0_f32.to_bits());
+    epilogue_chain_output(&mut builder, "y", "sy", second_columns, 3.0_f32.to_bits());
     builder.build().unwrap()
 }
 
@@ -400,6 +439,64 @@ fn two_outputs_reading_disjoint_declared_inputs_compile_binding_only_what_they_r
         sorted,
         vec![vec!["a".to_owned()], vec!["b".to_owned()]],
         "each stage must bind exactly the declared input its own output reads",
+    );
+}
+
+/// Two independently declared, same-shaped producer chains still collide at
+/// the current public compiler boundary.
+///
+/// Reassociation makes each four-contributor fold's split alternative
+/// reachable. The two split combiners bind distinct materialized values but
+/// dispatch the same kernel. Each physical pass claims its own fold occurrence's
+/// second semantic stage, but program assembly projects only first-stage atoms
+/// into `CoveredOccurrence`, so both combiners carry an empty IR coverage list.
+/// Kernel plus that projected coverage is the complete subject `stage_key`
+/// compares. Whole-program verification therefore rejects the pair as
+/// ambiguous and the public boundary classifies the defect as
+/// [`CompileFailureClass::InvalidCompilerOutput`].
+///
+/// The shape perturbation is the executable neighbour: reducing `y` from four
+/// contributors to two removes its split alternative, and therefore the second
+/// uncovered combiner carrying the same stage key. Keeping the request,
+/// operation families, bindings, and output cardinality otherwise fixed proves
+/// the changed result belongs to the stage subject rather than to the expected
+/// error.
+#[test]
+fn same_shaped_epilogue_chains_reach_invalid_compiler_output() {
+    let control = one_epilogue_chain_program();
+    assert_eq!(control.input_count(), 1);
+    assert_eq!(control.output_count(), 1);
+
+    let same_shape = two_epilogue_chain_program(4);
+    assert_eq!(same_shape.input_count(), 2);
+    assert_eq!(same_shape.output_count(), 2);
+
+    let different_extent = two_epilogue_chain_program(2);
+    assert_eq!(different_extent.input_count(), same_shape.input_count());
+    assert_eq!(different_extent.output_count(), same_shape.output_count());
+
+    let contract = NumericalContract::REASSOCIATE_F32;
+    assert_eq!(
+        compile_under(&control, contract),
+        Ok(()),
+        "one chain must compile or the pair is not evidence about a collision",
+    );
+    let targets = TargetRequest::new([TargetProfile::governed()]).unwrap();
+    let failure = compile(CompileRequest::new(&same_shape, contract, targets))
+        .expect_err("the two same-shaped split chains still collide");
+    assert_eq!(
+        failure.class(),
+        CompileFailureClass::InvalidCompilerOutput,
+        "the public boundary must report its own ambiguous stage-key output as a defect",
+    );
+    assert!(
+        failure.explain().is_some(),
+        "program verification happens after the target-qualified trace opens",
+    );
+    assert_eq!(
+        compile_under(&different_extent, contract),
+        Ok(()),
+        "changing only one chain's extent must remove the colliding split combiner",
     );
 }
 
