@@ -1,11 +1,11 @@
 ---
 id: correct-session-facade-acceptance-disclosures
 title: Correct residual draft disclosures for the accepted session facade
-status: in-progress
+status: review
 priority: p2
 dependencies: [accept-the-public-compiler-facade-boundary]
 related: [state-and-check-a-bf16-numerical-contract, clarify-the-inline-frontend-facades-consumer-scope]
-scopes: [contracts/navigation, contracts/foundation, implementation/frontend]
+scopes: [contracts/navigation, contracts/foundation, implementation/frontend, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, public-boundary, disclosure]
@@ -22,6 +22,8 @@ Tom accepted `tiler_compiler::session` in full on 2026-08-05 (five items) and 20
 
 Several portals and the consumer facade crate still describe the session surface (or its BF16 contract additions) as an unaccepted reviewed experimental draft. That is post-acceptance disclosure drift, not a re-decision of the six-item surface.
 
+**Source-first correction — 2026-08-10.** The original six-site census was imprecise. Reading `docs/artifact-abi.md` in full found a seventh live present-tense claim at the anchor `The public reviewed-draft compiler session constructs`; a follow-up full-document and crate-header census found three more at the source anchors `as one coherent public compiler facade is an undecided boundary owned by`, `the live nodes are`, and `and it is a reviewed experimental draft on the same terms`. The artifact-ABI clause is about this accepted session facade, not the artifact-program facade that the same document separately and correctly retains as a reviewed draft. The other three respectively misstate the compiler boundary from the inline frontend, retain its completed ticket in an open-question queue, and copy its old maturity onto the separately draft operation-capability surface. The live population is therefore ten sites. Explicitly historical audit reports and dated retired passages are evidence, not live disclosure sites.
+
 ## Sites to align
 
 Rewrite each live present-tense draft claim to accepted (not stabilized) wording that matches `session.rs` / correctness-and-testing. Do not re-open item-level acceptance; do not stabilize.
@@ -32,6 +34,10 @@ Rewrite each live present-tense draft claim to accepted (not stabilized) wording
 4. `docs/roadmap.md` — anchor `a public reviewed-draft session facade` → accepted-not-stabilized session facade.
 5. `crates/tiler/src/lib.rs` crate header — anchors `reviewed experimental draft rather than an accepted or stabilized API` and `accept-the-public-compiler-facade-boundary owns that decision` → session is accepted (not stabilized); stop naming this ticket as an open owner. Keep the load-bearing claim that `tiler` is the inline frontend facade and not the general semantic-program entry point.
 6. `docs/dtype-support.md` — anchor `likewise a reviewed experimental draft rather than an accepted boundary` (BF16 session additions) → accepted contract items per the sibling Surface accepted record; still not a full BF16 vertical guarantee.
+7. `docs/artifact-abi.md` — anchor `The public reviewed-draft compiler session constructs` → accepted-not-stabilized compiler session. Preserve the artifact-program draft label and every technical construction claim in the paragraph.
+8. `crates/tiler-macros/src/lib.rs` crate header — anchor `as one coherent public compiler facade is an undecided boundary owned by` → accepted-not-stabilized compiler session; remove the completed ticket as an open owner. Preserve that `tiler-macros` is only the implementation half of the accepted inline frontend, consumers name `tiler`, and neither frontend crate is a general semantic-program entry point.
+9. `docs/open-questions.md` Q-PKG-002 — anchor `the live nodes are` → remove the completed compiler-facade ticket from the live `awaiting-decision` queue. Preserve the still-live route-requirement acceptance ticket and the question's operation-capability promotion focus.
+10. `docs/operation-extensions.md` — anchor `and it is a reviewed experimental draft on the same terms` → accepted-not-stabilized compiler session. Preserve the registered operation-capability surface's own reviewed-prototype status.
 
 ## Explicitly not in scope
 
@@ -44,10 +50,10 @@ Rewrite each live present-tense draft claim to accepted (not stabilized) wording
 Session/facade-scoped residual draft language is gone or historical/struck only. Suggested check:
 
 ```sh
-rg -n "reviewed experimental draft|reviewed-draft session|reviewed draft" docs/status.md docs/architecture.md docs/roadmap.md docs/dtype-support.md crates/tiler/src/lib.rs
+rg -n "reviewed experimental draft|reviewed-draft session|reviewed draft|undecided boundary|accept-the-public-compiler-facade-boundary" docs crates/*/src/lib.rs --glob '*.md' --glob '*.rs' --glob '!docs/research/documentation/ticket-audit-*/**'
 ```
 
-Every remaining hit is either about a different surface or is inside a dated historical/struck passage. `make citations` if ticket links move. If `crates/tiler` rustdoc text changes: `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler --no-deps`.
+Every remaining hit is either about a different surface or is inside an explicitly historical audit report or dated retired/struck passage. `make citations` if ticket links move. If a frontend crate's rustdoc text changes: `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler-macros -p tiler --no-deps`.
 
 ## Graph
 

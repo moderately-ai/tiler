@@ -13,17 +13,15 @@
 //! Apart from the macro, this crate publishes no way to construct, compile, or
 //! explain a semantic tensor graph; those surfaces live in `tiler-ir` and
 //! `tiler-compiler` today,
-//! and whether they are eventually presented as one coherent public compiler
-//! facade is a separate boundary that has not been decided —
-//! `tiler_compiler::session` is a reviewed experimental draft rather than an
-//! accepted or stabilized API, and `accept-the-public-compiler-facade-boundary`
-//! owns that decision.
+//! and `tiler_compiler::session` is an accepted but not stabilized compiler
+//! facade. That acceptance does not make this crate a general semantic-program
+//! entry point.
 //!
 //! So "internal" is the wrong reading of the other members. What is decided is
 //! that the inline frontend routes through none of them, which is why nothing a
 //! `tensor!` expansion emits names one. What is undecided is which of them a
-//! consumer that does not use this frontend may name, and this crate answers
-//! nothing about it.
+//! consumer that does not use this frontend may name beyond the accepted session
+//! facade, and this crate answers nothing about it.
 //!
 //! # Why the macro lives in another crate
 //!
