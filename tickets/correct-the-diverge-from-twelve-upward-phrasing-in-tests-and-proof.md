@@ -1,7 +1,7 @@
 ---
 id: correct-the-diverge-from-twelve-upward-phrasing-in-tests-and-proof
 title: Correct the "diverge from twelve upward" phrasing in tests and proof
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [restate-the-tree-width-rule-outside-the-compiler-crate]
@@ -9,6 +9,9 @@ scopes: [implementation/conformance, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [reductions, documentation]
+claimed_from: todo
+assignee: terra-diverge-twelve-prose
+lease_expires_at: 1786406457
 ---
 ## The claim, and why it is wrong
 
