@@ -3,50 +3,31 @@
 - Audit base (Phase A read authority): `c99ac54950f242d88d8dfe8335332bef0cf75f2d`
 - In scope: **700**
 - Out of scope (older terminal): **602**
-- Living authority: `ledger.json` (this file is a snapshot; re-derive counts from the ledger when they disagree)
+- Living authority: `ledger.json`
 
-## Phase A (complete)
+## Phase A
 
-- **Audited: 700 / 700**
+- Completed at frozen base for all 700 in-scope tickets.
+- Rows may become `stale` after Phase B content changes until re-audited.
+
+## Ledger snapshot
+
+### audit_state
 - `audited-clean`: 342
-- `audited-repair-required`: 358
-- `pending` / `claimed`: 0
+- `audited-repair-required`: 338
+- `stale`: 20
 
-## Phase B (in progress)
+### repair_state
+- `integrated`: 28
+- `not-needed`: 335
+- `pending`: 337
 
-- `repair_state=pending`: **357** (open repair work orders)
-- `repair_state=integrated`: 8 (early open-board batch)
-- `repair_state=not-needed`: 335
+- Open repairs (`pending`): **337**
+- Integrated repairs: **28**
 
-### Queue classes (see `repairs/phase-b-queue.json`)
+## Phase B progress
 
-Derived from each report's Repair required / Exact files sections. Class is a batching hint, not a hard gate.
+- Wave B1 complete: 20 class-A terminal ticket-only repairs integrated; marked `stale` for re-audit.
+- Queue: `repairs/phase-b-queue.json`
+- Next: continue class-A bulk at higher parallelism; then B/C/D; re-audit stale rows.
 
-| Class | Meaning | Count (approx at queue build) |
-| --- | --- | --- |
-| A | Terminal (`done`/`closed`), ticket-record repair | ~196 |
-| B | Nonterminal board repairs | ~122+ |
-| C | Ticket + docs residual | ~16 |
-| D | Ticket + new remainder filing | ~14 |
-| E | Code residual / authority escalate | ~6+ |
-
-Strict class-A (ticket-only file list, public consequences none): **98** at queue build.
-
-### Progress
-
-- Wave B1: first **20** strict class-A terminal ticket-only repairs (low concurrency process pilot)
-- Later waves: scale parallelism after B1 process is solid; then re-audit integrated hashes
-
-## How to re-count
-
-```sh
-python3 - <<'PY'
-import json
-from collections import Counter
-from pathlib import Path
-doc=json.loads(Path('docs/research/documentation/ticket-audit-2026-08-10/ledger.json').read_text())
-print('audit', Counter(t['audit_state'] for t in doc['tickets']))
-print('repair', Counter(t.get('repair_state') for t in doc['tickets']))
-print('pending repairs', sum(1 for t in doc['tickets'] if t.get('repair_state')=='pending'))
-PY
-```
