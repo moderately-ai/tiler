@@ -144,11 +144,6 @@ const OPERAND_CASES: [(&str, [u32; 3]); 5] = [
     ),
 ];
 
-/// The serial-sum operand-case population the published matrix consumes.
-pub(crate) const fn serial_sum_case_count() -> usize {
-    OPERAND_CASES.len()
-}
-
 /// The exact extents [`CONTRACTION_CASES`] is written for.
 ///
 /// Stated as constants and checked rather than assumed, because the table is

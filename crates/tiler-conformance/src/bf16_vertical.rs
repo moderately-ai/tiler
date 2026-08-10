@@ -242,22 +242,6 @@ use tiler_reference::{
     ReferenceNumericalConformance, Tensor, TensorPayloadView, UnsupportedReferenceContract,
 };
 
-/// Retained execution constraining BF16's conformance-evidence cell.
-///
-/// These are the device-observed result encodings landed at `b7c01815`, not an
-/// alias for the oracle table. The live test compares a fresh result with both
-/// this record and the independent oracle. Fresh unavailability remains a
-/// separate `Measured` outcome and cannot manufacture retained execution.
-pub(crate) const RETAINED_EXECUTION: crate::ledger::RetainedBf16Execution =
-    crate::ledger::RetainedBf16Execution {
-        identity: "pure-bf16-vertical@b7c01815",
-        environment: crate::ledger::RetainedEnvironment::APPLE9_2026_08_07,
-        observed: [
-            0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x00c0, 0x3fc0, 0x3fc2, 0x403f,
-            0x7f80, 0x7f80, 0xff80, 0x7fc0,
-        ],
-    };
-
 /// The scale constant, `1.5` in BF16.
 pub(crate) const SCALE_BITS: u16 = 0x3fc0;
 /// The bias constant, `+0.0` in BF16.

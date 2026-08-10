@@ -28,8 +28,7 @@ use super::{
     flush_moved_indices, operands, pack, preserved_expectations, realization_of, reference_bits,
     region_under, scheduled_region, semantic_program, unpack,
 };
-use crate::ledger::{CompositionExtent, bf16_subject, validate_fresh_bf16};
-use crate::measurement::{measured_half, require_or_report, require_or_report_with_boundary};
+use crate::measurement::{measured_half, require_or_report};
 
 /// Corpus positions this file names, so a reordering is a failure rather than a
 /// silently different claim.
@@ -353,12 +352,6 @@ fn a_regrouping_bf16_contract_is_refused_at_the_conformance_bridge() {
 /// turns this red here rather than passing silently there.
 #[test]
 fn the_request_boundary_stops_at_the_ledgers_undeclared_bf16_contraction_row() {
-    let subject = bf16_subject().expect("the retained BF16 execution subject resolves");
-    assert_eq!(
-        subject.composition(),
-        CompositionExtent::HandAssembledBf16,
-        "the retained subject claims a route this refusal proves was not crossed",
-    );
     let declaration = tiler_build::BoundMetalCompileDeclaration::first_macos_apple9()
         .expect("the authoritative declaration assembles");
     let key = InputKey::new("operand").expect("the input key is valid");
@@ -565,7 +558,6 @@ fn a_wrongly_derived_operand_width_changes_what_the_kernel_reads() {
 /// than leaving two implementations to agree for unexamined reasons.
 #[test]
 fn the_bf16_vertical_agrees_with_the_oracle_on_the_measured_row() {
-    let subject = bf16_subject().expect("the retained BF16 execution subject resolves");
     let elements = corpus_elements();
     let emitted = emit_vertical(elements).expect("the bf16 vertical emits");
     let expected = declared_expectations();
@@ -575,7 +567,7 @@ fn the_bf16_vertical_agrees_with_the_oracle_on_the_measured_row() {
         "the oracle and the hand-derived column must already agree before a device is asked",
     );
 
-    let Some((boundary, observed)) = require_or_report_with_boundary(
+    let Some(observed) = require_or_report(
         "bf16 vertical",
         measured_half(&emitted, OperandStride::Declared),
     ) else {
@@ -601,7 +593,6 @@ fn the_bf16_vertical_agrees_with_the_oracle_on_the_measured_row() {
         expected.len(),
     );
     assert!(disagreements.is_empty(), "{disagreements:#?}");
-    validate_fresh_bf16(&subject, &boundary, &observed);
 
     // The execution witnesses, named and checked individually rather than left
     // to the bulk comparison. Without them `flushed` and `the arithmetic was

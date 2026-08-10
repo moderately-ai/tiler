@@ -132,17 +132,6 @@ use crate::applicability::ProbedGpuFamily;
 use crate::device_preflight::PreflightRefusal;
 use crate::serial_sum::{F32_BYTES, INPUT_KEY, OUTPUT_KEY, compile_under, serial_sum_program};
 
-/// Retained execution constraining IEEE F32's conformance-evidence cell.
-///
-/// Its identity is the checked realization-probe directory this module reads.
-/// The ledger refuses another spelling before deriving the operation and case
-/// populations from the executable tables below.
-pub(crate) const RETAINED_EXECUTION: crate::ledger::RetainedF32Execution =
-    crate::ledger::RetainedF32Execution {
-        identity: crate::retained_record::RECORD_DIRECTORY,
-        environment: crate::ledger::RetainedEnvironment::APPLE9_2026_08_07,
-    };
-
 /// The one delivery position every artifact here is built for.
 ///
 /// A delivery position is the ordered slot a consumer's build target resolves
