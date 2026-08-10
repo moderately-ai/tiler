@@ -5,7 +5,7 @@ status: in-progress
 priority: p2
 dependencies: []
 related: [admit-the-registered-elementary-families-as-recognizable-program-stages]
-scopes: [implementation/compiler]
+scopes: [implementation/compiler, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, diagnostics]
@@ -15,7 +15,7 @@ lease_expires_at: 1786409566
 ---
 ## User-visible outcome
 
-A caller whose program no *installed vocabulary* can spell is told `CompileFailureClass::UnsupportedCapability`, which names an action — install a provider, or wait for coverage — rather than `NoFeasiblePlan`, which the public documentation defines as "a hard target rejection".
+A caller whose program no *installed vocabulary* can spell is told `CompileFailureClass::UnsupportedCapability`, which names an action — install a provider, or wait for coverage — rather than `NoFeasiblePlan`, which retains hard target refusals and conservative mixed or structural empty portfolios whose causes do not establish a pure capability gap.
 
 ## The observation, corrected at the current repository boundary
 
@@ -28,7 +28,7 @@ A caller whose program no *installed vocabulary* can spell is told `CompileFailu
 
 ## The question
 
-`NoFeasiblePlan`'s own documentation says "This is a hard target rejection, never an exhausted analysis budget", and `UnsupportedCapability`'s says "The program is valid and no installed capability compiles it... The action is to install a provider or wait for coverage". An empty portfolio whose every rejection is a region-vocabulary wall matches the second exactly. An empty portfolio caused by a *target* rejection — a region the vocabulary spells and the profile refuses — matches the first.
+`NoFeasiblePlan`'s current documentation includes hard target rejections and conservative mixed or structural planning failures whose causes do not establish a pure capability gap. `UnsupportedCapability` says the program is valid but no installed capability compiles it, and directs the caller to install a provider or wait for coverage. An empty portfolio whose complete census establishes only supported-but-unspellable region vocabulary matches the second. An empty portfolio caused by a *target* rejection — a region the vocabulary spells and the profile refuses — remains one case of the first, as do mixed and structural empty portfolios. `BudgetExhausted` remains distinct from both because a bounded search proves neither conclusion.
 
 The distinction remains derivable only if planning retains a private, fail-closed cause census while it still has every cover outcome. Classify the no-plan result as a vocabulary gap only when all of these hold:
 
@@ -39,6 +39,8 @@ The distinction remains derivable only if planning retains a private, fail-close
 - there was no fusion-legality rejection or unknown, boundary disagreement, hard target refusal, silent or mixed frontier, or other structural decline.
 
 **Predicate correction — 2026-08-10.** The earlier wording required every cover to be non-partial, which cannot classify its own live subject. At exact base `b07d269b5ca64605060f7baf70a4d4095be86516`, source anchor `staged_over_an_edge` exhaustively enumerates four covers. One is blocked solely by `region-partial-coverage` over three occurrences; one solely by `region-staged-family-unspellable` over two stages; one by a staged-family wall over one stage plus partial coverage over two occurrences; and one by two staged-family walls over one stage each. The partial walls are alternative groupings the search considered, not the reason the complete staged partition cannot compile. The corrected rule therefore requires at least one cover carrying a non-partial vocabulary wall, permits partial coverage beside or instead of that wall on other all-`UnspellableRegion` covers, and still refuses a portfolio whose only evidence is partial coverage.
+
+**Contract-alignment review correction — 2026-08-10.** Independent exact-hash review of `238030982878f65e082b85adbbb18216e7fdb24c` found that four present-tense passages still repeated the retired hard-target-only definition: optimizer anchor `never as NoFeasiblePlan, which is a hard target rejection`, pipeline-test anchor `rather than NoFeasiblePlan, whose contract is that it`, and the two budget-coverage passages anchored by `public surface documents as`. Current source authority is `CompileFailureClass::NoFeasiblePlan` anchor `This includes hard target rejections and mixed or structural planning`, together with pipeline mappings `portfolio-empty-with-vocabulary-gap`, `portfolio-empty-after-budget-stop`, and `portfolio-empty-without-target-rejection`. The repaired prose now keeps conservative mixed or structural empty portfolios in `NoFeasiblePlan`, hard target refusal as one case, pure supported-but-unspellable populations in `UnsupportedCapability`, and budget exhaustion distinct. Scope `contracts/optimizer` was added because `ticketsplease.toml` maps `docs/compiler/**` there; this is scheduling metadata, not a new contract boundary. No historical quotation needed removal: the repaired passages were live current-surface claims, while dated historical corrections remain explicitly labelled provenance.
 
 Anything else remains `NoFeasiblePlan`. In particular, the existing contraction-permitting mixed-body case must remain a control: its fused candidates resolve fusion legality as `Unknown` under source anchor `unrealized-contraction`, while its surviving covers hit partial coverage, so it is not a pure vocabulary gap.
 

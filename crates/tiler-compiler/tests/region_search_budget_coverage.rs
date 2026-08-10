@@ -163,8 +163,9 @@ fn the_population_the_member_bound_refused_compiles_as_one_whole_program_region(
 /// wall.** Sixty-three occurrences exceed `semantic_operations`, which
 /// `check_program_budgets` refuses before any target is consulted, so the
 /// refusal carries `BudgetExhausted` — the class whose action is to widen a
-/// bound — and never `NoFeasiblePlan`, which the public surface documents as "a
-/// hard target rejection, never an exhausted analysis budget".
+/// bound — and never `NoFeasiblePlan`. That class retains hard target refusals
+/// and conservative mixed or structural empty portfolios, while neither class
+/// can turn a budget-truncated search into a verdict about the program.
 ///
 /// **The refusal names the resource, its limit, and the demand**, which is what
 /// `carry-the-exhausted-resource-through-the-budget-refusal` widened it to do.
@@ -196,10 +197,10 @@ fn a_chain_past_the_program_size_bound_names_the_budget_it_exhausted() {
         "the refusal names the exhausted budget, its limit, and the demand",
     );
 
-    // The class is still not `NoFeasiblePlan`, which the public surface
-    // documents as "a hard target rejection, never an exhausted analysis
-    // budget". Carrying a payload must not let the two blur: no target was
-    // consulted here at all.
+    // The class is still not `NoFeasiblePlan`, which retains hard target
+    // refusals and conservative mixed or structural empty portfolios. Carrying
+    // a payload must not let the two blur: no target was consulted here at all,
+    // and the bounded search proves neither kind of exhaustive refusal.
     assert!(!matches!(
         failure.class(),
         CompileFailureClass::NoFeasiblePlan
