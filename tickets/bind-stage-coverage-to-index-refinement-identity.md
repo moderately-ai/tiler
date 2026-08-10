@@ -4,7 +4,7 @@ title: Bind kernel-program stage coverage to its refinement evidence
 status: done
 priority: p1
 dependencies: [correct-adr-0071-retained-lower-layer-identity-cardinality, place-index-refinement-evidence-under-an-ir-owned-verifier, admit-a-strict-affine-index-realization-law, derive-a-reached-only-executable-coverage-identity]
-related: [bind-the-scheduled-region-to-the-verified-index-region-identity, restore-an-executable-artifact-assembly-example]
+related: [bind-the-scheduled-region-to-the-verified-index-region-identity, restore-an-executable-artifact-assembly-example, accept-the-proof-bound-stage-coverage-public-boundary]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/artifacts, implementation/runtime, implementation/frontend, contracts/decisions, research/program-planning, research/documentation, contracts/foundation, implementation/build]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
