@@ -1,7 +1,7 @@
 ---
 id: pin-the-gather-request-boundary-refusal-with-a-test
 title: Pin the gather's request-boundary refusal with a test that names the key
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [admit-the-indirect-access-class-into-the-index-layer, admit-an-indirect-gather-family-for-tied-embedding-lookup, accept-adr-0107-indirect-gather-semantic-family]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, gather, testing, fail-closed]
-claimed_from: todo
-assignee: sol-gather-boundary
-lease_expires_at: 1786404265
 ---
 ## User-visible outcome
 
