@@ -734,10 +734,9 @@ fn a_published_and_consumed_intermediate_compiles_and_agrees() {
 /// **Two different subset shapes in one fixture, deliberately.** `product`'s
 /// region binds ordinals that are not `0..n` — the case a region-local
 /// renumbering would silently get wrong at assembly — and the prologue's region
-/// binds a single ordinal that is not the first, which is what the *fused* fold
-/// vocabulary cannot spell. The affine prologue is chosen so a fused alternative
-/// would otherwise be offered: this fixture is therefore also the evidence that
-/// it is withheld rather than proposed and rejected.
+/// binds a single ordinal that is not the first. The affine prologue is chosen
+/// so the fused alternative must retain that ordinal while coexisting with the
+/// independent output.
 fn disjoint_input_subset_program() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let inputs: Vec<_> = ["a", "b", "c"]
@@ -799,13 +798,10 @@ fn read_tensors(
 /// `a * c`. The ordinals are the only fact separating them, which is exactly why
 /// a bare `is_ok()` here would report nothing.
 ///
-/// **The fused fold is withheld, and that is a claim rather than an absence.**
+/// **The fused fold is retained, and its read is asserted.**
 /// `b * 2.0 + 1.0` is the one prologue shape `FusedMultiplyAddSerialSum` spells,
-/// so a fused alternative would be offered were it not for the declared ordinal;
-/// `tiler_ir::schedule` requires that region's contributor read to be the first
-/// declared input exactly, and
-/// `admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary`
-/// owns the widening that makes the candidate reachable again.
+/// and its scheduled region reads declared input one directly. This is the path
+/// that was previously withheld solely because that ordinal was not zero.
 ///
 /// **Both published outputs are compared against the reference bit for bit**,
 /// and the payloads are chosen so that no two elements and no two row sums
@@ -829,35 +825,31 @@ fn outputs_reading_input_subsets_compile_and_bind_the_inputs_they_read() {
     let compiled = compile(CompilationRequest::governed(&program))
         .expect("outputs reading input subsets compile through the ordinary path");
     assert_eq!(compiled.targets[0].failure(), None);
-    assert!(
-        compiled.targets[0]
-            .portfolio
-            .alternatives
-            .iter()
-            .all(|retained| retained.kind != ProgramAlternativeKind::Fused),
-        "the affine fusion must be withheld for a prologue over a later declared input",
-    );
-    let retained: Vec<&ProgramAlternative> =
-        compiled.targets[0].portfolio.alternatives.iter().collect();
-    let [alternative] = retained.as_slice() else {
-        panic!(
-            "expected one retained alternative, found {}",
-            retained.len()
-        );
-    };
-
-    // Three regions and one materialization edge: the independent product, the
-    // prologue staging its contributors, and the fold reading them across.
-    assert_eq!(alternative.plan.cover().region_count(), 3);
-    assert_eq!(alternative.plan.cover().materializations().len(), 1);
-    assert_eq!(alternative.kernels.len(), 3);
-    assert_eq!(alternative.scheduled_regions.len(), 3);
-
-    // Each region against the declaration, and `assert_kernels_match_program`
-    // is what makes `kernels[i]` the kernel of `scheduled_regions[i]`.
     let input = |ordinal| TensorRole::Input {
         ordinal: InputOrdinal::new(ordinal),
     };
+    let alternative = compiled.targets[0]
+        .portfolio
+        .alternatives
+        .iter()
+        .find(|alternative| {
+            alternative.plan.cover().materializations().is_empty()
+                && alternative
+                    .scheduled_regions
+                    .iter()
+                    .any(|region| read_tensors(region) == [input(1)])
+        })
+        .expect("the affine fold over input one is retained without materialization");
+
+    // Two independent regions and no materialization edge: the product, and the
+    // affine fold reading its later declared input directly.
+    assert_eq!(alternative.plan.cover().region_count(), 2);
+    assert_eq!(alternative.plan.cover().materializations().len(), 0);
+    assert_eq!(alternative.kernels.len(), 2);
+    assert_eq!(alternative.scheduled_regions.len(), 2);
+
+    // Each region against the declaration, and `assert_kernels_match_program`
+    // is what makes `kernels[i]` the kernel of `scheduled_regions[i]`.
     let reads: Vec<Vec<TensorRole>> = alternative
         .scheduled_regions
         .iter()
@@ -870,12 +862,10 @@ fn outputs_reading_input_subsets_compile_and_bind_the_inputs_they_read() {
             .unwrap_or_else(|| panic!("no region reads {expected:?}; regions read {reads:?}"))
     };
     let product_region = find(&[input(0), input(2)]);
-    let prologue_region = find(&[input(1)]);
-    let fold_region = find(&[TensorRole::Intermediate]);
+    let fold_region = find(&[input(1)]);
 
     let product = interpret_fused_inputs(&alternative.kernels[product_region], &[&a, &c]);
-    let staged = interpret_fused(&alternative.kernels[prologue_region], &b);
-    let folded = interpret_fused(&alternative.kernels[fold_region], &staged);
+    let folded = interpret_fused(&alternative.kernels[fold_region], &b);
 
     let tensors = [
         f32_tensor(shape.clone(), &a),

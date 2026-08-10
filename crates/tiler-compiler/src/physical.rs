@@ -100,25 +100,13 @@ const fn contributor_tensor(serial: &NormalizedSerialSum) -> TensorRole {
 /// structural one. `sum(permute(a) * 2.0 + 1.0)` would otherwise fold `a` where
 /// the program said `permute(a)`.
 ///
-/// **And the ordinal must be the first, which is a wall a crate down rather
-/// than a property of the fusion.** `tiler_ir::schedule`'s
-/// `verify_access_and_semantics` requires a `FusedMultiplyAddSerialSum` region's
-/// contributor read to be `FIRST_INPUT` exactly, so a fused region over
-/// `sum(b * 2.0 + 1.0)` beside an independent output reading `a` would be
-/// proposed and then rejected as invalid compiler output. Declining it here
-/// loses a *candidate* and never a program — the materialized prologue-and-fold
-/// pair realizes that prologue, reading declared input `1` from a region whose
-/// own vocabulary admits it —
-/// and `admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary`
-/// is what makes the candidate reachable again.
 fn fused_contributor_tensor(prologue_reads: &[(u32, LogicalAccess)]) -> Option<TensorRole> {
     let [(ordinal, LogicalAccess::LinearIdentity)] = prologue_reads else {
         return None;
     };
-    let tensor = TensorRole::Input {
+    Some(TensorRole::Input {
         ordinal: InputOrdinal::new(*ordinal),
-    };
-    (*ordinal == InputOrdinal::FIRST.get()).then_some(tensor)
+    })
 }
 
 /// Recovers the scale and bias a fused serial sum's scalar program can spell.
@@ -3751,8 +3739,8 @@ fn subject_contributor_tensor(
 /// `tensor` is stated by the caller rather than derived here because the four
 /// spellings do not agree on it: the materialized fold, the split's partial pass,
 /// and the cooperative tile bind whichever tensor holds the *declared contributor
-/// domain*, while the fused region binds the first input because its scalar
-/// program contains the prologue. Checking it at all is what stops a provider
+/// domain*, while the fused region binds the declared input its contained
+/// prologue reads. Checking it at all is what stops a provider
 /// offering a `sum(x)` region that reads an intermediate no cover materialized —
 /// which `tiler-ir` admits as an intrinsically coherent region and the program
 /// assembler would then refuse for a missing edge, naming the wrong authority.
@@ -4151,18 +4139,8 @@ mod tests {
 
     /// A fold's contributor tensor is its recognized ordinal, not the first.
     ///
-    /// **Driven directly at the derivation, because nothing else can reach its
-    /// general arm today.** `crate::request`'s `sum-contributor-ordinal`
-    /// refusal declines a recognized fold over any declared input but the
-    /// first, so every `contributor_input` a compilation produces is `Some(0)`
-    /// or `None` and a version of this function that ignored the ordinal
-    /// entirely would fail no end-to-end test — measured, not assumed: replacing
-    /// its `Some` arm with `InputOrdinal::FIRST` leaves the whole `tiler-compiler`
-    /// suite green. The general arm is *implemented and walled*, which is a
-    /// different claim from tested, and this is the test that makes the
-    /// difference small enough to state.
-    /// `admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary`
-    /// removes the wall.
+    /// Driven directly at the derivation so the three physical spellings below
+    /// share one asserted source of truth rather than restating the mapping.
     #[test]
     fn a_folds_contributor_tensor_is_its_recognized_declared_ordinal() {
         assert_eq!(
@@ -4181,22 +4159,21 @@ mod tests {
 
     /// The fused fold reads the tensor its prologue read, and declines the rest.
     ///
-    /// Three refusals and one admission, each a different reason the fused
-    /// vocabulary cannot spell a prologue: a read list of any length but one has
-    /// no single contributor; a structural relation has nowhere to go in a
-    /// region that addresses its input through a reduction relation; and a
-    /// declared ordinal other than the first is refused by `tiler_ir::schedule`
-    /// itself.
+    /// The declared ordinal is retained rather than densely renumbered. The two
+    /// refusal classes are independent: a read list of any length but one has no
+    /// single contributor, and a structural relation has nowhere to go in a
+    /// region that addresses its input through a reduction relation.
     #[test]
-    fn the_fused_fold_reads_its_prologues_own_dense_first_input() {
+    fn the_fused_fold_reads_its_prologues_own_dense_input() {
         let dense = |ordinal| (ordinal, LogicalAccess::LinearIdentity);
-        assert_eq!(
-            super::fused_contributor_tensor(&[dense(0)]),
-            Some(TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            }),
-        );
-        assert_eq!(super::fused_contributor_tensor(&[dense(1)]), None);
+        for ordinal in [0_u32, 1, 7] {
+            assert_eq!(
+                super::fused_contributor_tensor(&[dense(ordinal)]),
+                Some(TensorRole::Input {
+                    ordinal: InputOrdinal::new(ordinal),
+                }),
+            );
+        }
         assert_eq!(super::fused_contributor_tensor(&[]), None);
         assert_eq!(super::fused_contributor_tensor(&[dense(0), dense(1)]), None);
         assert_eq!(
@@ -4605,6 +4582,84 @@ mod tests {
         ))
         .unwrap();
         request.for_target(0).unwrap()
+    }
+
+    /// A relaxed two-output request whose fold reads declared input one while
+    /// the independent output retains input zero.
+    fn later_input_fold_request() -> VerifiedTargetRequest {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let shape = Shape::from_dims([2, 4]);
+        let first = builder
+            .input::<F32>(InputKey::new("first").unwrap(), shape.clone())
+            .unwrap();
+        let contributor = builder
+            .input::<F32>(InputKey::new("contributor").unwrap(), shape)
+            .unwrap();
+        let sum = StrictSerialF32Sum::apply(&mut builder, contributor, [Axis::new(1)]).unwrap();
+        let retained = F32Add::apply(&mut builder, first, first).unwrap();
+        builder
+            .output(OutputKey::new("folded").unwrap(), sum)
+            .unwrap();
+        builder
+            .output(OutputKey::new("retained").unwrap(), retained)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let request = verify_planned_request(CompilationRequest::governed_under(
+            &program,
+            StrictF32NumericalContract::governed_relaxed(),
+        ))
+        .unwrap();
+        request.for_target(0).unwrap()
+    }
+
+    /// Serial, split, and cooperative spellings bind the same recognized
+    /// nonzero contributor ordinal. A different or out-of-range ordinal stays
+    /// intrinsically well formed and is refused by exact request binding.
+    #[test]
+    fn every_fold_topology_binds_the_same_later_declared_input() {
+        let request = later_input_fold_request();
+        let expected = TensorRole::Input {
+            ordinal: InputOrdinal::new(1),
+        };
+        let folded = &request.normalized().outputs()[0];
+
+        let (serial, serial_members) =
+            reduction_region(&request, folded, RegionWrite::ProgramOutput);
+        assert_eq!(serial.index.accesses[0].tensor, expected);
+        verify_schedule(serial, serial_members, &request).unwrap();
+
+        let split = split_reduction_regions(&request, folded, RegionWrite::ProgramOutput)
+            .expect("the relaxed four-contributor fold admits a split");
+        let [(partial, partial_members), (combine, combine_members)] =
+            <[_; 2]>::try_from(split.stages).unwrap();
+        assert_eq!(partial.index.accesses[0].tensor, expected);
+        assert_eq!(combine.index.accesses[0].tensor, TensorRole::Intermediate);
+        verify_schedule(partial.clone(), partial_members.clone(), &request).unwrap();
+        verify_schedule(combine, combine_members, &request).unwrap();
+
+        let (tree, tree_members) =
+            single_workgroup_tree_region(&request, folded, RegionWrite::ProgramOutput)
+                .expect("the relaxed four-contributor fold admits a tree");
+        assert_eq!(tree.index.accesses[0].tensor, expected);
+        verify_region_subject_binding(&tree, &tree_members, request.subject()).unwrap();
+
+        for (mut forged, members, ordinal) in [
+            (partial, partial_members, 0_u32),
+            (tree, tree_members, 7_u32),
+        ] {
+            let tensor = TensorRole::Input {
+                ordinal: InputOrdinal::new(ordinal),
+            };
+            forged.index.accesses[0].tensor = tensor;
+            forged.index.bounds_proofs[0].tensor = tensor;
+            assert_eq!(
+                verify_region_subject_binding(&forged, &members, request.subject()),
+                Err(PhysicalError::Intrinsic {
+                    rule: "request-binding",
+                    region: forged.index.id,
+                }),
+            );
+        }
     }
 
     /// A split's two passes are told apart by the stage, not by the member set.

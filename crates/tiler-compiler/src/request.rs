@@ -5141,8 +5141,8 @@ fn resolve_numerical_contract(
 /// `verify_access_and_semantics` required a `ScalarProgram::StrictSerialSum`
 /// region's contributor access to read `TensorRole::Intermediate`;
 /// `admit-a-reduction-over-a-declared-input-tensor` widened that arm to the fold's
-/// *declared contributor domain*, which is the first input tensor when the program
-/// folds it directly and an intermediate when a prologue region wrote it.
+/// *declared contributor domain*, which is the input tensor the program folds
+/// directly or an intermediate when a prologue region wrote it.
 /// [`recognize_reduction`] therefore admits the shape with no prologue at all, and
 /// the rule name no longer exists.
 ///
@@ -7308,25 +7308,6 @@ fn recognize_reduction(
     } else {
         Some(declared_ordinal(&declared, *contributor)?)
     };
-    // **A fold over any declared input but the first has no region to be built
-    // from, and it is refused here rather than proposed and rejected.**
-    // `tiler_ir::schedule`'s `ContributorTensor::DeclaredDomain` admits
-    // `TensorRole::Intermediate` or `Input { ordinal: 0 }` and nothing else, and
-    // its split and cooperative topologies name `Exactly(FIRST_INPUT)`, so a
-    // region reading `Input { ordinal: 1 }` under a `StrictSerialSum` fails the
-    // intrinsic verifier as `numerical-or-access-refinement` — which reaches a
-    // caller as invalid compiler output naming a provider, not as a property of
-    // its program.
-    //
-    // The state became reachable with this ticket and not before: a
-    // prologue-less fold's walk reads exactly one tensor, so while every walk
-    // had to read every declared input, such a program declared exactly one and
-    // the recognized ordinal could only be zero.
-    // [`admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary`](../../../tickets/admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary.md)
-    // owns the widening; deleting this refusal is what it lands.
-    if contributor_input.is_some_and(|ordinal| ordinal != 0) {
-        return mismatch("sum-contributor-ordinal");
-    }
     let members = RecognizedSerialSumMembers::new(recognized_members, sum_member);
 
     let input_elements = element_count_u64(&input_shape, "input")?;
@@ -10499,22 +10480,14 @@ mod tests {
         );
     }
 
-    /// A fold over a declared input other than the first refuses by name.
+    /// A fold retains whichever declared input its contributor names.
     ///
-    /// **A `tiler-ir` wall reported as a program property rather than as invalid
-    /// compiler output.** `ContributorTensor::DeclaredDomain` admits a fold's
-    /// contributor read at `TensorRole::Intermediate` or the first declared
-    /// input and nothing else, so the region this program needs fails the
-    /// intrinsic verifier — which reaches a caller naming a provider instead of
-    /// naming their program.
-    ///
-    /// Its accepted neighbour folds the *first* declared input over the same two
-    /// declarations and the same two families, so the difference between them is
-    /// exactly which input the fold names.
-    /// `admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary`
-    /// is what turns this row into an admission.
+    /// The two programs have the same declaration, output families, shapes, and
+    /// operation order. The contributor ordinal is the relevant difference, and
+    /// it reaches both normalization and the output-subject bytes rather than
+    /// being renumbered to the fold region's only read.
     #[test]
-    fn a_fold_over_a_later_declared_input_refuses_by_name() {
+    fn a_fold_over_a_later_declared_input_retains_its_ordinal() {
         let folded = |first: bool| {
             let mut builder = SemanticProgramBuilder::try_standard().unwrap();
             let inputs: Vec<_> = ["a", "b"]
@@ -10537,20 +10510,29 @@ mod tests {
                 .unwrap();
             builder.build().unwrap()
         };
-        let accepted = recognize_outputs(&folded(true)).expect("a fold over the first input");
-        let [fold, _] = accepted.outputs() else {
-            panic!("the fixture declares two outputs");
-        };
-        let NormalizedOutput::SerialSum(fold) = fold else {
-            panic!("a reduction output recognizes as a serial sum");
-        };
-        assert_eq!(fold.prologue, None);
-        assert_eq!(fold.contributor_input, Some(0));
+        let recognized = [
+            recognize_outputs(&folded(true)).expect("a fold over input zero"),
+            recognize_outputs(&folded(false)).expect("a fold over input one"),
+        ];
+        let mut encoded = Vec::new();
+        for (ordinal, outputs) in recognized.iter().enumerate() {
+            let [normalized, _] = outputs.outputs() else {
+                panic!("the fixture declares two outputs");
+            };
+            let NormalizedOutput::SerialSum(fold) = normalized else {
+                panic!("a reduction output recognizes as a serial sum");
+            };
+            assert_eq!(fold.prologue, None);
+            assert_eq!(
+                fold.contributor_input,
+                Some(u32::try_from(ordinal).unwrap())
+            );
 
-        assert_eq!(
-            recognize_outputs(&folded(false)).unwrap_err(),
-            "sum-contributor-ordinal",
-        );
+            let mut bytes = Vec::new();
+            encode_output_subject(&mut bytes, &output_subject(normalized));
+            encoded.push(bytes);
+        }
+        assert_ne!(encoded[0], encoded[1]);
     }
 
     /// The read run separates two subsets and leaves a complete one empty.
