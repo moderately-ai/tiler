@@ -1,7 +1,7 @@
 ---
 id: spike-kani-push-slice-framing-over-a-symbolic-byte-run
 title: Spike Kani proof of push_slice framing over a symbolic byte run
-status: todo
+status: in-progress
 priority: p2
 dependencies: [spike-kani-bounded-verification-on-one-inexhaustible-encoder]
 related: [spike-kani-bounded-verification-on-one-inexhaustible-encoder, prove-the-exhaustible-encoder-injectivity-claims-natively]
@@ -9,6 +9,9 @@ scopes: [research/verification]
 shared_scopes: [project/tickets]
 paths: []
 tags: [verification, spike, kani, identity, length-framing]
+claimed_from: todo
+assignee: sol-kani-framing
+lease_expires_at: 1786409872
 ---
 
 ## User-visible outcome
