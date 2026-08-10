@@ -1,7 +1,7 @@
 ---
 id: correct-session-facade-acceptance-disclosures
 title: Correct residual draft disclosures for the accepted session facade
-status: review
+status: done
 priority: p2
 dependencies: [accept-the-public-compiler-facade-boundary]
 related: [state-and-check-a-bf16-numerical-contract, clarify-the-inline-frontend-facades-consumer-scope]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation, contracts/foundation, implementation/frontend, co
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, public-boundary, disclosure]
-claimed_from: todo
-assignee: terra-session-disclosures
-lease_expires_at: 1786391758
 ---
 ## What this owes
 
