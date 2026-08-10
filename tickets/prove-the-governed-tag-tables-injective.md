@@ -1,7 +1,7 @@
 ---
 id: prove-the-governed-tag-tables-injective
 title: Prove the governed tag tables injective
-status: todo
+status: in-progress
 priority: p2
 dependencies: [derive-the-artifact-numerical-and-fenced-space-populations]
 related: [prove-the-exhaustible-encoder-injectivity-claims-natively]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [verification, identity, injectivity, evidence-upgrade]
+claimed_from: todo
+assignee: sol-tag-injectivity
+lease_expires_at: 1786404931
 ---
 ## User-visible outcome
 
