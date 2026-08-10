@@ -1,7 +1,7 @@
 ---
 id: retire-adr-0078s-stale-physical-provider-standing-clauses
 title: Retire ADR 0078's stale physical-provider standing clauses
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [record-the-landed-physical-provider-seam-in-adrs-0078-and-0090, disclose-offered-and-selected-physical-provider-sets-separately, refresh-the-forkless-physical-provider-spike-against-the-landed-seam, accept-the-installed-physical-provider-public-surface]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, documentation, backend-providers]
-claimed_from: todo
-assignee: sol-adr0078-provider-standing
-lease_expires_at: 1786406376
 ---
 ## User-visible outcome
 

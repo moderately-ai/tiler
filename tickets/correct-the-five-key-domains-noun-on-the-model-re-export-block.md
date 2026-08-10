@@ -1,7 +1,7 @@
 ---
 id: correct-the-five-key-domains-noun-on-the-model-re-export-block
 title: Correct the five key domains noun on the model re-export block
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [reattach-the-scalar-arithmetic-block-and-correct-its-accessor-count]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, doc-drift]
-claimed_from: todo
-assignee: terra-artifact-domain-comment
-lease_expires_at: 1786406376
 ---
 
 ## User-visible outcome
