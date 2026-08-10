@@ -1300,6 +1300,8 @@ impl VerifiedScheduledRegion {
         &self.identity
     }
 
+    /// **Draft surface, not yet accepted.**
+    ///
     /// Returns whether this region's arithmetic is bounded away from subnormals.
     ///
     /// Derived from the *verified* scalar program, which is why this is a method

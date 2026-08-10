@@ -1117,6 +1117,8 @@ impl VerifiedKernel {
         self.data.numerical
     }
 
+    /// **Draft surface, not yet accepted.**
+    ///
     /// Returns whether this kernel's arithmetic is bounded away from subnormals.
     ///
     /// A backend deciding whether it can honour [`Self::numerical`]'s declared

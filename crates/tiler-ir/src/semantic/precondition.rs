@@ -48,6 +48,8 @@ pub fn positive_finite_scalar_predicate() -> SemanticPredicateIdentity {
         .expect("the governed PositiveFiniteScalar predicate identity is valid")
 }
 
+/// **Draft surface, not yet accepted.**
+///
 /// Returns the governed predicate which requires one positive *normal* scalar.
 ///
 /// Strictly stronger than [`positive_finite_scalar_predicate`]: it admits

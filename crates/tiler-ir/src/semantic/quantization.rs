@@ -41,6 +41,8 @@ pub const ENCODED_NUMERIC_NAN_BEHAVIOR: AttributeFieldId = AttributeFieldId::new
 pub const ENCODED_NUMERIC_DECODE_EVALUATION: AttributeFieldId = AttributeFieldId::new(9);
 /// Static-contract field naming observable materialization behavior.
 pub const ENCODED_NUMERIC_MATERIALIZATION: AttributeFieldId = AttributeFieldId::new(10);
+/// **Draft surface, not yet accepted.**
+///
 /// Static-contract field naming the admissible domain of the scale component.
 ///
 /// This is where the normal-scale guarantee lives, and the choice of carrier is

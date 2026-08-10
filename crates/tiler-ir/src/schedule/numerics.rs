@@ -89,6 +89,8 @@ pub enum SubnormalMode {
     },
 }
 
+/// **Draft surface, not yet accepted.**
+///
 /// Whether a region's arithmetic is bounded away from the subnormal range.
 ///
 /// A declared [`SubnormalMode`] states what a region's arithmetic *means*; this
@@ -147,6 +149,8 @@ pub enum SubnormalFreedom {
 }
 
 impl SubnormalFreedom {
+    /// **Draft surface, not yet accepted.**
+    ///
     /// Returns whether this freedom discharges the subnormal obligation for one
     /// arithmetic type.
     ///
