@@ -88,7 +88,9 @@ The prototype tickets below all reached `done`. The list is therefore a record o
 
 - Owner/track: [Numerical semantics](numerical-semantics.md), Milestone 1.
 - Close: complete operation/dtype/signature reassociation and commutativity
-  matrix with verifier tests.
+  matrix, plus ADR 0101 decision 3's parameterized elementary-identity
+  capability law: an operation-owned functional equation together with that
+  equation's real-domain side condition, all with verifier tests.
 
 ### Q-SEM-003 — First-profile operation and dtype support
 
