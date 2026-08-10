@@ -90,3 +90,21 @@ acceptance provenance or draft status is recorded durably; the six-item census
 has been deliberately reddened by removing one subject statement and restored;
 targeted `tiler-ir` rustdoc and tests pass; and `tkt lint`, `make citations`,
 `git diff --check`, the exact-base scope guard, and the required final gate pass.
+
+## Delivery evidence — 2026-08-10
+
+**Draft fallback applied.** No final Tom acceptance was supplied or found after
+the source-first audit at `93c69b14`. Each of the six exact exported symbols now
+carries the coherent rustdoc statement `**Draft surface, not yet accepted.**`.
+This is an authority-only correction: the freedom remains derived rather than
+caller-settable, discharges only `f32`, and remains outside the redundant kernel
+identity encoding.
+
+`all_six_normal_scale_exports_are_public_with_one_truthful_draft_statement`
+compiles against all six public re-exports, locates exactly one declaration for
+each source subject, and requires exactly one draft statement in that subject's
+own contiguous rustdoc block. Removing the statement from
+`positive_normal_scalar_predicate` produced the subject-level failure
+``normal-scale public symbol `positive_normal_scalar_predicate` must carry
+exactly one authority statement `/// **Draft surface, not yet accepted.**` in
+its own rustdoc block``; the statement was then restored and the test passed.
