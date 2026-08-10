@@ -1,7 +1,7 @@
 ---
 id: admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary
 title: Admit a fold over any declared input in the scheduled-region vocabulary
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [admit-an-elementwise-region-reading-a-subset-of-the-declared-inputs, admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary, admit-a-reduction-over-a-declared-input-tensor, admit-a-strict-serial-fold-that-writes-a-materialized-intermediate]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, schedule]
+claimed_from: todo
+assignee: sol-fold-input-ordinal
+lease_expires_at: 1786408310
 ---
 ## User-visible outcome
 

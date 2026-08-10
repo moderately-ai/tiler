@@ -1,7 +1,7 @@
 ---
 id: realign-the-l1-and-l2-operation-family-standing-after-post-close-matrix-moves
 title: Realign L1 and L2 operation-family standing after post-close matrix moves
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [refresh-the-l1-operation-family-standing, refresh-the-l2-derivation-operation-family-standing, admit-a-fusion-role-for-the-sub-tensor-selection-slice, register-the-softmax-realization-law, refresh-the-roadmap-softmax-cells-remaining-prerequisite-clause]
@@ -9,6 +9,9 @@ scopes: [research/program-planning, research/shapes]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation]
+claimed_from: todo
+assignee: terra-l1-l2-standing
+lease_expires_at: 1786408310
 ---
 ## User-visible outcome
 
