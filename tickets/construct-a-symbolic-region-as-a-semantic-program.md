@@ -12,13 +12,13 @@ tags: [implementation, frontend, shapes, inline-dx]
 ---
 ## User-visible outcome
 
-`ProgramEvidence::DeferredSymbolicExtent` is removed, because a region declaring `sym n` is constructed and verified as a real `SemanticProgram` through the governed registry, exactly as a fully literal region already is.
+`ProgramEvidence::DeferredSymbolicExtent` is removed as the frontend's answer to a symbolic region. When the governed registry admits the region's operations (the approved elementwise region), the region is constructed and verified as a real `SemanticProgram` through that registry, exactly as a fully literal region already is. Operations that still decline symbolic operands surface as a typed `RegionError::Program` (or equivalent) rather than silent deferral — not every region that declares `sym n` becomes `Verified`.
 
 ## Why this exists
 
-**Fact.** `crates/tiler-macros/src/region.rs:568` returns `ProgramEvidence::DeferredSymbolicExtent` without constructing anything as soon as any declared extent is symbolic, and its documentation states the reason is the fixed-extent vocabulary rather than a missing value.
+**Fact.** `verify_public_logical_program` in `crates/tiler-macros/src/region.rs` returns `ProgramEvidence::DeferredSymbolicExtent` without constructing a program as soon as any declared operand or result extent is symbolic (`return Ok(ProgramEvidence::DeferredSymbolicExtent)` on both paths after `literal_extents` fails). Its documentation still states the reason is the fixed-extent vocabulary rather than a missing value.
 
-**Fact.** The expansion already holds a verified `ShapeEnv` — `crates/tiler-macros/src/binding.rs:466` builds one, declaring each symbol in the fixed scope `tiler.inline-region.v1` and binding it to `BindingSource::InputDimension` at `LiveDevicePreflight`. What was missing was somewhere to put it.
+**Fact.** The expansion already holds a verified `ShapeEnv` — `crates/tiler-macros/src/binding.rs` builds one at `let mut environment = ShapeEnvBuilder::new();`, declaring each symbol in the fixed scope `tiler.inline-region.v1` and binding it to `BindingSource::InputDimension` at `LiveDevicePreflight`. After [`carry-a-sourced-shape-on-semantic-values`](carry-a-sourced-shape-on-semantic-values.md), `try_standard_with_shape_environment` / `input_sourced` already exist on the semantic builder; what remains is handing `BoundRegion`'s environment into that builder and building `SourcedExtent`s from `DeclaredAxis`.
 
 ## Implementation keys
 
@@ -38,4 +38,10 @@ tags: [implementation, frontend, shapes, inline-dx]
 
 ## Public boundary
 
-`ProgramEvidence`'s variant set is crate-private, so nothing is published here. What is observable is that a previously refused region now expands; the `deliver` gate is separate and belongs to ticket 7.
+`ProgramEvidence`'s variant set is crate-private, so nothing is published here. What is observable is that a previously deferred region now expands when the registry admits it; the `deliver` gate is separate and belongs to [`deliver-an-artifact-family-from-a-symbolic-region`](deliver-an-artifact-family-from-a-symbolic-region.md).
+
+## Fact audit — 2026-08-10 at base `c99ac54950f2`
+
+- Ordinal citation `region.rs:568` had drifted (that line is inside `refuse_undeclared_symbols`); the durable anchors are the two `return Ok(ProgramEvidence::DeferredSymbolicExtent)` arms in `verify_public_logical_program`.
+- The input-side vocabulary gap is closed by carry (`input_sourced` / `try_standard_with_shape_environment`); the remaining gap is the frontend's unmigrated construction path that still uses `SemanticProgramBuilder::try_standard()` and never hands `BoundRegion`'s environment through.
+- The original User-visible outcome overclaimed universal `Verified` for every `sym n` region; strict serial sum and other non-elementwise families still decline symbolic operands via `static_operand_shape`. After deferral removal those surface as typed program refusals unless a later family-admission ticket widens them.
