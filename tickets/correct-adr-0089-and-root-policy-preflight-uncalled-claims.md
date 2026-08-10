@@ -48,3 +48,11 @@ Neither ADR 0089 nor `docs/research/cache/root-policy.md` live-asserts that `Exp
 ## Provenance
 
 Filed 2026-08-10 from Phase B ticket audit of [`call-the-expansion-cache-preflight-on-the-resolved-root`](call-the-expansion-cache-preflight-on-the-resolved-root.md) and the residual named by [`correct-the-documents-that-still-say-the-cache-root-preflight-is-never-called`](correct-the-documents-that-still-say-the-cache-root-preflight-is-never-called.md). Population leftover relative to the three-document docs close, not a reopen of the frontend implementation.
+
+## Fact audit — 2026-08-10
+
+**Verified — the probe is called only for a directory decision.** `aot::open_cache` matches `CacheRootDecision::Directory`, opens that root, and calls `report_unsuitable_root`; its `Disabled` arm returns `ExpansionCache::disabled()` without a probe. Reproduce: `rg -n -F 'CacheRootDecision::Directory' crates/tiler-macros/src/aot.rs` and `rg -n -F 'CacheRootDecision::Disabled' crates/tiler-macros/src/aot.rs`.
+
+**Verified — the report is process-amortized and never refuses.** `PreflightGate::process` is process-static; `report_unsuitable_root` returns nothing; `reported_to` treats stderr as best effort after `cache.preflight()`. Reproduce: `rg -n -F 'pub(crate) fn process' crates/tiler-macros/src/preflight.rs` and `rg -n -F 'Best effort. A closed or failing standard error' crates/tiler-macros/src/preflight.rs`.
+
+**Verified — exactly two owned live claims remain.** ADR 0089 Consequences contains the source-safe fragment `is still not called on a resolved root`; root-policy Unsupported cases contains `is not called.` Both lack a `Corrected 2026-08-10` successor. The sibling ticket's Non-goals and Fact audit explicitly leave these decision and research sites outside its three-document outcome. Reproduce: `rg -n -F 'is still not called on a resolved root' docs/decisions/0089-resolve-the-expansion-cache-root-from-an-override-or-the-user-cache.md`, `rg -n -F 'is not called.' docs/research/cache/root-policy.md`, and `sed -n '1,$p' tickets/correct-the-documents-that-still-say-the-cache-root-preflight-is-never-called.md`.
