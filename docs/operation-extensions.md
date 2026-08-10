@@ -176,9 +176,9 @@ against the region that capability's provider emitted. The registered surface is
 a reviewed prototype boundary, not a stabilized compiler-session API. The
 ordinary public compiler session exists —
 [`prototype-public-compiler-api`](../tickets/prototype-public-compiler-api.md)
-landed `tiler_compiler::session` and Tom reviewed it — and it is a reviewed
-experimental draft on the same terms: reviewed visibility is not stabilization,
-and no work may treat these surfaces as published or fixed.
+landed `tiler_compiler::session` and Tom reviewed it — and that session facade is
+accepted but not stabilized. The registered capability surface remains a
+reviewed prototype, and no work may treat either surface as published or fixed.
 
 Two consequences belong to this contract rather than to the compiler's own. First, a resolved capability's provenance reaches the artifact: a selected plan records the `{provider identity, capability revision}` pair each occurrence resolved, and the compiler re-derives that set from the installed registry rather than trusting what a plan recorded. Second, resolution for this family fails closed, so the two failing dispositions this contract already distinguishes are load-bearing rather than diagnostic preferences — an absent capability says the installed authority was never extended to the occurrence, a contended one says two extensions contradict each other, and neither is resolved by a priority order or a default provider. [The optimizer contract](compiler/optimizer.md#lowering-capability-resolution-and-index-region-refinement) owns the stage's placement and behaviour.
 

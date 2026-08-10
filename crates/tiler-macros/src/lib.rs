@@ -13,9 +13,10 @@
 //! That pair is the accepted frontend for inline Rust tensor regions and is not
 //! a claim about any other way into Tiler. The general graph and compiler
 //! surfaces this crate calls during an expansion — `tiler-ir` and
-//! `tiler-compiler` — are governed on their own, and whether they are presented
-//! as one coherent public compiler facade is an undecided boundary owned by
-//! `accept-the-public-compiler-facade-boundary`.
+//! `tiler-compiler` — are governed on their own. The
+//! `tiler_compiler::session` facade is accepted but not stabilized; its
+//! acceptance does not turn either frontend crate into a general
+//! semantic-program entry point.
 //!
 //! # The pipeline, and why it is three modules and this file
 //!
