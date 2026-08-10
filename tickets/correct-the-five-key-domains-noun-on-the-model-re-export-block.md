@@ -42,3 +42,7 @@ The live comment no longer calls all five model re-exports "key domains", the fo
 ## Outcome
 
 The comment now distinguishes the one artifact-identity separator from the four key domains. No model constants, identity bytes, values, visibility, or re-export list changed.
+
+## Review correction (2026-08-10)
+
+Exact-hash review of `4a7fd05e6a5cb3d85f0316f76c7a6a82fd6a9a8c` found the wrapped comment read `these seven, the the artifact-identity`. This follow-up removes only the retained first `the`; the live clause remains `the artifact-identity separator and four key domains`.
