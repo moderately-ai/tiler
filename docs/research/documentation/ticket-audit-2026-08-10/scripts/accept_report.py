@@ -63,12 +63,15 @@ def main() -> int:
     row["report_path_or_id"] = str(args.report)
     row["report_hash"] = rh
     if state == "audited-clean":
-        row["repair_state"] = "not-needed"
+        # Do not clobber an already-integrated repair (post-repair re-audit).
+        if row.get("repair_state") != "integrated":
+            row["repair_state"] = "not-needed"
     elif state == "audited-repair-required":
         if row.get("repair_state") in (None, "not-needed"):
             row["repair_state"] = "pending"
     elif state == "blocked":
-        row["repair_state"] = "blocked"
+        if row.get("repair_state") != "integrated":
+            row["repair_state"] = "blocked"
 
     Path(args.ledger).write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
     jsonl = Path(args.ledger).with_suffix(".jsonl")
