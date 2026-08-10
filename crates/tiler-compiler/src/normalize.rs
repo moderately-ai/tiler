@@ -1749,8 +1749,9 @@ mod tests {
     use super::*;
     use crate::request::{CompilationRequest, verify_planned_request};
     use tiler_ir::semantic::{
-        CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant, F32Multiply,
-        InputKey, OutputKey, SemanticProgramBuilder, StrictSerialF32Sum, Value,
+        Bf16, Bf16Add, Bf16Constant, Bf16Multiply, CanonicalValueView, F32,
+        F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant, F32Multiply, InputKey, OutputKey,
+        SemanticProgramBuilder, StrictSerialF32Sum, Value,
     };
     use tiler_ir::shape::{Axis, Shape};
     use tiler_reference::{
@@ -1826,6 +1827,44 @@ mod tests {
             StrictF32NumericalContract::governed(),
         )
         .unwrap()
+    }
+
+    fn f32_pointwise_program(share_constant: bool) -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("x").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let two = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let product = F32Multiply::apply(&mut builder, input, two).unwrap();
+        let addend = if share_constant {
+            two
+        } else {
+            F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap()
+        };
+        let output = F32Add::apply(&mut builder, product, addend).unwrap();
+        builder
+            .output(OutputKey::new("out").unwrap(), output)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    fn bf16_pointwise_program(share_constant: bool) -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<Bf16>(InputKey::new("x").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let two = Bf16Constant::apply(&mut builder, 0x4000).unwrap();
+        let product = Bf16Multiply::apply(&mut builder, input, two).unwrap();
+        let addend = if share_constant {
+            two
+        } else {
+            Bf16Constant::apply(&mut builder, 0x4000).unwrap()
+        };
+        let output = Bf16Add::apply(&mut builder, product, addend).unwrap();
+        builder
+            .output(OutputKey::new("out").unwrap(), output)
+            .unwrap();
+        builder.build().unwrap()
     }
 
     fn evaluate(program: &SemanticProgram, values: &[f32]) -> Vec<u32> {
@@ -2356,6 +2395,68 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    /// The f32 pair whose initial mint has four versus five expression nodes
+    /// converges at the normalization seam ordinary compilation runs before
+    /// candidate readmission and physical planning.
+    ///
+    /// **Watched failing.** Excluding `constant_f32_op` from
+    /// `detect_shared_values` made the duplicated outcome stay unchanged and
+    /// failed with `equal pure f32 constants are commoned`.
+    #[test]
+    fn f32_equal_pointwise_constants_converge_at_normalization() {
+        let shared = f32_pointwise_program(true);
+        let duplicated = f32_pointwise_program(false);
+        assert_eq!(shared.operation_count(), 3);
+        assert_eq!(duplicated.operation_count(), 4);
+        assert_ne!(
+            shared.semantic_identity().graph(),
+            duplicated.semantic_identity().graph()
+        );
+
+        let shared_outcome = normalize(&shared);
+        let duplicated_outcome = normalize(&duplicated);
+        let normalized = duplicated_outcome
+            .normalized_program()
+            .expect("equal pure f32 constants are commoned");
+        assert!(shared_outcome.normalized_program().is_none());
+        assert_eq!(duplicated_outcome.rewrite_count(), 1);
+        assert_eq!(normalized.operation_count(), 3);
+        assert_eq!(normalized.semantic_identity(), shared.semantic_identity());
+    }
+
+    /// The common-subexpression rule is not f32-specific. Although the governed
+    /// target refuses BF16 dispatch before recognition, a caller profile that
+    /// admits BF16 reaches this same normalization stage before physical
+    /// planning, and the equal-payload pair converges here too.
+    ///
+    /// **Watched failing independently.** Excluding `constant_bf16_op` from
+    /// `detect_shared_values` made the duplicated outcome stay unchanged and
+    /// failed with `equal pure bf16 constants are commoned`.
+    #[test]
+    fn bf16_equal_pointwise_constants_converge_at_normalization() {
+        let shared = bf16_pointwise_program(true);
+        let duplicated = bf16_pointwise_program(false);
+        assert_eq!(shared.operation_count(), 3);
+        assert_eq!(duplicated.operation_count(), 4);
+        assert_ne!(
+            shared.semantic_identity().graph(),
+            duplicated.semantic_identity().graph()
+        );
+
+        let contract = crate::session::NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_BF16.resolve();
+        let shared_outcome =
+            normalize_semantics(&shared, DeterministicBudgets::governed(), contract).unwrap();
+        let duplicated_outcome =
+            normalize_semantics(&duplicated, DeterministicBudgets::governed(), contract).unwrap();
+        let normalized = duplicated_outcome
+            .normalized_program()
+            .expect("equal pure bf16 constants are commoned");
+        assert!(shared_outcome.normalized_program().is_none());
+        assert_eq!(duplicated_outcome.rewrite_count(), 1);
+        assert_eq!(normalized.operation_count(), 3);
+        assert_eq!(normalized.semantic_identity(), shared.semantic_identity());
     }
 
     #[test]

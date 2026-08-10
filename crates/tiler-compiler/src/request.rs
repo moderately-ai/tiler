@@ -9518,27 +9518,19 @@ mod tests {
         );
     }
 
-    /// Constant occurrence identity reaches the scheduled scalar program.
+    /// Constant occurrence identity reaches the initial recognizer and mint.
     ///
     /// Each pair computes `x * 2 + 2` in its own arithmetic. The only authored
     /// difference is whether the add reuses the exact constant value consumed by
     /// the multiply or consumes a second constant occurrence with the same
     /// payload. Semantic construction, elementwise planning, and minting all
     /// preserve that difference for both arithmetic widths the compiler
-    /// currently recognizes. The governed target then carries the `f32`
-    /// expression into a scheduled scalar program; its exact `bf16` boundary is
-    /// asserted separately because that target declares no `bf16` dispatch row.
+    /// currently recognizes. This drives `recognize` directly: ordinary
+    /// compilation normalizes equal pure constants before candidate readmission,
+    /// as the normalization and pipeline regressions assert separately.
     ///
-    /// **Watched fail by perturbing each width's repeated-occurrence arm to
-    /// return `two` instead of applying a second constant.** The `f32` case said
-    /// *assertion `left == right` failed; left: 3, right: 4* at the repeated
-    /// program's occurrence count. Restoring `f32` and perturbing `bf16` alone
-    /// produced the same failure at the `bf16` occurrence count. Those failures
-    /// are before the scalar-node assertions by design: a fixture that stopped
-    /// containing the occurrence under test cannot pass for evidence that
-    /// lowering collapsed it.
     #[test]
-    fn equal_constant_occurrences_remain_distinct_through_compiler_minting() {
+    fn equal_constant_occurrences_remain_distinct_through_initial_recognition() {
         fn f32_program(repeat_occurrence: bool) -> SemanticProgram {
             let mut builder = SemanticProgramBuilder::try_standard().unwrap();
             let input = builder
@@ -9577,29 +9569,6 @@ mod tests {
             builder.build().unwrap()
         }
 
-        fn scalar_program(
-            program: &SemanticProgram,
-            contract: StrictF32NumericalContract,
-        ) -> tiler_ir::schedule::ScalarProgram {
-            let verified =
-                verify_planned_request(CompilationRequest::governed_under(program, contract))
-                    .expect("the governed compiler recognizes the elementwise program");
-            let target = verified
-                .for_target(0)
-                .expect("the governed target honours the stated contract");
-            let (region, members) = crate::physical::pointwise_region(
-                &target,
-                target.sole_output(),
-                crate::physical::RegionWrite::ProgramOutput,
-            );
-            assert_eq!(
-                members.len(),
-                program.operation_count(),
-                "the scalar program must cover every semantic occurrence",
-            );
-            region.index.scalar_program
-        }
-
         fn recognized_pointwise(program: &SemanticProgram) -> RecognizedPointwise {
             let NormalizedOutput::Pointwise(recognized) =
                 recognize(program).expect("the compiler recognizes the elementwise program")
@@ -9618,22 +9587,18 @@ mod tests {
         let repeated_f32 = f32_program(true);
         assert_eq!(shared_f32.operation_count(), 3);
         assert_eq!(repeated_f32.operation_count(), 4);
-        let tiler_ir::schedule::ScalarProgram::PointwiseF32(shared_f32) = scalar_program(
-            &shared_f32,
-            StrictF32NumericalContract::governed_flush_to_zero(),
-        ) else {
-            panic!("an f32 program must mint ScalarProgram::PointwiseF32");
+        let RecognizedPointwise::F32(shared_f32_expression) = recognized_pointwise(&shared_f32)
+        else {
+            panic!("an f32 program must mint the f32 pointwise vocabulary");
         };
-        let tiler_ir::schedule::ScalarProgram::PointwiseF32(repeated_f32) = scalar_program(
-            &repeated_f32,
-            StrictF32NumericalContract::governed_flush_to_zero(),
-        ) else {
-            panic!("an f32 program must mint ScalarProgram::PointwiseF32");
+        let RecognizedPointwise::F32(repeated_f32_expression) = recognized_pointwise(&repeated_f32)
+        else {
+            panic!("an f32 program must mint the f32 pointwise vocabulary");
         };
-        assert_eq!(shared_f32.nodes().len(), 4);
-        assert_eq!(repeated_f32.nodes().len(), 5);
+        assert_eq!(shared_f32_expression.nodes().len(), 4);
+        assert_eq!(repeated_f32_expression.nodes().len(), 5);
         assert_eq!(
-            shared_f32
+            shared_f32_expression
                 .nodes()
                 .iter()
                 .filter_map(|node| match node {
@@ -9644,7 +9609,7 @@ mod tests {
             [2.0_f32.to_bits()],
         );
         assert_eq!(
-            repeated_f32
+            repeated_f32_expression
                 .nodes()
                 .iter()
                 .filter_map(|node| match node {
@@ -9655,7 +9620,7 @@ mod tests {
             [2.0_f32.to_bits(), 2.0_f32.to_bits()],
             "the extra node is a second equal-payload constant occurrence",
         );
-        assert_ne!(shared_f32, repeated_f32);
+        assert_ne!(shared_f32_expression, repeated_f32_expression);
 
         let shared_bf16 = bf16_program(false);
         let repeated_bf16 = bf16_program(true);
@@ -9719,7 +9684,7 @@ mod tests {
                 resolved_type: Box::new(Bf16::resolved_type()),
                 disposition: DTypeDispatchRefusalDisposition::Unknown,
             },
-            "the governed request stops at its exact target boundary after recognition has proved the pair is statable",
+            "the governed request stops at dtype dispatch before target-specific recognition",
         );
     }
 
