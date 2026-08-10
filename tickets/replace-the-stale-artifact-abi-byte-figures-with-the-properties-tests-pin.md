@@ -4,7 +4,7 @@ title: Replace the stale artifact ABI byte figures with the properties tests pin
 status: done
 priority: p1
 dependencies: []
-related: [recompute-the-unasserted-bf16-byte-lengths-in-the-dtype-support-matrix]
+related: [recompute-the-unasserted-bf16-byte-lengths-in-the-dtype-support-matrix, pin-the-differing-identity-positions-beside-the-carrier-positions-constant, date-or-regenerate-the-six-kernel-identity-lengths-in-the-artifact-abi]
 scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
@@ -87,16 +87,6 @@ Enumerated mechanically, then every survivor resolved by reading its site. `grep
 
 ## Later follow-through — 2026-08-09
 
-Both remainders above are now complete. The six kernel-identity figures were
-re-measured, dated, and qualified by
-[`date-or-regenerate-the-six-kernel-identity-lengths-in-the-artifact-abi`](date-or-regenerate-the-six-kernel-identity-lengths-in-the-artifact-abi.md),
-which also corrected this record's false proposed construction: the named
-conformance helper was rank-two-only and could not regenerate ranks three
-through eight. The surviving unpinned BF16-versus-F32 identity property was
-then made executable by
-[`pin-the-differing-identity-positions-beside-the-carrier-positions-constant`](pin-the-differing-identity-positions-beside-the-carrier-positions-constant.md):
-`DIFFERING_IDENTITY_POSITIONS` is now distinct from the carrier-envelope count,
-and the test first proves equal identity lengths before counting the four
-structural tag positions. The offsets remain deliberately unpinned. Thus the
-Outcome's proposed work and unowned-quantity account are historical; no live
-remainder remains under this ticket.
+Both *implementation* remainders above are complete. The six kernel-identity figures were re-measured, dated, and qualified by [`date-or-regenerate-the-six-kernel-identity-lengths-in-the-artifact-abi`](date-or-regenerate-the-six-kernel-identity-lengths-in-the-artifact-abi.md), which also corrected this record's false proposed construction: the named conformance helper was rank-two-only and could not regenerate ranks three through eight. The surviving unpinned BF16-versus-F32 identity property was then made executable by [`pin-the-differing-identity-positions-beside-the-carrier-positions-constant`](pin-the-differing-identity-positions-beside-the-carrier-positions-constant.md): `DIFFERING_IDENTITY_POSITIONS` is now distinct from the carrier-envelope count, and the test first proves equal identity lengths before counting the four structural tag positions. The offsets remain deliberately unpinned. The Outcome's proposed pin work and the unowned-quantity account of the nine absolute figures are therefore historical for *implementation*.
+
+**Correction — 2026-08-10.** The 2026-08-09 close sentence claiming "no live remainder remains under this ticket" is false while this ticket's own authored contracts prose still denies the landed pin. Live `docs/artifact-abi.md` still carries the paragraph beginning `What is left unpinned, stated rather than left for a reader to assume.`, which claims that equal identity length and the four differing identity positions have "no test asserts either" and that "Until that lands… not a guarantee." Those properties are now asserted in `a_bf16_artifact_round_trips_and_its_carrier_enters_identity` via length equality and `DIFFERING_IDENTITY_POSITIONS = 4`. The implementation pin landed under `implementation/artifact` only and did not rewrite contracts prose. Status stays `done` for the primary retirement deliverable (absolute figures out; properties named; census and route recorded). Residual product debt under `contracts/artifacts`: retire or rewrite that "What is left unpinned" paragraph into a house-style pin citation (name `DIFFERING_IDENTITY_POSITIONS` and the length-equality assert), optionally framing the forged-pair Measurement's "exactly four byte positions" the way **68** is framed, without reintroducing absolute offsets. Do not reopen absolute length pinning.

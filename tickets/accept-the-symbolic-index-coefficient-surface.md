@@ -4,7 +4,7 @@ title: Accept the symbolic index coefficient surface
 status: done
 priority: p1
 dependencies: []
-related: [admit-symbolic-index-expression-coefficients, promote-the-symbolic-index-profile-to-a-public-boundary]
+related: [admit-symbolic-index-expression-coefficients, promote-the-symbolic-index-profile-to-a-public-boundary, bound-a-symbolic-index-coefficient-interval-from-its-declared-extent]
 scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
@@ -104,3 +104,15 @@ Two further supports, both read rather than argued: six pre-existing proof paths
 **What the sourced boundary actually keeps is the other operation** — writing an environment-derived *value into a node*. Normalization still refuses to fold `S * x` at `S == 1` and `as_literal` still answers `None` for a pinned symbol, so `[m]` and `[4]` remain two programs. That separation is now proved directly rather than protected by declining a sound bound.
 
 **This does not disturb what was accepted here.** The surface, the normalization rule, and the `symbol * 1` addend spelling all stand — the acceptance was of a shape, and the correction is to a *reason* recorded beside it. What changes is that the declined capability was not a principled line but an unexamined exception, and the exception is now closed.
+
+## Residual post-acceptance hygiene — 2026-08-10
+
+**Fact.** Closing this node accepted the surface and discharged the bound-ticket condition; it did **not** flip the draft labels or rewrite the stale interval-decline contract prose that still read as live after acceptance.
+
+Still present after this acceptance (and after [`bound-a-symbolic-index-coefficient-interval-from-its-declared-extent`](bound-a-symbolic-index-coefficient-interval-from-its-declared-extent.md) landed) and **not** repaired on this node:
+
+1. Rustdoc still labels `SourcedIndexInteger`, `IndexRegionBuilder::sourced_linear_combination`, and `LinearTermRef::coefficient` as "**Draft surface, not yet accepted**" / pending Tom — false after 2026-08-07. The `SourcedIndexInteger` draft text also still lists the `constant` field of `IndexExprView::LinearCombination` as pending; that field was never widened and the narrower exclusion was accepted as the shape.
+2. Interval-decline claims remain in those rustdocs and in the assemble-path comment that "interval propagation declines on the same terms", contradicting `interval_linear` (which multiplies by `sources.interval` of the symbol) and the bound ticket Outcome.
+3. [`docs/ir.md`](../docs/ir.md) coefficient paragraph still states interval propagation declines by policy and treats the coefficient half as a labelled draft pending Tom; domain narrative may still lag the live `tiler.index-region.v11` step.
+
+This residual is product-path documentation debt (crates rustdoc + `docs/ir.md`), not a reopen of the acceptance decision. No remainder ticket id was assigned on the audit report; the flip-and-rewrite work is residual until a board carrier owns it.

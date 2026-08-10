@@ -42,7 +42,7 @@ An elementary-function golden compiles and links on a recorded toolchain row wit
 
 ### The golden
 
-`crates/tiler-metal/goldens/elementary_silu_activation.metal`, emitted from the existing `silu_kernel` fixture under the same strict declared realization (`tiler.test.strict-f32`) and the same emitter facts as every other golden, and added to `GOLDENS` in `golden_compilation.rs` (nine → **ten**). It is the only fixture whose body calls a function and divides; every other golden's arithmetic is `*`, `+`, and comparison, which is why it is the first checked-in artifact whose acceptance depends on a *name* resolving. `crate::tests::silu_matches_its_golden_source` pins its bytes; `every_checked_in_golden_is_compiled_by_this_module` makes the directory-to-list correspondence a failing assertion rather than a convention.
+`crates/tiler-metal/goldens/elementary_silu_activation.metal`, emitted from the existing `silu_kernel` fixture under the same strict declared realization (`tiler.test.strict-f32`) and the same emitter facts as every other golden, and added to `GOLDENS` in `golden_compilation.rs` (nine → **ten**). It is the only fixture whose body calls an elementary function and divides floats; every other golden's *float* arithmetic is `*`, `+`, and comparison (other goldens may still emit integer `/` or `-` for structural index work), which is why it is the first checked-in artifact whose acceptance depends on a *name* resolving. **Correction — 2026-08-10.** The landing sentence said "every other golden's arithmetic is `*`, `+`, and comparison" without the float/elementary scope; that overstated the population. `crate::tests::silu_matches_its_golden_source` pins its bytes; `every_checked_in_golden_is_compiled_by_this_module` makes the directory-to-list correspondence a failing assertion rather than a convention.
 
 Body of interest, emitted exactly as the string assertions claimed: `float v8 = precise::exp(v7);` and `float v12 = v3 / v11;`, each arithmetic result canonicalized. **The toolchain did not reject it**, so the stop condition did not fire and the emitter is untouched by this ticket.
 
@@ -60,6 +60,8 @@ Read from `xcodebuild -version`, `sw_vers`, `xcrun --sdk macosx --show-sdk-versi
 | Flags | `-target air64-apple-macos14.0 -std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off` |
 
 `elementary_silu_activation.metal` links **3,779 bytes**; the linked library names `tiler_kernel_b1e08c4feb69be47`. All ten fixtures compile and link on this row. **This is deliberately not the [compile-profile authority ledger](../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md)'s row** — that ledger sources its profile from `32023.883` and excludes `metalfe-32023.921` by name — which is why the row is recorded here rather than inherited.
+
+**Correction — 2026-08-10.** The linked-library symbol above is the landing-time measurement pin, not the current golden's entry point. The checked-in fixture is now `kernel void tiler_kernel_474c1b875639dceb(` (`kernel identity digest: 474c1b875639dceb` in `crates/tiler-metal/goldens/elementary_silu_activation.metal`). The hex `b1e08c4feb69be47` remains historical for this Outcome row; do not treat it as the live symbol. Rebaseline of the golden after later identity-affecting landings is ordinary; byte size was not re-measured here.
 
 ### The perturbations, both observed failing before being trusted
 
@@ -94,6 +96,8 @@ Nothing dispatched. No compiler-derived region put through `emit`. No emitter ch
 ### One out-of-scope observation, not filed
 
 `FpContract::FastHonorPragmas` in `tiler-metal-aot` is rejected by this toolchain: `metal: error: unsupported argument 'fast-honor-pragmas' to option '-ffp-contract='`, at the `metal` stage on Metal 32023.921. Found while constructing the fast row (`FpContract::Off` was used instead, which also keeps the perturbation about function selection alone). The driver fails closed with a typed `ToolFailure`, so this is not a correctness defect, but the enum offers a selection this row cannot deliver and nothing records that. `implementation/metal-aot` is not held here; reported for the coordinator rather than filed, since whether that is a documentation fix or a validation gap is that scope's decision.
+
+**Correction — 2026-08-10.** That residual is closed as a standing enum gap: `FpContract` is only `Off | On | Fast` (no `FastHonorPragmas` variant). Clang's `fast-honor-pragmas` is deliberately not spellable through the enum; the driver still watches string rejection of the unsupported argument via a substituted-flag path. The paragraph above records the landing-time observation, not a live residual.
 
 ### Checks
 

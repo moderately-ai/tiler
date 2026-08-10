@@ -4,7 +4,7 @@ title: Declare evaluation-order preservation in the target profile
 status: done
 priority: p2
 dependencies: []
-related: [measure-whether-the-metal-compiler-preserves-the-emitted-evaluation-order, admit-a-refutation-only-derived-bound-conformance-oracle]
+related: [measure-whether-the-metal-compiler-preserves-the-emitted-evaluation-order, admit-a-refutation-only-derived-bound-conformance-oracle, accept-the-evaluation-order-preservation-target-fact]
 scopes: [implementation/metal, implementation/compiler, implementation/build, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
@@ -93,3 +93,11 @@ Five in `tiler-compiler`, one in `tiler-build`. Perturbations run and observed r
 ### Commit
 
 ``a8d169c0` carries the whole delivery — the compiler vocabulary, the bound macOS declaration's absent-row account and its fail-closed test, the authority ledger row, and the acceptance node — on `tkt/declare-evaluation-order-preservation-in-the-target-profile` from base `b84b8f81`. This Outcome follows in its own commit so it can name that hash.`
+
+## Fact audit — 2026-08-10
+
+**Correction — 2026-08-10.** The Outcome's present-tense "labelled draft" / `awaiting-decision` language and the Boundary's "implement as a labelled draft" sentence are landing history only. Tom accepted the surface on 2026-08-06 under [`accept-the-evaluation-order-preservation-target-fact`](accept-the-evaluation-order-preservation-target-fact.md) (that ticket is `status: done`; Outcome "Accepted by Tom on 2026-08-06…"). The accept ticket's **Current-state correction — 2026-08-09** records that source labels in `crates/tiler-compiler/src/target.rs` now read **Accepted public surface** (module-header anchor `The **evaluation-order-preservation** family carries an acceptance of its own`; item docs `**Accepted public surface.** The key half of the evaluation-order fact`). Do not re-open this ticket for acceptance or draft-label rewrite.
+
+**Correction — 2026-08-10.** "Closes when"'s second clause ("the macOS row declares the measured values with finding 34 as provenance") was discharged as the authority ledger's explicit absent-row deferral, not as a declared macOS row. That is what `status: done` means on this ticket: vocabulary landed, fail-closed `Unknown` on every profile, ledger row and toolchain-authorization reconsideration trigger hold the deferral, acceptance node filed (and later accepted). Row declaration remains blocked on Tom-authorized remeasurement of the profile's own toolchain row; no remainder is owed on this ticket's scopes.
+
+**Correction — 2026-08-10.** The Outcome's 1,999-byte pin on `the_declared_profile_states_one_barrier_realization` and the 2,139 unconditional-emission perturbation are landing-time relative to the post-grid / pre-cost-row descriptor. The live pin is **2_099** after the unrelated measured cost-row family (+100); evaluation-order still contributes zero bytes when the family is empty. Reproduce: `assert_eq!( descriptor.len(), 2_099,` in `crates/tiler-build/src/metal_declaration.rs`.

@@ -4,7 +4,7 @@ title: Check synchronization realization before the routing commit
 status: done
 priority: p2
 dependencies: []
-related: [realize-parallel-reduction-strategies-on-metal]
+related: [realize-parallel-reduction-strategies-on-metal, discharge-the-derived-requirements-in-the-candle-metal-adapter, carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit]
 scopes: [implementation/compiler, implementation/runtime, implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
@@ -74,7 +74,7 @@ The module's own work is the *inversion* — the neutral schedule vocabulary is 
 
 - Keep the emission-time barrier refusals where they are; this added a delivery-time check rather than moving one.
 - The two unreachable `BarrierRejection` arms stay unreachable and untested; see the corrected Fact above.
-- **Remainder, not done here:** `prototypes/candle-metal-adapter` discharges *no* derived requirement — neither the new synchronization check nor the pre-existing `evaluate_index_arithmetic`. That gap predates this ticket and sits in `implementation/candle`, which this ticket does not hold. It needs its own ticket.
+- ~~**Remainder, not done here:** `prototypes/candle-metal-adapter` discharges *no* derived requirement — neither the new synchronization check nor the pre-existing `evaluate_index_arithmetic`. That gap predates this ticket and sits in `implementation/candle`, which this ticket does not hold. It needs its own ticket.~~ **Historical pre-sibling gap (struck 2026-08-10).** Candle discharge is implemented; only Tom acceptance of the draft public `RouteRefusal` / witness surface remains on [`discharge-the-derived-requirements-in-the-candle-metal-adapter`](discharge-the-derived-requirements-in-the-candle-metal-adapter.md) (`awaiting-decision`). This ticket's scopes stay closed.
 - **Unmeasured:** the wiring in `prototypes/serial-sum-run` is exercised only by a device-bound run, which this coordination host cannot perform. The authority itself is fully covered device-free.
 
 ## Completion correction — 2026-08-09
@@ -91,3 +91,7 @@ requirements, then pipeline preparation. The earlier Worker outcome repeated
 the reversed "ahead of the live-device rows" wording even after the correction
 above had disproved it; that sentence is corrected here. No routing behavior,
 requirement vocabulary, or public surface changed in this ticket-record repair.
+
+## Fact audit — 2026-08-10
+
+**Correction — 2026-08-10.** The Graph maintenance bullet that claimed `prototypes/candle-metal-adapter` discharges *no* derived requirement was false as a live remainder on this `done` ticket. At current tree the adapter's `mod discharge` runs `check_direct_requirements` → `derived_requirements_hold`, which calls `evaluate_synchronization` then `evaluate_index_arithmetic` before `build_pipelines` (`prototypes/candle-metal-adapter/src/adapter.rs`). Implementation landed under the sibling; that sibling remains `awaiting-decision` only for Tom acceptance of the draft public refusal and witness surface. No implementation work reopens on this ticket's scopes.

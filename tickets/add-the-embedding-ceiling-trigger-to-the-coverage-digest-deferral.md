@@ -12,13 +12,13 @@ tags: [identity, deferred, artifacts, embedding]
 ---
 ## User-visible outcome
 
-[`decide-whether-executable-coverage-evidence-folds-as-a-digest`](decide-whether-executable-coverage-evidence-folds-as-a-digest.md) fires on the consumer that actually binds first. Today its triggers are sized entirely against the 64 MiB `MAX_PROGRAM_IDENTITY_BYTES` refusal, and the 1 MiB per-invocation embedding ceiling refuses roughly **21× earlier in operation count**.
+[`decide-whether-executable-coverage-evidence-folds-as-a-digest`](decide-whether-executable-coverage-evidence-folds-as-a-digest.md) fires on the consumer that actually binds first. When this ticket opened, that deferral's triggers were sized entirely against the 64 MiB `MAX_PROGRAM_IDENTITY_BYTES` refusal, and the 1 MiB per-invocation embedding ceiling refused roughly **21× earlier in operation count**.
 
 ## Why this exists
 
 **Measurement** ([Where the artifact envelope's fixed content came from](../docs/research/artifacts/manifest-fixed-content-growth.md), 2026-08-06). The per-occurrence coverage evidence that a kernel-program identity carries is stored **four times** in one artifact envelope — once as the framed `KernelProgramSubject` section, once in the manifest body's per-entry stage subjects, and twice inside the canonical-identity run, which folds the whole program-subject section verbatim and then restates the entries' stage subjects. The multiplicity was measured exactly at the landing that introduced the evidence: 20,144 bytes of program identity became 80,576 bytes of envelope.
 
-**Measurement, retained** ([`spikes/program-planning/identity-growth`](../spikes/program-planning/identity-growth/README.md)). Kernel-program identity is exactly `134n² + 3650n + 710` bytes for `n` semantic operations, and the 64 MiB program-identity bound binds at **695 operations**.
+**Measurement, retained** ([`spikes/program-planning/identity-growth`](../spikes/program-planning/identity-growth/README.md)). Kernel-program identity is exactly `134n² + 3650n + 710` bytes for `n` semantic operations, and the 64 MiB program-identity bound binds at **695 operations**. The constant later moved 710 → 719 under the publishing-copy / `v10` step before the fold; the ceiling arithmetic below uses 719.
 
 **Inference — the crossing the deferral does not carry.** `4 × (134·32² + 3650·32 + 719) = 1,018,940` and `4 × (134·33² + 3650·33 + 719) = 1,068,380`, so the envelope's fixed content passes the **1,048,576-byte per-invocation embedding ceiling between 32 and 33 semantic operations**. The decoder-layer program that [Complete model ingestion and execution](../docs/research/program-planning/complete-model-ingestion-and-execution.md) contemplates is **≥ 51 operations**, which the same arithmetic puts at ≈ 2.04 MiB of fixed content before a single object byte.
 

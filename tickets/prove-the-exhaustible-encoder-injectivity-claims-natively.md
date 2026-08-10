@@ -82,7 +82,7 @@ None of the following can be enumerated; each is listed with what blows the doma
 
 **`u32`/`u64` ordinals (2^32 or 2^64 per field).** `push_tensor_role` (`InputOrdinal`), `push_component_role` (`EncodedComponentRole`), `push_contraction_axis_source`, `push_synchronization_placement` (two `PhaseId`), `push_synchronization_point` (`SyncPointId`), `push_participant_range` (two `u64`), `push_workgroup_staging`, `push_bounds_proof`, `push_abi_reference`, `EntryPolicyBinding::encode`, `NumericalObligationKey::encode` (2^32 x 6 x 2^32).
 
-**Slices and vectors (unbounded length).** `push_shape`, `push_axes`, `push_axis_decodes`, `push_participant_space`, `push_staged_span`, `push_cooperative_phase`, `push_cooperative_tile`, `push_schedule`, `push_staging`, `push_indices`, `push_requirements`, `encode_route_requirements`, `push_sorted_keys`, `push_interface_components`.
+**Slices and vectors (unbounded length).** `push_shape`, `push_axes`, `push_axis_decodes`, `push_participant_space`, `push_staged_span`, `push_cooperative_phase`, `push_cooperative_tile`, `push_schedule`, `push_staging`, `push_indices`, `encode_route_requirements`, `push_sorted_keys`, `push_interface_components`.
 
 **Strings.** `push_numerical` (`profile_key`), `push_component_type` (`ResolvedValueType::canonical_encoding`), `push_origin` (`InputKey`), `TypeKey::encode`, `ProviderIdentity::encode`, `ShapeSymbol::encode`, `TargetPropertyQuery::canonical_bytes`, `ExecutionEnvironmentIdentity::encode` (5 strings), `CompilerBuildIdentity::encode`.
 
@@ -90,9 +90,11 @@ None of the following can be enumerated; each is listed with what blows the doma
 
 **Top-level identity encoders** (`schedule::encode_identity`, `kernel::encode_identity`, `program::encode_identity`, `artifact::encode_identity`, `compute_graph_identity`, `compute_identity`, `encode_environment`, `encode_sequence_identity`, `derive_identity`) are unbounded by construction.
 
+**Fixed-width ordinals plus a finite numerical/sync tail (still inexhaustible because of the ordinals).** Kernel `push_requirements` is a fixed-width `u32`/`u32`/`u64`/`bool` prefix, then `push_index_arithmetic`, then the same finite synchronization and numerical fields as the resource tail — not an unbounded slice encoder. Artifact `push_resources` is the parallel shape (see almost-exhaustible bullets below). Both remain inexhaustible because of the ordinal prefix, not because of a length-framed vector.
+
 **Two worth naming for the spike specifically, because they are *almost* exhaustible:**
 
-- `push_resources` (`tiler-artifact` `program/model.rs`) — a `u32`/`u32`/`u64`/`bool` prefix, then a **finite tail of 1 495 296 values** (`Option<SynchronizationSubject>` 649 x `SubnormalMode`^2 x `NumericalPermission`^4 x `ExceptionalValueAssumption`^2). Holding the prefix fixed makes the tail enumerable, which is exactly the shape a bounded verifier wants: a small unbounded head over a large finite tail.
+- `push_resources` (`tiler-artifact` `program/model.rs`) — a `u32`/`u32`/`u64`/`bool` prefix, then a **finite tail of 1 495 296 values** (`Option<SynchronizationSubject>` 649 x `SubnormalMode`^2 x `NumericalPermission`^4 x `ExceptionalValueAssumption`^2; `IndexArithmetic` contributes factor 1). Holding the prefix fixed makes the tail enumerable, which is exactly the shape a bounded verifier wants: a small unbounded head over a large finite tail. Kernel `push_requirements` has the same ordinal head and finite tail shape.
 - `push_numerical` (both `tiler-ir` copies and the artifact copy) — a length-framed string and a `u32`, then a **finite tail of 2 304 values**. Same shape, smaller.
 
 `push_tensor_role` and `push_component_role` are the cheapest genuinely unbounded targets: three shapes over one `u32` each, no recursion and no slices, so a bounded proof over the whole `u32` range is a single-variable problem.
@@ -105,9 +107,9 @@ None of the following can be enumerated; each is listed with what blows the doma
 
 About 50 `fn tag(self) -> u8` tables in `tiler-ir` and `tiler-artifact` are reached only by *inexhaustible* encoders — `BinaryOp` (12), `AbiBinaryOp` (13), `ConvertOp` (4), `FactAuthority` (7), `ExtentRelation` (6), and so on. Each is itself a finite total map whose injectivity is exhaustible and, for most of them, unproved: a duplicated tag literal is silent today. That is a real and cheap population, but it is a different unit from this ticket's — the ticket classifies *encoders*, and every one of these sits inside an encoder already classified inexhaustible above. Filed as `prove-the-governed-tag-tables-injective` rather than absorbed here, so the two claims stay separately auditable.
 
-Tables reached by an exhaustible encoder are already covered by the tests above. Separately, the seven artifact tag tables in `crates/tiler-artifact/src/program/codec/tests.rs:541` are already proved injective — a total `from_tag` left inverse over a complete enumeration implies injectivity — so they need nothing.
+Tables reached by an exhaustible encoder among the nineteen are already covered by the tests above. Separately, `fn every_governed_tag_table_round_trips` in `crates/tiler-artifact/src/program/codec/tests.rs` walks a left-inverse round trip over the governed artifact tag tables it enumerates (element type, storage scalar, address space, buffer access, subnormal, permission, exceptional assumption, plus routing policy, section kind, availability phase, and binding-target tag distinctness among others) — a total `from_tag` left inverse over a complete enumeration implies injectivity for those tables. It does **not** cover `index_arithmetic_tag` / `index_arithmetic_from_tag` (see the 2026-08-10 audit note below).
 
-**Correction 2026-08-08.** The left-inverse argument is valid, but two enumerations it quantified over were not shown complete. The `SubnormalMode` and `ExceptionalValueAssumption` lists carry payload products and have no type-derived sizes, so widening `FlushedZeroSign` or `ValueDomainProvenance` can leave the round trip short after the tag tables are repaired. [`derive-the-artifact-numerical-and-fenced-space-populations`](derive-the-artifact-numerical-and-fenced-space-populations.md) owns those two populations and the parallel `FencedSpaces` census. The other five artifact tables and this ticket's encoder classifications are unchanged.
+**Correction 2026-08-08.** The left-inverse argument is valid, but two enumerations it quantified over were not shown complete. The `SubnormalMode` and `ExceptionalValueAssumption` lists carry payload products and have no type-derived sizes, so widening `FlushedZeroSign` or `ValueDomainProvenance` can leave the round trip short after the tag tables are repaired. [`derive-the-artifact-numerical-and-fenced-space-populations`](derive-the-artifact-numerical-and-fenced-space-populations.md) owns those two populations and the parallel `FencedSpaces` census. The other named artifact tables in that round-trip test and this ticket's encoder classifications are unchanged.
 
 ### Pinned identities
 
@@ -115,12 +117,15 @@ Tables reached by an exhaustible encoder are already covered by the tests above.
 
 ## Current follow-through — 2026-08-09
 
-The artifact correction named above is now `done`: its numerical payload and
-fenced-space populations are derived from their types, with the workspace macro
-authority reconciled. Its audit also found a separate hand-sized Metal
-`FencedSpaces` copy; that live remainder is explicitly owned by
-[`derive-the-metal-fenced-space-population`](derive-the-metal-fenced-space-population.md)
-under `implementation/metal`. This ticket's nineteen encoder classifications
-and identity non-movement remain unchanged. The distinction matters: the Metal
-ticket is a test-population repair, not unfinished artifact work under this
-completed encoder sweep.
+The artifact correction named above is now `done`: its numerical payload and fenced-space populations are derived from their types, with the workspace macro authority reconciled. Its audit also found a separate hand-sized Metal `FencedSpaces` copy; that live remainder is explicitly owned by [`derive-the-metal-fenced-space-population`](derive-the-metal-fenced-space-population.md) under `implementation/metal`. This ticket's nineteen encoder classifications and identity non-movement remain unchanged. The distinction matters: the Metal ticket is a test-population repair, not unfinished artifact work under this completed encoder sweep.
+
+## Fact audit — 2026-08-10
+
+**Correction — 2026-08-10.** The Outcome close language that the enumeration is complete — every exhaustible encoder classified and tested; every inexhaustible encoder named with domain character — overstated residual coverage. Audit at content-hash `e744edd1ceef…` found a size-1 exhaustible leaf omitted from the nineteen and from the inexhaustible menu:
+
+- Kernel `push_index_arithmetic` (`crates/tiler-ir/src/kernel/model.rs`) is a dedicated identity encoder over `IndexArithmetic` with a single inhabitant (`CompleteU64`), the same size-1 class as `push_order` / `ContributorOrder`, which *was* given an exhaustive injectivity test precisely to pin the population. No injectivity test mentions `push_index_arithmetic` or `IndexArithmetic`.
+- Artifact `index_arithmetic_tag` / `index_arithmetic_from_tag` is the parallel finite total map on the artifact side; it is used by `push_resources` and is **not** among the nineteen tests, and it is **not** exercised by `fn every_governed_tag_table_round_trips` either.
+
+So the nineteen remain correct as a landed set; they are not a complete census of every exhaustible identity encoder. Completeness residual (not implemented on this ticket): a one-encoder remainder covering kernel `push_index_arithmetic` and artifact `index_arithmetic_tag`/`from_tag` with a `variant_count`-sized population pin (literal 1 until a second arm lands), either as a narrow related ticket or absorbed into the owed-set classification of `prove-the-governed-tag-tables-injective`. Status stays `done` for the landed nineteen plus the inexhaustible menu as delivered; silent completeness is withdrawn.
+
+Domain-character repair applied in the inexhaustible menu above: `push_requirements` was listed under **Slices and vectors**; it is fixed-width ordinals plus finite tail (same shape special-cased for `push_resources` / `push_numerical`), still inexhaustible because of the ordinals. Stale `codec/tests.rs:541` and a fixed "seven" table count are replaced by the searchable anchor `fn every_governed_tag_table_round_trips` and an accurate description of what that test walks.

@@ -94,3 +94,7 @@ The remaining symbolic Slice admission is still owned by
 this completed correction did not decide its attribute-versus-operand boundary
 or its identity consequences. No stale vocabulary site discovered by this
 ticket remains unowned.
+
+## Fact audit — 2026-08-10
+
+**Correction — 2026-08-10.** The Outcome sentence "No stale vocabulary site discovered by this ticket remains unowned" is true only for the ticket's enumerated owned population and the three search anchors it re-ran (`carrier gap Q-SHAPE-006`, `No coordinate expression carries an extent symbol`, `ValueFact on a fixed Shape`). It is false as corpus-wide completeness: `docs/glossary.md` Slice row still asserts in present tense that "the offset is a literal because no index expression carries an extent symbol in a coordinate position." The offset *is* still a literal (window grammar admits only `offset: u64`); the *ground* is the retired coordinate-carrier claim. The glossary wording does not match this ticket's renewed-search anchors, so it was not discovered when the Outcome was written, and none of the three named remainders owns that row. Status stays `done` for the declared population; a narrow `contracts/navigation` (glossary-owning) remainder still needs filing to replace that ground with the literal-only selection-grammar boundary and optionally re-scan for other glossary-class hits of the same conclusion.

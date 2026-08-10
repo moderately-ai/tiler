@@ -4,7 +4,7 @@ title: Realign the compiler refinement error mirror with the grouped result arit
 status: done
 priority: p3
 dependencies: []
-related: [bind-a-partitioned-output-through-index-refinement]
+related: [bind-a-partitioned-output-through-index-refinement, realign-the-result-side-display-strings-across-both-refinement-error-mirrors]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -18,7 +18,7 @@ tags: [documentation, compiler]
 
 **Fact — the mirror's doc comment is now a claim about superseded behaviour.** `crates/tiler-compiler/src/legality.rs:591-596` declares `RefinementError::ResultArity { region_outputs, results }` and documents `region_outputs` as "Region output-root count.". [`bind-a-partitioned-output-through-index-refinement`](bind-a-partitioned-output-through-index-refinement.md) changed the population `IndexRefinementVerificationError::ResultArity` counts to the region's *distinct output tensors*, because a partitioned output is several roots answering one semantic result. The mapping at `legality.rs:869-875` copies the field verbatim, so the value is correct and only the comment is wrong.
 
-**Fact — no observable value changed.** A region with one root per output tensor counts the same either way, and no registered capability emits a partitioned region yet, so `a_well_formed_region_with_an_extra_output_is_rejected` (`legality.rs:1815-1832`) still observes `region_outputs: 2` for its two-distinct-output fixture.
+**Fact — no observable value changed.** A region with one root per output tensor counts the same either way, so `a_well_formed_region_with_an_extra_output_is_rejected` (`legality.rs:1815-1832`) still observes `region_outputs: 2` for its two-distinct-output fixture. **Correction — 2026-08-10.** The supporting clause "and no registered capability emits a partitioned region yet" was true at filing; it is false now. `GovernedConcatenateF32` documents "One region with one write root per *operand* over the single output" and emits `WriteOwnershipProofView::PartitionMember` sites (`crates/tiler-compiler/src/governed.rs`). The named test still uses a one-root-per-tensor extra-output fixture, so the `region_outputs: 2` assertion remains value-correct under tensor counting.
 
 **Inference — it is a separate ticket because the scope was held.** `implementation/compiler` carried a live claim (`region-expansion-exhaustion-loses-the-only-feasible-plan`, `agent-region-expansion`) for the whole of the binding ticket's dispatch, so the one-line edit was serialized rather than taken.
 
@@ -67,6 +67,8 @@ The mirror's documentation states the counted population correctly, and the comp
 ### Observation for the coordinator — `Display` drift, not taken here
 
 The four result-side `Display` strings still say `region output {position} …` (`legality.rs:690-705`), which now names a result position as a region output. They are **verbatim mirrors** of the IR's own strings (`refinement.rs:3020-3034`), so changing one side alone desynchronizes the mirror this ticket exists to keep aligned, and it is an observable-output change rather than documentation. `implementation/ir` was held by a concurrent worker for this dispatch. Worth a narrow ticket covering both crates' strings together; not filed, left to the coordinator.
+
+**Correction — 2026-08-10.** The Display remainder was filed as [`realign-the-result-side-display-strings-across-both-refinement-error-mirrors`](realign-the-result-side-display-strings-across-both-refinement-error-mirrors.md) (`status: todo` at this base; `related` points back here). The "not filed, left to the coordinator" sentence is the close-time handoff, not current graph state. Line-number citations in Why this exists and this Outcome (`legality.rs:591-596`, `:869-875`, `:1815-1832`, `:690-705`; `refinement.rs:3344-3409`, `:3020-3034`) are stale at the audit base; symbols and quoted doc strings are authoritative.
 
 ### Commands — all on the branch tip
 

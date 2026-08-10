@@ -16,9 +16,11 @@ Physical selection prefers a parallel reduction where the qualified profile's ow
 
 ## Why this is parked rather than todo
 
+**Correction — 2026-08-10.** This section is the pre-acceptance filing posture. Frontmatter is `status: done`; the activation landed and integrated 2026-08-07 (see Outcome / Integrated). It is **not** live board state and must not be read as `awaiting-decision` or parking against the closed ticket.
+
 **Tom decides two things this ticket cannot execute without.** It adds a `pub` `TargetProfileBuilder` declaration for a quantity no target currently carries, and moving that row moves the canonical descriptor, which moves every pinned artifact identity and cache subject derived from it. Both are reserved: consequential public boundaries and identity-domain steps are his, and this one is a *new kind* of row rather than another instance of an existing kind.
 
-It is `awaiting-decision` rather than `deferred` because nothing is missing. The measurement exists, the model exists, the held-out score exists, and the design below is complete enough to land in one commit.
+~~It is `awaiting-decision` rather than `deferred` because nothing is missing.~~ **Correction — 2026-08-10.** That present-tense board claim is retired; the ticket closed `done` after landing. The measurement, model, held-out score, and design below were the complete filing-time basis that made the work landable in one commit once Tom accepted the direction.
 
 ## The evidence this rests on
 
@@ -228,8 +230,10 @@ Merged at `09b0d0b8`; the composed tree gates green with `make full` exit 0 — 
 
 **One test observation, recorded per `AGENTS.md`.** The workspace run reported a single `leaky` verdict, on `tiler-compiler governed::contraction_conformance::the_four_prefill_cells_are_refused_by_the_unstaged_fold_and_reached_by_the_staged_one`. An earlier run today reported one on an unrelated `tiler-macros` test. A leaky verdict that **moves between unrelated tests** is the known macOS pipe-inheritance race rather than a real unreaped child, which is the distinction `AGENTS.md` draws; recurrence in one test would mean the opposite.
 
-**The public surface is parked, not landed as accepted:** [`accept-the-measured-cost-row-public-surface`](accept-the-measured-cost-row-public-surface.md). Tom's acceptance covered the model; the spelling of the `declare_*` pair is a separate boundary under ADR 0075.
+~~**The public surface is parked, not landed as accepted:**~~ **Correction — 2026-08-10.** [`accept-the-measured-cost-row-public-surface`](accept-the-measured-cost-row-public-surface.md) is `status: done`; Tom accepted the exact `declare_*` spelling on 2026-08-07. The Integrated sentence that called the surface parked was the landing-time split under ADR 0075 and is left as history. Residual bookkeeping — draft labels still on the accepted surface in `target.rs` / ledger — is owned by open [`retire-the-draft-label-on-the-accepted-cost-row-surface`](retire-the-draft-label-on-the-accepted-cost-row-surface.md) (`todo`), not by this selection-activation ticket.
 
 **A measurement boundary that must survive this ticket.** The sweep dispatched the tree at the *balanced* split, and `MEASURED_TREE_PARTICIPANT_CAP` landed after it. That moves which parallel plan is preferred, not whether the program parallelizes, so the contour this row turns on is unaffected — recorded in the ledger, the spike README, and the test rather than only here.
 
 **Flagged and deliberately not edited:** `docs/research/embedding/self-contained-embedding.md:67` quotes the old 1,999-byte descriptor inside a dated measurement paragraph. Historically correct at its commit, in an undeclared scope.
+
+**Correction — 2026-08-10 (identity after-table).** The four pin after-values enumerated in Outcome and restated above (descriptor 2,099; artifact `357f0676…`; cache `c626e43b…`; fixed content 65,242) are the merge-time recomputation for this ticket's cost-row section. Later unrelated encoding steps moved standard Metal artifact/cache/fixed-content pins past that after-table; `metal_plan` documents the history and is the live test authority. Descriptor length for the qualified declaration remains 2,099 at this audit.

@@ -4,7 +4,7 @@ title: Prove partition coverage for symbolic extents
 status: deferred
 priority: p2
 dependencies: []
-related: [admit-sub-range-write-domains-for-unequal-partitions, lower-the-concatenate-occurrence-through-partitioned-writes]
+related: [admit-sub-range-write-domains-for-unequal-partitions, lower-the-concatenate-occurrence-through-partitioned-writes, admit-symbolic-extents-at-the-compiler-request-boundary, construct-a-symbolic-region-as-a-semantic-program]
 scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
@@ -28,9 +28,9 @@ A partition whose boundary or member extents are symbolic is proved or refuted t
 
 ## What the work is
 
-Decide what the shape environment must be asked. The candidate obligation is that the members' spans sum to the boundary extent along the partitioned axis and agree on every other, which is an additive relation over sourced extents rather than the equality `extents_proved_equal` already answers. Establish whether `ShapeEnv` can carry it before designing around it — an additive relation the environment cannot decide makes this a refusal to state, not a proof to build.
+Decide what the partition verifier must ask of the shape environment. The candidate coverage obligation is that the members' spans sum to the boundary extent along the partitioned axis and agree on every other, which is additive over sourced extents rather than the equality `extents_proved_equal` already answers.
 
-Whatever is admitted, re-derive the two obligations rather than assuming they carry, exactly as the dependency did: per-root injectivity, and the rectangle-volume identity that reads a root's volume as its element count. The volume identity in particular is currently arithmetic over `u64`, and a symbolic volume is a different object.
+**Correction — 2026-08-10.** `ShapeEnv` already admits a fixed two-addend additive relation: `ExtentRelation::AdditiveEquality { sum, left, right }` (`s == left + right`) in `crates/tiler-ir/src/shape/env/constraint.rs`, complete on the admitted fragment (including runtime-bound forms such as `S == C + T`). The open design is not whether the environment vocabulary can carry addition; it is (1) whether and how the partition verifier should *query* additive coverage — binary `AdditiveEquality` vs multi-member chains beyond one two-addend relation, (2) symbolic offsets for non-zero cut points (member *k* starts at the sum of the extents before it; `coordinate_offset_dimension` still admits only `to_u64` displacements), and (3) re-deriving the two proof obligations for symbolic spans rather than assuming they carry from the literal path: per-root injectivity, and the rectangle-volume identity that currently reads a root's volume as `u64` element-count arithmetic. An additive relation the environment cannot decide for a given partition remains a refusal to state with a derived diagnostic, not a silent admit.
 
 ## Explicit non-goals
 
@@ -48,5 +48,6 @@ Either a symbolic partition is proved and its evidence names the environment fac
 
 ## Trigger check log
 
-- 2026-08-06 — **not fired.** The trigger is a live consumer emitting a partition over a symbolic boundary extent. No governed region is symbolic at all: the compiler declares every domain dimension and boundary through the literal constructors, so no emitted region can reach the symbolic path, let alone a symbolic partition. The only candidate consumer is the concatenate lowering, which is `todo` and has emitted nothing. Reproduce: `grep -n 'symbolic_dimension\|sourced_tensor' crates/tiler-compiler/src/governed.rs` — empty on this date; a non-empty result is the first thing that could fire this.
+- 2026-08-06 — **not fired.** The trigger is a live consumer emitting a partition over a symbolic boundary extent. No governed region is symbolic at all: the compiler declares every domain dimension and boundary through the literal constructors, so no emitted region can reach the symbolic path, let alone a symbolic partition. The only candidate consumer is the concatenate lowering, which is `todo` and has emitted nothing (dated claim on this log day; concatenate later landed as literal-only — see 2026-08-10). Reproduce: `grep -n 'symbolic_dimension\|sourced_tensor' crates/tiler-compiler/src/governed.rs` — empty on this date; a non-empty result is the first thing that could fire this.
 - 2026-08-09 — **not fired.** Symbolic and sourced index construction is now well exercised inside `tiler-ir`, but no compiler construction site calls `symbolic_dimension` or `sourced_tensor`, and no governed concatenate lowering emits a symbolic partition. The IR vocabulary's existence is not the trigger; the first compiler-produced symbolic partition remains the trigger.
+- 2026-08-10 — **not fired.** Concatenate lowering is `status: done` and proves Interval partitions on static `Shape` extents only (pinned prefill binds literal `T=5`; semantic occurrences still carry static extents). Still zero `symbolic_dimension` / `sourced_tensor` call sites under `crates/tiler-compiler`. Reproduce: `rg -n 'symbolic_dimension|sourced_tensor' crates/tiler-compiler` — empty; a non-empty construction site that emits a multi-root partition over undetermined boundary or member extents would fire this. Activation path for such a consumer remains the related todos [`admit-symbolic-extents-at-the-compiler-request-boundary`](admit-symbolic-extents-at-the-compiler-request-boundary.md) and [`construct-a-symbolic-region-as-a-semantic-program`](construct-a-symbolic-region-as-a-semantic-program.md).

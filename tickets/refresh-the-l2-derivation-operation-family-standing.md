@@ -4,7 +4,7 @@ title: Refresh the L2 derivation's operation-family standing against the current
 status: done
 priority: p2
 dependencies: []
-related: [refresh-the-l1-operation-family-standing, refresh-the-l2-derivation-s-symbolic-index-profile-source-claims, refresh-the-roadmap-softmax-cells-remaining-prerequisite-clause]
+related: [refresh-the-l1-operation-family-standing, refresh-the-l2-derivation-s-symbolic-index-profile-source-claims, refresh-the-roadmap-softmax-cells-remaining-prerequisite-clause, realign-the-l2-derivation-operation-family-standing-to-the-family-state-table]
 scopes: [research/shapes]
 shared_scopes: [project/tickets]
 paths: []
@@ -121,3 +121,7 @@ reconciled the public symbolic-index profile source claims, and
 updated the roadmap after the realization law and earlier prerequisites landed.
 They are now explicit graph relations above rather than body-only handoffs. No
 remaining correction is owned by this completed L2 refresh.
+
+## Current remainder correction — 2026-08-10
+
+**Correction — 2026-08-10.** The 2026-08-09 remainder claim "No remaining correction is owned by this completed L2 refresh" is false as a live standing claim. The 2026-08-06 Outcome and the two filed defects it named remain historically earned and `done`, and this ticket stays `done` rather than reopened. The close condition ("L2's *Rung* column and its standing prose agree with the roadmap's family-state table") fails again against the tree after later landings: Softmax bound prose still asserts no registered `IndexRealizationLaw` and an `operation-set` refusal (registry registers `staged_softmax_f32` among fifteen standard laws; boundary test refuses under `missing-capability`; the inverted "roadmap prerequisites remaining" pointer is stale), Slice is still stated as **R4** awaiting a fusion role while the family-state table places the F32 literal-offset family at **R5** with `FusionOperationRole::CoordinateRelation`, and Gather is still stated as R1 / no matrix row / no key while `tiler::gather-f32@1` is registered and the family-state table places it at **R4**. Ownership of that re-stale L2 standing is [`realign-the-l2-derivation-operation-family-standing-to-the-family-state-table`](realign-the-l2-derivation-operation-family-standing-to-the-family-state-table.md) under `research/shapes`; L2 document cells are not edited on this ticket.

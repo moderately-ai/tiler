@@ -4,7 +4,7 @@ title: Scope the geometric resampling family
 status: deferred
 priority: p3
 dependencies: [admit-an-indirect-gather-family-for-tied-embedding-lookup]
-related: [scope-the-padding-and-cropping-family, derive-the-operation-family-and-signature-delivery-graph]
+related: [scope-the-padding-and-cropping-family, derive-the-operation-family-and-signature-delivery-graph, revise-adr-0108-with-a-complete-data-dependent-index-vertical, emit-the-indirect-gather-on-metal]
 scopes: [research/semantic-graph, research/indexing]
 shared_scopes: [project/tickets]
 paths: []
@@ -20,9 +20,9 @@ A resize, a grid sample, or an affine warp is one family carrying all four of th
 
 **Fact — the numerical difficulty is in the coordinates, not the interpolation.** "Interpolation arithmetic is ordinary float arithmetic; the coordinate computation's rounding is where implementations diverge."
 
-**Fact — its physical route is a gather.** D7 records "physical fallback is a gather with computed coordinates", and [the minimum correct physical realization profile](../docs/research/program-planning/minimum-correct-physical-realization-profile.md) places F-41 in its *covered only under a stated precondition* class, the precondition being "the gather its coordinates are read through". That gather is live work: [`admit-an-indirect-gather-family-for-tied-embedding-lookup`](admit-an-indirect-gather-family-for-tied-embedding-lookup.md) owns the tensor-data-derived index class under Q-SHAPE-007.
+**Fact — its physical route is a gather.** D7 records "physical fallback is a gather with computed coordinates", and [the minimum correct physical realization profile](../docs/research/program-planning/minimum-correct-physical-realization-profile.md) places F-41 in its *covered only under a stated precondition* class, the precondition being "the gather its coordinates are read through". **Correction — 2026-08-10.** The filing-time sentence that followed treated that gather as live work under [`admit-an-indirect-gather-family-for-tied-embedding-lookup`](admit-an-indirect-gather-family-for-tied-embedding-lookup.md) owning the tensor-data-derived index class under Q-SHAPE-007. That claim is false against the present tree: the gather *semantic* family was delivered 2026-08-07 as `tiler::gather-f32@1` under ADR 0107 (ticket `status: done`), with semantic registration and reference evaluation live. What remains open is the index-layer / scheduled access representation and the physical backend route — successors [`revise-adr-0108-with-a-complete-data-dependent-index-vertical`](revise-adr-0108-with-a-complete-data-dependent-index-vertical.md) (`awaiting-decision`) and [`emit-the-indirect-gather-on-metal`](emit-the-indirect-gather-on-metal.md) (`blocked`) — so F-41's physical fallback still inherits O-08's uncovered physical half. The frontmatter dependency on the closed admit ticket stays as the historical chain link; it no longer names the remaining lowering gate.
 
-**Inference — the dependency is real rather than topical.** Without an admitted indirect access class the family has no lowering at all, so scoping it first would produce a signature with no route.
+**Inference — the dependency is real rather than topical.** Without an index-layer admission and physical gather route the family has no physical lowering, so scoping it first would produce a signature with no backend route. The semantic gather family alone does not discharge that gate.
 
 ## Activation trigger
 
@@ -30,11 +30,11 @@ A named image, signal, or vision workload requires resampling. The pinned langua
 
 ## What the work would be, when it starts
 
-State all four attributes as canonical fields with their admissible values, and — the part that decides correctness — pin the coordinate computation's rounding rather than leaving it to the realization, since that is where implementations diverge. Then the exact-coordinate-then-interpolate oracle, and the gather-with-computed-coordinates lowering expressed over whatever access class the gather work admits, rather than a second indirection.
+State all four attributes as canonical fields with their admissible values, and — the part that decides correctness — pin the coordinate computation's rounding rather than leaving it to the realization, since that is where implementations diverge. Then the exact-coordinate-then-interpolate oracle, and the gather-with-computed-coordinates lowering expressed over whatever access class the remaining gather-route work admits, rather than a second indirection.
 
 ## Explicit non-goals
 
-- The indirect access class, which the gather ticket owns.
+- The indirect access class and physical gather route, which the gather successor tickets own.
 - One family per interpolation mode, which the taxonomy's own reasoning rejects.
 - A boundary mode implemented as a padding family. Reflect, edge, and wrap need the piecewise access class, and borrowing a pad here would hide that.
 
@@ -51,3 +51,4 @@ The family has all four attributes canonical, a pinned coordinate rounding, an e
 
 - 2026-08-05 — **not fired.** No image, signal, or vision workload is filed; the roadmap's candidate-track table records that class as "Not filed", and the only live conformance track is language-model inference. Recheck: `rg -o -N --no-filename 'tiler::[a-z0-9-]+@[0-9]+' crates/tiler-ir/src/semantic/ | sort -u` — 46 governed keys today, comprising the dtype identities, the ULP metric key, and the eighteen registered operation keys; the family's key is absent from that list.
 - 2026-08-09 — **not fired.** The active consumer work remains language-model/conformance work; no image, signal, or vision workload names resize, grid sampling, or an affine warp. Gather/index representation work alone does not fire the workload half of this trigger.
+- 2026-08-10 — **not fired.** Workload half still unsatisfied: no image, signal, or vision resampling workload filed; roadmap candidate-track "Image and signal pipelines" remains "Not filed". Semantic gather delivery (`tiler::gather-f32@1`) does not fire this trigger. Resampling family key remains unregistered.

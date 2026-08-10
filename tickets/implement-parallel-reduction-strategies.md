@@ -4,7 +4,7 @@ title: Implement parallel reduction strategies
 status: done
 priority: p1
 dependencies: [implement-first-profile-numerical-policies, implement-analytical-component-cost-model, calibrate-and-activate-parallel-reduction-selection]
-related: [admit-the-rms-normalization-family, admit-the-softmax-family, scope-transformer-nonlinear-normalization-and-reductions]
+related: [admit-the-rms-normalization-family, admit-the-softmax-family, scope-transformer-nonlinear-normalization-and-reductions, decide-the-general-accumulation-width-contract-for-reductions-and-contractions]
 scopes: [implementation/compiler, implementation/ir, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
@@ -124,6 +124,8 @@ Six of the seven closing criteria are met by the split graph on this merged tree
 
 **No census exists to update, which is a finding rather than a skipped item.** The Graph maintenance bullet asks for a census update in the same commit. There is none over `ScheduledRegionDiagnostic`: `tiler-ir` does not enable `feature(variant_count)` (only `tiler-cache` and `tiler-metal` do), no test enumerates the diagnostic vocabulary, and no test asserts its rule strings are distinct. Sizing one from the type is the right shape and it is a crate-level attribute change plus a new inventory, which is a different unit of work from this refusal; it is not silently dropped, it is stated here as unowned.
 
+**Correction — 2026-08-10.** The claim that `tiler-ir` does not enable `feature(variant_count)` is **false** at this base: `crates/tiler-ir/src/lib.rs` has `#![cfg_attr(test, feature(variant_count))]` (test-gated, same shape as `tiler-cache` and `tiler-compiler`; `tiler-metal` enables it unconditionally). The **load-bearing** half of the finding stands: there is still **no inventory** over `ScheduledRegionDiagnostic` — no `variant_count::<ScheduledRegionDiagnostic>` census and no test asserting rule-string uniqueness — so Graph maintenance's census update remains unowned rather than silently dropped. Reproduce: `grep -n 'feature(variant_count)' crates/tiler-ir/src/lib.rs`; `grep -n 'variant_count::<ScheduledRegionDiagnostic>' crates/`.
+
 **Numerical contract per strategy, stated by name.**
 
 - **Serial fold** — requires nothing. It *is* the declared contributor sequence, so it consumes neither permission. `permits_reassociation` and `permits_permutation` are recorded on the topology and cross-checked against the declared realization, never consulted to admit it.
@@ -153,6 +155,8 @@ Tom decides the exact included and excluded surface; nothing here is self-accept
 **Identity — measured no-change.** Nothing in this commit reaches a canonical identity. The diagnostic vocabulary is a *rejection* vocabulary: it is never encoded, never keyed on, and no schedule, kernel-program, artifact, or profile descriptor carries it. Measured rather than inferred: the `tiler-ir` and `tiler-compiler` suites are 1,787 green at this base with no golden or pin updated, and `git diff --stat` against `1438c867` names two files, both under `crates/tiler-ir/src/schedule/`, neither of which contains an encoder.
 
 **Unsupported cases, unchanged by this commit and named so a reader does not infer coverage.** A ragged final partition (`ContributorPartition::covers` requires an exact product). A tile with `rounds > 1` — representable, costed, and unreachable from any plan this build assembles. An accumulation *wider* than the region's element width is refused by the same rule as a narrower one, so no widening strategy exists yet for the L3′/L4 question D-5 and D-6 keep open; the general accumulation contract is still owned here and still undecided. The extrema family's padding identity `0xff80_0000` is proved observably neutral in the vocabulary's own doc but has nowhere to sit, because `TailPolicy` admits `Exact` alone.
+
+**Correction — 2026-08-10.** Residual ownership of the *general* accumulation-width / widening policy must **not** remain on this `done` rollup. Criteria 1–7 stay met as closed (explicit accumulation field + equality refusal of both narrower and wider widths); what stayed open is a **policy decision** outside those criteria — whether any strategy may accumulate wider than the region element type, and what evidence closes L3′ D-5's general contract and L3/L4 D-6's longest-accumulation width. That remainder is now owned by [`decide-the-general-accumulation-width-contract-for-reductions-and-contractions`](decide-the-general-accumulation-width-contract-for-reductions-and-contractions.md) (`todo`). Research docs that still assign open D-5/D-6 closure solely to this id are residual navigation debt to retarget when that remainder is accepted or closed; do not reopen this rollup's close criteria for it.
 
 ## Enforcers trigger re-evaluation, 2026-08-08 — not fired, and the restart condition is now wrong rather than unmet
 

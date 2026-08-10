@@ -31,7 +31,9 @@ A model-level tolerance, which [`design-model-level-qualification-and-optimizati
 
 ## Closes when
 
-Both halves exist in the ordinary test surface, each was watched failing under a deliberate perturbation, the realization half declines rather than passes on a non-matching environment row, and the coverage statement says exactly which of the reduction contract's adversarial cells are covered and which are not.
+Both halves exist in the ordinary test surface, each was watched failing under a deliberate perturbation, and the realization half declines rather than passes on a non-matching environment row.
+
+**Correction — 2026-08-10.** An earlier close condition also required that "the coverage statement says exactly which of the reduction contract's adversarial cells are covered and which are not." That clause is not a residual of this ticket: on 2026-08-09 the coverage ledger was rehomed to [`state-the-contraction-conformance-corpus-coverage-against-the-reduction-contract`](state-the-contraction-conformance-corpus-coverage-against-the-reduction-contract.md).
 
 ## Outcome audit — 2026-08-09
 

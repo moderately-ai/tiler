@@ -21,11 +21,13 @@ because this measurement needs its selected resource population and residency
 formula as the oracle. The edge replaces reliance on the rejected dense
 candidate's totals; it does not broaden the measurement outcome.
 
-**Fact.** The workload profile's exclusion table reads "Contexts beyond 8,320 tokens … A residency measurement on a named host, under L8", and its benchmark-row section says the same: extending the matrix upward "needs a residency measurement on a named host first, and it belongs to L8."
+**Fact.** The workload profile's exclusion table reads "Contexts beyond 8,320 tokens … A residency measurement on a named host, under L8", and its B1 section says extending the matrix upward "needs the selected layout carrier to land and its residency formula to be measured on a named host first, and it belongs to L8."
 
-**Fact.** [`design-model-ingestion-and-complete-execution`](design-model-ingestion-and-complete-execution.md) states the model-level peak figures and labels every one an **Inference** over quantities L1, L4, and L5 already state. Nothing has measured any of them.
+**Fact.** [`design-model-ingestion-and-complete-execution`](design-model-ingestion-and-complete-execution.md) states the model-level peak figures as **historical rejected-candidate** Inference over quantities L1, L4, and L5 already state — not current physical-residency authority. Nothing has measured resident-process peaks for any of them.
 
-**Inference — the measurement's primary value is not performance.** The cited totals contain KV terms from a rejected compact-allocation candidate. [Dynamic KV physical-layout authority](../docs/research/runtime/dynamic-kv-physical-layout.md) instead selects 56 logical members with two capacity-sized pool banks each: `2 × capacity × 229,376` reserved bytes, or 3,816,816,640 at B1-d capacity 8,320, while final exact-live bytes touched are 3,816,587,264. This measurement can falsify the reservation arithmetic and distinguish it from resident pages; D-16 uses the measured token-transaction cost while the prefill-decomposition and final-position-projection terms remain separately attributable.
+**Inference — the measurement's primary value is not performance.** The cited totals contain KV terms from a **rejected singular dense-allocation candidate**. [Dynamic KV physical-layout authority](../docs/research/runtime/dynamic-kv-physical-layout.md) instead selects 56 logical members with two capacity-sized pool banks each: `2 × capacity × 229,376` reserved bytes, or 3,816,816,640 at B1-d capacity 8,320, while final exact-live bytes touched are 3,816,587,264. This measurement can falsify the reservation arithmetic and distinguish it from resident pages; D-16 uses the measured token-transaction cost while the prefill-decomposition and final-position-projection terms remain separately attributable.
+
+**Correction — 2026-08-10.** Fact audit: L1's B1 sentence includes the layout-carrier clause (the shorter form was an L8 relay, not a literal L1 quote); L6 peak figures are historical rejected-candidate Inference only; the rejected peak source is the singular dense-allocation candidate, not bare "compact-allocation" (that name is the dynamic-kv fresh-allocate measurement control).
 
 ## Required work
 

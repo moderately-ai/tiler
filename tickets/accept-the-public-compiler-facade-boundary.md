@@ -4,11 +4,11 @@ title: Accept or revise the public compiler facade boundary
 status: done
 priority: p1
 dependencies: [admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary, admit-ordered-multi-output-programs-at-the-compiler-request-boundary]
-related: [prototype-public-compiler-api, prototype-optimizer-conformance-gate]
+related: [prototype-public-compiler-api, prototype-optimizer-conformance-gate, correct-session-facade-acceptance-disclosures]
 scopes: [contracts/optimizer, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [decision, needs-tom, public-boundary]
+tags: [decision, public-boundary]
 ---
 ## User-visible outcome
 
@@ -209,7 +209,7 @@ Tom accepts or revises the facade; `docs/correctness-and-testing.md:106-111`'s p
 
 ## Decided — accepted with one named exclusion
 
-Accepted by Tom on 2026-08-05 at the live decision review in the coordination session, witnessed first-hand by the coordinator, per the packet above: `session::compile`, `CompileRequest` and its installation methods, `InstalledCapabilities`, `Compilation` and its accessors, and the `CompileFailureClass` vocabulary. **Excluded: `session::compile_governed`**, held back on the packet's lossiness finding until [`widen-compile-governed-s-error-to-the-target-compile-failure`](widen-compile-governed-s-error-to-the-target-compile-failure.md) lands, when it returns for acceptance as a delta on this node. The sweep executed in the same change: the conformance gate's precondition at `docs/correctness-and-testing.md` is discharged with the exclusion named, and the reviewed-draft disclosure is corrected to the accepted-minus-exclusion state with the acceptance-is-not-stabilization boundary kept explicit. The `contracts/numerics` edits were made against a verified file-level disjointness check on the one live holder's branch (`git diff --name-only main...tkt/wire-the-delivered-realization-record-into-the-artifact` = four tiler-ir files, none under docs/), recorded here per the coordination discipline.
+Accepted by Tom on 2026-08-05 at the live decision review in the coordination session, witnessed first-hand by the coordinator, per the packet above: `session::compile`, `CompileRequest` and its installation methods, `InstalledCapabilities`, `Compilation` and its accessors, and the `CompileFailureClass` vocabulary. **Excluded: `session::compile_governed`**, held back on the packet's lossiness finding until [`widen-compile-governed-s-error-to-the-target-compile-failure`](widen-compile-governed-s-error-to-the-target-compile-failure.md) lands, when it returns for acceptance as a delta on this node. Sweep at that change (partial, not whole-tree): the conformance gate's precondition at `docs/correctness-and-testing.md` was discharged with the exclusion named, and that document's reviewed-draft disclosure was corrected to the accepted-minus-exclusion state with the acceptance-is-not-stabilization boundary kept explicit. Residual draft-language sites outside that document are listed under **Correction — 2026-08-10** below and are owned by [`correct-session-facade-acceptance-disclosures`](correct-session-facade-acceptance-disclosures.md). The `contracts/numerics` edits were made against a verified file-level disjointness check on the one live holder's branch (`git diff --name-only main...tkt/wire-the-delivered-realization-record-into-the-artifact` = four tiler-ir files, none under docs/), recorded here per the coordination discipline.
 
 ## The exclusion's delta — 2026-08-06, for Tom's next round
 
@@ -217,7 +217,18 @@ The widening landed: `session::compile_governed` returns `Result<Compilation, Ta
 
 ## The delta — accepted, completing the facade
 
-Accepted by Tom on 2026-08-06 at the live decision review in the coordination session, witnessed first-hand by the coordinator: `session::compile_governed` returning `Result<Compilation, TargetCompileFailure>`, the exact repair the 2026-08-05 exclusion named. The facade boundary is now accepted in full — the five originally accepted items plus the returned exclusion — and acceptance remains not-stabilization. Sweep: the conformance-gate disclosure at `docs/correctness-and-testing.md` is corrected in this change; the `session.rs` module-header disclosure still reads "reviewed draft" and its correction is deferred to the integration of `admit-a-fusion-role-for-the-sequence-extension-concatenate`, whose live claim holds `implementation/compiler` exclusively — deferred with this named execution point rather than edited under a live exclusive scope on a vacuous disjointness verdict.
+Accepted by Tom on 2026-08-06 at the live decision review in the coordination session, witnessed first-hand by the coordinator: `session::compile_governed` returning `Result<Compilation, TargetCompileFailure>`, the exact repair the 2026-08-05 exclusion named. The facade boundary is now accepted in full — the five originally accepted items plus the returned exclusion — and acceptance remains not-stabilization. Sweep at that change: the conformance-gate disclosure at `docs/correctness-and-testing.md` was corrected; at Outcome write time the `session.rs` module-header still read "reviewed draft" and its correction was deferred to the integration of `admit-a-fusion-role-for-the-sequence-extension-concatenate`, whose live claim then held `implementation/compiler` exclusively — deferred with that named execution point rather than edited under a live exclusive scope on a vacuous disjointness verdict.
+
+**Correction — 2026-08-10.** The live claim that `session.rs` "still reads reviewed draft" is false at current bases. `crates/tiler-compiler/src/session.rs` opens `This boundary is **accepted** under ADR 0075 and ADR 0074 convention 7` and names both acceptance dates; `docs/correctness-and-testing.md` states `the facade is accepted in full` and keeps acceptance ≠ stabilization. Residual present-tense draft disclosures about **this** facade (and BF16 session additions framed as unaccepted) remain at:
+
+1. `docs/status.md` — compiler bullet: `The tiler_compiler::session facade remains a reviewed experimental draft as a whole`
+2. `docs/status.md` — BF16 clause: additions "sit inside the … facade recorded above as a reviewed experimental draft; no separate public-boundary acceptance is claimed for them here" (contradicts [`state-and-check-a-bf16-numerical-contract`](state-and-check-a-bf16-numerical-contract.md) `## Surface accepted — 2026-08-05`)
+3. `docs/architecture.md` — `The session module remains a reviewed experimental draft as a complete facade`
+4. `docs/roadmap.md` — `a public reviewed-draft session facade`
+5. `crates/tiler/src/lib.rs` — `tiler_compiler::session is a reviewed experimental draft rather than an accepted or stabilized API, and accept-the-public-compiler-facade-boundary owns that decision` (names this closed ticket as if the decision were still open)
+6. `docs/dtype-support.md` — BF16 session additions "likewise a reviewed experimental draft rather than an accepted boundary"
+
+Those sites do not reopen the acceptance decision. Aligning them to accepted-minus-not-stabilization wording (mirroring `session.rs` / correctness-and-testing) is residual product work owned by [`correct-session-facade-acceptance-disclosures`](correct-session-facade-acceptance-disclosures.md). Reproduce residuals with a session/facade-scoped search for `reviewed experimental draft|reviewed-draft session|reviewed draft` under `docs/` and `crates/tiler/`.
 
 ## Current-boundary correction, 2026-08-09
 

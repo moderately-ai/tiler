@@ -26,7 +26,13 @@ tags: [research, operations, value-kinds, control-flow, deferred]
 
 ## Activation trigger
 
-Q-SEM-012's own trigger: a workload requires reusable graph functions, interprocedural optimization, recursion, or structured control flow — **or**, for the value-kind half alone, a family this record already tracks requires a non-tensor result, the two identified candidates being a comparator region for sorting and an effect token for collectives.
+Three independent routes, not one bag of value-kind candidates:
+
+1. **Q-SEM-012 control-flow / modules** (as written in open-questions): a workload requires reusable graph functions, interprocedural optimization, recursion, or structured control flow.
+2. **Region half**: a named consumer needs a nested region on the public graph — the identified consumer is `RQ-OP-11`'s comparator region under [`scope-the-ordering-and-rank-selection-families`](scope-the-ordering-and-rank-selection-families.md). A comparator over ordinary scalars needs a region, not a new value kind.
+3. **Value-kind half**: a family requires a non-tensor graph result — the identified candidate is an effect token for collectives (owned at the gate by [`multi-device-and-sharding-scope-gate`](multi-device-and-sharding-scope-gate.md)), plus any other non-tensor result family that arrives later.
+
+**Correction — 2026-08-10.** An earlier draft of this trigger listed "a comparator region for sorting" under the value-kind half. That misclassified the region consumer as a value-kind consumer and contradicted the separable-halves Inference above. The three routes above replace that wording.
 
 ## What the work would be, when it starts
 
@@ -49,5 +55,5 @@ The value-kind half and the region half are scoped separately, each against a na
 
 ## Trigger check log
 
-- 2026-08-05 — **not fired, on either route.** No workload requires graph functions, recursion, or structured control flow, and neither identified value-kind consumer is live: `RQ-OP-11`'s comparator region is deferred under [`scope-the-ordering-and-rank-selection-families`](scope-the-ordering-and-rank-selection-families.md) and the collective token under [`multi-device-and-sharding-scope-gate`](multi-device-and-sharding-scope-gate.md). Recheck: `rg -n 'Q-SEM-012' -A4 docs/open-questions.md`.
-- 2026-08-09 — **not fired, on either route.** Multi-result tensor values and staged intermediates have widened, but they remain tensor values rather than tuples/tokens/futures. No graph function, comparator region, effect token, recursion, or structured-control-flow workload has arrived.
+- 2026-08-05 — **not fired, on either half.** No workload requires graph functions, recursion, or structured control flow. Neither half's identified consumer is live: the **region** consumer (`RQ-OP-11`'s comparator region under [`scope-the-ordering-and-rank-selection-families`](scope-the-ordering-and-rank-selection-families.md)) remains deferred, and the **value-kind** consumer (collective effect token under [`multi-device-and-sharding-scope-gate`](multi-device-and-sharding-scope-gate.md)) remains deferred. Recheck: `rg -n 'Q-SEM-012' -A4 docs/open-questions.md`. **Correction — 2026-08-10:** an earlier wording of this entry called both consumers "value-kind" consumers; the comparator region is the region-half consumer, not a value kind.
+- 2026-08-09 — **not fired, on either half.** Multi-result tensor values and staged intermediates have widened, but they remain tensor values rather than tuples/tokens/futures. No graph function, comparator region (region half), effect token (value-kind half), recursion, or structured-control-flow workload has arrived.

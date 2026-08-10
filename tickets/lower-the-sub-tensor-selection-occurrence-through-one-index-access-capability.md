@@ -4,7 +4,7 @@ title: Lower the sub-tensor selection occurrence through one index-access capabi
 status: todo
 priority: p2
 dependencies: [admit-the-sub-tensor-selection-family]
-related: [scope-the-sub-tensor-selection-fusion-role, admit-a-fusion-role-for-the-sub-tensor-selection-slice, lower-a-two-region-occurrence-through-one-index-access-capability, lower-the-concatenate-occurrence-through-partitioned-writes, admit-the-structural-families-into-the-scheduled-region-vocabulary, admit-the-sub-tensor-selection-family, decide-the-source-bearing-slice-offset-boundary]
+related: [scope-the-sub-tensor-selection-fusion-role, admit-a-fusion-role-for-the-sub-tensor-selection-slice, lower-a-two-region-occurrence-through-one-index-access-capability, lower-the-concatenate-occurrence-through-partitioned-writes, admit-the-structural-families-into-the-scheduled-region-vocabulary, decide-the-source-bearing-slice-offset-boundary]
 scopes: [implementation/compiler, research/semantic-graph]
 shared_scopes: [project/tickets]
 paths: []
@@ -12,11 +12,11 @@ tags: [implementation, compiler, lowering, indexing, slice]
 ---
 ## User-visible outcome
 
-`tiler::slice-f32@1` resolves an index-access lowering capability like the two structural families beside it, and the operation-family delivery graph's track **O-06** points at that owner instead of carrying an M5 cell that reads *owed* with no owner named anywhere in the corpus.
+`tiler::slice-f32@1` resolves an index-access lowering capability like the two structural families beside it, and the operation-family delivery graph's track **O-06** points at that owner instead of carrying a bare M5 cell that reads *owed* with no ticket link in that document.
 
 ## Why this exists
 
-**Fact — O-06's M5 is owed and the durable graph still names no lowering owner.** The [operation-family delivery graph](../docs/research/semantic-graph/operation-family-delivery-graph.md)'s physical-rung table gives track O-06 an M5 cell reading *owed*. Its owners section says only `live for the literal-offset form` and points to neither a capability ticket nor a lowering provider. This ticket is the missing owner; the family-admission ticket and the two reserved relations are separate work.
+**Fact — the delivery graph's O-06 M5 cell is still bare *owed* and its owners section names no lowering ticket.** The [operation-family delivery graph](../docs/research/semantic-graph/operation-family-delivery-graph.md)'s physical-rung table gives track O-06 an M5 cell reading *owed*. Its owners section says only `live for the literal-offset form` and points to neither a capability ticket nor a lowering provider. The [support-matrix](../docs/roadmap.md#operation-family-support-matrix) Sub-tensor selection row already names this ticket as the index-access lowering between R5 and R6, so the corpus is not ownerless — the *delivery graph* specifically still lacks a followable M5 owner. This ticket is that delivery-graph owner once the capability lands; the family-admission ticket and the two reserved relations are separate work. Adjacent corpus lag on the same track (out of this ticket's close condition): the delivery graph's O-06 M4 cell still reads *owed* while the matrix is R5 and [`admit-a-fusion-role-for-the-sub-tensor-selection-slice`](admit-a-fusion-role-for-the-sub-tensor-selection-slice.md) is done.
 
 **Fact — the literal-offset lowering is not a fork, on the evidence below, which is why this is an implementation ticket rather than a second scoping record.** [Sub-tensor selection fusion role](../docs/research/indexing/sub-tensor-selection-fusion-role.md) established that M5 and M4 do not block each other. Three further facts, re-read at `415ab4cd`, make the literal shape settled:
 
@@ -33,7 +33,7 @@ Prove the lowering can say no. The perturbation that matters is a dropped offset
 ## Explicit non-goals
 
 - Any fusion role. That is [`admit-a-fusion-role-for-the-sub-tensor-selection-slice`](admit-a-fusion-role-for-the-sub-tensor-selection-slice.md), and neither ticket waits on the other.
-- Lifting the request boundary or reaching a `VerifiedKernel`. The reindex and broadcast capabilities are registered and, in the delivery graph's own words, "delivered and never resolved, because no admitted program shape contains one"; this capability lands in the same state, and [`admit-the-structural-families-into-the-scheduled-region-vocabulary`](admit-the-structural-families-into-the-scheduled-region-vocabulary.md) owns the difference.
+- Lifting the request boundary or reaching a `VerifiedKernel`. Reindex and broadcast capabilities now resolve and compile through ordinary paths after [`admit-the-structural-families-into-the-scheduled-region-vocabulary`](admit-the-structural-families-into-the-scheduled-region-vocabulary.md) admitted `LogicalAccess::ReindexBijection` and `LogicalAccess::BroadcastReplication`. Slice still has no selection/window `LogicalAccess` map, so a program stating only a slice is refused under `operation-set` for that missing spelling — a residual that ticket closed for reindex/broadcast only and that **no live ticket currently owns** for slice (concatenate's parallel gap is [`admit-the-concatenate-family-into-the-scheduled-region-vocabulary`](admit-the-concatenate-family-into-the-scheduled-region-vocabulary.md); slice has no counterpart). This capability lands without clearing that wall; admitting a slice scheduled-region map is separate work.
 - The strided and symbolic relations, which the key refuses by name. Symbolic selection is no longer blocked by index-expression vocabulary; it remains blocked by the semantic selection grammar and is owned by the source-bearing-offset decision.
 - A view-versus-copy physical realization. That is M6 and a physical-candidate applicability question, not this capability's.
 

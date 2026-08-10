@@ -4,7 +4,7 @@ title: Wire the BF16 reference to the realization it is told
 status: done
 priority: p2
 dependencies: []
-related: [accept-the-bf16-subnormal-resolution-carrier, carry-a-bf16-subnormal-realization-the-reference-can-be-told, conform-the-bf16-vertical-end-to-end]
+related: [accept-the-bf16-subnormal-resolution-carrier, carry-a-bf16-subnormal-realization-the-reference-can-be-told, conform-the-bf16-vertical-end-to-end, give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject, route-the-bf16-vertical-s-declared-conformance-through-the-checked-bridge]
 scopes: [implementation/reference, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
@@ -24,15 +24,15 @@ Everything this needs already exists in `main`:
 
 - `Bf16SubnormalRealization` and its two application sites, `Bf16Format::accept_operand` (before the decode) and `Bf16Format::commit` (after the single rounding), in `crates/tiler-reference/src/bf16.rs`.
 - `Bf16BinaryReference::combine_under`, which takes a realization per evaluation.
-- `ReferenceEvaluationRequest::conformance()` (`crates/tiler-reference/src/registry.rs:199`), already carried on every request.
+- `ReferenceEvaluationRequest` conformance surface in `crates/tiler-reference/src/registry.rs` (at delivery the bare `conformance()` getter; later `conformance_for`), already carried on every request.
 
-What is missing is one link: `impl ReferenceOperation for Bf16BinaryReference::evaluate` calls `self.combine(left, right)`, and `combine` delegates with `Bf16SubnormalRealization::preserving()`. **Build the realization from `request.conformance()`'s two `SubnormalMode`s and call `combine_under` instead.**
+What is missing is one link: `impl ReferenceOperation for Bf16BinaryReference::evaluate` calls `self.combine(left, right)`, and `combine` delegates with `Bf16SubnormalRealization::preserving()`. **Build the realization from the request's two `SubnormalMode`s and call `combine_under` instead.**
 
 Read [`accept-the-bf16-subnormal-resolution-carrier`](accept-the-bf16-subnormal-resolution-carrier.md)'s decision section in full before starting — it records why a mixed-width refusal is deliberately *not* part of this, and adding one would reintroduce an unreachable check the decision rejected.
 
 ## What this must not do
 
-- **No mixed-width refusal.** A multi-format region cannot be constructed — `region_arithmetic_type` (`crates/tiler-ir/src/schedule/model.rs:1333`) is a total function from `ScalarProgram` to one `ArithmeticType` — so such a refusal is unreachable and cannot be watched failing. The decision drops it explicitly.
+- **No mixed-width refusal.** A multi-format region cannot be constructed — `region_arithmetic_type` in `crates/tiler-ir/src/schedule/model.rs` is a total function from `ScalarProgram` to one `ArithmeticType` — so such a refusal is unreachable and cannot be watched failing. The decision drops it explicitly.
 - **No subject added to `NumericalRealization`.** That is arm B, closed against a trigger in [`subject-the-numerical-realization-when-a-region-carries-two-arithmetic-types`](subject-the-numerical-realization-when-a-region-carries-two-arithmetic-types.md).
 - **No change to `BF16_FACT_SUBNORMALS`.** Its unconditional `preserved-…` states what the operation *means*; a flushing realization is a declared deviation a region's contract carries, not a second opinion about semantics. Weakening it is the authority substitution ADR 0076 forbids, and it would move the registry snapshot and every identity derived from it.
 - **No widening of the binary32 conformance object to stand in for a BF16 one**, and no approximation of BF16 flushing with the binary32 modes. Read only the two format-agnostic `SubnormalMode` values; the `f32` appliers are not for this family.
@@ -81,6 +81,8 @@ No capability checks that the conformance it was handed was *stated about its ow
 
 Coordinator note: [`accept-the-bf16-subnormal-resolution-carrier`](accept-the-bf16-subnormal-resolution-carrier.md) says that obligation is "Recorded on [`apply-the-declared-numerical-conformance-on-every-reference-evaluation-path`]". It is not — `grep -n subject` on that file returns two unrelated lines, and the ticket is `done`. Adding it there is outcome expansion on a closed node, so this branch cites the carrier's own decision section instead and leaves the graph repair to the coordinator.
 
+**Correction — 2026-08-10.** The residual above is historical delivery narrative, not live Fact. The subject check and production bridge closed on [`give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject`](give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject.md) and [`route-the-bf16-vertical-s-declared-conformance-through-the-checked-bridge`](route-the-bf16-vertical-s-declared-conformance-through-the-checked-bridge.md) (both `done`). `evaluate` now obtains conformance via `ReferenceEvaluationRequest::conformance_for(ArithmeticType::Bf16)` rather than the bare `conformance()` getter named at delivery; present-tense claims that the subject is still unchecked, that the window is unreachable, or that `from_realization` has no caller must not be re-read as describing the current tree.
+
 ## Outcome — delivered 2026-08-07 at `8f0d4f5d`, merged as `a440c708`
 
 `<Bf16BinaryReference as ReferenceOperation>::evaluate` reads the two format-agnostic `SubnormalMode`s off `request.conformance()`, builds a `Bf16SubnormalRealization`, and calls `combine_under`. The binary32 appliers are not reached, the exact-rational arithmetic and its single rounding are untouched, `BF16_FACT_SUBNORMALS` is unchanged, and no mixed-width refusal was added — all four as the accepted arm requires. Neither `crates/tiler-ir/` nor `crates/tiler-compiler/` was touched.
@@ -94,3 +96,5 @@ Coordinator note: [`accept-the-bf16-subnormal-resolution-carrier`](accept-the-bf
 **The doc exception is retired.** `docs/correctness-and-testing.md`'s "One registered family cannot yet follow that rule…" paragraph is replaced by "Every registered family now follows that rule…", plus a second paragraph naming what is still unchecked — that no capability verifies the conformance it was handed was stated about its own format. That window is unreachable today because every conformance in the tree is `strict()` or a test's `new()`, and closing it belongs to [`give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject`](give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject.md).
 
 `make full` exit 0 on the branch and again on the merged tree: 2,951 workspace tests, 1,031 release numerical, `tkt lint`, shellcheck.
+
+**Correction — 2026-08-10.** The residual paragraph above is historical Outcome text from this ticket's delivery, not a live residual. The subject check and the BF16 vertical's production bridge closed on [`give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject`](give-the-realization-to-conformance-bridge-its-first-caller-and-a-subject.md) and [`route-the-bf16-vertical-s-declared-conformance-through-the-checked-bridge`](route-the-bf16-vertical-s-declared-conformance-through-the-checked-bridge.md) (both `done`). Post-wire, `evaluate` reads via `conformance_for(ArithmeticType::Bf16)`; do not re-read the delivery-time bare `request.conformance()` spelling, or the "still unchecked / unreachable / no caller" wording, as present-tense Fact about the current tree.

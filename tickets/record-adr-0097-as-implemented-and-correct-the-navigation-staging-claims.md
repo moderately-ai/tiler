@@ -4,7 +4,7 @@ title: Record ADR 0097 as implemented and correct the navigation docs' staging-r
 status: done
 priority: p2
 dependencies: []
-related: [implement-the-two-dimensional-staging-relation-and-step-the-schedule-domain-to-v5, admit-a-two-dimensional-cooperative-staging-relation]
+related: [implement-the-two-dimensional-staging-relation-and-step-the-schedule-domain-to-v5, admit-a-two-dimensional-cooperative-staging-relation, test-the-cooperative-lowering-shape-refusal]
 scopes: [contracts/decisions, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
@@ -41,3 +41,7 @@ Two deferrals ADR 0097 records are also unchanged and must survive the edit: the
 **`docs/decisions/README.md` needed no edit, and the check is one line.** `grep -n 'implement\|not-started\|partial\|spike-only' docs/decisions/README.md` returns nothing: neither catalog view encodes `implementation_status` for any ADR, so 0097's two rows say `accepted` — its unchanged `decision_status` — and already agree. Adding a status word to one row of a uniform hand-maintained view would have made the view inconsistent rather than more accurate.
 
 **One gap was found and filed rather than absorbed.** `grep -rn 'CooperativeLoweringShape' crates/` returns the variant, its diagnostic string, and its single binding in `cooperative_plan`, and no test in the workspace — so the refusal that keeps a rank-two tile out of the emitted body has never been watched refusing. [`test-the-cooperative-lowering-shape-refusal`](test-the-cooperative-lowering-shape-refusal.md) owns it at `todo`; it is out of this ticket's scopes, which reach no `crates/` path.
+
+## Fact audit — 2026-08-10
+
+**Correction — 2026-08-10.** Outcome 2026-08-05's close conditions on ADR 0097 `implementation_status`, the rewritten Implementation boundary maturity split, the decisions catalog (no `implementation_status` vocabulary), and the navigation docs' retirement of the one-dimensional `StagedSpan` / step-ownership claims still hold. After that Outcome, live board-status labels in the navigation deliverables this ticket corrected drifted: [`docs/status.md`](../docs/status.md) still says the second tile relation and [`realize-the-tiled-contraction-schedule-and-its-metal-emission`](realize-the-tiled-contraction-schedule-and-its-metal-emission.md) are "both `deferred`", and [`docs/roadmap.md`](../docs/roadmap.md)'s contraction support-matrix row still says the second tile relation is "still `deferred` under" [`admit-a-cooperative-tile-over-shared-operands`](admit-a-cooperative-tile-over-shared-operands.md). At re-read, that ticket is `awaiting-decision` and the realize ticket remains `deferred` — so one half of each pair is false. ADR 0097's Implementation boundary also claims the four-name existence grep "returns six files"; at re-read the same pattern matches seven files under `crates/`. Those three prose sites are residual navigation/ADR maintenance outside this wave's ticket-only edit set; this ticket stays `done` on the staging-relation / domain / catalog close conditions. `related` now includes the gap ticket for graph symmetry with its reverse edge.

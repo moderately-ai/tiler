@@ -92,3 +92,7 @@ That carrier is complete. `IndexRealizationLaw` now states the reinterpretation
 boundary, its reachability fence, and the non-relaxation of watched reachable
 refusals; the four named unreachable rules carry their local reasons. The
 accepted softmax law and its identity consequence are unchanged.
+
+## Current-state correction — 2026-08-10
+
+**Acceptance did not flip the in-source Draft boundary.** Tom accepted `StagedSoftmaxF32` without exclusion on 2026-08-07 (Accepted section above), but `crates/tiler-ir/src/index/law.rs` still labels that variant with `**Draft boundary.**` prose claiming it is a "labelled draft awaiting Tom's decision" and that "the label is what an acceptance flips." That awaiting-decision claim is false after acceptance. Neither the Accepted close, the 2026-08-09 carrier correction, nor any Outcome records the omission. The accepted surface, registration, tag 11, and identity consequence are unchanged; only the public docs understate maturity. A narrow remainder is still owed: replace the `StagedSoftmaxF32` draft-boundary docs with accepted-boundary language (or remove the awaiting-decision claim) without reopening the accepted surface. No remainder ticket id is assigned on this node yet; the defect is residual product debt on `law.rs` only (sibling accepted `PartitionedConcatenate` shows the same leftover pattern and is out of this ticket's repair).

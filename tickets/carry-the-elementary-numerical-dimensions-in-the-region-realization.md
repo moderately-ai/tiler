@@ -21,11 +21,11 @@ A caller that states a numerical contract permitting reciprocal replacement or a
 
 **Fact — corrected 2026-08-09.** The obligation is no longer activation-only. `tiler::silu-f32@1`, `tiler::rms-norm-f32@1`, and `tiler::softmax-f32@1` are all admitted elementary families; each can consume `NumericalDimension::ReciprocalTransform` and `NumericalDimension::ApproximateIntrinsics`. `ELEMENTARY_UNCARRIED_DIMENSIONS` names the common omission explicitly.
 
-**Fact — listing them would refuse a public preset for every program.** `dimension_requirements` filters by `is_consumable`, so a row entry enters the dimension into the requirement set every contract places on every target; and `unrepresentable_dimension` refuses any consumable dimension that `tiler_ir::schedule::NumericalRealization` cannot carry, which neither is. `session::NumericalContract::RelaxedF32` authorizes both, so it would become unrepresentable — for programs with no activation in them as well.
+**Fact — listing them would refuse a public preset for every program.** `dimension_requirements` filters by `is_consumable`, so a row entry enters the dimension into the requirement set every contract places on every target; and `unrepresentable_dimension` refuses any consumable dimension that `tiler_ir::schedule::NumericalRealization` cannot carry, which neither is. `session::NumericalContract::RELAXED_F32` authorizes both, so it would become unrepresentable — for programs with no elementary family occurrence as well.
 
 **Fact — the omission is a checked claim rather than a gap.** `policy::ELEMENTARY_UNCARRIED_DIMENSIONS` names both, and `the_uncarried_elementary_dimensions_are_outside_the_realization` fails the moment the region realization grows to carry either, which is the condition under which withholding the rows stops being honest.
 
-**Fact — what holds the obligation meanwhile is backend-local.** `crates/tiler-metal/src/emit.rs` writes `precise::exp` and the `/` operator rather than a fast intrinsic or a reciprocal multiply, and records `MetalNumericalRequirement::PreciseFp32Functions`. That is a guarantee over the operations actually emitted; it is not a profile-level assessment, and it speaks for one backend.
+**Fact — what holds the obligation meanwhile is backend-local.** `crates/tiler-metal/src/emit.rs` writes `precise::exp`, `precise::rsqrt`, and the `/` operator rather than a fast intrinsic or a reciprocal multiply, and records `MetalNumericalRequirement::PreciseFp32Functions`. That is a guarantee over the operations actually emitted; it is not a profile-level assessment, and it speaks for one backend.
 
 ## Required delivery
 
@@ -41,7 +41,7 @@ Widening `MaterializationRounding`, which no admitted operation consumes. Changi
 
 ## Reconsideration trigger
 
-**Fired.** Three elementary families are admitted and the public `RelaxedF32` preset authorizes both withheld dimensions. This is current implementation work, not a deferred trigger.
+**Fired.** Three elementary families are admitted and the public `RELAXED_F32` preset authorizes both withheld dimensions. This is current implementation work, not a deferred trigger.
 
 ## Decision packet — 2026-08-09
 

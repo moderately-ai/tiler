@@ -12,7 +12,7 @@ tags: [implementation, ir, schedule, compiler-api]
 ---
 ## Trigger — fired 2026-08-08
 
-Ordered multi-output programs are admitted, so a binary contraction can coexist with an independent output that retains a skipped declared input. The already required `rms_norm(matmul(a, b), w)` chain needs exactly that shape. This is current implementation work, not a parked capability.
+Ordered multi-output programs are admitted, so a binary contraction can coexist with an independent output that retains a skipped declared input. Separately, the already required single-output `rms_norm(matmul(a, b), w)` chain retains a third declaration via the staged consumer rather than multi-output coexistence. Both subjects hit this wall under `contraction-input-arity`. This is current implementation work, not a parked capability.
 
 ## Boundary
 
@@ -34,3 +34,7 @@ Current construction assumes dense ordinals in more than one place: `tiler_ir::s
 Restore the IR verifier's exact `0,1` predicate; densely renumber only `contraction_region`; densely renumber only `contraction_accesses_match`; perturb both physical derivations together; reintroduce dense indexing in `input_elements_at`; reintroduce the length predicate in `reads_declared_input`; and remove the request-subject operand-ordinal encoding. Each must fail its own targeted subject with quoted diagnostics before restoration. Test repeat and descent independently.
 
 Stop for any public signature or semantic-family change, or if the identity determination cannot preserve injectivity without a separately reviewed domain step and pin sweep.
+
+## Fact audit — 2026-08-10
+
+**Correction — 2026-08-10.** The Trigger originally said the `rms_norm(matmul(a, b), w)` chain "needs exactly that shape," equating it with multi-output coexistence of a binary contraction beside an independent retained-third-input output. Those are two distinct subjects; both still refuse under `contraction-input-arity` at this tree: (a) multi-output binary contraction beside an independent output that retains a skipped declaration; (b) single-output staged chain that retains the third declaration in the staged consumer. Only (a) is multi-output coexistence; the chain does not need multi-output. Fixtures still spell `rms_norm(matmul(a, b), a)` over two declared inputs to dodge this wall (`staged_family_over_a_materialized_intermediate`, `recognized_chain_depth_boundary`, `request.rs` contraction-fed-normalization comments). Boundary prose "ADR 0087's binary family" means the reserved multi-operand question / fifth structural rule (`no index in more than two operands`), not a second family key.

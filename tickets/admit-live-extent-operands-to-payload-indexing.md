@@ -5,7 +5,7 @@ status: todo
 priority: p1
 dependencies: [admit-symbolic-extents-at-the-compiler-request-boundary]
 related: [deliver-an-artifact-family-from-a-symbolic-region, bind-repeated-invocations-over-caller-retained-tensors]
-scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/metal, implementation/runtime, implementation/build, contracts/artifacts, contracts/integrations]
+scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/metal, implementation/runtime, implementation/build, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, extents, kernel, artifact, runtime, identity, public-boundary]
@@ -16,9 +16,15 @@ One compiled payload consumes a live symbolic input extent in its address and lo
 
 ## Exact gap and ownership
 
-**Fact at `b4e3478d42ce21ed68e23f772b643c6370d36498`.** `AbiRoot::InputExtent` already lets artifact expressions evaluate accessible ranges, guards, preconditions, and launch geometry from runtime-bound extents. `place_bindings` publishes only the evaluated offset/count and launch values. `BufferParameter` plus admitted launch builtins are the complete structured-kernel/Metal parameter population; no live input extent reaches the kernel body. The symbolic compiler-request ticket promises only that a program reaches planning or declines by the right reason, and the artifact-family delivery ticket discusses host-side range/launch evaluation. Neither owns a payload-consumable live scalar. This ticket is the missing prerequisite, not extra layout work.
+**Fact at `b4e3478d42ce21ed68e23f772b643c6370d36498`; re-verified at `c99ac54950f242d88d8dfe8335332bef0cf75f2d`.** `AbiRoot::InputExtent` already lets artifact expressions evaluate accessible ranges, guards, preconditions, and launch geometry from runtime-bound extents. `place_bindings` evaluates binding expressions into `RoutedBinding::{accessible_offset, accessible_bytes}` (with transport and binding). Launch geometry is published separately by `evaluate_launch` as `RoutedLaunch` on `RoutedEntry::launch`, not by `place_bindings`. `BufferParameter` plus admitted launch builtins are the complete structured-kernel/Metal parameter population; no live input extent reaches the kernel body. The symbolic compiler-request ticket promises only that a program reaches planning or declines by the right reason, and the artifact-family delivery ticket discusses host-side range/launch evaluation. Neither owns a payload-consumable live scalar. This ticket is the missing prerequisite, not extra layout work.
+
+**Correction — 2026-08-10.** The prior place_bindings sentence attributed launch publication to `place_bindings`; launch is `evaluate_launch` / `RoutedLaunch`. Wording matches `docs/research/runtime/dynamic-kv-physical-layout.md`. Reproduce: `rg -n "fn place_bindings|fn evaluate_launch" crates/tiler-runtime/src/load.rs`.
 
 An input extent is resolved from the program interface's existing `AbiRoot::InputExtent`; it is never derived from a workload-named storage descriptor, and after the 2026-08-04 KV supersession no such descriptor exists to derive one from. The dynamic-KV layout research selected exact-live dense packing in capacity-sized pooled buffers, so `C` and `S` themselves are the only address operands that path needs; no physical layout-root carrier follows this ticket.
+
+## Scopes note — 2026-08-10
+
+`contracts/integrations` was removed: this ticket does not own frontend-integration contract prose (`docs/integration/**`); deliver owns that path under that scope. Payload compilation subject identity is carried transitively via kernel identity bytes folded into compilation identity; `implementation/metal-aot` is not declared unless a worker must edit `crates/tiler-metal-aot/**` directly (add that scope only if such an edit is required).
 
 ## Required work
 

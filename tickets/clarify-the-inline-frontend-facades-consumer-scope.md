@@ -71,16 +71,16 @@ the consumer did not declare" clause in the crate header.
 `tiler_compiler::session` as a reviewed experimental draft rather than an
 accepted API and point at
 [`accept-the-public-compiler-facade-boundary`](accept-the-public-compiler-facade-boundary.md),
-which matches `docs/correctness-and-testing.md:117`. The diff adds and removes
+which at landing matched the correctness inventory's then-open facade language (searchable in `docs/correctness-and-testing.md` under the multi-output / facade-acceptance paragraph that now carries `the facade is accepted in full` — not a stable line number). The diff adds and removes
 only `//!` and `///` lines, so no item's signature, visibility, or path moved and
-no interface was accepted here.
+no interface was accepted *by this ticket*.
+
+**Correction — 2026-08-10.** At bases after 2026-08-06 the `tiler_compiler::session` surface is **accepted** (acceptance is not stabilization) per [`accept-the-public-compiler-facade-boundary`](accept-the-public-compiler-facade-boundary.md) — Tom accepted the item set on 2026-08-05 and the returned `compile_governed` exclusion on 2026-08-06. `crates/tiler-compiler/src/session.rs` opens `This boundary is **accepted** under ADR 0075 and ADR 0074 convention 7`; `docs/correctness-and-testing.md` states `the facade is accepted in full` and keeps acceptance ≠ stabilization. The Outcome sentences above that present "reviewed experimental draft" / "has not been decided" as a live description of a still-pending boundary are historical delivery wording that later went stale; the same draft/undecided sentences remain in the delivered `crates/tiler` and `crates/tiler-macros` crate headers (and architecture's packaging paragraph still ends `their eventual coherent facade is a separate public-boundary decision`). That is post-acceptance disclosure drift, not a reversion of this ticket's consumer-scope close. Refreshing those present-tense sites is residual product work, not a reason to reopen this ticket.
 
 **Fact — the Markdown contract already agreed and still does.**
-`docs/architecture.md:331` describes `tiler` as "The inline Rust frontend's
-import path", and `:424` states that this "does not make `tiler` the accepted
-facade for consumers that construct and compile arbitrary semantic programs".
-The code documentation now says the same thing; no Markdown edit was required,
-and none was in scope.
+`docs/architecture.md` (anchor: `The inline Rust frontend's import path`) describes `tiler` as "The inline Rust frontend's import path", and (anchor: `does not make `tiler` the accepted facade for consumers that construct and compile arbitrary semantic programs`) states that this "does not make `tiler` the accepted facade for consumers that construct and compile arbitrary semantic programs".
+The code documentation now says the same thing on the consumer-scope half; no Markdown edit was required,
+and none was in scope. **Correction — 2026-08-10.** Bare line citations `:331` / `:424` are retired in favour of the anchors above (the quoted table cell and packaging-paragraph clauses still hold; line numbers had already drifted). The packaging paragraph's present-tense "eventual coherent facade is a separate public-boundary decision" tail is the same residual disclosure class as the crate headers after session acceptance — still correct that `tiler` is not the general semantic-program facade; wrong only as "undecided" status for `session`.
 
 **Fact — the freeze was re-checked independently before editing.**
 `grep -rn "code freeze\|review freeze\|architecture-review" .` (excluding the

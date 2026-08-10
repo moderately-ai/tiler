@@ -57,14 +57,16 @@ Every freedom site is enumerated at source, each is marked declared or undeclare
 
 **Measurement boundary.** Nothing was run. Every claim is a source reading at `c335bb5b` with a file, a line, and — for each absence — the one-line command that reproduces it. No cargo build, no test, no device execution.
 
+**Correction — 2026-08-10.** Outcome above is the delivery snapshot at `c335bb5b`. Post-delivery authority for site counts and classes is the research record's Part 7.5 (twenty-five sites after site 4.8 reclass and site 4.9; Outcome's twenty-four / fourteen split is not current). Public-surface parking at `accept-the-realization-witness-surface` was historical: that ticket is `done` (A+B accepted, C redirected to plain-scalar); `RealizationWitness` / `UnpinnedFreedomSite` live in `crates/tiler-ir/src/schedule/witness.rs`. The navigation claim that the record had no catalog row is obsolete: `docs/research/README.md` carries the row. Line-number cites in Outcome (e.g. `policy.rs:736`, `request.rs:4697`, `policy.rs:476`, `model.rs:715`) and the two-line `permits_contraction` count are delivery-base anchors; content claims remain, positions have drifted.
+
 ## Graph maintenance
 
 Filed by [the permitted-divergence oracle derivation](../docs/research/reference/permitted-divergence-oracle.md) as the second of its two ownerless gaps.
 
-**Filed by this ticket:**
+**Filed by this ticket** (statuses as of 2026-08-10; each ticket's own frontmatter is authority):
 
-- [`accept-the-realization-witness-surface`](accept-the-realization-witness-surface.md) — `awaiting-decision`. The ADR 0075 public boundary, drafted with its evidence and not adopted. Only Tom closes it.
-- [`decide-how-a-pinned-pointwise-grouping-becomes-evaluable`](decide-how-a-pinned-pointwise-grouping-becomes-evaluable.md) — `todo`. The architecture fork the enumeration surfaced: retain the selected semantic candidate's program, or write an exact evaluator for the physical projection. Both drafted in the record's Part 7.3; neither is correctness-dominant, so the record parks rather than picking.
-- [`record-the-contraction-choice-a-fused-fold-actually-made`](record-the-contraction-choice-a-fused-fold-actually-made.md) — `todo`. The mirror field and the missing field at the two plan-side contraction sites.
+- [`accept-the-realization-witness-surface`](accept-the-realization-witness-surface.md) — `done` (was `awaiting-decision` at filing). The ADR 0075 public boundary; Tom accepted A+B and redirected C to plain-scalar.
+- [`decide-how-a-pinned-pointwise-grouping-becomes-evaluable`](decide-how-a-pinned-pointwise-grouping-becomes-evaluable.md) — `done` (was `todo` at filing). The architecture fork the enumeration surfaced: retain the selected semantic candidate's program, or write an exact evaluator for the physical projection. Both drafted in the record's Part 7.3; resolved on that ticket.
+- [`record-the-contraction-choice-a-fused-fold-actually-made`](record-the-contraction-choice-a-fused-fold-actually-made.md) — `done` (was `todo` at filing). The mirror field and the missing field at the two plan-side contraction sites.
 
-**Already filed elsewhere, and confirmed still correct at this base:** the backend-compiler question is `measure-whether-the-metal-compiler-preserves-the-emitted-evaluation-order` (`todo`); the multi-round tile evaluator is `derive-the-exact-evaluator-for-a-multi-round-cooperative-fold-order` (`deferred`); carrying the two elementary dimensions is `carry-the-elementary-numerical-dimensions-in-the-region-realization` (`todo`).
+**Already filed elsewhere** (statuses as of 2026-08-10; each ticket's own frontmatter is authority): the backend-compiler question is `measure-whether-the-metal-compiler-preserves-the-emitted-evaluation-order` (`done`; was `todo` at delivery); the multi-round tile evaluator is `derive-the-exact-evaluator-for-a-multi-round-cooperative-fold-order` (`deferred`); carrying the two elementary dimensions is `carry-the-elementary-numerical-dimensions-in-the-region-realization` (`awaiting-decision`; was `todo` at delivery).

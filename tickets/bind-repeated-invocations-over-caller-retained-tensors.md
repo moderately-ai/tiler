@@ -3,8 +3,8 @@ id: bind-repeated-invocations-over-caller-retained-tensors
 title: Bind repeated invocations over caller-retained tensors from one artifact identity
 status: todo
 priority: p1
-dependencies: [admit-the-sequence-extension-concatenate-family, admit-live-extent-operands-to-payload-indexing, establish-a-dynamic-kv-physical-layout-authority, reclassify-language-model-work-as-a-conformance-track, supersede-the-runtime-owned-kv-state-design]
-related: [design-autoregressive-state-and-kv-cache, assemble-the-causal-self-attention-block-program, expose-the-dispatch-record-on-a-decoded-artifact, evaluate-retained-shape-relations-before-routing-commit]
+dependencies: [admit-live-extent-operands-to-payload-indexing, establish-a-dynamic-kv-physical-layout-authority, reclassify-language-model-work-as-a-conformance-track, supersede-the-runtime-owned-kv-state-design]
+related: [admit-the-sequence-extension-concatenate-family, design-autoregressive-state-and-kv-cache, assemble-the-causal-self-attention-block-program, expose-the-dispatch-record-on-a-decoded-artifact, evaluate-retained-shape-relations-before-routing-commit]
 scopes: [implementation/artifact, implementation/runtime, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
@@ -33,10 +33,13 @@ All of it is withdrawn, and the withdrawal removes work rather than deferring
 it. The manifest existed to stop a caller from supplying a partial, reordered,
 or duplicated cache-binding population. A program's ordered named inputs and
 outputs *already* state that population, and binding already refuses a wrong
-count, a wrong key, a wrong rank, a wrong stored scalar, and a wrong literal
-extent — for every program, not for caches. A second, KV-named authority over
-the same subject would have been the duplication the corpus keeps eliminating,
-and it would have put workload vocabulary into the neutral envelope schema.
+count, a wrong rank, a wrong stored scalar, and a wrong literal extent on the
+positional `bind_region` path — for every program, not for caches. Keyed
+lookup on `RegionRequest` / artifact `BindingTarget::ProgramInput` is a separate
+path with its own tests; it is not a universal wrong-key refusal on every bind
+surface. A second, KV-named authority over the same subject would have been the
+duplication the corpus keeps eliminating, and it would have put workload
+vocabulary into the neutral envelope schema.
 **The artifact-schema and canonical-identity version step is therefore no longer
 required by this ticket**, and `contracts/artifacts` is dropped from its scopes
 for that reason.
@@ -54,7 +57,17 @@ per invocation at one bound extent.
 - **A routed accessible span is derived from the bound extents, never from the
   allocation length.** A caller may bind a dense payload that occupies a prefix
   of a longer resource, and the invocation must address exactly that payload.
-  The retained oracle is the layout record's: at a caller pool of 73,728 bytes
+  Today the paths disagree: adapter `plan_dispatch` already accepts storage
+  longer than the published live reach (`supplied < reach` →
+  `UndersizedStorage`; longer storage passes), while the public
+  `DenseRowMajorStorage` facade in `tiler` `checked_length` requires
+  `declared == actual` and returns `BindError::StorageLengthMismatch` otherwise.
+  On the path this ticket owns, that equality must be relaxed or bypassed so a
+  capacity-sized pool bound at a shorter live extent is legal and still
+  range-checked (`reach ≤ storage`, not `storage == dense(extents)`). Relaxing
+  facade equality is a consequential bind-surface behaviour change; treat as
+  draft until Tom accepts if it widens `BindError` / adapter contracts. The
+  retained oracle is the layout record's: at a caller pool of 73,728 bytes
   holding `[8, 14, 128]` and `[8, 15, 128]` F32 payloads, head 1 begins at byte
   7,168 and 7,680 and the accessible spans are 57,344 and 61,440 bytes. An
   implementation that derives a stride from the resource length addresses byte
@@ -71,11 +84,16 @@ per invocation at one bound extent.
   specialization values are packaged and the check is decidable. This is a
   general rule about bound extents; it names no workload quantity.
 - **Guarded variants discriminate on bound extents at route time, not at build
-  time.** Package the tiled realization guarded on a contracted extent
-  `≡ 0 (mod 16)` and the direct realization otherwise, selected per invocation
-  under `RoutingPolicy::StablePriority`. Across the C1 conformance row's nine
-  invocations the tiled guard holds exactly once, at extent 16 — which is what
-  makes "one artifact, several plans" a testable claim rather than a slogan.
+  time.** Package **two complete variants** (a synthetic multi-variant fixture
+  or any already-landed realizations) whose applicability guards discriminate on
+  a bound contracted extent `≡ 0 (mod 16)`, selected per invocation under
+  `RoutingPolicy::StablePriority`, with the guard true only at extent 16 across
+  the nine C1 extents. This discharges "one artifact, several plans" without
+  requiring [`realize-the-tiled-contraction-schedule-and-its-metal-emission`](realize-the-tiled-contraction-schedule-and-its-metal-emission.md)
+  (status `deferred`; cooperative-tile public boundary not yet accepted). Scopes
+  here do not include `implementation/metal`; if the real tiled Metal body
+  becomes the close criterion later, that ticket must be added as a dependency
+  and readiness accepted as deferred with it.
 - **Reuse the live-extent operand transport.**
   [`admit-live-extent-operands-to-payload-indexing`](admit-live-extent-operands-to-payload-indexing.md)
   is the only generic address-operand prerequisite. Do not define a capacity
@@ -91,11 +109,30 @@ Any runtime object that outlives one invocation.
 ## Closes when
 
 One assembled artifact routes at every extent of the C1 conformance row's nine
-invocations with one identity and one prepared pipeline; the guard selects the
-tiled variant at extent 16 and the direct variant elsewhere; a program
-specializing a kernel on a bound extent is refused at artifact assembly with its
-own diagnostic, watched failing against a deliberate perturbation; an invocation
-binding a payload inside a longer resource addresses the exact live span, and
-the wrong-stride interpretation is exercised and fails the retained oracle; and
-a test asserts the single artifact identity across all nine invocations so that
-a per-invocation compilation fails rather than passes quietly.
+invocations with one identity and one prepared pipeline; the StablePriority
+guard selects the extent-`≡ 0 (mod 16)` variant at extent 16 and the other
+variant elsewhere (fixture or already-landed realizations; not the deferred
+Metal tiled contraction body); a program specializing a kernel on a bound extent
+is refused at artifact assembly with its own diagnostic, watched failing against
+a deliberate perturbation; an invocation binding a payload inside a longer
+resource addresses the exact live span on the consumer path this ticket owns
+(after facade equality is relaxed or bypassed so capacity-sized pools at shorter
+live extents are legal), and the wrong-stride interpretation is exercised and
+fails the retained oracle; and a test asserts the single artifact identity
+across all nine invocations so that a per-invocation compilation fails rather
+than passes quietly.
+
+## Fact audit — 2026-08-10
+
+Ticket-audit wave B5 residual repair against report
+`docs/research/documentation/ticket-audit-2026-08-10/reports/bind-repeated-invocations-over-caller-retained-tensors/e1e32eeca509_c99ac54950f2.md`.
+
+**Correction — 2026-08-10.** `admit-the-sequence-extension-concatenate-family` moved from `dependencies` to `related`. Required behaviour and Closes when never construct a concatenate occurrence after the generic rewrite; concatenate remains a related capability for later stateful verticals, not a bind/route/identity prerequisite for nine-extent rebinding of one artifact.
+
+**Correction — 2026-08-10.** Close criterion packages two complete multi-variant realizations with extent-rooted guards under `RoutingPolicy::StablePriority`, not the real Metal tiled contraction body owned by deferred `realize-the-tiled-contraction-schedule-and-its-metal-emission`. Prior wording ("Package the tiled realization … and the direct realization") could send a worker into that deferred chain despite scopes excluding `implementation/metal`.
+
+**Correction — 2026-08-10.** Longer-resource live-span obligation now names the facade/adapter split: adapter `plan_dispatch` already allows `supplied ≥ reach`; `tiler` `checked_length` / `BindError::StorageLengthMismatch` still requires equality under `DenseRowMajorStorage` and must change on the path this ticket owns.
+
+**Correction — 2026-08-10.** Supersession rationale no longer claims binding refuses "a wrong key" as a universal program-interface rule. Positional `bind_region` refuses wrong count/rank/stored scalar/literal extent; keyed request/artifact paths are separate.
+
+Reproduce anchors: `rg -n 'if declared == actual' crates/tiler/src/route.rs`; `rg -n 'if supplied < reach' crates/tiler-runtime/tests/adapter_route/adapter.rs`; `rg -n 'status: deferred' tickets/realize-the-tiled-contraction-schedule-and-its-metal-emission.md`; `rg -n 'OperandCountMismatch|RankMismatch|StorageScalarMismatch|LiteralExtentMismatch' crates/tiler/src/value.rs`.

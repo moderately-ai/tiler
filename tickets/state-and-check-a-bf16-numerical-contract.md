@@ -17,8 +17,10 @@ constant/multiply/add family already defines, and target feasibility checks that
 contract against the exact BF16 arithmetic subject. On the measured macOS
 Apple9 profile, a strict subnormal-preserving request is refused with a typed
 numerical gap naming BF16 and the profile's measured sign-preserving flush; a
-flush-accepting request reaches the next independently unsupported layer. No
-F32 contract entry, profile row, or arithmetic behaviour is inherited.
+flush-accepting request clears the subnormal dimension, and on that profile's
+measured two-row BF16 ledger (subnormals only) the next refusal is `Unknown` on
+contraction rather than a permanent dtype wall. No F32 contract entry, profile
+row, or arithmetic behaviour is inherited.
 
 ## Why this is a separate boundary
 
@@ -28,14 +30,17 @@ F32 contract entry, profile row, or arithmetic behaviour is inherited.
 complete exclusive tables. `declare-the-bf16-rows-on-the-authoritative-metal-profile`
 can therefore add the measured BF16 rows without changing this ticket's scope.
 
-**Fact.** The public request contract cannot ask the corresponding question.
-`NumericalContract` contains one dimension vector documented as "Every
-resolution is stated for `f32`"; its only entry point is
-`NumericalContractBuilder::strict_f32`; and `NumericalContract::resolve`
-constructs `StrictF32NumericalContract`. A pure-BF16 semantic program is refused
-at the request boundary with `dtype-f32` before target numerical feasibility,
-so adding a BF16 profile row does not make a strict BF16 preservation refusal
-observable through `compile`.
+**Fact, at `aa09b5e` (before this ticket landed).** The public request contract
+could not ask the corresponding question. `NumericalContract` contained one
+dimension vector documented as "Every resolution is stated for `f32`"; its only
+entry point was `NumericalContractBuilder::strict_f32`; and
+`NumericalContract::resolve` constructed `StrictF32NumericalContract`. A
+pure-BF16 semantic program was refused at the request boundary with `dtype-f32`
+before target numerical feasibility, so adding a BF16 profile row did not make a
+strict BF16 preservation refusal observable through `compile`. This ticket's
+delivery inverted that: width is required and named (`strict_f32` or
+`strict_bf16`), the contract carries `arithmetic: ArithmeticType`, and docs now
+say every resolution is stated for exactly one `ArithmeticType`.
 
 **Inference.** Treating the existing `STRICT_F32` contract as a BF16 contract
 would silently transfer per-dtype behaviour across a boundary the retained
@@ -140,6 +145,18 @@ and `crates/tiler-ir/src/schedule/mod.rs` as the files at risk.
   `admit-bf16-into-the-schedule-and-kernel-vocabulary`'s layer, because
   recognition sits above it. That ticket's relation stands and its wall is the
   next one after this one, not this one.
+  **Correction — 2026-08-10.** The `dtype-f32` post-feasibility claim above is
+  landing-time history for this ticket, not a live present-tense Fact. Later
+  work (`widen-the-strategy-recognizer-past-the-f32-wall` and related) replaced
+  the blanket `dtype-f32` rule with a derivation of the program's own
+  arithmetic, so pure BF16 is recognized. On a complete BF16 numerical table a
+  flush-accepting contract reaches a selected `PlanAlternative`
+  (`a_flush_accepting_bf16_contract_reaches_a_selected_plan`). The measured
+  ledger boundary in the next Fact (contraction / `Unknown` on the two-row
+  Apple9 BF16 rows) remains live. The related edge to
+  `admit-bf16-into-the-schedule-and-kernel-vocabulary` still stands as related
+  work that owned schedule/kernel vocabulary; it is not this ticket's
+  post-feasibility wall at the current tree.
 - **Fact — the measured ledger's BF16 rows cover the two subnormal dimensions
   only.** So on `FIRST_MACOS_APPLE9`'s own rows a flush-accepting BF16 contract
   meets `Unknown` on the first remaining consumable dimension (contraction)

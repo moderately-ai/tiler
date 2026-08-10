@@ -12,7 +12,7 @@ tags: [implementation, diagnostics, runtime, explain, language-model, class-conf
 ---
 ## User-visible outcome
 
-A failed forward pass says which of its thirty executions failed, in which phase, with which token in flight — so a consumer changes something rather than re-running.
+A failed model-level pass reports enough that a consumer changes something rather than re-running. For the four execution failure classes (bind, route, pre-commit adapter, post-commit), the consumer driver pairs the ordinal, phase, and token-in-flight it already holds with Tiler's typed stage reason. A conformance disagreement reports the position, which observable disagreed, and the tie state at that position, without inventing an ordinal — the attribution fixture owns "where" at the model boundary. The Required content table and Closes when below are the normative authority for which fields each class names.
 
 ## The ordinal is the driver's, and no Tiler type acquires one
 

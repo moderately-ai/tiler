@@ -12,7 +12,7 @@ tags: [research, decision, needs-tom, public-boundary]
 ---
 ## User-visible outcome
 
-One interpreter answers "what does this verified kernel compute", and both crates' conformance tests read it. Until then there are two, they disagree about what a body may contain, and the weaker one is the one the pipeline tests use.
+One interpreter answers "what does this verified kernel compute", and both crates' conformance tests read it. Until then there are two, they disagree about what a body may contain, and the weaker one on barrier-nesting / multi-round executability is the one the pipeline tests use — not a weaker overall feature surface (the pipeline machine is richer on multi-buffer binding, bf16, and op vocabulary).
 
 ## The two, and how they differ
 
@@ -31,7 +31,7 @@ Deciding where the shared machine lives and moving both call sites onto it. The 
 - **Option A — a non-test, doc-hidden `tiler-ir` support item.** This adds no crate, but makes a test interpreter reachable through a production crate and therefore creates a public Rust surface whose stability and consumer exclusions must be stated.
 - **Option B — a dev-only workspace crate, `tiler-kernel-test-support` (recommended).** Both test suites depend on one implementation without turning test machinery into `tiler-ir`'s production API. It costs one small workspace member and lockfile/dependency-graph maintenance, which is narrower than a permanently reachable public helper.
 
-Tom needs to choose the ownership boundary. The implementation may then move the complete IR machine, keep one authority, and delete both copies; it must not create a third temporary copy.
+Tom needs to choose the ownership boundary. The implementation may then build one shared authority that preserves the IR machine's barrier-containing-loop flatten (Seed/Iterate/Yield/Exit steps and Rendezvous split) and the compiler machine's multi-buffer, bf16, and op vocabulary surfaces that existing pipeline tests already exercise, then delete both private copies; it must not create a third temporary copy.
 
 ## Closes when
 

@@ -68,9 +68,4 @@ separate ADR carrier its scopes could not perform. That carrier landed at
 missing-method golden. The original `Closes when` is therefore satisfied by the
 ticket plus its carrier, not by an out-of-scope edit hidden in this branch.
 
-The two disclosure tickets named above have also since landed. Commit
-`788b0c03` added the complete offered physical-provider environment beside the
-already selected set, and ADR 0090 records both halves separately. What remains
-is acceptance of the labelled-draft public surface, owned by
-`accept-the-installed-physical-provider-public-surface`; there is no remaining
-provider-environment implementation gap on this completed spike ticket.
+Of the two disclosure tickets named above, `disclose-offered-and-selected-physical-provider-sets-separately` closed after commit `788b0c03` delivered `Compilation::offered_physical_providers` beside the already selected set, and ADR 0090 records both halves separately. `disclose-the-physical-provider-environment-a-compilation-was-offered` remains `awaiting-decision` for the artifact `CompilationEnvironment` subject; its compiler-side documentation/accessor half was already discharged by that landing. What remains for the public surface is acceptance of the labelled draft, owned by `accept-the-installed-physical-provider-public-surface`; there is no remaining provider-environment implementation gap on this completed spike ticket.

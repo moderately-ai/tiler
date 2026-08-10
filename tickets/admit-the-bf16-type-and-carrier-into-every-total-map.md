@@ -12,7 +12,7 @@ tags: [implementation, dtype, bf16, kernel-ir, vocabulary]
 ---
 ## User-visible outcome
 
-`KernelType::Bf16` and `StorageScalar::Bf16` exist, every total map over those two vocabularies states what BF16 means or refuses it by name, and the workspace compiles. Nothing produces either variant yet — this ticket admits the *types*, not a program, a kernel, or a target capability.
+`KernelType::Bf16` and `StorageScalar::Bf16` exist, every total map over those two vocabularies states what BF16 means or refuses it by name, and the workspace compiles. **At close of this ticket**, producing either variant as a program, kernel, or target capability was an explicit non-goal — this ticket admitted the *types* only. Successors own production: `admit-bf16-into-the-schedule-and-kernel-vocabulary` (schedule/kernel constructs), `lower-bf16-to-metal` (`bfloat` emission and numerics machinery), and related BF16 vertical work.
 
 ## Why this is one atomic cross-crate change rather than four tickets
 
@@ -63,7 +63,7 @@ tags: [implementation, dtype, bf16, kernel-ir, vocabulary]
 - `element_bytes(KernelType::Bf16)` and `StorageScalar::Bf16::byte_width()` are both `2`, derived at the one width authority each, with no second table.
 - The artifact's `*_from_tag` decoders gain the new tags in the same change. A tag added to the encoder and not the decoder produces an artifact that encodes and fails to decode.
 - `check_binding_access` pairs `StorageScalar::Bf16` with `KernelType::Bf16` and continues to refuse every mismatched pair — the two-versus-four-byte misread is the failure this check exists to prevent.
-- **`msl_type` must refuse BF16, not spell it.** This is the load-bearing decision in this ticket. Emitting `bfloat` would make an unmeasured target capability appear available: `declare-the-bf16-rows-on-the-authoritative-metal-profile` is `blocked` because the only BF16 measurement is `-std=metal3.1` against macOS 13.0 while the authoritative profile is MSL 4.0 / macOS 26.0. Make `msl_type` fallible and return the existing unsupported-type refusal for BF16, so the widened vocabulary rejects explicitly rather than silently approximating. `lower-bf16-to-metal` replaces that refusal with a spelling once its profile dependency is satisfied.
+- **`msl_type` refused BF16 at this ticket's close; `lower-bf16-to-metal` later spelled it.** **Historical landing (this ticket):** make `msl_type` fallible and return the unsupported-type refusal for BF16 so the widened vocabulary rejects by name rather than silently approximating — at close, emitting `bfloat` without the constant reinterpretation, NaN helper, and dispatch route would have let a BF16 kernel emit source that compiles while the numerics it depends on are absent. **Supersession:** `lower-bf16-to-metal` (done) replaced that refusal arm with `Ok("bfloat")` together with the numerics machinery; live `msl_type` at `crates/tiler-metal/src/emit.rs` is `KernelType::Bf16 => Ok("bfloat")`. The filing-time profile-blocked justification for refusal is itself historical — see the Fact above about `declare-the-bf16-rows-on-the-authoritative-metal-profile` being done.
 - `index_arithmetic_requirement` classifies BF16 as imposing no index-arithmetic requirement, beside the other non-index types.
 - Check whether `docs/artifact-abi.md` states anything that a widened element-type or storage-carrier vocabulary makes wrong. It does not enumerate tag values today, so the expected answer is no; the scope is declared so the answer can be *recorded* rather than assumed. If the ledger must move, it moves in this commit.
 
@@ -75,13 +75,13 @@ tags: [implementation, dtype, bf16, kernel-ir, vocabulary]
 - Every pinned identity recomputed on this tree, with the result stated: which moved (expected: none) and which did not.
 - The `msl_type` refusal observed failing — a BF16-typed value reaches emission and is refused by name, and an F32 neighbour on the same path still emits, so the refusal is about the type and not a dead path.
 
-  **Measurement boundary — the emission half of this is not constructible at this commit, and the refusal was still watched failing.** No `VerifiedKernel` can carry a BF16 buffer here: `crates/tiler-ir/src/kernel/verify.rs:245` derives every buffer's expected element type from the region's `ScalarProgram`, every arm of which is F32, so such a kernel is refused as `BufferContract` before emission is reached. Making one constructible is `admit-bf16-into-the-schedule-and-kernel-vocabulary`, which is blocked on *this* ticket, so the ordering forbids the end-to-end observation here rather than it having been skipped. What was observed: `msl_type(KernelType::Bf16)` refused by name while `msl_type(KernelType::F32)` returned `Ok("float")` in the same test, and the refusal watched failing by perturbing the arm to `Ok("bfloat")` — `left: Ok("bfloat")`, `right: Err(UnsupportedValueType { value_type: Bf16 })`. Reachability from emission is structural: all five `msl_type` call sites propagate its `Err`.
+  **Measurement boundary at this ticket's close (historical) — the emission half was not constructible then, and the refusal was still watched failing.** At close, no `VerifiedKernel` could carry a BF16 buffer: verify derived every buffer's expected element type from the region's `ScalarProgram`, every arm of which was F32, so such a kernel was refused as `BufferContract` before emission. Making one constructible was `admit-bf16-into-the-schedule-and-kernel-vocabulary`, then blocked on *this* ticket. What was observed at close: `msl_type(KernelType::Bf16)` refused by name while `msl_type(KernelType::F32)` returned `Ok("float")` in the same test, and the refusal watched failing by perturbing the arm to `Ok("bfloat")` — `left: Ok("bfloat")`, `right: Err(UnsupportedValueType { value_type: Bf16 })`. **Correction — 2026-08-10.** That F32-only constructibility bound is superseded: `admit-bf16-into-the-schedule-and-kernel-vocabulary` is `done` and lands `ScalarProgram::PointwiseBf16`; pure BF16 verified kernels and Metal `bfloat` emission are live. The close-time unit observation of the refusal arm remains the evidence that *this* ticket's Metal arm failed by name.
 - `check_binding_access` refusing a `StorageScalar::Bf16` paired with `KernelType::F32`, observed failing.
 - An F32 artifact and an F32 kernel identity byte-identical to `3990f9d`, pinned by the existing goldens.
 
 ## Closes when
 
-Both variants exist, all eight sites above state BF16's meaning or refuse it by name, no pinned identity moved, the two refusals are observed failing, and the gate is green on the exact commit.
+Both variants exist, every total-map site over `KernelType` / `StorageScalar` then known states BF16's meaning or refuses it by name (the final set is the eleven sites in the re-run table: eight original plus `storage_scalar_path`, the route `dense_len` fixture, and the trybuild `Buffer::dense` fixture), no pinned identity moved, the two refusals are observed failing, and the gate is green on the exact commit.
 
 ## Graph maintenance
 
@@ -89,4 +89,35 @@ Both variants exist, all eight sites above state BF16's meaning or refuse it by 
 - Does **not** subsume `carry-bf16-through-the-artifact-encoding-and-identity`: that ticket still owns the encode/decode round trip, the dtype's participation in program identity, the unknown-tag decoder refusal, and the `canonical_arithmetic_nan_bits` width question. This ticket only adds the tags those tests will exercise.
 - Does **not** subsume `lower-bf16-to-metal`: that ticket still owns the `bfloat` spelling, the constant reinterpretation, the BF16 NaN canonicalization helper, dispatch on the measured row, and the simulator refusal. This ticket only makes the unspelled case an explicit refusal.
 - Nothing here declares, implies, or depends on a BF16 target fact. The Metal arm is a refusal precisely so that no unmeasured capability becomes reachable.
-- This ticket declares four implementation scopes and must be dispatched when all four are free. That is a real scheduling cost and it is the cost the non-`#[non_exhaustive]` design deliberately buys.
+- This ticket declares four implementation scopes and must be dispatched when all four are free. That is a real scheduling cost and it is the cost the non-`#[non_exhaustive]` design deliberately buys. (The later enumeration re-run also declared `implementation/frontend` for the three additional compile-forced sites — see the table above.)
+
+## Outcome
+
+**Landed at `129d783b` (2026-08-05): admit `KernelType::Bf16` and `StorageScalar::Bf16` into every total map over those vocabularies so the widening decides rather than defaults.**
+
+### What this ticket delivered
+
+- Variants: `KernelType::Bf16` and `StorageScalar::Bf16` on the two deliberately non-`#[non_exhaustive]` total-map vocabularies (ADR 0074 convention 5b).
+- Append-only tags: `KernelType::Bf16` → `0x06`, `StorageScalar::Bf16` → `0x03`; every earlier tag keeps its value; all five tag encoders (`KernelType::tag`, `push_element_type`, `StorageScalar::tag` / `push_storage_scalar`, artifact `element_type_tag`, artifact `storage_scalar_tag`) and the matching `*_from_tag` decoders carry the new tags.
+- Widths: `element_bytes(KernelType::Bf16) == 2` and `StorageScalar::Bf16.byte_width() == 2` at the single authority each; natural access pairs the carrier to `KernelType::Bf16`.
+- Total-map sites patched at landing (final set, not the original eight alone): `element_bytes`, `push_element_type`, `element_type_tag`, `storage_scalar_tag`, `check_binding_access`, `index_arithmetic_requirement` (BF16 imposes no index-arithmetic requirement; the classification later lives in `IndexArithmetic::of`), `msl_type` (refusal at close), `every_storage_carrier_has_a_representable_alignment`, `storage_scalar_path`, route `dense_len` fixture, trybuild `Buffer::dense` fixture.
+- Identity: no identity domain stepped; append-only tags cannot appear in any previously encodable artifact. Commit message and Required evidence state F32 goldens remain byte-identical to the pre-landing base; recompute on the merged tree if the pins are reopened.
+- `docs/artifact-abi.md`: no edit required at landing (no element-type/storage-carrier tag enumeration made wrong); `every_governed_tag_table_round_trips` gained wildcard-free matches so the exhaustive round-trip claim is forced.
+- Explicit non-goal at close: no program, kernel construct, or target capability that *produces* BF16 values. That work is owned by successors named in Graph maintenance (`admit-bf16-into-the-schedule-and-kernel-vocabulary`, `carry-bf16-through-the-artifact-encoding-and-identity`, `lower-bf16-to-metal`), all since `done`.
+
+### Gate
+
+`make full` was required evidence for the completed batch at landing; this Outcome does not re-quote a terminal log path (absent from the pre-repair ticket body). Structural evidence is the landing commit and the successor handoffs.
+
+## Fact audit — 2026-08-10
+
+**Correction — 2026-08-10.** Present-tense live claims in this done ticket are retired:
+
+1. ~~"Nothing produces either variant yet — this ticket admits the *types*, not a program, a kernel, or a target capability."~~ Historical non-goal at *close of this ticket* only. Live production paths include `ScalarProgram::PointwiseBf16`, pure BF16 verified kernel programs with `StorageScalar::Bf16`, and Metal emission. User-visible outcome above is rephrased accordingly.
+2. ~~"`msl_type` must refuse BF16, not spell it."~~ Historical obligation of this ticket's landing. Superseded by `lower-bf16-to-metal`: live arm is `KernelType::Bf16 => Ok("bfloat")` in `crates/tiler-metal/src/emit.rs`. Implementation key above rephrased to historical landing + supersession.
+3. ~~Required-evidence measurement boundary that no `VerifiedKernel` can carry a BF16 buffer because every `ScalarProgram` arm is F32.~~ True at this ticket's close; superseded by `admit-bf16-into-the-schedule-and-kernel-vocabulary` (done). Paragraph above marked historical.
+4. Closes-when "all eight sites" undercounted the final eleven-site set documented in the re-run table; close condition updated to match.
+
+**Source residual (not this ticket's type-admission work):** `StorageScalar::Bf16`'s doc comment may still claim carrier-only / nothing-produces framing; KernelType-side stale-refusal prose was addressed by `correct-the-stale-bf16-backend-refusal-claim-in-the-kernel-type-doc`. A parallel StorageScalar doc repair, if still needed, is crates prose — not a reopen of this ticket.
+
+Status remains `done`. No dependency frontmatter change.

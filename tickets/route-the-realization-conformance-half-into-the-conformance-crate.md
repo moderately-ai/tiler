@@ -4,7 +4,7 @@ title: Route the realization-conformance half into the conformance crate
 status: done
 priority: p2
 dependencies: [carry-the-device-executed-value-proof-into-the-conformance-crate]
-related: [retain-contraction-conformance-evidence, publish-an-l3-contraction-cell-through-the-accepted-route, survey-what-belongs-in-the-conformance-crate]
+related: [retain-contraction-conformance-evidence, publish-an-l3-contraction-cell-through-the-accepted-route, survey-what-belongs-in-the-conformance-crate, decide-whether-the-proof-payload-limit-admits-the-vocabulary-projection-weights, state-a-subject-on-the-contraction-publication-path-s-reference-oracle]
 scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
@@ -12,7 +12,7 @@ tags: [implementation, conformance, contraction, migration]
 ---
 ## User-visible outcome
 
-All six L3 correctness cells' retained `result_sha256` values are compared against **executed** device results inside `crates/tiler-conformance`, on a matching host row and declining with a named difference on any other — so the spike's retained record becomes a gate rather than a document.
+Five of six L3 correctness cells' retained `result_sha256` values are compared against **executed** device results inside `crates/tiler-conformance` (machine fields must match the retained row; toolchain differences are announced by name and comparison proceeds — see Outcome deviation). The sixth cell (`w_vocab_slice`) is pinned in the table but excluded from the routed set by `MAX_PROOF_PAYLOAD_BYTES` and is owned by [`decide-whether-the-proof-payload-limit-admits-the-vocabulary-projection-weights`](decide-whether-the-proof-payload-limit-admits-the-vocabulary-projection-weights.md). The spike's retained record is a gate for the five routable cells rather than a document.
 
 ## Why this is separate from its parent ticket
 
@@ -28,14 +28,14 @@ Filed 2026-08-07 by [`survey-what-belongs-in-the-conformance-crate`](survey-what
 
 [`retain-contraction-conformance-evidence`](retain-contraction-conformance-evidence.md) proposes two halves and holds four scopes because neither half had a home. This ticket takes **one** of them:
 
-- **Realization conformance — this ticket.** The six cells' `result_sha256` against the *executed* result, valid only where the environment row matches, announcing the difference and declining to compare where it does not. That is verbatim [ADR 0106](../docs/decisions/0106-admit-tiler-conformance-as-the-cross-layer-evidence-member.md) item 1's hard requirement, and `implementation/conformance` is now the scope that can carry it.
+- **Realization conformance — this ticket.** The L3 cells' retained `result_sha256` against the *executed* result on a matching machine row (five of six routable; sixth blocked outside this crate). **Correction — 2026-08-10.** This is an application of [ADR 0106](../docs/decisions/0106-admit-tiler-conformance-as-the-cross-layer-evidence-member.md) Decision §1's ownership of cross-layer executed evidence, not a verbatim restatement of item 1's hard-requirement sentence. That hard requirement is: a host without the measured environment runs the deterministic half and **reports the measurement boundary as unavailable, naming what was missing** — never silent skip or claimed pass. The retained-digest program is adjacent to that sentence and instances the ownership; `implementation/conformance` is the scope that carries it.
 - **Reference conformance — stays.** The adversarial cases against the reference evaluator are target-independent and already live in `crates/tiler-reference/tests/contraction_conformance.rs`, whose own header says that a pass there is evidence about the semantic contract and the host reference evaluator, and disclaims any schedule, kernel, device, or model tolerance. (Repaired 2026-08-07: this sentence previously presented that as a verbatim quotation, which it was not — the file's own words are "**What a pass here is not.** It is evidence about the semantic contract and the host reference evaluator." It also holds nine `#[test]`s rather than eight; `a_nan_the_reduction_forms_itself_is_canonicalized_too` is a ninth case.) Moving them would be the layer-local migration the crate's third anti-goal refuses.
 
 **The coordinator should narrow `retain-contraction-conformance-evidence` to its reference half when this lands**, rather than leaving two owners for one deliverable. Do not close it from here.
 
 ## Cost, so the choice is stated rather than discovered
 
-The comparison is a device dispatch per cell, not a host fold, so `tiler-reference`'s measured 1.1e9-step host cost does not apply. `w_decode_kv` folds 1,048,576 steps on the GPU; the largest two cells fold 402,653,184 each. Measure the wall clock per cell on the qualified host and state whether the whole profile runs on every gate run or whether the four prefill cells sit behind `#[ignore]` with a recorded invocation — the shape `crates/tiler-reference/tests/contraction_profile_cells.rs` already uses. Either answer is defensible; picking one silently is not.
+~~The comparison is a device dispatch per cell, not a host fold, so `tiler-reference`'s measured 1.1e9-step host cost does not apply.~~ **Correction — 2026-08-10.** That framing is false as a live claim. Device dispatch is nearly free; publication cost is dominated by the host oracle (`crates/tiler-conformance/src/publication/proof.rs` `reference_bits` / `ReferenceEvaluator`), so the ~1.1e9-step fold applies in full and is why the four prefill cells sit behind `#[ignore]` (Outcome: ~30.78 s / 323 MB peak RSS for those cells vs ~0.62 s for the rest of the crate). `w_decode_kv` folds 1,048,576 steps under the default evaluator bound; the largest two cells fold 402,653,184 each. Measure the wall clock per cell on the qualified host and state whether the whole profile runs on every gate run or whether the four prefill cells sit behind `#[ignore]` with a recorded invocation — the shape `crates/tiler-reference/tests/contraction_profile_cells.rs` already uses. Either answer is defensible; picking one silently is not.
 
 ## Required evidence
 
@@ -46,7 +46,7 @@ The comparison is a device dispatch per cell, not a host fold, so `tiler-referen
 
 ## Closes when
 
-All six cells are compared against executed results inside `crates/tiler-conformance`, the per-cell cost is measured and the run/ignore choice is stated with it, every comparison was watched refusing under a deliberate perturbation, a non-matching host row is observed declining by name, and the reference half is confirmed still resident in `crates/tiler-reference`.
+Five of six cells are compared against executed results inside `crates/tiler-conformance` (the sixth, `w_vocab_slice`, is excluded by `MAX_PROOF_PAYLOAD_BYTES` and owned by [`decide-whether-the-proof-payload-limit-admits-the-vocabulary-projection-weights`](decide-whether-the-proof-payload-limit-admits-the-vocabulary-projection-weights.md)), the per-cell cost is measured and the run/ignore choice is stated with it, every comparison was watched refusing under a deliberate perturbation, a non-matching host *machine* row is observed declining by name, and the reference half is confirmed still resident in `crates/tiler-reference`.
 
 ## Per-Fact audit, re-read at base `d8913a9d`
 
@@ -99,7 +99,7 @@ offline-compiler: record "Apple metal version 32023.883 (metalfe-32023.883)", th
 sdk: record "macosx 26.5 build 25F70", this host "macosx 27.0 build 26A5388f"
 ```
 
-**A deviation from this ticket's required evidence, stated rather than absorbed.** The ticket asks that *any* non-matching field produce "a named unavailable outcome rather than a skip or a pass". Taken literally that makes the comparison permanently unmade: the record's toolchain row is already unreachable — this repository's own qualified toolchain has moved past SDK 26.5 and metal `32023.883` — so **no currently reachable host is on the record's row**, and every run would report a boundary instead of comparing. That turns the one executed cross-workspace check in this crate back into a document, which is what this ticket exists to undo. What is implemented instead: a difference in the *machine* (device name, GPU family) declines the retained comparison by name while the member still routes and is still compared bit-for-bit against its published reference; a difference in the *toolchain* is announced and the comparison proceeds, so a toolchain that did move the bits goes red with the row printed beside the three digests, which is the correctness finding the record was retained to produce. **Tom's call whether that split is right** — it is one line of `hardware` flags in `retained_record::compare`.
+**A deviation from this ticket's required evidence, stated rather than absorbed.** The ticket asks that *any* non-matching field produce "a named unavailable outcome rather than a skip or a pass". Taken literally that makes the comparison permanently unmade: the record's toolchain row is already unreachable — this repository's own qualified toolchain has moved past SDK 26.5 and metal `32023.883` — so **no currently reachable host is on the record's row**, and every run would report a boundary instead of comparing. That turns the one executed cross-workspace check in this crate back into a document, which is what this ticket exists to undo. What is implemented instead: a difference in the *machine* (device name, GPU family) declines the retained comparison by name while the member still routes and is still compared bit-for-bit against its published reference; a difference in the *toolchain* is announced and the comparison proceeds, so a toolchain that did move the bits goes red with the row printed beside the three digests, which is the correctness finding the record was retained to produce. **Tom's call whether that split is right** — it is one line of `hardware` flags in `retained_record::compare`. **Correction — 2026-08-10.** No written Tom acceptance of this hardware/toolchain split was found under tickets or docs at audit base `c99ac54950f2`. The open product call remains unsplit on this `done` ticket; filing a narrow decision ticket for the policy is residual work outside this ticket-only repair wave.
 
 **The retained digests are now a checked transcription.** `envelope::tests::the_pinned_cells_are_the_retained_records_own_direct_rows` reads the record's `workload.tsv`, filters the `direct` realization by column *name*, and compares all six cells' extents and digests against the source constants — device-free, so it holds on every host including ones that can never measure.
 
@@ -131,7 +131,7 @@ cargo clippy -p tiler-conformance --all-targets --target x86_64-unknown-linux-gn
 ### What this ticket does not close
 
 - **`w_vocab_slice` is uncompared**, blocked on `tiler_artifact::proof::MAX_PROOF_PAYLOAD_BYTES`. Needs its own ticket holding the artifact scope.
-- **The row-difference policy** above is a worker's reasoned choice on evidence this ticket predates, and is Tom's to confirm.
+- **The row-difference policy** above is a worker's reasoned choice on evidence this ticket predates, and is Tom's to confirm. **Correction — 2026-08-10.** Still no written acceptance or filed decision ticket for that policy (see Outcome deviation note); residual graph work, not reopened implementation.
 - `retain-contraction-conformance-evidence` still needs narrowing to its reference half by the coordinator; not closed from here.
 
 ## Outcome — done, 2026-08-07
@@ -167,3 +167,15 @@ The split landed instead: a difference in the **machine** (device, GPU family) d
 `w_vocab_slice` cannot route: its `[8192, 1024]` weights operand is 33,554,432 bytes against a `pub` `MAX_PROOF_PAYLOAD_BYTES` of 16,777,216 — **exactly a factor of two**, coordinator-verified. The exclusion is *derived* from that constant and pinned to the doubling, so it cannot be quietly edited. Filed as `decide-whether-the-proof-payload-limit-admits-the-vocabulary-projection-weights`.
 
 And the publication path's oracle still runs under `strict()`, whose subject is `Unstated`, while artifacts compile under `FLUSH_SUBNORMALS_TO_ZERO_F32`. Unobservable on these operands — the probe stream is `m·2⁻²⁴` — but a genuine asymmetry, and closing it needs a `VerifiedScheduledRegion` the contraction path does not hold. Filed as `state-a-subject-on-the-contraction-publication-path-s-reference-oracle`.
+
+## Fact audit — 2026-08-10
+
+Ticket-only repair from audit report `docs/research/documentation/ticket-audit-2026-08-10/reports/route-the-realization-conformance-half-into-the-conformance-crate/add740b427b4_c99ac54950f2.md` (audit base `c99ac54950f2`). Status stays `done`; no implementation reopened.
+
+**Live close boundary.** User-visible outcome and Closes when no longer claim all six cells. Five of six L3 cells route with retained digests (`CONTRACTION_MEMBERS` / `l3_member(0..4)`); `w_vocab_slice` remains pinned and unpublishable under `MAX_PROOF_PAYLOAD_BYTES`. Frontmatter `related` now includes `decide-whether-the-proof-payload-limit-admits-the-vocabulary-projection-weights` (awaiting-decision) and historical carrier `state-a-subject-on-the-contraction-publication-path-s-reference-oracle` (`done`).
+
+**Cost framing.** Cost section's "device dispatch per cell, not a host fold" sentence is struck; Outcome and Per-Fact cost corrections remain authoritative — oracle fold cost is the gate cost.
+
+**ADR 0106 wording.** "Verbatim item 1 hard requirement" softened to item 1 ownership vs the hard-requirement sentence (named unavailable measurement boundary).
+
+**Row-difference policy.** Still Tom's unsplit product call; no written acceptance found; decision ticket not filed in this wave (blocked residual for a later filing decision).

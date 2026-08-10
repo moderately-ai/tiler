@@ -4,7 +4,11 @@ title: Scope search-state caching across shape families
 status: deferred
 priority: p3
 dependencies: []
-related: [derive-the-capability-set-for-search-discovered-flash-class-attention-kernels]
+related:
+  - derive-the-capability-set-for-search-discovered-flash-class-attention-kernels
+  - survey-and-select-the-rewrite-search-formalism-against-the-optimizer-literature
+  - decide-whether-stage-one-semantic-exploration-adopts-an-e-graph
+  - design-the-measured-feedback-tuning-loop-against-the-autotuning-and-adaptive-execution-literature
 scopes: [research/cache]
 shared_scopes: [project/tickets]
 paths: []
@@ -16,7 +20,7 @@ An expensive search's state — the memo or e-graph, or a winning schedule as a 
 
 ## Why this exists, and why it is deferred
 
-**Fact.** The expansion cache stores *artifacts* keyed by exact compilation identity, with validation on every hit and immutable entries. **Inference.** Search state is a different animal: it is an accelerator whose staleness costs recompilation rather than wrongness, its key is a shape *family* rather than an exact identity, and a wrong hit must degrade to a cold search rather than a wrong plan — the fall-open discipline, where the artifact cache falls closed. The database ancestor is parameterized plan caching and plan-cache invalidation, which the survey mines deliberately. Deferred because no search exists to cache: the formalism ticket decides what the state even is.
+**Fact.** The expansion cache stores *artifacts* keyed by complete expansion-cache / composed-subject identity (`ComposedSubject`), with validation on every hit and immutable entries. **Inference.** Search state is a different animal: it is an accelerator whose staleness costs recompilation rather than wrongness, its key is a shape *family* rather than an exact identity, and a wrong hit must fall open to a cold search rather than a wrong plan — matching the expansion-cache discipline that never serves wrong or unvalidated artifact bytes (miss or hard error) while cache I/O failures fall open to uncached compilation. The database ancestor is parameterized plan caching and plan-cache invalidation, which the survey mines deliberately. Deferred because, though a staged alternative-retaining search formalism is selected and partially implemented, there is no measured cold-search cost worth amortizing; the representation of stage-one semantic search state (memo versus e-graph) also remains open.
 
 ## What the record must decide (when fired)
 

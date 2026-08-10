@@ -4,7 +4,7 @@ title: Refresh the L1 workload profile's operation-family standing against the c
 status: done
 priority: p2
 dependencies: []
-related: [audit-the-l1-workload-records-evidence-classes]
+related: [audit-the-l1-workload-records-evidence-classes, realign-the-l1-and-l2-operation-family-standing-after-post-close-matrix-moves, admit-a-fusion-role-for-the-sub-tensor-selection-slice, register-the-softmax-realization-law, refresh-the-roadmap-softmax-cells-remaining-prerequisite-clause]
 scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
@@ -93,6 +93,16 @@ The filed L2 owner is now `done`. Its complete Outcome records the corrected
 family rungs and bounds in the L2 derivation, and the L1 *What remains open*
 pointer now carries a dated forward correction rather than presenting that
 work as pending. L8 remains unaffected for the reason recorded above.
+
+### Fact audit — 2026-08-10 (post-close matrix drift)
+
+**Correction — 2026-08-10.** Keep `status: done` for the 2026-08-06 three-site L1 correction (delivery Outcome and table above remain the historical delivery record). The close condition "L1's operation-family standing agrees with the roadmap's family-state table … with each moved row's bound stated" **no longer holds in full** against the live matrix after landings that closed later the same evening and the next day:
+
+- **Slice.** Outcome and L1 still state **R4** / `R5 awaits a fusion role` / "nothing lowers, fuses, or emits it". [`admit-a-fusion-role-for-the-sub-tensor-selection-slice`](admit-a-fusion-role-for-the-sub-tensor-selection-slice.md) admitted `FusionOperationRole::CoordinateRelation` for `tiler::slice-f32@1`; the roadmap cell is **R5** for the F32 literal-offset family (strided and symbolic stay **R1**). Fusion is no longer an open wall; lowering/emission/request-boundary refusal remain.
+- **Softmax bound (rung still R5).** Outcome and L1 still state no registered `IndexRealizationLaw`, refuse under `operation-set`, and leave two named prerequisites open. [`register-the-softmax-realization-law`](register-the-softmax-realization-law.md) registered `IndexRealizationLaw::StagedSoftmaxF32`; [`refresh-the-roadmap-softmax-cells-remaining-prerequisite-clause`](refresh-the-roadmap-softmax-cells-remaining-prerequisite-clause.md) records the governed maximum key and multi-reader rule as landed and the refusal as `missing-capability`.
+- **L2 copy.** [`refresh-the-l2-derivation-operation-family-standing`](refresh-the-l2-derivation-operation-family-standing.md) closed from the 2026-08-06 L1 picture and still carries Slice R4 language; the 2026-08-09 handoff above did not re-read bounds after the Slice R5 and Softmax law landings.
+
+Remainder: [`realign-the-l1-and-l2-operation-family-standing-after-post-close-matrix-moves`](realign-the-l1-and-l2-operation-family-standing-after-post-close-matrix-moves.md) (`todo`, p2) owns re-sync of L1 and L2 standing prose (dated Corrections, bounds not rungs alone) against the current family-state table. No crate work.
 
 ### Checks
 

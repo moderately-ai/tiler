@@ -4,7 +4,7 @@ title: Decide how a pinned pointwise grouping becomes evaluable
 status: done
 priority: p2
 dependencies: []
-related: [enumerate-the-freedom-sites-a-physical-plan-must-pin-for-a-permissive-conformance-oracle, derive-the-oracle-for-a-permitted-divergence-candidate, accept-the-realization-witness-surface, compose-a-declared-reduction-topology-into-a-semantic-program-evaluation]
+related: [enumerate-the-freedom-sites-a-physical-plan-must-pin-for-a-permissive-conformance-oracle, derive-the-oracle-for-a-permitted-divergence-candidate, accept-the-realization-witness-surface, compose-a-declared-reduction-topology-into-a-semantic-program-evaluation, retain-the-selected-semantic-candidate-for-the-conformance-oracle]
 scopes: [research/reference]
 shared_scopes: [project/tickets]
 paths: []
@@ -39,7 +39,7 @@ One design survives with the derivation stated, or the fork reaches Tom as one a
 
 ## Outcome
 
-**One design survives, and it is design 1 — retain the selected semantic candidate's program.** Recommended terminal state: `done`. The elimination is below; the same derivation lands in [the freedom-sites record's](../docs/research/reference/plan-freedom-sites.md) Part 7.3, which previously parked this fork. Nothing was implemented, no `crates/` file was touched, and the public boundary design 1 eventually needs is still Tom's.
+**One design survives, and it is design 1 — retain the selected semantic candidate's program.** Recommended terminal state: `done`. The elimination is below; the same derivation lands in [the freedom-sites record's](../docs/research/reference/plan-freedom-sites.md) Part 7.4 (Part 7.3 previously parked this fork and now points at 7.4 as superseding that parking). Nothing was implemented, no `crates/` file was touched, and the public boundary design 1 eventually needs is still Tom's.
 
 **Fact — this ticket's own framing Inference is refuted at source, and the refutation is the elimination.** The body above states that "a projection defect is invisible to the first and caught by the second". The projection sits *between* the selected semantic program and the observed device bits, so the two designs' comparisons do not straddle it symmetrically. Write `P'` for the semantic candidate the portfolio selected, `E` for the `PointwiseF32Expression` `mint_elementwise` produced from it, and `z` for the candidate's observed output bits. Design 1 compares `z` against `ReferenceEvaluator::evaluate(P', inputs)` — across the projection, the kernel lowering, the emission, and the device. Design 2 compares `z` against an evaluation of `E` — across the lowering, the emission, and the device only, with its expected value read *out of* the artifact the projection produced. Coverage is strict containment, and in the opposite direction from the one the body asserts: a projection defect is caught by design 1 and invisible to design 2.
 
@@ -79,10 +79,16 @@ One design survives with the derivation stated, or the fork reaches Tom as one a
 
 **Measurement boundary.** Nothing was run: no build, no test, no device execution. Every claim is a source reading at base `9466f622`, with a file and line, and each absence claim carries the one-line command that reproduces it. The freedom-sites record's cited anchors were rechecked at this base and all hold; `mint_elementwise` is at `request.rs:4697`, `pipeline.rs:328-333` is `SemanticCandidate`, `ProgramAlternative` at `:247-271` still has no semantic-program field, `grep -rn "pub fn .*SemanticProgram" crates/tiler-compiler/src/` still returns nothing, and `grep -rn "ScalarProgram\|ReductionTopology\|VerifiedScheduledRegion\|PointwiseF32" crates/tiler-reference/` still returns exactly one line (`crates/tiler-reference/tests/index_region_oracle.rs:1414`).
 
+**Correction — 2026-08-10.** Three live-prose drifts relative to the work-base snapshot above, without reopening the elimination:
+
+1. **Compose residual closed.** Graph maintenance below filed [`compose-a-declared-reduction-topology-into-a-semantic-program-evaluation`](compose-a-declared-reduction-topology-into-a-semantic-program-evaluation.md) as `todo`; that ticket is now `status: done`. Implementation of design 1 remains outside this ticket and is carried by [`retain-the-selected-semantic-candidate-for-the-conformance-oracle`](retain-the-selected-semantic-candidate-for-the-conformance-oracle.md) (`awaiting-decision`).
+2. **Absence-grep / line-pin drift.** At later trees the `tiler-reference` pattern returns **two** doc hits (`crates/tiler-reference/src/bf16.rs` and `tests/index_region_oracle.rs`), not one — still no plan-structure evaluator. Line pins for `mint_elementwise`, pipeline structs, conformance compare sites, `LeafRead`, `verify_pointwise_f32`, and `emit_pointwise` from `9466f622` have moved; the symbols and meanings hold. Prefer symbol anchors over those line numbers.
+3. **Consumer cardinality.** “Exactly two non-test consumers outside the defining module” undercounts later production type uses (`physical.rs`, `request.rs`, `elementary.rs`, witness accessors, and related storage). The load-bearing claim that remains is that none of them is a semantic cross-check of `E` against `P'`.
+
 ## Graph maintenance
 
-Filed by the freedom-sites enumeration, whose Part 7.3 drafts both and declines to pick.
+Filed by the freedom-sites enumeration, whose Part 7.3 drafts both and declines to pick (Part 7.4 carries the resolution).
 
-**Scope added by this ticket:** `research/reference`. The elimination's home is the record that parked the fork — Part 7.3 of `docs/research/reference/plan-freedom-sites.md` states "no evaluator is proposed … so it is parked rather than resolved", a sentence that becomes false the moment the fork resolves. The scope maps to `docs/research/reference/**` (`ticketsplease.toml:63`) and no live ticket declares it; the nine tickets that do are all `done` or `closed`. `project/tickets` is added to `shared_scopes` for the same reason every claimed ticket carries it — this ticket's own file and the follow-up it files both live under `tickets/**` (`ticketsplease.toml:111`), and `tkt guard` refused the branch until it was declared. Both are declaration and scheduling metadata, not a product-scope change.
+**Scope added by this ticket:** `research/reference`. The elimination's home is the record that parked the fork — Part 7.3 of `docs/research/reference/plan-freedom-sites.md` states "no evaluator is proposed … so it is parked rather than resolved", a sentence that becomes false the moment the fork resolves (superseded by Part 7.4). The scope maps to `docs/research/reference/**` (`ticketsplease.toml:63`) and no live ticket declares it; the nine tickets that do are all `done` or `closed`. `project/tickets` is added to `shared_scopes` for the same reason every claimed ticket carries it — this ticket's own file and the follow-up it files both live under `tickets/**` (`ticketsplease.toml:111`), and `tkt guard` refused the branch until it was declared. Both are declaration and scheduling metadata, not a product-scope change.
 
-**Filed by this ticket:** [`compose-a-declared-reduction-topology-into-a-semantic-program-evaluation`](compose-a-declared-reduction-topology-into-a-semantic-program-evaluation.md) — `todo`. The bounded residue design 1 does not reach.
+**Filed by this ticket:** [`compose-a-declared-reduction-topology-into-a-semantic-program-evaluation`](compose-a-declared-reduction-topology-into-a-semantic-program-evaluation.md) — was `todo` at filing; now `done`. The bounded residue design 1 does not reach.

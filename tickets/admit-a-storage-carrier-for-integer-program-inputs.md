@@ -49,25 +49,27 @@ Measured rather than predicted: with `StorageScalar::U32` appended at tag `0x04`
 | `STORAGE_SCALARS` (`variant_count`-sized) | `crates/tiler-ir/src/program/model.rs` | `implementation/ir` | yes |
 | `KernelType` variant, `KernelType::tag` | `crates/tiler-ir/src/kernel/model.rs` | `implementation/ir` | yes |
 | `element_bytes`, `push_element_type`, `ELEMENT_TYPES` | `crates/tiler-ir/src/program/model.rs` | `implementation/ir` | yes |
+| `IndexArithmetic::of` (KernelType → index-arithmetic total map) | `crates/tiler-ir/src/kernel/model.rs` | `implementation/ir` | yes |
 | `storage_scalar_tag`, `storage_scalar_from_tag` | `crates/tiler-artifact/src/program/model.rs` | `implementation/artifact` | yes |
 | `element_type_tag`, `element_type_from_tag` | `crates/tiler-artifact/src/program/model.rs` | `implementation/artifact` | yes |
 | `check_binding_access` | `crates/tiler-artifact/src/program/codec/validate.rs` | `implementation/artifact` | yes |
 | `every_governed_tag_table_round_trips` | `crates/tiler-artifact/src/program/codec/tests.rs` | `implementation/artifact` | yes |
 | `storage_scalar_path` | `crates/tiler-macros/src/binding.rs` | `implementation/frontend` | yes |
-| **`every_storage_carrier_has_a_representable_alignment`** (test) | **`crates/tiler-compiler/src/boundary.rs`** | **`implementation/compiler`** | **no** |
-| **`index_arithmetic_requirement`** (lib) | **`crates/tiler-compiler/src/physical.rs`** | **`implementation/compiler`** | **no** |
-| **`msl_type`** (lib) | **`crates/tiler-metal/src/emit.rs`** | **`implementation/metal`** | **no** |
+| **`every_storage_carrier_has_a_representable_alignment`** (test) | **`crates/tiler-compiler/src/boundary.rs`** | **`implementation/compiler`** | **yes** |
+| **`msl_type`** (lib) | **`crates/tiler-metal/src/emit.rs`** | **`implementation/metal`** | **yes** |
 
-**Fact — so this ticket cannot be landed under its declared scopes, and the reason is structural rather than a matter of effort.** Both widened enums are deliberately not `#[non_exhaustive]`; every site above is a wildcard-free match that ADR 0074 convention 5b requires to be a build error. There is no ordering of these edits that leaves the workspace compiling in between, so they are one commit or none — the same argument the BF16 ticket made, which is why that ticket declared `implementation/compiler` and `implementation/metal` and this one must too.
+The Declared? column matches frontmatter after the 2026-08-09 scope repair (all six implementation/contract scopes plus `contracts/decisions`). Earlier board prose that marked compiler/metal rows `no` is historical. `crates/tiler-compiler/src/physical.rs`'s `index_arithmetic_requirement` matches only `IndexArithmetic` (today a single arm on `CompleteU64`); it is **not** a `KernelType` total map and is not broken by appending `KernelType::U32`. The KernelType→index-arithmetic classifier is `IndexArithmetic::of` in IR (row above).
 
-**Even the dishonest `KernelType::I32` variant does not fit the declared scopes**: it still needs `crates/tiler-compiler/src/boundary.rs`. The compiler scope is unavoidable either way.
+**Fact (historical as of the pre–scope-repair body; scopes are now declared).** The original site census found compiler and metal total-map sites outside the then-declared scopes, and the reason those sites matter is structural rather than a matter of effort: both widened enums are deliberately not `#[non_exhaustive]`; every site above is a wildcard-free match that ADR 0074 convention 5b requires to be a build error. There is no ordering of these edits that leaves the workspace compiling in between, so they are one commit or none — the same argument the BF16 ticket made, which is why that ticket declared `implementation/compiler` and `implementation/metal` and this one now does too (frontmatter already lists them).
 
-**Historical scheduling blocker, cleared.** `implementation/compiler` was held by a live exclusive claim (`answer-input-element-counts-as-the-declared-tensors-own-count`) when this was audited on 2026-08-07. `implementation/metal` was unheld. The 2026-08-09 board repair found no live claims and added both required scopes. The ticket remains `blocked`, now for its declared dependencies rather than for an obsolete scope collision.
+**Even the dishonest `KernelType::I32` variant still needs compiler scope**: it still needs `crates/tiler-compiler/src/boundary.rs`. The compiler scope is unavoidable either way.
+
+**Historical scheduling blocker, cleared.** `implementation/compiler` was held by a live exclusive claim (`answer-input-element-counts-as-the-declared-tensors-own-count`) when this was audited on 2026-08-07. `implementation/metal` was unheld. The 2026-08-09 board repair found no live claims and added both required scopes. Dependency and scope holds from that period are cleared; the live board state is `awaiting-decision` on the public surface (see Public-boundary correction below), not `blocked` on scopes or dependencies.
 
 ## What a redispatch needs
 
-- Scopes `[implementation/ir, implementation/artifact, implementation/compiler, implementation/metal, implementation/frontend, contracts/artifacts]` — the BF16 ticket's exact set, and free simultaneously.
-- A decision on `msl_type(KernelType::U32)`: spell `uint`, or refuse by name as BF16 does. The BF16 precedent refused, because a spelling that compiles while the numerics behind it are absent is worse than an explicit refusal. A `u32` index carrier has no numerics behind it to be absent, so the two cases may differ; this is a real question and not a formality.
+- Scopes `[implementation/ir, implementation/artifact, implementation/compiler, implementation/metal, implementation/frontend, contracts/artifacts]` — the BF16 ticket's exact set, already declared on this ticket, and free simultaneously at dispatch time.
+- A decision on `msl_type(KernelType::U32)`: spell `uint`, or refuse by name. **Resolved below: refuse by name** until a backend consumer produces a `U32`-typed kernel value; the refuse seam is `MetalEmitError::UnsupportedValueType`. Do **not** cite a live BF16 `msl_type` refusal — at the current tree `msl_type(KernelType::Bf16)` spells `Ok("bfloat")`. U32's refusal stands on maturity/support (no producer of a U32-typed kernel value yet), not on the BF16 numerics ground that once refused BF16 spelling.
 - `cargo check --workspace --all-targets` does **not** reach `trybuild` fixtures, which compile at test *run* time. The BF16 landing found a site that only appeared under `cargo nextest`. The enumeration above is complete for `check` and unverified for `trybuild`.
 
 ## Closes when
@@ -82,8 +84,8 @@ Merged at `435bd0d5`'s successor. **No code landed and that was correct** — th
 
 - **`KernelType` has no `U32`.** `crates/tiler-ir/src/kernel/model.rs`, `enum KernelType`: `Bool`, `U8`, `Index`, `F32`, `I32`, `Bf16`. Confirmed by reading.
 - **The two widening tripwires are real and sit where reported.** `crates/tiler-artifact/src/program/codec/tests.rs`, `UNASSIGNED_CARRIER = 0x04` and `UNASSIGNED_ACCESS = 0x07` — precisely the tags an appended `StorageScalar::U32` and `KernelType::U32` claim. A landing must retarget both; they are doing exactly the job they were written for.
-- **All three out-of-scope sites exist** at the named functions: `physical.rs`'s `index_arithmetic_requirement`, `tiler-metal`'s `msl_type`, and `boundary.rs`'s `every_storage_carrier_has_a_representable_alignment`.
-- **The pinned-identity measurement stands**: appending `U32` at `0x04` moved **no golden, pin, or identity test** across 2,213 tests in five packages. Empirical, bounded to that base.
+- **Widening sites that still require compiler and metal scopes** (scopes now declared): `tiler-metal`'s `msl_type` and `boundary.rs`'s `every_storage_carrier_has_a_representable_alignment`. The KernelType index-arithmetic total map is `IndexArithmetic::of` in `crates/tiler-ir/src/kernel/model.rs` (`implementation/ir`), not `physical.rs`'s `index_arithmetic_requirement` (that function matches only `IndexArithmetic` and is not broken by `KernelType::U32`).
+- **The pinned-identity measurement stands as historical evidence at `68f1ced6`**: appending `U32` at `0x04` moved **no golden, pin, or identity test** across 2,213 tests in five packages. Empirical, bounded to that base; redispatch must re-measure on the land base rather than treat the count as live.
 
 ### The blocker is real and not routable around
 
@@ -93,7 +95,7 @@ Merged at `435bd0d5`'s successor. **No code landed and that was correct** — th
 
 The worker asked whether `msl_type(KernelType::U32)` should spell `uint` or refuse by name, noting the BF16 precedent may not transfer since BF16 refused for absent *numerics* and a `u32` index carrier has none to be absent.
 
-**Refuse by name.** It eliminates under AGENTS.md rather than surviving as a genuine fork: no index-layer access class exists, so nothing can produce a kernel holding a `U32`-typed value, and emitting `uint` would be an unexercised path asserting a backend capability nothing demonstrates. AGENTS.md prefers typed, explainable failure over a silently wrong fast path, and requires maturity claims to track demonstrated support. The refusal's `reason` must name **what lifts it** — the first backend consumer producing a `U32`-typed kernel value — so it reads as a stated boundary rather than an omission. This differs from BF16's ground and the comment should say so rather than citing the precedent as if it transferred.
+**Refuse by name.** It eliminates under AGENTS.md rather than surviving as a genuine fork: no index-layer access class exists, so nothing can produce a kernel holding a `U32`-typed value, and emitting `uint` would be an unexercised path asserting a backend capability nothing demonstrates. AGENTS.md prefers typed, explainable failure over a silently wrong fast path, and requires maturity claims to track demonstrated support. Use the existing `MetalEmitError::UnsupportedValueType` seam; the refusal's `reason` must name **what lifts it** — the first backend consumer producing a `U32`-typed kernel value — so it reads as a stated boundary rather than an omission. Do not model this after a live BF16 refusal arm: `msl_type(KernelType::Bf16)` now returns `Ok("bfloat")`. U32's refuse-by-name decision stands on its own maturity ground, not on BF16's former numerics refusal.
 
 ### Release trigger for redispatch
 
@@ -110,3 +112,11 @@ Both declared dependencies are `done`: [`admit-an-indirect-gather-family-for-tie
 ## Public-boundary correction — 2026-08-09
 
 Clearing dependencies did not accept the two public enum additions. Tom must accept the exact coherent surface before implementation: append `StorageScalar::U32` at tag `0x04`, append `KernelType::U32` at the next unclaimed tag, preserve width-exact binding, and make Metal refuse the kernel type by name until a real backend consumer exists. Recommendation: accept that exact honest carrier/access pair; `F32`, `I32`, and eight-byte `Index` are all semantically wrong substitutes. The ticket is therefore `awaiting-decision`, not dependency-blocked and not yet implementation-ready.
+
+## Fact audit — 2026-08-10
+
+**Correction — 2026-08-10.** Ticket-audit wave re-read the site census against the live tree and fixed three stale present-tense claims that would misroute a redispatch brief:
+
+1. **`IndexArithmetic::of` is the KernelType → index-arithmetic total map**, at `crates/tiler-ir/src/kernel/model.rs` under `implementation/ir`. The former table row naming `index_arithmetic_requirement` in `crates/tiler-compiler/src/physical.rs` under `implementation/compiler` was wrong for a `KernelType::U32` widening: that function matches only `IndexArithmetic` (single arm `CompleteU64`) and is not broken by appending a kernel type. The site table above now lists `IndexArithmetic::of` instead.
+2. **Declared? on the compiler and metal rows was stale.** Frontmatter already declares `implementation/compiler` and `implementation/metal` (post–2026-08-09 repair). The table now says **yes**; the earlier "cannot be landed under its declared scopes" sentence is historical of the pre-repair declaration, not of the current board state.
+3. **BF16 `msl_type` spelling is live** (`Ok("bfloat")`); there is no present BF16 refuse arm to cite as precedent. U32 refuse-by-name remains this ticket's decision, discharged via `UnsupportedValueType` until a backend consumer produces a U32-typed kernel value. Status, dependencies, and scopes needed no metadata change; outcome still undelivered (no `StorageScalar::U32` / `KernelType::U32`).

@@ -8,17 +8,21 @@ related: [admit-the-conformance-crate-to-the-workspace, conform-the-bf16-vertica
 scopes: []
 shared_scopes: [project/tickets]
 paths: []
-tags: [decision, needs-tom, unsafe]
+tags: [decision, unsafe]
 ---
 ## The decision
 
-**Only Tom closes this.** `crates/tiler-conformance` inherits the workspace lint table, which sets `unsafe_code = "forbid"`. The device-reaching half of a conformance run cannot be written under it. What lint level should the crate carry, and under what named sites?
+**Only Tom closes this.** (Filing-time framing; Tom answered on 2026-08-07 — see **Decided — 2026-08-07**.) At filing, `crates/tiler-conformance` inherited the workspace lint table, which sets `unsafe_code = "forbid"`. The device-reaching half of a conformance run cannot be written under it. What lint level should the crate carry, and under what named sites?
+
+**Correction — 2026-08-10.** The inherit claim is historical only. The crate no longer inherits: `crates/tiler-conformance/Cargo.toml` restates the workspace lint table with `unsafe_code = "deny"` (no `[lints] workspace = true`). The workspace default remains `forbid`. The rule and justification live in the comment above that crate's `[lints]` and in **Decided — 2026-08-07**.
 
 ## Why it cannot be worked around
 
-**Fact — `MTLBuffer` storage is reachable only through a raw pointer.** Moving operands into a device buffer and results back out goes through what `metal::Buffer::contents` returns, and there is no safe route. **Fact — `forbid` cannot be relaxed by an inner attribute at any scope**, so a `#[allow(unsafe_code)]` at a named site does not compile under it; the level itself has to move. **Fact — the repository already answered this once**: `prototypes/serial-sum-run` sets `deny` and carries two reasoned `#[allow(unsafe_code)]` sites in `src/buffer.rs`, which is the only construction in the tree that has actually crossed the device boundary.
+**Fact — `MTLBuffer` storage is reachable only through a raw pointer.** Moving operands into a device buffer and results back out goes through what `metal::Buffer::contents` returns, and there is no safe route. **Fact — `forbid` cannot be relaxed by an inner attribute at any scope**, so a `#[allow(unsafe_code)]` at a named site does not compile under it; the level itself has to move. **Fact — the repository already answered this once**: `prototypes/serial-sum-run` sets `deny` and carries two reasoned `#[allow(unsafe_code)]` sites in `src/buffer.rs`, which at filing was the only construction in the tree that had actually crossed the device boundary.
 
-Found by the worker on [`admit-the-conformance-crate-to-the-workspace`](admit-the-conformance-crate-to-the-workspace.md), which inherited the table whole and **deliberately did not pre-authorize a weaker level**, on the ground that admitting a named unsafe site is a decision under [ADR 0079](../docs/decisions/0079-permit-unsafe-code-case-by-case-at-named-sites.md) and belongs to the ticket that first needs one. The constraint is recorded in a comment above `[lints]` in the crate manifest.
+**Correction — 2026-08-10.** That "only construction" claim is false live. `crates/tiler-conformance/src/device_buffer.rs` also crosses via `Buffer::contents` under the same deny + named-allow shape. The complete admitted population in that module is two sites: [`write_bytes`](../crates/tiler-conformance/src/device_buffer.rs) (host→device byte copy) and [`read_bytes`](../crates/tiler-conformance/src/device_buffer.rs) (device→host byte copy). The prototype buffer module remains the shape precedent; it is no longer unique.
+
+Found by the worker on [`admit-the-conformance-crate-to-the-workspace`](admit-the-conformance-crate-to-the-workspace.md), which inherited the table whole and **deliberately did not pre-authorize a weaker level**, on the ground that admitting a named unsafe site is a decision under [ADR 0079](../docs/decisions/0079-permit-unsafe-code-case-by-case-at-named-sites.md) and belongs to the ticket that first needs one. At filing the constraint was recorded in a comment above `[lints]` in the crate manifest; that comment now records the decision (see **Decided — 2026-08-07**).
 
 ## Why it is Tom's
 
@@ -58,6 +62,8 @@ Filed 2026-08-07 by the coordinator at integration of the crate admission, from 
 - Each site carries what ADR 0079 requires: no safe foreign-API route, a reasoned `#[allow(unsafe_code)]`, a bounding assertion, and a `SAFETY` explanation naming the invariant and why the foreign API forces it.
 - The site population is **named and counted** where a reader can find it, so a later addition is visible rather than absorbed. A third site appearing without a stated reason is the failure this rule exists to catch.
 - The crate manifest's comment above `[lints]` currently describes this as an open question. It must be replaced by the decision — the level, the single admitted justification, and the isolation requirement — rather than left describing a fork that is closed.
+
+**Correction — 2026-08-10 (sites named here; Closes when).** The deny-level sites delivered under this rule are `write_bytes` and `read_bytes` in `crates/tiler-conformance/src/device_buffer.rs`: host→device and device→host byte copies through `metal::Buffer::contents`, each with a reasoned `#[allow(unsafe_code)]`, a `buffer.length()` bound, and a `SAFETY` note. The open-question manifest comment obligation is already discharged in tree (decision text, not a fork).
 
 ### What was rejected, and why it is not merely deferred
 

@@ -20,7 +20,9 @@ A scheduled candidate carrying an online-softmax rescaling fold states the two s
 
 **Fact.** Neither is stated anywhere. [ADR 0096](../docs/decisions/0096-compose-the-subgroup-and-workgroup-reduction-levels.md) and [ADR 0100](../docs/decisions/0100-admit-the-multi-round-two-level-reduction-composition.md) compose a fold over a `(round, subgroup, lane)` block index, and its depths are derivable from the composition's widths — but `D` is not, because a level contributes to `D` only when the partial states entering it carry different maxima, which is a property of what the level folds rather than of how wide it is. A lane running the online recurrence element by element and a lane computing a lane-local maximum then a lane-local sum have identical widths and differ by `k-1` in `D`.
 
-**Inference.** A bound instantiated from a shape the schedule does not declare is instantiated from an assumption, which is exactly the fifth thing the certified-bounds record's admission rule says must never be admitted.
+**Inference.** A bound instantiated from a shape the schedule does not declare is instantiated from an assumption. [The certified-bounds record](../docs/research/numerics/certified-bounds-as-rewrite-permissions.md)'s obligation 3 requires that evidence identity bind the complete scheduled candidate — including fold height — and any undischarged obligation yields Undecided rather than admission. That is not the fifth "must never be admitted" item (which is filling `eps_exp` with a plausible constant when the target authority cannot answer).
+
+**Correction — 2026-08-10.** Earlier wording of the Inference above called undeclared-shape instantiation "exactly the fifth thing" the certified-bounds record "must never be admitted"; the fifth item is the `eps_exp` plausible-constant case. The load-bearing cite is obligation 3 and Undecided-for-undischarged-obligation.
 
 ## What this ticket must produce
 

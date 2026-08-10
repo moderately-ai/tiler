@@ -4,7 +4,7 @@ title: Recompute the unasserted BF16 byte lengths in the dtype support matrix
 status: done
 priority: p2
 dependencies: []
-related: [carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit]
+related: [carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit, replace-the-stale-artifact-abi-byte-figures-with-the-properties-tests-pin, pin-the-differing-identity-positions-beside-the-carrier-positions-constant]
 scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
@@ -59,4 +59,6 @@ Check the surrounding paragraphs for the same shape before closing: this is unli
 
 ## Out of scope, for a `contracts/artifacts` ticket
 
-`docs/artifact-abi.md`'s *"Measurement, of the carrier-only forged pair"* and *"Measurement, of the producer-path pair"* clauses carry six stale figures: the identity length `48,584` (now 40,132), the four offsets `3,104` / `3,106` / `47,898` / `47,899` — the last two of which are now **past the end of the identity**, so a reader following them lands nowhere — and `90,806` / `45,457` / `73,556` / `36,832`. Its differing-position count and its own account of pinning are correct and should not be touched. The same document's neighbouring paragraph is the precedent for the repair: *"Measurement, and it is now pinned by a test rather than carried as prose here."*
+`docs/artifact-abi.md`'s *"Measurement, of the carrier-only forged pair"* and *"Measurement, of the producer-path pair"* clauses carry ~~six~~ **nine** stale figures: the identity length `48,584` (now 40,132), the four offsets `3,104` / `3,106` / `47,898` / `47,899` — the last two of which are now **past the end of the identity**, so a reader following them lands nowhere — and the four lengths `90,806` / `45,457` / `73,556` / `36,832` (`1 + 4 + 4 = 9`). Its differing-position count and its own account of pinning are correct and should not be touched. The same document's neighbouring paragraph is the precedent for the repair: *"Measurement, and it is now pinned by a test rather than carried as prose here."*
+
+**Correction — 2026-08-10.** The opening count said "six stale figures" while the same sentence enumerated nine items (identity length + four offsets + four lengths). The sibling [replace-the-stale-artifact-abi-byte-figures-with-the-properties-tests-pin](replace-the-stale-artifact-abi-byte-figures-with-the-properties-tests-pin.md) repaired that miscount on 2026-08-08 (`~~Six figures~~` → nine, `1 + 4 + 4`) and named this ticket's Out of scope block as the inherited source; this ticket now matches.

@@ -8,7 +8,7 @@ related: [derive-the-region-shape-budgets-from-the-declaration, state-the-rule-t
 scopes: [contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
-tags: [budgets, identity, research, decision, needs-tom, public-boundary]
+tags: [budgets, identity, decision, needs-tom, public-boundary]
 ---
 ## The question
 
@@ -34,7 +34,7 @@ So the first thing to settle is whether budgets are ever caller-supplied, or alw
 
 ## If the answer is yes
 
-It is an encoding step on `tiler.compiler.request-subject.v5` and therefore an identity-domain migration with its own evidence and its own acceptance — **do not land it under this node.** File it, with the enumerated pinned population, and state plainly that the migration's cost is paid once against a permanent reduction in future identity movement. That trade is the decision, and it is Tom's.
+It is an encoding step on `tiler.compiler.request-subject.v6` and therefore an identity-domain migration with its own evidence and its own acceptance — **do not land it under this node.** File it, with the enumerated pinned population, and state plainly that the migration's cost is paid once against a permanent reduction in future identity movement. That trade is the decision, and it is Tom's.
 
 ## Explicit non-goals
 
@@ -73,15 +73,22 @@ This ticket asks the broad question — do *any* budgets belong in the subject, 
 - **Budgets are never caller-supplied.** The public `CompileRequest`, source anchor `pub struct CompileRequest`, has no budgets field; `compile` always builds `CompilationRequest::governed_preferring`, overriding only `target_profiles` and `capabilities`. Both `DeterministicBudgets` and `CompilationRequest` are `pub(crate)`, and `request` is not a `pub mod`. Every non-`governed()` value in the workspace is inside a `mod tests`. `session.rs`, anchor `Budgets and the shape environment stay internal`, states it outright.
 - **The pinned population is one and it is measured.** Exactly one pin encodes these bytes (`request.rs`, anchor `Exactly one pinned identity encodes these bytes`); the sibling moved it `0aa252e0bfa16451` → `e59cb8aa9b38ef70` and confirmed `tiler-build`'s goldens did not move.
 
-Carry one inconsistency into whichever branch lands: `request.rs`, anchors `Exactly one pinned identity encodes these bytes` and `tiler-build's standard Metal goldens`, describes the pin population in two ways. The sibling's measurement settles it in favour of "exactly one", but the comment pair reads as two populations and should be reconciled.
+**Correction — 2026-08-10.** The `request.rs` comment pair anchors `Exactly one pinned identity encodes these bytes` (budget-byte pin claim on the governed profile) and `tiler-build's standard Metal goldens` (staged-family encoder arm: no pin encodes a *staged* subject) address different subjects. They are not two contradictory descriptions of the budget-pin population. Sibling measurement already separates the domains: budgets are request-subject properties; tiler-build artifact goldens did not move with the budget value change. Residual comment hygiene is optional if a landing opens those sites; it is not a load-bearing board defect for this decision.
 
 ### Scopes corrected
 
-`research/verification` **removed** — it maps to `docs/research/verification/**` and `spikes/verification/**`, **neither of which exists**, so the ticket's only exclusive scope matched nothing. `contracts/optimizer` **added**, because the "budgets stay" branch obliges correcting `docs/compiler/optimizer.md`, anchor `whether a field in that position keeps its slot`, which currently asserts the decision is open; without it that branch could not be completed inside the declaration.
+`research/verification` **removed** — this ticket does not edit `docs/research/verification/**` or `spikes/verification/**`, so that exclusive scope matched nothing this node should touch. `contracts/optimizer` **added**, because the "budgets stay" branch obliges correcting `docs/compiler/optimizer.md`, anchor `whether a field in that position keeps its slot`, which currently asserts the decision is open; without it that branch could not be completed inside the declaration.
+
+**Correction — 2026-08-10.** The earlier scopes-correction sentence claimed those two verification trees **neither exist**. That existence claim is false at the current tree: both `docs/research/verification/` and `spikes/verification/` are present (e.g. kani-bounded-encoder records). Scope removal remains correct because this ticket still does not edit those paths; only the existence justification was wrong.
+
+## Fact audit — 2026-08-10
+
+- **Live request-subject domain is `tiler.compiler.request-subject.v6`**, not `v5`. Encoder prefix is `b"tiler.compiler.request-subject.v6\0"` (`request.rs`, anchor `tiler.compiler.request-subject.v6`). The domain stepped when the fifth semantic-identity subject (`shape_environment`) was folded; budget field set, widths, and order did not force that step. Stale `v5` still appears in *comments* inside `request.rs` only. Present-tense domain names in this ticket (Tom question; remove-branch encoding-step sentence) were corrected to `v6` with this note.
+- Scopes and pin-comment-pair corrections are above in their sections.
 
 ## The question for Tom
 
-**Do `region_members` and `region_live_values` — the two budget fields the governed profile can no longer fire — keep their slots in `tiler.compiler.request-subject.v5`?**
+**Do `region_members` and `region_live_values` — the two budget fields the governed profile can no longer fire — keep their slots in `tiler.compiler.request-subject.v6`?**
 
 - **Keep them.** They still bind for a program whose families realize region sequences (`request.rs`, anchor `both bounds still bind on a program whose`), and a budget is a *request* field rather than a plan property, so the governed profile's coincidence is a property of its declaration and not of the fields. Removing a field that a future non-governed budget set would need means re-adding it later at an identity-domain step.
 - **Remove them.** All fourteen budget words are constant across the entire encodable request space, so they distinguish no two requests and every future envelope widening becomes identity-neutral. This costs one identity-domain step now to avoid paying one on every subsequent widening.

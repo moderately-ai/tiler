@@ -5,7 +5,7 @@ status: awaiting-decision
 priority: p1
 dependencies: [drive-an-external-physical-implementation-provider-through-compilation]
 related: [accept-the-public-backend-provider-composition-boundary, disclose-offered-and-selected-physical-provider-sets-separately]
-scopes: [contracts/decisions, implementation/compiler, implementation/build]
+scopes: [contracts/decisions, contracts/optimizer, contracts/foundation, implementation/compiler, implementation/build]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [backend-providers, public-boundary, decision, needs-tom]
@@ -43,7 +43,7 @@ This node is not research or implementation work. Only Tom closes it.
 
 ## Recommendation
 
-Accept the additive installation rule, the `baseline` subject, and the `scheduled_kernel` restriction as built. They preserve the governed provider, keep one host-owned derivation, and expose only the body variant the external-provider vertical actually exercised. Rename `offered_providers` to `offered_lowering_providers` in the same acceptance sweep: this pre-production tree has one in-workspace consumer, and the symmetric pair prevents the old completeness misreading from returning through the shorter name. **Strongest counterpoint:** that final rename reopens a name Tom already accepted under ADR 0085; keeping it would avoid churn and the corrected documentation is now truthful. Tom should answer the four questions independently even if he accepts the first three as a block.
+Accept the additive installation rule, the `baseline` subject, and the `scheduled_kernel` restriction as built. They preserve the governed provider, keep one host-owned derivation, and expose only the body variant the external-provider vertical actually exercised. Rename `offered_providers` to `offered_lowering_providers` in the same acceptance sweep: this pre-production tree has one production in-workspace consumer (`crates/tiler-build/src/plan_artifact.rs`), and the symmetric pair prevents the old completeness misreading from returning through the shorter name. **Strongest counterpoint:** that final rename reopens a name Tom already accepted under ADR 0085; keeping it would avoid churn and the corrected documentation is now truthful. Tom should answer the four questions independently even if he accepts the first three as a block.
 
 ## Closes when
 

@@ -4,7 +4,7 @@ title: Date ADR 0079's one-crate claims for the second diverging member
 status: done
 priority: p3
 dependencies: []
-related: [record-the-conformance-crate-in-the-architecture-table-and-an-admission-adr]
+related: [record-the-conformance-crate-in-the-architecture-table-and-an-admission-adr, pin-the-admitted-unsafe-sites-in-the-workspace-gate, pin-lint-inheritance-across-the-workspace-member-set]
 scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
@@ -118,3 +118,5 @@ Landed at **`d4863d6d`**. **41 insertions, 0 deletions** — every original line
 It also added a nuance the brief missed and the coordinator verified: **`spikes/` is outside the workspace member set**, inherits no lint table, and carries 8 unsafe blocks of its own across 5 files that this ADR does not govern. And it dated `ADR:55`, which the brief's site list had omitted.
 
 Verified independently: zero deletions; no crate-root `#![allow]` in either diverging member; exactly two members drop `[lints] workspace = true`; `Cargo.toml:33` sets `publish = false`. Delta is `docs/` only, so it carries the green gate; `tkt lint` rerun.
+
+**Residual — 2026-08-10 (ticket audit).** Landing `d4863d6d` dated the numbered Decision/Consequences sites this ticket listed; it did **not** date Decision item 4's Proposal (`**Proposal — three specific extensions are outside it.**`). That sentence still reads as if "a second member dropping lint inheritance" is prospective and as if "since then none of the three is" after `e197176` — both false as present tense at audit base: the second member already landed under Tom's conformance decision, and pin-lint-inheritance plus the unsafe-site inventory later restored mechanical rejection of a third diverging member, widen-to-allow, and root-forbid relaxation (see ADR Context `Closed mechanically later on 2026-08-07` and Implementation `Updated again 2026-08-08`). Same-class residual for a docs-only ADR-0079 hygiene pass: date rather than overwrite that Proposal, reading "second member" forward as a *further* (third) member drop. Secondary and post-land: Decision item 2's "Both of those are now reachable as an edit" still contradicts Context's closed-mechanically note. This ticket's landed scope stays closed; those ADR sentences are unsplit documentation remainder, not reopened one-crate work.

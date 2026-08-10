@@ -75,12 +75,9 @@ extents bound per invocation and one artifact identity across the family.
 
 ### The preserved draft
 
-The unmerged branch `tkt/define-the-runtime-kv-state-boundary` is retained as
-review evidence and must not be merged or deleted. It is the concrete draft that
-made the ownership question decidable — three independent API reviews at
-`fc242fd1`, `59b0e4d8`, and `dca26e5a` — and a later reader evaluating any
-proposal to reintroduce runtime-held state should read it rather than
-reconstruct it.
+The unmerged branch `tkt/define-the-runtime-kv-state-boundary` is retained as review evidence and must not be merged or deleted. The concrete draft that made the ownership question decidable is one linear sequence ending at `dca26e5a` — `59b0e4d8` (exact-live authority) → `fc242fd1` (model/artifact split) → `dca26e5a` (dependent alignment) — frozen by the 2026-08-04 architecture stop recorded in the ticket comment that names tip `dca26e5a`. The named branch is a related but non-identical lineage (shared base `0c54d5e8`, current remote tip `488daa97`) that also carries draft `docs/integration/runtime-state.md`; a later reader evaluating any proposal to reintroduce runtime-held state should read that draft rather than reconstruct it.
+
+**Correction — 2026-08-10.** `git for-each-ref --contains dca26e5a` is empty at audit base `c99ac54950f2`, so the three named draft SHAs resolve as objects but sit under no named ref. Durable preservation of the Tom-named tip needs an explicit ref if GC-safety matters; the branch name alone does not pin those SHAs.
 
 ### What would reopen the question
 

@@ -46,7 +46,7 @@ Two `RouteRefusal` variants carry the outcome — `SynchronizationUnrealizable` 
 
 ## Evidence
 
-Four properties, perturbed separately, each quoted in the worker report:
+Five properties, perturbed separately, each quoted in the worker report:
 
 - deleting the discharge from `prepare_entries` → `error[E0061]: this method takes 2 arguments but 1 argument was supplied`;
 - forging the witness at the call site → `error[E0423]: cannot initialize a tuple struct which contains private fields`;
@@ -66,7 +66,7 @@ The adapter implementation and tests described above have landed. What remains i
 
 **Recommendation: accept the draft as built.** The two variants retain the owning typed causes, preserve the device-free-before-device-dependent refusal order, and make deletion or forgery of the discharge step a compile failure. **Strongest counterpoint:** `RouteRefusal` is deliberately exhaustive rather than `#[non_exhaustive]`, so even an additive variant is a breaking promise to downstream matches; Tom may prefer a nested derived-requirement refusal before accepting more top-level variants.
 
-This ticket is therefore `awaiting-decision`, not complete implementation work. The worker's implementation result is evidence for the decision; it is not acceptance provenance. If Tom accepts it, the remaining out-of-scope runtime comment repair stays a separate ticket. If he revises it, return this node to `todo` with the exact replacement surface rather than editing the prototype under a parked decision.
+This ticket is therefore `awaiting-decision`, not complete implementation work. The worker's implementation result is evidence for the decision; it is not acceptance provenance. If Tom accepts it, no further out-of-scope remainder is attached to this node — the reversed-order serial-sum-run comment repair is already done (see Graph maintenance). If he revises it, return this node to `todo` with the exact replacement surface rather than editing the prototype under a parked decision.
 
 ## Graph maintenance
 

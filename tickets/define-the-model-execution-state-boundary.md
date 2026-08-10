@@ -17,8 +17,9 @@ closed_note: Model-level instantiation of the withdrawn runtime KV state; the co
 **This ticket is closed as superseded by
 [`supersede-the-runtime-owned-kv-state-design`](supersede-the-runtime-owned-kv-state-design.md).
 It satisfies no dependent.** It was the model-level instantiation of the
-runtime-owned KV state, and it cannot outlive it: every one of its sections
-began "instantiate the generic `KvStateSet`", and that type is withdrawn.
+runtime-owned KV state, and it cannot outlive it: its Required content
+instantiated the generic `KvStateSet` as 28 ordered K/V pairs, and that type
+is withdrawn.
 
 ### What it asked for
 
@@ -53,9 +54,9 @@ removes the state rather than checking it.
   which is unaffected and now depends on this ticket no longer.
 - **The typed model-level failure report** — execution ordinal, phase, token in
   flight, and the operations a numerical claim covers — is
-  [`name-the-execution-ordinal-in-model-level-failures`](name-the-execution-ordinal-in-model-level-failures.md)'s
-  and is generic: an invocation reports which invocation failed, without holding
-  state.
+  [`name-the-execution-ordinal-in-model-level-failures`](name-the-execution-ordinal-in-model-level-failures.md)'s:
+  the consumer driver composes ordinal, phase, and token it already holds over
+  Tiler stage reasons; Tiler does not hold model state.
 - **D-16** stays open as a research question in the L6 record. Its subject
   becomes the consumer's own allocation policy — whether a consumer ever
   publishes per layer instead of per token — and it needs the same two halves it

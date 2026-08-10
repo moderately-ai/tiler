@@ -30,7 +30,7 @@ A named workload requires a product reduction, a standalone extrema reduction, a
 
 ## What the work would be, when it starts
 
-Per reducer: instantiate the fixed schema, which means stating the identity and empty-domain behaviour, the contributor order, the NaN and signed-zero policy, and the reassociation and permutation permissions independently — and for a non-identity seed, the rule that makes `empty_without_initial` meaningful, since the delivered extrema scalar program carries no `empty_identity_bits` field at all because no binary32 value is an identity for `Maximum`. Then answer `RQ-OP-06` against its own test, recording that the variadic *shape* may be adopted without the ordering model that comes with it in the source.
+Per reducer: instantiate the fixed schema, which means stating the identity and empty-domain behaviour, the contributor order, the NaN and signed-zero policy, and the reassociation and permutation permissions independently — and for a non-identity seed, the rule that makes `empty_without_initial` meaningful, since the delivered extrema scalar program carries no `empty_identity_bits` field: the empty-domain *result* was never declared for the embedded extrema fold, so the program refuses an empty reduced domain rather than committing an empty identity, while padding neutrality of `-inf` (`0xff80_0000`) is a separate fact that neither supplies nor weakens that empty-domain declaration. Then answer `RQ-OP-06` against its own test, recording that the variadic *shape* may be adopted without the ordering model that comes with it in the source.
 
 ## Explicit non-goals
 

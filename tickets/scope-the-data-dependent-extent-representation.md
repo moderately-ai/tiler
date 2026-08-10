@@ -18,7 +18,7 @@ tags: [research, operations, shapes, dynamic-extent, deferred]
 
 **Fact — the blocker is a shape mechanism rather than an operation design.** [the mature operation and signature taxonomy](../docs/research/semantic-graph/mature-operation-and-signature-taxonomy.md)'s F-36 is classified "Neither, today", because "**The result extent is a function of the operand values**, which no accepted shape mechanism expresses"; there is "no physical fallback, because an allocation size is unknown before execution". The [contract memo](../docs/research/semantic-graph/contract-memo.md) already rules `NonZero` "outside the first dynamic shape contract unless its result is bounded and represented by an explicit future mechanism".
 
-**Fact — a compiler-facing portable IR omits the whole class, and that is evidence rather than an anecdote.** ONNX defines `NonZero`, `Compress`, `Unique`, and `TensorScatter` and the Array API defines `nonzero`, `unique_all`, `unique_counts`, `unique_inverse`, `unique_values`, and `count_nonzero`; StableHLO defines none of them. The taxonomy's inference is that the family "is coherent and widely used at the framework level, and it is not expressible as a *tensor* result in a system whose allocations are planned before execution".
+**Fact — a compiler-facing portable IR omits the whole class, and that is evidence rather than an anecdote.** ONNX defines `NonZero`, `Compress`, and `Unique` and the Array API defines `nonzero`, `unique_all`, `unique_counts`, `unique_inverse`, `unique_values`, and `count_nonzero`; StableHLO defines none of them. (ONNX `TensorScatter` is a fixed-shape scatter/update, not a data-dependent result extent; it belongs with the scatter cohort, not this class.) The taxonomy's inference is that the family "is coherent and widely used at the framework level, and it is not expressible as a *tensor* result in a system whose allocations are planned before execution".
 
 **Fact — `RQ-OP-10` names both candidates and what closes it.** "a bounded extent plus a validity count, which keeps allocation static and makes every consumer mask-aware; or an explicit future value... Closes when a named workload requires one, with the consequence for allocation, ABI, and every downstream consumer's shape inference stated for the chosen candidate."
 
@@ -44,8 +44,10 @@ One representation is chosen against a named workload with its allocation, ABI, 
 
 ## Graph maintenance
 
-- Filed by [`derive-the-operation-family-and-signature-delivery-graph`](derive-the-operation-family-and-signature-delivery-graph.md) as track **O-30** of [Operation-family delivery graph](../docs/research/semantic-graph/operation-family-delivery-graph.md), which covers F-36 alone, plus the dynamic-`k` case of F-38 and states why they are one track rather than several.
+- Filed by [`derive-the-operation-family-and-signature-delivery-graph`](derive-the-operation-family-and-signature-delivery-graph.md) as track **O-30** of [Operation-family delivery graph](../docs/research/semantic-graph/operation-family-delivery-graph.md). O-30 covers **F-36 alone**. This ticket owns `RQ-OP-10`, whose representation population also includes the dynamic / operand-valued `k` case of F-38 as a consumer under **O-31** (ordering and rank selection) — not as an O-30 track member. The cheaper representation candidate makes every downstream consumer mask-aware, which is why the representation decision precedes admitting any member family.
 - [operation-family support matrix](../docs/roadmap.md#operation-family-support-matrix) owns delivered maturity. This ticket moves no rung, and a scoping record delivers nothing.
+
+**Correction — 2026-08-10.** Graph maintenance previously claimed O-30 "covers F-36 alone, plus the dynamic-`k` case of F-38 and states why they are one track rather than several." Delivery-graph membership is F-36 → O-30 and F-38 → O-31; only `RQ-OP-10` question ownership spans the F-38 dynamic-`k` case. The multi-family "one track" phrase was vacuous for a single-family track.
 
 ## Trigger check log
 

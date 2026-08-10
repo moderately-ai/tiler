@@ -20,29 +20,15 @@ rather than attach unrelated evidence or preserve a manually asserted proof gap.
 
 ## Fact
 
-`tiler_ir::index::IndexRealizationLaw` is a closed, non-exhaustive public enum
-whose current variants cover F32 constants, binary pointwise F32, precise SiLU,
-strict serial sum, reindex, broadcast, and strict F32 contraction. Reading that
-enum and running
-`rg -n 'dequantize_strict_affine_op|strict.affine' crates/tiler-compiler/src crates/tiler-ir/src/index`
-finds no strict-affine realization law or compiler registration. The compiler's
-physical frontier separately recognizes `ScalarProgram::StrictAffineU4Dequantize`
-only to refuse it as a frontier expression; a physical spelling is not logical
-index-refinement evidence.
+**Correction — 2026-08-10.** The present-tense census and `rg` absence claim below are the pre-delivery problem statement that motivated this ticket. They are **not** live claims about the tree. The strict-affine realization law, standard scalar meaning, semantic registration, scalar reference oracle, and compiler lowering capability landed under `## Accepted public boundary` and `## Public-boundary acceptance — 2026-08-04`. Reproduce the live surface: `rg -n 'StrictAffineU4Dequantize|GovernedStrictAffineU4Dequantize' crates/tiler-ir/src/index crates/tiler-compiler/src`. Downstream `bind-stage-coverage-to-index-refinement-identity` is `status: done` and mints fixture coverage from a real IR-owned receipt.
 
-`bind-stage-coverage-to-index-refinement-identity` makes the absence observable:
-`CoveredOccurrence` can be derived only from a completed
-`IndexRefinementReceipt`. Its artifact tests retain four strict-affine claims
-that cannot honestly be reconstructed after that boundary: one builder/component
-projection test and three codec tests covering round trip, typed corruption
-refusals, and component-order identity. The exact population is
-`rg -n 'strict_affine_u4_dequantize_artifact|strict_affine_components' crates/tiler-artifact/src/program`;
-the helper has one builder consumer and three codec consumers. Deleting or
-diluting them would erase established component-ABI evidence, while a synthetic
-or foreign receipt would test the invalid path this prerequisite exists to
-remove.
+**~~Fact~~ — pre-delivery problem statement (struck as a live claim 2026-08-10).** At filing, `tiler_ir::index::IndexRealizationLaw` was a closed, non-exhaustive public enum whose then-current variants covered F32 constants, binary pointwise F32, precise SiLU, strict serial sum, reindex, broadcast, and strict F32 contraction. Reading that enum and running `rg -n 'dequantize_strict_affine_op|strict.affine' crates/tiler-compiler/src crates/tiler-ir/src/index` found no strict-affine realization law or compiler registration. The compiler's physical frontier separately recognized `ScalarProgram::StrictAffineU4Dequantize` only to refuse it as a frontier expression; a physical spelling is not logical index-refinement evidence.
+
+**~~Fact~~ — pre-delivery problem statement (struck as a live claim 2026-08-10).** At filing, `bind-stage-coverage-to-index-refinement-identity` made the absence observable: `CoveredOccurrence` can be derived only from a completed `IndexRefinementReceipt`. Its artifact tests retained four strict-affine claims that could not honestly be reconstructed after that boundary: one builder/component projection test and three codec tests covering round trip, typed corruption refusals, and component-order identity. The exact population is `rg -n 'strict_affine_u4_dequantize_artifact|strict_affine_components' crates/tiler-artifact/src/program`; the helper has one builder consumer and three codec consumers. Deleting or diluting them would erase established component-ABI evidence, while a synthetic or foreign receipt would test the invalid path this prerequisite existed to remove.
 
 ## Inference
+
+**Correction — 2026-08-10.** The Inference below is the filing-time design argument for why the missing row was not a one-line registration. The accepted shape is the law and component-expansion boundary in `## Accepted public boundary`; the row is no longer missing.
 
 The missing row is not a one-line registration. Strict-affine dequantization
 reads the ordered codes, scale, and zero-point components of one encoded logical
@@ -173,6 +159,8 @@ in this diff were recomputed from the complete tree.
 The residual ceiling remains 6,144: strict-affine has two rank-wide accesses
 (codes read and result write), while scale and zero-point reads are rank zero,
 so it does not exceed the existing three-rank-wide-access closed-law maximum.
+
+**Correction — 2026-08-10.** The delivery-time explain pin `fb0b64dd69649785` and residual ceiling `6,144` were correct at this ticket's acceptance. Later authority-row growth and multi-region residual work moved them: the sealed explain fixture now pins `tiler-explain-v7 request=7ba3d77a66f04638` (`crates/tiler-compiler/src/explain.rs`); residual ceiling is `MAX_INDEX_REFINEMENT_RESIDUAL_OBLIGATIONS = 6 * MAX_TENSOR_RANK * 2` = 12,288 with `MAX_TENSOR_RANK = 1_024` (`crates/tiler-ir/src/index/refinement.rs`, `crates/tiler-ir/src/index/mod.rs`). Strict-affine still has two rank-wide accesses and does not by itself drive that later widening.
 
 **Unsupported cases:** strict-affine U8, other schemes or component maps, nested
 components, non-strict F32 contracts, alternate component order or roles, and

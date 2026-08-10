@@ -27,7 +27,7 @@ for t in admit-bf16-into-the-schedule-and-kernel-vocabulary admit-the-bf16-type-
          state-and-check-a-bf16-numerical-contract; do grep -m1 '^status:' tickets/$t.md; done
 ```
 
-All eight return `status: done`. Every one of the thirty-five tickets linked from anywhere in `docs/dtype-support.md` that concerns BF16 is likewise `done`. D-4's heading `docs/research/numerics/dtype-family-research-tracks.md "Owner: the live BF16 track; no new ticket."` is stale in the same motion: the track is not live.
+All eight return `status: done`. ~~Every one of the thirty-five tickets linked from anywhere in `docs/dtype-support.md` that concerns BF16 is likewise `done`.~~ **Correction — 2026-08-10.** That universal held at the pre-repair census of BF16-concerned links; after this ticket's landing the same ledger **Trigger** intentionally links the blocked partial owner [`declare-the-bf16-ios-family-answers-on-authoritative-ios-profiles`](declare-the-bf16-ios-family-answers-on-authoritative-ios-profiles.md) (`status: blocked`), so a present-tense "every BF16 ticket this document links is `done`" claim is false. The eight named rung owners remain all `done`. D-4's heading `docs/research/numerics/dtype-family-research-tracks.md "Owner: the live BF16 track; no new ticket."` is stale in the same motion: the track is not live.
 
 **The narrow claim holds and the broad reading does not — check this before widening the repair.** A scan of tickets referenced from `docs/dtype-support.md` finds **16** non-terminal ones, so the file as a whole is not routing into a void. Every one of the 16 is an integer, quantized, sub-byte, execution-only, or other-family owner — `admit-a-storage-carrier-for-integer-program-inputs` at `blocked`, eleven `deferred` track owners, three quantized `todo`s, and `state-the-non-enumerable-float-conformance-profile` at `deferred`. **None is BF16.** The defect is confined to the BF16 owner set; do not restate it as a claim about the ledger's owners generally.
 
@@ -93,3 +93,13 @@ follow-up root-document check landed as well. Heading fragments remain an
 explicitly excluded renderer-derived question, so the hand-check of heading
 anchors remains historical evidence rather than a capability now claimed by the
 gate. The dtype-ledger reroute itself is unchanged and complete.
+
+## Residual audit — 2026-08-10
+
+The named Defect 1–2 close conditions at the three intended sites (BF16 Trigger remainder authorities, D-4 owner block, two host-dtype tautology cells) remain discharged. `status: done` is not reopened. Two residual prose falsehoods sit **outside** those three targets — the 2026-08-08 landing moved D-4 owner prose and the Trigger body, not the early physical summary matrix, and the strike rationale over-broadened when the iOS partial owner was linked.
+
+**Fact — D-4 physical/execution summary row still claims live tickets.** Under `docs/research/numerics/dtype-family-research-tracks.md` `### Physical and execution obligations`, the **D-4** BF16 row still says Artifact ABI, Scalar/KIR, and Conformance are `Owed; a live ticket carries it`, and Backend capability still says `lowering and execution are owed`. That contradicts the same file's `#### D-4` body (`Owner: no live rung ticket; every remainder names an authority instead.` / `Rung owners, and all eight are delivered.`) and the ledger cells those rungs moved to tested guarantees (with bounds). Reproduce: `rg -n 'live ticket carries' docs/research/numerics/dtype-family-research-tracks.md` — residual hit is that physical-table D-4 row only.
+
+**Fact — Trigger strike rationale overclaims in present tense.** The same `docs/dtype-support.md` BF16 **Trigger** paragraph that struck the live-rung-ticket clause says `and so is every BF16 ticket this document links` while immediately linking the blocked iOS partial owner. Scope the claim to the eight rung owners / pre-repair owner set, not every BF16 link in the document. Reproduce: `rg -n 'so is every BF16 ticket this document links' docs/dtype-support.md`; `grep -m1 '^status:' tickets/declare-the-bf16-ios-family-answers-on-authoritative-ios-profiles.md`.
+
+**Not residual on this node.** Host-dtype tautology routing, conversion-family authority absence (Tom / ADR 0075), and the non-enumerable float remainder owner are already correctly stated; graph edges and scopes on this ticket need no change. The residual is docs matrix/Trigger prose alignment only — file a narrow docs remainder or edit those two cells when product work allows; do not reframe this ticket as open implementation work.

@@ -4,7 +4,7 @@ title: Reconcile the artifact ABI's hashing-site count with its own governed-dig
 status: done
 priority: p3
 dependencies: []
-related: [cover-the-fifth-envelope-digest-domain-in-the-union-no-prefix-check, decide-whether-adr-0103-s-eight-domain-count-is-a-dated-record-or-a-stale-claim]
+related: [cover-the-fifth-envelope-digest-domain-in-the-union-no-prefix-check, decide-whether-adr-0103-s-eight-domain-count-is-a-dated-record-or-a-stale-claim, reconcile-the-artifact-abis-four-hashing-sites-with-the-fifth-it-names]
 scopes: [contracts/artifacts, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
@@ -12,7 +12,9 @@ tags: [documentation]
 ---
 `cover-the-fifth-envelope-digest-domain-in-the-union-no-prefix-check` reconciled eight count sites against the true population of eighteen. This ticket originally found two further ordinal claims in a different vocabulary — *hashing sites* rather than *governed domains*. Re-reading the contract at this ticket's base distinguishes the already-repaired ADR 0074 block from a separate live schema-15 Fact, and the encoder comment also remains live.
 
-**Ticket repair — 2026-08-08 at base `689c5ccc0e4b8fa5087c5a91feeafd24360c5012`.** The original first Fact is false only for the ADR 0074 convention-2 block it named: commit `8e024560` already corrected that block, leaving its retired wording quoted only in the dated correction. Its separate schema-15 Fact remains live and says the identity digest is under a "fourth governed digest domain"; this is the same stale ordinal and requires a narrow contract edit to "its own governed digest domain". The live "The governed digest" authority says the envelope has seven governed domains, of which five are digest arguments. The encoder Fact is verified in substance but its "fourth" ordinal is stale. `crates/tiler-artifact/src/domains.rs` enumerates eighteen total domains: seven envelope, four proof-sidecar, and seven artifact-program identity/key domains. Within the envelope, `identity_digest` is the fifth digest argument, but both repairs remove the ordinal rather than replacing it. The ticket's outcome is therefore one contract-prose edit, one encoder-comment edit, and this repair; ADR 0103 remains a non-goal.
+**Ticket repair — 2026-08-08 at base `689c5ccc0e4b8fa5087c5a91feeafd24360c5012`.** The original first Fact is false only for the ADR 0074 convention-2 block it named: commit `8e024560` already corrected that block, leaving its retired wording quoted only in the dated correction. Its separate schema-15 Fact remains live and says the identity digest is under a "fourth governed digest domain"; this is the same stale ordinal and requires a narrow contract edit to "its own governed digest domain". The live "The governed digest" authority says the envelope has seven governed domains, of which five are digest arguments. The encoder Fact is verified in substance but its "fourth" ordinal is stale. `crates/tiler-artifact/src/domains.rs` enumerates eighteen total domains: seven envelope, four proof-sidecar, and seven artifact-program identity/key domains. Within the envelope, `identity_digest` is the fourth of five digest arguments (and the fifth envelope domain overall, after the manifest framing tag), but both repairs remove the ordinal rather than replacing it. The ticket's outcome is therefore one contract-prose edit, one encoder-comment edit, and this repair; ADR 0103 remains a non-goal.
+
+**Correction — 2026-08-10.** The 2026-08-08 repair paragraph above mis-ranked `identity_digest` as the fifth digest argument. Under "The governed digest", the five digest arguments in stated order are manifest, section, envelope, identity, then payload_identity; identity is the fourth digest argument. Status and delivered outcome are unchanged.
 
 **Retired ticket Fact — false as a live claim at this base.**
 

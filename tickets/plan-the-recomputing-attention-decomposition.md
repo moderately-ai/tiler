@@ -4,7 +4,7 @@ title: Plan the recomputing attention decomposition that never materializes the 
 status: todo
 priority: p2
 dependencies: [integrate-the-attention-block-into-the-runtime, reclassify-language-model-work-as-a-conformance-track]
-related: [design-attention-program-vertical, plan-the-materialized-attention-decomposition, enumerate-the-split-reduction-on-the-planning-frontier, implement-analytical-component-cost-model, decide-whether-to-admit-a-distributivity-permission]
+related: [design-attention-program-vertical, plan-the-materialized-attention-decomposition, enumerate-the-split-reduction-on-the-planning-frontier, implement-analytical-component-cost-model, decide-whether-to-admit-a-distributivity-permission, scope-causal-structure-aware-attention-schedules, reconcile-the-first-attention-planning-record-with-landed-fusion-roles-and-budgets]
 scopes: [implementation/compiler, implementation/ir, implementation/metal, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
@@ -12,7 +12,7 @@ tags: [implementation, physical-planning, fusion, feasibility, attention, langua
 ---
 ## User-visible outcome
 
-A second complete decomposition of the attention chain that materializes **no** `[8, 2, T, S]` tensor — only two `[8, 2, T]` statistics — so that the long benchmark rows become feasible without consuming any numerical permission. At the B1-d prefill row its design arithmetic is 1,150,287,880 bytes, against 18,329,108,488 for the historical unfused materialized design and 5,444,206,600 for that design's one-tensor handoff case. The materialized implementation ticket must supply the actual current comparison; this ticket does not keep calling the proposal-era unfused form the reachable plan after its fusion roles landed.
+A second complete decomposition of the attention chain that materializes **no** `[8, 2, T, S]` tensor — only two `[8, 2, T]` statistics — so the transient requirement is low enough that a target profile can accept it where the materialized plan's residency predicate rejects or stays `Unknown` under D-11, without consuming any numerical permission. At the B1-d prefill row its design arithmetic is 1,150,287,880 bytes, against 18,329,108,488 for the historical unfused materialized design and 5,444,206,600 for that design's one-tensor handoff case. The materialized implementation ticket must supply the actual current comparison; this ticket does not keep calling the proposal-era unfused form the reachable plan after its fusion roles landed.
 
 ## What it is, precisely
 
@@ -20,7 +20,9 @@ A second complete decomposition of the attention chain that materializes **no** 
 
 **Inference — it consumes no numerical permission, and that is the whole reason it is written this way rather than as a flash-attention kernel.** Every probability is formed by the same three roundings the reference performs, in the same order; both reductions run over the same contributor sequences the materialized plan uses. A recomputation is a physical implementation of one logical DAG, not a new logical equivalence group, so nothing about it is a relaxation.
 
-**Inference — the online single-pass form is a different arithmetic and is rejected, not deferred.** It computes `O = (Σ_s e_s · v_s) · r` where the reference computes `O = Σ_s (e_s · r) · v_s`. Factoring the common multiplier out of the sum consumes **distributivity**, the third numerical dimension, for which [Numerical semantics](../docs/numerical-semantics.md#distributivity-is-outside-the-order-contract) admits no permission and [ADR 0080](../docs/decisions/0080-treat-distributivity-as-a-third-numerical-dimension.md) is the accepted classification. Its running-maximum rescale separately consumes reassociation. This ticket is what survives in its place.
+**Inference — the online single-pass form is a different arithmetic and is rejected, not deferred.** It computes `O = (Σ_s e_s · v_s) · r` where the reference computes `O = Σ_s (e_s · r) · v_s`. Factoring the common multiplier out of the sum consumes **distributivity**, the third numerical dimension, for which [Numerical semantics](../docs/numerical-semantics.md#distributivity-is-outside-the-order-contract) admits no permission, [ADR 0080](../docs/decisions/0080-treat-distributivity-as-a-third-numerical-dimension.md) is the accepted classification, and [ADR 0095](../docs/decisions/0095-decline-a-distributivity-permission.md) is the product decline. The online-softmax rescaling fold additionally consumes **elementary-function identity**, the fourth numerical dimension ([ADR 0101](../docs/decisions/0101-treat-elementary-function-identities-as-a-fourth-numerical-dimension.md)): the exp telescoping through a running maximum is a rewrite through a registered elementary function, not only a ring regroup of `+` and `*`. A multi-dimension refusal must name every missing dimension (ADR 0080 item 5; ADR 0101 decision 6); naming only distributivity, or stating reassociation as the sole second ground, is incomplete. This ticket is what survives in its place.
+
+**Correction — 2026-08-10.** The L4 proposal-era account of the online form named distributivity plus reassociation. ADR 0101 (2026-08-06) requires elementary-function identity to be named alongside distributivity for flash/online refusal, so this ticket is not the sole authority for a reassociation-only second ground.
 
 ## Evidence prerequisite
 
@@ -37,7 +39,7 @@ A second complete decomposition of the attention chain that materializes **no** 
 
 **Inference — which plan wins is unmeasured and this ticket is where it stops being unmeasured.** The design deliberately makes no claim: it holds no timing of either attention contraction at any shape, and multiply-accumulate counts are arithmetic rather than measurements. That is why this ticket depends on the materialized plan running first.
 
-**Fact — the stage handoff needs no barrier and the precedent is in the tree.** `crates/tiler-ir/src/program/model.rs` records for the split reduction that "a split reduction needs no barrier because the pass boundary *is* the dispatch boundary", and `crates/tiler-compiler/src/program.rs` builds that ordinary `Data` edge at the site. This plan's statistics handoff is the same mechanism at a different subject, which is also why [`enumerate-the-split-reduction-on-the-planning-frontier`](enumerate-the-split-reduction-on-the-planning-frontier.md) is the shape to follow rather than to reinvent.
+**Fact — the stage handoff needs no *program-level kernel barrier* because the pass boundary is the dispatch boundary; the precedent is in the tree.** `crates/tiler-ir/src/program/model.rs` records for the split reduction that "a split reduction needs no barrier because the pass boundary *is* the dispatch boundary", and `crates/tiler-compiler/src/program.rs` builds that ordinary `Data` edge at the site. That claim is program-stage ordering only: it does not decide kernel-internal synchronization, and the schedule vocabulary admits `ReductionTopology::CooperativeWorkgroup` / `SynchronizationPoint` (same separation already corrected on [`plan-the-materialized-attention-decomposition`](plan-the-materialized-attention-decomposition.md)). **Inference —** this plan's statistics handoff is the same program-stage mechanism at a different subject, which is also why [`enumerate-the-split-reduction-on-the-planning-frontier`](enumerate-the-split-reduction-on-the-planning-frontier.md) is the shape to follow rather than to reinvent.
 
 ## Required delivery
 
@@ -49,7 +51,7 @@ A second complete decomposition of the attention chain that materializes **no** 
 
 ## Non-goals
 
-The online single-pass form, on the grounds above. Any distributivity permission — [`decide-whether-to-admit-a-distributivity-permission`](decide-whether-to-admit-a-distributivity-permission.md) owns that choice and this ticket takes no position. A three-pass variant that also recomputes for the maximum. The decode step. Making this the default: it is a second candidate on the frontier, and preference belongs to measured calibration.
+The online single-pass form, on the multi-dimension grounds above (distributivity and elementary-function identity; ADR 0080, ADR 0095, ADR 0101). Any distributivity permission — [`decide-whether-to-admit-a-distributivity-permission`](decide-whether-to-admit-a-distributivity-permission.md) owns that closed choice and this ticket takes no position. A three-pass variant that also recomputes for the maximum. The decode step. Making this the default: it is a second candidate on the frontier, and preference belongs to measured calibration.
 
 ## Closes when
 

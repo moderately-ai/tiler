@@ -219,7 +219,7 @@ schema therefore steps 1 → 2 and the request-subject domain steps
 `tiler.compiler.request-subject.v3` → `v4`, appending the length-framed frozen
 law-registry identity after lowering authority. On this corrected tree the only
 pinned value moved is the deterministic explain qualifier to
-`3a2bda87fc26f899`; it was recomputed from the current tree rather than copied
+`3a2bda87fc26f899` **(historical measurement at the 2026-08-03 fixed points; not the live sealed pin — see Fact audit — 2026-08-10)**; it was recomputed from the then-current tree rather than copied
 from either rejected fixed point.
 No program, artifact, schedule, kernel, or cache identity changes here: the
 dependent `bind-stage-coverage-to-index-refinement-identity` still owns receipt
@@ -266,15 +266,11 @@ setting was mutated.
 
 **Fact:** affected-crate Clippy with warnings denied, both crates' doctests,
 formatting, `git diff --check`, and `tkt lint` pass. The request qualifier pin was
-recomputed on this corrected tree as `3a2bda87fc26f899`. Scope guard is run after
+recomputed on this corrected tree as `3a2bda87fc26f899` **(historical measurement at the 2026-08-03 fixed points; not the live sealed pin — see Fact audit — 2026-08-10)**. Scope guard is run after
 the correction commit so it inspects the branch diff rather than the integration
 checkout's ticket body.
 
-**Unsupported case:** the law vocabulary is closed to the currently implemented
-f32 realization templates. An operation without a same-transaction law, an
-unrecognized numerical-contract domain, or a semantically equivalent but
-noncanonical logical index form refuses explicitly. Broadening any of those is a
-new reviewed law/template boundary, not a lowering-provider escape hatch.
+**Unsupported case (corrected — 2026-08-10):** the law vocabulary is a closed multi-template set registered with semantic freeze — including f32 and bf16 constants/pointwise forms, staged multi-region realizations (RMS/softmax/sum-then-pointwise), concatenate, strict affine u4 dequantize, and other admitted `IndexRealizationLaw` variants — not an f32-only catalogue. An operation without a same-transaction law, an unrecognized numerical-contract domain, or a semantically equivalent but noncanonical logical index form refuses explicitly. Widening the closed vocabulary remains a reviewed law/template boundary, not a lowering-provider escape hatch.
 
 **Second fixed-point correction — 2026-08-03:** review found that public
 constructors could still pair semantic authority A with a scalar registry built
@@ -382,14 +378,9 @@ row; subject identity moves and resolution returns the typed
 `SubjectRealizationLawMismatch`. No v2 step is taken because these v1 domains
 remain unlanded. The compiler explain qualifier is the only literal derived pin
 in the affected request path; it was recomputed by the full compiler suite and
-remains `3a2bda87fc26f899`.
+remains `3a2bda87fc26f899` **(historical measurement at the 2026-08-03 fixed points; not the live sealed pin — see Fact audit — 2026-08-10)**.
 
-Pending receipt construction now refuses more than 6,144 residual obligations
-immediately after exact canonical-law equality and before collection/allocation;
-the limit is the closed vocabulary's conservative `3 accesses * 1,024 rank * 2
-predicates`. Assessments and proofs share one `Arc`-backed authority instead of
-cloning its owned provider strings per obligation. A bound-plus-one perturbation
-returns the typed actual/limit error.
+Pending receipt construction now refuses more residual obligations than the hard structural ceiling immediately after exact canonical-law equality and before collection/allocation. **At this fixed point the landing formula was the closed vocabulary's conservative `3 accesses * 1,024 rank * 2 predicates` = 6,144 (historical-at-landing).** The live constant is `MAX_INDEX_REFINEMENT_RESIDUAL_OBLIGATIONS = 6 * MAX_TENSOR_RANK * 2` (12,288 at `MAX_TENSOR_RANK = 1_024`), with source rationale that the widest staged template reaches five accesses and six is a margin — see Fact audit — 2026-08-10. Assessments and proofs share one `Arc`-backed authority instead of cloning its owned provider strings per obligation. A bound-plus-one perturbation returns the typed actual/limit error.
 
 The exact-finite evaluator now preflights conservative 8-byte-limb work for the
 locked num-bigint 0.4.8 implementation, including operands, prior accumulator,
@@ -446,7 +437,7 @@ nextest passed 1,289/1,289 with one configured skip. Compiler doctests passed 2
 ordinary and 7 compile-fail cases; IR doctests passed 8 ordinary and 1
 compile-fail case with one ignored example. Affected-crate Clippy with warnings
 denied passed. Deliberately replacing the request qualifier pin with zero made
-the exact deterministic-trace test report `3a2bda87fc26f899` from this tree;
+the exact deterministic-trace test report `3a2bda87fc26f899` from this tree **(historical measurement at the 2026-08-03 fixed points; not the live sealed pin — see Fact audit — 2026-08-10)**;
 restoring that recomputed value made the test pass.
 
 **Ownership truth sweep — 2026-08-03:** the glossary and two runtime research
@@ -470,7 +461,7 @@ bounds, the three opaque byte-identity types, and the enumerated removals with
 no compatibility path.
 
 Semantically equivalent noncanonical logical forms, operations outside the
-closed F32 law vocabulary, and residual `SoundProof` certificates remain
+closed multi-template law vocabulary (not f32-only — see Fact audit — 2026-08-10), and residual `SoundProof` certificates remain
 explicitly unsupported. The dependent
 `bind-stage-coverage-to-index-refinement-identity` continues to own later
 stage/program/artifact receipt binding.
@@ -491,3 +482,13 @@ explicitly states that coverage folds the reached-only projection, never the
 complete `IndexRefinementReceiptIdentity`; artifact program identity is now
 `tiler.artifact-program.v16` with manifest schema 16.0. This later consumption
 does not change the verifier boundary accepted here.
+
+## Fact audit — 2026-08-10
+
+**Correction — 2026-08-10.** Three present-tense measurement and unsupported-case claims in the 2026-08-03 fixed-point narrative no longer match live source; board status, dependencies, related, and scopes stay coherent and are unchanged.
+
+1. **Law vocabulary is not f32-only.** The live `IndexRealizationLaw` enum is a closed multi-template vocabulary (f32 and bf16 constants/pointwise, staged RMS/softmax/sum-then-pointwise, concatenate, strict affine u4 dequantize, and further registered forms). The earlier present-tense “closed to the currently implemented f32 realization templates” and “closed F32 law vocabulary” sentences are struck as live claims; widening remains a reviewed law/template boundary. Reproduce: read `pub enum IndexRealizationLaw` in `crates/tiler-ir/src/index/law.rs`.
+
+2. **Residual-obligation ceiling at landing was 6,144; live ceiling is 12,288.** Fourth fixed-point prose recorded `3 accesses * 1,024 rank * 2 predicates` = 6,144 as the refusal threshold — historical-at-landing only. Live source is `MAX_INDEX_REFINEMENT_RESIDUAL_OBLIGATIONS = 6 * MAX_TENSOR_RANK * 2` with `MAX_TENSOR_RANK = 1_024` → 12,288; the comment cites a five-access staged widest case with margin six. Reproduce: `MAX_INDEX_REFINEMENT_RESIDUAL_OBLIGATIONS` in `crates/tiler-ir/src/index/refinement.rs`; `MAX_TENSOR_RANK` in `crates/tiler-ir/src/index/mod.rs`.
+
+3. **Explain request-qualifier pin `3a2bda87fc26f899` is historical measurement, not the live sealed pin.** Every occurrence of that hex in this ticket is a 2026-08-03 fixed-point measurement. The sealed deterministic-trace assertion now pins `7ba3d77a66f04638`. Reproduce: `deterministic_trace_is_sealed_and_rendered_separately` in `crates/tiler-compiler/src/explain.rs` (`"tiler-explain-v7 request=7ba3d77a66f04638\n"`); the old pin appears only in ticket text under the repository tree.

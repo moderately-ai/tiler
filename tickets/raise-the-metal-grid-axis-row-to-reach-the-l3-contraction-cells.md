@@ -4,7 +4,7 @@ title: Raise the Metal grid-axis row so the L3 contraction cells are reachable
 status: done
 priority: p2
 dependencies: [establish-an-upper-bound-authority-for-the-metal-grid-axis-row]
-related: [integrate-the-contraction-vertical-into-the-runtime]
+related: [integrate-the-contraction-vertical-into-the-runtime, publish-an-l3-contraction-cell-through-the-accepted-route]
 scopes: [implementation/build, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
@@ -42,7 +42,9 @@ One L3 correctness cell runs through the accepted AOT and runtime route and its 
 
 ### This branch executes no identity-domain step, and that is the finding to read first
 
-**Fact.** The row and its identity move landed with [`establish-an-upper-bound-authority-for-the-metal-grid-axis-row`](establish-an-upper-bound-authority-for-the-metal-grid-axis-row.md) and are already in this ticket's base commit `561dfe0b`: `crates/tiler-build/src/metal_declaration.rs:225` reads `grid_axis_threads: 268_435_456`, declared through the profile's own `TargetCompileProfileMeasurementSource`. **Zero pinned identities move on this branch** — the descriptor stays 1,999 bytes, the standard Metal artifact identity stays `3f98afa59d9ef46999acc211f2153a7d194444f5be3d0dd946f4128b57674a69`, and its cache subject stays `8bca5e7825cdd1dc37da5135b0ea7d6dbd3e9ce1557097f2ee9e60e79fe23d07`. Re-stepping the row here would have been the same step twice from two bases, which the dependency edge exists to prevent. The first two bullets of "What this ticket owes" were therefore discharged before this branch started, exactly as the 2026-08-04 worker comment recorded.
+**Fact.** The row and its identity move landed with [`establish-an-upper-bound-authority-for-the-metal-grid-axis-row`](establish-an-upper-bound-authority-for-the-metal-grid-axis-row.md) and are already in this ticket's base commit `561dfe0b`: `FIRST_MACOS_APPLE9` in `crates/tiler-build/src/metal_declaration.rs` reads `grid_axis_threads: 268_435_456`, declared through the profile's own `TargetCompileProfileMeasurementSource`. **Zero pinned identities move on this branch** — the descriptor stays 1,999 bytes, the standard Metal artifact identity stays `3f98afa59d9ef46999acc211f2153a7d194444f5be3d0dd946f4128b57674a69`, and its cache subject stays `8bca5e7825cdd1dc37da5135b0ea7d6dbd3e9ce1557097f2ee9e60e79fe23d07`. Re-stepping the row here would have been the same step twice from two bases, which the dependency edge exists to prevent. The first two bullets of "What this ticket owes" were therefore discharged before this branch started, exactly as the 2026-08-04 worker comment recorded.
+
+**Correction — 2026-08-10.** The descriptor length and identity triple above are the grid-row-only pins as of base `561dfe0b`, not live values. Later identity-domain steps moved the standard Metal artifact/cache pins and the descriptor-length pin; the measured `grid_axis_threads: 268_435_456` row itself remains.
 
 ### The reachability claim was an inference, and is now checked
 
@@ -56,7 +58,7 @@ That is worth a test rather than an arithmetic remark: a bound admitting an exte
 
 **Measurement, read-only, no files edited.** `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer cargo run -p tiler-prototype-compile -- --out <path>` published seven members against `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1` (1,999 descriptor bytes), and `cargo run -p tiler-prototype-run -- --artifact <path>` dispatched them on the Apple M4 Max and exited 0: 30 cases across six serial-sum members, plus the `2x2x3` contraction's five operand cases agreeing bit for bit with the published reference. The identity move did not break the vertical.
 
-Its closing line is now false, and it is not this ticket's to fix: `prototypes/serial-sum-run/src/proof.rs` prints "the L3 profile's own cells are refused by this profile's four-thread grid-axis row and are not published here". That site and its siblings belong to [`correct-the-four-thread-grid-rationales-the-measured-row-falsified`](correct-the-four-thread-grid-rationales-the-measured-row-falsified.md), which holds both prototype scopes.
+**Correction — 2026-08-10.** At Outcome time, `prototypes/serial-sum-run/src/proof.rs` still printed that the L3 profile's own cells were refused by this profile's four-thread grid-axis row and were not published here. That closing line is gone: [`correct-the-four-thread-grid-rationales-the-measured-row-falsified`](correct-the-four-thread-grid-rationales-the-measured-row-falsified.md) and [`publish-an-l3-contraction-cell-through-the-accepted-route`](publish-an-l3-contraction-cell-through-the-accepted-route.md) corrected the site after an L3 cell was dispatched through the producer.
 
 ### Why the third bullet is split out rather than delivered
 

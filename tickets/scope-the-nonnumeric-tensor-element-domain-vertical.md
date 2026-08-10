@@ -18,7 +18,7 @@ String and bytes, object and variant, temporal, structured and record, and categ
 
 **Fact.** [The mature dtype taxonomy](../docs/research/numerics/mature-dtype-taxonomy.md)'s `## Nonnumeric tensor element domains` classifies each: string tensors are "a genuine tensor element domain in systems such as ONNX, but requires offsets/buffers and a separate operation family"; object and variant are runtime-managed or opaque; temporal is a parameterized semantic domain over integer storage with a separate operation family; structured and record is a compound schema rather than one scalar arithmetic dtype; and categorical or dictionary is an encoded relational domain rather than primitive integer semantics. Recognizing them "does not require admitting them to the initial tensor-kernel optimizer".
 
-**Fact.** [The dtype support ledger](../docs/dtype-support.md) records them as type-system reservations at recognized identity and physical carrier, and `absent/unsupported` everywhere else.
+**Fact.** [The dtype support ledger](../docs/dtype-support.md) records them as type-system reservation at recognized identity, physical carrier, and ABI/materialization; `absent/unsupported` on every other maturity column.
 
 **Inference — they are one track because their shared obligation precedes all their differences.** Each needs offsets, variable-length buffers, lifetimes, and its own operation family before any of them is a tensor element at all. That obligation is not the numeric tensor ABI, and answering it once is what the track buys.
 
@@ -37,5 +37,5 @@ The trigger has fired and the selected domain's operation, lifetime, storage, an
 
 ## Trigger check log
 
-- 2026-08-04 — **not fired.** Track D-14's trigger is checked in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md):239: no named frontend or product workload requires string, object/variant, temporal, structured, or categorical domains, and numeric dtype breadth is the stated anti-trigger.
+- 2026-08-04 — **not fired.** Track D-14's trigger is checked under `#### D-14 — Nonnumeric tensor element domains` in [Dtype-family research tracks](../docs/research/numerics/dtype-family-research-tracks.md) (trigger paragraph): no named frontend or product workload requires string, object/variant, temporal, structured, or categorical domains, and numeric dtype breadth is the stated anti-trigger.
 - 2026-08-09 — **not fired.** The active frontend and conformance work still binds numeric and predicate-shaped tensor programs only; no named consumer requires string/bytes, object/variant, temporal, record, or categorical tensor elements with operation and lifetime contracts.

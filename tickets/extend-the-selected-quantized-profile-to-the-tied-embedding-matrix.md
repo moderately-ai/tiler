@@ -12,7 +12,7 @@ tags: [implementation, quantization, language-model, deferred, class-conformance
 ---
 ## Activation boundary
 
-Do not start this before both dependencies deliver. It needs the selected quantized profile working over the weighted projections, and it needs a gather family that can consume a compound value — neither exists.
+Do not start this before both capability residuals clear. It needs the selected quantized profile working over the weighted projections as an executable Tiler path (`implement-first-quantized-backend-profile` is still open), and it needs a gather that can consume a compound value — the admitted gather (`tiler::gather-f32@1`) takes only `tiler::f32@1` sources, so a compound or quantized tied matrix cannot yet be a gather operand.
 
 ## User-visible outcome
 
@@ -22,7 +22,7 @@ The workload's single largest weight tensor, the `[151936, 1024]` matrix that `t
 
 **Measurement — the memory case, from [the first quantized language-model profile](../docs/research/numerics/first-quantized-lm-profile.md).** Extending the selected per-output-channel strict-affine U8 profile from the 196 weighted projections to the tied embedding as well moves the model's weight bytes from 1,064,714,240 (0.447 of the F32 baseline) to 598,726,528 (0.251), with identical measured behaviour on the C1 conformance row — 17 of 18 greedy agreement and the exact 18-token sequence in both variants. There is no accuracy argument against it on the measured row.
 
-**Fact — why it is nonetheless not in the first vertical.** The matrix has two uses with different access relations. As the vocabulary projection's operand it is contraction index structure 1, which the selected profile covers. As the input embedding it is a gather, which the profile does not cover and which Tiler cannot express: [`admit-an-indirect-gather-family-for-tied-embedding-lookup`](admit-an-indirect-gather-family-for-tied-embedding-lookup.md) owns that family. A per-row scale — one per vocabulary token — is the natural granularity for both uses, which is a convenience of this profile and not a general fact.
+**Fact — why it is nonetheless not in the first vertical.** The matrix has two uses with different access relations. As the vocabulary projection's operand it is contraction index structure 1, which the selected profile covers. As the input embedding it is a gather, which the selected profile does not cover and which the admitted F32 gather cannot take as a compound source (ADR 0107 / `tiler::gather-f32@1`): [`admit-an-indirect-gather-family-for-tied-embedding-lookup`](admit-an-indirect-gather-family-for-tied-embedding-lookup.md) owns that family. A per-row scale — one per vocabulary token — is the natural granularity for both uses, which is a convenience of this profile and not a general fact.
 
 **Inference — one plan must not allocate two copies.** The record's workload authority already states that one matrix serves both uses and that "a plan that allocates two copies doubles the largest single allocation in the model for no semantic reason". Quantizing it does not change that, and a quantized copy plus an `f32` copy would be worse than either alone.
 
@@ -44,3 +44,4 @@ Filed by [`scope-first-quantized-lm-profile`](scope-first-quantized-lm-profile.m
 
 - 2026-08-04 — **not fired.** Both dependencies are `todo`: [`implement-first-quantized-backend-profile`](implement-first-quantized-backend-profile.md) and [`admit-an-indirect-gather-family-for-tied-embedding-lookup`](admit-an-indirect-gather-family-for-tied-embedding-lookup.md). The activation boundary is explicit that neither exists yet.
 - 2026-08-09 — **not fired; one dependency has landed.** The indirect gather family is now `done` and admits the exact `tiler::u32@1` index route, but `implement-first-quantized-backend-profile` remains `todo`. The ticket's activation boundary requires both a real selected quantized profile and gather, so the tied-matrix composition still has no executable producer to extend. Recheck both dependency statuses and preserve the shared-logical-value requirement when the second one lands.
+- 2026-08-10 — **not fired.** Gather dependency remains `done` (F32 semantic only). `implement-first-quantized-backend-profile` remains `todo`. Compound gather source still unadmitted; activation residual unchanged.

@@ -4,7 +4,7 @@ title: Admit the registered elementary families as recognizable program stages
 status: done
 priority: p1
 dependencies: [widen-the-staged-realization-law-to-the-registered-elementary-families, resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage, implement-stage-level-cover-atoms-for-multi-region-occurrences, resolve-which-authority-mints-a-multi-stage-region-candidate, enumerate-region-candidates-over-realization-stages]
-related: [accept-the-governed-reciprocal-square-root-scalar-key]
+related: [accept-the-governed-reciprocal-square-root-scalar-key, accept-the-registered-family-region-sequence-query, admit-a-scheduled-region-for-a-staged-elementary-family, account-for-a-staged-realization-stage-in-the-kernel-program, admit-a-staged-family-that-reads-a-materialized-intermediate, classify-a-vocabulary-gap-refusal-as-an-unsupported-capability, admit-a-scheduled-region-that-reads-two-materialization-edges, register-the-softmax-realization-law]
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -13,6 +13,8 @@ tags: []
 ## User-visible outcome
 
 A program whose middle stage is a registered elementary family — a softmax, an RMS normalization, or any family the registry carries with per-family facts — compiles through the ordinary path when that stage reads a materialized intermediate and feeds a later stage, exactly as elementwise epilogues and strict folds already do. The capability is the general one: any registered family with a realization law becomes a recognizable stage; no family-specific recognizer arm and no chain-shaped special case.
+
+**Correction — 2026-08-10.** The paragraph above is the product-level aspiration as filed, not the close condition that `status: done` discharges. Recognition is general and law-derived for any registered multi-region family. End-to-end compile with reference bit-agreement holds for at least one family as a middle stage (`rms_norm(value, weight) * value` over declared inputs — see Outcome). It does **not** hold universally for every registered elementary family over every materialization shape: softmax is recognized then refused for want of an installed lowering (`missing-capability`); a staged family that must read two materialization edges (`rms_norm(matmul(a, b), a)`) is recognized then stops without a scheduled-region spelling (`NoFeasiblePlan`). Owners of those remainders are named in Outcome.
 
 ## Why this exists, and the worked instance
 
@@ -132,3 +134,39 @@ A cover region can retain a law-internal handed value as an ordinary `RetainedOu
 ### Checks
 
 `cargo fmt --all --check`; `cargo check` and `cargo clippy --all-targets -- -D warnings` for `tiler-ir` and `tiler-compiler`; `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` for both; `cargo nextest run --workspace` **2866 passed, 7 skipped**; `cargo test --workspace --doc` green including the ADR 0051 compile-fail evidence; `tkt lint`; `git diff --check`; `tkt guard` against the true base. Five new tests, each watched failing under a named deliberate perturbation.
+
+## Fact audit — 2026-08-10
+
+**Correction — 2026-08-10.** The third-round Progress (including its support-matrix bullet) still speaks as if the physical half had not landed and "no program compiles." Those sentences are accurate as of the third-round landing base only. Later siblings closed the physical and program-assembly halves: [`admit-a-scheduled-region-for-a-staged-elementary-family`](admit-a-scheduled-region-for-a-staged-elementary-family.md) and [`account-for-a-staged-realization-stage-in-the-kernel-program`](account-for-a-staged-realization-stage-in-the-kernel-program.md). Reproduce: `pipeline::tests::a_staged_family_program_compiles_and_computes_the_normalization_bit_for_bit` expects `compile(...).expect("the staged program compiles")`, three stages, one `StagedRealization`, and bit-equality vs `tiler-reference`.
+
+**Correction — 2026-08-10.** "The softmax is unchanged and still refuses at the recognizer" is false as a live claim. Softmax carries `StagedSoftmaxF32` via [`register-the-softmax-realization-law`](register-the-softmax-realization-law.md); the same law-derived staged arm answers true. The live wall is an installed lowering / `physical::staged_plan` arm: `a_softmax_program_is_refused_for_want_of_an_installed_lowering` asserts `UnsupportedCapability { rule: "missing-capability" }` (`crates/tiler-compiler/tests/softmax_recognizer_boundary.rs`).
+
+**Correction — 2026-08-10.** Surfaces this ticket parked as labelled drafts are accepted: `rsqrt-f32` ([`accept-the-governed-reciprocal-square-root-scalar-key`](accept-the-governed-reciprocal-square-root-scalar-key.md), `done`) and `family_realizes_region_sequence` ([`accept-the-registered-family-region-sequence-query`](accept-the-registered-family-region-sequence-query.md), `done`). The close condition's "parked for Tom" wording is landing-time posture, not the live label.
+
+**Fact.** Intermediate-read recognition for a staged family over a single materialization edge is landed by [`admit-a-staged-family-that-reads-a-materialized-intermediate`](admit-a-staged-family-that-reads-a-materialized-intermediate.md). The double-edge schedule wall remains at [`admit-a-scheduled-region-that-reads-two-materialization-edges`](admit-a-scheduled-region-that-reads-two-materialization-edges.md) (`blocked`). The vocabulary-gap failure class remains misbucketed as `NoFeasiblePlan` under [`classify-a-vocabulary-gap-refusal-as-an-unsupported-capability`](classify-a-vocabulary-gap-refusal-as-an-unsupported-capability.md) (`todo`).
+
+## Outcome — 2026-08-10
+
+This ticket is **done** against its written close condition. Formal Outcome was missing after third-round Progress left the physical half open; sibling landings closed the bit-agreement conjunct, and this record is brought current without reopening status.
+
+**What this ticket delivered (recognizer half and its prerequisites).**
+- Law-derived `NormalizedOutput::Staged` via `laws.family_realizes_region_sequence(root.key())` — no operation key in the staged arm; general for any registered multi-region law family (`crates/tiler-compiler/src/request.rs`).
+- `GovernedRootMeanSquareScaleF32` multi-region lowering (second-round Progress) and the law-widening / stage-attribution / multi-stage candidate chain as dependencies, all `done`.
+- Scalar admission of `rsqrt-f32` (now accepted) and the contract-free region-sequence query (now accepted public surface).
+
+**What later tickets closed that the third-round Progress still names as open.**
+- Scheduled-region spelling for staged rms-norm stages: [`admit-a-scheduled-region-for-a-staged-elementary-family`](admit-a-scheduled-region-for-a-staged-elementary-family.md) (`done`) — `ScalarProgram::SquaredSerialSumThenEpilogue` and staged fold/pass spelling.
+- Kernel-program assembly for a staged realization stage: [`account-for-a-staged-realization-stage-in-the-kernel-program`](account-for-a-staged-realization-stage-in-the-kernel-program.md) (`done`).
+- Close-condition bit-agreement evidence: `pipeline::tests::a_staged_family_program_compiles_and_computes_the_normalization_bit_for_bit` — `rms_norm(value, weight) * value` compiles with three stages, one `StagedRealization`, and reference bit-equality.
+
+**What recognition is, and what it is not.**
+- Recognition is general: any family the law registry carries with a multi-region realization is `NormalizedOutput::Staged`. Softmax is recognized after [`register-the-softmax-realization-law`](register-the-softmax-realization-law.md).
+- Recognition does not install a lowering or a `staged_plan` arm. Softmax refuses at `missing-capability` until a four-stage provider and physical plan land (no separate open ticket id under this repair; residual is product debt outside this id — see `crates/tiler-compiler/tests/softmax_recognizer_boundary.rs` header naming the missing provider and `physical::staged_plan` arm).
+- A staged family over an edge is recognized ([`admit-a-staged-family-that-reads-a-materialized-intermediate`](admit-a-staged-family-that-reads-a-materialized-intermediate.md)); a program that needs two materialization-edge reads into one scheduled region still fails planning as `NoFeasiblePlan` until [`admit-a-scheduled-region-that-reads-two-materialization-edges`](admit-a-scheduled-region-that-reads-two-materialization-edges.md).
+
+**Open residuals (not this ticket; not reopened).**
+- [`classify-a-vocabulary-gap-refusal-as-an-unsupported-capability`](classify-a-vocabulary-gap-refusal-as-an-unsupported-capability.md) — `todo`.
+- [`admit-a-scheduled-region-that-reads-two-materialization-edges`](admit-a-scheduled-region-that-reads-two-materialization-edges.md) — `blocked`.
+- Softmax installed lowering / `physical::staged_plan` arm for `StagedSoftmaxF32` — residual capability gap; multi-reader region-formation prerequisites already landed separately ([`carry-a-multi-reader-intermediate-through-region-formation`](carry-a-multi-reader-intermediate-through-region-formation.md), [`admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence`](admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence.md)).
+
+**Support-matrix / user-visible.** The third-round claim that both R6 blockers discharged but "no program compiles" is superseded: programs do compile on the interpreter path for the rms-norm middle-stage shape above. Roadmap extent and device/backend rows remain outside this ticket's scopes ([`correct-the-one-region-per-occurrence-claim-in-the-records`](correct-the-one-region-per-occurrence-claim-in-the-records.md)). The User-visible outcome's universal compile language is aspirational product wording; the close condition and this Outcome are the AC that `status: done` discharges.

@@ -81,3 +81,11 @@ Accepted by Tom on 2026-08-06 at the morning decision review in the coordination
 ## Current follow-on correction — 2026-08-09
 
 The IR-side accessor rename filed in the compiler delta is complete. [`name-the-index-receipt-final-stage-accessors-for-what-they-return`](name-the-index-receipt-final-stage-accessors-for-what-they-return.md) renamed the four receipt readers to `final_stage()` and `final_scalar_authority()` without changing signatures, return values, identity bytes, or verification behaviour; the compiler's `single_region()` refusal remains the explicit route for consumers that cannot evaluate a chain. The independent multi-value handoff remains `deferred` on its own trigger and was not absorbed by this rename.
+
+## Correction — 2026-08-10
+
+Two present-tense claims in the acceptance inventory above are historical surface drift, not live Facts.
+
+1. **`StagedIntermediate` fields.** The Exact surface bullet lists `producer`, `producer_output`, `consumer`, `consumer_input`, `value_type`, `shape` only. The live struct also carries `retained_through` (last stage across which the published value stays live; lifetime is `producer..=retained_through`). Multi-reader retention was accepted on a sibling node ([`accept-the-multi-reader-index-realization-retention`](accept-the-multi-reader-index-realization-retention.md)); the field is still part of the IR surface this ticket named.
+
+2. **"One law form, admitted for a family nothing registers yet" / reciprocal square root "does not exist".** That Choice text is historical. `rsqrt_f32_scalar_op` exists and RMS uses `IndexRealizationLaw::StagedRootMeanSquareScaleF32`; the standard semantic registry registers specialized staged laws for rms-norm and softmax. The original `StagedStrictSerialSumThenPointwiseF32` form admitted on this node remains a tested law shape with no standard registry row.

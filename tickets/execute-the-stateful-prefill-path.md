@@ -29,25 +29,14 @@ runtime change it declared no longer exists.
 
 ## Required behaviour
 
-- Prefill is the **same program** as a decode step, invoked with the cached
-  extent at zero. Two programs for one computation was eliminated in
-  [the L5 record](../docs/research/runtime/autoregressive-state-and-kv-cache.md):
-  the twenty-two steps are identical and only the bound extents differ, so
-  packaging both would duplicate an identity to buy a saving no reachable plan
-  realizes. That elimination is unaffected by the supersession.
-- A zero-extent operand follows its explicit allocation and ABI policy and is
-  not replaced by an implicit null binding. Whether the zero-work concatenation
-  dispatch is skipped is answered by the routed launch's own
-  `zero_work_skips_dispatch`, not by a convention here.
-- The driver allocates whatever it will reuse **before** the invocation and
-  binds a dense payload at the exact extent it wrote. It advances its own
-  cursor to `T` only on the invocation's observed terminal success, and never on
-  submission alone.
+- Prefill uses the decode-shaped program invoked with the cached extent at zero (`C = 0`). At a fixed `T`, that empty-cache binding has the same occurrence signature as a nonempty cache — only extents move (`a_nonempty_cache_changes_no_occurrence` in `crates/tiler-reference/tests/decoder_layer.rs`). Packaging a second program solely along the cache axis was eliminated in [the L5 record](../docs/research/runtime/autoregressive-state-and-kv-cache.md): it would duplicate an identity to buy a saving no reachable plan realizes. That cache-axis elimination is unaffected by the 2026-08-04 supersession. This ticket does **not** claim one unconditional artifact identity across C1 prefill at `T = 10` and C1 decode at `T = 1`; that T-axis question is owned by L5/L6 D-19 and [`define-the-widening-relation-over-a-symbolic-broadcast-extent`](define-the-widening-relation-over-a-symbolic-broadcast-extent.md).
+- A zero-extent operand follows its explicit allocation and ABI policy and is not replaced by an implicit null binding. Whether the zero-work concatenation dispatch is skipped is answered by the routed launch's own `zero_work_skips_dispatch`, not by a convention here.
+- The driver allocates whatever it will reuse **before** the invocation and binds a dense payload at the exact extent it wrote. It advances its own cursor to `T` only on the invocation's observed terminal success, and never on submission alone.
+
+## Correction — 2026-08-10
+
+**Correction — 2026-08-10.** Ticket-audit wave. Required behaviour's first bullet absorbed L5's 2026-08-05 narrowing under [`decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode`](decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode.md) (L5 anchors: `narrowed, not withdrawn`; `a_nonempty_cache_changes_no_occurrence`). The retired absolute — "the twenty-two steps are identical and only the bound extents differ" as covering C1 prefill versus C1 decode — is struck for the T half; the cache half still holds. Close still targets only prefill at `T = S = 10`; no D-19 delivery is owed under this id.
 
 ## Closes when
 
-The C1 prefill invocation runs at `T = S = 10`; the driver holds the returned
-`k_rope` and `v_heads` as its own tensors, 81,920 bytes per layer, matching the
-arithmetic; and an invocation whose submission does not reach terminal success
-leaves the driver's cursor at 0 with no partially written retained tensor —
-watched failing by forcing the failure, not asserted from the success path.
+The C1 prefill invocation runs at `T = S = 10`; the driver holds the returned `k_rope` and `v_heads` as its own tensors, 81,920 bytes per layer, matching the arithmetic; and an invocation whose submission does not reach terminal success leaves the driver's cursor at 0 with no partially written retained tensor — watched failing by forcing the failure, not asserted from the success path.

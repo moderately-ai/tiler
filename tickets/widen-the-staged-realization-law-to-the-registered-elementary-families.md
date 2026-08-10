@@ -14,6 +14,8 @@ tags: []
 
 `tiler::rms-norm-f32@1` -- and, once its scalar lands, `tiler::softmax-f32@1` -- carries a registered `IndexRealizationLaw`, so `FrozenIndexRealizationLawRegistry::resolve` stops answering `MissingRealizationLaw` for them and refinement can prove a provider's emitted region sequence realizes the occurrence.
 
+**Correction — 2026-08-10.** The softmax half of that sentence is no longer an open promise of this ticket. Both walls named below (`admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`, `admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence`) are `status: done`, and a later registration lands `StagedSoftmaxF32` for `tiler::softmax-f32@1`. This ticket still closed only the normalization half under `implementation/ir`.
+
 ## Why this exists: the accepted staged template expresses neither family
 
 **Fact, and it corrects a premise.** [`admit-the-registered-elementary-families-as-recognizable-program-stages`](admit-the-registered-elementary-families-as-recognizable-program-stages.md) states that "the law registrations then use the accepted staged template (or a single-region law where the family is one region)". Read against `crates/tiler-ir/src/index/law.rs`, that is false for both registered elementary families. `IndexRealizationLaw::StagedStrictSerialSumThenPointwiseF32` (`law.rs:106-111`) is realized by `realize_staged_sum_then_pointwise` (`law.rs:953-1017`), and its exact shape is:
@@ -74,6 +76,8 @@ The survivor fixes the chain (as `PreciseSiluF32` does, because the chain is wha
 
 **Where the generality actually went, per the worked-examples discipline.** The three gaps this ticket names are closed as reusable *emitters*, not as one family's inline code: `SumPlan::contributor_square` (a fold over a per-contributor square), `SumPlan::fold` (a fold that returns its value so an epilogue can transform it inside the producing region, split out of `emit_serial_sum` with its emission order preserved byte for byte), and reading a reduced-rank published value at the kept coordinates of the consuming stage's point domain. The next staged family instantiates those; it does not instantiate this variant.
 
+**Correction — 2026-08-10.** Live spelling in `law.rs` is `FoldPlan` with field `contributor_square` set by `squaring_contributors`, return path `FoldPlan::fold`, and emission helper `emit_fold_region`. The architectural claim (reusable emitters, not family-inline) is unchanged; the `SumPlan` / `emit_serial_sum` names above are historical at close.
+
 **Why the epilogue is in stage zero.** `r` is computed once per folded row and read once per point. Publishing `a` and putting `/N`, `+eps`, and `Rsqrt` in the pointwise pass evaluates each `N` times per row — a different scalar program, not a different schedule, by the same argument the staged template's own doc-comment already makes.
 
 ### Step-for-step realization evidence
@@ -113,9 +117,13 @@ Folded in here on the coordinator's instruction, and executed against the *merge
 
 The graph said the softmax waits on [`admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold`](admit-a-governed-maximum-scalar-key-for-the-softmax-shifting-fold.md). That key is necessary and **not sufficient**. `VerifiedIndexRegionSequence` requires a non-final stage to publish exactly one value and that value to be read by the immediately following stage and nothing else; the softmax needs `e_i` in both the summing fold and the final scale, or `m` and `d` together in the final stage. Every staging is refused, and the derivation is filed at [`admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence`](admit-a-handed-value-with-more-than-one-reader-in-the-region-sequence.md). The softmax law is one ticket once both walls are down.
 
+**Correction — 2026-08-10.** Both named walls are `status: done`. A softmax realization law (`StagedSoftmaxF32`, tag 11) and standard registration for `tiler::softmax-f32@1` later landed outside this ticket. This ticket still correctly closed only the normalization half; the "one ticket once both walls are down" sentence is residual map language at close, not a live open remainder owned here.
+
 ### The public boundary
 
 `IndexRealizationLaw` is `pub` and `#[non_exhaustive]`, so the variant lands as a labelled draft with its own acceptance node, [`accept-the-root-mean-square-scale-realization-law`](accept-the-root-mean-square-scale-realization-law.md), parked at `awaiting-decision`. Nothing is self-accepted.
+
+**Correction — 2026-08-10.** [`accept-the-root-mean-square-scale-realization-law`](accept-the-root-mean-square-scale-realization-law.md) is `status: done` with `## Accepted — 2026-08-06` (Tom, coordination session). That acceptance record states no draft-boundary label existed on `StagedRootMeanSquareScaleF32` at the definition to flip, so no code moved with the close. "Labelled draft" / `awaiting-decision` above is the landing-time parking posture, not live graph status.
 
 ### Checks
 

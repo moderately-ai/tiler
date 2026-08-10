@@ -4,7 +4,7 @@ title: Refresh the device-free test floor s prose census
 status: done
 priority: p3
 dependencies: []
-related: [date-the-conformance-measurement-bullet-s-all-runs-claim]
+related: [date-the-conformance-measurement-bullet-s-all-runs-claim, pin-the-admitted-unsafe-sites-in-the-workspace-gate]
 scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
@@ -54,3 +54,5 @@ Cite by searchable anchor, run its grep before committing, and use `grep -F`.
 This ticket delivered its then-current repair in `8c5579c90b382851a3eef9fcf7eaec26a8e70b92`: 74 device-free tests, a floor raised from 72 to 73, corrected historical prose, and a demonstrated two-test gate loss that failed at 72 versus 73.
 
 That population changed later on 2026-08-08 under `pin-the-admitted-unsafe-sites-in-the-workspace-gate`. The conformance-local unsafe-token scan was policy machinery rather than conformance evidence and moved to the workspace-wide inventory under `crates/tiler/tests/`; removing that one local test reduced this crate to 73 device-free tests, and the floor deliberately returned from 73 to 72 to preserve the same one-below sensitivity. The current source records both steps. A fresh focused run on 2026-08-09 printed `20 source file(s); 73 device-free test(s) and 3 in the macOS-gated module(s)` and passed with `DEVICE_FREE_TEST_FLOOR = 72`. Thus `status: done` remains correct, but the ticket's original 74/73 closure is dated evidence rather than today's census.
+
+**Correction — 2026-08-10.** "The current source records both steps" names the floor-transition history paragraphs (72 → 73 under this ticket; 73 → 72 under the pin/unsafe inventory move), not the lead `Seventy-three` / drops-to-N sensitivity arithmetic on `DEVICE_FREE_TEST_FLOOR`. That lead block still describes the intermediate 74-device-free / floor-73 regime (two-test modules → 72, retained_record → 70, applicability → 68, publication::proof → 65, bf16_vertical → 61, serial_sum → 56, envelope → 57) and was not restated when the floor returned to 72. Live one-below drops for the 73/72 population would be two-test modules → 71, retained_record → 69, applicability → 67, publication::proof → 64, bf16_vertical → 61, serial_sum → 55, envelope → 56; refreshing or dating that arithmetic is residual product debt in `crates/tiler-conformance/src/portability.rs`, not a reopening of this ticket's closure.

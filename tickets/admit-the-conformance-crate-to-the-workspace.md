@@ -24,7 +24,9 @@ The crate exists, is wired into every authority that must know about it, and **h
 
 ## Four authorities that must be updated in the same commit
 
-`AGENTS.md` states that a crate-admission ticket "must atomically add the real workspace package and add or move its mapping". Each of these fails deliberately when a member is added, which is the intended behaviour rather than an obstacle:
+`ticketsplease.toml` states (above `[scope_crates]`) that a crate-admission ticket "must atomically add the real workspace package and add or move its mapping". Each of these fails deliberately when a member is added, which is the intended behaviour rather than an obstacle:
+
+**Correction — 2026-08-10.** The atomic-admission sentence was never in `AGENTS.md` at any commit; it lives only in `ticketsplease.toml`'s `[scope_crates]` comment (`Each crate-admission ticket must atomically add the real workspace package and add or move its mapping here.`). The prior wording that attributed it to `AGENTS.md` is substituted rather than dated beside, same shape as other never-true citation repairs. Reproduce: `rg 'must atomically add' AGENTS.md` is empty; the same fragment hits `ticketsplease.toml`. Authority 4's separate claim that `AGENTS.md` notes lint inheritance is not enforced remains a true AGENTS.md note and is untouched.
 
 1. **`crates/tiler/tests/workspace_population.rs`** — `EXPECTED_MEMBERS` is a hand-maintained list of 15, derived against `cargo metadata`. It fails on a missing *or* unexpected member. Update the count and the list, and the doc comment's "Twelve production crates plus the three prototype proof executables" phrasing with it.
 2. **`ticketsplease.toml`** — add `"implementation/conformance" = ["crates/tiler-conformance/**"]` under `[scopes]`, and the `[scope_crates]` mapping so the Rust backend can expand reverse-dependents. The file's own comment requires the mapping be added atomically with the package.

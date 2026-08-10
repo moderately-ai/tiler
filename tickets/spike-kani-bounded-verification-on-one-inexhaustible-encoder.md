@@ -4,7 +4,7 @@ title: Spike Kani bounded verification on one inexhaustible encoder
 status: done
 priority: p2
 dependencies: [prove-the-exhaustible-encoder-injectivity-claims-natively]
-related: []
+related: [catalog-the-kani-verification-research-and-spike, spike-kani-push-slice-framing-over-a-symbolic-byte-run, resync-the-kani-encoder-injectivity-shim-after-index-arithmetic]
 scopes: [research/verification]
 shared_scopes: [project/tickets]
 paths: []
@@ -116,9 +116,11 @@ The first three cover their **whole domains** — a stronger claim than `crates/
 
 ### The negative is the more useful half, and it was isolated rather than reported as a wall
 
-The string encoder capped at the **smallest symbolic bound that exists** — an empty key — never reaching SAT. Rather than stopping there, the worker isolated the cause: the *same* encoder costs **1.46 s with a concrete key**, and traces show `run_utf8_validation` dominating `memcmp` 840:40 when the key is symbolic and absent when it is not. So **`String` defeats Kani, not the encoding logic**, and the property is recoverable by proving `push_slice`'s framing separately — one primitive shared by all nine string encoders. Filed as the next bounded experiment.
+The string encoder capped at the **smallest symbolic bound that exists** — an empty key — never reaching SAT. Rather than stopping there, the worker isolated the cause: the *same* encoder costs **1.46 s with a concrete key**, and traces show `run_utf8_validation` dominating `memcmp` 840:40 when the key is symbolic and absent when it is not. So **`String` defeats Kani, not the encoding logic**, and the property is recoverable by proving `push_slice`'s framing separately — one primitive shared by all nine string encoders. Not attempted here; the obvious next bounded experiment.
 
 `key_len_1/_2/_4` are checked in but deliberately not run, each being strictly harder than one that already capped. That is labelled **Inference**, and the README marks them not-to-run with the command for anyone wanting confirmation.
+
+**Correction — 2026-08-10.** The close-time wording "Filed as the next bounded experiment." was **false**: no remainder ticket existed under any plausible id, and this ticket's `related` was empty. Catalog rows *were* filed under `catalog-the-kani-verification-research-and-spike` (now `done`); the string-encoder / `push_slice` decomposition was not. That experiment is filed as `spike-kani-push-slice-framing-over-a-symbolic-byte-run` (`status: todo`) and listed in `related`.
 
 ### Blocked on toolchain convergence, and the re-probe assumption was wrong
 
@@ -130,4 +132,6 @@ The string encoder capped at the **smallest symbolic bound that exists** — an 
 
 `kani-verifier` 0.67.0 plus two nightlies (`nightly-2025-11-21` bundled, `nightly-2026-05-03` for the bracket) now exist on this host. The worker reports the install predated the coordinator's authorization note, on this ticket's own trigger log. **The evidence environment is unaffected**: the pinned toolchain is unchanged, `1.97.0` remains default, and nothing in the repository's gate invokes Kani. Recorded rather than assumed harmless.
 
-The spike is tied to the crate by `guard.sh` — 28 items, token-content comparison, asserting its own population — **watched failing on four planted drifts** before being trusted. Catalog rows are owed and filed as `catalog-the-kani-verification-research-and-spike`.
+The spike is tied to the crate by `guard.sh` — 28 items, token-content comparison, asserting its own population — **watched failing on four planted drifts** before being trusted. Catalog rows were filed as `catalog-the-kani-verification-research-and-spike` (now `done`).
+
+**Correction — 2026-08-10 (guard drift).** As of base `c99ac54950f2` and re-checked on the current tree, `./spikes/verification/kani-encoder-injectivity/guard.sh` exits 1 with two real drifts: live `ResourceRequirements` gained `index_arithmetic: IndexArithmetic`, and `push_resources` writes `index_arithmetic_tag(...)` before synchronization. The guard is doing its job; the land-time complete `push_resources_*` proofs no longer attach to current source text. Tensor-role and component-role copies still match. Maintenance remainder: `resync-the-kani-encoder-injectivity-shim-after-index-arithmetic` (`status: todo`).

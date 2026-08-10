@@ -16,16 +16,16 @@ A rewrite refused on a quantitative bound can state the number it was refused on
 
 ## Why this exists
 
-**Fact.** `FactValue` (`crates/tiler-compiler/src/explain.rs:376`) has six variants — `Count`, `Bytes`, `Threads`, `Bindings`, `Boolean`, `Identity` — and `Quantity` (`:523`) has eight, none of them rational. Every quantity the explain vocabulary can carry is an integer count of something.
+**Fact.** `FactValue` (`pub(crate) enum FactValue` in `crates/tiler-compiler/src/explain.rs`) has six variants — `Count`, `Bytes`, `Threads`, `Bindings`, `Boolean`, `Identity` — and `Quantity` (`pub(crate) enum Quantity` in the same file) has eight, none of them rational. Every quantity the explain vocabulary can carry is an integer count of something.
 
-**Fact.** [The certified-bounds record](../docs/research/numerics/certified-bounds-as-rewrite-permissions.md)'s Part 4 item 5 states what a tolerance refusal owes: "the stated tolerance, the derived price, and which of the five obligations failed — because 'refused' without the number is unactionable when the number is the whole point." Both quantities are exact rationals: `ExactRational` (`crates/tiler-ir/src/semantic/accuracy/rational.rs:175`) is what tolerances are stated in, and a rule's derived price is a rational function of the shape parameter, `u`, and `eps_exp`.
+**Fact.** [The certified-bounds record](../docs/research/numerics/certified-bounds-as-rewrite-permissions.md)'s Part 4 item 5 states what a tolerance refusal owes: "the stated tolerance, the derived price, and which of the five obligations failed — because 'refused' without the number is unactionable when the number is the whole point." Both quantities are exact rationals: `ExactRational` (`pub struct ExactRational` in `crates/tiler-ir/src/semantic/accuracy/rational.rs`) is what tolerances are stated in, and a rule's derived price is a rational function of the shape parameter, `u`, and `eps_exp`.
 
 **Inference, from [the rule-object record](../docs/research/numerics/online-softmax-rule-object.md)'s Part 5.** The dimension-naming half of ADR 0101 decision 6's refusal needs no widening at all — several declined `Numerical` assessments already fit the channel, and the function and identity fit `FactValue::Identity`. The one element that does not fit is the number, and it is needed only once a rewrite is admitted far enough to have a price computed. Under a continued decline no price exists to report.
 
 ## What this ticket must produce
 
 - Whether an exact rational belongs in `FactValue`, in `Quantity`, or in both, and what a canonical rendering of one is — the encoding enters the explain trace identity, so the spelling is an identity question rather than a formatting one.
-- The renderer spelling, and the schema and renderer version steps the addition forces (`EXPLAIN_SCHEMA_VERSION`, `EXPLAIN_RENDERER_VERSION`, `crates/tiler-compiler/src/explain.rs:35-36`), executed completely with every pinned trace identity recomputed on the tree the step lands into.
+- The renderer spelling, and the version policy the addition actually triggers under the forced/unforced ledger in `crates/tiler-compiler/src/explain.rs` (`pub(crate) const EXPLAIN_SCHEMA_VERSION`, `pub(crate) const EXPLAIN_RENDERER_VERSION`). A new fact-value or quantity tag under the existing per-tag framing is the Bits-style unforced append (schema v7 / renderer v5 did not step when quantity kind 8 landed) unless an existing payload or spelling moves; recompute pinned trace identities only when existing identity or presentation bytes change.
 - What refuses a non-canonical rational — an unreduced fraction and its reduced form must not be two identities for one number.
 
 ## Non-goals
@@ -40,3 +40,4 @@ Fires when a rewrite exists whose refusal has a price to report — that is, whe
 
 - 2026-08-06 — not fired. No rewrite computes a price: no rule consumes a numerical dimension no permission grants, and no admission rule is registered. Reproduce with `grep -n 'numerical\.' crates/tiler-compiler/src/normalize.rs`, which returns three lines — the ordered-reassociation rule's two categorical reason keys, `numerical.reassociation-forbidden` and `numerical.reassociation-permitted`, and one test assertion over the first. No reason key names a quantity.
 - 2026-08-09 — **not fired.** Exact rationals exist in target-accuracy calculations, but `FactValue` has no exact-rational arm and no compile-path rewrite computes or reports a price. ADR 0095 still declines distributivity and ADR 0101 still admits no elementary-identity permission, so no quantitative refusal needs this explain value yet.
+- 2026-08-10 — **not fired.** Reassess remains done in the declining direction; elementary-identity permission remains deferred; `FactValue` still lacks a rational arm; no price-bearing rewrite on the compile path.

@@ -4,7 +4,7 @@ title: Replace four assertions that cannot fail in the cache and spike harnesses
 status: done
 priority: p2
 dependencies: []
-related: []
+related: [pin-the-bf16-spike-admitted-operation-verdict-to-its-own-enum, correct-the-accounts-for-every-entry-claim-in-the-cache-research-note-and-harness]
 scopes: [implementation/cache]
 shared_scopes: [project/tickets]
 paths: []

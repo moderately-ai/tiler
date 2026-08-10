@@ -4,7 +4,7 @@ title: Restate the tree width rule outside the compiler crate
 status: done
 priority: p2
 dependencies: []
-related: [bound-the-tree-cap-s-unmeasured-downward-direction, measure-the-tree-width-excursion-past-the-cap]
+related: [bound-the-tree-cap-s-unmeasured-downward-direction, measure-the-tree-width-excursion-past-the-cap, correct-the-two-participant-residue-s-smallest-count, correct-the-diverge-from-twelve-upward-phrasing-in-tests-and-proof]
 scopes: [contracts/optimizer, contracts/numerics, implementation/conformance, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
@@ -73,3 +73,12 @@ Five sites edited across four files, from base `97282def`.
 - `crates/tiler-build/src/metal_plan.rs` — **read and deliberately unedited**; its domain claim verifies. `implementation/build` was claimed and not used.
 
 **How the figures were derived.** Not transcribed. Both rules were re-implemented from `crates/tiler-compiler/src/physical.rs` at this base in a throwaway enumeration and run over `0..4_096` and `0..200_000`, then cross-checked against the two pinning tests. Independent agreement on all of: 3,530 admitting; 2,350 differing and 1,180 agreeing under the landed rule; 2,561 and 969 under the superseded one; 1,061 widened past the cap; widest width exactly 509; identical decline sets over `0..200_000`; 1,133 two-participant counts below 20,000 against 1,176; and, below 20,000, 1,065 counts where the wider-of-the-two candidate exceeds `MAX_COOPERATIVE_PARTICIPANTS` and this rule does not.
+
+## Fact audit — 2026-08-10
+
+**Correction — 2026-08-10.** The closed Outcome left two live imprecise "diverge from twelve contributors upward" phrases unsplit. Both overclaim universal divergence past twelve; 1,180 of the 3,530 admitting counts below 4,096 still agree under the landed rule. Sites:
+
+1. `crates/tiler-conformance/src/serial_sum/tests.rs` — four-contributor portfolio comment, anchor `` they diverge from twelve contributors upward `` (held `implementation/conformance` at close; same defect class repaired in `serial_sum.rs` `declared_partition` but missed here).
+2. `prototypes/serial-sum-run/src/proof.rs` — `declared_partition` doc, anchor `` the two agree at four and diverge from twelve contributors upward `` (unheld `implementation/runtime`; already marked **imprecise** in the pre-edit Fact table above but never filed).
+
+Prefer "first diverge at twelve" and/or name residual agreement, matching the repaired `serial_sum.rs` language. Filed as [`correct-the-diverge-from-twelve-upward-phrasing-in-tests-and-proof`](correct-the-diverge-from-twelve-upward-phrasing-in-tests-and-proof.md). The two-participant residue defect in `physical.rs` remains owned by [`correct-the-two-participant-residue-s-smallest-count`](correct-the-two-participant-residue-s-smallest-count.md) (now also listed under `related`).

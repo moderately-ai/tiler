@@ -4,7 +4,7 @@ title: Admit symbolic coefficients to index expressions
 status: done
 priority: p1
 dependencies: []
-related: [admit-live-extent-operands-to-payload-indexing, promote-the-symbolic-index-profile-to-a-public-boundary, admit-semi-affine-index-expression-class]
+related: [admit-live-extent-operands-to-payload-indexing, promote-the-symbolic-index-profile-to-a-public-boundary, admit-semi-affine-index-expression-class, accept-the-symbolic-index-coefficient-surface, bound-a-symbolic-index-coefficient-interval-from-its-declared-extent, correct-the-symbolic-coefficient-era-index-vocabulary-claims]
 scopes: [implementation/ir, contracts/foundation, implementation/reference, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
@@ -43,6 +43,8 @@ Identity moves: an index-region domain step is required, because a coefficient w
 - Two regions differing only in whether a coefficient is the literal `4` or a symbol pinned to `4` have different identities, matching the graph-versus-specialized distinction the sourced-boundary work established.
 - Targeted `tiler-ir` tests, per-package Clippy, rustdoc, and `make full` pass.
 
+**Correction — 2026-08-10.** The interval-decline bullet above (and the matching "must **decline**" line under What to do) is this ticket's deliberate landing requirement, not live analysis contract. [`bound-a-symbolic-index-coefficient-interval-from-its-declared-extent`](bound-a-symbolic-index-coefficient-interval-from-its-declared-extent.md) (`done`) admits environment-derived bounds in proofs and refutes the prior ground; Outcome already records that. Do not re-read the design bullets as the current interval rule.
+
 ## Closes when
 
 A symbolic coefficient and addend are expressible through an accepted public surface, normalization and interval behaviour are decided and tested rather than inherited, every refusal is fail-capable, the identity domain step lands with recomputed pins, and `docs/ir.md`'s implemented-extent paragraph is updated to say the coefficient half landed.
@@ -57,4 +59,4 @@ A symbolic coefficient and addend are expressible through an accepted public sur
 
 **Accepted by Tom on 2026-08-07** under [`accept-the-symbolic-index-coefficient-surface`](accept-the-symbolic-index-coefficient-surface.md), conditional on the deferred capability being captured on the board — discharged by [`bound-a-symbolic-index-coefficient-interval-from-its-declared-extent`](bound-a-symbolic-index-coefficient-interval-from-its-declared-extent.md), which has since **landed and refuted the ground this ticket recorded for declining it**: a `ShapeEnv` holds no values, so an environment-derived bound is a fact about the region rather than about a binding. The decline was an unexamined exception, not a principled line, and the exception is now closed.
 
-**Residual drift this ticket's landing caused, now owned elsewhere:** six documentation sites still say a bound symbol cannot be an index coefficient or addend. Filed as [`correct-the-symbolic-coefficient-era-index-vocabulary-claims`](correct-the-symbolic-coefficient-era-index-vocabulary-claims.md), which names the trap — the literal wording survives for `SourcedExtent` while the claim it supports does not, so find-and-replace produces true-but-misleading sentences.
+**Residual drift this ticket's landing caused, owned elsewhere at close:** six documentation sites then still said a bound symbol cannot be an index coefficient or addend. Filed as [`correct-the-symbolic-coefficient-era-index-vocabulary-claims`](correct-the-symbolic-coefficient-era-index-vocabulary-claims.md), which names the trap — the literal wording survives for `SourcedExtent` while the claim it supports does not, so find-and-replace produces true-but-misleading sentences. **Correction — 2026-08-10.** That residual is discharged: the correction ticket is `status: done` (Outcome 2026-08-09); the six sites were corrected. Do not treat "still say" as live board residual.

@@ -31,3 +31,7 @@ Three edits to `docs/roadmap.md`, each read in the full cell before writing:
 - The `Minimum`/`Maximum` families row gains a dated Fact that `tiler.scalar::maximum-f32@1` exists as scalar realization vocabulary and is deliberately not a semantic family, naming `the_maximum_has_no_semantic_counterpart` as the check, so the row's R2 stands with the coincidence explained rather than discoverable.
 
 The rung cell stays R5: no program compiles through the key, which is the R6 line the cell already draws.
+
+## Fact audit — 2026-08-10
+
+**Correction — 2026-08-10.** The Outcome's "labelled draft" / `accept-the-softmax-realization-law` parked language is historical as of the 2026-08-06 close. That acceptance node is `status: done` with **Accepted — 2026-08-07** (Tom, no exclusion). The live `docs/roadmap.md` Softmax cell and `crates/tiler-ir/src/index/law.rs` Draft-boundary comments still speak present-tense of a labelled draft awaiting decision; that drift is residual product debt on those paths, not a reopen of this navigation ticket. Separately, the roadmap R6-needs clause still says the four-stage lowering provider and the physical `staged_plan` arm are each "its own ticket," but at audit time no discoverable owner ticket existed under those subjects — the phrase asserted tickets without filing. Filing (or connecting) those two R6 walls and flipping the live matrix draft/parked prose remain remainders outside this node's delivered close condition.

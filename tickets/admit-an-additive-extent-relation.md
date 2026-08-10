@@ -112,9 +112,18 @@ required preflight evaluation.
 **Serialized navigation correction — completed at integration.** The BF16
 profile ticket was integrated first, releasing its exclusive
 `contracts/navigation` claim. This ticket then added that scope and corrected
-the `Sequence extension: Concatenate along one axis` roadmap row: it now records
-the additive implementation as an independently reviewed public boundary, and
-also corrects the concatenate compiler seating that had already landed.
+the `Sequence extension: Concatenate along one axis` roadmap row as of
+2026-08-03 integration: it recorded the additive implementation and corrected
+the concatenate compiler seating that had already landed. **Correction —
+2026-08-10.** The present-tense claim that the row "now records the additive
+implementation as an independently reviewed public boundary" is not a current
+searchable fact; `rg 'independently reviewed public boundary' docs/roadmap.md`
+is empty (that phrasing appears only in this ticket's pre-correction text).
+Later 2026-08-08 Concatenate row rewrites still carry additive language under
+that same cell, including `**Fact — accepted additive extent boundary.**` and a
+link to this ticket, but they do not restore the retired "independently
+reviewed public boundary" wording. Contracts (`docs/ir.md`, glossary) still
+record `AdditiveEquality` as the accepted public boundary.
 
 ## Integration review — 2026-08-03
 

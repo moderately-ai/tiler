@@ -4,11 +4,11 @@ title: Accept the measured cost row public surface
 status: done
 priority: p1
 dependencies: []
-related: [activate-measured-reduction-selection-from-a-target-cost-row]
+related: [activate-measured-reduction-selection-from-a-target-cost-row, retire-the-draft-label-on-the-accepted-cost-row-surface]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
-tags: [decision, needs-tom, public-boundary, target-profiles]
+tags: [decision, public-boundary, target-profiles]
 ---
 ## What is being accepted
 

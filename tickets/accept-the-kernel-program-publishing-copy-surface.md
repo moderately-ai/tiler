@@ -58,7 +58,9 @@ PublishedCopyNotWrittenByPublisher,
 PublishedCopyExtentMismatch,
 ```
 
-`KernelProgramDiagnostic::UncoveringStage`'s meaning also widened: it now admits a stage covering no occurrence under **two** declared accounts — a split's combiner, as before, and a publishing copy's publisher. The variant, its rule code `uncovering-stage`, and its refusal for anything undeclared are unchanged.
+At acceptance, `KernelProgramDiagnostic::UncoveringStage`'s meaning widened so it admitted a stage covering no occurrence under **two** declared accounts — a split's combiner, as before, and a publishing copy's publisher. The variant, its rule code `uncovering-stage`, and its refusal for anything undeclared were unchanged by this surface.
+
+**Correction — 2026-08-10.** Live `verify_stage_accounts` and `KernelProgramDiagnostic::UncoveringStage` docs admit **three** declared accounts: the split combiner, the publishing-copy publisher, and the staged-realization consumer. The third arm landed with the staged-realization declaration (`tiler.kernel-program.v11`), not this publishing-copy surface. The publisher arm accepted here and the `uncovering-stage` refusal for anything undeclared remain as accepted. Sweep line citations `model.rs:1464` and `builder.rs:712` in the 2026-08-06 section below are historical anchors and have drifted.
 
 ## Why this exists, and the evidence behind the shape
 

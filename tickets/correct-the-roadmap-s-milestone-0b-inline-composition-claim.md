@@ -4,7 +4,7 @@ title: Correct the roadmap's Milestone 0B inline-composition claim
 status: done
 priority: p2
 dependencies: []
-related: []
+related: [correct-the-stale-fallbackonly-claims-in-tiler-macros-family-cfg]
 scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
@@ -69,3 +69,11 @@ Its claim that no evidence exists about rust-analyzer and fallback paths was **t
 `crates/tiler-macros/src/family_cfg.rs` asserts in two places that "every expansion delivers `FallbackOnly`" — coordinator-confirmed present, and refuted by `aot::deliver` and the facade fixture **in the same crate**. Filed as `correct-the-stale-fallbackonly-claims-in-tiler-macros-family-cfg`, with the note that the `dead_code` allowance on `MAP_VERSION` may itself be correct while its stated *reason* is false — worth checking before deleting.
 
 The worker verified `make citations` actually reaches its own anchors by **breaking one, watching exit 1, and reverting** — the second worker in a row to apply that discipline unprompted.
+
+## Fact audit — 2026-08-10
+
+**Close condition.** Still met for this ticket: Milestone 0B on `docs/roadmap.md` records inline composition as present at correct maturity, preserves consumer-integration absence, carries exit accounting without declaring the milestone exited, and cites by searchable anchor. Status remains `done`.
+
+**Sibling filed from Outcome.** [`correct-the-stale-fallbackonly-claims-in-tiler-macros-family-cfg`](correct-the-stale-fallbackonly-claims-in-tiler-macros-family-cfg.md) is itself `done`. The Outcome "Filed, not fixed" block is the landing-time posture; the false universal-FallbackOnly comments are no longer present in `crates/tiler-macros/src/family_cfg.rs`. Frontmatter `related` now carries that edge for graph hygiene.
+
+**Residual navigation (not this ticket's close condition).** `docs/status.md` still has a live sentence that the Milestone 0B roadmap text "still asserts that inline composition does not exist" and points at this ticket as owner. After this ticket landed that pointer is false: the roadmap no longer asserts composition absence. Consumer-integration and second-family absences, and non-judgement of milestone exit, remain correctly stated elsewhere in that bullet. Repair is a dated correction under the inline developer experience Milestone 0B paragraph in `docs/status.md` — product/navigation debt outside this wave's ticket-only Class C scope. Reproduce: `rg -n 'still asserts that inline composition' docs/status.md`.
