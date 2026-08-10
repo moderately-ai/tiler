@@ -1,7 +1,7 @@
 ---
 id: derive-the-conformance-evidence-ledger-cells-from-executed-runs
 title: Derive the conformance-evidence ledger cells from executed runs
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [survey-what-belongs-in-the-conformance-crate, decide-whether-the-bf16-conformance-evidence-cell-overstates, own-the-dtype-support-maturity-matrix, conform-the-bf16-vertical-end-to-end]
@@ -9,6 +9,9 @@ scopes: [research/verification, implementation/conformance, contracts/navigation
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, conformance, documentation, ledger, trigger-fired]
+claimed_from: todo
+assignee: sol-conformance-ledger
+lease_expires_at: 1786405848
 ---
 ## Question
 
