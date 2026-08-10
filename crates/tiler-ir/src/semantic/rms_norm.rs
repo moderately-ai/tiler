@@ -126,15 +126,19 @@ pub const RMS_NORM_F32_FACT_RSQRT_ACCURACY_CONTRACT: AttributeFieldId = Attribut
 pub const RMS_NORM_F32_FACT_FOLD_ORDER: AttributeFieldId = AttributeFieldId::new(5);
 /// Fact field naming the type the embedded reduction accumulates at.
 ///
-/// Explicit, and **not** inherited from the element type. Criterion 3 of
-/// [`implement-parallel-reduction-strategies`](../../../../tickets/implement-parallel-reduction-strategies.md)
-/// owns decision **D-5** and states the obligation this fact discharges: "the
-/// accumulation dtype is an explicit part of the strategy, not inherited
-/// silently from the element dtype, and a strategy that would accumulate at a
-/// narrower width than the contract allows is rejected with a typed reason".
-/// This family consumes that authority rather than re-deciding it — the value is
-/// `tiler::f32@1` because F32 is what reproduces the pinned reference, and
-/// whether a longer context justifies widening stays that ticket's question.
+/// Explicit, and **not** inherited from the element type. [ADR 0091] makes the
+/// accumulator an identity-bearing operation fact, never a schedule or resolved
+/// numerical-contract choice; a different width therefore requires a different
+/// registered operation key. This key declares `tiler::f32@1`, and its reference
+/// evaluator independently performs the fold in F32.
+///
+/// Schedule verification does not read this fact. Its `accumulation-width`
+/// diagnostic is limited to the explicit `accumulation` fields on `MultiPass`
+/// and `CooperativeWorkgroup`, compared with the scalar program's region
+/// arithmetic. Missing support for a differently accumulating operation, its
+/// lowering, or its target realization is a separate typed outcome.
+///
+/// [ADR 0091]: ../../../../docs/decisions/0091-separate-bf16-float-conversion-families-and-keep-the-accumulator-an-operation-fact.md
 pub const RMS_NORM_F32_FACT_ACCUMULATOR_TYPE: AttributeFieldId = AttributeFieldId::new(6);
 /// Fact field naming how the mean divides by the normalized extent.
 pub const RMS_NORM_F32_FACT_EXTENT_DIVISION: AttributeFieldId = AttributeFieldId::new(7);
