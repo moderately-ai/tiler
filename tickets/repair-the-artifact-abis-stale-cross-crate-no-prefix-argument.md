@@ -1,17 +1,14 @@
 ---
 id: repair-the-artifact-abis-stale-cross-crate-no-prefix-argument
 title: Repair the artifact ABI's stale cross-crate no-prefix argument
-status: in-progress
+status: done
 priority: p1
 dependencies: [correct-the-every-ir-domain-opens-tiler-ir-premise-in-two-places]
-related: []
+related: [correct-the-two-source-comments-that-repeat-the-reversed-domain-dependency-premise]
 scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, identity, documentation]
-claimed_from: todo
-assignee: sol-artifact-abi-prefix
-lease_expires_at: 1786383181
 ---
 ## Facts to re-verify before editing
 
@@ -64,3 +61,12 @@ Independent review of the accepted-contract repair found two pre-existing source
 - `crates/tiler-ir/src/index/refinement.rs`, source anchor `so neither crate can enumerate the union`, likewise treats the dependency direction as the blocker; the actual obstacle on the depending side is the private, test-only IR pin population and absence of an exported enumeration.
 
 Repairing the first requires `implementation/artifact`; repairing the second requires `implementation/ir`. This branch deliberately edits neither source file. The accepted-contract remainder recorded above was delivered on this branch at `8cc23ae3`; the review correction makes its terminator-free premise explicit without adding a population count.
+
+## Outcome — 2026-08-10
+
+Delivered and independently reviewed through `488f89f7`. The accepted contract
+now retires the false namespace and dependency premises and states the
+count-free spelling-and-terminator argument, including that every unterminated
+IR spelling carries no NUL at all. The two out-of-scope source-comment repairs
+are separately owned by
+[`correct-the-two-source-comments-that-repeat-the-reversed-domain-dependency-premise`](correct-the-two-source-comments-that-repeat-the-reversed-domain-dependency-premise.md).

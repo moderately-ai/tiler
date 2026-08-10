@@ -1,7 +1,7 @@
 ---
 id: pin-the-tiler-artifact-identity-domain-bytes-the-existing-census-does-not-fix
 title: Pin the tiler-artifact identity-domain bytes the existing census does not fix
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [pin-the-identity-domain-strings-so-a-reverted-domain-reddens-the-gate, pin-the-tiler-compiler-identity-domain-spellings-the-ir-census-does-not-reach]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, tests, versioning]
-claimed_from: todo
-assignee: sol-artifact-domain-bytes
-lease_expires_at: 1786383181
 ---
 `crates/tiler-artifact/src/domains.rs` proves that every governed domain constant
 is enumerated, every enum variant is classified into a container, and no two
@@ -165,3 +162,10 @@ The supported population remains exactly the 18 governed domains of this crate:
 seven envelope, four proof-sidecar, and seven artifact-program domains. This
 test does not claim coverage of other crates or of this crate's classified
 non-domain literals.
+
+## Outcome — 2026-08-10
+
+Delivered and independently reviewed at `db3cd6b5`: every governed artifact
+domain now has an exact, independently stated byte pin, and the type-sized
+enumeration remains exhaustive. The merged-tree domain suite reports four
+passing tests. No production domain byte or encoder changed.

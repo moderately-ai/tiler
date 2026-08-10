@@ -1,7 +1,7 @@
 ---
 id: reclassify-the-covered-occurrence-public-boundary-acceptance-labels
 title: Reclassify CoveredOccurrence acceptance labels after the 2026-08-05 decision
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [accept-the-proof-bound-stage-coverage-public-boundary, bind-stage-coverage-to-index-refinement-identity]
@@ -9,9 +9,6 @@ scopes: [contracts/foundation, contracts/decisions, research/documentation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, public-boundary, contracts]
-claimed_from: todo
-assignee: sol-covered-occurrence-labels
-lease_expires_at: 1786383181
 ---
 ## User-visible outcome
 
@@ -56,3 +53,12 @@ Re-read each site in full at the edit base before changing it; the anchors below
 
 - Filed from the 2026-08-10 ticket audit repair of [`accept-the-proof-bound-stage-coverage-public-boundary`](accept-the-proof-bound-stage-coverage-public-boundary.md).
 - Related to [`bind-stage-coverage-to-index-refinement-identity`](bind-stage-coverage-to-index-refinement-identity.md), which landed the surface the labels describe.
+
+## Outcome — 2026-08-10
+
+Delivered and independently reviewed through `e110db70`. All three documents
+now record Tom's 2026-08-05 acceptance with provenance and preserve the
+distinction between accepted pre-alpha vocabulary and stabilization. The IR
+contract names all three encoder sites and all three identity-domain steps;
+ADR 0071 remains `partial` solely for its separately unrealized
+`VerifiedProgramPortfolio` clause.
