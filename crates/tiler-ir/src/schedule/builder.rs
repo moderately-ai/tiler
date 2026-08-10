@@ -325,9 +325,11 @@ const FIRST_INPUT: TensorRole = TensorRole::Input {
 enum ContributorTensor {
     /// This boundary tensor and no other.
     Exactly(TensorRole),
+    /// Any declared input, with its program ordinal retained by the role.
+    DeclaredInput,
     /// The fold's declared contributor domain, wherever the plan placed it: the
-    /// first input tensor when the program folds it directly, or a materialized
-    /// intermediate when a prologue region wrote it.
+    /// input tensor the program folds directly, or a materialized intermediate
+    /// when a prologue region wrote it.
     DeclaredDomain,
 }
 
@@ -336,7 +338,10 @@ impl ContributorTensor {
     fn admits(self, tensor: TensorRole) -> bool {
         match self {
             Self::Exactly(required) => tensor == required,
-            Self::DeclaredDomain => tensor == TensorRole::Intermediate || tensor == FIRST_INPUT,
+            Self::DeclaredInput => matches!(tensor, TensorRole::Input { .. }),
+            Self::DeclaredDomain => {
+                tensor == TensorRole::Intermediate || Self::DeclaredInput.admits(tensor)
+            }
         }
     }
 }
@@ -956,11 +961,11 @@ fn verify_access_and_semantics(
     let numerical = &region.index.numerical;
     // Every arm below differs in what it reads and agrees on what it writes.
     // The read obligation is per family, because a family's scalar program is
-    // what decides which tensor holds its contributors — three of these four
-    // bind the first input tensor, two because they carry a prologue over the
-    // original input and the extrema fold because its pass reads the original
-    // scores, while the bare sum reads whichever tensor holds its declared
-    // contributor domain. The write obligation is [`CommittedTensor::CoverAssigned`] at all
+    // what decides which tensor holds its contributors. The fused affine family
+    // reads whichever declared input its prologue names; the two squared families
+    // and the extrema fold keep their family-specific first-input rule; and the
+    // bare sum reads whichever tensor holds its declared contributor domain. The
+    // write obligation is [`CommittedTensor::CoverAssigned`] at all
     // four, because no fold's algebra distinguishes committing the caller's
     // answer from committing a value a later region reads, so widening one arm
     // and not its siblings would state a difference between them that does not
@@ -1035,7 +1040,7 @@ fn verify_access_and_semantics(
             && *empty_identity_bits == 0.0_f32.to_bits()
             && output_shape == &region.index.iteration_shape
             && input_shape.without_axes(axes) == *output_shape
-            && read.tensor == FIRST_INPUT
+            && ContributorTensor::DeclaredInput.admits(read.tensor)
             && CommittedTensor::CoverAssigned.admits(write.tensor) => {}
         // The squaring prologue reads the *original* input, exactly as the
         // scale-bias one does, so its read binds the first input tensor rather
@@ -1294,7 +1299,7 @@ const fn empty_domain_is_satisfied(contract: EmptyDomainContract, contributors: 
 /// **The two passes of a bare sum have different obligations, and the asymmetry
 /// is structural rather than conservative.** The partial pass folds the region's
 /// declared contributor domain, which lives in whichever tensor the plan placed
-/// it — the first input for `sum(x)`, an intermediate for a materialized prologue
+/// it — the input named by `sum(x)`, or an intermediate for a materialized prologue
 /// — so it carries [`ContributorTensor::DeclaredDomain`]. The final pass folds
 /// values the partial pass *staged*, and those exist only because it staged them,
 /// so its read is exactly the intermediate. Widening the final pass too would let
@@ -1341,7 +1346,7 @@ fn multi_pass_family(program: &ScalarProgram, pass: ReductionPass) -> Option<Spl
                     bits: *empty_identity_bits,
                 },
                 consumes_reassociation: true,
-                read_tensor: ContributorTensor::Exactly(FIRST_INPUT),
+                read_tensor: ContributorTensor::DeclaredInput,
             }),
             ReductionPass::Partial | ReductionPass::Final => None,
         },
@@ -1430,7 +1435,7 @@ fn cooperative_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
                 bits: *empty_identity_bits,
             },
             consumes_reassociation: true,
-            read_tensor: ContributorTensor::Exactly(FIRST_INPUT),
+            read_tensor: ContributorTensor::DeclaredInput,
         }),
         ScalarProgram::SquaredSerialSum {
             axes,
@@ -3648,7 +3653,7 @@ mod tests {
         builder
     }
 
-    /// Builds a `[2, 6] -> [2]` serial reduction over the first input tensor.
+    /// Builds a `[2, 6] -> [2]` serial reduction over input zero.
     ///
     /// The shape the extrema fixtures below share. A *serial* topology rather
     /// than a split, because the serial arm is the only one the identity-less
@@ -4753,7 +4758,7 @@ mod tests {
         builder.bounds_proofs[0].tensor = tensor;
     }
 
-    /// The second declared input tensor, which no reduction family binds.
+    /// A nonzero declared input tensor used to prove ordinals are retained.
     const SECOND_INPUT: TensorRole = TensorRole::Input {
         ordinal: InputOrdinal::new(1),
     };
@@ -4762,11 +4767,11 @@ mod tests {
     ///
     /// **The widening, and its exact width.** `ScalarProgram::StrictSerialSum`
     /// carries no prologue, so it says how contributors combine and nothing about
-    /// where they live: `sum(x)` over the first input tensor and the same fold
+    /// where they live: `sum(x)` over any declared input tensor and the same fold
     /// over a prologue region's materialized result are one scalar program over
-    /// two tensors, and both verify. What the widening is *not* is "any tensor" —
-    /// a second declared input is refused, because a family reading one
-    /// contributor domain has no ordinal for it.
+    /// several possible boundary tensors. What the widening is *not* is "any tensor" —
+    /// a program output remains refused because no fold reads one as a
+    /// contributor domain.
     #[test]
     fn a_bare_serial_sum_folds_a_declared_input_or_a_materialized_domain() {
         assert!(
@@ -4785,10 +4790,25 @@ mod tests {
 
         let mut second = serial_reduction_builder(bare_sum(vec![Axis::new(1)]));
         read_from(&mut second, SECOND_INPUT);
+        let second = second
+            .build()
+            .expect("the fold retains a nonzero input ordinal");
+
+        let first = serial_reduction_builder(bare_sum(vec![Axis::new(1)]))
+            .build()
+            .unwrap();
+        assert_ne!(
+            first.canonical_identity().as_bytes(),
+            second.canonical_identity().as_bytes(),
+            "the input ordinal is part of scheduled-region identity",
+        );
+
+        let mut output = serial_reduction_builder(bare_sum(vec![Axis::new(1)]));
+        read_from(&mut output, TensorRole::Output);
         assert_eq!(
-            second.build().unwrap_err().diagnostics(),
+            output.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
-            "one contributor domain has no second input ordinal to bind",
+            "a fold cannot read its contributor domain from a program output",
         );
     }
 
@@ -5001,10 +5021,10 @@ mod tests {
         assert!(final_pass_builder(SPLIT).build().is_ok());
 
         let mut partial = partial_pass_builder(SPLIT);
-        read_from(&mut partial, FIRST_INPUT);
+        read_from(&mut partial, SECOND_INPUT);
         assert!(
             partial.build().is_ok(),
-            "a prologue-less fold's partial pass reads the input the fold folds",
+            "a prologue-less fold's partial pass retains the input ordinal it folds",
         );
 
         let mut combine = final_pass_builder(SPLIT);
@@ -5032,14 +5052,155 @@ mod tests {
         );
 
         let mut input = cooperative_builder(cooperative_tile_fixture());
-        read_from(&mut input, FIRST_INPUT);
+        read_from(&mut input, SECOND_INPUT);
         assert!(input.build().is_ok());
+    }
 
-        let mut second = cooperative_builder(cooperative_tile_fixture());
-        read_from(&mut second, SECOND_INPUT);
+    /// A fused affine fold retains a nonzero declared-input ordinal in every
+    /// topology that can spell the family.
+    #[test]
+    fn an_affine_fold_reads_any_declared_input_in_serial_and_parallel_forms() {
+        let affine = ScalarProgram::FusedMultiplyAddSerialSum {
+            scale_bits: 2.0_f32.to_bits(),
+            bias_bits: 1.0_f32.to_bits(),
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7fc0_0000,
+            empty_identity_bits: 0.0_f32.to_bits(),
+            contraction: false,
+        };
+
+        let mut serial = serial_reduction_builder(affine.clone());
+        read_from(&mut serial, SECOND_INPUT);
+        serial
+            .build()
+            .expect("the serial affine fold reads input one");
+
+        let mut partial = partial_pass_builder(SPLIT);
+        partial.scalar_program = Some(affine.clone());
+        read_from(&mut partial, SECOND_INPUT);
+        partial
+            .build()
+            .expect("the affine partial pass reads input one");
+
+        let mut cooperative = cooperative_builder(cooperative_tile_fixture());
+        cooperative.scalar_program = Some(affine);
+        read_from(&mut cooperative, SECOND_INPUT);
+        cooperative
+            .build()
+            .expect("the affine cooperative tile reads input one");
+    }
+
+    /// Parallel affine folds read a declared input, never an intermediate.
+    ///
+    /// The bare sum's parallel forms admit an intermediate because it may hold a
+    /// materialized prologue. The affine family carries that prologue inside its
+    /// scalar program, so admitting the intermediate would apply the affine body
+    /// to a value that was already transformed or to an unbound staging edge.
+    #[test]
+    fn affine_parallel_folds_reject_an_intermediate_contributor() {
+        let affine = ScalarProgram::FusedMultiplyAddSerialSum {
+            scale_bits: 2.0_f32.to_bits(),
+            bias_bits: 1.0_f32.to_bits(),
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7fc0_0000,
+            empty_identity_bits: 0.0_f32.to_bits(),
+            contraction: false,
+        };
+
+        let mut partial = partial_pass_builder(SPLIT);
+        partial.scalar_program = Some(affine.clone());
         assert_eq!(
-            second.build().unwrap_err().diagnostics(),
+            partial.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "an affine partial pass cannot read a materialized contributor",
+        );
+
+        let mut cooperative = cooperative_builder(cooperative_tile_fixture());
+        cooperative.scalar_program = Some(affine);
+        assert_eq!(
+            cooperative.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "an affine cooperative tile cannot read a materialized contributor",
+        );
+    }
+
+    /// Family-specific first-input rules remain exact when the generic fold
+    /// contributor domain widens.
+    #[test]
+    fn squared_and_maximum_folds_still_require_the_first_input() {
+        for scalar in [
+            ScalarProgram::SquaredSerialSum {
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: 0x7fc0_0000,
+                empty_identity_bits: 0.0_f32.to_bits(),
+            },
+            squared_sum_with_epilogue(scale_epilogue()),
+            maximum_scalar(),
+        ] {
+            let mut region = serial_reduction_builder(scalar);
+            read_from(&mut region, SECOND_INPUT);
+            assert_eq!(
+                region.build().unwrap_err().diagnostics(),
+                [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            );
+        }
+    }
+
+    /// The squared parallel family keeps its own first-input rule.
+    ///
+    /// This is separate from the serial control above because the split and
+    /// cooperative family tables are independent match arms. Widening either to
+    /// every declared input would otherwise leave the serial check green.
+    #[test]
+    fn squared_parallel_folds_reject_a_later_declared_input() {
+        let mut partial = squared_partial_pass_builder(SPLIT);
+        read_from(&mut partial, SECOND_INPUT);
+        assert_eq!(
+            partial.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "a squared partial pass cannot read input one",
+        );
+
+        let squared = ScalarProgram::SquaredSerialSum {
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7fc0_0000,
+            empty_identity_bits: 0.0_f32.to_bits(),
+        };
+        let mut cooperative = cooperative_builder(cooperative_tile_fixture());
+        cooperative.scalar_program = Some(squared);
+        read_from(&mut cooperative, SECOND_INPUT);
+        assert_eq!(
+            cooperative.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "a squared cooperative tile cannot read input one",
+        );
+    }
+
+    /// The maximum parallel family keeps its own first-input rule.
+    ///
+    /// Maximum has independent split and cooperative family-table arms, so the
+    /// serial maximum control does not prove that either parallel obligation
+    /// still refuses a later declared input.
+    #[test]
+    fn maximum_parallel_folds_reject_a_later_declared_input() {
+        let mut partial = extrema_partial_builder(SPLIT);
+        read_from(&mut partial, SECOND_INPUT);
+        assert_eq!(
+            partial.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "a maximum partial pass cannot read input one",
+        );
+
+        let mut cooperative = extrema_cooperative_builder();
+        read_from(&mut cooperative, SECOND_INPUT);
+        assert_eq!(
+            cooperative.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "a maximum cooperative tile cannot read input one",
         );
     }
 
