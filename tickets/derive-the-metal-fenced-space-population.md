@@ -1,7 +1,7 @@
 ---
 id: derive-the-metal-fenced-space-population
 title: Derive the Metal fenced-space population
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [derive-the-artifact-numerical-and-fenced-space-populations]
@@ -9,9 +9,6 @@ scopes: [implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: terra-metal-fences
-lease_expires_at: 1786403012
 ---
 ## Fact audit — split from the artifact population repair on 2026-08-08
 
