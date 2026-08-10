@@ -1,25 +1,34 @@
 # Manifest — ticket audit 2026-08-10
 
 - Audit base: `c99ac54950f242d88d8dfe8335332bef0cf75f2d`
-- HEAD: local main (ahead of origin; audit artifacts + repairs)
+- Scope window: 2026-08-03 .. 2026-08-11
+- In scope: 700
 
 ## Audit state
 
-- `audited-clean`: 23
-- `audited-repair-required`: 33
-- `claimed`: 40
+- `audited-clean`: 37
+- `audited-repair-required`: 59
 - `pending`: 604
 
 ## Repair state
 
 - `integrated`: 8
-- `not-needed`: 659
-- `pending`: 33
+- `not-needed`: 634
+- `pending`: 58
 
 ## Progress
 
-- Open board through wave 5 (remaining open + batch2 re-audits claimed)
-- Awaiting-decision wave started (16 of 40)
-- 8 repairs integrated
-- Terminal-in-window still pending bulk (~476)
+- Audited: 96 / 700 in-scope
+- Open board: essentially complete through wave 5
+- Awaiting-decision: first 16 of 40 accepted in wave 5
+- Deferred: not yet started (103)
+- Recent terminal: not yet started (476)
+- Phase B: 8 ticket repairs integrated; more repair-required pending
+
+## Completion criteria
+
+- [ ] Every in-scope ticket has a current content-addressed report
+- [ ] No in-scope record is pending, claimed, or stale
+- [ ] Every confirmed repair is integrated or blocked on a named authority decision
+- [ ] Final ledger + this manifest frozen on published main
 
