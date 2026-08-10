@@ -1,7 +1,7 @@
 ---
 id: realign-the-l2-derivation-operation-family-standing-to-the-family-state-table
 title: Realign the L2 derivation's operation-family standing to the family-state table
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [refresh-the-l2-derivation-operation-family-standing]
@@ -9,6 +9,9 @@ scopes: [research/shapes]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation]
+claimed_from: todo
+assignee: terra-l2-family-realign
+lease_expires_at: 1786403723
 ---
 ## User-visible outcome
 
