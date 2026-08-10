@@ -6,8 +6,8 @@ title: "Concatenate fusion role and lowering"
 topics: ["indexing", "access", "fusion", "lowering", "operation-families", "concatenate", "write-ownership"]
 catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
-disposition: "pending"
-implementation_status: "not-started"
+disposition: "partially-adopted"
+implementation_status: "partial"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.ir", "tiler.contract.fusion-and-scheduling"]
 depends_on: ["tiler.research.indexing.index-access-model", "tiler.research.shapes.sequence-extending-tensor-family", "tiler.research.semantic-graph.operation-family-delivery-graph"]
@@ -16,13 +16,13 @@ ticket: "scope-the-concatenate-fusion-role-and-lowering"
 
 # Concatenate fusion role and lowering
 
-- **Status:** scoping record for track **O-07**'s two owed rungs. It registers nothing, moves no support-matrix rung, and accepts no public boundary. Its outcome is two eliminations, one restated open-question trigger, and four filed tickets.
+- **Status:** completed scoping record for track **O-07**'s M4 and M5 questions. Its M4 `CoordinateRelation` proposal was adopted and delivered R5; its M5 lowering conclusion remains separately incomplete. This record itself registered nothing, moved no support-matrix rung, and accepted no public boundary. Its outcome is two eliminations, one restated open-question trigger, and four filed tickets.
 - **Ticket:** [`scope-the-concatenate-fusion-role-and-lowering`](../../../tickets/scope-the-concatenate-fusion-role-and-lowering.md).
 - **Research date:** 2026-08-05, against the tree at `d5960e81`.
 
 ## Traceability
 
-- **The partition this record sits in:** [Operation-family delivery graph](../semantic-graph/operation-family-delivery-graph.md) track **O-07**, whose M4 cell reads *owed, and newly owned* and whose M5 cell reads *owed, and the alternative is a fork*. That record owns the partition and the rung vocabulary; this one answers only O-07's two cells.
+- **The partition this record sits in:** [Operation-family delivery graph](../semantic-graph/operation-family-delivery-graph.md) track **O-07**, whose M4 cell read *owed, and newly owned* and whose M5 cell read *owed, and the alternative is a fork* at this record's base. That record owns the partition and the rung vocabulary; this one answers only O-07's two cells. **Restated 2026-08-10:** M4 landed under [`admit-a-fusion-role-for-the-sequence-extension-concatenate`](../../../tickets/admit-a-fusion-role-for-the-sequence-extension-concatenate.md) and the support matrix records R5; the lowering work remains separate.
 - **The delivered state this record consumes and never restates:** the [operation-family support matrix](../../roadmap.md#operation-family-support-matrix)'s `Sequence extension` row. It is the sole maturity ledger and **no rung moves here.**
 - **The access language this record is bounded by:** [Symbolic index and access model](index-access-model.md) and [ADR 0046](../../decisions/0046-separate-logical-access-from-storage-addressing.md). The piecewise reservation this record tests against is that record's own — "Finite piecewise/guarded maps may be added as an explicit ordered-or-disjoint case set, but only with a verifier proving cases cover the domain and overlap consistently."
 - **The semantic elimination this record inherits rather than reopens:** [Sequence-extending tensor family](../shapes/sequence-extending-tensor-family.md) eliminated the windowed-mutation and out-of-program mechanisms and selected a pure semantic join. That elimination stands; this record starts from the family as registered and asks only what fusion role it takes and how it lowers.
@@ -43,7 +43,9 @@ Claims are labelled **Fact** when traced to inspected source at that commit, **I
 
 ### What a role has to answer for
 
-**Fact.** The fusion authority is `crates/tiler-compiler/src/fusion_legality.rs`. `FusionOperationRole` (`:132-223`) has six variants; `FusionNumericalCapabilities::governed()` (`:268-335`) maps nine operation keys onto them; `classify` (`:349-351`) is a checked lookup and `derive_member` returns `Ok(None)` for an unregistered family (`:1037-1039`), which `derive_fusion_legality` converts into `FusionLegality::Unknown` with obligation `OperationCapabilitiesResolved` and reason `"unsupported-operation-capability"` (`:940-953`). That is exactly the state the ticket's user-visible outcome asks to leave.
+**Fact — at this record's `d5960e81` research base.** The fusion authority is `crates/tiler-compiler/src/fusion_legality.rs`. `FusionOperationRole` (`:132-223`) has six variants; `FusionNumericalCapabilities::governed()` (`:268-335`) maps nine operation keys onto them; `classify` (`:349-351`) is a checked lookup and `derive_member` returns `Ok(None)` for an unregistered family (`:1037-1039`), which `derive_fusion_legality` converts into `FusionLegality::Unknown` with obligation `OperationCapabilitiesResolved` and reason `"unsupported-operation-capability"` (`:940-953`). That is exactly the state the ticket's user-visible outcome asked to leave.
+
+**Restated 2026-08-10 — live census.** `rg -c -F 'roles.insert(' crates/tiler-compiler/src/fusion_legality.rs` returns **15**, and `is_exact_governed_same_family_pointwise`'s `CoordinateRelation` arm is closed over `reindex_f32_op()`, `broadcast_f32_op()`, `concatenate_f32_op()`, and `slice_f32_op()`. The nine-key premise is the record's historical research state, not its live inventory.
 
 **Fact.** Nine obligations exist (`:372-391`) and `derive_obligations` (`:1063-1163`) discharges each one from the members' roles, their reached definitions, their derived purity, their dtype homogeneity, and the numerical contract. Nothing in that function, or in `derive_fusion_legality` (`:922-967`), resolves an index-access lowering capability, consults a realization law, or reaches the request boundary.
 
@@ -80,6 +82,8 @@ Four candidates. Each is tested against what `derive_obligations` actually does,
 **Fact — registering the role does not move the pinned explain digest.** `ExplainWriter::new` (`explain.rs:1219-1235`) folds `FusionNumericalCapabilities::governed().provider()` — the `ProviderIdentity`, namespace, name, and revision — into the allowed-provider set. It does not fold the role table. `GOVERNED_PROVIDER_REVISION` has been `1` since the module was introduced (`git log -S "GOVERNED_PROVIDER_REVISION: u32 = " -- crates/tiler-compiler/src/fusion_legality.rs` returns exactly one commit, `1f541d60`), including across the landing that added the reindex and broadcast roles. **Inference:** on that precedent, adding a role is not an output-affecting revision bump, and the pinned `"tiler-explain-v7 request=45467875b9574962"` at `explain.rs:4050` is unaffected. The implementation ticket must still confirm this on its own merged tree rather than inherit it, because the ledger comments at `explain.rs:4008-4021` record two occasions on which a concatenate-related change moved that digest for a different reason. *(Dated 2026-08-06: the implementation landed, confirmed the non-movement on its tree, and the quoted pin value has since moved several times for unrelated changes — read the current value from `explain.rs`'s own ledger, never from this record.)*
 
 **Proposal — the disposition.** *The sequence-extension concatenate takes the existing `CoordinateRelation` fusion role, with `is_exact_governed_same_family_pointwise`'s coordinate-relation arm extended to its key.* No new role, no new obligation, no new structural count, no public boundary. `FusionOperationRole` is a private enum and `FusionNumericalCapabilities` is `pub(crate)`, so this proposal reaches no public item; the matrix rung it would satisfy remains the matrix's to move.
+
+**Fact — partly adopted 2026-08-06.** [`admit-a-fusion-role-for-the-sequence-extension-concatenate`](../../../tickets/admit-a-fusion-role-for-the-sequence-extension-concatenate.md) registered the existing role and the per-key arm decision, delivering the support matrix's R5 criterion. The lowering conclusion remains separate and is why this record is only partially adopted.
 
 ## Question 2 — the lowering fork
 
@@ -156,7 +160,9 @@ The ticket requires checking, not inheriting, the matrix row's assertion that an
 Each is one command from the repository root, with the positive control that proves it can return something.
 
 ```sh
-# 1. The fusion-role table holds eleven keys and the concatenate is among them.
+# 1. Historical census: this record's base held nine keys without concatenate;
+#    the 2026-08-06 restatement recorded eleven keys with it. Live, the table
+#    holds fifteen keys and includes concatenate as a CoordinateRelation.
 grep -n 'roles.insert(' -A 1 crates/tiler-compiler/src/fusion_legality.rs
 #    Positive control: the same read finds reindex_f32_op and broadcast_f32_op,
 #    so a key is read out of a list with members rather than out of an empty
@@ -164,19 +170,22 @@ grep -n 'roles.insert(' -A 1 crates/tiler-compiler/src/fusion_legality.rs
 #    Restated 2026-08-06: this read "nine keys and no concatenate", which was
 #    the state the elimination below ran against. The disposition it supports
 #    landed under `admit-a-fusion-role-for-the-sequence-extension-concatenate`,
-#    so what this check observes is the registration rather than its absence.
+#    so the eleven-key intermediate state observed the registration. Restated
+#    2026-08-10: the source-safe live census is fifteen registrations.
 #    `-A 1` is needed because most entries span two lines and the bare match
 #    shows no key.
 
-# 2. The coordinate-relation arm of the contraction proof is closed over three
-#    exact keys, the concatenate among them.
+# 2. Historical census: the arm had two keys at this record's base and three
+#    after concatenate's admission. Live, the CoordinateRelation arm is closed
+#    over four exact keys, including concatenate and slice.
 grep -n 'fn is_exact_governed_same_family_pointwise' -A 50 crates/tiler-compiler/src/fusion_legality.rs
 #    Positive control: the same read finds the ValueSource arm's constant guard,
 #    so the match is being read rather than a comment.
 #    Restated 2026-08-06: this read "closed over two keys" — reindex and
 #    broadcast — which is what the extension proposed below started from. The
-#    extension landed with the per-key transfer this record argued for, so the
-#    arm is still closed and only its membership moved.
+#    extension landed with the per-key transfer this record argued for, making
+#    the arm three-key at that point. Restated 2026-08-10: slice is the fourth
+#    exact key; the arm remains closed.
 
 # 3. The refusal list's current state: the subset write-domain rule, the
 #    partition path that replaced the construction-time refusals, the

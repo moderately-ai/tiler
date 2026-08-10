@@ -17,7 +17,14 @@ lease_expires_at: 1786412599
 
 Two research/indexing fusion-role records still assert intermediate role-table censuses that the live `FusionNumericalCapabilities::governed` registration has outgrown. The drift is pure document inventory; it does not reopen any landed elimination conclusion about which role either family takes.
 
-**Fact — live table (verify before editing; do not inherit a count from this ticket).** At the 2026-08-10 audit base `c99ac54950f2` and re-checked on the tree that filed this ticket: `grep -c 'roles.insert(' crates/tiler-compiler/src/fusion_legality.rs` returns **15**. The `CoordinateRelation` arm of `is_exact_governed_same_family_pointwise` matches four exact keys — `reindex_f32_op()`, `broadcast_f32_op()`, `concatenate_f32_op()`, and `slice_f32_op()`. Reproduce arm membership with `grep -n 'fn is_exact_governed_same_family_pointwise' -A 70 crates/tiler-compiler/src/fusion_legality.rs` and confirm the four-way match, not a line pin.
+**Fact — live table (verify before editing; do not inherit a count from this ticket).** At the 2026-08-10 audit base `c99ac54950f2` and re-checked at this ticket's edit base `916d877d7b103567a4709346b6d6672f2cb54e60`: `rg -c -F 'roles.insert(' crates/tiler-compiler/src/fusion_legality.rs` returns **15**. The `CoordinateRelation` arm of `is_exact_governed_same_family_pointwise` matches four exact keys — `reindex_f32_op()`, `broadcast_f32_op()`, `concatenate_f32_op()`, and `slice_f32_op()`. Reproduce arm membership with `rg -n -F 'fn is_exact_governed_same_family_pointwise' -A 70 crates/tiler-compiler/src/fusion_legality.rs` and confirm the four-way match, not a line pin.
+
+## Base Fact audit — 2026-08-10 at `916d877d7b103567a4709346b6d6672f2cb54e60`
+
+- **Verified — live table.** `crates/tiler-compiler/src/fusion_legality.rs` contains 15 `roles.insert(` registrations, and `is_exact_governed_same_family_pointwise`'s `FusionOperationRole::CoordinateRelation` guard names exactly `reindex`, `broadcast`, `concatenate`, and `slice`. Earlier wording calling this the “contraction arm” was imprecise: it is the coordinate-relation arm of the arithmetic-contraction proof.
+- **Verified — sub-tensor record is live-stale.** `docs/research/indexing/sub-tensor-selection-fusion-role.md` still has `disposition: "pending"`, `implementation_status: "not-started"`, check 1's eleven-key/no-slice statement, check 2's three-key/slice-absent statement, and the eleven-key correction-to-precedent restatement. The completed slice-admission ticket and the `Sub-tensor selection` support-matrix row establish that the role landed as R5, without a request-boundary or lowering claim.
+- **Verified — concatenate record is live-stale only at its current inventory statements.** `docs/research/indexing/concatenate-fusion-role-and-lowering.md` still makes checks 1–2 read as eleven keys and three coordinate keys and says the registry “maps nine operation keys onto them.” Its check 5 is already dated as a resolution-only correction and remains outside this ticket.
+- **Verified — reporter premise.** `tickets/correct-the-one-region-premise-in-the-concatenate-absence-check.md` already distinguishes its historical claims from the live fifteen-key/four-key state and assigns exactly this bounded remainder. No Fact changes this ticket's purpose, identity, or authority.
 
 ### Sub-tensor selection fusion role
 
@@ -63,3 +70,13 @@ Both research records' live-looking role-table counts and contraction-arm member
 
 - `research/indexing` for both paths under `docs/research/indexing/**`.
 - Prior reporters: [`correct-the-one-region-premise-in-the-concatenate-absence-check`](correct-the-one-region-premise-in-the-concatenate-absence-check.md), [`admit-a-fusion-role-for-the-sub-tensor-selection-slice`](admit-a-fusion-role-for-the-sub-tensor-selection-slice.md). Concatenate role landing cited as the first intermediate restatement source: [`admit-a-fusion-role-for-the-sequence-extension-concatenate`](admit-a-fusion-role-for-the-sequence-extension-concatenate.md).
+
+## Outcome
+
+**Fact — live inventory restated without erasing history.** At edit base `916d877d7b103567a4709346b6d6672f2cb54e60`, `rg -c -F 'roles.insert(' crates/tiler-compiler/src/fusion_legality.rs` returns `15`; `is_exact_governed_same_family_pointwise`'s `CoordinateRelation` guard names exactly `reindex`, `broadcast`, `concatenate`, and `slice`. Both records now label their nine-key base and eleven-key intermediate counts as historical and state the live census separately; no four-candidate elimination was rewritten as though it ran against the newer table.
+
+**Fact — maturity metadata follows the governing landing evidence.** The slice record is `adopted` / `implemented`: its role and exact-key decision landed as R5, while the record still says that lowering and request-boundary admission were not delivered. The concatenate record is `partially-adopted` / `partial`: its M4 role landed as R5 and its M5 lowering conclusion remains separately incomplete. Check 5 in the concatenate record remains the resolution-only correction this ticket was forbidden to reopen.
+
+**Checks.** `make citations` passed; `tkt lint --format json` returned `ok: true`; `git diff --check` passed; and `tkt guard tkt/restate-the-fusion-role-table-census-in-the-indexing-records --format json` reported no under-declaration. The residual census intentionally finds only explicitly historical nine/eleven-key statements, each anchored to its research base or dated restatement, plus live fifteen-key/four-key restatements.
+
+**Full-gate carry.** The requested green full-gate baseline is `0b0e6952`. `git diff --name-only 916d877d7b103567a4709346b6d6672f2cb54e60` contains only the two `docs/research/indexing/**` records and this ticket; it touches none of the invalidating paths in `AGENTS.md`, so the full gate is carried. `make citations` and `tkt lint` were rerun for this ticket-only/document-only delta.
