@@ -33,17 +33,21 @@
 //! count literal beside a list cannot notice a population that stopped covering
 //! its domain.
 //!
-//! Three independent mechanisms replace it, and each can say *no* on its own:
+//! Four independent mechanisms replace it, and each can say *no* on its own:
 //!
 //! 1. [`GovernedDomain::ALL`] declares its length as
 //!    [`variant_count`](core::mem::variant_count), so a variant added to the enum
 //!    and left out of the list is an array-length build error at the list, and
 //!    [`GovernedDomain::bytes`] is a wildcard-free match, so it is a second build
 //!    error there.
-//! 2. [`no_governed_domain_of_this_crate_prefixes_another`] is pairwise over
+//! 2. [`GovernedDomain::pinned_bytes`] restates each member's exact expected
+//!    spelling in a wildcard-free match, so changing a live constant without its
+//!    pin fails [`every_governed_domain_has_its_exact_pinned_bytes`] with both
+//!    values, and widening the enum without a spelling decision fails to build.
+//! 3. [`no_governed_domain_of_this_crate_prefixes_another`] is pairwise over
 //!    `ALL`. Because a byte string is a prefix of itself, a list that padded its
 //!    length by naming one variant twice fails that test rather than passing it.
-//! 3. [`every_governed_domain_declared_in_the_source_is_enumerated`] reads this
+//! 4. [`every_governed_domain_declared_in_the_source_is_enumerated`] reads this
 //!    crate's own sources and requires every declared domain constant to appear
 //!    in `ALL`. This is the one that catches the failure that produced this
 //!    module: a constant declared in some module and never enumerated anywhere.
@@ -187,6 +191,39 @@ impl GovernedDomain {
         }
     }
 
+    /// Returns the independently pinned separator bytes this domain must keep.
+    ///
+    /// This mapping deliberately restates the values rather than returning the
+    /// live constants as [`Self::bytes`] does. A legitimate version step costs
+    /// the live declaration edit plus its one arm here; an accidental spelling
+    /// change leaves the pin behind for the test below to report. The match is
+    /// wildcard-free so a new variant cannot compile without an exact-byte
+    /// decision.
+    const fn pinned_bytes(self) -> &'static [u8] {
+        match self {
+            Self::EnvelopeManifest => b"tiler.artifact-envelope.manifest.v1\0",
+            Self::EnvelopeManifestDigest => b"tiler.artifact-envelope.manifest-digest.v1\0",
+            Self::EnvelopeSectionDigest => b"tiler.artifact-envelope.section-digest.v1\0",
+            Self::EnvelopeEnvelopeDigest => b"tiler.artifact-envelope.envelope-digest.v1\0",
+            Self::EnvelopeIdentityDigest => b"tiler.artifact-envelope.identity-digest.v1\0",
+            Self::EnvelopePayloadMetadata => b"tiler.artifact-envelope.payload-metadata.v1\0",
+            Self::EnvelopePayloadIdentity => b"tiler.artifact-envelope.payload-identity.v1\0",
+            Self::SidecarManifest => b"tiler.proof-sidecar.manifest.v1\0",
+            Self::SidecarManifestDigest => b"tiler.proof-sidecar.manifest-digest.v1\0",
+            Self::SidecarPayloadDigest => b"tiler.proof-sidecar.payload-digest.v1\0",
+            Self::SidecarIdentity => b"tiler.proof-sidecar.identity.v1\0",
+            Self::ProgramArtifact => b"tiler.artifact-program.v16\0",
+            Self::ProgramStageKey => b"tiler.artifact-program.stage.v3\0",
+            Self::ProgramPayloadKey => b"tiler.artifact-program.payload.v1\0",
+            Self::ProgramProviderKey => b"tiler.artifact-program.provider.v2\0",
+            Self::ProgramDeferredKey => b"tiler.artifact-program.deferred.v2\0",
+            Self::ProgramDeliveredRealization => {
+                b"tiler.artifact-program.delivered-realization.v2\0"
+            }
+            Self::ProgramRouteRequirement => b"tiler.artifact.route-requirement.v1\0",
+        }
+    }
+
     /// Returns the container that admits this domain.
     ///
     /// Wildcard-free for the same reason [`Self::bytes`] is.
@@ -242,6 +279,28 @@ const _: () = {
         "the per-container governed-domain counts must account for every variant",
     );
 };
+
+/// Every governed domain retains its independently stated exact bytes.
+///
+/// What it takes for this check to say *no*: change any live domain declaration
+/// without moving its one arm in [`GovernedDomain::pinned_bytes`]. The failure
+/// names the member and prints both byte strings so the required second edit is
+/// located rather than hunted.
+#[test]
+fn every_governed_domain_has_its_exact_pinned_bytes() {
+    for domain in GovernedDomain::ALL {
+        let expected = domain.pinned_bytes();
+        let observed = domain.bytes();
+        let expected_text = String::from_utf8_lossy(expected);
+        let observed_text = String::from_utf8_lossy(observed);
+        assert_eq!(
+            observed, expected,
+            "{domain:?}'s exact domain bytes moved:\n  expected bytes: {expected_text:?}\n  observed bytes: \
+             {observed_text:?}\nA deliberate domain step costs the live declaration edit plus this member's \
+             one `GovernedDomain::pinned_bytes` arm edit.",
+        );
+    }
+}
 
 /// No governed domain of this crate is a prefix of another.
 ///
