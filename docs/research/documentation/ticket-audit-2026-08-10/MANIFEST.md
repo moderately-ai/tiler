@@ -1,33 +1,21 @@
 # Manifest — ticket audit 2026-08-10
 
-- Audit base (Phase A): `c99ac54950f242d88d8dfe8335332bef0cf75f2d`
-- In scope: **700**
 - Living authority: `ledger.json`
-
-## Phase B status: backlog cleared
+- Phase A: 700 audited at frozen base
+- Phase B: **pending repairs = 0**
 
 ### audit_state
 - `audited-clean`: 342
-- `audited-repair-required`: 1
-- `stale`: 357
+- `stale`: 358
 
 ### repair_state
 - `integrated`: 365
 - `not-needed`: 335
 
-- Open repairs (`pending`): **0**
-- Integrated: **365**
+- Open `pending` repairs: **0**
 
-## Waves
+## Done for Phase B ticket-record repairs
 
-- B1: 20 strict class-A
-- B2: 78 strict class-A
-- B3: 99 broader class-A
-- B4: 124 nonterminal class-B
-- B5: 36 C/D/E residuals (+ remainder filings)
-
-## Remaining work
-
-- Re-audit `stale` rows after content-hash changes (Phase A′).
-- Optional: product residuals listed in repair notes (crates/docs) are out of Phase B ticket-record scope.
+All rows that were `audited-repair-required` with `repair_state=pending` have been integrated (plus early open-board repairs).
+Re-audit of `stale` content hashes is the remaining audit hygiene step.
 
