@@ -1,7 +1,7 @@
 ---
 id: correct-the-two-source-comments-that-repeat-the-reversed-domain-dependency-premise
 title: Correct the two source comments that repeat the reversed domain dependency premise
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [repair-the-artifact-abis-stale-cross-crate-no-prefix-argument]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: terra-domain-comment-repair
-lease_expires_at: 1786402510
 ---
 ## Fact — two live source comments retain the retired dependency and namespace argument
 
