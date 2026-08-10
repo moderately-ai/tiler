@@ -317,14 +317,12 @@ impl ReductionContractSubject {
     /// The retained test relationship independently expected for covered rows.
     const fn expected_exact_test(self) -> Option<&'static str> {
         match self {
-            Self::LastContractedAxis | Self::SerialTree => {
-                Some("the_execution_witness_is_exactly_six")
-            }
+            Self::LastContractedAxis => Some("the_execution_witness_is_exactly_six"),
             Self::NoSeed => {
                 Some("the_accumulator_is_seeded_from_the_first_product_and_not_from_positive_zero")
             }
             Self::Subnormals => Some("a_subnormal_product_is_preserved_rather_than_flushed"),
-            Self::Infinities => Some("a_nan_the_reduction_forms_itself_is_canonicalized_too"),
+            Self::SerialTree => Some("the_searched_split_separator_reproduces_the_strict_value"),
             _ => None,
         }
     }
@@ -337,7 +335,7 @@ struct OrdinaryTest {
     name: &'static str,
 }
 
-/// The two target-independent source files the ledger may cite.
+/// The target-independent source files the ledger may cite.
 ///
 /// A device or digest source is deliberately unrepresentable here. That keeps
 /// target realization evidence from silently satisfying a reference row.
@@ -345,6 +343,7 @@ struct OrdinaryTest {
 enum OrdinaryTestSource {
     ReferenceContractionUnit,
     SemanticContraction,
+    AttentionContractionStructures,
 }
 
 impl OrdinaryTestSource {
@@ -352,6 +351,9 @@ impl OrdinaryTestSource {
         match self {
             Self::ReferenceContractionUnit => "crates/tiler-reference/src/contraction/tests.rs",
             Self::SemanticContraction => "crates/tiler-ir/src/semantic/contraction/tests.rs",
+            Self::AttentionContractionStructures => {
+                "crates/tiler-reference/tests/attention_contraction_structures.rs"
+            }
         }
     }
 
@@ -360,6 +362,9 @@ impl OrdinaryTestSource {
             Self::ReferenceContractionUnit => include_str!("../src/contraction/tests.rs"),
             Self::SemanticContraction => {
                 include_str!("../../tiler-ir/src/semantic/contraction/tests.rs")
+            }
+            Self::AttentionContractionStructures => {
+                include_str!("attention_contraction_structures.rs")
             }
         }
     }
@@ -404,6 +409,7 @@ const fn exact_bit(
 
 const REFERENCE_UNIT: OrdinaryTestSource = OrdinaryTestSource::ReferenceContractionUnit;
 const SEMANTIC: OrdinaryTestSource = OrdinaryTestSource::SemanticContraction;
+const ATTENTION_STRUCTURES: OrdinaryTestSource = OrdinaryTestSource::AttentionContractionStructures;
 
 /// Current coverage of every atomic subject in `Required adversarial tests`.
 ///
@@ -444,9 +450,10 @@ const REDUCTION_CONTRACT_LEDGER: &[LedgerEntry] = &[
     },
     LedgerEntry {
         subject: ReductionContractSubject::MiddleContractedAxis,
-        coverage: Coverage::AdmittedUncovered(
-            "the retained structure contracts the last axis of both operands",
-        ),
+        coverage: Coverage::Ordinary(&[OrdinaryTest {
+            source: ATTENTION_STRUCTURES,
+            name: "the_value_structure_denotes_repeat_then_matmul_bit_for_bit",
+        }]),
     },
     exact_bit(
         ReductionContractSubject::LastContractedAxis,
@@ -548,9 +555,10 @@ const REDUCTION_CONTRACT_LEDGER: &[LedgerEntry] = &[
     },
     LedgerEntry {
         subject: ReductionContractSubject::NegativeThenPositiveZero,
-        coverage: Coverage::AdmittedUncovered(
-            "no retained case folds the two zero signs in this order",
-        ),
+        coverage: Coverage::Ordinary(&[OrdinaryTest {
+            source: ATTENTION_STRUCTURES,
+            name: "a_masked_position_contributes_a_signed_zero_to_the_value_contraction",
+        }]),
     },
     exact_bit(
         ReductionContractSubject::Subnormals,
@@ -558,12 +566,12 @@ const REDUCTION_CONTRACT_LEDGER: &[LedgerEntry] = &[
         a_subnormal_product_is_preserved_rather_than_flushed,
         "one positive subnormal product is preserved; no other sign, boundary, or position is claimed",
     ),
-    exact_bit(
-        ReductionContractSubject::Infinities,
-        "a_nan_the_reduction_forms_itself_is_canonicalized_too",
-        a_nan_the_reduction_forms_itself_is_canonicalized_too,
-        "positive infinity times positive zero forms NaN in the first contributor; no other sign or position is claimed",
-    ),
+    LedgerEntry {
+        subject: ReductionContractSubject::Infinities,
+        coverage: Coverage::AdmittedUncovered(
+            "the retained infinity operand is multiplied by zero and forms a NaN product before the fold; no infinity contributor is exercised",
+        ),
+    },
     LedgerEntry {
         subject: ReductionContractSubject::QuietNanEveryContributorPosition,
         coverage: Coverage::AdmittedUncovered(
@@ -594,9 +602,9 @@ const REDUCTION_CONTRACT_LEDGER: &[LedgerEntry] = &[
     },
     exact_bit(
         ReductionContractSubject::SerialTree,
-        "the_execution_witness_is_exactly_six",
-        the_execution_witness_is_exactly_six,
-        "one sixteen-contributor canonical serial left fold",
+        "the_searched_split_separator_reproduces_the_strict_value",
+        the_searched_split_separator_reproduces_the_strict_value,
+        "the retained separator distinguishes the strict serial left fold from both two-part split topologies",
     ),
     LedgerEntry {
         subject: ReductionContractSubject::BalancedTree,
