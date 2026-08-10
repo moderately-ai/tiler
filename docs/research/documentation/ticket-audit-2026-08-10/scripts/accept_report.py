@@ -13,12 +13,12 @@ REQUIRED = [
     "Ticket:",
     "Exact audit base:",
     "Ticket content hash:",
-    "Files read in full:",
     "Per-Fact verdicts:",
     "Board and graph verdict:",
     "Repair required:",
     "Recommended audit_state:",
 ]
+FILES_READ_RE = re.compile(r"^Files read", re.M)
 
 
 def main() -> int:
@@ -33,6 +33,8 @@ def main() -> int:
     args = ap.parse_args()
     text = args.report.read_text(encoding="utf-8")
     missing = [r for r in REQUIRED if r not in text]
+    if not FILES_READ_RE.search(text):
+        missing.append("Files read…")
     if missing:
         print("REJECT structural missing:", missing, file=sys.stderr)
         return 2
