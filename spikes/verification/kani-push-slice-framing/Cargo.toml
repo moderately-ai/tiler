@@ -1,0 +1,14 @@
+[package]
+name = "kani-push-slice-framing"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# This spike is intentionally outside the repository workspace. Kani 0.67.0's
+# bundled rustc cannot compile `tiler-ir`, so `src/lib.rs` carries a guarded copy
+# of the two framing primitives and states that provenance limit explicitly.
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
