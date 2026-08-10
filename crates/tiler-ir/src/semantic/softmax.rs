@@ -276,14 +276,22 @@ pub const SOFTMAX_F32_FACT_MAXIMUM_FOLD_LEGALITY: AttributeFieldId = AttributeFi
 pub const SOFTMAX_F32_FACT_SUM_FOLD_ORDER: AttributeFieldId = AttributeFieldId::new(7);
 /// Fact field naming the type the denominator sum accumulates at.
 ///
-/// Explicit, and **not** inherited from the element type, discharging decision
-/// **D-5** for the second of the two sums the L3′ derivation identified. The
-/// value is `tiler::f32@1` because F32 is what reproduces the pinned reference;
-/// whether a growing context justifies widening stays
-/// [`implement-parallel-reduction-strategies`](../../../../tickets/implement-parallel-reduction-strategies.md)'s
-/// question. The maximum reduction carries no accumulator declaration of its own
-/// because it performs no arithmetic: it selects one of its contributors' bit
-/// patterns, so there is no width at which it could accumulate differently.
+/// Explicit, and **not** inherited from the element type. [ADR 0091] makes the
+/// accumulator an identity-bearing operation fact, never a schedule or resolved
+/// numerical-contract choice; a different width therefore requires a different
+/// registered operation key. This key declares `tiler::f32@1`, and its reference
+/// evaluator independently performs the denominator fold in F32. The maximum
+/// reduction carries no accumulator declaration of its own because it performs
+/// no arithmetic: it selects one of its contributors' bit patterns, so there is
+/// no width at which it could accumulate differently.
+///
+/// Schedule verification does not read this fact. Its `accumulation-width`
+/// diagnostic is limited to the explicit `accumulation` fields on `MultiPass`
+/// and `CooperativeWorkgroup`, compared with the scalar program's region
+/// arithmetic. Missing support for a differently accumulating operation, its
+/// lowering, or its target realization is a separate typed outcome.
+///
+/// [ADR 0091]: ../../../../docs/decisions/0091-separate-bf16-float-conversion-families-and-keep-the-accumulator-an-operation-fact.md
 pub const SOFTMAX_F32_FACT_ACCUMULATOR_TYPE: AttributeFieldId = AttributeFieldId::new(8);
 /// Fact field naming how the row is normalized.
 ///
