@@ -38,7 +38,8 @@ use super::{
     require_contraction_interface, require_serial_sum_interface, result_digest, sha256_hex,
     sidecar_path,
 };
-use crate::measurement::require_or_report;
+use crate::ledger::{CompositionExtent, f32_subject, validate_fresh_f32_matrix};
+use crate::measurement::{require_or_report, require_or_report_with_boundary};
 use crate::serial_sum::{COLUMNS, declaration};
 
 /// The extents the published contraction member is compiled and routed at.
@@ -872,7 +873,11 @@ fn the_routed_dtype_rows_are_the_declarations_own() {
 /// statement about both.
 #[test]
 fn the_published_matrix_agrees_with_its_record_on_the_routed_row() {
-    let Some(members) = require_or_report("envelope matrix", measured_matrix()) else {
+    let subject = f32_subject().expect("the retained F32 execution subject resolves");
+    assert_eq!(subject.composition(), CompositionExtent::RoutedArtifact);
+    let Some((boundary, members)) =
+        require_or_report_with_boundary("envelope matrix", measured_matrix())
+    else {
         return;
     };
 
@@ -901,6 +906,11 @@ fn the_published_matrix_agrees_with_its_record_on_the_routed_row() {
         "the two roles must not converge on one shape, or their agreement is one program agreeing \
          with itself",
     );
+    validate_fresh_f32_matrix(
+        &subject,
+        &boundary,
+        members.iter().map(|member| member.proved).sum(),
+    );
 }
 
 /// Routes a set of contraction members and returns how many were compared
@@ -917,6 +927,7 @@ fn the_published_matrix_agrees_with_its_record_on_the_routed_row() {
 /// unmeasured machine indistinguishable from a compared one, which is the silent
 /// skip the crate header refuses.
 fn route_and_compare(members: &[&ContractionMember]) -> Option<(usize, usize)> {
+    let _subject = f32_subject().expect("the retained F32 execution subject resolves");
     let (mut compared, mut declined) = (0_usize, 0_usize);
     for member in members {
         let routed = require_or_report(

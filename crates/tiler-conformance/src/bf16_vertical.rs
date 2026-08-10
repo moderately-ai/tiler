@@ -242,19 +242,21 @@ use tiler_reference::{
     ReferenceNumericalConformance, Tensor, TensorPayloadView, UnsupportedReferenceContract,
 };
 
-/// The executed record constraining BF16's conformance-evidence ledger cell.
+/// Retained execution constraining BF16's conformance-evidence cell.
 ///
-/// This private declaration states the run's exact operation, corpus,
-/// environment, availability, and composition bounds. It assigns neither the
-/// manual maturity phrase nor one of the repository's evidence classes.
-pub(crate) const LEDGER_CELL: crate::ledger::CellDeclaration = crate::ledger::CellDeclaration {
-    cell: crate::ledger::ConformanceCell::Bf16,
-    run_ids: &["pure-bf16-vertical@b7c01815"],
-    operation_extent: "constant/multiply/add over fifteen hand-derived cases",
-    environment: crate::ledger::EnvironmentRow::APPLE9_2026_08_07,
-    measured_half: crate::ledger::MeasuredHalf::Ran,
-    composition: crate::ledger::CompositionExtent::HandAssembledBf16,
-};
+/// These are the device-observed result encodings landed at `b7c01815`, not an
+/// alias for the oracle table. The live test compares a fresh result with both
+/// this record and the independent oracle. Fresh unavailability remains a
+/// separate `Measured` outcome and cannot manufacture retained execution.
+pub(crate) const RETAINED_EXECUTION: crate::ledger::RetainedBf16Execution =
+    crate::ledger::RetainedBf16Execution {
+        identity: "pure-bf16-vertical@b7c01815",
+        environment: crate::ledger::RetainedEnvironment::APPLE9_2026_08_07,
+        observed: [
+            0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x00c0, 0x3fc0, 0x3fc2, 0x403f,
+            0x7f80, 0x7f80, 0xff80, 0x7fc0,
+        ],
+    };
 
 /// The scale constant, `1.5` in BF16.
 pub(crate) const SCALE_BITS: u16 = 0x3fc0;

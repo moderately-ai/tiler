@@ -88,7 +88,7 @@ use crate::envelope::{
 };
 use crate::serial_sum::{CompileRefusal, compile_under, serial_sum_program};
 
-mod proof;
+pub(crate) mod proof;
 
 pub(crate) use proof::{ProofFamily, SidecarFailure};
 

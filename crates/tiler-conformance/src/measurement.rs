@@ -158,10 +158,21 @@ pub(crate) enum Measured<T> {
 /// boundary; and when [`REQUIRE_MEASUREMENT`] is set and the outcome is
 /// [`Measured::Unavailable`].
 pub(crate) fn require_or_report<T>(label: &str, outcome: Measured<T>) -> Option<T> {
+    require_or_report_with_boundary(label, outcome).map(|(_, observed)| observed)
+}
+
+/// Reports a measured half while retaining its fresh environment boundary.
+///
+/// Retained-execution consumers use this form so a fresh rerun can be compared
+/// with historical evidence without an unavailable rerun becoming `Ran`.
+pub(crate) fn require_or_report_with_boundary<T>(
+    label: &str,
+    outcome: Measured<T>,
+) -> Option<(Box<MeasurementBoundary>, T)> {
     match outcome {
         Measured::Ran { boundary, observed } => {
             eprintln!("{label}: measured on this row:\n{boundary}");
-            Some(observed)
+            Some((boundary, observed))
         }
         Measured::Unavailable(reason) => {
             assert!(

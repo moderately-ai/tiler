@@ -132,23 +132,16 @@ use crate::applicability::ProbedGpuFamily;
 use crate::device_preflight::PreflightRefusal;
 use crate::serial_sum::{F32_BYTES, INPUT_KEY, OUTPUT_KEY, compile_under, serial_sum_program};
 
-/// The aggregate executed records constraining IEEE F32's conformance-evidence
-/// ledger cell.
+/// Retained execution constraining IEEE F32's conformance-evidence cell.
 ///
-/// The stable identifiers name the migrations whose retained runs this module
-/// routes. The declaration is data for `crate::ledger`'s private comparison;
-/// it assigns no maturity or evidence class.
-pub(crate) const LEDGER_CELL: crate::ledger::CellDeclaration = crate::ledger::CellDeclaration {
-    cell: crate::ledger::ConformanceCell::F32,
-    run_ids: &[
-        "carry-device-executed-value-proof@0f948637",
-        "route-five-l3-realization-cells@2026-08-07",
-    ],
-    operation_extent: "serial-sum and contraction device runs (30 routed cases plus five retained L3 cells)",
-    environment: crate::ledger::EnvironmentRow::APPLE9_2026_08_07,
-    measured_half: crate::ledger::MeasuredHalf::Ran,
-    composition: crate::ledger::CompositionExtent::RoutedArtifact,
-};
+/// Its identity is the checked realization-probe directory this module reads.
+/// The ledger refuses another spelling before deriving the operation and case
+/// populations from the executable tables below.
+pub(crate) const RETAINED_EXECUTION: crate::ledger::RetainedF32Execution =
+    crate::ledger::RetainedF32Execution {
+        identity: crate::retained_record::RECORD_DIRECTORY,
+        environment: crate::ledger::RetainedEnvironment::APPLE9_2026_08_07,
+    };
 
 /// The one delivery position every artifact here is built for.
 ///
