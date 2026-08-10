@@ -5091,6 +5091,41 @@ mod tests {
             .expect("the affine cooperative tile reads input one");
     }
 
+    /// Parallel affine folds read a declared input, never an intermediate.
+    ///
+    /// The bare sum's parallel forms admit an intermediate because it may hold a
+    /// materialized prologue. The affine family carries that prologue inside its
+    /// scalar program, so admitting the intermediate would apply the affine body
+    /// to a value that was already transformed or to an unbound staging edge.
+    #[test]
+    fn affine_parallel_folds_reject_an_intermediate_contributor() {
+        let affine = ScalarProgram::FusedMultiplyAddSerialSum {
+            scale_bits: 2.0_f32.to_bits(),
+            bias_bits: 1.0_f32.to_bits(),
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7fc0_0000,
+            empty_identity_bits: 0.0_f32.to_bits(),
+            contraction: false,
+        };
+
+        let mut partial = partial_pass_builder(SPLIT);
+        partial.scalar_program = Some(affine.clone());
+        assert_eq!(
+            partial.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "an affine partial pass cannot read a materialized contributor",
+        );
+
+        let mut cooperative = cooperative_builder(cooperative_tile_fixture());
+        cooperative.scalar_program = Some(affine);
+        assert_eq!(
+            cooperative.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "an affine cooperative tile cannot read a materialized contributor",
+        );
+    }
+
     /// Family-specific first-input rules remain exact when the generic fold
     /// contributor domain widens.
     #[test]
@@ -5112,6 +5147,61 @@ mod tests {
                 [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
             );
         }
+    }
+
+    /// The squared parallel family keeps its own first-input rule.
+    ///
+    /// This is separate from the serial control above because the split and
+    /// cooperative family tables are independent match arms. Widening either to
+    /// every declared input would otherwise leave the serial check green.
+    #[test]
+    fn squared_parallel_folds_reject_a_later_declared_input() {
+        let mut partial = squared_partial_pass_builder(SPLIT);
+        read_from(&mut partial, SECOND_INPUT);
+        assert_eq!(
+            partial.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "a squared partial pass cannot read input one",
+        );
+
+        let squared = ScalarProgram::SquaredSerialSum {
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7fc0_0000,
+            empty_identity_bits: 0.0_f32.to_bits(),
+        };
+        let mut cooperative = cooperative_builder(cooperative_tile_fixture());
+        cooperative.scalar_program = Some(squared);
+        read_from(&mut cooperative, SECOND_INPUT);
+        assert_eq!(
+            cooperative.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "a squared cooperative tile cannot read input one",
+        );
+    }
+
+    /// The maximum parallel family keeps its own first-input rule.
+    ///
+    /// Maximum has independent split and cooperative family-table arms, so the
+    /// serial maximum control does not prove that either parallel obligation
+    /// still refuses a later declared input.
+    #[test]
+    fn maximum_parallel_folds_reject_a_later_declared_input() {
+        let mut partial = extrema_partial_builder(SPLIT);
+        read_from(&mut partial, SECOND_INPUT);
+        assert_eq!(
+            partial.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "a maximum partial pass cannot read input one",
+        );
+
+        let mut cooperative = extrema_cooperative_builder();
+        read_from(&mut cooperative, SECOND_INPUT);
+        assert_eq!(
+            cooperative.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "a maximum cooperative tile cannot read input one",
+        );
     }
 
     /// A cooperative tile may commit its result to a materialized intermediate.
