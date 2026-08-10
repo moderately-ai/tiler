@@ -1,7 +1,7 @@
 ---
 id: correct-session-facade-acceptance-disclosures
 title: Correct residual draft disclosures for the accepted session facade
-status: in-progress
+status: review
 priority: p2
 dependencies: [accept-the-public-compiler-facade-boundary]
 related: [state-and-check-a-bf16-numerical-contract, clarify-the-inline-frontend-facades-consumer-scope]
