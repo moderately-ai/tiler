@@ -1,7 +1,7 @@
 ---
 id: widen-q-sem-002-for-elementary-identity-capability-law
 title: Widen Q-SEM-002 for the elementary-identity capability law
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [accept-adr-0101-elementary-identity-dimension, decide-whether-to-admit-an-elementary-identity-permission]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, open-questions]
+claimed_from: todo
+assignee: sol-qsem002-elementary-law
+lease_expires_at: 1786412164
 ---
 ## User-visible outcome
 
