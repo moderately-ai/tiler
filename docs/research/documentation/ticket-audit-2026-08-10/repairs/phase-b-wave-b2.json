@@ -1,0 +1,1410 @@
+{
+  "wave": "B2",
+  "count": 78,
+  "tickets": [
+    {
+      "ticket_id": "calibrate-the-reduction-partition-against-measured-alternatives",
+      "ticket_file": "tickets/calibrate-the-reduction-partition-against-measured-alternatives.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "43b66274c7c36410bdeb9b18604635ac267ff418bcb0315e60cb2efaec6dbf14",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/calibrate-the-reduction-partition-against-measured-alternatives/43b66274c7c3_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/calibrate-the-reduction-partition-against-measured-alternatives.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "cap-the-tree-reduction-participants-at-the-measured-256",
+      "ticket_file": "tickets/cap-the-tree-reduction-participants-at-the-measured-256.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "bbb85e4b9716a9bbc8fd8d92fd3711be00afc30a05f30d0e052223468862a20a",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/cap-the-tree-reduction-participants-at-the-measured-256/bbb85e4b9716_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/cap-the-tree-reduction-participants-at-the-measured-256.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "carry-a-producer-stated-total-into-a-retained-run",
+      "ticket_file": "tickets/carry-a-producer-stated-total-into-a-retained-run.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "75ff8f7a9892767c8eb8ed900a834aa0e0d836d49cf2685ca327ba6baffbcaa9",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/carry-a-producer-stated-total-into-a-retained-run/75ff8f7a9892_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/carry-a-producer-stated-total-into-a-retained-run.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "carry-a-sourced-shape-on-semantic-values",
+      "ticket_file": "tickets/carry-a-sourced-shape-on-semantic-values.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "2c8551c739b67ed4dc3be5269bcf5377c489aa487411d22d9d9ef037638eec8c",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/carry-a-sourced-shape-on-semantic-values/2c8551c739b6_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/carry-a-sourced-shape-on-semantic-values.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "carry-artifact-program-output-order-into-kernel-program-identity",
+      "ticket_file": "tickets/carry-artifact-program-output-order-into-kernel-program-identity.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "5400197dd1b769473928069dde6ebe0af33b6dfde00fad08c7b481db5fc0a1f3",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/carry-artifact-program-output-order-into-kernel-program-identity/5400197dd1b7_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/carry-artifact-program-output-order-into-kernel-program-identity.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "carry-bf16-through-the-artifact-encoding-and-identity",
+      "ticket_file": "tickets/carry-bf16-through-the-artifact-encoding-and-identity.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "56d693c2bd5066014defd273deb7177b6399f76c0d699dedba2c6e8ca10b4446",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/carry-bf16-through-the-artifact-encoding-and-identity/56d693c2bd50_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/carry-bf16-through-the-artifact-encoding-and-identity.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "carry-the-concatenate-scoping-conclusions-into-the-navigation-corpus",
+      "ticket_file": "tickets/carry-the-concatenate-scoping-conclusions-into-the-navigation-corpus.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "b5746a821a22afcdb34438ad5968810ccac748b9199ca6e38cab1c963983e99c",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/carry-the-concatenate-scoping-conclusions-into-the-navigation-corpus/b5746a821a22_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/carry-the-concatenate-scoping-conclusions-into-the-navigation-corpus.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "carry-the-device-executed-value-proof-into-the-conformance-crate",
+      "ticket_file": "tickets/carry-the-device-executed-value-proof-into-the-conformance-crate.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "dcb8945b5ffb7778b8a2f6750c999dc95f71eacf7bf166f59d642a44a96f4f77",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/carry-the-device-executed-value-proof-into-the-conformance-crate/dcb8945b5ffb_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/carry-the-device-executed-value-proof-into-the-conformance-crate.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "carry-the-elementary-identity-dimension-adr",
+      "ticket_file": "tickets/carry-the-elementary-identity-dimension-adr.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "bc658f00f36a8457d4ddeab2bf19890c70c285d3785e3d429f2784f60bcc51cf",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/carry-the-elementary-identity-dimension-adr/bc658f00f36a_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/carry-the-elementary-identity-dimension-adr.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "correct-the-coverage-graph-digest-domain-s-eight-count-and-hyphenated-artifact-prefix",
+      "ticket_file": "tickets/correct-the-coverage-graph-digest-domain-s-eight-count-and-hyphenated-artifact-prefix.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "b65415634fcc325f13fa64efa8a6c48b73462b8497b8b72c540f7a8288feb439",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/correct-the-coverage-graph-digest-domain-s-eight-count-and-hyphenated-artifact-prefix/b65415634fcc_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/correct-the-coverage-graph-digest-domain-s-eight-count-and-hyphenated-artifact-prefix.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "correct-the-l6-budget-item-for-the-output-derived-budgets",
+      "ticket_file": "tickets/correct-the-l6-budget-item-for-the-output-derived-budgets.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "7ca43d7e1d5dfce3ee88cfce7a64d8c93d50cb8a28ec1ec88e1f59be5528a11a",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/correct-the-l6-budget-item-for-the-output-derived-budgets/7ca43d7e1d5d_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/correct-the-l6-budget-item-for-the-output-derived-budgets.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "decide-how-the-link-check-reads-a-retained-byte-identical-drafted-adr-span",
+      "ticket_file": "tickets/decide-how-the-link-check-reads-a-retained-byte-identical-drafted-adr-span.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "350b0a2f2c2d8020c240894422ba05120b7e2c71d7e031ce7a1c09bbd60b5434",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/decide-how-the-link-check-reads-a-retained-byte-identical-drafted-adr-span/350b0a2f2c2d_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/decide-how-the-link-check-reads-a-retained-byte-identical-drafted-adr-span.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode",
+      "ticket_file": "tickets/decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "8c0cc1875b81d3736ec8ae221caf919a4a5f8ee6d5be785717e5cfe2fdb9e946",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode/8c0cc1875b81_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "decide-whether-the-bundle-envelope-section-digest-is-redundant",
+      "ticket_file": "tickets/decide-whether-the-bundle-envelope-section-digest-is-redundant.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "c063445bfe35f67c53043ea31acf16d17175cc5c710d18c19aab645a9cd096bd",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/decide-whether-the-bundle-envelope-section-digest-is-redundant/c063445bfe35_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/decide-whether-the-bundle-envelope-section-digest-is-redundant.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "declare-host-dtype-dispatchability-at-the-consumer-boundary",
+      "ticket_file": "tickets/declare-host-dtype-dispatchability-at-the-consumer-boundary.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "c80565b291b39eac7cc8e91434011ec8241160a066878adde5ea9e42881af928",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/declare-host-dtype-dispatchability-at-the-consumer-boundary/c80565b291b3_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/declare-host-dtype-dispatchability-at-the-consumer-boundary.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "declare-the-bf16-rows-on-the-authoritative-metal-profile",
+      "ticket_file": "tickets/declare-the-bf16-rows-on-the-authoritative-metal-profile.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "a3d865e7e1354f8eae3c4f81111770b6fc36ed926fe202d9951dc453e8b87d58",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/declare-the-bf16-rows-on-the-authoritative-metal-profile/a3d865e7e135_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/declare-the-bf16-rows-on-the-authoritative-metal-profile.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "define-the-minimum-correct-physical-realization-profile",
+      "ticket_file": "tickets/define-the-minimum-correct-physical-realization-profile.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "163c55b4e9002ecbc9e014bf40090da3c1056629dc7e0d8185ab0edfa2c29045",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/define-the-minimum-correct-physical-realization-profile/163c55b4e900_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/define-the-minimum-correct-physical-realization-profile.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "derive-per-locus-numerical-obligations",
+      "ticket_file": "tickets/derive-per-locus-numerical-obligations.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "7826dd08bc147862ce14dc5d34f5351a4e077fba1c03f46842821673d482116f",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/derive-per-locus-numerical-obligations/7826dd08bc14_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/derive-per-locus-numerical-obligations.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "derive-physical-proposals-from-the-cover-region-subject",
+      "ticket_file": "tickets/derive-physical-proposals-from-the-cover-region-subject.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "1d26134186367b3d47df8445aa84a6370e7191679563f12bc3de0bc7bb906926",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/derive-physical-proposals-from-the-cover-region-subject/1d2613418636_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/derive-physical-proposals-from-the-cover-region-subject.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "design-the-measured-feedback-tuning-loop-against-the-autotuning-and-adaptive-execution-literature",
+      "ticket_file": "tickets/design-the-measured-feedback-tuning-loop-against-the-autotuning-and-adaptive-execution-literature.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "1886076a4400c5cb25d46bf8db29267165669bf3c937215818426b28e2e5ee6e",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/design-the-measured-feedback-tuning-loop-against-the-autotuning-and-adaptive-execution-literature/1886076a4400_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/design-the-measured-feedback-tuning-loop-against-the-autotuning-and-adaptive-execution-literature.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "drive-an-external-physical-implementation-provider-through-compilation",
+      "ticket_file": "tickets/drive-an-external-physical-implementation-provider-through-compilation.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "9fca49de25890d69044902a3c03198473534e9d9f0706b1226b3a074c6829842",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/drive-an-external-physical-implementation-provider-through-compilation/9fca49de2589_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/drive-an-external-physical-implementation-provider-through-compilation.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "emit-from-a-populated-retention-in-the-inline-expansion",
+      "ticket_file": "tickets/emit-from-a-populated-retention-in-the-inline-expansion.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "b6f1f2ec3420e40b5925cfb841f4fcaa73ace8520364f7940e944155eadccf85",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/emit-from-a-populated-retention-in-the-inline-expansion/b6f1f2ec3420_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/emit-from-a-populated-retention-in-the-inline-expansion.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "enforce-resolved-encoded-value-binding-conformance",
+      "ticket_file": "tickets/enforce-resolved-encoded-value-binding-conformance.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "8aea8d1010156caafa88687ffb91c20c29175ffeca5621b298d3e93e40fecb4f",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/enforce-resolved-encoded-value-binding-conformance/8aea8d101015_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/enforce-resolved-encoded-value-binding-conformance.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "enumerate-the-mature-tensor-operation-and-signature-taxonomy",
+      "ticket_file": "tickets/enumerate-the-mature-tensor-operation-and-signature-taxonomy.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "461f731963278806362e7c30f10e22cb474ffc61a032965672577c09286b20a6",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/enumerate-the-mature-tensor-operation-and-signature-taxonomy/461f73196327_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/enumerate-the-mature-tensor-operation-and-signature-taxonomy.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "establish-an-upper-bound-authority-for-the-metal-grid-axis-row",
+      "ticket_file": "tickets/establish-an-upper-bound-authority-for-the-metal-grid-axis-row.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "5c81d380d98f01e3d31697e39963acb12e719adc81e3272ff4e694216bf47c19",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/establish-an-upper-bound-authority-for-the-metal-grid-axis-row/5c81d380d98f_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/establish-an-upper-bound-authority-for-the-metal-grid-axis-row.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "expose-the-numeric-elementary-accuracy-a-parametric-bound-can-instantiate",
+      "ticket_file": "tickets/expose-the-numeric-elementary-accuracy-a-parametric-bound-can-instantiate.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "d2a53fec00165d713650008f603d99fede325039b853d8d5fe2175fe39e4e47a",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/expose-the-numeric-elementary-accuracy-a-parametric-bound-can-instantiate/d2a53fec0016_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/expose-the-numeric-elementary-accuracy-a-parametric-bound-can-instantiate.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "flip-the-normalization-law-wall-test-and-rebaseline-the-request-pin",
+      "ticket_file": "tickets/flip-the-normalization-law-wall-test-and-rebaseline-the-request-pin.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "e6100823cb8d553fdf40443f47bcd30d872ec0301c64dc35e6b829924a294192",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/flip-the-normalization-law-wall-test-and-rebaseline-the-request-pin/e6100823cb8d_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/flip-the-normalization-law-wall-test-and-rebaseline-the-request-pin.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "fold-the-attribution-stage-into-region-and-request-subject-identity",
+      "ticket_file": "tickets/fold-the-attribution-stage-into-region-and-request-subject-identity.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "12370b46e3edd41271af7587e3c6f68449391585651c75e0b2ec7afc69595cbf",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/fold-the-attribution-stage-into-region-and-request-subject-identity/12370b46e3ed_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/fold-the-attribution-stage-into-region-and-request-subject-identity.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "give-the-qwen3-reference-citation-its-provenance",
+      "ticket_file": "tickets/give-the-qwen3-reference-citation-its-provenance.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "854c52462593d09f1a5d82384a399c9cb4753217296be4d8f8b0375991a9fb0c",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/give-the-qwen3-reference-citation-its-provenance/854c52462593_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/give-the-qwen3-reference-citation-its-provenance.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "govern-the-three-ungoverned-spike-records",
+      "ticket_file": "tickets/govern-the-three-ungoverned-spike-records.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "257eaffa369e775a470c15a454a617a83c3a184fd3e56cc556b9dd31b1f5eff3",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/govern-the-three-ungoverned-spike-records/257eaffa369e_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/govern-the-three-ungoverned-spike-records.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "honour-require-metal-toolchain-in-the-aot-driver-tests",
+      "ticket_file": "tickets/honour-require-metal-toolchain-in-the-aot-driver-tests.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "db1f2e8573d0574e16a1578125a5794b7763b73420365294db16ca06c2c0d287",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/honour-require-metal-toolchain-in-the-aot-driver-tests/db1f2e8573d0_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/honour-require-metal-toolchain-in-the-aot-driver-tests.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "lower-bf16-to-metal",
+      "ticket_file": "tickets/lower-bf16-to-metal.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "dd53292677bdd3fc0b34bfe6910631347a0450d01899c54308b6a69c2cce7d3a",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/lower-bf16-to-metal/dd53292677bd_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/lower-bf16-to-metal.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "lower-the-concatenate-occurrence-through-partitioned-writes",
+      "ticket_file": "tickets/lower-the-concatenate-occurrence-through-partitioned-writes.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "6e05771249a683097a477ba1e7ce05367712f185910553a86a7d6f4f3d88e1a9",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/lower-the-concatenate-occurrence-through-partitioned-writes/6e05771249a6_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/lower-the-concatenate-occurrence-through-partitioned-writes.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "make-the-research-catalog-generated-or-stop-claiming-it-is",
+      "ticket_file": "tickets/make-the-research-catalog-generated-or-stop-claiming-it-is.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "4453f7346e72efe05115ba534303d80aa4e72c262ffcb160700db49e8131efe7",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/make-the-research-catalog-generated-or-stop-claiming-it-is/4453f7346e72_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/make-the-research-catalog-generated-or-stop-claiming-it-is.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "measure-artifact-decoder-allocation-amplification",
+      "ticket_file": "tickets/measure-artifact-decoder-allocation-amplification.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "015474461cae9948f6f39bd054a409e4bab85f003683a5f756cc637e6212cde8",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/measure-artifact-decoder-allocation-amplification/015474461cae_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/measure-artifact-decoder-allocation-amplification.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "measure-executable-coverage-identity-growth-against-the-program-identity-bound",
+      "ticket_file": "tickets/measure-executable-coverage-identity-growth-against-the-program-identity-bound.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "94fc6ffa621346242ce185adcdf844c4835b30dbf00a576f3a51b4cfaf92f229",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/measure-executable-coverage-identity-growth-against-the-program-identity-bound/94fc6ffa6213_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/measure-executable-coverage-identity-growth-against-the-program-identity-bound.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "measure-the-expansion-cache-hot-path-efficiency",
+      "ticket_file": "tickets/measure-the-expansion-cache-hot-path-efficiency.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "4c6f1791521a7080db38acb1b444063d2ea2dd427fd9c28a259ce8be3f126815",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/measure-the-expansion-cache-hot-path-efficiency/4c6f1791521a_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/measure-the-expansion-cache-hot-path-efficiency.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "name-the-elementary-identity-rewrite-dimension",
+      "ticket_file": "tickets/name-the-elementary-identity-rewrite-dimension.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "f808b7978bc6ef827c64ab6d86fc81cb978da1550c2770eb55fd619bfabd3e7e",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/name-the-elementary-identity-rewrite-dimension/f808b7978bc6_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/name-the-elementary-identity-rewrite-dimension.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "name-the-index-receipt-final-stage-accessors-for-what-they-return",
+      "ticket_file": "tickets/name-the-index-receipt-final-stage-accessors-for-what-they-return.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "a384717d1999e0957376d37afe1a345f26836ecb955fb78e9f3d6b4d79b1d216",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/name-the-index-receipt-final-stage-accessors-for-what-they-return/a384717d1999_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/name-the-index-receipt-final-stage-accessors-for-what-they-return.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "pin-lint-inheritance-across-the-workspace-member-set",
+      "ticket_file": "tickets/pin-lint-inheritance-across-the-workspace-member-set.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "32b9f8d687bdae8b71ae73947a2b781486b2d3df5de5a7760590cb972b72c6dc",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/pin-lint-inheritance-across-the-workspace-member-set/32b9f8d687bd_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/pin-lint-inheritance-across-the-workspace-member-set.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "pin-the-identity-domain-strings-so-a-reverted-domain-reddens-the-gate",
+      "ticket_file": "tickets/pin-the-identity-domain-strings-so-a-reverted-domain-reddens-the-gate.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "12cd7c3dc7c1152fdb9cdc1f00334cdd064acc463a98bbad1aff9f1baa489e22",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/pin-the-identity-domain-strings-so-a-reverted-domain-reddens-the-gate/12cd7c3dc7c1_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/pin-the-identity-domain-strings-so-a-reverted-domain-reddens-the-gate.md \u2014 optional one-line Worker-record wording fix"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "pin-the-sdk-provenance-the-xcrun-reproduce-forms-silently-rebase",
+      "ticket_file": "tickets/pin-the-sdk-provenance-the-xcrun-reproduce-forms-silently-rebase.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "51506fe858ca602ad7dcc8b5d2c447d9077c0a4c8fe681ff9c820a5dfab3f97f",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/pin-the-sdk-provenance-the-xcrun-reproduce-forms-silently-rebase/51506fe858ca_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/pin-the-sdk-provenance-the-xcrun-reproduce-forms-silently-rebase.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "preserve-the-float-to-integer-conversion-precedent-sources",
+      "ticket_file": "tickets/preserve-the-float-to-integer-conversion-precedent-sources.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "e83eeeda0572824e74b47064a186d7b2149ff7b4e35f08ac3ce8fadb17a7f552",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/preserve-the-float-to-integer-conversion-precedent-sources/e83eeeda0572_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/preserve-the-float-to-integer-conversion-precedent-sources.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "preserve-the-pytorch-conversion-platform-variation-source",
+      "ticket_file": "tickets/preserve-the-pytorch-conversion-platform-variation-source.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "2bb7ecff4d1951f92d1c54d808f7c6a6f8b743a0fb80770b566e5e40262a0677",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/preserve-the-pytorch-conversion-platform-variation-source/2bb7ecff4d19_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/preserve-the-pytorch-conversion-platform-variation-source.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "raise-the-adopted-research-records-to-their-landed-implementation-status",
+      "ticket_file": "tickets/raise-the-adopted-research-records-to-their-landed-implementation-status.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "84b7844f2c2e9a440d700d95a10be2aebd68143ff565b3c78d3983b596a7e4b2",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/raise-the-adopted-research-records-to-their-landed-implementation-status/84b7844f2c2e_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/raise-the-adopted-research-records-to-their-landed-implementation-status.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "re-transfer-the-adr-0092-span-after-the-item-6-restatement-fork",
+      "ticket_file": "tickets/re-transfer-the-adr-0092-span-after-the-item-6-restatement-fork.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "75f4f8b965c23ead2205cb90eaac418c00f3437f9e17bfe0d5d2e04ff88417c9",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/re-transfer-the-adr-0092-span-after-the-item-6-restatement-fork/75f4f8b965c2_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/re-transfer-the-adr-0092-span-after-the-item-6-restatement-fork.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "re-transfer-the-adr-0092-span-for-its-drifted-prototype-referent",
+      "ticket_file": "tickets/re-transfer-the-adr-0092-span-for-its-drifted-prototype-referent.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "f3696aa09e63bced918a04e6776e86f4acbe4a0191075ab5cd14a89fc83e93c2",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/re-transfer-the-adr-0092-span-for-its-drifted-prototype-referent/f3696aa09e63_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/re-transfer-the-adr-0092-span-for-its-drifted-prototype-referent.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "rebaseline-the-identity-growth-ladder-on-the-derived-region-shape-budgets",
+      "ticket_file": "tickets/rebaseline-the-identity-growth-ladder-on-the-derived-region-shape-budgets.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "06a77ca51e1230879a2b3fa90d322f56c4fce892ac2bb61eb2abc9d6d7d808da",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/rebaseline-the-identity-growth-ladder-on-the-derived-region-shape-budgets/06a77ca51e12_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/rebaseline-the-identity-growth-ladder-on-the-derived-region-shape-budgets.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "reclassify-language-model-work-as-a-conformance-track",
+      "ticket_file": "tickets/reclassify-language-model-work-as-a-conformance-track.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "b136be2c53c6b467023289f5211894d28af333682702ccfc5345091482e69fcf",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/reclassify-language-model-work-as-a-conformance-track/b136be2c53c6_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/reclassify-language-model-work-as-a-conformance-track.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "recognize-several-ordered-named-outputs-at-the-compiler-request-boundary",
+      "ticket_file": "tickets/recognize-several-ordered-named-outputs-at-the-compiler-request-boundary.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "d045f1a41e974f84302f91f716a17f301f4e50a986a18ebecc50181dfccb5191",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/recognize-several-ordered-named-outputs-at-the-compiler-request-boundary/d045f1a41e97_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/recognize-several-ordered-named-outputs-at-the-compiler-request-boundary.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "reconcile-the-roadmap-and-public-facades-with-the-consumer-neutral-mission",
+      "ticket_file": "tickets/reconcile-the-roadmap-and-public-facades-with-the-consumer-neutral-mission.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "56af03ee4dbcb0c8f8bf24c920c915b1f71431f9a0138322c6cf4f258bfcd045",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/reconcile-the-roadmap-and-public-facades-with-the-consumer-neutral-mission/56af03ee4dbc_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/reconcile-the-roadmap-and-public-facades-with-the-consumer-neutral-mission.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "reconcile-which-quantity-the-admission-rule-compares-against-a-caller-s-tolerance",
+      "ticket_file": "tickets/reconcile-which-quantity-the-admission-rule-compares-against-a-caller-s-tolerance.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "e7152def2e26489fac611736f56ceb48335cf8a1d122615583a3a5f340bca323",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/reconcile-which-quantity-the-admission-rule-compares-against-a-caller-s-tolerance/e7152def2e26_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/reconcile-which-quantity-the-admission-rule-compares-against-a-caller-s-tolerance.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "record-the-contraction-execution-row-and-correct-the-matrix-headline",
+      "ticket_file": "tickets/record-the-contraction-execution-row-and-correct-the-matrix-headline.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "3c908d3f250626ff336f58d8733cebe5ee49aaf36e59787f36387a5541d09567",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/record-the-contraction-execution-row-and-correct-the-matrix-headline/3c908d3f2506_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/record-the-contraction-execution-row-and-correct-the-matrix-headline.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "redesign-the-delivered-realization-record-from-typed-evidence",
+      "ticket_file": "tickets/redesign-the-delivered-realization-record-from-typed-evidence.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "fdb487a1ac095af53e7747c82c36cc88120c43a404b5790d64d108cebb8f7685",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/redesign-the-delivered-realization-record-from-typed-evidence/fdb487a1ac09_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/redesign-the-delivered-realization-record-from-typed-evidence.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "register-the-softmax-realization-law",
+      "ticket_file": "tickets/register-the-softmax-realization-law.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "9cae5efe81f335b3564b8f98f8c246a0a2885a8ef7d47829a95c85b2220de8bf",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/register-the-softmax-realization-law/9cae5efe81f3_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/register-the-softmax-realization-law.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "remove-the-fast-honor-pragmas-variant",
+      "ticket_file": "tickets/remove-the-fast-honor-pragmas-variant.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "045dfe5066559b26f653e200fdea425b0c18ea56a6e5fa83c3c0c9ad1c698bce",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/remove-the-fast-honor-pragmas-variant/045dfe506655_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/remove-the-fast-honor-pragmas-variant.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "remove-the-scalar-lowering-family-from-the-compiler",
+      "ticket_file": "tickets/remove-the-scalar-lowering-family-from-the-compiler.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "03fa78289debe31e4540bc1dbaa5d1e1ad1a382f830b0808bc8f9d602651ca02",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/remove-the-scalar-lowering-family-from-the-compiler/03fa78289deb_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/remove-the-scalar-lowering-family-from-the-compiler.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "remove-the-workload-shapes-from-the-concatenate-normative-definition",
+      "ticket_file": "tickets/remove-the-workload-shapes-from-the-concatenate-normative-definition.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "22717b607d947e68c428f81312be076f8ef61fc891ca82d5f94a2145e4be6aae",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/remove-the-workload-shapes-from-the-concatenate-normative-definition/22717b607d94_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/remove-the-workload-shapes-from-the-concatenate-normative-definition.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "repair-adr-0107-s-duplicated-and-mislabelled-decision-catalog-rows",
+      "ticket_file": "tickets/repair-adr-0107-s-duplicated-and-mislabelled-decision-catalog-rows.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "9b0edc7a39711df6888b7e38af1c4246642a657aa4392aff8f1f82982e5e782d",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/repair-adr-0107-s-duplicated-and-mislabelled-decision-catalog-rows/9b0edc7a3971_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/repair-adr-0107-s-duplicated-and-mislabelled-decision-catalog-rows.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage",
+      "ticket_file": "tickets/resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "28c77509a0f300d09ea0451d1ad093d398cc914ba2b22a09f9a6e172c666494d",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage/28c77509a0f3_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/resolve-the-region-attribution-fork-for-a-multi-region-elementary-stage.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "restore-an-executable-artifact-assembly-example",
+      "ticket_file": "tickets/restore-an-executable-artifact-assembly-example.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "6b2e46e8a6acb7791c722bb2fb5678959c21e787dbe48394bddb9c5435b48354",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/restore-an-executable-artifact-assembly-example/6b2e46e8a6ac_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/restore-an-executable-artifact-assembly-example.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "retain-and-attribute-a-real-msl-failure-through-an-expansion",
+      "ticket_file": "tickets/retain-and-attribute-a-real-msl-failure-through-an-expansion.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "f628cf2e60c8fba607c6f70ca1f470c0e77f0ebf56f33dc4f21a600f06b3b90f",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/retain-and-attribute-a-real-msl-failure-through-an-expansion/f628cf2e60c8_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/retain-and-attribute-a-real-msl-failure-through-an-expansion.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "scope-the-concatenate-fusion-role-and-lowering",
+      "ticket_file": "tickets/scope-the-concatenate-fusion-role-and-lowering.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "e57163bf285b80964305bd92a047f8877671919c43a9fb80b2d21ca98713775f",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/scope-the-concatenate-fusion-role-and-lowering/e57163bf285b_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/scope-the-concatenate-fusion-role-and-lowering.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "scope-the-sub-tensor-selection-fusion-role",
+      "ticket_file": "tickets/scope-the-sub-tensor-selection-fusion-role.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "94e3ef36c888fcbc885e5dc857e6a16d3bf2a6e5beba713139151291e2503d60",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/scope-the-sub-tensor-selection-fusion-role/94e3ef36c888_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/scope-the-sub-tensor-selection-fusion-role.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "separate-the-tree-and-split-groupings-at-a-contributor-count-where-their-partitions-differ",
+      "ticket_file": "tickets/separate-the-tree-and-split-groupings-at-a-contributor-count-where-their-partitions-differ.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "2698261f240942c3dedb982ffbc33e3a1a57b1fe80cb49a11ded1bfc4515fce4",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/separate-the-tree-and-split-groupings-at-a-contributor-count-where-their-partitions-differ/2698261f2409_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/separate-the-tree-and-split-groupings-at-a-contributor-count-where-their-partitions-differ.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "size-the-four-hand-written-metal-all-arrays-from-their-types",
+      "ticket_file": "tickets/size-the-four-hand-written-metal-all-arrays-from-their-types.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "b8d1c3f6e6dd2024468dbd15fff2e352a31a50149d148469c591f987515e1f76",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/size-the-four-hand-written-metal-all-arrays-from-their-types/b8d1c3f6e6dd_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/size-the-four-hand-written-metal-all-arrays-from-their-types.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "size-the-metal-aot-all-arrays-whose-count-coupling-does-not-rescue-them",
+      "ticket_file": "tickets/size-the-metal-aot-all-arrays-whose-count-coupling-does-not-rescue-them.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "8788ee083700cc25252bdcb1dda0607bbf6ebef8fdffaffb06356aec70cc2760",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/size-the-metal-aot-all-arrays-whose-count-coupling-does-not-rescue-them/8788ee083700_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/size-the-metal-aot-all-arrays-whose-count-coupling-does-not-rescue-them.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "size-the-region-shape-budgets-to-the-programs-the-profile-admits",
+      "ticket_file": "tickets/size-the-region-shape-budgets-to-the-programs-the-profile-admits.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "4ff25656e138700170c238920b7bf65ecbe9bb85a37a0e5b87ccbd3a1e0a881c",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/size-the-region-shape-budgets-to-the-programs-the-profile-admits/4ff25656e138_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/size-the-region-shape-budgets-to-the-programs-the-profile-admits.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "state-the-general-property-in-each-reindex-conformance-test",
+      "ticket_file": "tickets/state-the-general-property-in-each-reindex-conformance-test.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "011f90659880fd97e3cce896c446aa7d85bc548b9f6db5dbd7b7fe6c42c288a5",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/state-the-general-property-in-each-reindex-conformance-test/011f90659880_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/state-the-general-property-in-each-reindex-conformance-test.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "stop-the-conformance-crate-s-lint-table-drifting-from-the-workspace",
+      "ticket_file": "tickets/stop-the-conformance-crate-s-lint-table-drifting-from-the-workspace.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "63e5585d359cd219b40a19302a9b11da75f8e20bfaa3f31fe31c0021b692373e",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/stop-the-conformance-crate-s-lint-table-drifting-from-the-workspace/63e5585d359c_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/stop-the-conformance-crate-s-lint-table-drifting-from-the-workspace.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "supersede-the-runtime-owned-kv-state-design",
+      "ticket_file": "tickets/supersede-the-runtime-owned-kv-state-design.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "835d7b685365c3fa3f3aef1eec23b35e414e5966834f10d8d630e3209d20c024",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/supersede-the-runtime-owned-kv-state-design/835d7b685365_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/supersede-the-runtime-owned-kv-state-design.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "survey-what-belongs-in-the-conformance-crate",
+      "ticket_file": "tickets/survey-what-belongs-in-the-conformance-crate.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "42f267ed56dccda2266eeb7dcf4d913944efeb44bbc50105648644e7615540ef",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/survey-what-belongs-in-the-conformance-crate/42f267ed56dc_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/survey-what-belongs-in-the-conformance-crate.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "validate-bf16-at-the-runtime-routing-boundary",
+      "ticket_file": "tickets/validate-bf16-at-the-runtime-routing-boundary.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "5df5f7ad0602fb4292435636b24277fbf209b06dc53721946d5f375c0572beb8",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/validate-bf16-at-the-runtime-routing-boundary/5df5f7ad0602_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/validate-bf16-at-the-runtime-routing-boundary.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "verify-and-file-the-remaining-maturity-audit-leads",
+      "ticket_file": "tickets/verify-and-file-the-remaining-maturity-audit-leads.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "3697db5a95eb0cddab9724d40d59c80b440e993e4f4b8ac5786713955dbb961e",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/verify-and-file-the-remaining-maturity-audit-leads/3697db5a95eb_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/verify-and-file-the-remaining-maturity-audit-leads.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "widen-compile-governed-s-error-to-the-target-compile-failure",
+      "ticket_file": "tickets/widen-compile-governed-s-error-to-the-target-compile-failure.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "42fda9908d49b85472be46fe5db3d55a2145bd9b50411b7eee75a784640dd571",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/widen-compile-governed-s-error-to-the-target-compile-failure/42fda9908d49_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/widen-compile-governed-s-error-to-the-target-compile-failure.md only"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "widen-the-deterministic-budgets-to-the-decoder-layer-program",
+      "ticket_file": "tickets/widen-the-deterministic-budgets-to-the-decoder-layer-program.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "facf5423b0f54decf5770515a5e990b3dc2c64874b161707d09af2288dc05eaf",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/widen-the-deterministic-budgets-to-the-decoder-layer-program/facf5423b0f5_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/widen-the-deterministic-budgets-to-the-decoder-layer-program.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "widen-the-strategy-recognizer-past-the-f32-wall",
+      "ticket_file": "tickets/widen-the-strategy-recognizer-past-the-f32-wall.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "39712c49a962aa99dc2e868de28a40587b75e624171afebdd79f504d38fa457b",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/widen-the-strategy-recognizer-past-the-f32-wall/39712c49a962_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/widen-the-strategy-recognizer-past-the-f32-wall.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    },
+    {
+      "ticket_id": "wire-the-env-configured-eviction-policy-through-the-deliver-path",
+      "ticket_file": "tickets/wire-the-env-configured-eviction-policy-through-the-deliver-path.md",
+      "repository_status": "done",
+      "inclusion_reason": "terminal-completed-in-window",
+      "ticket_content_hash": "da3e88ec9c2e662ad3adedd2357cd3d1537c70d07ece724e5cedc8079bad30aa",
+      "report_path": "/Users/tsanterre/workspace/github.com/moderately-ai/tiler/docs/research/documentation/ticket-audit-2026-08-10/reports/wire-the-env-configured-eviction-policy-through-the-deliver-path/da3e88ec9c2e_c99ac54950f2.md",
+      "class": "A",
+      "file_class": "ticket_only",
+      "files": [
+        "tickets/wire-the-env-configured-eviction-policy-through-the-deliver-path.md"
+      ],
+      "kinds": {
+        "ticket": 1
+      },
+      "public_none": true,
+      "only_this_ticket": true
+    }
+  ]
+}
