@@ -1,7 +1,7 @@
 ---
 id: re-reconcile-document-metadata-with-make-citations-link-resolution
 title: Re-reconcile document-metadata with make citations link resolution
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [reconcile-the-document-metadata-validator-claim-with-its-own-validation-section, resolve-the-markdown-links-the-citation-check-cannot-see]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: sol-document-metadata-links
-lease_expires_at: 1786411317
 ---
 ## User-visible outcome
 
