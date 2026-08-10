@@ -19,11 +19,13 @@
 ## Repair state (in-scope)
 
 - `not-needed`: 683
-- `pending`: 17
+- `integrated`: 3
+- `pending`: 14
 
 ## Progress
 
 - Waves 1–2 complete: 24 open-board tickets accepted into ledger
+- Phase B integrated 3 repair-required tickets at `cbce7419f52649d0e6513dc24584297d0e188458` (accept-adr-0108 scopes; reassociated-contraction graph; two-participant residue sequencing)
 - Shared RO worktree @ c99ac549
 
 ## Completion criteria
