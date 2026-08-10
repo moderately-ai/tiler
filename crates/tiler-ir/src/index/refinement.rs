@@ -90,8 +90,9 @@ const STAGED_EXECUTABLE_COVERAGE_IDENTITY_TAG: &[u8] =
 /// cross-crate property from spellings and terminators: every terminated
 /// spelling has its sole NUL at the end, every unterminated IR spelling has no
 /// NUL, and the observed populations have no exact equality. This crate's
-/// `no_governed_domain_of_this_crate_prefixes_another` checks its own admitted
-/// set rather than leaving that half to prose.
+/// private pin population is inspected for that argument;
+/// `tiler_artifact::domains::no_governed_domain_of_this_crate_prefixes_another`
+/// checks that crate's own admitted set rather than leaving its half to prose.
 ///
 /// **The other set is sized by its type and not by a number here.**
 /// `GovernedDomain` in `crates/tiler-artifact/src/domains.rs` is that
