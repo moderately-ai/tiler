@@ -1,7 +1,7 @@
 ---
 id: reclassify-the-covered-occurrence-public-boundary-acceptance-labels
 title: Reclassify CoveredOccurrence acceptance labels after the 2026-08-05 decision
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [accept-the-proof-bound-stage-coverage-public-boundary, bind-stage-coverage-to-index-refinement-identity]
@@ -9,6 +9,9 @@ scopes: [contracts/foundation, contracts/decisions, research/documentation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, public-boundary, contracts]
+claimed_from: todo
+assignee: sol-covered-occurrence-labels
+lease_expires_at: 1786383181
 ---
 ## User-visible outcome
 

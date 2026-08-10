@@ -1,7 +1,7 @@
 ---
 id: pin-the-tiler-artifact-identity-domain-bytes-the-existing-census-does-not-fix
 title: Pin the tiler-artifact identity-domain bytes the existing census does not fix
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [pin-the-identity-domain-strings-so-a-reverted-domain-reddens-the-gate, pin-the-tiler-compiler-identity-domain-spellings-the-ir-census-does-not-reach]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, tests, versioning]
+claimed_from: todo
+assignee: sol-artifact-domain-bytes
+lease_expires_at: 1786383181
 ---
 `crates/tiler-artifact/src/domains.rs` proves that every governed domain constant
 is enumerated, every enum variant is classified into a container, and no two

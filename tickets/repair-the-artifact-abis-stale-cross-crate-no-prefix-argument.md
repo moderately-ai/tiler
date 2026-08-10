@@ -1,7 +1,7 @@
 ---
 id: repair-the-artifact-abis-stale-cross-crate-no-prefix-argument
 title: Repair the artifact ABI's stale cross-crate no-prefix argument
-status: todo
+status: in-progress
 priority: p1
 dependencies: [correct-the-every-ir-domain-opens-tiler-ir-premise-in-two-places]
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, identity, documentation]
+claimed_from: todo
+assignee: sol-artifact-abi-prefix
+lease_expires_at: 1786383181
 ---
 ## Facts to re-verify before editing
 
