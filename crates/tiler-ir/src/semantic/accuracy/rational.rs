@@ -725,6 +725,20 @@ fn power_of_two_exponent(value: &BigUint) -> Option<u64> {
 /// value it carries past that point has a power-of-two denominator, and so does
 /// every product of two of them.
 ///
+/// The population census remains reproducible from `### Reproducing the census`
+/// in `tickets/bound-the-exact-rational-gcd-cost-in-certified-enclosures.md`;
+/// its temporary harness runs with
+/// `cargo nextest run -p tiler-reference --test gcd_census_temp --no-capture`.
+///
+/// **Regression-guard decision (2026-08-10).** No admissible deterministic
+/// in-tree test distinguishes this shift from the value-identical general gcd in
+/// release builds. A test-only path observer can be satisfied from a
+/// `debug_assert` while release executes gcd; a source-text census pins one Rust
+/// spelling rather than the mechanism; timing is host-sensitive; and a permanent
+/// dependency or hot-path counter adds the cost this branch exists to avoid.
+/// Preserve the explicit branch and rerun the cited operand-population census
+/// when changing it rather than treating value tests as performance evidence.
+///
 /// The symmetric case — a dyadic *magnitude* against an odd denominator — is not
 /// taken, because the same census measured it at 480 calls (0.7 %) carrying 6,168
 /// iterations (0.066 %). It would be a branch whose cost is paid on every call to
