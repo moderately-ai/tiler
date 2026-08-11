@@ -7115,6 +7115,12 @@ fn the_tree_takes_the_capped_participant_count_where_the_balanced_split_differs(
         "the population separating the two rules moved"
     );
 
+    assert_eq!(
+        crate::physical::take_capped_tree_above_cap_candidate_checks_for_test(),
+        0,
+        "the below-4,096 domain sweep must not enter the above-cap search"
+    );
+
     // The above-cap branch, which the sweep cannot reach: it needs a contributor
     // count whose smallest divisor above one already exceeds the cap, and the
     // smallest is 257 * 257 — far past the ladder. The branch is what keeps the
@@ -7142,8 +7148,43 @@ fn the_tree_takes_the_capped_participant_count_where_the_balanced_split_differs(
                 .partitions,
         "the above-cap branch chose a wider count than the balanced rule"
     );
-    // A prime count admits nothing, in this branch as in the other.
+    assert_eq!(
+        crate::physical::take_capped_tree_above_cap_candidate_checks_for_test(),
+        1,
+        "257 squared must check its one above-cap divisor candidate"
+    );
+
+    // A prime count admits nothing, but this one makes the above-cap search do
+    // real work before it reaches that conclusion. Its floor square root is
+    // 257, so after the lower scan finds no divisor the fallback checks 257;
+    // 65,537 instead has floor square root 256 and would make that loop empty.
+    let prime_reaching_above_cap_search = 66_067_u64;
+    assert_eq!(
+        prime_reaching_above_cap_search.isqrt(),
+        crate::physical::MEASURED_TREE_PARTICIPANT_CAP + 1,
+        "the prime subject must leave one candidate for the above-cap search"
+    );
+    assert!(
+        (2..=crate::physical::MEASURED_TREE_PARTICIPANT_CAP)
+            .all(|candidate| !prime_reaching_above_cap_search.is_multiple_of(candidate)),
+        "the prime subject must enter the above-cap search rather than return from the lower scan"
+    );
     assert_eq!(crate::physical::capped_tree_partition(65_537), None);
+    assert_eq!(
+        crate::physical::take_capped_tree_above_cap_candidate_checks_for_test(),
+        0,
+        "65,537 must leave the above-cap search empty"
+    );
+    assert_eq!(
+        crate::physical::capped_tree_partition(prime_reaching_above_cap_search),
+        None,
+        "the above-cap search must exhaust its one non-dividing candidate for this prime"
+    );
+    assert_eq!(
+        crate::physical::take_capped_tree_above_cap_candidate_checks_for_test(),
+        1,
+        "66,067 must check exactly one candidate in the actual above-cap loop"
+    );
 }
 
 /// The tree's width rule bounds the *downward* direction, and pays nothing for it

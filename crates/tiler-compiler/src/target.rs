@@ -6312,15 +6312,18 @@ mod tests {
         assert_eq!(request.profiles(), &[second, first]);
     }
 
-    /// The shapes on which all three reduction strategies coexist, for one bound.
+    /// Candidate shapes where all three reduction strategies are expressible, for
+    /// one grid-axis bound.
     ///
-    /// A shape qualifies when both parallel strategies are expressible and a plan
-    /// is feasible. Every condition is read from the code that decides it rather
-    /// than restated: `governed_partition` is what withholds the split,
-    /// `capped_tree_partition` is what withholds the tree — the two choose
-    /// different participant counts and are asked separately rather than one
-    /// standing in for the other — and the grid-axis bound is what the prologue's
-    /// one-invocation-per-element launch is assessed against.
+    /// This helper deliberately reads only the algebraic and launch conditions it
+    /// models: `governed_partition` withholds the split,
+    /// `capped_tree_partition` withholds the tree — the two choose different
+    /// participant counts and are asked separately rather than one standing in
+    /// for the other — and the grid-axis bound assesses the prologue's
+    /// one-invocation-per-element launch. It does not assess a plan's target
+    /// feasibility: local memory and synchronization realization are read later
+    /// by the physical feasibility path, which can withhold the tree for every
+    /// shape on a profile such as the governed baseline.
     fn three_strategy_domain(grid_axis_bound: u64) -> Vec<(u64, u64)> {
         let mut domain = Vec::new();
         for rows in 1..=grid_axis_bound {
@@ -6336,8 +6339,8 @@ mod tests {
         domain
     }
 
-    /// **The prototype baseline admits one three-strategy shape, and it is not
-    /// the profile calibration measures against.**
+    /// **The prototype baseline has one three-strategy candidate shape, and it
+    /// is not the profile calibration measures against.**
     ///
     /// This test was written as the measured-calibration trigger for
     /// [`calibrate-and-activate-parallel-reduction-selection`], and it could not
@@ -6358,7 +6361,7 @@ mod tests {
     /// `tiler_build::metal_plan::tests::the_measured_grid_axis_admits_more_than_one_three_strategy_shape`.
     ///
     /// What this test still checks is worth keeping and is what its name now
-    /// says: on *this* profile the derivation `4 <= contributors <=
+    /// says: for *this helper* the derivation `4 <= contributors <=
     /// rows * contributors <= bound` closes on `(1, 4)`, because both partition
     /// rules — `governed_partition` for the split and `capped_tree_partition`
     /// for the tree — withhold their strategy below four contributors. The two
@@ -6376,7 +6379,7 @@ mod tests {
     /// [`calibrate-and-activate-parallel-reduction-selection`]:
     ///     ../../../tickets/calibrate-and-activate-parallel-reduction-selection.md
     #[test]
-    fn the_prototype_baseline_admits_one_three_strategy_shape() {
+    fn the_prototype_baseline_has_one_three_strategy_candidate_shape() {
         let bound = TargetProfileBuilder::governed()
             .quantitative
             .iter()
@@ -6389,7 +6392,8 @@ mod tests {
             domain,
             vec![(1, 4)],
             "the prototype baseline's three-strategy domain moved at grid-axis bound {bound}. \
-             This is the target-neutral baseline, not the profile calibration measures against: \
+             This is the helper's algebraic-and-launch domain, not a feasibility result. \
+             The target-neutral baseline is not the profile calibration measures against: \
              widening it needs an authority covering every target, which no device measurement \
              can supply. The Metal profile's domain is reported by tiler-build's \
              the_measured_grid_axis_admits_more_than_one_three_strategy_shape"

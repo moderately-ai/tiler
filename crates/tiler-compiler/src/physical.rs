@@ -2163,6 +2163,22 @@ pub(crate) fn governed_partition(contributors: u64) -> Option<ContributorPartiti
 ///     ../../../spikes/program-planning/reduction-partition-calibration/README.md
 pub(crate) const MEASURED_TREE_PARTICIPANT_CAP: u64 = 256;
 
+// This is test-only because candidate counts explain test reachability, not a
+// property of a physical plan. Thread-local state makes a test's reset/read
+// deterministic even while other unit tests call the partition rule in parallel.
+#[cfg(test)]
+std::thread_local! {
+    static CAPPED_TREE_ABOVE_CAP_CANDIDATE_CHECKS: std::cell::Cell<u64> = const {
+        std::cell::Cell::new(0)
+    };
+}
+
+/// Returns and clears the calling test thread's above-cap candidate-check count.
+#[cfg(test)]
+pub(crate) fn take_capped_tree_above_cap_candidate_checks_for_test() -> u64 {
+    CAPPED_TREE_ABOVE_CAP_CANDIDATE_CHECKS.with(|checks| checks.replace(0))
+}
+
 /// Chooses the participant count the single-workgroup tree runs for one extent.
 ///
 /// The rule is **the admissible participant count nearest
@@ -2296,6 +2312,10 @@ pub(crate) fn capped_tree_partition(contributors: u64) -> Option<ContributorPart
         let limit = contributors.isqrt();
         let mut candidate = ceiling + 1;
         while candidate <= limit {
+            #[cfg(test)]
+            CAPPED_TREE_ABOVE_CAP_CANDIDATE_CHECKS.with(|checks| {
+                checks.set(checks.get() + 1);
+            });
             if contributors.is_multiple_of(candidate) {
                 return Some(partition(candidate));
             }
