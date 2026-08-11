@@ -1,7 +1,7 @@
 ---
 id: admit-a-storage-carrier-for-integer-program-inputs
 title: Admit a storage carrier for integer program inputs
-status: awaiting-decision
+status: todo
 priority: p1
 dependencies: [admit-an-indirect-gather-family-for-tied-embedding-lookup, reclassify-language-model-work-as-a-conformance-track]
 related: [design-model-ingestion-and-complete-execution, enumerate-the-mature-tensor-dtype-taxonomy, route-an-embedded-artifact-through-a-consumer-storage-seam, admit-the-bf16-type-and-carrier-into-every-total-map, admit-an-invocation-scoped-gather-index-validation-receipt]
@@ -112,6 +112,18 @@ Both declared dependencies are `done`: [`admit-an-indirect-gather-family-for-tie
 ## Public-boundary correction — 2026-08-09
 
 Clearing dependencies did not accept the two public enum additions. Tom must accept the exact coherent surface before implementation: append `StorageScalar::U32` at tag `0x04`, append `KernelType::U32` at the next unclaimed tag, preserve width-exact binding, and make Metal refuse the kernel type by name until a real backend consumer exists. Recommendation: accept that exact honest carrier/access pair; `F32`, `I32`, and eight-byte `Index` are all semantically wrong substitutes. The ticket is therefore `awaiting-decision`, not dependency-blocked and not yet implementation-ready.
+
+## Accepted — 2026-08-11
+
+Tom accepted the recommended honest carrier/access pair in the Codex coordination thread by replying `sounds good, accept`. The relay source is Tom's direct response to the ranked decision packet; this acceptance moves the ticket to `todo` and does not claim implementation.
+
+The exact accepted surface is append-only `StorageScalar::U32` at tag `0x04` and append-only `KernelType::U32` at the next unclaimed tag. Binding remains width- and type-exact: a U32 semantic input must be backed by U32 storage and read through a U32 kernel access type. `F32`, `I32`, `U8`, and the eight-byte `Index` type are not aliases or fallbacks, and no implicit conversion, reinterpretation, narrowing, or widening is admitted.
+
+Metal must initially refuse `KernelType::U32` through the existing typed `UnsupportedValueType` path. The refusal names the missing maturity condition: an admitted backend consumer that produces a U32-typed kernel value and supplies direct emission evidence. No unexercised `uint` spelling lands merely because MSL can state one. A later gather-lowering vertical may lift this refusal only with its own tested producer, exact binding, and public-boundary consequences.
+
+This storage decision does not discharge gather bounds. The invocation-scoped preflight ticket still validates every host-visible index against the gathered extent, seals the immutable snapshot, and refuses missing, stale, mismatched, or out-of-range evidence before routing commit. No carrier choice creates a clamp, wrap, unchecked execution, plan substitution, reference execution, or backend fallback.
+
+The broader parameterized-integer carrier is deferred until a second concrete integer-storage use establishes a shared vocabulary. The smaller exact pair is preferred now because it is semantically honest, preserves all existing encoded bytes, matches the four-byte input representation, and keeps unsupported backend execution fail-closed.
 
 ## Fact audit — 2026-08-10
 
