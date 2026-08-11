@@ -1575,13 +1575,14 @@ impl CanonicalLoweringRegistryIdentity {
 
 /// Encodes the registry's canonical identity with its sub-identities interned.
 ///
-/// **Why a pool and not an inline copy.** Every capability names four authority
-/// identities, and capabilities registered against one registry overwhelmingly
-/// name the *same* ones — the governed profile's five capabilities restated a
-/// single 1,496-byte registry snapshot five times, 7,480 bytes of a 15,583-byte
-/// identity, which in turn was 77% of the explain subject that is hashed once
-/// per compilation and compared on every evidence binding. Writing each distinct
-/// value once and referring to it by position is the same shape
+/// **Historical measurement — before the v2 pool (2026-07-27).** Every
+/// capability names four authority identities, and capabilities registered
+/// against one registry overwhelmingly named the *same* ones — the then-governed
+/// profile's five capabilities restated a single 1,496-byte registry snapshot
+/// five times, 7,480 bytes of a 15,583-byte identity, which in turn was 77% of
+/// the explain subject that is hashed once per compilation and compared on every
+/// evidence binding. Writing each distinct value once and referring to it by
+/// position is the same shape
 /// `tiler_ir::semantic::identity::compute_graph_identity` already uses, and the
 /// same one that took kernel-program identity from 13,309 bytes to 3,118.
 ///
