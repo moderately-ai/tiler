@@ -1,7 +1,7 @@
 ---
 id: realign-the-result-side-display-strings-across-both-refinement-error-mirrors
 title: Realign the result-side Display strings across both refinement error mirrors
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [realign-the-compiler-refinement-error-mirror-with-the-grouped-result-arity]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [diagnostics, error-messages]
-claimed_from: todo
-assignee: terra-result-display
-lease_expires_at: 1786424181
 ---
 ## User-visible outcome
 
@@ -26,3 +23,9 @@ The rendered result-side refinement errors say what their fields now carry, in b
 ## Closes when
 
 Both crates' result-side strings state the counted population and the position's meaning identically, any string-asserting tests move with them, and the mirror is re-verified verbatim-equal.
+
+## Outcome — 2026-08-11
+
+Delivered at `3c94759e4c64487e7f2808787d43d62edb0e20b1`. Both formatter mirrors now say `distinct output tensors` for `ResultArity` and `result {position}` for the three ordered result-position refusals, with the latter spelling the root-level condition where relevant. A four-variant value-level regression compares each IR rendering, compiler rendering, and independent expected string.
+
+Eight subject perturbations changed each production formatter arm independently while leaving assertions untouched; every run executed one test and failed with `IR result-side display moved` or `compiler result-side display moved`. Independent exact-hash review re-derived the distinct-tensor grouping and ordered-position mapping, repeated all eight perturbations, and found no defect. The integration commit receives a fresh `make full` before publication because the worker's full-gate result had no persistent log.
