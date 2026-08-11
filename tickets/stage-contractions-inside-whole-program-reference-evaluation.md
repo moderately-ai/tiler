@@ -18,6 +18,16 @@ tags: [implementation, reference, evaluation, contraction, language-model]
 
 **Fact — the bound, and the two occurrences that meet it.** `contract_operands` in `crates/tiler-reference/src/contraction.rs` refuses a fold of more than `MAX_REFERENCE_TENSOR_ELEMENTS` (16,777,216) multiply-accumulate steps, before the loop and under its own `IterationStepsExceeded` variant. At the C1 conformance row's prefill shape the causal self-attention block's query projection is `10 * 2048 * 1024` and its output projection `10 * 1024 * 2048` — **20,971,520 steps each** — so both are refused.
 
+**Correction — 2026-08-10, review of candidate
+`5e6a813ded3ce86436b39ee9bcdf0519c999a7b0`.** The preceding Fact records the
+pre-landing premise but is false as a description of the current implementation.
+`contract_operands` now refuses above the evaluator-carried per-occurrence
+iteration-step allowance; the default allowance remains
+`MAX_REFERENCE_TENSOR_ELEMENTS`, so it still refuses both named projections.
+That constant now bounds one window, and an evaluator whose caller states the
+larger allowance folds an admitted occurrence in several such windows. The
+landed Outcome below is the authority for that result.
+
 **Measurement — watched, not derived.** `the_reference_work_bound_refuses_the_c1_projections` in `crates/tiler-reference/tests/causal_self_attention_block.rs` builds the block at the C1 extents and evaluates it, and the refusal reads:
 
 ```text

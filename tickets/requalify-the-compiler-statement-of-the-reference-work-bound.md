@@ -19,13 +19,30 @@ lease_expires_at: 1786418733
 
 ## Why this exists
 
-**Fact — verified 2026-08-09 at source anchor `MAX_REFERENCE_TENSOR_ELEMENTS bounds a *single* fold`.** The module still says the constant bounds a single fold at 16,777,216 steps and that `contract_operands` refuses `output_count * contracted_count` above it under `IterationStepsExceeded`.
+**Fact — corrected 2026-08-10 after re-reading the source at claim
+`d8f4cfca07c9bc9f8a71a3fa172eb9501bac349f`.** The module still says
+`MAX_REFERENCE_TENSOR_ELEMENTS` bounds a *single* fold at 16,777,216 steps,
+but that is now stale: the constant bounds one window. `contract_operands`
+refuses `output_count * contracted_count` above the evaluator-carried
+per-occurrence allowance under `IterationStepsExceeded`; the default allowance
+is the constant.
 
 **Fact — what `stage-contractions-inside-whole-program-reference-evaluation` changed.** That constant now bounds a single *window* — the steps one uninterrupted walk of a contraction's iteration space may cost — and `contract_operands` refuses above the iteration-step allowance its evaluator carries, which is that constant unless a caller states another. A fold over one window is spent as several windows rather than refused.
 
 **Fact — corrected 2026-08-09.** `governed::contraction_conformance` does not call `ReferenceEvaluator::standard()`; both relevant sites construct `ReferenceEvaluator::new(FrozenReferenceRegistry::standard(...))`. That constructor still uses the default per-occurrence allowance, and neither site calls `with_iteration_step_allowance`, so every refusal this module observes is unchanged and every assertion in the file still holds. What has stopped being true is the general claim about the constant: a reader deriving "the four prefill cells can never come through the evaluator" would now be wrong.
 
 The out-of-scope status is why this is filed rather than fixed: the change that made the sentence stale held `implementation/reference` alone.
+
+## Review correction, 2026-08-10
+
+**Fact — independent review at candidate
+`5e6a813ded3ce86436b39ee9bcdf0519c999a7b0`.** The related completed staging
+ticket's anchor `Fact — the bound, and the two occurrences that meet it.` still
+described `MAX_REFERENCE_TENSOR_ELEMENTS` as the direct
+`contract_operands` refusal limit, despite that ticket's later Outcome and the
+live allowance/windowing implementation. Its dated correction preserves the
+historical premise and states the current behavior; this ticket's compiler-only
+documentation change remains unchanged.
 
 ## Closes when
 
