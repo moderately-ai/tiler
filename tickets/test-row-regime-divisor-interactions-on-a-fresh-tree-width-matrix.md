@@ -1,7 +1,7 @@
 ---
 id: test-row-regime-divisor-interactions-on-a-fresh-tree-width-matrix
 title: Test row-regime and divisor-neighbour interactions on a fresh tree-width matrix
-status: in-progress
+status: done
 priority: p3
 dependencies: [calibrate-a-shape-aware-tree-width-cost-row]
 related: [measure-the-tree-width-excursion-past-the-cap]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [reductions, scheduling, measurement]
-claimed_from: todo
-assignee: sol-tree-width-interactions
-lease_expires_at: 1786449043
 ---
 ## The question
 
@@ -90,3 +87,7 @@ Do not change `capped_tree_partition`, reuse the opened 2026-08-11 held-out cell
 ## Closes when
 
 A fresh sealed population either supports one explicitly encoded interaction family under primary and repeat scoring or rejects the family and states whether the next useful evidence is a second profile, a different observable, or a non-parametric target-private table.
+
+## Integration
+
+- 2026-08-11 — Candidate `15f5f61fe0efb2a22452943510aa594602d6d887` received an independent exact-hash review with no findings and was integrated into `main` by merge commit `a0a4fe96777c8e8ddf1290eac2832241b4192024`. The review independently reproduced all 1,250 measured rows, six C/D fold comparisons, the 56-key environment record, and every reported objective. This spike/docs/tickets-only delta touches none of the repository full-gate invalidation paths and carries exact-main full gate `477634a1d251afd8cdb116947df3c33fd8b7e7ae`; citations and ticket lint are rerun on the closing commit.
