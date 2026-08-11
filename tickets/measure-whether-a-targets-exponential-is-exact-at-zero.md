@@ -1,7 +1,7 @@
 ---
 id: measure-whether-a-targets-exponential-is-exact-at-zero
 title: Measure whether a target's exponential is exact at zero
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [derive-the-tree-fold-form-of-the-online-softmax-rescaling-bound, expose-the-numeric-elementary-accuracy-a-parametric-bound-can-instantiate]
@@ -9,6 +9,9 @@ scopes: [research/numerics, research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, accuracy, transcendentals, measurement, trigger-fired]
+claimed_from: todo
+assignee: sol-exp-zero
+lease_expires_at: 1786423431
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: pin-the-local-memory-refusal-band-the-tree-cap-opened
 title: Pin the local-memory refusal band the tree cap opened
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [cap-the-tree-reduction-participants-at-the-measured-256, activate-measured-reduction-selection-from-a-target-cost-row]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [reductions, scheduling, evidence-gap]
+claimed_from: todo
+assignee: terra-local-memory-band
+lease_expires_at: 1786423430
 ---
 ## User-visible outcome
 
