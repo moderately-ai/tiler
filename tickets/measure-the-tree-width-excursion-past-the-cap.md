@@ -1,7 +1,7 @@
 ---
 id: measure-the-tree-width-excursion-past-the-cap
 title: Measure the tree width excursion past the cap
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [bound-the-tree-cap-s-unmeasured-downward-direction, cap-the-tree-reduction-participants-at-the-measured-256, calibrate-a-shape-aware-tree-width-cost-row]
@@ -9,9 +9,6 @@ scopes: [research/program-planning, implementation/compiler, contracts/navigatio
 shared_scopes: [project/tickets]
 paths: []
 tags: [reductions, scheduling, measurement]
-claimed_from: todo
-assignee: sol-tree-width
-lease_expires_at: 1786438383
 ---
 ## Per-Fact audit — 2026-08-11, exact base `946e0328`
 
@@ -119,3 +116,8 @@ One profile (`tiler.metal.macos-apple9.msl4-0.f32.v1`), one contract (`FLUSH_AND
 Filed 2026-08-08 from [`bound-the-tree-cap-s-unmeasured-downward-direction`](bound-the-tree-cap-s-unmeasured-downward-direction.md), which landed the rule and bounded the direction arithmetically rather than by measurement. Every count above was verified by exhausting the range at that ticket's base rather than taken from a report.
 
 Scopes `contracts/navigation`, `contracts/optimizer`, and `research/target-profiles` were added on 2026-08-11 because the completed measurement makes the two catalogs, fusion contract's blanket cost-`Unknown`, and authority ledger's consumer boundary imprecise; each changed record is named in the Outcome. They authorize evidence corrections only, not a production selection or public-boundary change.
+
+
+## Integration — 2026-08-11
+
+Integrated reviewed candidate a574248cd093ae5409275be4cd6fe904f60d503f into main at merge commit 12742df2032810545e22735453518fa01ab2c905. The production selector and cap remain unchanged; calibrate-a-shape-aware-tree-width-cost-row owns the wider held-out study.
