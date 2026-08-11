@@ -1,7 +1,7 @@
 ---
 id: test-row-regime-divisor-interactions-on-a-fresh-tree-width-matrix
 title: Test row-regime and divisor-neighbour interactions on a fresh tree-width matrix
-status: todo
+status: in-progress
 priority: p3
 dependencies: [calibrate-a-shape-aware-tree-width-cost-row]
 related: [measure-the-tree-width-excursion-past-the-cap]
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [reductions, scheduling, measurement]
+claimed_from: todo
+assignee: sol-tree-width-interactions
+lease_expires_at: 1786447587
 ---
 ## The question
 
