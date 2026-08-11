@@ -63,3 +63,9 @@ Tom accepts the five paths, accepts with a named exclusion, or rejects. Nothing 
 ## Current adjacent-surface correction — 2026-08-09
 
 The statement above that `SourcedIndexInteger` keeps a pending acceptance is historical. [`accept-the-symbolic-index-coefficient-surface`](accept-the-symbolic-index-coefficient-surface.md) is `done`: Tom accepted `SourcedIndexInteger`, its readers and conversions, `IndexRegionBuilder::sourced_linear_combination`, and the `LinearTermRef::coefficient` widening on 2026-08-07. It correctly remains in `tiler_ir::index`; this ticket's accepted five-item relocation and its layering argument are unchanged. The interval-bound follow-on named by that acceptance is also `done`, while the accepted normalization rule continues to refuse writing environment-derived values into canonical nodes.
+
+## Representation correction — 2026-08-11
+
+This ticket accepted **where** the five items live and accurately recorded that the relocation itself changed no signature, field, variant, behavior, or canonical bytes. It did not make their then-current representations immutable. A later independent review at exact candidate `2f244dc7ff3a759d9688a482c27b48da70f37227` proved that public `SourcedShape` variants bypass the documented normalization constructor, permitting a safe-Rust panic and two unequal values with identical canonical bytes.
+
+The `tiler_ir::shape` location and absence of an `index` compatibility re-export remain accepted. [`seal-and-validate-sourced-shapes-at-semantic-inference-boundaries`](seal-and-validate-sourced-shapes-at-semantic-inference-boundaries.md) owns making the representation opaque while keeping the accepted path and existing admitted encodings; this note prevents the historical “no signature changed during relocation” measurement from being misread as authority to preserve the unsafe representation forever.

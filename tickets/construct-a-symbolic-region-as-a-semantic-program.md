@@ -4,7 +4,7 @@ title: Construct a symbolic inline region as a real semantic program
 status: todo
 priority: p1
 dependencies: [resolve-semantic-shape-inference-over-symbolic-extents, carry-a-sourced-shape-on-semantic-values]
-related: [carry-symbolic-extents-into-the-semantic-program, prototype-inline-proc-macro-frontend]
+related: [carry-symbolic-extents-into-the-semantic-program, prototype-inline-proc-macro-frontend, seal-and-validate-sourced-shapes-at-semantic-inference-boundaries, narrow-symbolic-inference-and-restore-host-owned-refusals]
 scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []

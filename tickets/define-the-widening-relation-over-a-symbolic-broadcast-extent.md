@@ -3,7 +3,7 @@ id: define-the-widening-relation-over-a-symbolic-broadcast-extent
 title: Define the widening relation when a broadcast result extent is a symbol
 status: awaiting-decision
 priority: p2
-dependencies: [relocate-the-sourced-extent-vocabulary-to-the-shape-module, carry-a-sourced-shape-on-semantic-values]
+dependencies: [relocate-the-sourced-extent-vocabulary-to-the-shape-module, carry-a-sourced-shape-on-semantic-values, seal-and-validate-sourced-shapes-at-semantic-inference-boundaries]
 related: [decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode, resolve-semantic-shape-inference-over-symbolic-extents, assemble-the-decoder-layer-program, assemble-the-causal-self-attention-block-program, design-model-ingestion-and-complete-execution, design-autoregressive-state-and-kv-cache, deliver-an-artifact-family-from-a-symbolic-region]
 scopes: [research/shapes, implementation/ir]
 shared_scopes: [project/tickets]
@@ -51,6 +51,7 @@ Tom has decided the meaning of a many-to-one relation at a symbolic result exten
 - Filed 2026-08-05 by [`decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode`](decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode.md), which ran the elimination and corrected the three records rather than taking the vocabulary change.
 - Depends on [`relocate-the-sourced-extent-vocabulary-to-the-shape-module`](relocate-the-sourced-extent-vocabulary-to-the-shape-module.md) and [`carry-a-sourced-shape-on-semantic-values`](carry-a-sourced-shape-on-semantic-values.md): a predicate over a sourced extent on a mapping was not designable before the sourced vocabulary lived in `tiler_ir::shape` and a semantic value could carry one. Both are now `done`; their completion is what ripens this ticket into a decision rather than silently answering it.
 - Related to [`resolve-semantic-shape-inference-over-symbolic-extents`](resolve-semantic-shape-inference-over-symbolic-extents.md) rather than dependent on it: that ticket routes the *elementwise* rule through `proves_equal`, and this one is the same question for a shape-declaring attribute, which its record does not reach.
+- **Dependency correction — 2026-08-11.** The elementwise decision remains related rather than a prerequisite, but this ticket now depends on [`seal-and-validate-sourced-shapes-at-semantic-inference-boundaries`](seal-and-validate-sourced-shapes-at-semantic-inference-boundaries.md). Independent review proved the shared public `SourcedShape` representation does not enforce normalization and can produce a safe-Rust panic or duplicate canonical spelling; a new sourced broadcast mapping must not be designed or implemented on that unsafe representation. The provider-specific narrowing ticket is not a dependency because this mapping question is governed-family semantics, not external provider participation.
 - Declared `research/shapes` because the addendum belongs beside the symbolic-extent record, and `implementation/ir` because `crates/tiler-ir/src/semantic/broadcast.rs` is where the predicate and the normative definition live.
 
 ## Trigger check log
