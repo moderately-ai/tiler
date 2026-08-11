@@ -182,6 +182,26 @@ The predeclared richer family is rejected. D is strictly better than C in only 2
 
 This is evidence that the tested compact row-regime × divisor-neighbour vocabulary does not generalize on this one qualified host, not evidence for a replacement. `capped_tree_partition`, the target cost row, feasibility, request/profile surface, and identity remain unchanged. [`compare-a-target-private-tree-width-table-with-a-prime-factor-signature`](../../../tickets/compare-a-target-private-tree-width-table-with-a-prime-factor-signature.md) owns the next useful test: a capacity/interpolation/default-frozen target-private table against an explicitly encoded pre-lowering prime-factor signature on another fresh contributor-grouped matrix. Neither opened matrix may validate it, and a second profile is premature until some policy survives this one.
 
+## The frozen target-private table versus prime-signature study
+
+[`compare-a-target-private-tree-width-table-with-a-prime-factor-signature`](../../../tickets/compare-a-target-private-tree-width-table-with-a-prime-factor-signature.md) owns the third fresh matrix. **Proposal, frozen 2026-08-11 before timing:** rows `{16,384,1,536,6,144,12,288}` cross fit contributors `{1,080,1,215,1,320,1,512,1,638,1,890}`, sealed held-out contributors `{1,050,1,155,1,274,1,430,1,575,1,925}`, and diagnostic-only anchors `{1,024,1,729}`. Every row and contributor is absent from every earlier retained TSV. Proper-divisor arithmetic gives 152 fit, 86 held-out, and 15 anchor widths per row: 1,265 variants in 70 cells per run. Preparation must admit and verify all 1,265 and decline zero. The widest candidate is 945 participants, with a 3,780-byte source request and expected 3,792-byte prepared allocation; the maximum element count is 23,654,400.
+
+The finite table has exactly 30 occupied entries: the primary raw-minimum width at every exact `(row, fit contributor)` key. Exact keys read their entry. In-range contributors linearly interpolate in contributor count between the adjacent entries' log2 widths and choose the admitted width at minimum absolute log-distance, narrower on a tie. Contributors below 1,080 or above 1,890, and unlisted rows, default to current production; there is no extrapolation or cross-row interpolation. Held scoring therefore exercises ten defaults and twenty interpolations, while the anchors add five of each. Contributor-group leave-one-out rebuilds the table without one group's five entries. Analysis reports every occupied, interpolated, and defaulted lookup and its complete derivation.
+
+The competing signature is the exact 30-byte little-endian device-free record `(contributors:u64, v2:u8, v3:u8, v5:u8, v7:u8, Omega:u8, omega:u8, smallest:u64, largest:u64)`. Missing named factors have valuation zero; zero contributors are refused; one uses zero counts and endpoint sentinel one; a prime uses counts one and identical endpoints but has no proper-divisor candidate. Trial division, primality, and checked recomposition are asserted. These bytes are spike evidence and do not enter artifact or cache identity.
+
+The signature model predicts the raw-minimum log2 width from `[log2(rows), log2(rows)^2, log2(contributors), v2, v3, v5, v7, Omega, omega, log2(smallest), log2(largest)]` plus an intercept. Ridge, standardization, zero-variance handling, deterministic solver, pivot floor, contributor-group LOO, lambda grid, objective, and narrower ties are exactly the predecessor's. At the signature's selected aggregate-LOO lambda, the 30-entry table is eligible only when its aggregate objective is componentwise no worse and it is componentwise no worse with at least one strict improvement in four of six folds. Otherwise the twelve-coefficient signature wins the complexity order.
+
+Only primary fit cells select and finally fit. The primary-fitted policies are applied unchanged to primary and repeat held-out data; a repeat refit is diagnostic. Standard error is `stddev / sqrt(30)`, and the plateau separation rule remains exactly **twice the sum** of the candidate and raw-minimum standard errors. Both runs independently require worst regret at most 1.10, upper median at most 1.02, at most three misses, worst strictly below production, and median no worse than production; the table must also pass its complexity gate. Anchors never select or support.
+
+The separate mode and device-free analyzer retain exact matrix/schema, source, ABI, oracle, result, environment, and executable-custody controls. The timed binary remains unretained: source and lock digests identify build inputs, while before/after executable digest, size, and mtime identify the observed binary without a byte-identical rebuild claim. No result changes production, public surface, target schema, feasibility, or identity. A survivor stops for a separate authority/threading decision because current production receives only contributors and owns no target-private table.
+
+**Measurement, 2026-08-11 on the qualified Apple M4 Max/Apple9 host:** the retained [primary](results/2026-08-11-apple-m4-max-macos27.0-26A5388g-tree-width-table/sweep.tsv) and [repeat](results/2026-08-11-apple-m4-max-macos27.0-26A5388g-tree-width-table/repeat.tsv) each measured all 1,265 predeclared widths in 70 cells, declined zero, reached P945 and 3,792 prepared bytes, and preserved the same unretained executable digest before and after. Primary ran `2026-08-11T11:22:31Z`–`11:40:38Z` at load `3.73 4.07 4.37`–`2.75 2.72 3.18`; repeat ran `11:40:50Z`–`11:58:38Z` at `2.94 2.77 3.19`–`3.42 3.30 3.19`. The [environment and custody record](results/2026-08-11-apple-m4-max-macos27.0-26A5388g-tree-width-table/environment.tsv) equality-pins those observations, the exact toolchain, every source/result digest, and the zero-process reservation.
+
+The frozen [analysis](results/2026-08-11-apple-m4-max-macos27.0-26A5388g-tree-width-table/analysis.txt) rejects both candidates. At lambda 1 the signature's fit LOO objective is worst `1.676963`, upper median `1.025229`, and 19 misses. The table is strictly better in only 2/6 folds, is ineligible, and primary selection therefore chooses the signature. On sealed held cells the signature records `1.318962 / 1.005762 / 7` primary and `1.439519 / 1.006505 / 10` repeat; the table records `2.794883 / 1.031449 / 16` and `2.542376 / 1.025240 / 15`. Both fail the predeclared support bar. Production itself is worse on worst regret and misses (`3.150855 / 1.072583 / 27` and `3.165281 / 1.070154 / 28`), but that comparison does not make either failed candidate supported.
+
+This is finite one-host evidence that neither the frozen 30-entry interpolation/default table nor the frozen prime-factor-signature model generalizes across this matrix and repeat. It is not evidence for a replacement or a portable profile claim. Production selection, cost rows, feasibility, request/profile surface, and identity remain unchanged. [`audit-the-stability-of-tree-width-optimum-labels-across-retained-matrices`](../../../tickets/audit-the-stability-of-tree-width-optimum-labels-across-retained-matrices.md) owns the device-free residual: determine whether raw-minimum and plateau labels are repeatable enough to justify any later supervised selector study, without treating any opened matrix as validation.
+
 ## Both strategies, because they consume the number differently
 
 The split's partition count is a launch extent and its contributors-per-partition is a fold length. The tree's partition count is *also* its declared workgroup width and, through the tile's staging, its threadgroup reservation — visible in the retained `threadgroup_bytes` column, which rises from 16 bytes at two participants to 4,096 at 1,024. That column records the prepared entry's aligned allocation as distinguished above, while the scheduled tile's source requirement remains one `f32` slot per participant. A partition best for one need not be best for the other, and the retained result shows a shape where their plateaus are **disjoint**.
@@ -259,6 +279,23 @@ cargo run --release --bin tree-width-interactions-analysis -- \
   results/<date>-<host>-tree-width-interactions/sweep.tsv \
   results/<date>-<host>-tree-width-interactions/repeat.tsv \
   results/<date>-<host>-tree-width-interactions/environment.tsv
+
+# Frozen target-private table versus prime-factor-signature study. Verify and
+# build before the reserved window; run primary and repeat from that same binary.
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  cargo run --release --bin reduction-partition-sweep -- \
+  --verify-tree-width-table
+cargo build --release --bin reduction-partition-sweep
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  target/release/reduction-partition-sweep --tree-width-table \
+  > results/<date>-<host>-tree-width-table/sweep.tsv
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  target/release/reduction-partition-sweep --tree-width-table \
+  > results/<date>-<host>-tree-width-table/repeat.tsv
+cargo run --release --bin tree-width-table-analysis -- \
+  results/<date>-<host>-tree-width-table/sweep.tsv \
+  results/<date>-<host>-tree-width-table/repeat.tsv \
+  results/<date>-<host>-tree-width-table/environment.tsv
 ```
 
 `DEVELOPER_DIR` selects the offline toolchain the [authority ledger](../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md)'s compilation-environment row names. On the host that produced the retained result the default selection *is* a newer Xcode, so the variable is load-bearing rather than defensive.
