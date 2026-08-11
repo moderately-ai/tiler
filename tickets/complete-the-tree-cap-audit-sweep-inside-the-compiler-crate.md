@@ -17,6 +17,27 @@ lease_expires_at: 1786410519
 
 The post-landing audit of [`cap-the-tree-reduction-participants-at-the-measured-256`](cap-the-tree-reduction-participants-at-the-measured-256.md) produced findings in two places. Everything outside `crates/tiler-compiler/` was fixed inline by the coordinator on 2026-08-07. The three items below are **inside** that crate, which a live claim held at the time, so they were filed rather than raced. Each was independently verified, not relayed.
 
+## Per-Fact audit — 2026-08-10 at `fbf7f32ea8093e01a53c226f3c27cb9664f91813`
+
+| Ticket Fact | Verdict | Evidence |
+| --- | --- | --- |
+| `65_537` reaches the fallback with no loop iteration, while prime `66_067` reaches its above-cap search for exactly one iteration. | **verified** | In `crates/tiler-compiler/src/physical.rs`, anchor `while candidate <= limit`, the search starts at `ceiling + 1` and is guarded by the integer square root. `factor 65537 66067` reports both prime; `256^2 = 65,536 < 65,537`, so its floor root is 256 and candidate 257 fails the guard. `257^2 = 66,049 < 66,067 < 66,564 = 258^2`, so its floor root is 257 and candidate 257 is checked once. An independent enumeration finds `66,049 = 257^2` as the first *composite* with any fallback iteration; `66,067` remains the first prime, as the Fact says. |
+| `three_strategy_domain` overclaims that it reads every feasibility condition. | **verified** | `crates/tiler-compiler/src/target.rs`, anchors `Every condition is read` and `fn three_strategy_domain`, show only both partition predicates and the grid-axis inequality. The same file's `workgroup_tree_target_for_test` doc, anchor `local-memory-bytes\` as *zero*`, says the governed baseline declares no local memory and no synchronization realization, both of which the helper does not consult. |
+| The upward/downward evidence separation already landed and needs no duplicate edit. | **verified** | `crates/tiler-compiler/src/physical.rs`, anchors `Upward: empirical evidence, one host` and `Downward: two claims, deliberately not sharing a sentence`, both remain. |
+
+The audit found no false Fact that changes this ticket's purpose, authority, public boundary, or identity surface.
+
+### Review correction — 2026-08-10 at `699ad6c4`
+
+Independent review found the first repair's watched failure incomplete: its
+arithmetic preconditions prove that `66_067` *should* enter the loop, but an
+early production `return None` immediately before `let limit =
+contributors.isqrt()` leaves every assertion green. Item 1 therefore needs a
+test-only, thread-local count recorded inside the actual above-cap loop; the
+test must clear it, observe zero for `65_537`, and observe exactly one candidate
+check for `66_067`. This changes neither the production rule nor any identity or
+public surface.
+
 ## The three items
 
 **1. A test assertion that cannot reach the branch its comment names.** `crates/tiler-compiler/src/pipeline/tests.rs`, in `the_tree_takes_the_capped_participant_count_where_the_balanced_split_differs`:
