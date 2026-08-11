@@ -42,7 +42,8 @@
 //! distinct from a capability axis, with silence meaning *no preference* rather
 //! than *no plan*.
 //!
-//! Four exclusions were accepted with it and are deliberate rather than gaps: no
+//! Four exclusions were accepted with the evaluation-order-preservation family
+//! and are deliberate rather than gaps: no
 //! math-mode spelling, because `safe`/`relaxed`/`fast` are one backend driver's
 //! option tokens and the licence is what the measurement attributes the
 //! behaviour to; no twelfth numerical dimension, because this states what
