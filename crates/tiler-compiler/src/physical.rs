@@ -2167,7 +2167,7 @@ pub(crate) const MEASURED_TREE_PARTICIPANT_CAP: u64 = 256;
 // property of a physical plan. Thread-local state makes a test's reset/read
 // deterministic even while other unit tests call the partition rule in parallel.
 #[cfg(test)]
-std::thread_local! {
+thread_local! {
     static CAPPED_TREE_ABOVE_CAP_CANDIDATE_CHECKS: std::cell::Cell<u64> = const {
         std::cell::Cell::new(0)
     };

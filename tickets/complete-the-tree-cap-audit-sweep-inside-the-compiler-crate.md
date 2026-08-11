@@ -35,6 +35,25 @@ test must clear it, observe zero for `65_537`, and observe exactly one candidate
 check for `66_067`. This changes neither the production rule nor any identity or
 public surface.
 
+### Gate correction — 2026-08-10 at `6272fca1`
+
+The reported exact-tip `make full` result was **invalid**. Its process was
+observed to exit without retaining its terminal status, and that absence was
+incorrectly reported as success. The combined-main gate then rejected the
+source with:
+
+```text
+workspace unsafe-site inventory failed: unsafe-sites.crates/tiler-compiler/src/physical.rs:2170: path-qualified macro invocation thread_local! is unsupported in the workspace source-language boundary
+```
+
+The test-only trace's `std::thread_local!` spelling is replaced by the accepted
+unqualified `thread_local!` spelling without an import. The trace, its
+`cfg(test)` boundary, and the two watched failures are otherwise unchanged.
+The coordinator reran `make full` directly in the exact `d3ad2efc` worktree and
+observed its terminal exit status `0`: 3,287 workspace tests and 1,132 release
+tests passed, followed by ticket lint and shellcheck. No redirected log is cited;
+the earlier missing-status mistake is not repaired by inventing one.
+
 ## The three items
 
 **1. A test assertion that cannot reach the branch its comment names.** `crates/tiler-compiler/src/pipeline/tests.rs`, in `the_tree_takes_the_capped_participant_count_where_the_balanced_split_differs`:
