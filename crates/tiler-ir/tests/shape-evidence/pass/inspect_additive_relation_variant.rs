@@ -8,10 +8,7 @@ fn main() {
     );
     match relation {
         ExtentRelation::AdditiveEquality {
-            sum,
-            left,
-            right,
-            ..
+            sum, left, right, ..
         } => {
             assert_eq!(sum, ExtentTerm::Constant(3));
             assert_eq!(left, ExtentTerm::Constant(1));

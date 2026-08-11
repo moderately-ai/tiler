@@ -19,9 +19,7 @@ fn explicit_conversion(
     builder.reify(result[0]).map_err(BuildError::Reify)
 }
 
-fn external_input(
-    builder: &mut SemanticProgramBuilder,
-) -> Result<Value<External>, BuildError> {
+fn external_input(builder: &mut SemanticProgramBuilder) -> Result<Value<External>, BuildError> {
     builder.input(InputKey::new("external")?, Shape::from_dims([2]))
 }
 
@@ -37,8 +35,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let resolved = program.resolve_typed_output(&output)?;
     let _: Value<F32> = resolved.value();
 
-    let _external_authoring: fn(&mut SemanticProgramBuilder) -> Result<Value<External>, BuildError> =
-        external_input;
+    let _external_authoring: fn(
+        &mut SemanticProgramBuilder,
+    ) -> Result<Value<External>, BuildError> = external_input;
     let _explicit_conversion: fn(
         &mut SemanticProgramBuilder,
         Value<F32>,
