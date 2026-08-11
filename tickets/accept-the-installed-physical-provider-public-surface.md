@@ -4,7 +4,7 @@ title: Accept or revise the installed physical-provider public surface
 status: todo
 priority: p1
 dependencies: [drive-an-external-physical-implementation-provider-through-compilation]
-related: [accept-the-public-backend-provider-composition-boundary, disclose-offered-and-selected-physical-provider-sets-separately]
+related: [accept-the-public-backend-provider-composition-boundary, disclose-offered-and-selected-physical-provider-sets-separately, publish-occurrence-bound-selected-physical-implementation-evidence]
 scopes: [contracts/decisions, contracts/optimizer, contracts/foundation, implementation/compiler, implementation/build]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []

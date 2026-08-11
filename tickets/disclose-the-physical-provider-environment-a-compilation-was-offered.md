@@ -1,10 +1,10 @@
 ---
 id: disclose-the-physical-provider-environment-a-compilation-was-offered
 title: Disclose the physical-provider environment a compilation was offered
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
-related: [drive-an-external-physical-implementation-provider-through-compilation, expose-explicit-backend-provider-and-selection-policy-composition, audit-backend-authoring-against-all-thirteen-responsibilities, disclose-offered-and-selected-physical-provider-sets-separately, accept-the-installed-physical-provider-public-surface]
+related: [drive-an-external-physical-implementation-provider-through-compilation, expose-explicit-backend-provider-and-selection-policy-composition, audit-backend-authoring-against-all-thirteen-responsibilities, disclose-offered-and-selected-physical-provider-sets-separately, accept-the-installed-physical-provider-public-surface, publish-occurrence-bound-selected-physical-implementation-evidence, package-selected-physical-implementation-provenance-in-artifact-identity]
 scopes: [implementation/artifact, implementation/build, contracts/artifacts, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
@@ -12,7 +12,31 @@ tags: [backend-providers, identity, explainability, compiler, decision, needs-to
 ---
 ## User-visible outcome
 
-The artifact type `CompilationEnvironment` has a recorded subject answer at its definition: either it is lowering-only (Option B — document that physical offered and selected distinction stays on compiler accessors and plans, not in packaged artifact provenance) or it is the whole offered provider environment with separately tagged lowering and physical sets (Option A). A negative control demonstrates the chosen subject failing when perturbed. Compiler-side disclosure (`Compilation::offered_providers` lowering-only docs; `offered_physical_providers` / `selected_physical_providers`) is already complete and is not reopened here.
+The artifact boundary will distinguish construction authority from packaged provenance. `CompilationEnvironment` will require separate lowering and physical offered sets and will use them only to validate selections; unused offered providers remain outside artifact bytes and identity. Existing selected lowering capabilities remain packaged, and every selected physical implementation will gain occurrence-bound packaged provenance inside the artifact variant that selected it. Compiler-side disclosure behaviour (`Compilation::offered_providers` lowering-only docs; `offered_physical_providers` / `selected_physical_providers`) remains complete and is not reopened here; the already accepted mechanical rename to `offered_lowering_providers` remains owned by [`accept-the-installed-physical-provider-public-surface`](accept-the-installed-physical-provider-public-surface.md).
+
+## Outcome — accepted 2026-08-11 by Tom, relayed in this thread
+
+The old A/B packet was incomplete. The accepted answer is the split below.
+
+- **Offered authority is construction evidence, never packaged content.** `CompilationEnvironment` becomes one explicit role-separated construction authority with required lowering and physical sets. The same `ProviderIdentity` may occur in both roles; the roles are never unioned or deduplicated across one another. Both sets are discarded after validating the selected rows. Installing, removing, or revising an offered provider that no retained plan selected must preserve artifact identity, envelope bytes and digest, and cache subject.
+- **Selected physical authority is packaged provenance.** Existing `SelectedProvider` rows remain the lowering-capability projection. Each artifact variant gains a separate, tagged physical-selection run binding the canonical region occurrence to the compiler-minted implementation-proposal identity and carrying the readable provider identity and proposal kind. A global provider union or provider-only set is insufficient because variants may select different mixes and one mixed plan must say which authority produced which occurrence.
+- **Membership is strict.** A selected lowering row must be present in the lowering offered set and a selected physical row must be present in the physical offered set. Absence is a typed artifact-build refusal. There is no empty/default physical environment, inference from payload/backend/profile, governed-provider substitution, or retry.
+- **Identity follows selection, not availability.** Changing selected physical authority or its proposal identity deliberately moves artifact canonical identity, envelope bytes/digest, and derived cache subjects even if the structural kernel bytes happen to match. It does not change semantic graph, schedule, structured-kernel, or payload-content identity merely because provenance changed. Unused offered rows never move those subjects.
+
+This matches ADR 0072's accepted split: unused providers belong to compilation-request environment, while selected provider authority remains in plan and artifact provenance. It also preserves ADR 0090's responsibility distinction instead of merging lowering and physical providers into one ambiguous set.
+
+Runtime cost is bounded by the subjects involved: construction validates canonical offered sets and selected membership, while artifact encoding adds one fixed provenance row per selected physical region. No unused provider is serialized, hashed into the artifact, or allowed to fragment the cache.
+
+Delivery is split deliberately. [`publish-occurrence-bound-selected-physical-implementation-evidence`](publish-occurrence-bound-selected-physical-implementation-evidence.md) owns the compiler-minted projection the neutral assembler can forward without reconstructing private selection state. [`package-selected-physical-implementation-provenance-in-artifact-identity`](package-selected-physical-implementation-provenance-in-artifact-identity.md) depends on it and owns the role-separated construction authority, artifact schema/identity step, build forwarding, pins, and negative controls.
+
+### Source-first Fact audit at exact base `b9af8b18101cd2dc78372aaf433e61d821239809`
+
+- **VERIFIED:** `Compilation::offered_providers` is lowering-only and `Compilation::offered_physical_providers` separately returns the complete physical environment. `PlanAlternative::selected_physical_providers` returns one selected implementation per cover region in canonical region-occurrence order.
+- **VERIFIED:** `assemble_plan_artifact` constructs `CompilationEnvironment` only from `compilation.offered_providers()` and calls `select_provider` only for `selected_capabilities()`. Neither physical accessor reaches artifact construction.
+- **VERIFIED:** `CompilationEnvironment` is construction-only. `ArtifactProgramBuilder` uses it to prove selected lowering providers were offered, then the verified artifact retains only selected rows. Tests `an_unused_environment_provider_does_not_change_identity` and `an_unused_environment_provider_does_not_change_the_bytes` pin that an unused offered provider changes neither canonical identity nor envelope digest.
+- **VERIFIED:** physical provider identity is already folded into `ImplementationProposalIdentity`; `SelectedPlanIdentity` folds each selected implementation identity; `ProgramAlternativeIdentity` folds the selected plan. The artifact projection then drops this physical authority, so two provider-distinct selected plans can currently converge on one artifact provenance subject when their packaged structural program and payload declarations agree.
+- **IMPRECISE:** Option A treated widening `CompilationEnvironment` as though that alone packaged provenance. The environment is discarded, so widening it only strengthens construction-time membership validation unless separate selected physical rows are retained and encoded.
+- **FALSE as a terminal answer:** Option B would preserve current bytes but leave selected physical authority absent from artifact provenance, contrary to ADR 0072's requirement that selected provider identities remain in plan and artifact provenance.
 
 ## Why this exists
 
@@ -41,18 +65,18 @@ Ticket-audit repair. Key 1 remains discharged (accessor docs agree with lowering
 
 - The cheap half is correctness-derived and needs no new public surface: make the doc comment describe the lowering environment it actually returns, so a reader stops building on a false completeness claim. **Discharged 2026-08-08.**
 - Do not widen `offered_providers` itself to include physical providers as a shortcut. ADR 0090 item 5's whole ground is that "this provider was available and lost on cost" and "this provider was never installed" are the two findings a composition failure most needs to tell apart, and merging the sets into one accessor destroys exactly that distinction. **Still load-bearing.**
-- Decide explicitly whether the artifact's `CompilationEnvironment` is a lowering-only subject or a whole-provider-environment subject, and record the answer where the type is defined rather than only in this ticket. That choice, not the accessor, is what the artifact identity consequence turns on. **Open — Decision packet.**
-- Any new accessor or encoding that expands public `CompilationEnvironment` shape is a public boundary / identity-sensitive change under ADR 0075 rather than being self-accepted. Option A is an identity-domain step if selected providers or environment encoding move.
+- Decide explicitly whether the artifact's `CompilationEnvironment` is a lowering-only subject or a whole-provider-environment subject, and record the answer where the type is defined rather than only in this ticket. **Decided 2026-08-11:** it is a role-separated construction authority whose offered rows are discarded; separately encoded selected physical rows, not the offered environment, move artifact identity.
+- Any new accessor or encoding that expands public `CompilationEnvironment` shape is a public boundary / identity-sensitive change under ADR 0075 rather than being self-accepted. **Accepted subject boundary 2026-08-11:** required lowering and physical construction sets; per-variant occurrence-bound selected physical provenance; no offered rows in packaged bytes. Exact delivery remains on the linked implementation tickets.
 
-## Decision packet — 2026-08-09
+## Historical Decision packet — 2026-08-09, superseded by the accepted Outcome above
 
-The compiler-side disclosure work is complete; the remaining question is an artifact identity contract under the current artifact/build scopes (already correct on frontmatter — not left under `implementation/compiler`).
+This packet omitted the compiler-owned occurrence/implementation projection required for exact selected physical provenance. Its A/B ranking is retained as history, not as an open choice. The source-first audit above also disproved its claim that artifact/build scopes alone could close the complete provenance result.
 
 - **Option A — make `CompilationEnvironment` the whole offered provider environment (recommended).** Encode lowering and physical providers as separately tagged sets so the artifact distinguishes availability from selection without conflating responsibilities. If identity completeness is the goal, also decide whether selected physical providers enter packaged `SelectedProvider`-or-peer provenance (assemble never calls `select_provider` for them today).
 - **Option B — keep it lowering-only and rename/document the subject accordingly.** This preserves current bytes but makes physical-provider availability intentionally absent from artifact provenance; the owning artifact contract must state where that distinction is retained instead (compiler accessors + plans).
 
 Tom must choose the artifact subject. Any encoding movement then lands as one complete identity step under the artifact/build scopes. If Option A is chosen, one implementation ticket under those same scopes must land encoding + pins + negative control as one identity step — do not implement under this decision ticket without Tom. If Option B is chosen, document the subject on `CompilationEnvironment` and state where physical offered/selected distinction is retained without claiming artifact provenance holds it.
 
-## Closes when
+## Closure evidence
 
-The accessor's documentation and its behaviour agree (**already true** — key 1 discharged); the `CompilationEnvironment` subject question has a recorded answer at the type; a negative control demonstrates the chosen behaviour failing when perturbed; and targeted nextest plus per-package Clippy pass for any encoding or docs change under artifact/build.
+The subject decision and exact dependency graph are recorded above. Executable negative controls and package gates belong to the two linked implementation tickets because this decision ticket changes no production source or encoding.
