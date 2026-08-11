@@ -235,6 +235,7 @@ name = "reduction-partition-calibration"
 version = "0.0.0"
 dependencies = [
  "metal",
+ "sha2",
  "tiler-build",
  "tiler-compiler",
  "tiler-ir",

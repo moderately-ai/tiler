@@ -1,0 +1,44 @@
+# analysis	reduction-tree-width-excursion
+# validation	passed
+# shapes	6
+# variants_per_run	52
+
+## Production against the best measured width
+
+shape	production_P	production_us	best_P	best_us	ratio	band_us	verdict	plateau
+4x514	257	9.8717	257	9.8717	1.000	2.6325	within noise of best	2,257
+16384x514	257	444.3644	257	444.3644	1.000	1.3739	within noise of best	257
+4x780	260	6.1243	39	3.3274	1.841	0.7806	production is beaten	12,15,20,39,52,65,78
+16384x780	260	653.7328	39	631.3783	1.035	1.8837	production is beaten	39,52,65,78
+4x1042	2	9.1574	521	7.1700	1.277	1.8839	production is beaten	521
+16384x1042	2	906.9511	521	896.1025	1.012	1.6209	production is beaten	521
+
+## Boundary comparisons, primary
+
+shape	left_P	left_us	right_P	right_us	band_us	verdict
+4x514	2	11.8003	257	9.8717	2.9104	within noise
+4x780	195	8.9391	260	6.1243	0.8200	right is faster
+4x780	260	6.1243	390	23.9471	1.2092	left is faster
+4x1042	2	9.1574	521	7.1700	1.8839	right is faster
+16384x514	2	454.2110	257	444.3644	1.3849	right is faster
+16384x780	195	676.7712	260	653.7328	1.6056	right is faster
+16384x780	260	653.7328	390	978.1739	1.6382	left is faster
+16384x1042	2	906.9511	521	896.1025	1.6209	right is faster
+
+## Repeatability
+
+rows_compared	52
+median_relative_p50_difference	0.0024
+maximum_relative_p50_difference	0.1271
+
+## Boundary comparisons, repeat
+
+shape	left_P	left_us	right_P	right_us	band_us	verdict
+4x514	2	10.3009	257	9.0655	2.3168	within noise
+4x780	195	8.4941	260	6.3148	0.7320	right is faster
+4x780	260	6.3148	390	23.8069	1.0692	left is faster
+4x1042	2	9.1157	521	6.7970	0.8121	right is faster
+16384x514	2	454.1733	257	444.6872	1.4514	right is faster
+16384x780	195	676.9993	260	653.9894	1.5769	right is faster
+16384x780	260	653.9894	390	978.4306	1.6174	left is faster
+16384x1042	2	906.8730	521	896.4094	1.9168	right is faster

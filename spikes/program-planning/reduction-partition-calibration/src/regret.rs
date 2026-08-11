@@ -2,7 +2,7 @@
 //!
 //! The measuring half needs a Metal host and the qualified offline toolchain;
 //! this half needs neither. It reads a retained TSV and derives every claim the
-//! spike's README makes — the per-strategy verdict against the governed
+//! spike's README makes — the per-strategy verdict against the production
 //! partition, the plateau of partitions a shape cannot tell apart, and what a
 //! fixed replacement rule would cost — so those claims can be audited and
 //! recomputed on any machine rather than being numbers a document asserts.
@@ -28,7 +28,7 @@ struct Row {
     contributors: u64,
     strategy: Strategy,
     partitions: u64,
-    governed: bool,
+    production: bool,
     /// Median per-plan cost in microseconds, submission round trip cancelled.
     p50: f64,
     /// Conservative spread of that median, in microseconds.
@@ -82,12 +82,12 @@ struct Cell {
 
 impl Cell {
     /// The row carrying the partition the compiler chooses.
-    fn governed(&self) -> Row {
+    fn production(&self) -> Row {
         *self
             .measured
             .iter()
-            .find(|row| row.governed)
-            .expect("every shape measures the governed partition")
+            .find(|row| row.production)
+            .expect("every shape measures the production partition")
     }
 
     /// The fastest measured row.
@@ -165,34 +165,34 @@ fn main() {
     caps(&cells);
 }
 
-/// Reports, per shape and strategy, whether the governed partition is best.
+/// Reports, per shape and strategy, whether the production partition is best.
 fn verdicts(cells: &[Cell]) {
-    println!("## The governed partition against the best measured one");
+    println!("## The production partition against the best measured one");
     println!();
     println!(
-        "shape\tstrategy\tgoverned_P\tgoverned_us\tbest_P\tbest_us\tratio\tband_us\tverdict\t\
+        "shape\tstrategy\tproduction_P\tproduction_us\tbest_P\tbest_us\tratio\tband_us\tverdict\t\
          plateau"
     );
     for cell in cells {
-        let governed = cell.governed();
+        let production = cell.production();
         let best = cell.best();
-        let band = 2.0 * (governed.standard_error() + best.standard_error());
-        let separated = governed.p50 - best.p50 > band;
+        let band = 2.0 * (production.standard_error() + best.standard_error());
+        let separated = production.p50 - best.p50 > band;
         let plateau = cell.plateau();
-        let inside = plateau.contains(&governed.partitions);
+        let inside = plateau.contains(&production.partitions);
         println!(
             "{}x{}\t{}\t{}\t{:.2}\t{}\t{:.2}\t{:.3}\t{:.2}\t{}\t{}",
             cell.rows,
             cell.contributors,
             cell.strategy.key(),
-            governed.partitions,
-            governed.p50,
+            production.partitions,
+            production.p50,
             best.partitions,
             best.p50,
-            governed.p50 / best.p50,
+            production.p50 / best.p50,
             band,
             if separated {
-                "governed is beaten"
+                "production is beaten"
             } else {
                 "within noise of best"
             },
@@ -200,7 +200,7 @@ fn verdicts(cells: &[Cell]) {
         );
         assert!(
             separated != inside,
-            "{}x{} {}: the governed partition is both separated from the best and inside the \
+            "{}x{} {}: the production partition is both separated from the best and inside the \
              plateau, so the two separation rules disagree",
             cell.rows,
             cell.contributors,
@@ -244,15 +244,15 @@ fn caps(cells: &[Cell]) {
             println!("{cap}\t{worst:.3}\t{median:.3}\t{}", per_shape.join(" "));
         }
 
-        // The governed choice scored the same way, so the comparison is like for
+        // The production choice is scored the same way, so the comparison is like for
         // like: it is a rule over the same population, not a baseline measured
         // by another standard.
-        let governed_worst = group
+        let production_worst = group
             .iter()
-            .map(|cell| cell.governed().p50 / cell.best().p50)
+            .map(|cell| cell.production().p50 / cell.best().p50)
             .fold(f64::MIN, f64::max);
         println!();
-        println!("governed_worst_regret\t{governed_worst:.3}");
+        println!("production_worst_regret\t{production_worst:.3}");
 
         println!();
         println!("held_out_shape\tcap_chosen_on_the_other_six\tregret");
@@ -323,12 +323,17 @@ fn parse(text: &str) -> Vec<Cell> {
         let Some(strategy) = Strategy::parse(fields[3]) else {
             panic!("unrecognized strategy key {}", fields[3]);
         };
+        assert!(
+            matches!(fields[6], "governed" | "production" | "-"),
+            "unrecognized production marker {}",
+            fields[6]
+        );
         rows.push(Row {
             rows: fields[0].parse().expect("the row count parses"),
             contributors: fields[1].parse().expect("the contributor count parses"),
             strategy,
             partitions: fields[4].parse().expect("the partition count parses"),
-            governed: fields[6] == "governed",
+            production: matches!(fields[6], "governed" | "production"),
             p50: fields[21].parse().expect("the amortized median parses"),
             stddev: fields[22].parse().expect("the amortized spread parses"),
             reps: fields[10].parse().expect("the repetition count parses"),

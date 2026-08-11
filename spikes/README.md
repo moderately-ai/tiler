@@ -81,7 +81,7 @@ The rows below are **maintained by hand**, like the [research catalog](../docs/r
 - [What grid-axis extent this Apple9 macOS row actually dispatches](target-profiles/metal-grid-axis-extent/README.md) — reproducible; bounded-measurement, exhaustive-finite; supports: [Authority ledger for the first macOS Metal compile profile](../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md)
 - [Where a parallel-reduction crossover could be measured](program-planning/reduction-crossover/README.md) — reproducible; bounded-measurement; supports: [Authority ledger for the first macOS Metal compile profile](../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md)
 - [Where the parallel-reduction crossover is, measured on the device](program-planning/reduction-dispatch-crossover/README.md) — reproducible; bounded-measurement; supports: [Authority ledger for the first macOS Metal compile profile](../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md)
-- [Whether the balanced exact split is the partition to use, measured on the device](program-planning/reduction-partition-calibration/README.md) — reproducible; bounded-measurement; supports: [Authority ledger for the first macOS Metal compile profile](../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md)
+- [Reduction partition calibration and the current tree-width excursion, measured on the device](program-planning/reduction-partition-calibration/README.md) — reproducible; bounded-measurement; supports: [Authority ledger for the first macOS Metal compile profile](../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md)
 
 ### Artifacts, build, and toolchains
 

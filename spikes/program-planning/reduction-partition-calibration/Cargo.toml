@@ -18,6 +18,13 @@ path = "src/main.rs"
 name = "partition-regret"
 path = "src/regret.rs"
 
+# Validates and analyzes the finite non-power-of-two excursion record without a
+# device. Its exact population checks make a missing or widened matrix fail
+# before any cost conclusion is printed.
+[[bin]]
+name = "tree-width-excursion-analysis"
+path = "src/excursion.rs"
+
 # Its own workspace root, following `reduction-dispatch-crossover` beside it:
 # `make` never reaches here and the dependency set is the spike's own. The path
 # dependencies still resolve their `[lints]` through the repository workspace
@@ -25,6 +32,7 @@ path = "src/regret.rs"
 [workspace]
 
 [dependencies]
+sha2 = "0.11.0"
 tiler-build = { path = "../../../crates/tiler-build" }
 tiler-compiler = { path = "../../../crates/tiler-compiler" }
 tiler-ir = { path = "../../../crates/tiler-ir" }

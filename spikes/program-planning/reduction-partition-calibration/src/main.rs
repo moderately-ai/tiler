@@ -22,12 +22,13 @@
 //!
 //! **Nothing shipped changes, and the mechanism is checked rather than
 //! asserted.** For every shape the sweep first requires that the rebuilt plan at
-//! the governed partition emits the byte-identical translation unit the compiler
-//! emits for the same alternative, and declares the same launch extents the
-//! compiler's ABI publishes. A shape whose anchor fails is refused outright, so a
-//! transcription that drifted from `physical.rs` is a hard failure rather than a
-//! partition sweep of a different program. That check is the whole licence for
-//! reading the off-governed rows as evidence about the compiler's plans.
+//! each strategy's current production partition emits the byte-identical
+//! translation unit the compiler emits for the same alternative, and declares
+//! the same launch extents the compiler's ABI publishes. A shape whose anchor
+//! fails is refused outright, so a transcription that drifted from `physical.rs`
+//! is a hard failure rather than a partition sweep of a different program. That
+//! check is the whole licence for reading the off-production rows as evidence
+//! about the compiler's plans.
 //!
 //! # Both strategies, because they consume the number differently
 //!
@@ -115,7 +116,7 @@ use std::time::Instant;
 
 use metal::{
     Buffer, CommandBufferRef, CommandQueue, ComputePipelineDescriptor, ComputePipelineState,
-    Device, MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    Device, MTLCommandBufferStatus, MTLGPUFamily, MTLResourceOptions, MTLSize,
 };
 use regions::{Subject, admissible_partitions, governed_partition};
 use tiler_build::BoundMetalCompileDeclaration;
@@ -166,6 +167,24 @@ const SHAPES: [(u64, u64); 7] = [
     (65536, 16),
 ];
 
+/// The finite non-power-of-two matrix measuring the tree's cap excursion.
+///
+/// Row count four is deep on the retained contour's parallel side and 16,384 is
+/// deep on its serial side. The contributor counts separate three divisor
+/// lattices: 514 admits only 2 and 257 and production widens to 257; 780 has a
+/// dense lattice below the cap and only 260 and 390 above it, with 260 just four
+/// participants past the cap and selected; 1,042 admits only 2 and 521 and
+/// production stays at 2. The Cartesian product is six shapes and 52 tree
+/// variants, all predeclared before any result was observed.
+const TREE_WIDTH_EXCURSION_SHAPES: [(u64, u64); 6] = [
+    (4, 514),
+    (16_384, 514),
+    (4, 780),
+    (16_384, 780),
+    (4, 1_042),
+    (16_384, 1_042),
+];
+
 /// The shape the closed-form oracle is tied to `tiler-reference` on, once.
 ///
 /// Small enough to evaluate through the reference's boxed element vocabulary on
@@ -206,7 +225,56 @@ const BATCH: usize = 64;
 /// Byte width of one `f32`.
 const F32_BYTES: u64 = 4;
 
+/// Which predeclared matrix this invocation runs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RunMode {
+    /// The retained seven-shape, two-strategy calibration.
+    Calibration,
+    /// The six-shape tree excursion, including timing.
+    TreeWidthExcursion,
+    /// The excursion's anchors and per-element oracle, without timing.
+    VerifyTreeWidthExcursion,
+}
+
+impl RunMode {
+    /// Parses the complete command-line vocabulary.
+    fn from_args() -> Self {
+        let arguments: Vec<String> = std::env::args().skip(1).collect();
+        match arguments.as_slice() {
+            [] => Self::Calibration,
+            [argument] if argument == "--tree-width-excursion" => Self::TreeWidthExcursion,
+            [argument] if argument == "--verify-tree-width-excursion" => {
+                Self::VerifyTreeWidthExcursion
+            }
+            _ => panic!(
+                "usage: reduction-partition-sweep [--tree-width-excursion|--verify-tree-width-excursion]"
+            ),
+        }
+    }
+
+    /// The stable result key printed in the retained record.
+    const fn key(self) -> &'static str {
+        match self {
+            Self::Calibration => "reduction-partition-calibration",
+            Self::TreeWidthExcursion | Self::VerifyTreeWidthExcursion => {
+                "reduction-tree-width-excursion"
+            }
+        }
+    }
+
+    /// Whether this invocation records timing samples.
+    const fn timed(self) -> bool {
+        !matches!(self, Self::VerifyTreeWidthExcursion)
+    }
+
+    /// Whether this invocation measures only the tree strategy.
+    const fn tree_only(self) -> bool {
+        !matches!(self, Self::Calibration)
+    }
+}
+
 fn main() {
+    let mode = RunMode::from_args();
     let declaration = BoundMetalCompileDeclaration::first_macos_apple9()
         .expect("the authoritative macOS Apple9 declaration binds");
     let device = Device::system_default().expect("this host has a Metal device");
@@ -214,7 +282,25 @@ fn main() {
     let queue = device.new_command_queue();
     let toolchain = Toolchain::system();
 
-    println!("# spike\treduction-partition-calibration");
+    if mode.tree_only() {
+        assert_eq!(
+            std::env::var("DEVELOPER_DIR").as_deref(),
+            Ok("/Applications/Xcode.app/Contents/Developer"),
+            "the excursion must select the authority ledger's Xcode through DEVELOPER_DIR"
+        );
+        assert_eq!(
+            device.name(),
+            "Apple M4 Max",
+            "the excursion is bounded to the authority ledger's exact execution device"
+        );
+        assert!(
+            device.supports_family(MTLGPUFamily::Apple9),
+            "the excursion requires a live device reporting Apple9 support"
+        );
+    }
+
+    println!("# spike\t{}", mode.key());
+    println!("# mode\t{mode:?}");
     println!("# metric\twall-clock microseconds, commit to completed");
     println!("# warmup\t{WARMUP}");
     println!("# repetitions\t{REPETITIONS}");
@@ -222,6 +308,10 @@ fn main() {
     println!("# contract\tFLUSH_AND_REASSOCIATE_F32");
     println!("# declaration\tBoundMetalCompileDeclaration::first_macos_apple9");
     println!("# device\t{}", device.name());
+    println!(
+        "# device_apple9\t{}",
+        device.supports_family(MTLGPUFamily::Apple9)
+    );
     println!(
         "# device_max_threads_per_threadgroup\t{}",
         device.max_threads_per_threadgroup().width,
@@ -238,24 +328,32 @@ fn main() {
         ORACLE_TIE.0, ORACLE_TIE.1
     );
 
-    println!(
-        "rows\tcontributors\telements\tstrategy\tpartitions\tper_partition\tgoverned\t\
-         widest_workgroup\tthreadgroup_bytes\tencoders\treps\tbatch\tsubmit_min_us\t\
-         submit_p50_us\tsubmit_p90_us\tsubmit_stddev_us\tbatch_min_us\tbatch_p50_us\t\
-         batch_p90_us\tbatch_stddev_us\tamortized_min_us\tamortized_p50_us\t\
-         amortized_stddev_us\tstatus"
-    );
+    if mode.timed() {
+        println!(
+            "rows\tcontributors\telements\tstrategy\tpartitions\tper_partition\tproduction\t\
+             widest_workgroup\tthreadgroup_bytes\tencoders\treps\tbatch\tsubmit_min_us\t\
+             submit_p50_us\tsubmit_p90_us\tsubmit_stddev_us\tbatch_min_us\tbatch_p50_us\t\
+             batch_p90_us\tbatch_stddev_us\tamortized_min_us\tamortized_p50_us\t\
+             amortized_stddev_us\tstatus"
+        );
+    }
 
     let mut attempted = 0_usize;
     let mut measured = 0_usize;
     let mut declined = 0_usize;
-    for (rows, contributors) in SHAPES {
+    let shapes: &[(u64, u64)] = if mode.tree_only() {
+        &TREE_WIDTH_EXCURSION_SHAPES
+    } else {
+        &SHAPES
+    };
+    for &(rows, contributors) in shapes {
         let counts = measure_shape(
             &device,
             &queue,
             &toolchain,
             &declaration,
             Subject { rows, contributors },
+            mode,
         );
         attempted += counts.0;
         measured += counts.1;
@@ -263,9 +361,16 @@ fn main() {
     }
 
     println!();
-    println!("# shapes\t{}", SHAPES.len());
+    println!("# shapes\t{}", shapes.len());
     println!("# variants_attempted\t{attempted}");
-    println!("# variants_measured\t{measured}");
+    println!(
+        "# {}\t{measured}",
+        if mode.timed() {
+            "variants_measured"
+        } else {
+            "variants_verified"
+        }
+    );
     println!("# variants_declined\t{declined}");
     println!("# load_after\t{}", load_average());
 }
@@ -274,12 +379,17 @@ fn main() {
 ///
 /// Returns the attempted, measured, and declined variant counts, so the run can
 /// state its own population rather than leaving a reader to count rows.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one shape must compile and identify production, anchor both strategies, allocate one shared input, prepare the full variant population, verify it, and only then time it; extracting those stateful phases would obscure their required order"
+)]
 fn measure_shape(
     device: &Device,
     queue: &CommandQueue,
     toolchain: &Toolchain,
     declaration: &BoundMetalCompileDeclaration,
     subject: Subject,
+    mode: RunMode,
 ) -> (usize, usize, usize) {
     let Subject { rows, contributors } = subject;
     let elements = rows * contributors;
@@ -335,12 +445,26 @@ fn measure_shape(
     // third thing to keep in step with `physical.rs`.
     let numerical = ordered[1].numerical();
 
-    let governed = governed_partition(contributors)
+    let split_production = governed_partition(contributors)
         .expect("every swept contributor count admits a balanced exact split");
+    let tree_participants = stage_launches(tree)[1].threads_per_workgroup;
+    assert!(
+        contributors.is_multiple_of(tree_participants),
+        "{rows}x{contributors}: the compiler-published tree width {tree_participants} does not exactly partition the contributor sequence"
+    );
+    let tree_production = ContributorPartition {
+        partitions: tree_participants,
+        contributors_per_partition: contributors / tree_participants,
+    };
+    assert!(
+        tree_production.covers(contributors),
+        "{rows}x{contributors}: the compiler-published tree partition does not cover the contributor sequence"
+    );
 
     anchor(
         subject,
-        governed,
+        split_production,
+        tree_production,
         numerical,
         declaration,
         split,
@@ -365,8 +489,13 @@ fn measure_shape(
     let partitions = admissible_partitions(contributors);
     let mut prepared: Vec<Variant> = Vec::new();
     let mut attempted = 0_usize;
-    let mut declines: Vec<(&'static str, ContributorPartition, String)> = Vec::new();
-    for strategy in [Strategy::Split, Strategy::Tree] {
+    let mut declines: Vec<(Strategy, ContributorPartition, String)> = Vec::new();
+    let strategies: &[Strategy] = if mode.tree_only() {
+        &[Strategy::Tree]
+    } else {
+        &[Strategy::Split, Strategy::Tree]
+    };
+    for &strategy in strategies {
         for partition in &partitions {
             attempted += 1;
             match prepare(
@@ -383,7 +512,7 @@ fn measure_shape(
                 &mapped,
             ) {
                 Ok(variant) => prepared.push(variant),
-                Err(reason) => declines.push((strategy.key(), *partition, reason)),
+                Err(reason) => declines.push((strategy, *partition, reason)),
             }
         }
     }
@@ -393,11 +522,29 @@ fn measure_shape(
         reason = "the contributor count is at most 2^14 and f32 represents every integer below 2^24 exactly"
     )]
     let expected = contributors as f32;
-    verify_and_warm(queue, &prepared, expected, subject);
+    verify(queue, &prepared, expected, subject);
+    if !mode.timed() {
+        println!(
+            "# verified\t{}x{}\t{} variant(s)",
+            rows,
+            contributors,
+            prepared.len()
+        );
+        return (attempted, prepared.len(), declines.len());
+    }
+    warm(queue, &prepared);
     let single = timed_rounds(queue, &prepared, 1);
     let batched = timed_rounds(queue, &prepared, BATCH);
 
-    report(subject, governed, &prepared, &single, &batched, &declines);
+    report(
+        subject,
+        split_production,
+        tree_production,
+        &prepared,
+        &single,
+        &batched,
+        &declines,
+    );
     (attempted, prepared.len(), declines.len())
 }
 
@@ -409,11 +556,12 @@ fn measure_shape(
 /// the range.
 fn report(
     subject: Subject,
-    governed: ContributorPartition,
+    split_production: ContributorPartition,
+    tree_production: ContributorPartition,
     prepared: &[Variant],
     single: &[Vec<f64>],
     batched: &[Vec<f64>],
-    declines: &[(&'static str, ContributorPartition, String)],
+    declines: &[(Strategy, ContributorPartition, String)],
 ) {
     let Subject { rows, contributors } = subject;
     let elements = rows * contributors;
@@ -428,7 +576,12 @@ fn report(
             variant.strategy.key(),
             variant.partition.partitions,
             variant.partition.contributors_per_partition,
-            governed_mark(variant.partition, governed),
+            production_mark(
+                variant.strategy,
+                variant.partition,
+                split_production,
+                tree_production,
+            ),
             variant.widest_workgroup,
             variant.threadgroup_bytes,
             variant.encoded.len(),
@@ -447,28 +600,35 @@ fn report(
     }
     for (strategy, partition, reason) in declines {
         println!(
-            "{rows}\t{contributors}\t{elements}\t{strategy}\t{}\t{}\t{}\t-\t-\t-\t-\t-\t-\t-\t-\t\
+            "{rows}\t{contributors}\t{elements}\t{}\t{}\t{}\t{}\t-\t-\t-\t-\t-\t-\t-\t-\t\
              -\t-\t-\t-\t-\t-\t-\t-\tdeclined: {reason}",
+            strategy.key(),
             partition.partitions,
             partition.contributors_per_partition,
-            governed_mark(*partition, governed),
+            production_mark(*strategy, *partition, split_production, tree_production,),
         );
     }
 }
 
 /// Marks the one row of a shape that carries the partition the compiler chooses.
-const fn governed_mark(
+const fn production_mark(
+    strategy: Strategy,
     partition: ContributorPartition,
-    governed: ContributorPartition,
+    split_production: ContributorPartition,
+    tree_production: ContributorPartition,
 ) -> &'static str {
-    if partition.partitions == governed.partitions {
-        "governed"
+    let production = match strategy {
+        Strategy::Split => split_production,
+        Strategy::Tree => tree_production,
+    };
+    if partition.partitions == production.partitions {
+        "production"
     } else {
         "-"
     }
 }
 
-/// Requires the rebuilt plans at the governed partition to *be* the compiler's.
+/// Requires the rebuilt plans at each production partition to *be* the compiler's.
 ///
 /// Two independent equalities, both hard. The emitted translation unit must be
 /// byte-identical, which covers the kernel bodies, the fold bounds, the declared
@@ -477,12 +637,17 @@ const fn governed_mark(
 /// equal the ones the compiler's ABI publishes, which covers the dispatch the
 /// source cannot state.
 ///
-/// **This is what makes the off-governed rows evidence.** Without it the sweep
+/// **This is what makes the off-production rows evidence.** Without it the sweep
 /// would be comparing the compiler's plan against a lookalike, and any measured
 /// difference could be the transcription rather than the partition.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the anchor compares two production partitions and alternatives against one shared subject, realization, declaration, and prologue; grouping them would only move this exact evidence tuple"
+)]
 fn anchor(
     subject: Subject,
-    governed: ContributorPartition,
+    split_production: ContributorPartition,
+    tree_production: ContributorPartition,
     numerical: NumericalRealization,
     declaration: &BoundMetalCompileDeclaration,
     split: &PlanAlternative<'_>,
@@ -496,8 +661,8 @@ fn anchor(
             .to_owned()
     };
 
-    let split_stages =
-        regions::split_stages(subject, governed, numerical).expect("the governed split rebuilds");
+    let split_stages = regions::split_stages(subject, split_production, numerical)
+        .expect("the production split rebuilds");
     let rebuilt_split = emit(&[prologue, &split_stages[0].kernel, &split_stages[1].kernel]);
     let compiler_split = emit(&split.kernels().iter().collect::<Vec<_>>());
     assert!(
@@ -508,21 +673,21 @@ fn anchor(
          different program",
         subject.rows,
         subject.contributors,
-        governed.partitions,
-        governed.contributors_per_partition,
+        split_production.partitions,
+        split_production.contributors_per_partition,
     );
 
-    let tree_stages =
-        regions::tree_stages(subject, governed, numerical).expect("the governed tree rebuilds");
+    let tree_stages = regions::tree_stages(subject, tree_production, numerical)
+        .expect("the production tree rebuilds");
     let rebuilt_tree = emit(&[prologue, &tree_stages[0].kernel]);
     let compiler_tree = emit(&tree.kernels().iter().collect::<Vec<_>>());
     assert!(
         rebuilt_tree == compiler_tree,
-        "{}x{}: the rebuilt single-workgroup tree at the governed participant count ({}) does \
+        "{}x{}: the rebuilt single-workgroup tree at the production participant count ({}) does \
          not emit the source the compiler emits",
         subject.rows,
         subject.contributors,
-        governed.partitions,
+        tree_production.partitions,
     );
 
     let published = stage_launches(split);
@@ -815,12 +980,12 @@ fn encode_stage(
     })
 }
 
-/// Checks every variant against the oracle, then warms every one of them.
+/// Checks every variant against the oracle.
 ///
 /// **Correctness before timing, always.** A partition that returns the wrong bits
 /// has no meaningful cost, and timing it would put a number on a plan that does
 /// not compute the program.
-fn verify_and_warm(queue: &CommandQueue, prepared: &[Variant], expected: f32, subject: Subject) {
+fn verify(queue: &CommandQueue, prepared: &[Variant], expected: f32, subject: Subject) {
     for variant in prepared {
         let readback = variant
             .submit(queue, 1)
@@ -840,6 +1005,10 @@ fn verify_and_warm(queue: &CommandQueue, prepared: &[Variant], expected: f32, su
             );
         }
     }
+}
+
+/// Warms every verified variant at both encode counts.
+fn warm(queue: &CommandQueue, prepared: &[Variant]) {
     for variant in prepared {
         for _ in 0..WARMUP {
             variant
@@ -890,7 +1059,7 @@ impl Amortized {
     fn of(single: &Summary, batched: &Summary) -> Self {
         #[allow(
             clippy::cast_precision_loss,
-            reason = "BATCH is 16 and f64 represents every small integer exactly"
+            reason = "BATCH is 64 and f64 represents every small integer exactly"
         )]
         let divisor = (BATCH - 1) as f64;
         Self {
