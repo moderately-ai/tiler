@@ -62,6 +62,8 @@ Workflow status intentionally remains `in-progress` for coordinator review and i
 
 **Correction, reviewed at `b205d1c2d08a02de1f9581bd51d6147fc1d502de`.** That candidate said `P0` was “always retained” while applying one universal model-level stage that excluded every `Unknown` or corpus miss. The governing qualification record says every current Tiler conformance row is `Unknown`, and `A-tie` has no input, so the proposed stage would also have excluded `P0` and left no executable population. It also conflated execution-conformance coverage with the separate question whether `P1` is an acceptable approximation of the F32 model. The corrected record makes the F32-relative approximation obligation inapplicable to its own `P0` reference without waiving `P0`'s execution obligations, keeps `A-tie` as conformance `Unknown`, and leaves `P1` non-admitted until an accepted policy disposes the measured 17-of-18 evidence. No threshold or executable co-search capability is inferred.
 
+**Second-review correction, reviewed at `2cbe48636a99d64bddb136ae454e32731a060ded`.** The authority's thirteen named entries comprise twelve live rows plus withdrawn historical `A-capacity`, not thirteen live rows with required dispositions. The record now states that census exactly; live `A-tie` remains conformance `Unknown`.
+
 ## Explicit non-goals
 
 - Implementing joint precision×schedule search, optimizer-minted precision assignment, or any production co-search path.
