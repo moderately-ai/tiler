@@ -1,18 +1,18 @@
 ---
 id: admit-a-cooperative-tile-over-shared-operands
 title: Admit a cooperative tile whose participants share operands rather than one output
-status: awaiting-decision
+status: todo
 priority: p1
 dependencies: [admit-a-two-dimensional-cooperative-staging-relation]
-related: [realize-the-strict-contraction-on-metal, realize-the-tiled-contraction-schedule-and-its-metal-emission, implement-the-single-workgroup-synchronized-reduction-strategy]
-scopes: [implementation/ir]
+related: [realize-the-strict-contraction-on-metal, realize-the-tiled-contraction-schedule-and-its-metal-emission, implement-the-single-workgroup-synchronized-reduction-strategy, admit-guarded-output-tails-for-cooperative-contraction]
+scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, ir, physical-planning, public-boundary, decision, needs-tom]
+tags: [implementation, ir, physical-planning, public-boundary]
 ---
 ## User-visible outcome
 
-A workgroup whose invocations each own **their own** output position, and cooperate only by staging shared *operand* data, is statable and verifiable — the relation a blocked GEMM tile has, and the one the existing cooperative tile is the inverse of.
+On an exactly tiled output domain, a workgroup whose invocations each own **their own** output position, and cooperate only by staging shared *operand* data, is statable and verifiable — the exact-divisible relation a blocked GEMM tile has, and the one the existing cooperative tile is the inverse of.
 
 ## Why this is a second relation and not a widening
 
@@ -20,21 +20,34 @@ A workgroup whose invocations each own **their own** output position, and cooper
 
 **Inference.** A 16×16 operand tile has `commit.count == 256`, `owned_output_positions == work_items`, and no trailing participant axis. Relaxing those three rules would not narrow the existing contract — it would delete the fact the contract exists to state, and the tree strategy rests on that fact. The two relations must therefore be separate and separately verified, which is the same reason `ReductionTopology` keeps `MultiPass` and `CooperativeWorkgroup` apart rather than parameterizing one.
 
+## Accepted boundary — 2026-08-11
+
+**Accepted by Tom in the Codex coordination session after a fresh exact-base audit, with the ticket's original map/proof proposal corrected before implementation.** The accepted first pass is deliberately exact and narrow:
+
+- Add a sibling cooperative-contraction topology. It may reuse the existing `CooperativeTile` dataflow record, but it has its own semantic, commit, coverage, and shape verifier. `ReductionTopology::CooperativeWorkgroup` and its one-committer theorem remain unchanged; no helper may infer reduction ownership merely from the presence of a tile.
+- Add an explicit blocked-workgroup [`ExecutionBinding`](../crates/tiler-ir/src/schedule/model.rs). The binding maps hardware workgroup/local coordinates to the contraction's logical output coordinates once, for both operand reads and the owning write. This is the layer [ADR 0007](../docs/decisions/0007-first-class-kernel-schedules.md) assigns hardware-to-logical mapping to. It is required rather than defaulted.
+- Keep the contraction's owning write as `LogicalAccess::LinearIdentity` *after* that binding, and keep `OwnershipProofKind::OneGlobalInvocationPerOutput`. The proof kind states the theorem; the binding verifier supplies the new bijectivity argument. A new logical-access map would restate one execution mapping on three accesses, and a new ownership-proof kind would duplicate the theorem while forcing a tag into the currently untagged ownership encoding.
+- Admit only exact output blocks and exact contracted tiles. Preflight must prove every output extent is divisible by its block extent and `K` is divisible by the contracted tile width before constructing the schedule. A caller selecting this tiled approach receives a typed refusal when any equality is absent or false. It never silently substitutes the direct contraction.
+- Preserve old identity bytes. The new execution-binding and topology alternatives receive fresh appended tags on the tree they land into; existing binding/topology encodings keep their bytes. No `tiler.schedule.v6` step is authorized by this decision.
+
+**Correction to the original decision packet.** The assertion that a new `LogicalAccess` and a new `OwnershipProofKind` were required was false. The blocked coordinate governs both reads and the write, so placing it on one write would split one authority across layers; `OwnershipProofKind::OneGlobalInvocationPerOutput` already states the exact theorem the blocked bijection must establish. The assertion that the measured tile has every participant commit was also only true on exact-divisible output blocks: the retained `M = 1` and `M = 10` kernels keep every participant convergent but mask out-of-range operand loads and owning writes. Those guarded tails are a separate public and verification boundary owned by [`admit-guarded-output-tails-for-cooperative-contraction`](admit-guarded-output-tails-for-cooperative-contraction.md), not a silent widening of this first pass.
+
 ## What this owns
 
-- **The second tile relation**: participants sharing staged operand data, each committing one output, with its own commit and coverage rules. What replaces "exactly one committer" is a statement that the participants' owning writes are a bijection onto the workgroup's output block — and that statement has to be *checkable*, not asserted.
-- **The invocation-to-output map, and its ownership evidence.** `verify_contraction` requires `write.map == LogicalAccess::LinearIdentity` and the kernel lowering stores at the invocation value itself. Under a 16×16 tiling the owning output of global invocation `gid` is `(gid / 256 / (N/16) * 16 + gid % 256 / 16) * N + (gid / 256 % (N/16)) * 16 + gid % 256 % 16`, which equals `gid` only at `N == 16`. So this needs a new `LogicalAccess` variant for the tile-blocked map **and** a new `OwnershipProofKind`: `OneGlobalInvocationPerOutput` is discharged today by the identity map, and discharging it for a blocked map is a bijectivity argument nothing in the model currently makes. That is a new validation authority, and it is the part to be most sceptical about — an ownership proof that cannot fail is not evidence.
-- Whether the tail is refused or handled. The existing tile has no tail by contract, and a blocked map over extents that are not tile multiples has one. Refuse it explicitly rather than masking committers, and state which of the two this relation admits.
+- The exact-divisible sibling cooperative-contraction topology and its relation-specific verifier.
+- The explicit blocked-workgroup execution binding and the algebraic proof that it is a bijection from launched invocations onto the declared output domain.
+- Typed preflight refusals for output-block or contracted-tile divisibility, with no automatic direct fallback.
+- The additive identity encoding and regression evidence that every existing one-committer schedule retains its bytes and verifier rules.
 
 ## What this does not own
 
-The staged relation the tile's reads need ([`admit-a-two-dimensional-cooperative-staging-relation`](admit-a-two-dimensional-cooperative-staging-relation.md), a hard dependency: without it the tile's reads are unstatable and this relation would be verified over an access it cannot express), the contraction topology and its Metal body ([`realize-the-tiled-contraction-schedule-and-its-metal-emission`](realize-the-tiled-contraction-schedule-and-its-metal-emission.md)), and any cost model that would make the tile win.
+The staged relation the tile's reads need ([`admit-a-two-dimensional-cooperative-staging-relation`](admit-a-two-dimensional-cooperative-staging-relation.md), a hard dependency: without it the tile's reads are unstatable and this relation would be verified over an access it cannot express), guarded output tails ([`admit-guarded-output-tails-for-cooperative-contraction`](admit-guarded-output-tails-for-cooperative-contraction.md)), the Metal body ([`realize-the-tiled-contraction-schedule-and-its-metal-emission`](realize-the-tiled-contraction-schedule-and-its-metal-emission.md)), and any cost model that would make the tile win.
 
 ## Activation history
 
-This was deferred behind its dependency and Tom's acceptance of two public boundaries — a second cooperative tile relation and a new `OwnershipProofKind`. [`admit-a-two-dimensional-cooperative-staging-relation`](admit-a-two-dimensional-cooperative-staging-relation.md) is now `done`; only the acceptance condition remains.
+**Historical state.** This was deferred behind its dependency and Tom's acceptance of two proposed public boundaries — a second cooperative tile relation and a new `OwnershipProofKind`. [`admit-a-two-dimensional-cooperative-staging-relation`](admit-a-two-dimensional-cooperative-staging-relation.md) reached `done`; the original acceptance packet then remained. The 2026-08-11 audit corrected that packet and Tom accepted the replacement boundary above, so neither the old proof-kind proposal nor this historical activation condition remains live.
 
-## Decision boundary — 2026-08-09
+## Superseded decision boundary — 2026-08-09
 
 The implementation dependency is `done`; the only remaining activation condition is Tom's answer. This ticket therefore belongs in `awaiting-decision`, not `deferred`.
 
@@ -43,13 +56,13 @@ Tom decides whether the next cooperative-tile vertical may add both of these pub
 1. a second cooperative relation in which every participant owns one output while sharing staged operands; and
 2. an ownership-proof kind that proves the blocked invocation-to-output map is a bijection over the declared output block.
 
-**Recommendation: accept the pair as one bounded vertical.** The existing one-committer relation proves a different ownership theorem and cannot be weakened without invalidating the workgroup-reduction contract; a separate relation and proof keep both statements checkable. **Strongest counterpoint:** the blocked map, tail policy, and exact proof payload have not yet been implemented, so Tom may prefer a smaller research spike that fixes their spelling before accepting public enum variants.
+**Superseded 2026-08-11.** The recommendation to accept a new access map and ownership-proof kind is replaced by the accepted execution-binding design above. The observation that the one-committer relation must remain separate still stands.
 
-If accepted, return this ticket to `todo` and implement the exact accepted spelling. If revised, record the replacement boundary here before dispatch. Acceptance does not authorize the Metal body or cost model owned by the related tickets.
+This ticket is now `todo` for the exact-divisible IR vertical. Acceptance does not authorize guarded tails, the Metal body, or a cost model.
 
 ## Closes when
 
-A tile whose participants each commit their own output verifies, its ownership evidence has been watched refusing a map that is not a bijection onto the declared block, the existing one-committer tile still verifies unchanged with its own rules intact, and the identity consequence of whatever the relation required is recorded.
+An exact-divisible cooperative contraction verifies under its explicit blocked execution binding; perturbing the block mapping, output extent, block extent, or launch relation independently makes the bijection proof refuse; the existing one-committer tile verifies unchanged and keeps identical canonical bytes; unsupported output or contracted tails fail in preflight with typed reasons; and every new identity tag and downstream pin consequence is recorded.
 
 ## Trigger check log
 

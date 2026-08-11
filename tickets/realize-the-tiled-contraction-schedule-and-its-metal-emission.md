@@ -3,7 +3,7 @@ id: realize-the-tiled-contraction-schedule-and-its-metal-emission
 title: Realize the tiled contraction schedule and its Metal emission
 status: deferred
 priority: p1
-dependencies: [admit-a-cooperative-tile-over-shared-operands, admit-a-two-dimensional-cooperative-staging-relation, reclassify-language-model-work-as-a-conformance-track]
+dependencies: [admit-a-cooperative-tile-over-shared-operands, admit-guarded-output-tails-for-cooperative-contraction, admit-a-two-dimensional-cooperative-staging-relation, reclassify-language-model-work-as-a-conformance-track]
 related: [realize-the-strict-contraction-on-metal, realize-the-contraction-through-the-appendable-direct-path, integrate-the-contraction-vertical-into-the-runtime]
 scopes: [implementation/ir, implementation/compiler, implementation/metal, contracts/navigation]
 shared_scopes: [project/tickets]
@@ -14,11 +14,12 @@ tags: [implementation, physical-planning, metal, contraction, language-model, de
 
 The `tiled` realization the [L3 record](../docs/research/scheduling/first-metal-contraction-realizations.md) selects compiles through the ordinary entry point as a retained alternative beside `direct`, refuses `K` not a multiple of its tile width with a typed reason that has been watched firing, and emits an MSL body carrying no fused multiply-add on its accumulation path.
 
-## What remains once its two dependencies land
+## What remains once its cooperative dependencies land
 
 This is the *fourth* wall [`realize-the-strict-contraction-on-metal`](realize-the-strict-contraction-on-metal.md) derived plus the work that was always this ticket's, and it is deliberately the cheapest of the four so it is not attempted first with a half-built vocabulary.
 
 - **The topology dispatch.** `verify_intrinsic` (`crates/tiler-ir/src/schedule/builder.rs`) dispatches on the scalar program: `StrictTensorContraction` reaches `verify_contraction`, which requires `ReductionTopology::Contraction` by `let … else`, and `verify_cooperative_semantics` is reachable only from the four single-read reduction programs. A contraction therefore cannot carry a cooperative topology at all. A new `ReductionTopology` variant at appended tag `0x36` with its own semantic-verification arm is what admits it; the tag is an append that moves no earlier region's bytes.
+- **The guarded output tail used by four retained rows.** The exact-divisible first pass deliberately refuses a partial output block. The retained kernel instead keeps the entire workgroup convergent, guards operand loads, and predicates the owning store at `M = 1` and `M = 10`; [`admit-guarded-output-tails-for-cooperative-contraction`](admit-guarded-output-tails-for-cooperative-contraction.md) must state and verify that relation before this ticket can claim all six correctness cells.
 - **The schedule and the alternative.** `single_workgroup_tree_region` (`crates/tiler-compiler/src/physical.rs`) is the precedent — a constructor returning a typed `…Unavailable` decline the frontier records as a declined strategy rather than as an absence — and the tiled alternative follows it, offered beside `direct` rather than replacing it.
 - **The `K ≡ 0 (mod 16)` precondition as a typed refusal, watched firing, never a pad.** `+0.0` is the strict sum's empty result and is not its bitwise-neutral padding; a K-padding schedule would owe the neutrality proof [Numerical semantics](../docs/numerical-semantics.md) requires. Refuse rather than acquire that obligation.
 - **The two-allocation lowering.** `cooperative_plan`'s `let ([staging], [produce, consume]) = …` (`crates/tiler-ir/src/kernel/lower.rs`) admits one allocation and one visibility edge. Two allocations are already admissible at the schedule layer — `verify_cooperative_tile` loops over `tile.staging`, and `SynchronizationPoint::discharges`/`discharges_anti` do not read an edge's `staging` field, so one phase boundary discharges both edges and one round boundary both anti-dependencies — so this is an emission widening with no identity consequence.
@@ -38,7 +39,7 @@ The split alternatives, the matrix-instruction route, any opaque call, and any c
 
 ## Activation triggers
 
-Deferred behind both dependencies. It becomes work when [`admit-a-cooperative-tile-over-shared-operands`](admit-a-cooperative-tile-over-shared-operands.md) is `done` — which itself requires [`admit-a-two-dimensional-cooperative-staging-relation`](admit-a-two-dimensional-cooperative-staging-relation.md) — because until then the tile's staged reads and its ownership are both unstatable and any schedule built here would be verified against a relation the vocabulary cannot express.
+Deferred behind the exact-divisible relation, its guarded-output-tail extension, and the already-landed two-dimensional staging relation. It becomes work only when both cooperative-contraction tickets are `done`, because the retained six-cell population contains exact and partial output blocks and this ticket may not silently substitute the direct realization for either.
 
 ## Closes when
 
