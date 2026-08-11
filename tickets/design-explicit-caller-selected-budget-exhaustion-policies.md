@@ -3,7 +3,7 @@ id: design-explicit-caller-selected-budget-exhaustion-policies
 title: Design explicit caller-selected budget-exhaustion policies
 status: deferred
 priority: p2
-dependencies: [state-the-rule-that-a-deterministic-budget-is-a-derivation]
+dependencies: [state-the-rule-that-a-deterministic-budget-is-a-derivation, replace-provider-offer-with-a-host-bounded-frontier-sink]
 related: [decide-whether-a-derived-budget-belongs-in-the-request-subject]
 scopes: [contracts/optimizer, implementation/compiler]
 shared_scopes: [project/tickets]
@@ -19,6 +19,8 @@ A caller that needs a budget policy other than the governed one explicitly selec
 **Fact — the narrow governed contract is already explicit and fail-closed.** [`state-the-rule-that-a-deterministic-budget-is-a-derivation`](state-the-rule-that-a-deterministic-budget-is-a-derivation.md) records Tom's 2026-08-11 decision. Complete-plan search retains every valid plan assembled before `physical_plan_combinations` fires. A non-empty truncated portfolio proceeds through ordinary selection with the stop in explain; an empty truncated portfolio returns typed `BudgetExhausted`. No target or backend fallback occurs.
 
 **Proposal — tuned configurations may eventually need more than one policy.** Examples worth comparing include accepting the best valid plan seen under a stated cap, refusing any non-exhaustive result even when a valid plan was found, or using a separately proved constructive baseline under its own work budget. These are different compilation questions and must not share a request subject or one ambiguous word such as `fallback`.
+
+The physical-frontier decision adds another mandatory case: raw provider-output exhaustion initially refuses atomically because no retained prefix is known complete. A future preset that selects from a partial frontier must separately prove what partial population is valid to select from; it may not inherit complete-plan search's successful-prefix rule by analogy.
 
 No second measured policy, public budget request, or constructive-baseline authority exists today. Adding a preset abstraction now would harden unsupported choices and violate ADR 0069's one-policy discipline.
 

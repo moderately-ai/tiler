@@ -1,7 +1,7 @@
 ---
 id: decide-whether-the-implementation-frontier-owes-a-retention-budget
 title: Decide whether the implementation frontier owes a retention budget
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [record-the-four-surface-optimizer-invariant]
@@ -12,30 +12,38 @@ tags: [optimizer, contracts, budgets]
 ---
 ## User-visible outcome
 
-The per-region implementation frontier either carries a declared retention bound inside the canonical request subject, or the optimizer contract records why an unbounded Pareto filter is the correct answer — so a reader of the deterministic-budget list is not left with a ninth budget that is neither implemented nor refused.
+The per-region implementation frontier has one accepted bounded-work contract: caller-installed providers emit raw proposals and declines through a host-bounded channel, provider count is preflighted separately, and exceeding either limit refuses atomically rather than compiling a partial frontier.
 
 ## Why this is its own ticket
 
-**Fact.** `ImplementationFrontier::non_dominated` (`crates/tiler-compiler/src/frontier.rs`) retains every admitted implementation no other admitted implementation dominates, and applies no count bound. `DeterministicBudgets` (`crates/tiler-compiler/src/request.rs`) has no field for it — the check is `grep -n "implementations_per_region\|nondominated" crates/tiler-compiler/src/request.rs`, which returns nothing.
+**Fact, corrected at exact base `f3364b126d18544d694860fc2cb4de9bbef0e75c`.** `ImplementationFrontier` (`crates/tiler-compiler/src/frontier.rs`) retains every admitted implementation. `ImplementationFrontier::non_dominated` allocates a borrowed Pareto *view* over that complete population; it does not own or reduce the retained population. Neither storage nor the view has a count bound, and `DeterministicBudgets` (`crates/tiler-compiler/src/request.rs`) has no field for either population — the source-safe anchors are `pub(crate) struct ImplementationFrontier`, `pub(crate) fn non_dominated`, and `pub(crate) struct DeterministicBudgets`.
 
 **Fact.** Plan selection multiplies over the full `frontier.admitted()` slice, not `non_dominated()`. `bind_region_frontiers` in `crates/tiler-compiler/src/selection.rs` binds `admitted: entry.frontier.admitted()` into cover plan combinations; `ImplementationFrontier::non_dominated` is a pure Pareto view exercised in frontier unit tests and contract prose, not the compile-path bind filter. Complete-plan combination growth is already capped by `DeterministicBudgets::physical_plan_combinations` (governed default 4096). A retention-budget decision must name which population it bounds: admitted proposals, the Pareto view, plan combinations, or more than one.
 
 **Fact.** `docs/compiler/optimizer.md` carried "8 nondominated implementations per region" as a forward-looking budget whose stated activation condition was the physical-implementation-frontier stage landing. That stage landed (`enumerate_frontier` is called from `crates/tiler-compiler/src/pipeline/planning.rs`), and the budget did not follow. `record-the-four-surface-optimizer-invariant` replaced the stale sentence with the current state and this pointer rather than inventing either a field name or a decision.
 
-**Fact — the activation trigger fired on 2026-08-08.** [ADR 0090](../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md), source anchor `item 2 landed`, records `InstalledPhysicalProviders` and `CompileRequest::with_physical_providers` on the ordinary compile path. The optimizer contract independently records the same boundary under `The condition that made that bound self-limiting expired on 2026-08-08`. A caller can now add providers, so the retained population is no longer bounded by this build's single governed provider. The remaining answer changes either the canonical deterministic-budget subject or the optimizer contract and therefore belongs in `awaiting-decision`, not the executable ready queue.
+**Fact — the activation trigger fired on 2026-08-08.** [ADR 0090](../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md), source anchor `item 2 landed`, records `InstalledPhysicalProviders` and `CompileRequest::with_physical_providers` on the ordinary compile path. The optimizer contract independently records the same boundary under `The condition that made that bound self-limiting expired on 2026-08-08`. A caller can now add providers, so the retained population is no longer bounded by this build's single governed provider. This decision closes that fired trigger; the linked delivery tickets own the canonical budget and contract changes.
 
-## The decision
+## Decision — bound raw provider output and refuse atomically
 
-Two answers are defensible and they are not the same claim:
+**Accepted by Tom on 2026-08-11 in the Codex coordination thread.** Tom accepted the coordinator's ranked recommendation and delegated choices within the stated repository constraints. The exact decision is:
 
-- **Declare a retention budget.** It joins the canonical request subject like every other `DeterministicBudgets` field, which is what makes it artifact-identity-bearing. The decision must also state the retention order, the baseline that cannot be lost, and the typed stop semantics; this ticket does not assume that truncating an incomparable frontier automatically preserves a complete plan. The cost is one more calibration input and one more identity byte sequence.
-- **Record that retention is deliberately unbounded.** The Pareto filter's output is bounded by the number of *incomparable* proposals rather than by the number offered, and the accepted contract's "bounded Pareto frontier" language may already be discharged by dominance itself. This answer must state what stops a provider set from producing an unbounded incomparable set, and it must correct the contract sentence at `docs/compiler/optimizer.md`'s boundary-requirements section that calls the frontier bounded.
+- Replace the public complete-`Vec` offer protocol with a host-owned bounded emission sink or equivalent pull protocol. Proposals and typed declines charge the same raw provider-output population before Tiler accepts or verifies them.
+- Preflight an explicit provider-count limit. A provider that emits nothing still consumes one invocation, so an outcome limit alone is not a host-work bound.
+- Exceeding either limit atomically returns typed `BudgetExhausted` at the first excess, with lower-bound demand `limit + 1`. No prefix becomes a frontier; Tiler does not retain the governed implementation, first entries, cheapest entries, structural-Pareto entries, or a claimed baseline.
+- Keep `physical_plan_combinations` as the separate downstream Cartesian-product work bound. The frontier bound owns provider invocations and raw proposal/decline outcomes before proposal assessment; the plan-combination bound owns complete-plan assembly attempts after verified frontiers exist.
+- Treat installed providers as trusted native code. The sink bounds Tiler-owned accepted outcome storage and subsequent verification; it cannot preempt arbitrary computation or allocation performed inside a provider before an emission. A stronger untrusted-provider guarantee would require isolation or a separately bounded construction vocabulary.
+- Put the exact limits in the complete deterministic budget policy and canonical request/evidence subject. This changes the request-subject domain and explain qualifier. It does **not** directly change artifact or cache identity; those move only if selected packaged content changes, and atomic exhaustion produces no artifact.
 
-Deciding requires knowing whether an incomparable set can grow without bound under the boundary-property subsumption relation, which is a question about `AdmittedImplementation::dominates` and the boundary contract rather than about provider count.
+**Fact — dominance is not a cardinality bound.** `PhysicalCostEstimate::dominates` requires at least one strict improvement. Distinct provider identities offering equal-boundary, equal-cost implementations therefore produce an arbitrarily large incomparable set; the existing additive-provider tests already exercise the two-provider case. The former dominance-only branch is refuted rather than retained as a co-equal option.
 
-## Closes when
+**Correctness boundary.** Selection deliberately ranges over every retained valid plan, including structurally dominated plans that a measured target cost row may prefer. A local first-N, cheapest-N, governed-only, or Pareto-only truncation can remove the only globally compatible plan or the measured winner. No safe retention order or baseline exists today, so the narrow first pass has one exhaustion disposition: refuse.
 
-Either a retention budget exists as a `DeterministicBudgets` field with a typed budget-stop and its default recorded as a calibration input, or the optimizer contract states that retention is bounded by dominance alone with the argument for why; in both cases the deterministic-budget list and the boundary-requirements section agree, and this ticket's pointer in `docs/compiler/optimizer.md` is replaced by the answer.
+**Implementation graph.** [`calibrate-the-physical-frontier-provider-and-outcome-budgets`](calibrate-the-physical-frontier-provider-and-outcome-budgets.md) owns the first values and workload census. [`replace-provider-offer-with-a-host-bounded-frontier-sink`](replace-provider-offer-with-a-host-bounded-frontier-sink.md) owns the source-breaking public seam, request identity, typed stop, and compile-path tests. A later caller-selectable exhaustion disposition remains owned by [`design-explicit-caller-selected-budget-exhaustion-policies`](design-explicit-caller-selected-budget-exhaustion-policies.md); this decision does not silently add one.
+
+## Outcome
+
+The architecture decision is closed: raw provider output is bounded before Tiler accepts it, provider count is bounded separately, and exhaustion refuses atomically. The linked calibration and implementation tickets own delivery. No worker may infer the retired value eight, a Pareto-prefix policy, or a governed fallback from this record.
 
 ## Measured input from the region-general provider
 
@@ -44,4 +52,4 @@ Either a retention budget exists as a `DeterministicBudgets` field with a typed 
 ## Graph maintenance
 
 - Not a blocker for the four-surface invariant, which cites the current state rather than depending on the answer.
-- ADR 0090 item 2's provider registry landed on 2026-08-08. The trigger is fired and this node stays in `awaiting-decision` until Tom chooses the retention contract; no implementation worker should infer the answer from the old forward-looking value of eight.
+- ADR 0090 item 2's provider registry landed on 2026-08-08. The trigger fired and Tom chose the bounded raw-output/atomic-refusal contract on 2026-08-11; no implementation worker should infer the answer from the old forward-looking value of eight.
