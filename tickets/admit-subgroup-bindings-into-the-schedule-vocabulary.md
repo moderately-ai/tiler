@@ -1,9 +1,9 @@
 ---
 id: admit-subgroup-bindings-into-the-schedule-vocabulary
 title: Admit subgroup bindings and their reduction topology into the schedule vocabulary
-status: awaiting-decision
+status: blocked
 priority: p2
-dependencies: [accept-adr-0094-subgroup-execution-tier]
+dependencies: [accept-adr-0094-subgroup-execution-tier, admit-shared-contributor-coverage-and-reduction-padding-identity, decide-the-subgroup-coordinate-binding-and-output-map]
 related: [design-the-subgroup-execution-tier, admit-vector-lane-bindings-into-the-schedule-vocabulary, compose-the-two-level-subgroup-and-workgroup-reduction]
 scopes: [implementation/ir, implementation/compiler, contracts/decisions]
 shared_scopes: [project/tickets]
@@ -47,3 +47,24 @@ ADR 0094 accepted the model, but the research record explicitly left the exact s
 ## Closes when
 
 The vocabulary is admitted, every obligation above is checked by a check observed failing, the identity encoding is exhaustive at every site, the record's worked examples are constructible as tests with the verdicts it states, and every public shape has gone to Tom rather than been self-accepted.
+
+## Source-first decision correction — 2026-08-11
+
+The packet above was not constructible as written. `ContributorPartition::covers` means exact real-contributor coverage, so `{ partitions: 32, contributors_per_partition: 4 }` covers 128 and cannot cover the worked example's 101 real contributors. A `lane_identity_bits` field beside that partition does not change the relation. Reinterpreting the existing type would silently change `MultiPass` and `CooperativeWorkgroup`.
+
+`TailPolicy::IdentityPadded` is also the wrong carrier: `KernelSchedule.tail` governs launch/iteration-domain coverage, while every subgroup lane remains active and padding extends the reduction's inner contributor sequence. The shared concept is a typed reduction padding identity inside a contributor-coverage sum, not the schedule's singular launch-tail policy.
+
+The proposed free-standing `LocalCoordinateSource::SubgroupLane` was stale and dead. The enum already has two variants, and its only carrier is `LocalCoordinates` inside `CooperativeTile`; this topology carries no tile. When a workgroup contains several subgroups, a lane alone is additionally insufficient to bind each subgroup to an output, and no portable relation reconstructs subgroup index from the local linear invocation.
+
+## Accepted portion — 2026-08-11
+
+Tom accepted in this conversation the shared, strict contributor-coverage direction:
+
+- Keep `ContributorPartition::covers` exact for every existing topology.
+- Add a required tagged `ContributorCoverage`: exact coverage carries no identity; identity-padded coverage carries a typed `ReductionPaddingIdentity`. There is no `Option`, default, empty-identity substitution, or caller-declared proof.
+- Derive the padding count as checked `partition.total_contributors() - real_contributors`; do not encode it twice. Padding is a canonical suffix and intrinsic verification proves the stated value is a two-sided identity for the actual family and numerical contract.
+- Use validated literal subgroup-width and lane values plus a required closed, allocation-free combine-tree vocabulary. Butterfly steps derive from width. Ascending is the admitted form; descending remains statable and explicitly unadmitted even after permission checks.
+- Do not weaken `TailPolicy`, infer any tree/identity in lowering, or fall back after target/preflight refusal.
+- Append the new topology under tag `0x36` with a separately tagged coverage payload, preserving every existing schedule byte and the current schedule identity domain.
+
+The exact subgroup-coordinate/output-map carrier was not part of the presented acceptance and a later source audit proved it cannot be omitted for the full `threads_per_workgroup % width == 0` model. `decide-the-subgroup-coordinate-binding-and-output-map` owns that remaining public decision. This ticket is blocked rather than falsely marked accepted or implementation-ready.

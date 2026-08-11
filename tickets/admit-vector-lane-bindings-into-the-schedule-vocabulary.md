@@ -3,7 +3,7 @@ id: admit-vector-lane-bindings-into-the-schedule-vocabulary
 title: Admit vector-lane bindings and their tail policies into the schedule vocabulary
 status: awaiting-decision
 priority: p2
-dependencies: [accept-adr-0093-cpu-vector-lane-tier]
+dependencies: [accept-adr-0093-cpu-vector-lane-tier, admit-shared-contributor-coverage-and-reduction-padding-identity]
 related: [design-the-cpu-vector-lane-tier, represent-cooperative-workgroup-reduction-dataflow, declare-cpu-vector-realization-facts-in-the-target-profile, admit-lane-typed-values-and-masked-memory-into-the-kernel-ir]
 scopes: [implementation/ir, implementation/compiler, contracts/decisions]
 shared_scopes: [project/tickets]
@@ -46,3 +46,5 @@ ADR 0093 accepted the vector-tier model, not the exact public Rust spellings lis
 The vocabulary is admitted; every obligation in Required failure-path evidence is checked by a check observed failing; the identity encoding is exhaustive at every site (encoder matches fail to compile if a new variant is omitted); and the design record's *schedule-owned* intrinsic verdicts are constructible as tests: map under a strict contract consumes no permission; A3 double refusal (reassociation + covers); B2 padding identity and strided permutation refuse; B3 scalable partition refuse. Target-feasibility forks in the worked examples (A1 Proven on AVX / Rejected on NEON; A2 admissible on NEON) belong to the profile ticket's Realized/Unrealizable composition and are not required here — jointly closable only after both land.
 
 **Correction — 2026-08-10.** Reassociation admission wording and Closes when were over-narrow / over-broad relative to live `verify_cooperative_semantics` / multi-pass gates and Non-goals; Implementation keys and Closes when above carry the repaired shape.
+
+**Decision correction — 2026-08-11.** `TailPolicy::IdentityPadded` conflates two independent axes and is withdrawn from the contributor-padding design. `TailPolicy` governs iteration-domain launch tails; padding a lane-partition reduction extends its contributor sequence while every executing lane remains active. `Predicated` and `ScalarEpilogue` remain iteration-tail candidates. The lane-partition topology instead consumes the shared `ContributorCoverage` and typed `ReductionPaddingIdentity` owned by `admit-shared-contributor-coverage-and-reduction-padding-identity`. Existing `ContributorPartition::covers` remains exact, and no missing identity defaults to `empty_identity_bits`.
