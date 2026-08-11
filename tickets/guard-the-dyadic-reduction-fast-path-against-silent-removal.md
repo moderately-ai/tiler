@@ -55,3 +55,7 @@ An initial test-only path census was rejected in independent review. A fully qua
 The remaining mechanisms are inadmissible for the reasons now recorded at `reduction_divisor`: a source-text census is a brittle spelling pin, timing and runtime blow-up are host-sensitive, a permanent dependency or hot-path counter adds the cost being protected, and uncommitted dependency instrumentation is measurement rather than an in-tree regression guard. No deterministic, profile-independent guard over the actual release mechanism remains.
 
 The original operand-population census remains deliberately temporary. Its exact recipe and `cargo nextest run -p tiler-reference --test gcd_census_temp --no-capture` command are cited at `reduction_divisor`, so changing the branch has an explicit remeasurement obligation rather than an overclaimed test.
+
+### Verification
+
+Commit `b4eb1dcc871c1d3e80d81a356afac1fb833c83c6`, the exact source tip, passed `make full` on 2026-08-10: workspace nextest ran 3,287 tests with 3,287 passing and 8 skipped; release nextest ran 1,132 tests with 1,132 passing and 3 skipped; citations, formatting, workspace check, Clippy with warnings denied, doctests, rustdoc with warnings denied, ticket lint, and shellcheck also passed. This ticket-only verification record carries that gate under the repository's documented rule; `make citations` and `tkt lint --format json` were rerun on the final record commit.
