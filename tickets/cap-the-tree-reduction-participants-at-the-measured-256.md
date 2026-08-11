@@ -63,3 +63,5 @@ The tree reads the capped rule, the split is untouched, every moved pin is enume
 **Correction — 2026-08-10.** That `deferred` → `todo` move is historical fire-record board state. [`separate-the-tree-and-split-groupings-at-a-contributor-count-where-their-partitions-differ`](separate-the-tree-and-split-groupings-at-a-contributor-count-where-their-partitions-differ.md) later closed (`status: done`).
 
 **Boundary.** 256 is a property of one host row — one profile, one contract, one program family, `f32`, powers of two only. A second target profile carries its own row rather than inheriting this one.
+
+**Correction — 2026-08-11.** The final sentence above is superseded by the accepted decision in [`gate-the-workgroup-tree-on-an-explicit-qualified-width-policy`](gate-the-workgroup-tree-on-an-explicit-qualified-width-policy.md). The fixed `256` is not exposed as a configurable numeric cost row. A target that offers this tree explicitly declares the closed evidence-qualified `MeasuredNearestCap256V1` policy; omission makes the tree alternative unavailable with a typed reason and does not inherit `256`, substitute the balanced rule, clamp, or retry.

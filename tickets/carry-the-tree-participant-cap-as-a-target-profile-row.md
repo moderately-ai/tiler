@@ -1,7 +1,7 @@
 ---
 id: carry-the-tree-participant-cap-as-a-target-profile-row
 title: Carry the tree participant cap as a target profile row
-status: awaiting-decision
+status: closed
 priority: p2
 dependencies: []
 related: [cap-the-tree-reduction-participants-at-the-measured-256, pin-the-local-memory-refusal-band-the-tree-cap-opened, correct-the-capped-tree-partition-s-false-declared-workgroup-width-claim]
@@ -9,7 +9,17 @@ scopes: [implementation/compiler, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [target-profiles, public-boundary, decision, needs-tom]
+closed_reason: superseded
+closed_note: "Decision accepted 2026-08-11: replace the configurable numeric cap row with gate-the-workgroup-tree-on-an-explicit-qualified-width-policy; retain enumerate-tree-width-alternatives-before-target-cost-ranking as the deferred generalization."
 ---
+## Decision — superseded 2026-08-11
+
+Tom delegated the choice to the coordinator after reviewing the full ranked matrix. The proposed configurable numeric cost row is rejected: its value can withdraw a legal tree before the authoritative prepared-entry limit exists, so it does not preserve the feasibility/cost boundary.
+
+The accepted narrow replacement is [`gate-the-workgroup-tree-on-an-explicit-qualified-width-policy`](gate-the-workgroup-tree-on-an-explicit-qualified-width-policy.md): a target that offers the tree explicitly declares the closed fixed `MeasuredNearestCap256V1` policy; omission produces a typed tree-strategy decline, never inherited `256`, balanced substitution, clamp, or retry. The general feasibility-before-ranking architecture is retained separately in [`enumerate-tree-width-alternatives-before-target-cost-ranking`](enumerate-tree-width-alternatives-before-target-cost-ranking.md).
+
+This decision preserves the audit and measurements below as historical evidence. Their earlier statements that this ticket “owes” a second numeric `CostRow` are withdrawn by this section rather than silently rewritten.
+
 ## Per-Fact audit at `cc667626`, 2026-08-08
 
 Re-read at this base before any edit, per AGENTS.md. Verdicts below; the bodies that follow are the corrected text.
