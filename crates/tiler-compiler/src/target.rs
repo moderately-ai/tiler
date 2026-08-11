@@ -30,21 +30,17 @@
 //! [`TargetProfile::evaluation_order_preservation`], and
 //! [`TargetProfileBuildError::DuplicateEvaluationOrderPreservation`].
 //!
-//! The **measured-cost-row** family is a **reviewed draft boundary** (ADR 0074
-//! convention 7, ADR 0075) and carries *no* acceptance of its own:
+//! The **measured-cost-row** family is an **Accepted public surface**. Tom
+//! accepted it on 2026-08-07 under
+//! `accept-the-measured-cost-row-public-surface`:
 //! [`TargetCostRowResolution`],
 //! [`TargetProfileBuilder::declare_saturated_parallel_fold_steps`],
 //! [`TargetProfileBuilder::declare_measured_saturated_parallel_fold_steps`],
 //! [`TargetProfile::saturated_parallel_fold_steps`], and
-//! [`TargetProfileBuildError::DuplicateCostRow`]. Tom accepted the *model* on
-//! 2026-08-07 under
-//! `activate-measured-reduction-selection-from-a-target-cost-row` — that
-//! selection may consult a measured term where a qualified profile declares one,
-//! carried as a kind distinct from a capability axis, with silence meaning *no
-//! preference* rather than *no plan*. That acceptance expressly excluded the
-//! exact spelling of the declaration pair, which comes back to him with the
-//! built surface. This paragraph is what a reader should find rather than an
-//! acceptance that was never given.
+//! [`TargetProfileBuildError::DuplicateCostRow`]. Its selection may consult a
+//! measured term where a qualified profile declares one, carried as a kind
+//! distinct from a capability axis, with silence meaning *no preference* rather
+//! than *no plan*.
 //!
 //! Four exclusions were accepted with it and are deliberate rather than gaps: no
 //! math-mode spelling, because `safe`/`relaxed`/`fast` are one backend driver's
@@ -1768,13 +1764,9 @@ impl CostRowFact {
 
 /// Result of a cost-row lookup.
 ///
-/// **Draft public surface.** The exact spelling of the declaration pair and of
-/// this reader is a public boundary under ADR 0075 and ADR 0074 convention 7, and
-/// it is not accepted: Tom accepted the *model* on 2026-08-07 —
-/// `activate-measured-reduction-selection-from-a-target-cost-row` — expressly
-/// excluding its spelling, which comes back to him with the built surface. This
-/// sentence is what a reader should find rather than an acceptance that was never
-/// given.
+/// **Accepted public surface**, accepted by Tom on 2026-08-07 under
+/// `accept-the-measured-cost-row-public-surface`, with the declaration pair and
+/// reader below.
 ///
 /// [`Self::Unknown`] is the common answer and it means **no preference**, not no
 /// plan. A consumer must treat it, and [`Self::Deferred`], as evidence it does not
@@ -2920,9 +2912,9 @@ impl TargetProfileBuilder {
     /// Declares how many fold steps this target retires at once when its launch
     /// saturates the device.
     ///
-    /// **Draft public surface**, with [`TargetCostRowResolution`] and the measured
-    /// constructor below; that type's documentation records what was and was not
-    /// accepted.
+    /// **Accepted public surface**, accepted by Tom on 2026-08-07 under
+    /// `accept-the-measured-cost-row-public-surface`, with
+    /// [`TargetCostRowResolution`] and the measured constructor below.
     ///
     /// This is a **cost row, not a capability axis**, and the difference is
     /// load-bearing rather than presentational. A capability axis is a hard bound
@@ -2951,7 +2943,8 @@ impl TargetProfileBuilder {
 
     /// Declares a measured saturated-parallel-fold-step count.
     ///
-    /// **Draft public surface**, with the constructor above.
+    /// **Accepted public surface**, accepted by Tom on 2026-08-07 under
+    /// `accept-the-measured-cost-row-public-surface`, with the constructor above.
     ///
     /// The measured spelling is the one a target row is expected to use, and it is
     /// the *only* one any profile in this repository uses. The quantity is a
@@ -3746,8 +3739,9 @@ impl TargetProfile {
     /// Resolves how many fold steps this target retires at once when saturated,
     /// preferring the latest declaration available through `available_phase`.
     ///
-    /// **Draft public surface**, with the two declaration constructors;
-    /// [`TargetCostRowResolution`] records what was and was not accepted.
+    /// **Accepted public surface**, accepted by Tom on 2026-08-07 under
+    /// `accept-the-measured-cost-row-public-surface`, with the two declaration
+    /// constructors.
     ///
     /// Returns [`TargetCostRowResolution::Unknown`] for a profile that declares
     /// nothing, which is every profile but the qualified Apple9 macOS one. That
