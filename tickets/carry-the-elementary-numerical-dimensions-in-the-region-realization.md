@@ -4,7 +4,7 @@ title: Carry the elementary numerical dimensions in the region realization
 status: todo
 priority: p2
 dependencies: [carry-every-realized-dimension-through-region-feasibility]
-related: [admit-the-silu-activation-family, admit-the-rms-normalization-family, admit-the-softmax-family]
+related: [admit-the-silu-activation-family, admit-the-rms-normalization-family, admit-the-softmax-family, require-both-elementary-evidence-halves-before-target-admission]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/reference, implementation/metal, contracts/decisions, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
