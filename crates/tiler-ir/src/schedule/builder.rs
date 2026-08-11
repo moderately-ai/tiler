@@ -958,229 +958,82 @@ fn verify_access_and_semantics(
     ) {
         return verify_cooperative_semantics(region, read, write);
     }
+    verify_serial_semantics(region, read, write)
+}
+
+/// Verifies the conjunction every serial fold shares.
+///
+/// The family derivation owns the axes, contributor order, contributor tensor,
+/// and empty-domain contract. This gate owns the serial topology's agreement
+/// with those facts and deliberately does not read
+/// [`SplitFamily::consumes_reassociation`]: a serial fold preserves the
+/// declared contributor grouping and spends no reassociation permission.
+fn verify_serial_semantics(
+    region: &ScheduledRegion,
+    read: &Access,
+    write: &Access,
+) -> Result<(), ScheduledRegionDiagnostic> {
     let numerical = &region.index.numerical;
-    // Every arm below differs in what it reads and agrees on what it writes.
-    // The read obligation is per family, because a family's scalar program is
-    // what decides which tensor holds its contributors. The fused affine family
-    // reads whichever declared input its prologue names; the two squared families
-    // and the extrema fold keep their family-specific first-input rule; and the
-    // bare sum reads whichever tensor holds its declared contributor domain. The
-    // write obligation is [`CommittedTensor::CoverAssigned`] at all
-    // four, because no fold's algebra distinguishes committing the caller's
-    // answer from committing a value a later region reads, so widening one arm
-    // and not its siblings would state a difference between them that does not
-    // exist — and would drop the *fused* alternative for every reduction whose
-    // result an epilogue consumes while keeping the materialized-prologue one.
-    match (
-        &region.index.scalar_program,
-        &region.schedule.reduction,
-        &read.map,
-    ) {
-        // The one family here whose contributor tensor is not fixed by its scalar
-        // program, for the reason [`ContributorTensor::DeclaredDomain`] states:
-        // the fold carries no prologue, so it reads whichever tensor holds its
-        // declared contributor domain.
-        (
-            ScalarProgram::StrictSerialSum {
-                axes,
-                order,
-                empty_identity_bits,
-                ..
-            },
-            ReductionTopology::Serial {
-                axes: scheduled_axes,
-                order: scheduled_order,
-                permits_reassociation,
-                permits_permutation,
-            },
-            LogicalAccess::ReductionContributor {
-                input_shape,
-                output_shape,
-                axes: access_axes,
-                order: access_order,
-            },
-        ) if axes == scheduled_axes
-            && axes == access_axes
-            && order == scheduled_order
-            && order == access_order
-            && *permits_reassociation == numerical.permits_reassociation()
-            && *permits_permutation == numerical.permits_permutation()
-            && *empty_identity_bits == 0.0_f32.to_bits()
-            && output_shape == &region.index.iteration_shape
-            && input_shape.without_axes(axes) == *output_shape
-            && ContributorTensor::DeclaredDomain.admits(read.tensor)
-            && CommittedTensor::CoverAssigned.admits(write.tensor) => {}
-        (
-            ScalarProgram::FusedMultiplyAddSerialSum {
-                axes,
-                order,
-                empty_identity_bits,
-                contraction,
-                ..
-            },
-            ReductionTopology::Serial {
-                axes: scheduled_axes,
-                order: scheduled_order,
-                permits_reassociation,
-                permits_permutation,
-            },
-            LogicalAccess::ReductionContributor {
-                input_shape,
-                output_shape,
-                axes: access_axes,
-                order: access_order,
-            },
-        ) if axes == scheduled_axes
-            && axes == access_axes
-            && order == scheduled_order
-            && order == access_order
-            && *permits_reassociation == numerical.permits_reassociation()
-            && *permits_permutation == numerical.permits_permutation()
-            && !contraction
-            && *empty_identity_bits == 0.0_f32.to_bits()
-            && output_shape == &region.index.iteration_shape
-            && input_shape.without_axes(axes) == *output_shape
-            && ContributorTensor::DeclaredInput.admits(read.tensor)
-            && CommittedTensor::CoverAssigned.admits(write.tensor) => {}
-        // The squaring prologue reads the *original* input, exactly as the
-        // scale-bias one does, so its read binds the first input tensor rather
-        // than an intermediate. Its obligations are otherwise the strict serial
-        // sum's, because it is that reduction over an elementwise prologue and
-        // not a second reducer.
-        (
-            ScalarProgram::SquaredSerialSum {
-                axes,
-                order,
-                empty_identity_bits,
-                ..
-            },
-            ReductionTopology::Serial {
-                axes: scheduled_axes,
-                order: scheduled_order,
-                permits_reassociation,
-                permits_permutation,
-            },
-            LogicalAccess::ReductionContributor {
-                input_shape,
-                output_shape,
-                axes: access_axes,
-                order: access_order,
-            },
-        ) if axes == scheduled_axes
-            && axes == access_axes
-            && order == scheduled_order
-            && order == access_order
-            && *permits_reassociation == numerical.permits_reassociation()
-            && *permits_permutation == numerical.permits_permutation()
-            && *empty_identity_bits == 0.0_f32.to_bits()
-            && output_shape == &region.index.iteration_shape
-            && input_shape.without_axes(axes) == *output_shape
-            && read.tensor == FIRST_INPUT
-            && CommittedTensor::CoverAssigned.admits(write.tensor) => {}
-        // The squaring fold that carries its own epilogue. Every fold obligation
-        // above is repeated here — the arm is the `SquaredSerialSum` one, and the
-        // epilogue does not change what the *fold* reads or writes — plus the two
-        // this variant owns:
-        //
-        // - **One leaf, which is the folded value.** This region reads one
-        //   boundary tensor, so an epilogue with a second leaf would name a buffer
-        //   nothing binds; the lowering supplies the accumulator for ordinal zero
-        //   and has nothing to supply for ordinal one.
-        // - **The epilogue must transform something.** A root that *is* the input
-        //   leaf computes nothing, which is a second spelling of
-        //   `SquaredSerialSum` and would give one program two identities.
-        //
-        // `is_valid` is required beside them for the reason a pointwise region
-        // requires it: the expression arrives from a producer, and a malformed one
-        // would reach the lowering as a forward reference or an unreachable node.
-        (
-            ScalarProgram::SquaredSerialSumThenEpilogue {
-                axes,
-                order,
-                empty_identity_bits,
-                epilogue,
-                ..
-            },
-            ReductionTopology::Serial {
-                axes: scheduled_axes,
-                order: scheduled_order,
-                permits_reassociation,
-                permits_permutation,
-            },
-            LogicalAccess::ReductionContributor {
-                input_shape,
-                output_shape,
-                axes: access_axes,
-                order: access_order,
-            },
-        ) if axes == scheduled_axes
-            && axes == access_axes
-            && order == scheduled_order
-            && order == access_order
-            && *permits_reassociation == numerical.permits_reassociation()
-            && *permits_permutation == numerical.permits_permutation()
-            && *empty_identity_bits == 0.0_f32.to_bits()
-            && output_shape == &region.index.iteration_shape
-            && input_shape.without_axes(axes) == *output_shape
-            && read.tensor == FIRST_INPUT
-            && CommittedTensor::CoverAssigned.admits(write.tensor)
-            && epilogue.is_valid()
-            && epilogue.input_count() == 1
-            && !matches!(
+    let ReductionTopology::Serial {
+        axes: scheduled_axes,
+        order: scheduled_order,
+        permits_reassociation,
+        permits_permutation,
+    } = &region.schedule.reduction
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    let LogicalAccess::ReductionContributor {
+        input_shape,
+        output_shape,
+        axes: access_axes,
+        order: access_order,
+    } = &read.map
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    let family = split_family(&region.index.scalar_program)
+        .ok_or(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
+    let read_tensor = family
+        .read_tensor(FamilyTopology::Serial)
+        .ok_or(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
+    let axes = family.axes;
+    if axes != scheduled_axes.as_slice()
+        || axes != access_axes.as_slice()
+        || family.order != scheduled_order
+        || family.order != access_order
+        || *permits_reassociation != numerical.permits_reassociation()
+        || *permits_permutation != numerical.permits_permutation()
+        || output_shape != &region.index.iteration_shape
+        || input_shape.without_axes(axes) != *output_shape
+        || !read_tensor.admits(read.tensor)
+        || !CommittedTensor::CoverAssigned.admits(write.tensor)
+    {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    let contributors = contributor_count(axes, &read.map)
+        .map_err(|_| ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
+    if !empty_domain_is_satisfied(family.empty_domain, contributors) {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+
+    // The sole serial-only family residual. A fold carrying an epilogue applies
+    // it to the complete folded value, which is why `split_family` refuses every
+    // parallel topology for it. Serial admission still owes three facts the fold
+    // family does not: the expression is valid, its one leaf is the accumulator,
+    // and it transforms that leaf instead of respelling `SquaredSerialSum`.
+    if let ScalarProgram::SquaredSerialSumThenEpilogue { epilogue, .. } =
+        &region.index.scalar_program
+        && (!epilogue.is_valid()
+            || epilogue.input_count() != 1
+            || matches!(
                 epilogue
                     .nodes()
                     .get(usize::try_from(epilogue.root().index()).unwrap_or(usize::MAX)),
                 Some(super::pointwise::PointwiseF32Node::Input { .. })
-            ) => {}
-        // The extrema fold. Every obligation the sums carry is carried here too
-        // *except* the empty-domain identity, which this family has no field for
-        // and no correct value of — the non-emptiness check below replaces it.
-        // Its read binds the first input tensor, because `tiler::softmax-f32@1`'s
-        // maximum pass reads the original scores rather than an intermediate.
-        //
-        // The two order permissions are still required to agree with the
-        // realization, and that is deliberate rather than an oversight: this fold
-        // is order-*insensitive*, so the permissions do not constrain what a
-        // schedule may do to it — but the region still declares them, and a
-        // declaration that disagreed with its own realization would be
-        // incoherent whatever the fold's legality.
-        (
-            ScalarProgram::StrictSerialMaximum { axes, order, .. },
-            ReductionTopology::Serial {
-                axes: scheduled_axes,
-                order: scheduled_order,
-                permits_reassociation,
-                permits_permutation,
-            },
-            LogicalAccess::ReductionContributor {
-                input_shape,
-                output_shape,
-                axes: access_axes,
-                order: access_order,
-            },
-        ) if axes == scheduled_axes
-            && axes == access_axes
-            && order == scheduled_order
-            && order == access_order
-            && *permits_reassociation == numerical.permits_reassociation()
-            && *permits_permutation == numerical.permits_permutation()
-            && output_shape == &region.index.iteration_shape
-            && input_shape.without_axes(axes) == *output_shape
-            && read.tensor == FIRST_INPUT
-            && CommittedTensor::CoverAssigned.admits(write.tensor) => {}
-        _ => return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement),
-    }
-    // The one precondition the extrema fold has and no sum does. The family is
-    // identity-less, so a reduced domain with no contributors has no value the
-    // region could commit — the same shape of refusal the contraction states for
-    // its unseeded fold, checked on the contributor count rather than on the rank
-    // because a rank-zero reduced domain has one contributor, not none.
-    if let ScalarProgram::StrictSerialMaximum { axes, .. } = &region.index.scalar_program {
-        let contributors = contributor_count(axes, &read.map)
-            .map_err(|_| ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
-        if contributors == 0 {
-            return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
-        }
+            ))
+    {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
     Ok(())
 }
@@ -1207,13 +1060,33 @@ enum EmptyDomainContract {
     NoIdentity,
 }
 
-/// What one scalar program's own algebra decides about a parallel split.
+/// Which topology asks for one reduction family's contributor tensor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FamilyTopology {
+    /// The complete fold runs serially in one region.
+    Serial,
+    /// One pass of a split across dispatches.
+    MultiPass(ReductionPass),
+    /// The complete split runs cooperatively in one workgroup.
+    Cooperative,
+}
+
+/// Which parallel forms one reduction family can realize.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ParallelFamily {
+    /// The partial pass and cooperative tile are admitted; `final_pass` records
+    /// whether this same scalar program can also combine staged partials.
+    Split { final_pass: bool },
+    /// Only the serial topology is meaningful for this scalar program.
+    SerialOnly,
+}
+
+/// What one scalar program's own algebra decides about every reduction topology.
 ///
-/// Both parallel topologies need exactly these facts and check different
-/// structures over them, so they are derived once per topology
-/// ([`multi_pass_family`], [`cooperative_family`]) rather than destructured
-/// inline: a family admitted by one admission and not the other would otherwise
-/// be a difference nobody states.
+/// Derived once by [`split_family`] and read by the serial, multi-pass, and
+/// cooperative admissions. A family admitted by one and not another is therefore
+/// an explicit [`ParallelFamily`] decision rather than a difference between
+/// independently maintained match tables.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SplitFamily<'a> {
     /// Reduced axes the scalar program declares.
@@ -1241,7 +1114,7 @@ struct SplitFamily<'a> {
     /// consume: a topology disagreeing with its own contract is incoherent
     /// however the fold behaves.
     consumes_reassociation: bool,
-    /// Boundary-tensor obligation this pass's single read must discharge.
+    /// Boundary-tensor obligation the complete fold or first split level reads.
     ///
     /// There is deliberately no write counterpart on this struct, and the
     /// absence is the claim: a read's tensor varies by *family*, because a
@@ -1251,7 +1124,36 @@ struct SplitFamily<'a> {
     /// [`CommittedTensor::Exactly`], identically for every family. Carrying it
     /// here would let a family declare a write target it has no authority over,
     /// and would invite two families to disagree about one cover's decision.
-    read_tensor: ContributorTensor,
+    contributor_tensor: ContributorTensor,
+    /// Parallel forms this family admits.
+    parallel: ParallelFamily,
+}
+
+impl SplitFamily<'_> {
+    /// Derives the contributor tensor one topology reads, or refuses that form.
+    ///
+    /// The serial fold, split partial pass, and cooperative tile all read the
+    /// family's own contributor domain. A final pass, when the family admits one,
+    /// reads exactly the intermediate its partial pass staged. Nothing here reads
+    /// [`Self::consumes_reassociation`], so deriving a serial tensor cannot give
+    /// that field serial meaning.
+    const fn read_tensor(self, topology: FamilyTopology) -> Option<ContributorTensor> {
+        match topology {
+            FamilyTopology::Serial => Some(self.contributor_tensor),
+            FamilyTopology::MultiPass(ReductionPass::Partial) | FamilyTopology::Cooperative => {
+                match self.parallel {
+                    ParallelFamily::Split { .. } => Some(self.contributor_tensor),
+                    ParallelFamily::SerialOnly => None,
+                }
+            }
+            FamilyTopology::MultiPass(ReductionPass::Final) => match self.parallel {
+                ParallelFamily::Split { final_pass: true } => {
+                    Some(ContributorTensor::Exactly(TensorRole::Intermediate))
+                }
+                ParallelFamily::Split { final_pass: false } | ParallelFamily::SerialOnly => None,
+            },
+        }
+    }
 }
 
 /// Decides one family's empty-domain obligation against a pass's contributors.
@@ -1288,32 +1190,15 @@ const fn empty_domain_is_satisfied(contract: EmptyDomainContract, contributors: 
     }
 }
 
-/// Resolves what one pass of a multi-dispatch split may be, from its program.
+/// Derives one reduction family's topology-independent algebraic facts.
 ///
-/// A fused prologue belongs to the pass that reads the original inputs: the final
-/// pass reads partials, so re-applying scale and bias there would scale each
-/// partial a second time and squaring one would square an already-folded value.
-/// Both therefore admit a partial pass alone, and the final pass that consumes
-/// their partials is an ordinary [`ScalarProgram::StrictSerialSum`] region.
-///
-/// **The two passes of a bare sum have different obligations, and the asymmetry
-/// is structural rather than conservative.** The partial pass folds the region's
-/// declared contributor domain, which lives in whichever tensor the plan placed
-/// it — the input named by `sum(x)`, or an intermediate for a materialized prologue
-/// — so it carries [`ContributorTensor::DeclaredDomain`]. The final pass folds
-/// values the partial pass *staged*, and those exist only because it staged them,
-/// so its read is exactly the intermediate. Widening the final pass too would let
-/// a region claim a declared input holds partials no dispatch wrote there.
-///
-/// **The extrema family is the other one here whose two passes read different
-/// tensors.** Its partial pass reads the original scores exactly as the serial
-/// extrema pass does, and its final pass folds the staged partials under the
-/// *same* family — which is what makes the split a reassociation of one fold
-/// rather than two reductions composed. A partial pass that read the original
-/// scores and *summed* them is not thereby admitted as a sum: the sum's partial
-/// pass has its own contributor domain to prove, and a mis-specified extrema
-/// partial states the extrema family's split rather than that domain.
-fn multi_pass_family(program: &ScalarProgram, pass: ReductionPass) -> Option<SplitFamily<'_>> {
+/// The serial, multi-pass, and cooperative admissions all read this one table.
+/// The first split level always reads `contributor_tensor`; a final pass, when
+/// admitted, reads the intermediate that level staged. A fused or squared
+/// prologue admits no final pass because applying it to a partial would apply it
+/// twice. The epilogue-carrying fold is explicitly serial-only because its
+/// epilogue applies to the complete fold rather than to a fragment.
+fn split_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
     match program {
         ScalarProgram::StrictSerialSum {
             axes,
@@ -1327,100 +1212,8 @@ fn multi_pass_family(program: &ScalarProgram, pass: ReductionPass) -> Option<Spl
                 bits: *empty_identity_bits,
             },
             consumes_reassociation: true,
-            read_tensor: match pass {
-                ReductionPass::Partial => ContributorTensor::DeclaredDomain,
-                ReductionPass::Final => ContributorTensor::Exactly(TensorRole::Intermediate),
-            },
-        }),
-        ScalarProgram::FusedMultiplyAddSerialSum {
-            axes,
-            order,
-            empty_identity_bits,
-            contraction,
-            ..
-        } => match pass {
-            ReductionPass::Partial if !contraction => Some(SplitFamily {
-                axes,
-                order,
-                empty_domain: EmptyDomainContract::Identity {
-                    bits: *empty_identity_bits,
-                },
-                consumes_reassociation: true,
-                read_tensor: ContributorTensor::DeclaredInput,
-            }),
-            ReductionPass::Partial | ReductionPass::Final => None,
-        },
-        ScalarProgram::SquaredSerialSum {
-            axes,
-            order,
-            empty_identity_bits,
-            ..
-        } => match pass {
-            ReductionPass::Partial => Some(SplitFamily {
-                axes,
-                order,
-                empty_domain: EmptyDomainContract::Identity {
-                    bits: *empty_identity_bits,
-                },
-                consumes_reassociation: true,
-                read_tensor: ContributorTensor::Exactly(FIRST_INPUT),
-            }),
-            ReductionPass::Final => None,
-        },
-        ScalarProgram::StrictSerialMaximum { axes, order, .. } => Some(SplitFamily {
-            axes,
-            order,
-            empty_domain: EmptyDomainContract::NoIdentity,
-            consumes_reassociation: false,
-            read_tensor: ContributorTensor::Exactly(match pass {
-                ReductionPass::Partial => FIRST_INPUT,
-                ReductionPass::Final => TensorRole::Intermediate,
-            }),
-        }),
-        // One answer, two different reasons. **A fold carrying an epilogue admits
-        // no pass of a split**, and that refusal is the program's algebra rather
-        // than caution: the epilogue applies to the *complete* fold, so a partial
-        // pass applying it would transform a fragment and one that did not would
-        // be an ordinary `SquaredSerialSum` wearing this variant's name — a split
-        // of this family is two scalar programs rather than one partitioned,
-        // which no split this vocabulary states can express. **And no pointwise
-        // program folds anything**, at either width.
-        ScalarProgram::SquaredSerialSumThenEpilogue { .. }
-        | ScalarProgram::PointwiseF32(_)
-        | ScalarProgram::PointwiseBf16(_)
-        | ScalarProgram::StrictAffineU4Dequantize { .. }
-        | ScalarProgram::StrictTensorContraction { .. } => None,
-    }
-}
-
-/// Resolves what a cooperative tile may fold, from its scalar program.
-///
-/// A tile reads the original inputs and commits the reduction's own output in one
-/// dispatch, so every family whose prologue belongs to the pass that reads the
-/// inputs is admissible — there is no later pass here for a prologue to be
-/// applied twice in. That is also why the extrema family needs no pass
-/// distinction: a tile *is* both halves of the split.
-///
-/// It is also why the bare sum carries [`ContributorTensor::DeclaredDomain`] with
-/// no pass distinction where [`multi_pass_family`] gives it one. A tile stages its
-/// partials in workgroup memory, which is not a boundary tensor at all, so the
-/// region's single read is the declared contributor domain and nothing here folds
-/// a staged intermediate through a boundary access.
-fn cooperative_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
-    match program {
-        ScalarProgram::StrictSerialSum {
-            axes,
-            order,
-            empty_identity_bits,
-            ..
-        } => Some(SplitFamily {
-            axes,
-            order,
-            empty_domain: EmptyDomainContract::Identity {
-                bits: *empty_identity_bits,
-            },
-            consumes_reassociation: true,
-            read_tensor: ContributorTensor::DeclaredDomain,
+            contributor_tensor: ContributorTensor::DeclaredDomain,
+            parallel: ParallelFamily::Split { final_pass: true },
         }),
         ScalarProgram::FusedMultiplyAddSerialSum {
             axes,
@@ -1435,7 +1228,8 @@ fn cooperative_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
                 bits: *empty_identity_bits,
             },
             consumes_reassociation: true,
-            read_tensor: ContributorTensor::DeclaredInput,
+            contributor_tensor: ContributorTensor::DeclaredInput,
+            parallel: ParallelFamily::Split { final_pass: false },
         }),
         ScalarProgram::SquaredSerialSum {
             axes,
@@ -1449,27 +1243,35 @@ fn cooperative_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
                 bits: *empty_identity_bits,
             },
             consumes_reassociation: true,
-            read_tensor: ContributorTensor::Exactly(FIRST_INPUT),
+            contributor_tensor: ContributorTensor::Exactly(FIRST_INPUT),
+            parallel: ParallelFamily::Split { final_pass: false },
         }),
-        // The extrema fold reads the original scores, as its serial and partial
-        // passes do, and stages one maximum per participant. Every slot it reads
-        // back holds a real contributor's value rather than an identity, which is
-        // what `empty_domain_is_satisfied` records the derivation for.
+        ScalarProgram::SquaredSerialSumThenEpilogue {
+            axes,
+            order,
+            empty_identity_bits,
+            ..
+        } => Some(SplitFamily {
+            axes,
+            order,
+            empty_domain: EmptyDomainContract::Identity {
+                bits: *empty_identity_bits,
+            },
+            consumes_reassociation: true,
+            contributor_tensor: ContributorTensor::Exactly(FIRST_INPUT),
+            parallel: ParallelFamily::SerialOnly,
+        }),
         ScalarProgram::StrictSerialMaximum { axes, order, .. } => Some(SplitFamily {
             axes,
             order,
             empty_domain: EmptyDomainContract::NoIdentity,
             consumes_reassociation: false,
-            read_tensor: ContributorTensor::Exactly(FIRST_INPUT),
+            contributor_tensor: ContributorTensor::Exactly(FIRST_INPUT),
+            parallel: ParallelFamily::Split { final_pass: true },
         }),
-        // One answer, two different reasons, as in [`multi_pass_family`]. **A fold
-        // carrying an epilogue** applies it to the complete fold, so a
-        // participant's share is not a value it may be applied to, and a tile
-        // that applied it once at the end would still have staged partials of a
-        // program this variant does not name. **And no pointwise program folds
-        // anything**, at either width.
-        ScalarProgram::SquaredSerialSumThenEpilogue { .. }
-        | ScalarProgram::PointwiseF32(_)
+        // No pointwise or decode program folds anything, and the contraction
+        // owns a distinct two-read topology rather than this one-read family.
+        ScalarProgram::PointwiseF32(_)
         | ScalarProgram::PointwiseBf16(_)
         | ScalarProgram::StrictAffineU4Dequantize { .. }
         | ScalarProgram::StrictTensorContraction { .. } => None,
@@ -1488,8 +1290,8 @@ fn cooperative_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
 ///
 /// The required width is *derived* from the region's own scalar program rather
 /// than compared against a literal `F32`. Every family that reaches either gate
-/// is `f32` today — `multi_pass_family` and `cooperative_family` both refuse the
-/// pointwise programs — so the derivation changes no outcome now; what it
+/// is `f32` today — `split_family` refuses the pointwise programs for every
+/// topology — so the derivation changes no outcome now; what it
 /// changes is that a `bf16` reduction admitted later must state its accumulator
 /// instead of inheriting an `f32` one nobody re-checked.
 ///
@@ -1537,7 +1339,10 @@ fn verify_multi_pass_semantics(
     else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
-    let family = multi_pass_family(&region.index.scalar_program, *pass)
+    let family = split_family(&region.index.scalar_program)
+        .ok_or(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
+    let read_tensor = family
+        .read_tensor(FamilyTopology::MultiPass(*pass))
         .ok_or(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
     let numerical = &region.index.numerical;
     // Reassociation is what a split of an order-*sensitive* fold consumes, and it
@@ -1573,7 +1378,7 @@ fn verify_multi_pass_semantics(
         || family.order != scheduled_order
         || family.order != access_order
         || input_shape.without_axes(axes) != *output_shape
-        || !family.read_tensor.admits(read.tensor)
+        || !read_tensor.admits(read.tensor)
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
@@ -1663,7 +1468,10 @@ fn verify_cooperative_semantics(
     else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
-    let family = cooperative_family(&region.index.scalar_program)
+    let family = split_family(&region.index.scalar_program)
+        .ok_or(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
+    let read_tensor = family
+        .read_tensor(FamilyTopology::Cooperative)
         .ok_or(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
     let numerical = &region.index.numerical;
     // Reassociation is what a split of an order-sensitive fold consumes, exactly
@@ -1711,7 +1519,7 @@ fn verify_cooperative_semantics(
         || family.order != scheduled_order
         || family.order != access_order
         || input_shape.without_axes(axes) != *output_shape
-        || !family.read_tensor.admits(read.tensor)
+        || !read_tensor.admits(read.tensor)
         // A tile is both halves of a split in one dispatch, so its single write
         // is the fold's committing write and the cover decides where it lands —
         // there is no staging pass here whose target the split structure fixes,
@@ -2572,6 +2380,7 @@ mod structural_relation_tests {
 mod tests {
     use super::*;
     use std::fmt::Write as _;
+    use std::mem::variant_count;
 
     use crate::schedule::MAX_COOPERATIVE_PARTICIPANT_RANK;
     use crate::schedule::cooperative::{
@@ -2591,7 +2400,9 @@ mod tests {
         FencedSpaces, MemoryOrdering, SynchronizationKind, SynchronizationPlacement,
         SynchronizationPoint, SynchronizationScope, SynchronizationSubject,
     };
-    use crate::schedule::{PointwiseF32Expression, PointwiseF32ExpressionBuilder};
+    use crate::schedule::{
+        PointwiseBf16ExpressionBuilder, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
+    };
     use crate::shape::{Axis, Shape};
 
     /// Recorded canonical identity of the strict-`f32` pointwise test region.
@@ -4011,9 +3822,19 @@ mod tests {
     #[test]
     fn a_fold_carrying_an_epilogue_admits_no_parallel_topology() {
         let scalar = squared_sum_with_epilogue(scale_epilogue());
-        assert!(multi_pass_family(&scalar, ReductionPass::Partial).is_none());
-        assert!(multi_pass_family(&scalar, ReductionPass::Final).is_none());
-        assert!(cooperative_family(&scalar).is_none());
+        let family = split_family(&scalar).expect("the serial family is derived");
+        assert_eq!(family.parallel, ParallelFamily::SerialOnly);
+        assert!(
+            family
+                .read_tensor(FamilyTopology::MultiPass(ReductionPass::Partial))
+                .is_none()
+        );
+        assert!(
+            family
+                .read_tensor(FamilyTopology::MultiPass(ReductionPass::Final))
+                .is_none()
+        );
+        assert!(family.read_tensor(FamilyTopology::Cooperative).is_none());
 
         // Stated against a partial pass that is otherwise *correct*: the fixture
         // is the squaring fold's own verified partial pass with its scalar
@@ -4762,6 +4583,267 @@ mod tests {
     const SECOND_INPUT: TensorRole = TensorRole::Input {
         ordinal: InputOrdinal::new(1),
     };
+
+    /// One inhabitant of every [`ScalarProgram`] variant and its expected
+    /// reduction-family classification.
+    ///
+    /// The array is sized from the type rather than from a hand-written count:
+    /// widening the scalar vocabulary without classifying its new inhabitant is
+    /// therefore a compile error here instead of a smaller census that stays
+    /// green.
+    struct ScalarProgramFamilyCase {
+        name: &'static str,
+        program: ScalarProgram,
+        parallel: Option<ParallelFamily>,
+    }
+
+    fn scalar_program_family_population()
+    -> [ScalarProgramFamilyCase; variant_count::<ScalarProgram>()] {
+        let mut bf16 = PointwiseBf16ExpressionBuilder::new();
+        let bf16_input = bf16.input(InputOrdinal::FIRST).unwrap();
+        let bf16 = bf16.build(bf16_input).unwrap();
+        [
+            ScalarProgramFamilyCase {
+                name: "pointwise f32",
+                program: ScalarProgram::PointwiseF32(scale_bias_expression(
+                    1.0_f32.to_bits(),
+                    0.0_f32.to_bits(),
+                )),
+                parallel: None,
+            },
+            ScalarProgramFamilyCase {
+                name: "pointwise bf16",
+                program: ScalarProgram::PointwiseBf16(bf16),
+                parallel: None,
+            },
+            ScalarProgramFamilyCase {
+                name: "strict affine u4 decode",
+                program: ScalarProgram::StrictAffineU4Dequantize {
+                    codes_role: STRICT_AFFINE_CODES_ROLE,
+                    scale_role: STRICT_AFFINE_SCALE_ROLE,
+                    zero_point_role: STRICT_AFFINE_ZERO_POINT_ROLE,
+                },
+                parallel: None,
+            },
+            ScalarProgramFamilyCase {
+                name: "strict serial sum",
+                program: bare_sum(vec![Axis::new(1)]),
+                parallel: Some(ParallelFamily::Split { final_pass: true }),
+            },
+            ScalarProgramFamilyCase {
+                name: "scale-bias prologue",
+                program: ScalarProgram::FusedMultiplyAddSerialSum {
+                    scale_bits: 1.0_f32.to_bits(),
+                    bias_bits: 0.0_f32.to_bits(),
+                    axes: vec![Axis::new(1)],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: 0x7fc0_0000,
+                    empty_identity_bits: 0.0_f32.to_bits(),
+                    contraction: false,
+                },
+                parallel: Some(ParallelFamily::Split { final_pass: false }),
+            },
+            ScalarProgramFamilyCase {
+                name: "squaring prologue",
+                program: ScalarProgram::SquaredSerialSum {
+                    axes: vec![Axis::new(1)],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: 0x7fc0_0000,
+                    empty_identity_bits: 0.0_f32.to_bits(),
+                },
+                parallel: Some(ParallelFamily::Split { final_pass: false }),
+            },
+            ScalarProgramFamilyCase {
+                name: "squaring prologue with epilogue",
+                program: squared_sum_with_epilogue(scale_epilogue()),
+                parallel: Some(ParallelFamily::SerialOnly),
+            },
+            ScalarProgramFamilyCase {
+                name: "strict tensor contraction",
+                program: ScalarProgram::StrictTensorContraction {
+                    contracted_shape: Shape::from_dims([6]),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: 0x7fc0_0000,
+                },
+                parallel: None,
+            },
+            ScalarProgramFamilyCase {
+                name: "extrema fold",
+                program: maximum_scalar(),
+                parallel: Some(ParallelFamily::Split { final_pass: true }),
+            },
+        ]
+    }
+
+    /// Makes a parallel fixture's numerical declaration agree with one family.
+    ///
+    /// Every sum family consumes reassociation; maximum is order-insensitive and
+    /// consumes none. The edit moves the topology declaration and realization
+    /// together so the contributor-tensor comparison below is the only varying
+    /// admission fact.
+    fn declare_family_reassociation(builder: &mut ScheduledRegionBuilder, program: &ScalarProgram) {
+        if !matches!(program, ScalarProgram::StrictSerialMaximum { .. }) {
+            return;
+        }
+        builder.numerical = Some(strict_numerical());
+        match &mut builder
+            .schedule
+            .as_mut()
+            .expect("the fixture has a schedule")
+            .reduction
+        {
+            ReductionTopology::MultiPass {
+                permits_reassociation,
+                ..
+            }
+            | ReductionTopology::CooperativeWorkgroup {
+                permits_reassociation,
+                ..
+            } => *permits_reassociation = false,
+            ReductionTopology::None
+            | ReductionTopology::Serial { .. }
+            | ReductionTopology::Contraction { .. } => {
+                panic!("the fixture has a parallel reduction")
+            }
+        }
+    }
+
+    fn partial_family_builder(
+        program: ScalarProgram,
+        read_tensor: TensorRole,
+    ) -> ScheduledRegionBuilder {
+        let mut builder = partial_pass_builder(SPLIT);
+        read_from(&mut builder, read_tensor);
+        declare_family_reassociation(&mut builder, &program);
+        builder.scalar_program = Some(program);
+        builder
+    }
+
+    fn cooperative_family_builder(
+        program: ScalarProgram,
+        read_tensor: TensorRole,
+    ) -> ScheduledRegionBuilder {
+        let mut builder = cooperative_builder(cooperative_tile_fixture());
+        read_from(&mut builder, read_tensor);
+        declare_family_reassociation(&mut builder, &program);
+        builder.scalar_program = Some(program);
+        builder
+    }
+
+    /// The scalar-program population derives exactly five serial fold families,
+    /// four of which also state a parallel split.
+    #[test]
+    fn the_scalar_program_population_derives_five_serial_and_four_parallel_families() {
+        let population = scalar_program_family_population();
+        assert_eq!(
+            population
+                .iter()
+                .filter(|case| case.parallel.is_some())
+                .count(),
+            5,
+            "five ScalarProgram variants are serial fold families",
+        );
+        assert_eq!(
+            population
+                .iter()
+                .filter(|case| matches!(case.parallel, Some(ParallelFamily::Split { .. })))
+                .count(),
+            4,
+            "four serial families also state a parallel split",
+        );
+        for case in population {
+            let derived = split_family(&case.program).map(|family| family.parallel);
+            assert_eq!(derived, case.parallel, "{} classification", case.name);
+        }
+    }
+
+    /// Every family shared by the three topologies admits the same boundary
+    /// contributor tensors.
+    ///
+    /// Four representative roles cover the complete predicate vocabulary:
+    /// first and nonzero declared inputs, the materialized intermediate, and the
+    /// refused output. The expected answer comes from the family derivation and
+    /// is checked independently through each production admission, so changing
+    /// only the serial gate's read predicate makes this test fail even though the
+    /// family table and both parallel gates still agree.
+    #[test]
+    fn shared_families_admit_the_same_contributor_tensors_in_every_topology() {
+        let tensors = [
+            FIRST_INPUT,
+            SECOND_INPUT,
+            TensorRole::Intermediate,
+            TensorRole::Output,
+        ];
+        for case in scalar_program_family_population()
+            .into_iter()
+            .filter(|case| matches!(case.parallel, Some(ParallelFamily::Split { .. })))
+        {
+            let family = split_family(&case.program).expect("the case is a fold family");
+            for tensor in tensors {
+                let expected = family
+                    .read_tensor(FamilyTopology::Serial)
+                    .expect("every fold has a serial contributor tensor")
+                    .admits(tensor);
+
+                let mut serial = serial_reduction_builder(case.program.clone());
+                read_from(&mut serial, tensor);
+                let serial_admitted = serial.build().is_ok();
+                let partial_admitted = partial_family_builder(case.program.clone(), tensor)
+                    .build()
+                    .is_ok();
+                let cooperative_admitted = cooperative_family_builder(case.program.clone(), tensor)
+                    .build()
+                    .is_ok();
+
+                assert_eq!(
+                    serial_admitted, expected,
+                    "serial {} reading {tensor:?}",
+                    case.name,
+                );
+                assert_eq!(
+                    partial_admitted, expected,
+                    "partial {} reading {tensor:?}",
+                    case.name,
+                );
+                assert_eq!(
+                    cooperative_admitted, expected,
+                    "cooperative {} reading {tensor:?}",
+                    case.name,
+                );
+            }
+        }
+    }
+
+    /// A fused family that requests contraction remains outside every fold
+    /// topology; shared derivation must not erase this per-family residual.
+    #[test]
+    fn a_contracted_fused_program_is_not_a_reduction_family() {
+        let mut contracted = scalar_program_family_population()
+            .into_iter()
+            .find(|case| case.name == "scale-bias prologue")
+            .expect("the population contains the fused family")
+            .program;
+        let ScalarProgram::FusedMultiplyAddSerialSum { contraction, .. } = &mut contracted else {
+            panic!("the named population member is the fused family")
+        };
+        *contraction = true;
+        assert!(split_family(&contracted).is_none());
+        assert!(
+            serial_reduction_builder(contracted.clone())
+                .build()
+                .is_err()
+        );
+        assert!(
+            partial_family_builder(contracted.clone(), FIRST_INPUT)
+                .build()
+                .is_err()
+        );
+        assert!(
+            cooperative_family_builder(contracted, FIRST_INPUT)
+                .build()
+                .is_err()
+        );
+    }
 
     /// A bare serial sum folds a declared input or a materialized domain.
     ///
