@@ -693,23 +693,23 @@ impl fmt::Display for RefinementError {
                 results,
             } => write!(
                 formatter,
-                "region produces {region_outputs} outputs for {results} results"
+                "region produces {region_outputs} distinct output tensors for {results} results"
             ),
             Self::ResultInterface { position } => {
                 write!(
                     formatter,
-                    "region output {position} does not match its result"
+                    "result {position} does not match its output tensor"
                 )
             }
             Self::ResultValueType { position } => {
                 write!(
                     formatter,
-                    "region output {position} writes the wrong result type"
+                    "result {position} has a root that writes the wrong result type"
                 )
             }
             Self::IncompleteWrite { position } => write!(
                 formatter,
-                "region output {position} lacks complete unique-write evidence"
+                "result {position} has a root lacking write-ownership evidence"
             ),
             Self::IrVerifier(source) => {
                 write!(formatter, "IR refinement authority refused: {source}")
@@ -2023,5 +2023,54 @@ mod tests {
                 limit: tiler_ir::index::MAX_INDEX_REFINEMENT_OPERAND_BINDINGS,
             }
         );
+    }
+
+    /// The compiler error is a value-level mirror of the IR refusal, so their
+    /// observable renderings must move together when grouped result binding
+    /// changes what the fields mean.
+    #[test]
+    fn result_side_refinement_error_displays_remain_verbatim_ir_mirrors() {
+        let cases = [
+            (
+                IndexRefinementVerificationError::ResultArity {
+                    region_outputs: 2,
+                    results: 1,
+                },
+                RefinementError::ResultArity {
+                    region_outputs: 2,
+                    results: 1,
+                },
+                "region produces 2 distinct output tensors for 1 results",
+            ),
+            (
+                IndexRefinementVerificationError::ResultInterface { position: 3 },
+                RefinementError::ResultInterface { position: 3 },
+                "result 3 does not match its output tensor",
+            ),
+            (
+                IndexRefinementVerificationError::ResultValueType { position: 5 },
+                RefinementError::ResultValueType { position: 5 },
+                "result 5 has a root that writes the wrong result type",
+            ),
+            (
+                IndexRefinementVerificationError::IncompleteWrite { position: 7 },
+                RefinementError::IncompleteWrite { position: 7 },
+                "result 7 has a root lacking write-ownership evidence",
+            ),
+        ];
+
+        for (ir, compiler, expected) in cases {
+            assert_eq!(ir.to_string(), expected, "IR result-side display moved");
+            assert_eq!(
+                compiler.to_string(),
+                expected,
+                "compiler result-side display moved"
+            );
+            assert_eq!(
+                compiler.to_string(),
+                ir.to_string(),
+                "result-side display mirrors diverged"
+            );
+        }
     }
 }

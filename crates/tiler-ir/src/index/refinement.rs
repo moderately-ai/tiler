@@ -3151,23 +3151,23 @@ impl fmt::Display for IndexRefinementVerificationError {
                 results,
             } => write!(
                 formatter,
-                "region produces {region_outputs} outputs for {results} results"
+                "region produces {region_outputs} distinct output tensors for {results} results"
             ),
             Self::ResultInterface { position } => {
                 write!(
                     formatter,
-                    "region output {position} does not match its result"
+                    "result {position} does not match its output tensor"
                 )
             }
             Self::ResultValueType { position } => {
                 write!(
                     formatter,
-                    "region output {position} writes the wrong result type"
+                    "result {position} has a root that writes the wrong result type"
                 )
             }
             Self::IncompleteWrite { position } => write!(
                 formatter,
-                "region output {position} lacks complete unique-write evidence"
+                "result {position} has a root lacking write-ownership evidence"
             ),
         }
     }
