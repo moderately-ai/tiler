@@ -7187,6 +7187,57 @@ fn the_tree_takes_the_capped_participant_count_where_the_balanced_split_differs(
     );
 }
 
+/// The capped tree's extra staging is rejected by feasibility rather than
+/// erased by its partition choice.
+///
+/// At 8,192 contributors, the capped tree has 256 participants and therefore
+/// stages 1,024 bytes. A synthetic 512-byte test profile is deliberately below
+/// that requirement while meeting the balanced tree's former 512-byte
+/// requirement, so this is the refusal band the cap opened. The adjacent
+/// 1,024-byte profile verifies the identical region, separating the band from a
+/// blanket refusal.
+///
+/// **Watched failing.** Raising the synthetic row from 512 to 1,024 makes the
+/// first verification succeed, so its `expect_err` fails; this confirms the
+/// target row is the subject that reaches the typed diagnostic.
+#[test]
+fn the_capped_tree_refuses_the_local_memory_band_and_admits_its_neighbour() {
+    const CONTRIBUTORS: u64 = 8_192;
+    let tree_for = |local_memory_bytes| {
+        let (_, request) = tree_request(
+            Shape::from_dims([1, CONTRIBUTORS]),
+            TargetProfile::workgroup_tree_target_for_test(
+                local_memory_bytes,
+                1_024,
+                Some(crate::target::SynchronizationSupport::Realized),
+            ),
+        );
+        let (region, members) = crate::physical::single_workgroup_tree_region(
+            &request,
+            request.sole_output(),
+            crate::physical::RegionWrite::ProgramOutput,
+        )
+        .expect("the capped tree is constructible before target feasibility");
+        (region, members, request)
+    };
+
+    let (region, members, request) = tree_for(512);
+    assert_eq!(
+        crate::physical::verify_schedule(region, members, &request)
+            .expect_err("the 512-byte profile must refuse the capped tree"),
+        crate::physical::PhysicalError::Target {
+            rule: "local-memory-bytes",
+            region: tiler_ir::schedule::RegionId::new(4),
+            required: 1_024,
+            available: 512,
+        }
+    );
+
+    let (region, members, request) = tree_for(1_024);
+    crate::physical::verify_schedule(region, members, &request)
+        .expect("the same capped tree verifies once 1,024 bytes are available");
+}
+
 /// The tree's width rule bounds the *downward* direction, and pays nothing for it
 /// where the calibration measured.
 ///

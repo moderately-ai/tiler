@@ -2280,9 +2280,12 @@ pub(crate) fn take_capped_tree_above_cap_candidate_checks_for_test() -> u64 {
 /// it would let a cost preference decide legality, which is the separation
 /// [`WorkgroupTreeUnavailable`] exists to keep. The row the calibration measured
 /// against declares 32,768 bytes — 8,192 participants' worth — so even the widest
-/// width this rule can reach is far inside it, and no profile in this repository
-/// sits in the affected band; the prototype baseline declares zero and refuses
-/// every tree at every width.
+/// width this rule can reach is far inside it, and no production profile in this
+/// repository sits in the affected band; the prototype baseline declares zero
+/// and refuses every tree at every width. The synthetic regression
+/// `pipeline::tests::the_capped_tree_refuses_the_local_memory_band_and_admits_its_neighbour`
+/// drives the 8,192-contributor tree at 512 and 1,024 bytes, pinning the typed
+/// refusal and its admitted neighbour without making a target capability claim.
 pub(crate) fn capped_tree_partition(contributors: u64) -> Option<ContributorPartition> {
     if contributors < 4 {
         return None;
