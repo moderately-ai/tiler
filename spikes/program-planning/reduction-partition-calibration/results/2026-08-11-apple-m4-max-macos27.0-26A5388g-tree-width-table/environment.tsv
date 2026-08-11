@@ -1,0 +1,66 @@
+key	value
+environment.date_utc.primary_start	2026-08-11T11:22:31Z
+environment.date_utc.primary_end	2026-08-11T11:40:38Z
+environment.date_utc.repeat_start	2026-08-11T11:40:50Z
+environment.date_utc.repeat_end	2026-08-11T11:58:38Z
+environment.os.product	macOS
+environment.os.version	27.0
+environment.os.build	26A5388g
+environment.architecture	arm64
+environment.device	Apple M4 Max
+environment.apple_gpu_family	apple9
+environment.cpu.logical_cores	14
+environment.developer_dir	/Applications/Xcode.app/Contents/Developer
+environment.default_developer_dir	/Applications/Xcode-beta.app/Contents/Developer
+environment.xcode	Xcode 26.6 Build version 17F113
+environment.sdk.macosx.version	26.5
+environment.sdk.macosx.build	25F70
+environment.offline_compiler	Apple metal version 32023.883 (metalfe-32023.883)
+environment.offline_linker	AIR-LLD 32023.883 (metalfe-32023.883) (compatible with legacy metallib linker)
+environment.rustc	rustc 1.99.0-nightly (eff8269f7 2026-07-18)
+environment.toolchain	nightly-2026-07-19-aarch64-apple-darwin
+environment.repository_base	f7287e1793b49008882ab5717e4b244a13ef34ad
+host.occupancy	coordinator-reserved quiet window; primary then repeat ran sequentially; zero cargo, rustc, rustdoc, nextest, clippy-driver, or make processes before and after each timed run
+host.load_before.primary	3.73 4.07 4.37
+host.load_after.primary	2.75 2.72 3.18
+host.load_before.repeat	2.94 2.77 3.19
+host.load_after.repeat	3.42 3.30 3.19
+matrix.rows	16,384,1536,6144,12288
+matrix.fit_contributors	1080,1215,1320,1512,1638,1890
+matrix.held_out_contributors	1050,1155,1274,1430,1575,1925
+matrix.anchor_contributors	1024,1729
+matrix.shapes	70
+matrix.arithmetic_variants_per_run	1265
+matrix.fit_variants_per_run	760
+matrix.held_out_variants_per_run	430
+matrix.anchor_variants_per_run	75
+matrix.source_max_threadgroup_bytes	3780
+matrix.prepared_max_threadgroup_bytes	3792
+matrix.maximum_elements	23654400
+measurement.metric	wall-clock commit-to-completed difference quotient
+measurement.warmup	8
+measurement.repetitions	30
+measurement.batch	64
+measurement.source_threadgroup_bytes	4 * participants
+measurement.result_threadgroup_bytes	prepared entry static allocation, source request rounded up to 16 bytes
+analysis.table_capacity	30
+analysis.signature_encoding_bytes	30
+analysis.noise_band	2 * (SE_a + SE_b)
+measurement.harness_relation	retained source and lock digests identify the harness build inputs; the before/after executable digest identifies the unretained timed binary; no byte-identical rebuild claim
+timed.executable.sha256	5d7d2d13daffbf05d002c2cf7438522bf303fd688f9c69b1017eebf5a427938e
+timed.executable.size_bytes	7823968
+timed.executable.mtime_utc	2026-08-11T11:18:32Z
+timed.executable.retention	digest and observed metadata only; target/release build product is not checked in
+hash.main	e27c84a134c5a6980be4ea08c7a308dfbf50491fde8a26d9243b22dc12951fe5
+hash.regions	1a7d4f492fef25d0ea719c8e47bfccac36e9b724e7bf79f0e2873c1b5d61ab96
+hash.buffer	a3f8303eb323c147c21b2ef2547d89e8e1cb0b0f205be66bb33b96b9c08b03fe
+hash.analysis_wrapper	f74f34b24ea2a5848863a26103e9a3486c1b9b8bb0d40320e57a095568bc0a26
+hash.analysis_shared	0807fbe108747fd1a377c02122ed42e4c9377548d4d22b60ec14971e248d9f15
+hash.cargo_toml	e971349473f8c405d307ad6028745a17f3c1e9ba810e71fa274c84409e3e149c
+hash.cargo_lock	4c73b106f913746318feca579f8b82d03739557e5e3f59d2f84d6feb2d8b6255
+hash.compiler_physical	40a2f48a4a10383e1e1775c73a1fe95aacb2e1f2674cbbc8022533ff4ef1adac
+hash.compiler_measured_cost	c814919adb6732147be8d5f561107164eb501a1fb870a360a030263b621a0cd1
+hash.compiler_target	bdf94113119120adcacd850d29498d349a02f22074cc0f496129c5a812bcf804
+hash.metal_declaration	f2c2c634ff5084ca0467b83f8bfe691365ccadfc8a73f5ca71f2c1de592d904f
+hash.sweep	7b63e4779bfd9f247c3ccb49b58260e57a1e69a12ef3772f4de6235fd1ef380a
+hash.repeat	3a1975b4ff940345ba3b2fbccbe1c9a750bea4013ebe58cb532938f6e0511521

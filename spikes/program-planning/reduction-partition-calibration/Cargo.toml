@@ -37,6 +37,12 @@ path = "src/shape_aware.rs"
 name = "tree-width-interactions-analysis"
 path = "src/interactions.rs"
 
+# Validates and scores the separately frozen target-private table versus
+# prime-factor-signature population without a Metal device.
+[[bin]]
+name = "tree-width-table-analysis"
+path = "src/table.rs"
+
 # Its own workspace root, following `reduction-dispatch-crossover` beside it:
 # `make` never reaches here and the dependency set is the spike's own. The path
 # dependencies still resolve their `[lints]` through the repository workspace

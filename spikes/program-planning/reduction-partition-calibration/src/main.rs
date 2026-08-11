@@ -215,6 +215,19 @@ const INTERACTION_CONTRIBUTORS: [u64; 14] = [
     780, 1_042, 774, 783, 900, 1_006, 1_082, 1_280, 775, 785, 899, 1_008, 1_094, 1_282,
 ];
 
+/// Rows in the frozen target-private table versus prime-signature matrix.
+const TABLE_ROWS: [u64; 5] = [16, 384, 1_536, 6_144, 12_288];
+
+/// Contributors in the third fresh matrix.
+///
+/// The first six are fit, the next six are sealed held out, and the final two
+/// are diagnostic-only anchors. Every value is absent from every earlier
+/// retained partition-calibration TSV.
+const TABLE_CONTRIBUTORS: [u64; 14] = [
+    1_080, 1_215, 1_320, 1_512, 1_638, 1_890, 1_050, 1_155, 1_274, 1_430, 1_575, 1_925, 1_024,
+    1_729,
+];
+
 /// Refuses a matrix drift before touching the device.
 ///
 /// The analyzer independently pins the same values, but this assertion keeps a
@@ -277,6 +290,36 @@ fn assert_interaction_population() {
     );
 }
 
+/// Refuses table/signature population drift before touching the device.
+fn assert_table_population() {
+    assert_eq!(
+        TABLE_ROWS,
+        [16, 384, 1_536, 6_144, 12_288],
+        "the frozen table/signature row population moved"
+    );
+    assert_eq!(
+        TABLE_CONTRIBUTORS,
+        [
+            1_080, 1_215, 1_320, 1_512, 1_638, 1_890, 1_050, 1_155, 1_274, 1_430, 1_575, 1_925,
+            1_024, 1_729,
+        ],
+        "the frozen table/signature contributor population moved"
+    );
+    let variants_per_row: usize = TABLE_CONTRIBUTORS
+        .into_iter()
+        .map(|contributors| regions::admissible_partitions(contributors).len())
+        .sum();
+    assert_eq!(
+        variants_per_row, 253,
+        "the frozen table/signature width population moved"
+    );
+    assert_eq!(
+        variants_per_row * TABLE_ROWS.len(),
+        1_265,
+        "the frozen table/signature variant population moved"
+    );
+}
+
 /// The shape the closed-form oracle is tied to `tiler-reference` on, once.
 ///
 /// Small enough to evaluate through the reference's boxed element vocabulary on
@@ -334,6 +377,10 @@ enum RunMode {
     TreeWidthInteractions,
     /// The fresh interaction matrix's complete device path, without timing.
     VerifyTreeWidthInteractions,
+    /// The target-private table versus prime-signature matrix, including timing.
+    TreeWidthTable,
+    /// The table/signature matrix's complete device path, without timing.
+    VerifyTreeWidthTable,
 }
 
 impl RunMode {
@@ -354,11 +401,14 @@ impl RunMode {
             [argument] if argument == "--verify-tree-width-interactions" => {
                 Self::VerifyTreeWidthInteractions
             }
+            [argument] if argument == "--tree-width-table" => Self::TreeWidthTable,
+            [argument] if argument == "--verify-tree-width-table" => Self::VerifyTreeWidthTable,
             _ => panic!(
                 "usage: reduction-partition-sweep [--tree-width-excursion|\
                  --verify-tree-width-excursion|--shape-aware-tree-width|\
                  --verify-shape-aware-tree-width|--tree-width-interactions|\
-                 --verify-tree-width-interactions]"
+                 --verify-tree-width-interactions|--tree-width-table|\
+                 --verify-tree-width-table]"
             ),
         }
     }
@@ -376,6 +426,7 @@ impl RunMode {
             Self::TreeWidthInteractions | Self::VerifyTreeWidthInteractions => {
                 "reduction-tree-width-interactions"
             }
+            Self::TreeWidthTable | Self::VerifyTreeWidthTable => "reduction-tree-width-table",
         }
     }
 
@@ -386,6 +437,7 @@ impl RunMode {
             Self::VerifyTreeWidthExcursion
                 | Self::VerifyShapeAwareTreeWidth
                 | Self::VerifyTreeWidthInteractions
+                | Self::VerifyTreeWidthTable
         )
     }
 
@@ -410,9 +462,14 @@ impl RunMode {
         )
     }
 
+    /// Whether this is the target-private table versus signature study.
+    const fn table(self) -> bool {
+        matches!(self, Self::TreeWidthTable | Self::VerifyTreeWidthTable)
+    }
+
     /// Whether this mode records executable and quiet-host custody.
     const fn custodied(self) -> bool {
-        self.shape_aware() || self.interactions()
+        self.shape_aware() || self.interactions() || self.table()
     }
 }
 
@@ -427,6 +484,9 @@ fn main() {
     }
     if mode.interactions() {
         assert_interaction_population();
+    }
+    if mode.table() {
+        assert_table_population();
     }
     let declaration = BoundMetalCompileDeclaration::first_macos_apple9()
         .expect("the authoritative macOS Apple9 declaration binds");
@@ -507,7 +567,16 @@ fn main() {
     let mut declined = 0_usize;
     let mut widest_prepared_workgroup = 0_u64;
     let mut maximum_prepared_threadgroup_bytes = 0_u64;
-    let shapes: Vec<(u64, u64)> = if mode.interactions() {
+    let shapes: Vec<(u64, u64)> = if mode.table() {
+        TABLE_ROWS
+            .into_iter()
+            .flat_map(|rows| {
+                TABLE_CONTRIBUTORS
+                    .into_iter()
+                    .map(move |contributors| (rows, contributors))
+            })
+            .collect()
+    } else if mode.interactions() {
         INTERACTION_ROWS
             .into_iter()
             .flat_map(|rows| {
@@ -566,6 +635,28 @@ fn main() {
         assert_eq!(
             maximum_prepared_threadgroup_bytes, 2_576,
             "the frozen interaction prepared threadgroup allocation maximum moved"
+        );
+    }
+    if mode.table() {
+        assert_eq!(
+            attempted, 1_265,
+            "the frozen table/signature attempt census moved"
+        );
+        assert_eq!(
+            measured, 1_265,
+            "the frozen table/signature admitted/verified census moved"
+        );
+        assert_eq!(
+            declined, 0,
+            "the frozen table/signature matrix gained a target decline"
+        );
+        assert_eq!(
+            widest_prepared_workgroup, 945,
+            "the frozen table/signature prepared workgroup maximum moved"
+        );
+        assert_eq!(
+            maximum_prepared_threadgroup_bytes, 3_792,
+            "the frozen table/signature prepared threadgroup allocation maximum moved"
         );
     }
 
