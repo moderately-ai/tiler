@@ -1,7 +1,7 @@
 ---
 id: decide-the-fixed-strided-contributor-membership-vocabulary
 title: Decide the fixed strided contributor-membership vocabulary
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [admit-reassociated-contraction-schedule-alternatives]
@@ -60,3 +60,28 @@ This ticket records the question and evidence. It deliberately does not draft, s
 ## Closes when
 
 Tom's dated decision names the accepted carrier and compatibility rule, records the exact included and excluded surface and acceptance venue, and the dependent implementation ticket is updated to cite that authority. Only Tom moves this ticket from `awaiting-decision`.
+
+## Accepted — 2026-08-11
+
+**Decision.** Tom accepted the exact carrier and compatibility rule below in the Codex coordination thread by replying `accepted` to the coordinator's decision packet. The relay source is Tom's direct response in that thread; the coordinator recorded it here without changing the surface presented for acceptance.
+
+The accepted public vocabulary is a deliberately exhaustive `ContributorMembership` with exactly `Contiguous` and `LaneStrided`, plus a fresh `ReductionTopology::CooperativeContractionSplit` carrying:
+
+- the existing `ContributorPartition` as the partition-count geometry;
+- `membership: ContributorMembership`;
+- the existing `CooperativeTile` dataflow;
+- `contracted_shape: Shape`;
+- `order: ContributorOrder`;
+- `accumulation: ArithmeticType`;
+- the existing reassociation and permutation permission fields; and
+- `arrival: ContributorArrival`.
+
+`ContributorPartition`'s existing composite meanings stay unchanged: `MultiPass` and `CooperativeWorkgroup` continue to state contiguous membership. Its documentation may be narrowed to distinguish its reusable count geometry from the composite topology's membership rule, but no existing field or variant changes meaning. `CooperativeContractionSplit` is contraction-specific because its contracted index space cannot be represented by the one-read `axes` field without giving that field a second meaning.
+
+**Compatibility rule.** Encode the fresh topology under append-only topology tag `0x36`, and encode `ContributorMembership::{Contiguous, LaneStrided}` under fresh tags `0x01` and `0x02`. Every existing `tiler.schedule.v5` row remains byte-for-byte unchanged, so this addition does not step the schedule identity domain. The new variant and membership participate in canonical schedule and transitive artifact identity. Type-sized exhaustive encoder and consumer censuses must make vocabulary growth a build error.
+
+**Included surface.** The split covers one canonical contracted contributor sequence through exact positive-multiple, nonempty partitions with no padding or ragged tail. Both memberships combine staged partials in fixed ascending participant order. `Contiguous` consumes reassociation but not permutation; `LaneStrided` consumes both. The logical seed contributes once at the root-facing boundary, and a constantly true partial `has_value` requires proved nonemptiness. Verification, witness projection, explanation, lowering, compiler proposal construction, and Metal emission must consume the accepted distinction explicitly and must name the missing permission independently.
+
+**Excluded surface.** This acceptance does not admit distributivity, contraction-chain regrouping, accumulator-width selection, runtime-selected split widths, source offsets, padding, masks, ragged partitions, atomics, collectives, subgroups, nondeterministic arrival, timing-dependent trees, backend-specific semantic vocabulary, scheduling policy, or a performance-transfer claim. It does not authorize hiding membership in the access relation or in private lowering state.
+
+**Strongest counterpoint accepted with the decision.** A fresh contraction-specific topology repeats some cooperative fields and expands every total consumer. That cost is preferred to changing retained topology payloads or assigning the existing one-read `axes` field a contraction-specific meaning. Shared private helpers may remove implementation duplication; they may not merge the two public authorities.

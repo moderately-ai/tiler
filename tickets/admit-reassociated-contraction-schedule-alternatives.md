@@ -1,7 +1,7 @@
 ---
 id: admit-reassociated-contraction-schedule-alternatives
 title: Admit reassociated and permuted contraction schedule alternatives
-status: blocked
+status: todo
 priority: p2
 dependencies: [implement-parallel-reduction-strategies, realize-the-contraction-through-the-appendable-direct-path, decide-the-fixed-strided-contributor-membership-vocabulary]
 related: [reduction-semantics-contract, implement-analytical-component-cost-model, realize-the-tiled-contraction-schedule-and-its-metal-emission, enumerate-the-split-reduction-on-the-planning-frontier, admit-a-reassociating-contract-without-contraction]
@@ -50,6 +50,10 @@ Hard dependency on [`realize-the-tiled-contraction-schedule-and-its-metal-emissi
 **Inference — the two-plan outcome is unstatable without a public and identity-bearing physical vocabulary decision.** Encoding a private strided implementation as `Contraction` would misstate a serial fold; encoding it as `MultiPass` or `CooperativeWorkgroup` would contradict their contiguous-membership contract; and choosing strided versus contiguous only inside private lowering would give two different trees one schedule identity. Extending `ContractionAxisSource::Contracted` to carry lane/stride arithmetic would instead widen the public access grammar and still leave the physical topology unnamed. Each route crosses [ADR 0012](../docs/decisions/0012-physical-reduction-topology.md)'s requirement that the selected topology participate in physical-plan and artifact identity.
 
 **No-edit outcome.** The worker stopped before implementation code as required. A contiguous-only change would not satisfy this ticket: it would omit the independently permutation-gated plan and its distinct missing-dimension refusal. [`decide-the-fixed-strided-contributor-membership-vocabulary`](decide-the-fixed-strided-contributor-membership-vocabulary.md) now owns Tom's exact public-carrier and append-only identity decision, and is a hard dependency rather than a related note.
+
+## Reactivated — 2026-08-11
+
+Tom accepted the exact public carrier in [`decide-the-fixed-strided-contributor-membership-vocabulary`](decide-the-fixed-strided-contributor-membership-vocabulary.md): exhaustive `ContributorMembership::{Contiguous, LaneStrided}` plus fresh `ReductionTopology::CooperativeContractionSplit`, append-only topology tag `0x36`, membership tags `0x01`/`0x02`, and byte-identical preservation of every existing `tiler.schedule.v5` row. The decision was recorded from Tom's direct `accepted` response in the Codex coordination thread. All three hard dependencies are now done, so this implementation ticket returns from `blocked` to `todo` without widening its outcome.
 
 ## Closes when
 
