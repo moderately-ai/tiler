@@ -40,14 +40,21 @@
 //! which this work does not own, and a bound that had quietly moved would turn
 //! a stated boundary into an unnoticed one.
 //!
-//! # The reference's four-cell boundary was settled, and this file no longer states it
+//! # The reference's four-cell refusal remains, but its window changed
 //!
-//! `MAX_REFERENCE_TENSOR_ELEMENTS` bounds a *single* fold at 16,777,216 steps,
-//! and `contract_operands` still refuses `output_count * contracted_count` above
-//! it under `IterationStepsExceeded` — which four of the six L3 correctness cells
-//! exceed: `w_prefill_q` at 20,971,520 steps, `w_prefill_mlp_in` and
+//! `MAX_REFERENCE_TENSOR_ELEMENTS` bounds one *window* at 16,777,216 steps.
+//! `ReferenceEvaluator` also uses that number as its default per-occurrence
+//! iteration-step allowance, and `contract_operands` refuses
+//! `output_count * contracted_count` above that allowance under
+//! `IterationStepsExceeded`. Both evaluator construction sites in this module
+//! use that default, so the same four of the six L3 correctness cells still
+//! refuse: `w_prefill_q` at 20,971,520 steps, `w_prefill_mlp_in` and
 //! `w_prefill_mlp_out` at 402,653,184, and `w_prefill_o` at 268,435,456. No
 //! operand or output tensor exceeds a limit; only the fold's step count does.
+//!
+//! An evaluator whose caller states a larger allowance spends an admitted fold
+//! in several bounded windows rather than walking a larger window. This module
+//! states no different allowance, so its four refusal assertions remain needed.
 //!
 //! **`bound-the-reference-contraction-comparison-for-the-profile-cells` (done,
 //! 2026-08-01) settled that boundary by staging the comparison rather than by
