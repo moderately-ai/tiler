@@ -1,7 +1,7 @@
 ---
 id: accept-the-installed-physical-provider-public-surface
 title: Accept or revise the installed physical-provider public surface
-status: awaiting-decision
+status: todo
 priority: p1
 dependencies: [drive-an-external-physical-implementation-provider-through-compilation]
 related: [accept-the-public-backend-provider-composition-boundary, disclose-offered-and-selected-physical-provider-sets-separately]
@@ -45,9 +45,26 @@ This node is not research or implementation work. Only Tom closes it.
 
 Accept the additive installation rule, the `baseline` subject, and the `scheduled_kernel` restriction as built. They preserve the governed provider, keep one host-owned derivation, and expose only the body variant the external-provider vertical actually exercised. Rename `offered_providers` to `offered_lowering_providers` in the same acceptance sweep: this pre-production tree has one production in-workspace consumer (`crates/tiler-build/src/plan_artifact.rs`), and the symmetric pair prevents the old completeness misreading from returning through the shorter name. **Strongest counterpoint:** that final rename reopens a name Tom already accepted under ADR 0085; keeping it would avoid churn and the corrected documentation is now truthful. Tom should answer the four questions independently even if he accepts the first three as a block.
 
+## Accepted — 2026-08-11
+
+**Decision.** Tom accepted all four recommended answers in the Codex coordination thread by replying `sounds good, accept` to the coordinator's decision packet. The relay source is Tom's direct response in that thread. This moves the ticket to `todo` for the mechanical rename and acceptance-label sweep; the accepted provider semantics do not wait on those edits.
+
+1. **Installation is additive.** `InstalledPhysicalProviders` always enumerates the governed provider and then the caller-installed providers. Installation order remains reporting order and never precedence. No public spelling removes, replaces, or reorders the governed provider. This asymmetry with `with_capabilities` is accepted: competing physical implementations are alternatives, while competing lowering authorities for one occurrence are contradictory semantic claims.
+2. **`ImplementationContext::baseline` is the accepted construction seam.** An installed provider specializes the host's own verified spelling rather than reconstructing the request-subject binding from separately exposed region identity, iteration shape, scalar program, semantic members, and access map. The present seam intentionally supports schedule specialization and does not authorize a provider to contribute a new region shape.
+3. **`ImplementationProposal::scheduled_kernel` is the only accepted public body constructor.** `ProposalBody`, `KernelSubprogram`, `SubprogramStage`, opaque-call registration and proposal bodies, reserved views, `SemanticStage`, `SemanticMemberId`, `RegionWrite`, `VerifiedTargetRequest`, region-subject constructors and semantic members, frontier enumeration, `PhysicalAuthorities`, and `GovernedPhysicalProvider` remain private. A broader body family requires its own evidence and public-boundary decision.
+4. **Rename `Compilation::offered_providers` to `Compilation::offered_lowering_providers`.** `Compilation::offered_physical_providers` remains unchanged. The symmetric pair names the two authority environments explicitly. Update the one production consumer in `crates/tiler-build/src/plan_artifact.rs`, every source/test/document reference, and the accepted ADR 0085 surface record in one sweep; do not retain a deprecated alias in this pre-production tree.
+
+The remainder of the ticket's landed included surface is accepted exactly as listed: provider trait and provenance, bounded implementation context and baseline, scheduled-kernel proposal, target applicability, governed structural-cost estimate and key, proposals and typed declines, installed-provider environment and errors, compile-request installation, offered/selected physical-provider disclosure, and selected-implementation provenance.
+
+The accepted exclusions remain exclusions. In particular, this decision does not publish physical rows into the artifact `CompilationEnvironment`, let providers choose a cost model, disclose graph-local semantic members, bypass host verification or hard feasibility, allow replacement of the governed provider, or broaden the seam from specialization to new region-shape authorship.
+
+No identity, schema, planning meaning, artifact bytes, or provider-selection ordering changes with the rename and label sweep.
+
+**Strongest counterpoints accepted with the decision.** Returning a baseline constrains the seam to specialization, and a future provider may need new region shapes; that is a separate, broader authority rather than a reason to expose the five binding facts prematurely. Renaming the lowering accessor reopens an ADR 0085 name whose documentation is now truthful, but the small in-workspace churn is preferred to retaining an objectively asymmetric pair that repeatedly reads as a complete environment.
+
 ## Closes when
 
-Tom accepts or revises each of the four, the module documentation and the contracts describing the seam state an accepted boundary rather than a draft, and the acceptance provenance — who, date, venue, relay source — is recorded.
+The accepted rename lands without a compatibility alias; the module documentation and governing contracts state the accepted included and excluded boundary rather than a draft; acceptance provenance remains recorded; and targeted compiler/build tests plus repository publication gates pass.
 
 ## Graph maintenance
 
