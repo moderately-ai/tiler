@@ -1,7 +1,7 @@
 ---
 id: admit-an-index-realization-law-for-the-literal-offset-slice
 title: Admit an index realization law for the literal-offset slice
-status: in-progress
+status: done
 priority: p2
 dependencies: [lower-the-sub-tensor-selection-occurrence-through-one-index-access-capability]
 related: [lower-the-sub-tensor-selection-occurrence-through-one-index-access-capability, accept-the-literal-offset-slice-realization-law]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, research/semantic-graph]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing, slice, identity]
-claimed_from: todo
-assignee: sol-slice-law
-lease_expires_at: 1786431075
 ---
 ## User-visible outcome
 
@@ -125,3 +122,8 @@ make full
 ## Closes when
 
 The exact literal-offset slice law is registered and identity-coherent; matching provider output refines; independent dropped-offset perturbations fail with quoted mismatches; the public draft/acceptance status is stated accurately; and the operation-family delivery graph can mark O-06 M5 fully delivered without implying scheduled-region or physical feasibility.
+
+
+## Integration — 2026-08-11
+
+Integrated reviewed candidate cf2278a4d84e81c353663bd6ff568be42dcf68c2 into main at merge commit 28377b3fba9bd566c6d70bb143a163a2ca213243. The separate exact public-boundary decision remains awaiting-decision in accept-the-literal-offset-slice-realization-law.
