@@ -810,7 +810,7 @@ impl IndexRealizationLaw {
                 // only the newly registered slice row enters the sidecar.
                 //
                 // Injectivity at this site: the first byte discriminates this
-                // variant from the five older one-attribute payloads, and the
+                // variant from the six older one-attribute payloads, and the
                 // remaining four bytes injectively encode the record-local
                 // selection field identifier.
                 output.push(13);

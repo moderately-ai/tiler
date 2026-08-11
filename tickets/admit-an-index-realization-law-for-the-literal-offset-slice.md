@@ -43,6 +43,11 @@ The literal-offset `tiler::slice-f32@1` occurrence has a registered `IndexRealiz
 
 ## Implementation evidence — 2026-08-11
 
+**Independent review correction — 2026-08-11 at exact `2f6a314d`.** The
+tag-13 encoder comment said there were five older one-attribute payloads, but
+the exhaustive match shows six at tags 4, 5, 6, 7, 11, and 12. The comment now
+says six; no encoder byte, law row, identity, pin, or behavior changed.
+
 **Fact.** The total source grammar admitted one dominant public shape:
 `IndexRealizationLaw::Slice { selection_attribute }`, with
 `IndexRealizationLaw::slice_f32()` fixing the standard attribute field. Its
