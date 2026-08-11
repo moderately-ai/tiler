@@ -1,7 +1,7 @@
 ---
 id: decide-the-unnameable-gpu-enumerator-channel
 title: Add a fallible GPU-enumerator channel when a second binding needs it
-status: todo
+status: awaiting-decision
 priority: p3
 dependencies: []
 related: [close-the-serial-sum-run-gpu-family-probe-table, close-the-metal-gpu-family-out-of-crate-total-map, widen-the-metal-gpu-family-vocabulary-to-apple10]
