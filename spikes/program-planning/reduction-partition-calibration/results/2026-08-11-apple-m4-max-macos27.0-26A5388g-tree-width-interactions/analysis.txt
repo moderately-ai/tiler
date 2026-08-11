@@ -1,0 +1,177 @@
+# analysis	reduction-tree-width-interactions
+# validation	passed
+# shapes	70
+# arithmetic_variants_per_run	625
+# measured_primary	625
+# measured_repeat	625
+
+## Fit-only model selection
+
+family	lambda	worst	upper_median	plateau_misses
+contributor-only	0.000100	1.553386	1.000000	5
+rows-plus-contributors	1.000000	1.124117	1.000000	6
+divisor-lattice	1.000000	1.553386	1.016716	13
+row-regime-lattice-interactions	1.000000	1.553386	1.009311	12
+existing-saturation-1056	-	2.396813	1.222629	26
+interaction_strictly_better_folds	2
+interaction_eligible	false
+selected_family	rows-plus-contributors
+repeat_refit_selected_family	contributor-only
+repeat_refit_interaction_eligible	false
+
+## Final fitted parameters
+
+family	contributor-only
+lambda	0.000100
+intercept	0.236489704360
+feature_0	mean=4.952805627796	scale=2.429892237127	coefficient=-6.951975200289
+feature_1	mean=4.952805627796	scale=2.429892237127	coefficient=-6.607294024970
+feature_2	mean=30.434659870775	scale=24.787314982000	coefficient=3.570652040277
+feature_3	mean=30.434659870775	scale=24.787314982000	coefficient=3.264916331063
+feature_4	mean=18.663001341795	scale=5.616203713825	coefficient=1.424985081916
+
+family	rows-plus-contributors
+lambda	1.000000
+intercept	0.236489704360
+feature_0	mean=4.952805627796	scale=2.429892237127	coefficient=-0.023744946751
+feature_1	mean=4.952805627796	scale=2.429892237127	coefficient=0.102518280430
+feature_2	mean=30.434659870775	scale=24.787314982000	coefficient=0.119224261873
+feature_3	mean=30.434659870775	scale=24.787314982000	coefficient=0.141980785929
+feature_4	mean=18.663001341795	scale=5.616203713825	coefficient=-0.218018258384
+feature_5	mean=45.697737042240	scale=29.149504368950	coefficient=-0.149805500736
+feature_6	mean=45.697737042240	scale=29.149504368950	coefficient=-0.163030906097
+feature_7	mean=280.809542764896	scale=264.336566507461	coefficient=-0.116055925207
+feature_8	mean=280.809542764896	scale=264.336566507461	coefficient=-0.224469386380
+feature_9	mean=172.196728850003	scale=83.765336224717	coefficient=0.142902639115
+
+family	divisor-lattice
+lambda	1.000000
+intercept	0.236489704360
+feature_0	mean=4.952805627796	scale=2.429892237127	coefficient=0.018979889781
+feature_1	mean=4.952805627796	scale=2.429892237127	coefficient=0.107766353313
+feature_2	mean=30.434659870775	scale=24.787314982000	coefficient=0.182147698585
+feature_3	mean=30.434659870775	scale=24.787314982000	coefficient=0.185591741165
+feature_4	mean=18.663001341795	scale=5.616203713825	coefficient=-0.263214097305
+feature_5	mean=45.697737042240	scale=29.149504368950	coefficient=-0.152475538755
+feature_6	mean=45.697737042240	scale=29.149504368950	coefficient=-0.173157965503
+feature_7	mean=280.809542764896	scale=264.336566507461	coefficient=-0.110820436678
+feature_8	mean=280.809542764896	scale=264.336566507461	coefficient=-0.212826822510
+feature_9	mean=172.196728850003	scale=83.765336224717	coefficient=0.144120011449
+feature_10	mean=0.500000000000	scale=0.326093974036	coefficient=-0.068849009379
+feature_11	mean=0.757848228061	scale=1.398513798889	coefficient=-0.091308176067
+feature_12	mean=0.757848228061	scale=1.398513798889	coefficient=-0.109469936894
+feature_13	mean=1.908405415554	scale=1.311980115339	coefficient=0.023030728197
+feature_14	mean=-0.608734631148	scale=0.574901265234	coefficient=-0.018326648711
+
+family	row-regime-lattice-interactions
+lambda	1.000000
+intercept	0.236489704360
+feature_0	mean=4.952805627796	scale=2.429892237127	coefficient=0.035403915666
+feature_1	mean=4.952805627796	scale=2.429892237127	coefficient=0.126963719558
+feature_2	mean=30.434659870775	scale=24.787314982000	coefficient=0.221097262569
+feature_3	mean=30.434659870775	scale=24.787314982000	coefficient=0.232252162177
+feature_4	mean=18.663001341795	scale=5.616203713825	coefficient=-0.298046327082
+feature_5	mean=45.697737042240	scale=29.149504368950	coefficient=-0.195278178888
+feature_6	mean=45.697737042240	scale=29.149504368950	coefficient=-0.218341015759
+feature_7	mean=280.809542764896	scale=264.336566507461	coefficient=-0.161082428578
+feature_8	mean=280.809542764896	scale=264.336566507461	coefficient=-0.265029779457
+feature_9	mean=172.196728850003	scale=83.765336224717	coefficient=0.204033514570
+feature_10	mean=0.500000000000	scale=0.326093974036	coefficient=-0.066515666772
+feature_11	mean=0.757848228061	scale=1.398513798889	coefficient=-0.091359146568
+feature_12	mean=0.757848228061	scale=1.398513798889	coefficient=-0.109016657050
+feature_13	mean=1.908405415554	scale=1.311980115339	coefficient=0.023782422080
+feature_14	mean=-0.608734631148	scale=0.574901265234	coefficient=-0.013301089007
+feature_15	mean=0.000000000000	scale=0.533919304692	coefficient=0.004060993281
+feature_16	mean=0.000000000000	scale=1.422722680626	coefficient=0.050778194035
+feature_17	mean=0.000000000000	scale=1.422722680626	coefficient=0.062461897688
+
+## Held-out summaries
+
+run	family	worst	upper_median	plateau_misses
+primary	contributor-only	1.463094	1.000000	5
+primary	rows-plus-contributors	1.484044	1.000000	5
+primary	divisor-lattice	1.084829	1.000000	3
+primary	row-regime-lattice-interactions	1.084829	1.000000	2
+primary	existing-saturation-1056	2.401905	1.030987	17
+primary	production-nearest-256	4.947300	1.012743	14
+repeat	contributor-only	1.455800	1.000000	5
+repeat	rows-plus-contributors	1.477213	1.000000	5
+repeat	divisor-lattice	1.105080	1.000000	4
+repeat	row-regime-lattice-interactions	1.105080	1.000000	2
+repeat	existing-saturation-1056	2.394669	1.037114	18
+repeat	production-nearest-256	4.587489	1.013607	15
+
+fit_selected_family	rows-plus-contributors
+support_verdict	finite-population-insufficient
+
+## Repeatability
+
+population	upper_median_relative_p50_difference	maximum_relative_p50_difference	plateau_agreement
+all-widths	0.005762	0.180548	-
+selected-held-out	0.007583	0.153805	30/30
+
+## primary anchor raw minima and plateaus
+
+shape	raw_minimum	plateau	production	production_regret
+8x780	39	15,20,39,52,65,78	260	1.894933
+8x1042	521	521	2	1.329577
+528x780	15	10,12,15,20,39,52,65,78	260	1.184000
+528x1042	2	2,521	2	1.000000
+1056x780	12	12,15,20,65,78	260	1.173794
+1056x1042	521	521	2	1.019612
+2112x780	15	15,20,65	260	1.182294
+2112x1042	521	521	2	1.015762
+8192x780	39	39,52,65,78	260	1.060962
+8192x1042	521	521	2	1.024403
+
+## primary anchor comparisons
+
+shape	left	right	verdict
+8x780	195	260	right-is-faster
+8x780	260	390	left-is-faster
+8x1042	2	521	right-is-faster
+528x780	195	260	right-is-faster
+528x780	260	390	left-is-faster
+528x1042	2	521	within-noise
+1056x780	195	260	right-is-faster
+1056x780	260	390	left-is-faster
+1056x1042	2	521	right-is-faster
+2112x780	195	260	right-is-faster
+2112x780	260	390	left-is-faster
+2112x1042	2	521	right-is-faster
+8192x780	195	260	right-is-faster
+8192x780	260	390	left-is-faster
+8192x1042	2	521	right-is-faster
+
+## repeat anchor raw minima and plateaus
+
+shape	raw_minimum	plateau	production	production_regret
+8x780	52	12,15,20,39,52,65,78	260	1.754173
+8x1042	521	521	2	1.353142
+528x780	12	10,12,15,20,52,65,78	260	1.213464
+528x1042	521	2,521	2	1.018888
+1056x780	15	12,15,20	260	1.192474
+1056x1042	521	2,521	2	1.003204
+2112x780	15	12,15,20,65	260	1.177750
+2112x1042	521	521	2	1.012897
+8192x780	39	39,52,65,78	260	1.061774
+8192x1042	521	521	2	1.021982
+
+## repeat anchor comparisons
+
+shape	left	right	verdict
+8x780	195	260	right-is-faster
+8x780	260	390	left-is-faster
+8x1042	2	521	right-is-faster
+528x780	195	260	right-is-faster
+528x780	260	390	left-is-faster
+528x1042	2	521	within-noise
+1056x780	195	260	right-is-faster
+1056x780	260	390	left-is-faster
+1056x1042	2	521	within-noise
+2112x780	195	260	right-is-faster
+2112x780	260	390	left-is-faster
+2112x1042	2	521	right-is-faster
+8192x780	195	260	right-is-faster
+8192x780	260	390	left-is-faster
+8192x1042	2	521	right-is-faster

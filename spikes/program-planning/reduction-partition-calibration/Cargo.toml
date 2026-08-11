@@ -31,6 +31,12 @@ path = "src/excursion.rs"
 name = "shape-aware-tree-width-analysis"
 path = "src/shape_aware.rs"
 
+# Validates and scores the separately frozen row-regime interaction population
+# without requiring a Metal device or redispatching any retained measurement.
+[[bin]]
+name = "tree-width-interactions-analysis"
+path = "src/interactions.rs"
+
 # Its own workspace root, following `reduction-dispatch-crossover` beside it:
 # `make` never reaches here and the dependency set is the spike's own. The path
 # dependencies still resolve their `[lints]` through the repository workspace
