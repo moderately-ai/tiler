@@ -1,7 +1,7 @@
 ---
 id: admit-an-index-realization-law-for-the-literal-offset-slice
 title: Admit an index realization law for the literal-offset slice
-status: todo
+status: in-progress
 priority: p2
 dependencies: [lower-the-sub-tensor-selection-occurrence-through-one-index-access-capability]
 related: [lower-the-sub-tensor-selection-occurrence-through-one-index-access-capability]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing, slice, identity]
+claimed_from: todo
+assignee: sol-slice-law
+lease_expires_at: 1786431075
 ---
 ## User-visible outcome
 

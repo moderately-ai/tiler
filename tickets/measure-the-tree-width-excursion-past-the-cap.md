@@ -1,7 +1,7 @@
 ---
 id: measure-the-tree-width-excursion-past-the-cap
 title: Measure the tree width excursion past the cap
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [bound-the-tree-cap-s-unmeasured-downward-direction, cap-the-tree-reduction-participants-at-the-measured-256]
@@ -9,6 +9,9 @@ scopes: [research/program-planning, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [reductions, scheduling, measurement]
+claimed_from: todo
+assignee: sol-tree-width
+lease_expires_at: 1786431075
 ---
 ## The question
 
