@@ -1,7 +1,7 @@
 ---
 id: audit-the-stability-of-tree-width-optimum-labels-across-retained-matrices
 title: Audit the stability of tree-width optimum labels across retained matrices
-status: todo
+status: in-progress
 priority: p3
 dependencies: [compare-a-target-private-tree-width-table-with-a-prime-factor-signature]
 related: []
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [reductions, scheduling, research]
+claimed_from: todo
+assignee: sol-tree-label-stability
+lease_expires_at: 1786458144
 ---
 ## The question
 
