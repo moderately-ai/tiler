@@ -1,7 +1,7 @@
 ---
 id: compare-a-target-private-tree-width-table-with-a-prime-factor-signature
 title: Compare a target-private tree-width table with a prime-factor signature
-status: todo
+status: in-progress
 priority: p3
 dependencies: [test-row-regime-divisor-interactions-on-a-fresh-tree-width-matrix]
 related: [calibrate-a-shape-aware-tree-width-cost-row]
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [reductions, scheduling, measurement]
+claimed_from: todo
+assignee: sol-tree-width-table
+lease_expires_at: 1786451749
 ---
 ## The question
 
