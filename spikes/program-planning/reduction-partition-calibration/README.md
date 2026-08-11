@@ -8,8 +8,8 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.target-profiles.first-macos-metal-compile-profile-authority-ledger"]
-entrypoints: ["spikes/program-planning/reduction-partition-calibration/src/main.rs", "spikes/program-planning/reduction-partition-calibration/src/regret.rs"]
-last_verified: "2026-08-07"
+entrypoints: ["spikes/program-planning/reduction-partition-calibration/src/main.rs", "spikes/program-planning/reduction-partition-calibration/src/regret.rs", "spikes/program-planning/reduction-partition-calibration/src/excursion.rs"]
+last_verified: "2026-08-11"
 ticket: "calibrate-the-reduction-partition-against-measured-alternatives"
 ---
 
@@ -29,11 +29,11 @@ This spike is the inverse. It holds the shape fixed and sweeps the partition, on
 
 [`src/regions.rs`](src/regions.rs) builds them. `tiler-ir` publishes `ScheduledRegion`, `ContributorPartition`, and `lower_scheduled_region`, so its three constructors are transcriptions of `physical.rs`'s `partial_reduction_region`, `final_reduction_region`, and `single_workgroup_tree_region` with the partition supplied as a parameter rather than chosen. Everything else is read from the compilation rather than restated: the numerical realization is taken off the compiler's *own* reduction kernel, and the elementwise prologue kernel is taken from the compiler's plan unmodified and re-emitted beside the rebuilt reduction stages.
 
-**Nothing shipped changes.** The compiler still calls `governed_partition`; no compiler boundary is widened; the mechanism is a spike-local module that `crates/` cannot reach.
+**Nothing shipped changes.** The mechanism is a spike-local module that `crates/` cannot reach. The 2026-08-07 record was produced while both strategies called `governed_partition`. Production has since separated them: the split still calls `governed_partition`, while the tree calls `capped_tree_partition`. The current harness therefore derives the tree's production participant count from the compiler-published ABI instead of pretending the historical balanced choice is still current.
 
 ### The anchor, which is what makes the off-governed rows evidence
 
-A transcription is a claim, so it is checked before any timing. At the governed partition of every shape the sweep requires two independent equalities and refuses the shape if either fails:
+A transcription is a claim, so it is checked before any timing. At each strategy's current production partition — balanced for the split, compiler-published nearest-cap for the tree — the sweep requires two independent equalities and refuses the shape if either fails:
 
 - the rebuilt plan must emit the **byte-identical translation unit** the compiler emits for the same alternative, which covers the kernel bodies, both fold bounds, the declared workgroup width, the workgroup staging declaration, and every numerical realization decision the emitter makes; and
 - the launch extents the rebuilt regions declare must equal the ones the compiler's **ABI publishes**, which covers the dispatch the source cannot state.
@@ -62,9 +62,48 @@ All eight are tree-side, and each is a real bound rather than a harness fault:
 
 The workgroup bound is not a constant this spike asserts: the authoritative Apple9 declaration fills its max-threads-per-workgroup row with a **prepared-entry query** rather than a literal, so the pipeline's own `maxTotalThreadsPerThreadgroup` *is* the profile's declared bound, and checking it here is checking the profile. The split has no declines at any partition, which is itself part of the finding: the split's partition count is only a launch extent, and the tree's is a workgroup width that runs into a hardware limit the split never touches.
 
+## The predeclared tree-width excursion extension
+
+[`measure-the-tree-width-excursion-past-the-cap`](../../../tickets/measure-the-tree-width-excursion-past-the-cap.md) asks the question the 2026-08-07 matrix cannot: what happens on a sparse non-power-of-two divisor lattice when the production rule selects a width above 256, and what happens at the first count where it instead stays at two while 521 is available? The extension uses the same region constructors, compiler source/ABI anchors, input, closed-form-plus-reference oracle, preparation, warm-up, interleaving, sample count, 64-encode difference quotient, and summary fields. It measures only the tree, because the split's width rule is not the question.
+
+**The matrix was frozen before any timed submission:** the Cartesian product of rows `{4, 16,384}` and contributors `{514, 780, 1,042}`, six shapes and 52 tree variants.
+
+| contributors | every admissible participant count | production | why this row exists |
+| --- | --- | --- | --- |
+| 514 | `{2, 257}` | 257 | The minimal excursion: the only width above the cap is one participant past it. |
+| 780 | `{2, 3, 4, 5, 6, 10, 12, 13, 15, 20, 26, 30, 39, 52, 60, 65, 78, 130, 156, 195, 260, 390}` | 260 | A dense sub-cap lattice followed by a sparse upper lattice; the selected width is four past the cap and 390 tests the far side. |
+| 1,042 | `{2, 521}` | 2 | The first contributor count at which production keeps two while declining another admissible width. |
+
+The three 4-row cells are deep on the retained contour's side where parallelism pays, while the three 16,384-row cells are on the side where the serial fold wins. They are separated row-count values of the retained contour, not a claim that the crossover location transfers exactly to these new contributor counts. All 52 widths are at most 521, inside the live prepared entry's observed 1,024-thread capacity and the declared 32,768-byte local-memory row; the harness still asks the prepared entry and records any decline rather than inferring feasibility from either statement.
+
+Before timing, `--verify-tree-width-excursion` ran the identical anchors and per-element oracle without warm-up or samples. It asserted the exact live device name and `supportsFamily(Apple9)` answer, and reported six shapes, 52 verified variants, and zero declines. Four independent subject perturbations were watched fail with assertions unchanged and restored: the tree partition failed the byte-identical source anchor; the rebuilt launch failed the ABI anchor; unit operands changed to two failed the oracle; and redirecting the result binding left a zero that failed the same oracle. Exact failure text is retained in the ticket Outcome.
+
+### The excursion result
+
+**Measurement, 2026-08-11**, retained at [`results/2026-08-11-apple-m4-max-macos27.0-26A5388g-tree-width-excursion/`](results/2026-08-11-apple-m4-max-macos27.0-26A5388g-tree-width-excursion/): primary `sweep.tsv`, same-matrix `repeat.tsv`, pinned `environment.tsv`, and device-free validation and scoring at `analysis.txt`. Both runs measured all 52 predeclared widths and declined zero. A gap counts only when it exceeds twice the two medians' combined standard errors, the same conservative rule as the retained calibration.
+
+| shape | production | cost | best | cost | production / best | verdict |
+| --- | --- | --- | --- | --- | --- | --- |
+| 4 × 514 | 257 | 9.8717 µs | 257 | 9.8717 µs | 1.000× | within noise of best; 2 and 257 share the plateau |
+| 16,384 × 514 | 257 | 444.3644 µs | 257 | 444.3644 µs | 1.000× | best; 257 alone is in the plateau |
+| 4 × 780 | 260 | 6.1243 µs | 39 | 3.3274 µs | **1.841×** | production beaten |
+| 16,384 × 780 | 260 | 653.7328 µs | 39 | 631.3783 µs | **1.035×** | production beaten |
+| 4 × 1,042 | 2 | 9.1574 µs | 521 | 7.1700 µs | **1.277×** | production beaten |
+| 16,384 × 1,042 | 2 | 906.9511 µs | 521 | 896.1025 µs | **1.012×** | production beaten |
+
+The predeclared boundary comparisons agree in the primary and repeat, **eight verdicts out of eight**. At 514, 2 versus 257 is inside noise at four rows and 257 is faster at 16,384. At 780, widening 195 → 260 is faster and widening 260 → 390 is sharply slower at both row counts: the dense lattice's optimum is below the cap, not at the nearest divisor. At 1,042, 521 beats production's two at both row counts. The repeat's same eight verdicts are identical. Across all 52 widths, the median primary-to-repeat relative `p50` difference is **0.24%** and the maximum is **12.71%**, the latter on the small-cost side where host round-trip noise is largest.
+
+**This is not a measured excursion boundary and does not retune production.** It establishes that the cost is not flat at the sparse cutoff and that nearest-to-256 distance is not a sufficient width model on the dense lattice. Six cells on one host do not support a replacement selection rule; [`calibrate-a-shape-aware-tree-width-cost-row`](../../../tickets/calibrate-a-shape-aware-tree-width-cost-row.md) owns the wider held-out study. `capped_tree_partition` therefore stays unchanged.
+
+The exact environment matches the authority ledger: macOS 27.0 build `26A5388g`, arm64, Apple M4 Max reporting Apple9, Xcode 26.6 build `17F113`, SDK 26.5 build `25F70`, offline Metal/AIR-LLD 32023.883, and nightly-2026-07-19. The coordinator reserved a quiet window and both timed submissions ran sequentially with no concurrent Cargo or full gate. Primary load was `2.97 4.33 4.66` before and `3.03 4.15 4.57` after; repeat was `2.95 4.12 4.56` before and `2.86 3.96 4.48` after.
+
+**Custody distinguishes the timed executable from the checked-in replay source.** Both timed runs used the same 7,807,056-byte release executable, whose filesystem mtime is `2026-08-11T06:23:37Z` and whose observed SHA-256 is `c9c3e5718a3a7aa3531179d735783f01c254b4907dda7f1a345ae96e670b571d`. The build product under `target/release` is not checked in; those are retained observations, not a source digest pretending byte identity. After timing, the harness renamed the result selection field from the misleading `governed` to `production` and received documentation and reasoned-Clippy repairs. The two TSVs received the same label-only repair. Kernel construction, source/ABI anchors, input, oracle, preparation, warm-up, timing, and every numeric result field are unchanged. `environment.tsv`'s `hash.main` therefore pins the **replay harness**, which reproduces the experiment, and does not claim to be the exact source bytes that built the timed executable.
+
+`threadgroup_bytes` is the prepared Metal entry's reported static allocation, not a restatement of the source request. The tree source stages exactly `4 × participants` bytes; the prepared entries in both runs report that request rounded up to 16 bytes — for example 1,028 source bytes at 257 participants become 1,040, and 2,084 at 521 become 2,096. The validator checks both relationships separately. This is an observed prepared-pipeline allocation on the named row, not a portable Metal alignment guarantee.
+
 ## Both strategies, because they consume the number differently
 
-The split's partition count is a launch extent and its contributors-per-partition is a fold length. The tree's partition count is *also* its declared workgroup width and, through the tile's staging, its threadgroup reservation — visible in the retained `threadgroup_bytes` column, which rises from 16 bytes at two participants to 4,096 at 1,024. A partition best for one need not be best for the other, and the retained result shows a shape where their plateaus are **disjoint**.
+The split's partition count is a launch extent and its contributors-per-partition is a fold length. The tree's partition count is *also* its declared workgroup width and, through the tile's staging, its threadgroup reservation — visible in the retained `threadgroup_bytes` column, which rises from 16 bytes at two participants to 4,096 at 1,024. That column records the prepared entry's aligned allocation as distinguished above, while the scheduled tile's source requirement remains one `f32` slot per participant. A partition best for one need not be best for the other, and the retained result shows a shape where their plateaus are **disjoint**.
 
 ## What is measured, and what that number is not
 
@@ -99,6 +138,15 @@ cd spikes/program-planning/reduction-partition-calibration
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   cargo run --release --bin reduction-partition-sweep > results/<date>-<host>/sweep.tsv
 cargo run --release --bin partition-regret -- results/<date>-<host>/sweep.tsv
+
+# Current production tree, non-power-of-two excursion matrix.
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  cargo run --release --bin reduction-partition-sweep -- \
+  --tree-width-excursion > results/<date>-<host>-tree-width-excursion/sweep.tsv
+cargo run --release --bin tree-width-excursion-analysis -- \
+  results/<date>-<host>-tree-width-excursion/sweep.tsv \
+  results/<date>-<host>-tree-width-excursion/repeat.tsv \
+  results/<date>-<host>-tree-width-excursion/environment.tsv
 ```
 
 `DEVELOPER_DIR` selects the offline toolchain the [authority ledger](../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md)'s compilation-environment row names. On the host that produced the retained result the default selection *is* a newer Xcode, so the variable is load-bearing rather than defensive.

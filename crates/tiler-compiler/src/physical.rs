@@ -2247,14 +2247,20 @@ pub(crate) fn take_capped_tree_above_cap_candidate_checks_for_test() -> u64 {
 /// evidence over a named range —
 /// `pipeline::tests::the_tree_widens_toward_the_cap_rather_than_truncating_at_it`
 /// enumerates every count below 4,096, reports 3,530 admitting ones, and pins the
-/// 1,061 this rule widens. That a count nearer the cap is *cheaper* is `Unknown`
-/// at every count the rule moves: **no measured shape has a contributor count
-/// that is not a power of two**, and on a power of two the largest admissible
-/// count at or below the cap is already the widest the cap admits, so no measured
-/// cell exercised this at all. The direction is inferred from the calibration's
-/// steepest measured span — the tree at four rows of 8,192 costs 9.53 µs at 256
-/// participants against 48.15 µs at two, 5.05x — and an inference is what it
-/// stays until a non-power-of-two count is measured.
+/// 1,061 this rule widens.
+///
+/// **Measurement, 2026-08-11 — cost on three non-power-of-two divisor lattices,
+/// not a replacement rule.** [The retained tree-width excursion] measured every
+/// admissible width for contributor counts 514, 780, and 1,042 at 4 and 16,384
+/// rows on the qualified Apple9 host, and repeated the same 52-row matrix. At
+/// 514, production's 257 is the best width at both row counts, though two is
+/// inside the low-row noise band. At 780, production's 260 is beaten by 39 at
+/// both row counts, by 1.841x and 1.035x respectively. So the first one-step
+/// excursion is supported, but the nearest-to-cap direction is refuted as a
+/// general cost rule even where it chooses only four participants above the cap.
+/// Six cells on one host do not locate a reusable boundary, and this function is
+/// deliberately unchanged; [the shape-aware follow-up] owns a wider held-out
+/// study.
 ///
 /// **The rule does not chase that direction to the end, and the residue is
 /// named rather than left to be rediscovered.** Below 20,000 contributors, 1,133
@@ -2263,10 +2269,11 @@ pub(crate) fn take_capped_tree_above_cap_candidate_checks_for_test() -> u64 {
 /// count. The first count where the rule takes two while declining an admissible
 /// wider count is 1,042 (`2 * 521`), where 521 is admissible, representable, and
 /// inside the qualified entry's workgroup width; the rule still declines it
-/// because 521 is 265 above the cap while 2 is 254 below. Nothing measured says
-/// which of those costs less, so `measure-the-tree-width-excursion-past-the-cap`
-/// carries the excursion width as an open measurement rather than a threshold
-/// fitted to no data.
+/// because 521 is 265 above the cap while 2 is 254 below. The 2026-08-11
+/// excursion measured that exact pair: 521 is faster at both row counts and in
+/// both runs, with primary production regret 1.277x at four rows and 1.012x at
+/// 16,384. That refutes a flat sparse cutoff; it does not by itself justify
+/// moving one arithmetic threshold across every other divisor lattice.
 ///
 /// **It does move one feasibility question, and deliberately does not answer
 /// it.** The rule chooses *within* what a target admits and decides nothing
@@ -2286,6 +2293,11 @@ pub(crate) fn take_capped_tree_above_cap_candidate_checks_for_test() -> u64 {
 /// `pipeline::tests::the_capped_tree_refuses_the_local_memory_band_and_admits_its_neighbour`
 /// drives the 8,192-contributor tree at 512 and 1,024 bytes, pinning the typed
 /// refusal and its admitted neighbour without making a target capability claim.
+///
+/// [The retained tree-width excursion]:
+///     ../../../spikes/program-planning/reduction-partition-calibration/README.md
+/// [the shape-aware follow-up]:
+///     ../../../tickets/calibrate-a-shape-aware-tree-width-cost-row.md
 pub(crate) fn capped_tree_partition(contributors: u64) -> Option<ContributorPartition> {
     if contributors < 4 {
         return None;
