@@ -1,7 +1,7 @@
 ---
 id: cover-multi-position-stage-retention
 title: Cover multi-position stage retention when a second artifact family is constructible
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [make-stage-retention-reachable-from-a-test, retain-succeeding-metal-stage-tool-output, carry-one-payload-per-artifact-family-in-one-envelope]
@@ -9,6 +9,9 @@ scopes: [implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, diagnostics, testing]
+claimed_from: todo
+assignee: terra-multi-position-retention
+lease_expires_at: 1786410519
 ---
 ## User-visible outcome
 

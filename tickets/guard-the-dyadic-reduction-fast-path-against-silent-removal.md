@@ -1,7 +1,7 @@
 ---
 id: guard-the-dyadic-reduction-fast-path-against-silent-removal
 title: Guard the dyadic reduction fast path against silent removal
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [bound-the-exact-rational-gcd-cost-in-certified-enclosures]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [performance, test-coverage]
+claimed_from: todo
+assignee: sol-dyadic-guard
+lease_expires_at: 1786410519
 ---
 ## The gap, reported by the worker who created it
 

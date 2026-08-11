@@ -1,7 +1,7 @@
 ---
 id: complete-the-tree-cap-audit-sweep-inside-the-compiler-crate
 title: Complete the tree cap audit sweep inside the compiler crate
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [cap-the-tree-reduction-participants-at-the-measured-256, correct-the-two-participant-residue-s-smallest-count]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [doc-drift, test-coverage]
+claimed_from: todo
+assignee: terra-tree-cap-audit
+lease_expires_at: 1786410519
 ---
 ## Why this exists
 
