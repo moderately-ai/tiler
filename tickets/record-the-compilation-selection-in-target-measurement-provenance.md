@@ -1,71 +1,65 @@
 ---
 id: record-the-compilation-selection-in-target-measurement-provenance
 title: Record the compilation selection in target measurement provenance
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
-related: [construct-and-bind-the-first-authoritative-metal-compile-profile, declare-the-bf16-rows-on-the-authoritative-metal-profile, measure-macos-apple9-bf16-under-unified-msl4-profile]
-scopes: [implementation/compiler, contracts/decisions, implementation/build]
+related: [construct-and-bind-the-first-authoritative-metal-compile-profile, declare-the-bf16-rows-on-the-authoritative-metal-profile, measure-macos-apple9-bf16-under-unified-msl4-profile, refuse-unknown-fact-source-provenance-schemas-in-artifact-decode, carry-required-compilation-selection-identity-on-compile-profile-contexts, split-metal-profile-measurement-sources-by-compilation-selection]
+scopes: [implementation/compiler, implementation/ir, implementation/artifact, implementation/build, implementation/metal-aot, contracts/decisions, contracts/numerics, contracts/artifacts, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
-tags: [target-profiles, provenance, identity, numerics, decision, needs-tom, public-boundary]
+tags: [target-profiles, provenance, identity, numerics, decision, public-boundary]
 ---
 ## User-visible outcome
 
-Two target-profile rows measured under compilations that differ in language standard, requested target, or any other producer-defining compilation selection are distinguishable in the profile descriptor, so a profile cannot silently claim that one compilation produced rows another one did.
+Measured target facts cannot silently claim the authority of a different compilation selection. A compile-profile measurement context will require one exact backend-owned selection identity; there is no absent, default, inferred, or fallback selection.
 
-## The gap, exactly located
+## Source-first audit — 2026-08-11
 
-**Fact.** `TargetCompileProfileMeasurementSource::new` (`crates/tiler-compiler/src/target.rs`, source anchor `pub struct TargetCompileProfileMeasurementSource`) takes a producer identity and a set of `TargetMeasurementContext`. The surrounding types are located by `pub struct TargetMeasurementContext`, `pub struct TargetCompilerBuild`, and `pub struct TargetExecutionEnvironmentBuilder`. `TargetCompilerBuild::new` carries `role`, `implementation`, `version`, and `build`; `TargetExecutionEnvironmentBuilder::build` requires and carries exactly `platform`, `platform-version`, `platform-build`, `architecture`, and `hardware`. **No field holds the language standard, the requested or emitted target triple, or the compilation flags.**
+**Fact — verified.** `TargetCompileProfileMeasurementSource::new` in `crates/tiler-compiler/src/target.rs` accepts a producer and `TargetMeasurementContext` values. The underlying `MeasurementContext` in `crates/tiler-ir/src/numerics.rs` canonically carries compiler builds and the execution environment only. It cannot represent the requested SDK/platform/triple, language standard, optimization and numerical flags, or linker flags.
 
-**Measurement — the gap is reachable today, not hypothetical.** The two retained Apple records `2026-07-31-numerics-covering-xcode26.6-metal32023.883` and `2026-07-31-numerics-covering-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883` were produced on one host by one toolchain and differ in exactly `-std` (`metal3.1` against `metal4.0`) and `requested_target` (`air64-apple-macos13.0` against `air64-apple-macos26.0`). Every field the provenance vocabulary can hold is byte-identical:
+**Measurement — corrected.** The two retained 2026-07-31 records do not differ *exactly* in `-std` and requested target as this ticket previously claimed. They also differ in schema, date, population, and emitted AIR triple. The narrower evidence is load-bearing: every field the present provenance vocabulary can represent can be identical while the compilation selections differ. Given the same producer identity, those selections therefore collapse to the same provenance bytes. The record files themselves do not construct provenance, so the old unconditional descriptor-equality sentence was also imprecise.
 
-```sh
-R3=spikes/apple-targets/results/2026-07-31-numerics-covering-xcode26.6-metal32023.883/record.tsv
-R4=spikes/apple-targets/results/2026-07-31-numerics-covering-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883/record.tsv
-for k in environment.xcode environment.os_version environment.os_build environment.machine \
-         environment.family.macos.sdk_version environment.family.macos.sdk_build \
-         environment.family.macos.metal_version environment.family.macos.metallib_version \
-         environment.family.macos.device environment.family.macos.requested_target; do
-  printf '%-46s %-24s %s\n' "$k" "$(grep -m1 "^$k	" $R4 | cut -f2)" "$(grep -m1 "^$k	" $R3 | cut -f2)"
-done
-```
+**Fact — current production relevance narrowed.** The authoritative declaration now uses the unified 2026-08-02 MSL 4/macOS 26 F32+BF16 record, so the old MSL 3.1-versus-MSL 4 mixing hazard is not an active defect in that declaration. The public provenance schema remains unable to express the distinction.
 
-The first nine agree; only `requested_target` differs. A row sourced from either record therefore produces the same provenance bytes and the same profile descriptor.
+**Fact — verified.** `tiler-metal-aot::CompileRequest` is the backend owner of the source, SDK/platform target, optimization policy, numerical policy, and the exact ordered compiler and linker flags. `CompilationIdentity` already demonstrates that the SDK selector and invocation flags are identity-bearing, but it also includes source and resolved toolchain facts that belong to different provenance fields.
 
-**Inference — what that costs.** The authority ledger's whole first section, "The two environments this ledger keeps apart", is built on the compilation selection being part of what a measured row is valid for; it tabulates the requested target and the language standard as components of the offline environment. The compiler's provenance type cannot represent either, so the discipline lives entirely in prose and in `BoundMetalCompileDeclaration`'s single-`LedgerRows` construction. That construction is a good defence and it is not the type system: a declaration assembling rows from two compilations would be accepted, would encode identically to one that did not, and would be undetectable from the descriptor that artifact and cache identity are taken over.
+**Fact — hidden delivery defect.** The artifact `decode_provenance` path reads an incoming provenance schema and discards it before reconstructing a current `FactSourceProvenance`. That can normalize a foreign schema instead of refusing it. The schema decoder must be healed before the new grammar is admitted.
 
-**This is a missing authority, not a defect with a known repair.** Whether the fix is a field on `TargetCompilerBuild`, a compilation-selection record on `TargetMeasurementContext`, or a refusal that keeps the compiler out of the business of naming a backend's flags is a genuine design question — the compiler core must stay independent of Metal, and `-std=metal4.0` is a Metal spelling. Reserving a producer-defined, backend-opaque selection identity is the shape most likely to survive that constraint, and it is a proposal rather than a conclusion.
+**Fact — source population must split.** `tiler-build` currently shares one measured source across grid, cost, dispatchability, and numerical rows. The retained grid invocation did not select the same explicit O2/safe/precise/contract-off policy used by the projected cost and numerical evidence. Equal compiler builds and execution environments do not make those compilation selections equal. Rows must cite only contexts whose exact selection produced them.
 
-## Scope keys
+## Accepted decision — 2026-08-11
 
-- Decide whether the compilation selection belongs on the compiler's provenance vocabulary at all, or whether the profile is right to be silent and the obligation belongs to the bound declaration that owns the backend facts. State the elimination rather than only the choice.
-- If it belongs: it must be backend-opaque. The compiler may not learn what `-std` means, and a typed `MslLanguageVersion` reaching `tiler-compiler` would violate the consumer-neutrality invariant.
-- Any new field is identity-bearing and moves every pinned descriptor. Enumerate the moved pins and recompute them on the tree the step lands into.
-- Do not widen `TargetFactSource::external_guarantee`'s normative-reference route to stand in for this. A normative reference names a document; a compilation selection names an invocation.
+Tom accepted in this conversation a required, backend-opaque, exact compilation-selection identity on every compile-profile measurement context.
 
-## Decision packet — 2026-08-09
+- Compile-profile and runtime/device measurement contexts remain distinct typed routes. A runtime context does not invent compile flags.
+- The compile-profile constructor requires exactly one nonempty selection. There is no `Option`, empty sentinel, default, inference from the target profile, or governed fallback.
+- The producing backend owns the canonical bytes. The compiler and IR only validate the generic envelope, length-frame, compare, retain, and expose them; they never learn Metal vocabulary.
+- Metal derives the value beside `CompileRequest::compile_flags()` and `link_flags()`. It includes the SDK selector, requested platform/target, and exact ordered compile/link selection. It excludes source text and resolved toolchain facts because those have separate authorities.
+- Retain exact canonical bytes rather than only a digest. This preserves mathematical injectivity and readable evidence without creating a second hash authority. The host cost is linear in a small profile-construction record, outside kernel execution and compilation search.
+- Do not invent a narrow independent limit. Empty input is refused early; the existing complete-profile descriptor envelope is the coarse alpha ceiling and cumulative authority. Any later tighter cap requires a measured consumer/resource need.
+- A fact supported by multiple different selections uses separate measurement contexts/sources. A row never silently claims a set of selections.
+- The identity is provenance only. It does not choose a backend, retry compilation, or provide any fallback.
 
-- **Option A — add one backend-opaque compilation-selection identity to each measurement context (recommended).** The producing backend hashes or keys its complete invocation selection; the compiler preserves and compares opaque bytes without learning Metal flags. This distinguishes the two measured records and keeps consumer neutrality.
-- **Option B — leave compiler provenance silent and make the bound backend declaration the sole owner.** This preserves descriptor identity but accepts that a profile descriptor alone cannot distinguish rows produced by different compilation selections.
+## Ranked alternatives
 
-Tom must choose which authority owns the distinction. Option A is an identity-bearing public provenance field and must move every descriptor pin coherently.
+1. **Accepted: required exact backend-owned canonical bytes per compile-profile context.** Best correctness and strictness; negligible bounded profile-construction cost; preserves backend neutrality and remains extensible.
+2. **A required fixed digest of those complete bytes.** Fixed-size and fast, but introduces collision and digest-governance questions while making evidence less readable.
+3. **A generic compiler-owned flag map.** Readable but inevitably incomplete and assigns backend vocabulary to the wrong layer.
+4. **Attach selection to each compiler build or whole source.** Wrong multiplicity: one build can serve several selections, and one source population may require several contexts.
+5. **Reuse full AOT compilation identity.** Conflates source and resolved toolchain evidence with selection.
+6. **Leave the profile silent or use declaration prose only.** Rejected: two different authorities can remain canonically indistinguishable.
 
-## Required evidence
+## Identity and delivery boundary
 
-- A perturbation moving only the compilation selection and observing the profile descriptor move with it, of the same shape as `every_measurement_context_field_moves_the_profile_descriptor` in `crates/tiler-build/src/metal_declaration.rs`, watched failing before the fix.
-- Confirmation that the compiler core still names no backend type.
-- Every moved pin enumerated with its before and after value.
+The implementation must rederive the exact domain-step population from source. The expected minimum is `FACT_SOURCE_PROVENANCE_SCHEMA_VERSION` 3 to 4 and `DELIVERED_REALIZATION_DOMAIN` v2 to v3, because delivered-realization decoding owns an unframed provenance grammar. Outer descriptors that length-frame a self-versioned provenance blob should not be stepped without a separate grammar change, although their values and downstream request, artifact, envelope, and cache pins may move transitively.
 
-## Closes when
+Delivery is split deliberately:
 
-Either the vocabulary distinguishes two compilations differing only in their selection and a perturbation test proves it, or the decision to leave it out is recorded with its derivation and the obligation is stated on the owner that does carry it, with the authority ledger's environment section updated to say which.
+- `refuse-unknown-fact-source-provenance-schemas-in-artifact-decode` heals the decoder first.
+- `carry-required-compilation-selection-identity-on-compile-profile-contexts` owns the generic and Metal-derived public carrier plus identity migration.
+- `split-metal-profile-measurement-sources-by-compilation-selection` repairs the current authoritative source population and its ledger/pins.
 
-## Graph maintenance
+## Outcome
 
-- Discovered by `declare-the-bf16-rows-on-the-authoritative-metal-profile`, which hit the gap while trying to attribute an MSL 3.1 BF16 measurement to an MSL 4.0 profile. That ticket does **not** depend on this one: `measure-macos-apple9-bf16-under-unified-msl4-profile` removes its need by measuring on the profile's own compilation row, which is the correct repair for that ticket regardless of how this question is decided.
-- Related to `construct-and-bind-the-first-authoritative-metal-compile-profile`, whose ledger states the discipline this type cannot enforce.
-
-## Scope repair — 2026-08-09
-
-`implementation/build` is declared because the required perturbation, the authoritative Metal declaration, and the descriptor pins this decision may move are in `crates/tiler-build`; compiler-only scope could not deliver either option A's evidence or its complete identity accounting.
+Decision recorded and implementation separated from the decision. No production type, identity, profile, or artifact byte changed in this ticket.
