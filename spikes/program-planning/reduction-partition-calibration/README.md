@@ -202,6 +202,14 @@ The frozen [analysis](results/2026-08-11-apple-m4-max-macos27.0-26A5388g-tree-wi
 
 This is finite one-host evidence that neither the frozen 30-entry interpolation/default table nor the frozen prime-factor-signature model generalizes across this matrix and repeat. It is not evidence for a replacement or a portable profile claim. Production selection, cost rows, feasibility, request/profile surface, and identity remain unchanged. [`audit-the-stability-of-tree-width-optimum-labels-across-retained-matrices`](../../../tickets/audit-the-stability-of-tree-width-optimum-labels-across-retained-matrices.md) owns the device-free residual: determine whether raw-minimum and plateau labels are repeatable enough to justify any later supervised selector study, without treating any opened matrix as validation.
 
+## The retained device-free label-stability audit
+
+**Measurement, 2026-08-11, bounded to the three already-opened one-host primary/repeat pairs:** the [retained analysis](results/2026-08-11-tree-width-label-stability/analysis.txt) validates the exact [input manifest](results/2026-08-11-tree-width-label-stability/inputs.tsv), all three environment and result digest chains, exact schemas and environment claims, 188 cells, 2,506 widths per run, and 5,012 measured rows before computing a metric. It applies each predecessor's separately sourced retained rule, `SE = stddev / sqrt(30)` and inclusive plateau distance `2 * (SE_a + SE_b)`, rather than pooling noise or adding a confidence interpretation. The raw minimum uses `f64::total_cmp` with the narrower participant count on an exact p50 tie.
+
+The frozen verdict is **stable named subsets only**, not stable across records. Overall, 139/188 raw minima agree exactly (`0.739362` against the frozen `0.80` bar), while every primary minimum belongs to the repeat plateau and every repeat minimum belongs to the primary plateau. Overall p90 width movement is `0.862496` octaves, reciprocal-regret p90 is `1.011071`, and worst reciprocal regret is `1.159887`; the exact-label clause is the overall failure. At study level only interactions passes: shape-aware records 35/48 exact, interactions 57/70, and table/signature 47/70, with table/signature also crossing the movement bar at p90 `1.137504` octaves.
+
+Exactly four of the nine predeclared study-by-role subsets pass: `shape-aware/held`, `interactions/fit`, `interactions/held`, and `table/anchor`. No row, contributor, divisor, or other output-derived subset was added. These are descriptive repeatability observations, not selector support: none of the opened cells may fit or validate another policy, and the audit adds no request-known observable, target authority, feasibility input, identity field, or production change. Any later selector hypothesis still needs a genuinely different observable, its construction and authority proof, and a fresh predeclared matrix.
+
 ## Both strategies, because they consume the number differently
 
 The split's partition count is a launch extent and its contributors-per-partition is a fold length. The tree's partition count is *also* its declared workgroup width and, through the tile's staging, its threadgroup reservation — visible in the retained `threadgroup_bytes` column, which rises from 16 bytes at two participants to 4,096 at 1,024. That column records the prepared entry's aligned allocation as distinguished above, while the scheduled tile's source requirement remains one `f32` slot per participant. A partition best for one need not be best for the other, and the retained result shows a shape where their plateaus are **disjoint**.
@@ -296,6 +304,21 @@ cargo run --release --bin tree-width-table-analysis -- \
   results/<date>-<host>-tree-width-table/sweep.tsv \
   results/<date>-<host>-tree-width-table/repeat.tsv \
   results/<date>-<host>-tree-width-table/environment.tsv
+
+# Device-free exact replay of the retained cross-record label-stability audit.
+cargo run --bin tree-width-label-stability-analysis -- --self-check
+cargo run --bin tree-width-label-stability-analysis -- \
+  results/2026-08-11-tree-width-label-stability/inputs.tsv \
+  results/2026-08-11-apple-m4-max-macos27.0-26A5388g-shape-aware-tree-width/sweep.tsv \
+  results/2026-08-11-apple-m4-max-macos27.0-26A5388g-shape-aware-tree-width/repeat.tsv \
+  results/2026-08-11-apple-m4-max-macos27.0-26A5388g-shape-aware-tree-width/environment.tsv \
+  results/2026-08-11-apple-m4-max-macos27.0-26A5388g-tree-width-interactions/sweep.tsv \
+  results/2026-08-11-apple-m4-max-macos27.0-26A5388g-tree-width-interactions/repeat.tsv \
+  results/2026-08-11-apple-m4-max-macos27.0-26A5388g-tree-width-interactions/environment.tsv \
+  results/2026-08-11-apple-m4-max-macos27.0-26A5388g-tree-width-table/sweep.tsv \
+  results/2026-08-11-apple-m4-max-macos27.0-26A5388g-tree-width-table/repeat.tsv \
+  results/2026-08-11-apple-m4-max-macos27.0-26A5388g-tree-width-table/environment.tsv \
+  --check results/2026-08-11-tree-width-label-stability/analysis.txt
 ```
 
 `DEVELOPER_DIR` selects the offline toolchain the [authority ledger](../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md)'s compilation-environment row names. On the host that produced the retained result the default selection *is* a newer Xcode, so the variable is load-bearing rather than defensive.
