@@ -112,13 +112,14 @@
 mod buffer;
 mod regions;
 
-use std::time::Instant;
+use std::{fmt::Write as _, fs::File, io::Read, time::Instant};
 
 use metal::{
     Buffer, CommandBufferRef, CommandQueue, ComputePipelineDescriptor, ComputePipelineState,
     Device, MTLCommandBufferStatus, MTLGPUFamily, MTLResourceOptions, MTLSize,
 };
 use regions::{Subject, admissible_partitions, governed_partition};
+use sha2::{Digest, Sha256};
 use tiler_build::BoundMetalCompileDeclaration;
 use tiler_compiler::session::{
     CompileRequest as CompilerRequest, NumericalContract, PlanAlternative, compile,
@@ -185,6 +186,52 @@ const TREE_WIDTH_EXCURSION_SHAPES: [(u64, u64); 6] = [
     (16_384, 1_042),
 ];
 
+/// Rows in the frozen shape-aware held-out matrix.
+const SHAPE_AWARE_ROWS: [u64; 4] = [4, 1_024, 2_048, 16_384];
+
+/// Contributors in the frozen shape-aware held-out matrix.
+///
+/// The first two are already-seen recurrence anchors, the next five are the
+/// only fit population, and the final five are sealed held-out contributors.
+/// Keeping the groups contiguous makes their membership inspectable here while
+/// the analyzer independently pins each set by value.
+const SHAPE_AWARE_CONTRIBUTORS: [u64; 12] = [
+    780, 1_042, 756, 779, 840, 1_018, 1_020, 768, 781, 960, 1_022, 1_046,
+];
+
+/// Refuses a matrix drift before touching the device.
+///
+/// The analyzer independently pins the same values, but this assertion keeps a
+/// changed harness from silently producing a different retained population that
+/// only fails after a timed run has completed.
+fn assert_shape_aware_population() {
+    assert_eq!(
+        SHAPE_AWARE_ROWS,
+        [4, 1_024, 2_048, 16_384],
+        "the frozen shape-aware row population moved"
+    );
+    assert_eq!(
+        SHAPE_AWARE_CONTRIBUTORS,
+        [
+            780, 1_042, 756, 779, 840, 1_018, 1_020, 768, 781, 960, 1_022, 1_046,
+        ],
+        "the frozen shape-aware contributor population moved"
+    );
+    let variants_per_row: usize = SHAPE_AWARE_CONTRIBUTORS
+        .into_iter()
+        .map(|contributors| regions::admissible_partitions(contributors).len())
+        .sum();
+    assert_eq!(
+        variants_per_row, 154,
+        "the frozen shape-aware width population moved"
+    );
+    assert_eq!(
+        variants_per_row * SHAPE_AWARE_ROWS.len(),
+        616,
+        "the frozen shape-aware variant population moved"
+    );
+}
+
 /// The shape the closed-form oracle is tied to `tiler-reference` on, once.
 ///
 /// Small enough to evaluate through the reference's boxed element vocabulary on
@@ -234,6 +281,10 @@ enum RunMode {
     TreeWidthExcursion,
     /// The excursion's anchors and per-element oracle, without timing.
     VerifyTreeWidthExcursion,
+    /// The frozen 48-cell shape-aware tree-width matrix, including timing.
+    ShapeAwareTreeWidth,
+    /// The shape-aware matrix's anchors and oracle, without timing.
+    VerifyShapeAwareTreeWidth,
 }
 
 impl RunMode {
@@ -246,8 +297,14 @@ impl RunMode {
             [argument] if argument == "--verify-tree-width-excursion" => {
                 Self::VerifyTreeWidthExcursion
             }
+            [argument] if argument == "--shape-aware-tree-width" => Self::ShapeAwareTreeWidth,
+            [argument] if argument == "--verify-shape-aware-tree-width" => {
+                Self::VerifyShapeAwareTreeWidth
+            }
             _ => panic!(
-                "usage: reduction-partition-sweep [--tree-width-excursion|--verify-tree-width-excursion]"
+                "usage: reduction-partition-sweep [--tree-width-excursion|\
+                 --verify-tree-width-excursion|--shape-aware-tree-width|\
+                 --verify-shape-aware-tree-width]"
             ),
         }
     }
@@ -259,22 +316,43 @@ impl RunMode {
             Self::TreeWidthExcursion | Self::VerifyTreeWidthExcursion => {
                 "reduction-tree-width-excursion"
             }
+            Self::ShapeAwareTreeWidth | Self::VerifyShapeAwareTreeWidth => {
+                "reduction-shape-aware-tree-width"
+            }
         }
     }
 
     /// Whether this invocation records timing samples.
     const fn timed(self) -> bool {
-        !matches!(self, Self::VerifyTreeWidthExcursion)
+        !matches!(
+            self,
+            Self::VerifyTreeWidthExcursion | Self::VerifyShapeAwareTreeWidth
+        )
     }
 
     /// Whether this invocation measures only the tree strategy.
     const fn tree_only(self) -> bool {
         !matches!(self, Self::Calibration)
     }
+
+    /// Whether this is the wider held-out study rather than its predecessor.
+    const fn shape_aware(self) -> bool {
+        matches!(
+            self,
+            Self::ShapeAwareTreeWidth | Self::VerifyShapeAwareTreeWidth
+        )
+    }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the top-level sequence keeps environment qualification, custody rows, oracle anchoring, the complete matrix, and final custody rows in their required observable order"
+)]
 fn main() {
     let mode = RunMode::from_args();
+    if mode.shape_aware() {
+        assert_shape_aware_population();
+    }
     let declaration = BoundMetalCompileDeclaration::first_macos_apple9()
         .expect("the authoritative macOS Apple9 declaration binds");
     let device = Device::system_default().expect("this host has a Metal device");
@@ -320,6 +398,17 @@ fn main() {
         "# device_max_threadgroup_memory\t{}",
         device.max_threadgroup_memory_length(),
     );
+    if mode.shape_aware() {
+        let occupancy = concurrent_build_processes();
+        println!("# concurrent_build_processes_before\t{occupancy}");
+        if mode.timed() {
+            assert_eq!(
+                occupancy, 0,
+                "the shape-aware timed run requires no concurrent Cargo, rustc, or make process"
+            );
+        }
+        println!("# executable_sha256_before\t{}", executable_sha256());
+    }
     println!("# load_before\t{}", load_average());
 
     tie_oracle();
@@ -341,12 +430,21 @@ fn main() {
     let mut attempted = 0_usize;
     let mut measured = 0_usize;
     let mut declined = 0_usize;
-    let shapes: &[(u64, u64)] = if mode.tree_only() {
-        &TREE_WIDTH_EXCURSION_SHAPES
+    let shapes: Vec<(u64, u64)> = if mode.shape_aware() {
+        SHAPE_AWARE_ROWS
+            .into_iter()
+            .flat_map(|rows| {
+                SHAPE_AWARE_CONTRIBUTORS
+                    .into_iter()
+                    .map(move |contributors| (rows, contributors))
+            })
+            .collect()
+    } else if mode.tree_only() {
+        TREE_WIDTH_EXCURSION_SHAPES.to_vec()
     } else {
-        &SHAPES
+        SHAPES.to_vec()
     };
-    for &(rows, contributors) in shapes {
+    for &(rows, contributors) in &shapes {
         let counts = measure_shape(
             &device,
             &queue,
@@ -373,6 +471,17 @@ fn main() {
     );
     println!("# variants_declined\t{declined}");
     println!("# load_after\t{}", load_average());
+    if mode.shape_aware() {
+        println!("# executable_sha256_after\t{}", executable_sha256());
+        let occupancy = concurrent_build_processes();
+        println!("# concurrent_build_processes_after\t{occupancy}");
+        if mode.timed() {
+            assert_eq!(
+                occupancy, 0,
+                "the shape-aware timed run ended with a concurrent Cargo, rustc, or make process"
+            );
+        }
+    }
 }
 
 /// Compiles, anchors, prepares, verifies, and times every partition of one shape.
@@ -1284,4 +1393,49 @@ fn load_average() -> String {
             || "unavailable".to_owned(),
             |value| value.trim().replace(['{', '}'], "").trim().to_owned(),
         )
+}
+
+/// SHA-256 of the executable bytes this process is running.
+fn executable_sha256() -> String {
+    let executable = std::env::current_exe().expect("the current executable path resolves");
+    let mut file = File::open(executable).expect("the current executable can be read");
+    let mut digest = Sha256::new();
+    let mut buffer = vec![0_u8; 64 * 1_024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .expect("the current executable can be hashed");
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    let mut observed = String::with_capacity(64);
+    for byte in digest.finalize() {
+        write!(observed, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    observed
+}
+
+/// Counts concurrent Cargo, rustc, and make processes without mutating them.
+fn concurrent_build_processes() -> usize {
+    std::process::Command::new("/bin/ps")
+        .args(["-axo", "command="])
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map_or(usize::MAX, |commands| {
+            commands
+                .lines()
+                .filter(|command| {
+                    let executable = command.split_whitespace().next().unwrap_or_default();
+                    ["cargo", "rustc", "make"].iter().any(|name| {
+                        executable == *name
+                            || executable
+                                .strip_suffix(name)
+                                .is_some_and(|prefix| prefix.ends_with('/'))
+                    })
+                })
+                .count()
+        })
 }

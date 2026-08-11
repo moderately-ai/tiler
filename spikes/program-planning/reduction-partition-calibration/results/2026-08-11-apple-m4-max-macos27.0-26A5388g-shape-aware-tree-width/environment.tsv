@@ -1,0 +1,52 @@
+key	value
+environment.date_utc.primary	2026-08-11T08:39:16Z
+environment.date_utc.repeat	2026-08-11T08:46:42Z
+environment.os.product	macOS
+environment.os.version	27.0
+environment.os.build	26A5388g
+environment.architecture	arm64
+environment.device	Apple M4 Max
+environment.apple_gpu_family	apple9
+environment.cpu.logical_cores	14
+environment.developer_dir	/Applications/Xcode.app/Contents/Developer
+environment.default_developer_dir	/Applications/Xcode-beta.app/Contents/Developer
+environment.xcode	Xcode 26.6 Build version 17F113
+environment.sdk.macosx.version	26.5
+environment.sdk.macosx.build	25F70
+environment.offline_compiler	Apple metal version 32023.883 (metalfe-32023.883)
+environment.offline_linker	AIR-LLD 32023.883 (metalfe-32023.883) (compatible with legacy metallib linker)
+environment.rustc	rustc 1.99.0-nightly (eff8269f7 2026-07-18)
+environment.toolchain	nightly-2026-07-19-aarch64-apple-darwin
+environment.repository_base	b30e384497682c91771fcf93c5ce6854054d39a3
+host.occupancy	coordinator-reserved quiet window; primary then repeat ran sequentially; zero Cargo, rustc, or make processes before and after each timed run
+host.load_before.primary	3.62 6.52 7.58
+host.load_after.primary	2.97 4.31 6.03
+host.load_before.repeat	3.10 4.22 5.95
+host.load_after.repeat	4.09 4.06 5.15
+matrix.rows	4,1024,2048,16384
+matrix.anchor_contributors	780,1042
+matrix.fit_contributors	756,779,840,1018,1020
+matrix.held_out_contributors	768,781,960,1022,1046
+matrix.shapes	48
+matrix.arithmetic_variants_per_run	616
+measurement.metric	wall-clock commit-to-completed difference quotient
+measurement.warmup	8
+measurement.repetitions	30
+measurement.batch	64
+measurement.harness_relation	retained source and lock digests identify the harness build inputs; the before/after executable digest identifies the unretained timed binary; no byte-identical rebuild claim
+measurement.source_threadgroup_bytes	4 * participants bytes
+measurement.result_threadgroup_bytes	prepared entry static allocation, source request rounded up to 16 bytes
+timed.executable.sha256	56fa8152ff5f5ff53c225398082e9f20e808df8208fc7a617023bb9912a34a59
+timed.executable.size_bytes	7807232
+timed.executable.mtime_utc	2026-08-11T08:16:16Z
+timed.executable.retention	digest and observed metadata only; target/release build product is not checked in
+hash.main	b256416545245035c21d50ff7223d738abc65f09b61cc1e1dac99b4a4c504a03
+hash.regions	1a7d4f492fef25d0ea719c8e47bfccac36e9b724e7bf79f0e2873c1b5d61ab96
+hash.buffer	a3f8303eb323c147c21b2ef2547d89e8e1cb0b0f205be66bb33b96b9c08b03fe
+hash.analysis	806e2f41cdfdbc7c02fe936a958b663413f8d6271bdf447ca89f00213e6e6d72
+hash.cargo_toml	abb00e276428abdfceeb2f8a3374ee0215fedb53fb166a667ac026ec3b693fed
+hash.cargo_lock	4c73b106f913746318feca579f8b82d03739557e5e3f59d2f84d6feb2d8b6255
+hash.compiler_physical	82139b1f5e5885b9d861f05a23628016033677ff0f2c30357969b752059bcd3d
+hash.compiler_measured_cost	c814919adb6732147be8d5f561107164eb501a1fb870a360a030263b621a0cd1
+hash.sweep	e919d79b7ea176dd0b83cbd051302e53fa2cc77ca28e9856545edecc60fd9a7d
+hash.repeat	cd6f7d5109669224fb14727fe95291ed36ef0cd951519305df26627bd84ecd3a
