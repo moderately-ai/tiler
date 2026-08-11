@@ -33,6 +33,17 @@ is the constant.
 
 The out-of-scope status is why this is filed rather than fixed: the change that made the sentence stale held `implementation/reference` alone.
 
+## Review correction, 2026-08-10
+
+**Fact — independent review at candidate
+`5e6a813ded3ce86436b39ee9bcdf0519c999a7b0`.** The related completed staging
+ticket's anchor `Fact — the bound, and the two occurrences that meet it.` still
+described `MAX_REFERENCE_TENSOR_ELEMENTS` as the direct
+`contract_operands` refusal limit, despite that ticket's later Outcome and the
+live allowance/windowing implementation. Its dated correction preserves the
+historical premise and states the current behavior; this ticket's compiler-only
+documentation change remains unchanged.
+
 ## Closes when
 
 The passage distinguishes the per-window bound from the per-occurrence allowance, states that this module constructs the default allowance and why that keeps its four refusals, and no assertion changes — the refusals it watches are the default evaluator's and must stay watched.
