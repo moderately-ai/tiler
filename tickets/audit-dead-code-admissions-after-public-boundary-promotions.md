@@ -1,7 +1,7 @@
 ---
 id: audit-dead-code-admissions-after-public-boundary-promotions
 title: Audit dead-code admissions after public-boundary promotions
-status: todo
+status: in-progress
 priority: p3
 dependencies: [promote-the-symbolic-index-profile-to-a-public-boundary, promote-the-metal-aot-compilation-identity, expose-the-governed-fact-field-vocabulary, expose-the-numerical-contract-preference-list, wire-the-delivered-realization-record-into-the-artifact]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [maintenance, lints, public-boundary, deferred]
+claimed_from: todo
+assignee: sol-dead-code-audit
+lease_expires_at: 1786441447
 ---
 Re-audit production `dead_code` admissions after the current public-boundary
 promotion wave makes the intended producers and consumers reachable.
