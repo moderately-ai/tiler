@@ -383,6 +383,18 @@ fn cooperative_plan(
     }))
 }
 
+/// Resolves the cooperative lowering shape without exposing its private plan.
+///
+/// This test-only projection lets the kernel module's fixture tests drive the
+/// lowering's defensive refusals even where the schedule verifier rejects the
+/// malformed subject first.
+#[cfg(test)]
+pub(super) fn cooperative_plan_shape_check(
+    schedule: &ScheduledRegion,
+) -> Result<(), KernelDiagnostic> {
+    cooperative_plan(schedule).map(|_| ())
+}
+
 /// Restates the one point discharging an obligation in the KIR barrier spelling.
 ///
 /// `None` when the obligation has any number of discharging points other than
