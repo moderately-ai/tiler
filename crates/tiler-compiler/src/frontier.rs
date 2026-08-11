@@ -227,7 +227,7 @@ pub(crate) struct ReservedProposalSeam {
 
 #[allow(
     dead_code,
-    reason = "reserved additive seam preserved so an unsupported body rejects explicitly instead of being silently approximated"
+    reason = "reserved View payload preserved so an unsupported body rejects explicitly instead of being silently approximated"
 )]
 impl ReservedProposalSeam {
     /// Wraps an uninterpreted descriptor for a reserved proposal body.
@@ -250,7 +250,7 @@ impl ReservedProposalSeam {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
-    reason = "reserved additive seam preserved so an unsupported body rejects explicitly instead of being silently approximated"
+    reason = "opaque calls are admitted from test providers but no production provider proposes one; View remains a reserved additive seam that rejects explicitly instead of being silently approximated"
 )]
 pub(crate) enum ProposalBody {
     /// A checked scheduled region carrying a minimal serial schedule. The
@@ -302,10 +302,6 @@ pub struct TargetApplicability {
     target_profile_keys: Vec<TargetProfileKey>,
 }
 
-#[allow(
-    dead_code,
-    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
-)]
 impl TargetApplicability {
     /// Builds an applicability predicate over a set of governed target keys.
     ///
@@ -1063,10 +1059,6 @@ pub(crate) struct ImplementationProvenance {
     kind: PhysicalProposalKind,
 }
 
-#[allow(
-    dead_code,
-    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
-)]
 impl ImplementationProvenance {
     /// Returns the provider that produced the implementation.
     pub(crate) const fn provider(&self) -> &ProviderIdentity {
@@ -1200,10 +1192,6 @@ impl BaselineImplementation {
     }
 }
 
-#[allow(
-    dead_code,
-    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
-)]
 impl ImplementationContext<'_> {
     /// Returns the verified target request.
     pub(crate) const fn request(&self) -> &VerifiedTargetRequest {
@@ -1648,10 +1636,6 @@ impl ImplementationProposalIdentity {
 /// any meaning for a call whose body is not modelled, so a consumer that needs
 /// one must handle its absence rather than receive a substitute.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "the sum AdmittedImplementation's body will become; landed with its tests ahead of the field change and the nine call sites that follow it"
-)]
 pub(crate) enum ImplementationBody {
     /// A region this compiler scheduled and will lower itself.
     Scheduled(Box<VerifiedScheduledRegion>),
@@ -1671,7 +1655,7 @@ pub(crate) enum ImplementationBody {
 
 #[allow(
     dead_code,
-    reason = "see the type's own allow: accessors land with the sum, ahead of the consumers that will match on it"
+    reason = "test-facing body projections exercise scheduled and opaque alternatives; production consumers reach the equivalent AdmittedImplementation projections until a production opaque provider needs these sum accessors"
 )]
 impl ImplementationBody {
     /// The scheduled region, when this is exactly one.

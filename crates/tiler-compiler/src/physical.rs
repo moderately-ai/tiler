@@ -3857,10 +3857,6 @@ impl AdmissionEvidence {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "the unattributed verdict; its second caller is the opaque-call admission being built"
-)]
 pub(crate) enum ResourceVerdict {
     /// The target profile or the proposal itself was malformed.
     Intrinsic(FeasibilityError),
@@ -3886,10 +3882,6 @@ pub(crate) enum ResourceVerdict {
 ///
 /// The shared half of the feasibility decision. Every caller runs this; each
 /// then maps a [`ResourceVerdict`] onto its own error vocabulary.
-#[allow(
-    dead_code,
-    reason = "the shared feasibility core; the opaque-call admission is its second caller"
-)]
 pub(crate) fn assess_resources(
     requirements: ResourceRequirements,
     arithmetic: ArithmeticType,

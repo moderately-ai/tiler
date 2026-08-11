@@ -67,7 +67,7 @@ use tiler_ir::schedule::ResourceRequirements;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
-    reason = "the work-scaling declaration; lands with its validation ahead of the admission that reads it"
+    reason = "no production opaque-call provider constructs work scaling; frontier admission consumes it from test providers until caller-supplied physical providers reach the compile path"
 )]
 pub(crate) enum WorkScaling {
     /// One work item per element of the tensor bound to this parameter.
@@ -80,7 +80,7 @@ pub(crate) enum WorkScaling {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
-    reason = "the coherence vocabulary; lands with the check that produces it, ahead of the registration seam"
+    reason = "provider-side declaration checking produces this vocabulary, and production installs no opaque-call provider until caller-supplied physical providers reach the compile path"
 )]
 pub(crate) enum IncoherentDeclaration {
     /// The ABI declares an in-place parameter while the effects claim results
@@ -120,7 +120,7 @@ pub(crate) enum IncoherentDeclaration {
 
 #[allow(
     dead_code,
-    reason = "see the enum's own allow: the stable code lands with the vocabulary, ahead of the explain records that will report it"
+    reason = "test diagnostics read the stable contradiction code; production has no provider-side declaration check to report until caller-supplied physical providers reach the compile path"
 )]
 impl IncoherentDeclaration {
     /// The stable code naming this contradiction.
@@ -151,10 +151,6 @@ impl fmt::Display for IncoherentDeclaration {
 /// not that the call is feasible, which is a separate question asked against a
 /// target profile.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "the checked declaration; lands ahead of the registration seam that will carry it"
-)]
 pub(crate) struct OpaqueCallDeclaration {
     abi: CallAbi,
     effects: CallEffects,
@@ -174,7 +170,7 @@ pub(crate) struct OpaqueCallDeclaration {
 
 #[allow(
     dead_code,
-    reason = "see the type's own allow: reviewed draft accessors whose consumer is the not-yet-written registration seam"
+    reason = "declaration checking is provider-side and test-exercised; production frontier admission consumes already-checked declarations until caller-supplied physical providers populate the registry"
 )]
 impl OpaqueCallDeclaration {
     /// Checks the declarations against each other and bundles them.
@@ -287,10 +283,6 @@ impl OpaqueCallDeclaration {
 /// which `CallAbi::declare` already refuses for a read role — so this is
 /// unreachable through a checked ABI and is `Option` rather than a panic
 /// because that reachability is an invariant of another type, not of this one.
-#[allow(
-    dead_code,
-    reason = "the requirement half of the boundary derivation; lands with its tests ahead of the admission"
-)]
 pub(crate) fn required_properties_for(
     parameter: &CallParameter,
     placement: &CallPlacement,
@@ -317,10 +309,6 @@ pub(crate) fn required_properties_for(
 
 /// Why a guarantee could not be derived for a parameter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "the guarantee-derivation outcome; lands with the derivation ahead of the admission"
-)]
 pub(crate) enum GuaranteeError {
     /// The parameter is read-only, so there is nothing it guarantees.
     NotAWrite,
@@ -349,10 +337,6 @@ pub(crate) enum GuaranteeError {
 ///   is a statement about *results*, so `MayAliasInputs` makes this an
 ///   `AliasView` and `Distinct` makes it a `MaterializedBuffer`. The requirement
 ///   side does not consult it, because it says nothing about incoming values.
-#[allow(
-    dead_code,
-    reason = "the guarantee half of the boundary derivation; lands with its tests ahead of the admission"
-)]
 pub(crate) fn guaranteed_properties_for(
     parameter: &CallParameter,
     effects: CallEffects,

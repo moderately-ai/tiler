@@ -1,9 +1,3 @@
-#![allow(
-    dead_code,
-    unused_imports,
-    reason = "the neutral artifact codec exposes only its accepted encode/decode capability, validated read view, governed digest, and payload-construction vocabulary. Its envelope framing, rows, canonical encoder and decoder, identity derivation, and wire-layout machinery remain crate-private under ADR 0074 convention 7; those reserved internals and their crate-level re-exports are not all used outside tests."
-)]
-
 //! The bounded canonical lockstep codec for the target-neutral artifact envelope.
 //!
 //! This module owns what `docs/artifact-abi.md` assigns to the artifact

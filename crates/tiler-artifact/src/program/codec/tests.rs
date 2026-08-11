@@ -68,9 +68,8 @@ use super::super::{
 };
 use super::decode::{Cursor, decode, parse_dependencies, parse_expression_arena};
 use super::encode::{
-    ENVELOPE_DIGEST_DOMAIN, ENVELOPE_FORMAT, HEADER_BYTES, IDENTITY_DIGEST_DOMAIN, MAGIC,
-    MANIFEST_DIGEST_DOMAIN, MANIFEST_DOMAIN, MANIFEST_SCHEMA, SECTION_DIGEST_DOMAIN, encode,
-    encode_with_identity, envelope_digest, identity_digest, matches_canonical_encoding,
+    ENVELOPE_FORMAT, HEADER_BYTES, MAGIC, MANIFEST_DIGEST_DOMAIN, MANIFEST_DOMAIN, MANIFEST_SCHEMA,
+    encode, encode_with_identity, envelope_digest, identity_digest, matches_canonical_encoding,
     section_digest,
 };
 use super::error::{

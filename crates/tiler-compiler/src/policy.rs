@@ -1,8 +1,3 @@
-#![allow(
-    dead_code,
-    reason = "the preset table, the per-operation capability table, and the representability rule are all on the compile path through `request`; what stays unconstructed is the reserved half — the named preset spelling a public facade would expose, which `expose-the-numerical-contract-preference-list` owns, and the per-operation effective-permission resolution, whose only consumer today is this module's own conformance tests until a rewrite declares the permission it requires"
-)]
-
 //! Named numerical policy presets, and the per-operation conformance a preset is
 //! resolved against.
 //!
@@ -98,6 +93,10 @@ use tiler_ir::semantic::OpKey;
 /// widened without changing the contract's identity, which is the one thing an
 /// accuracy clause must not permit. Nothing in this build emits an approximate
 /// intrinsic, so this names an envelope that is authorized and unconsumed.
+#[allow(
+    dead_code,
+    reason = "reserved governed envelope for an approximate intrinsic; no admitted operation consumes it until a registered realization carries that dimension"
+)]
 pub(crate) const RELAXED_APPROXIMATION_ENVELOPE: ApproximationEnvelope =
     ApproximationEnvelope::BackendElementary;
 
@@ -152,6 +151,10 @@ impl OperationNumericalCapability {
     }
 
     /// The dimensions this operation can consume.
+    #[allow(
+        dead_code,
+        reason = "test-facing complete table projection; production queries individual dimensions through can_consume until a consumer needs the whole declared slice"
+    )]
     pub(crate) const fn consumes(self) -> &'static [NumericalDimension] {
         self.consumes
     }
@@ -596,6 +599,10 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
 /// `MetalNumericalRequirement::PreciseFp32Functions`. That is a backend guarantee
 /// over the operations actually emitted, not a profile-level assessment, and the
 /// difference is the whole of what this constant defers.
+#[allow(
+    dead_code,
+    reason = "test-held omission witness until the region realization carries reciprocal-transform or approximate-intrinsic dimensions and their capability rows"
+)]
 pub(crate) const ELEMENTARY_UNCARRIED_DIMENSIONS: [NumericalDimension; 2] = [
     NumericalDimension::ReciprocalTransform,
     NumericalDimension::ApproximateIntrinsics,

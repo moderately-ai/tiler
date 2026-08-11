@@ -10,7 +10,6 @@
 //! vocabulary owns**, never through a Rust discriminant, so inserting a variant
 //! cannot silently renumber a value that is already on disk.
 
-use super::super::error::ArtifactDiagnostic;
 use super::super::expr::ExprNode;
 use super::super::model::{address_space_tag, buffer_access_tag};
 use super::super::model::{
@@ -821,8 +820,4 @@ fn encode_node(bytes: &mut Vec<u8>, node: &ExprNode) {
             bytes.extend_from_slice(&if_false.to_be_bytes());
         }
     }
-}
-
-fn identity_cause(cause: ArtifactDiagnostic) -> ArtifactCodecError {
-    ArtifactCodecError::IdentityDerivation { cause }
 }

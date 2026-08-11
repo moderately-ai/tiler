@@ -1423,15 +1423,15 @@ pub(crate) struct CompilationRequest<'a> {
 }
 
 impl CompilationRequest<'_> {
-    /// Builds the governed compilation request for the bounded prototype profile.
+    /// Builds the fixed governed compilation-request fixture.
     ///
-    /// This is the exact profile the request boundary admits: the governed static
+    /// Conformance and unit tests use this exact combination of governed static
     /// shape environment, strict-`f32` numerical contract, deterministic budgets,
-    /// target profile, and installed lowering capabilities. It is the ordinary
-    /// entry point every in-crate caller uses, not a test-only shortcut.
+    /// target profile, and installed lowering capabilities. Production resolves
+    /// the public caller's stated preference through [`Self::governed_preferring`].
     #[allow(
         dead_code,
-        reason = "the crate-internal governed request profile; its only in-crate callers are the compile path's own conformance and unit tests until a reviewed public facade exposes it"
+        reason = "crate-internal fixed governed fixture used by conformance and unit tests; the public CompileRequest path resolves caller preferences through governed_preferring until a production caller needs this exact fixture"
     )]
     pub(crate) fn governed(program: &SemanticProgram) -> CompilationRequest<'_> {
         Self::governed_under(program, StrictF32NumericalContract::governed())
