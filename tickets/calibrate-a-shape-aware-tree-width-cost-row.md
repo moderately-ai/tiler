@@ -1,7 +1,7 @@
 ---
 id: calibrate-a-shape-aware-tree-width-cost-row
 title: Calibrate a shape-aware tree-width cost row
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [measure-the-tree-width-excursion-past-the-cap, activate-measured-reduction-selection-from-a-target-cost-row]
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [reductions, scheduling, measurement]
+claimed_from: todo
+assignee: sol-tree-cost-row
+lease_expires_at: 1786439940
 ---
 ## The question
 

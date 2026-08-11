@@ -1,7 +1,7 @@
 ---
 id: admit-reassociated-contraction-schedule-alternatives
 title: Admit reassociated and permuted contraction schedule alternatives
-status: todo
+status: in-progress
 priority: p2
 dependencies: [implement-parallel-reduction-strategies, realize-the-contraction-through-the-appendable-direct-path]
 related: [reduction-semantics-contract, implement-analytical-component-cost-model, realize-the-tiled-contraction-schedule-and-its-metal-emission, enumerate-the-split-reduction-on-the-planning-frontier, admit-a-reassociating-contract-without-contraction]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/ir, implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, physical-planning, reductions, contraction, numerics]
+claimed_from: todo
+assignee: sol-contraction-schedules
+lease_expires_at: 1786439940
 ---
 ## User-visible outcome
 
