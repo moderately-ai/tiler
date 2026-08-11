@@ -1,7 +1,7 @@
 ---
 id: realign-the-result-side-display-strings-across-both-refinement-error-mirrors
 title: Realign the result-side Display strings across both refinement error mirrors
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [realign-the-compiler-refinement-error-mirror-with-the-grouped-result-arity]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [diagnostics, error-messages]
+claimed_from: todo
+assignee: terra-result-display
+lease_expires_at: 1786424181
 ---
 ## User-visible outcome
 
