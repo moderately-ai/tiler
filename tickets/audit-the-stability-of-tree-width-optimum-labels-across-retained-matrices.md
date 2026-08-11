@@ -5,7 +5,7 @@ status: in-progress
 priority: p3
 dependencies: [compare-a-target-private-tree-width-table-with-a-prime-factor-signature]
 related: []
-scopes: [research/program-planning]
+scopes: [research/program-planning, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [reductions, scheduling, research]
