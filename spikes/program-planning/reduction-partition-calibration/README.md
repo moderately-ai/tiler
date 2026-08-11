@@ -101,6 +101,63 @@ The exact environment matches the authority ledger: macOS 27.0 build `26A5388g`,
 
 `threadgroup_bytes` is the prepared Metal entry's reported static allocation, not a restatement of the source request. The tree source stages exactly `4 × participants` bytes; the prepared entries in both runs report that request rounded up to 16 bytes — for example 1,028 source bytes at 257 participants become 1,040, and 2,084 at 521 become 2,096. The validator checks both relationships separately. This is an observed prepared-pipeline allocation on the named row, not a portable Metal alignment guarantee.
 
+## The predeclared shape-aware held-out extension
+
+[`calibrate-a-shape-aware-tree-width-cost-row`](../../../tickets/calibrate-a-shape-aware-tree-width-cost-row.md) owns the wider study. **Proposal, frozen 2026-08-11 before timing:** rows `{4, 1,024, 2,048, 16,384}` crossed with the twelve contributor counts below, 48 cells and 616 arithmetically admissible variants per run. Primary and same-matrix repeat will use the excursion's region construction, compiler source/ABI anchors, oracle, preparation, 8 warm-ups, 30 rotating rounds, 64-encode difference quotient, and qualified Apple9 controls. Arithmetic enumerates candidates; preparation remains the authority that admits or declines them.
+
+| role | contributors | every arithmetically admissible exact width | production |
+| --- | ---: | --- | ---: |
+| anchor | 780 | `{2, 3, 4, 5, 6, 10, 12, 13, 15, 20, 26, 30, 39, 52, 60, 65, 78, 130, 156, 195, 260, 390}` | 260 |
+| anchor | 1,042 | `{2, 521}` | 2 |
+| fit | 756 | `{2, 3, 4, 6, 7, 9, 12, 14, 18, 21, 27, 28, 36, 42, 54, 63, 84, 108, 126, 189, 252, 378}` | 252 |
+| fit | 779 | `{19, 41}` | 41 |
+| fit | 840 | `{2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 15, 20, 21, 24, 28, 30, 35, 40, 42, 56, 60, 70, 84, 105, 120, 140, 168, 210, 280, 420}` | 280 |
+| fit | 1,018 | `{2, 509}` | 509 |
+| fit | 1,020 | `{2, 3, 4, 5, 6, 10, 12, 15, 17, 20, 30, 34, 51, 60, 68, 85, 102, 170, 204, 255, 340, 510}` | 255 |
+| held out | 768 | `{2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384}` | 256 |
+| held out | 781 | `{11, 71}` | 71 |
+| held out | 960 | `{2, 3, 4, 5, 6, 8, 10, 12, 15, 16, 20, 24, 30, 32, 40, 48, 60, 64, 80, 96, 120, 160, 192, 240, 320, 480}` | 240 |
+| held out | 1,022 | `{2, 7, 14, 73, 146, 511}` | 146 |
+| held out | 1,046 | `{2, 523}` | 2 |
+
+The two anchors were observed at the extreme rows in the earlier extension, so they are excluded from fit and held-out aggregates and answer recurrence only. Fit and held-out roles are contributor-grouped across all four rows. The exact adjacent `779 / 780 / 781` divisor counts are `2 / 22 / 2`; the neighbouring even `1,018 / 1,020 / 1,022` counts are `2 / 22 / 6`; `1,018 = 2 × 509` and held-out `1,046 = 2 × 523` straddle the sparse production cutoff. Production widths cover below, at, and above 256. Rows 1,024 and 2,048 lie on opposite sides of the declared 1,056 saturated-fold-step quantity; 4 and 16,384 preserve the separated extremes.
+
+### Frozen held-out scoring
+
+The complete deterministic protocol is in the owning ticket under **Frozen matrix and scoring protocol**; this is its operational summary. A fit observation's response is `ln(p50 / cell_raw_min_p50)`. Raw minima and predicted minima use `f64::total_cmp`, exact ties going to the narrower width. Regret is the raw ratio, median means the zero-index `sorted[len / 2]` upper median, and the existing plateau band remains `2 × (left_stddev / sqrt(30) + right_stddev / sqrt(30))`.
+
+Three ridge families are nested. With `w = log2(width)`, `q = log2(contributors / width)`, and `r = log2(rows)`, contributor-only is an unpenalized intercept plus `[w, q, w², q², wq]`; rows-plus-contributors appends `[rw, rq, rw², rq², rwq]`; lattice appends `[rank, log2(width / previous), log2(next / width), rank × log2(width_count), (width - 256) / 256]`. At the first and last divisor the missing neighbour equals the width, making that endpoint gap zero. A singleton rank is zero.
+
+Non-intercept features use their fit fold's population mean and population standard deviation; exact zero variance maps to zero and fixes that coefficient at zero. Ridge penalizes non-intercept coefficients only and tries `{0, 0.000001, 0.0001, 0.01, 1}`. Deterministic Gauss-Jordan normal-equation solving chooses the greatest absolute remaining pivot, lower row on an exact tie, and rejects a non-finite or at-most-`1e-12` pivot; singular zero-ridge fits therefore decline instead of gaining a post-hoc pseudoinverse.
+
+Contributor-group leave-one-out chooses each lambda by `(worst raw regret, upper-median raw regret, outside-plateau count, lambda)`. The existing-saturation candidate has no fit and ranks widths by `max(rows × (contributors + width), 1,056 × (contributors / width + width))`, the exact width-varying cooperative-tree term. The same fit-only tuple chooses one primary family, ties preferring contributor-only, rows-plus-contributors, lattice, then existing-saturation. Production is a baseline, not eligible. All families are reported, but only the fit-selected family may support a row.
+
+The primary-fit policy is applied unchanged to both sealed runs. Each run independently requires worst regret at most 1.10, upper median at most 1.02, at least 18/20 choices in the noise plateau, lower worst regret than production, and median no greater than production. Repeat refitting is diagnostic and changes no verdict. Anchor recurrence cannot rescue held-out failure. The analyzer also reports relative `p50` variation across all 616 rows and the selected rows, plateau agreement, and anchor boundary verdicts.
+
+Primary and repeat must have the same measured-width population. Relative differences use `abs(primary - repeat) / primary`. Selected plateau agreement counts the 20 held-out cells where the unchanged primary policy's selected width has the same inside/outside-plateau verdict in both runs.
+
+Those controls were satisfied before timing: the device-free mode reached all 48 cells and 616 widths with no decline, and independent source, ABI, oracle-input, owning-result-binding, and matrix perturbations failed unchanged assertions before being restored.
+
+### The retained shape-aware result
+
+**Measurement, 2026-08-11**, at [`results/2026-08-11-apple-m4-max-macos27.0-26A5388g-shape-aware-tree-width/`](results/2026-08-11-apple-m4-max-macos27.0-26A5388g-shape-aware-tree-width/): [`sweep.tsv`](results/2026-08-11-apple-m4-max-macos27.0-26A5388g-shape-aware-tree-width/sweep.tsv), [`repeat.tsv`](results/2026-08-11-apple-m4-max-macos27.0-26A5388g-shape-aware-tree-width/repeat.tsv), exact [`environment.tsv`](results/2026-08-11-apple-m4-max-macos27.0-26A5388g-shape-aware-tree-width/environment.tsv), and validator/scorer output [`analysis.txt`](results/2026-08-11-apple-m4-max-macos27.0-26A5388g-shape-aware-tree-width/analysis.txt). Both sequential runs measured all 616 widths with no decline, zero Cargo/rustc/make occupancy before and after, and the same before/after executable SHA-256. Primary load was `3.62 6.52 7.58` before and `2.97 4.31 6.03` after; repeat was `3.10 4.22 5.95` before and `4.09 4.06 5.15` after. The environment otherwise equals the qualified authority row named above. The timed binary itself is not retained; its digest, 7,807,232-byte size, and UTC mtime are observations rather than a byte-identical rebuild claim.
+
+**Measurement — no candidate clears the held-out support bar.** Contributor-only wins the predeclared fit-only selection in both primary and diagnostic repeat refitting. Its fit LOO tuple is worst `1.041761`, upper median `1.000048`, and four plateau misses. The held-out result is materially worse:
+
+| policy | primary worst | primary median | misses | repeat worst | repeat median | misses |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| contributor-only | 1.404845 | 1.011037 | 7 | 1.416495 | 1.011997 | 8 |
+| rows plus contributors | 1.404845 | 1.012906 | 8 | 1.416495 | 1.013211 | 8 |
+| divisor lattice | 1.718855 | 1.014938 | 10 | 1.612238 | 1.014052 | 10 |
+| existing saturation 1,056 | 2.547430 | 1.237156 | 15 | 2.406007 | 1.269829 | 15 |
+| production nearest 256 | 4.603724 | 1.069190 | 15 | 5.009975 | 1.077103 | 15 |
+
+The selected contributor-only row misses the required worst-at-most-1.10 and at-most-two-plateau-misses bounds in both runs, so its lower worst and median than production cannot rescue it. The exact finite verdict is **insufficient evidence for a replacement row**; `capped_tree_partition` remains unchanged. Across all 616 rows, primary-to-repeat relative `p50` difference has upper median `0.007233` and maximum `0.235500`; across the 20 selected held-out rows it has upper median `0.012259` and maximum `0.113438`, with plateau membership agreeing on 19/20. These tails are an additional reason not to promote a narrow fit.
+
+**Measurement — the motivating discontinuities recur, but do not yield a general selector.** For 780 contributors, all eight run/row cells have a below-cap raw minimum and a plateau excluding production 260. Primary raw minima over rows `{4, 1,024, 2,048, 16,384}` are `{39, 15, 15, 78}` and repeat minima are `{39, 15, 15, 65}`; every run also improves from 195 to 260 and reverses by 390. For sparse 1,042 contributors, 521 is faster in six of eight run/row cells, while both 1,024-row cells are indistinguishable from width two; it is never slower. Thus the dense plateau recurs throughout this record and the sparse reversal recurs except for one row regime becoming unresolved, but the sealed neighbouring contributors show that the frozen polynomial/lattice families do not generalize with acceptable regret.
+
+This remains one Apple M4 Max/Apple9 row, unit operands, exact-divisor candidates, and a wall-clock submission difference quotient rather than GPU-busy time. Post-hoc enrichment of the opened feature families cannot turn these held-out cells into new validation evidence. [`test-row-regime-divisor-interactions-on-a-fresh-tree-width-matrix`](../../../tickets/test-row-regime-divisor-interactions-on-a-fresh-tree-width-matrix.md) owns whether interactions between row regime and divisor-neighbour discontinuities generalize on a newly frozen contributor-grouped population; that needs a separate record (and a second qualified profile before any portable claim), not production selection here.
+
 ## Both strategies, because they consume the number differently
 
 The split's partition count is a launch extent and its contributors-per-partition is a fold length. The tree's partition count is *also* its declared workgroup width and, through the tile's staging, its threadgroup reservation — visible in the retained `threadgroup_bytes` column, which rises from 16 bytes at two participants to 4,096 at 1,024. That column records the prepared entry's aligned allocation as distinguished above, while the scheduled tile's source requirement remains one `f32` slot per participant. A partition best for one need not be best for the other, and the retained result shows a shape where their plateaus are **disjoint**.
@@ -147,6 +204,20 @@ cargo run --release --bin tree-width-excursion-analysis -- \
   results/<date>-<host>-tree-width-excursion/sweep.tsv \
   results/<date>-<host>-tree-width-excursion/repeat.tsv \
   results/<date>-<host>-tree-width-excursion/environment.tsv
+
+# Frozen shape-aware held-out study. Build before the reserved window, then run
+# the binary directly so the timed occupancy assertion does not see Cargo.
+cargo build --release --bin reduction-partition-sweep
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  target/release/reduction-partition-sweep --shape-aware-tree-width \
+  > results/<date>-<host>-shape-aware-tree-width/sweep.tsv
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  target/release/reduction-partition-sweep --shape-aware-tree-width \
+  > results/<date>-<host>-shape-aware-tree-width/repeat.tsv
+cargo run --release --bin shape-aware-tree-width-analysis -- \
+  results/<date>-<host>-shape-aware-tree-width/sweep.tsv \
+  results/<date>-<host>-shape-aware-tree-width/repeat.tsv \
+  results/<date>-<host>-shape-aware-tree-width/environment.tsv
 ```
 
 `DEVELOPER_DIR` selects the offline toolchain the [authority ledger](../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md)'s compilation-environment row names. On the host that produced the retained result the default selection *is* a newer Xcode, so the variable is load-bearing rather than defensive.

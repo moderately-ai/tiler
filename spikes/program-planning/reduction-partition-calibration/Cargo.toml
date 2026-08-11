@@ -25,6 +25,12 @@ path = "src/regret.rs"
 name = "tree-width-excursion-analysis"
 path = "src/excursion.rs"
 
+# Validates the wider shape-aware matrix and performs its contributor-grouped
+# ridge fit and sealed held-out scoring without a device.
+[[bin]]
+name = "shape-aware-tree-width-analysis"
+path = "src/shape_aware.rs"
+
 # Its own workspace root, following `reduction-dispatch-crossover` beside it:
 # `make` never reaches here and the dependency set is the spike's own. The path
 # dependencies still resolve their `[lints]` through the repository workspace
