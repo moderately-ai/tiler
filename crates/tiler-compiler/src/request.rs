@@ -1157,12 +1157,13 @@ impl DeterministicBudgets {
     ///
     /// The consequence of every one of these moves is the one this comment
     /// already records: every budget is written into the request subject, so
-    /// every governed compilation's qualifier moved with them. The pinned
-    /// identity is the same single one — `explain`'s
+    /// every governed compilation's qualifier moved with them. The one pinned
+    /// literal is `explain`'s
     /// `deterministic_trace_is_sealed_and_rendered_separately` request qualifier
     /// — and its ledger comment records the recomputation. No encoding version
     /// moved: the field set, widths, and order are untouched, so a value change
-    /// stays injective inside `tiler.compiler.request-subject.v5`.
+    /// stays injective inside the current `tiler.compiler.request-subject.v6`
+    /// domain.
     ///
     /// They move again when the decoder layer becomes plannable, and that is a
     /// second identity move this one cannot honestly absorb. The three
@@ -1202,30 +1203,31 @@ impl DeterministicBudgets {
     /// hands between stages — neither is a value the program's own occurrence
     /// and value counts hold — so both bounds still bind on a program whose
     /// families realize region sequences. The second is that a budget set is a
-    /// *request* field: these bound one region's shape for any budgets a caller
-    /// states, and the governed profile's coincidence is a property of its
-    /// declaration rather than of the fields. Whether a field that the governed
-    /// profile can no longer fire deserves to keep its slot in the canonical
-    /// request subject is a public-boundary question and is Tom's, not taken
-    /// here. `region_boundary_outputs` does not collapse: it is the declared
-    /// output count rather than any program-scoped bound, and it still refuses
-    /// a grown candidate that would export more values than the program names.
+    /// *request* field: these bound one region's shape for any budget policy,
+    /// and the governed profile's coincidence is a property of its declaration
+    /// rather than of the fields. Tom accepted on 2026-08-11 that both keep
+    /// their slots in the canonical request subject. Omitting them would make
+    /// distinct staged-region policies share one request/evidence subject,
+    /// while the measured saving is eight bytes. `region_boundary_outputs`
+    /// does not collapse: it is the declared output count rather than any
+    /// program-scoped bound, and it still refuses a grown candidate that would
+    /// export more values than the program names.
     ///
     /// Every value here is a *deliberate* decision and not a test-enabling
     /// edit, because every one of these numbers is inside the canonical request
     /// subject ([`VerifiedRequestSubject::canonical_explain_subject_bytes`]
-    /// writes every budget), which is carried into artifact identity. Every
-    /// governed compilation's request subject, and therefore every artifact
-    /// identity and cache entry derived from it, moves with this change — for
-    /// programs nowhere near any of these bounds as much as for ones at them,
-    /// because a budget is a property of the *request* rather than of the plan
-    /// chosen for it. Exactly one pinned identity encodes these bytes and it
-    /// moved with them: `explain`'s
+    /// writes every budget). Every governed compilation's request/evidence
+    /// subject moves with such a change — for programs nowhere near any bound
+    /// as much as for ones at it — because a budget is a property of the
+    /// compilation request rather than of the plan chosen for it. The request
+    /// subject is not artifact or cache identity; those move only when the
+    /// selected packaged content moves. The one checked-in literal derived from
+    /// these bytes is `explain`'s
     /// `deterministic_trace_is_sealed_and_rendered_separately` request
     /// qualifier, whose ledger comment records the recomputation. No encoding
     /// version moved with it — the field set, widths, and order are untouched,
-    /// so a value change stays injective inside
-    /// `tiler.compiler.request-subject.v5`.
+    /// so a value change stays injective inside the current
+    /// `tiler.compiler.request-subject.v6` domain.
     ///
     /// A budget is an upper bound, so widening admits program shapes and never
     /// requires them: [`check_program_budgets`] still refuses a program one step

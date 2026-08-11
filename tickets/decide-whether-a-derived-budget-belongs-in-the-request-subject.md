@@ -1,18 +1,34 @@
 ---
 id: decide-whether-a-derived-budget-belongs-in-the-request-subject
 title: Decide whether a derived budget belongs in the request subject
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [derive-the-region-shape-budgets-from-the-declaration, state-the-rule-that-a-deterministic-budget-is-a-derivation]
-scopes: [contracts/optimizer]
+scopes: [contracts/optimizer, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [budgets, identity, decision, needs-tom, public-boundary]
 ---
+## Decision accepted — 2026-08-11
+
+Tom accepted retaining all fourteen effective budget values in `VerifiedRequestSubject`, including `region_members` and `region_live_values`.
+
+**Fact — the two equal numbers are not redundant meanings.** Region formation counts realization-stage atoms rather than only semantic occurrences, and its live-value population includes handed intermediates that are absent from the semantic value count. Current registered sequence laws exercise that distinction. The governed equalities `region_members == semantic_operations` and `region_live_values == semantic_values` are numeric coincidences for the bounded profile, not derivations that erase the two policy axes.
+
+**Fact — the original artifact/cache consequence was false.** These bytes bind the compiler-internal request, evidence, receipts, and explain subject. They do not directly enter artifact or cache identity. A budget change moves packaged identity only if it changes the selected packaged content; the literal pin that directly moves is the explain qualifier, currently `request=4f6429492ac63d04` before this prose-only decision record.
+
+**Measurement — removal has no material compiler-host performance case.** The current measured canonical request subject is 244,024 bytes. The disputed two `u32` fields are 8 bytes, about 0.0033%; across the measured ceiling of twelve subject reconstructions, removal would save at most 96 bytes written against about 2.9 MiB. The complete fourteen-value vector is 64 bytes.
+
+**Inference — explicit values are the strict carrier today.** Omitting independently retained policy fields would let different internal compilation questions share canonical subject bytes. A field may leave only after its value is mechanically re-derived from complete already-encoded inputs under versioned derivation authority and that invariant is enforced at construction. These two staged-region fields do not meet that condition.
+
+If a second budget policy becomes real, its public form must be one explicit, complete, typed policy with no `Default`, ambient choice, or per-field fallback. A future opaque policy identity must be content-complete rather than a manually bumped name. Until that trigger fires, adding such an abstraction is premature under ADR 0069.
+
+No value, field, byte order, domain tag, public API, or runtime behaviour changes under this decision.
+
 ## The question
 
-`VerifiedRequestSubject::canonical_explain_subject_bytes` writes **all fourteen** deterministic budgets into the canonical request subject, which is carried into artifact identity. That is why every budget widening moves every governed compilation's qualifier — "for programs nowhere near any of these bounds as much as for ones at them, because a budget is a property of the *request* rather than of the plan chosen for it", as the budget comment puts it.
+`VerifiedRequestSubject::canonical_explain_subject_bytes` writes **all fourteen** deterministic budgets into the canonical request subject. It binds compiler-internal request/evidence identity and the explain qualifier, not artifact or cache identity directly. That is why every budget widening moves every governed compilation's qualifier — "for programs nowhere near any of these bounds as much as for ones at them, because a budget is a property of the *request* rather than of the plan chosen for it", as the budget comment puts it.
 
 **But if a budget is a pure function of the declaration, and the declaration is already in the subject, then encoding the budget too is redundant** — it cannot distinguish two requests, because any two requests with equal declarations have equal budgets by construction. If that holds, the budget bytes can leave the subject, and **every future envelope widening becomes identity-neutral.**
 
@@ -64,14 +80,14 @@ The ticket argues from "a budget is a pure function of the declaration". **`Dete
 
 ### The question narrows, and the narrow one is what the landed records actually hand over
 
-This ticket asks the broad question — do *any* budgets belong in the subject, all fourteen. All three records that hand it over ask something much narrower: whether the **two collapsed fields**, `region_members` and `region_live_values`, keep their slots. Those are the fields the governed profile can no longer fire. Decide that.
+This ticket asks the broad question — do *any* budgets belong in the subject, all fourteen. All three records that hand it over ask something much narrower: whether the **two numerically coincident fields**, `region_members` and `region_live_values`, keep their slots. They are shadowed by the program bounds for a single-stage occurrence population, but can still bind when realization sequences contribute multiple stage atoms or handed values. Decide that.
 
 **And note the collapse is not universal**, which is the strongest argument for keeping them: `request.rs`, anchor `both bounds still bind on a program whose`, records that region formation's attribution atom is a realization *stage* rather than an occurrence, and its live values include intermediates a staged law hands between stages. The collapse holds only where each occurrence is realized by one region. `region_boundary_outputs` does not collapse at all.
 
 ### What is already settled, so no worker needs to establish it
 
 - **Budgets are never caller-supplied.** The public `CompileRequest`, source anchor `pub struct CompileRequest`, has no budgets field; `compile` always builds `CompilationRequest::governed_preferring`, overriding only `target_profiles` and `capabilities`. Both `DeterministicBudgets` and `CompilationRequest` are `pub(crate)`, and `request` is not a `pub mod`. Every non-`governed()` value in the workspace is inside a `mod tests`. `session.rs`, anchor `Budgets and the shape environment stay internal`, states it outright.
-- **The pinned population is one and it is measured.** Exactly one pin encodes these bytes (`request.rs`, anchor `Exactly one pinned identity encodes these bytes`); the sibling moved it `0aa252e0bfa16451` → `e59cb8aa9b38ef70` and confirmed `tiler-build`'s goldens did not move.
+- **The literal pin population is one and it is measured.** The explain qualifier is the one checked-in literal derived from these bytes; the sibling's `0aa252e0bfa16451` → `e59cb8aa9b38ef70` pair is historical, and the live value before this prose-only decision is `4f6429492ac63d04`. `tiler-build`'s artifact goldens did not move because the request subject is not their identity.
 
 **Correction — 2026-08-10.** The `request.rs` comment pair anchors `Exactly one pinned identity encodes these bytes` (budget-byte pin claim on the governed profile) and `tiler-build's standard Metal goldens` (staged-family encoder arm: no pin encodes a *staged* subject) address different subjects. They are not two contradictory descriptions of the budget-pin population. Sibling measurement already separates the domains: budgets are request-subject properties; tiler-build artifact goldens did not move with the budget value change. Residual comment hygiene is optional if a landing opens those sites; it is not a load-bearing board defect for this decision.
 
@@ -86,13 +102,13 @@ This ticket asks the broad question — do *any* budgets belong in the subject, 
 - **Live request-subject domain is `tiler.compiler.request-subject.v6`**, not `v5`. Encoder prefix is `b"tiler.compiler.request-subject.v6\0"` (`request.rs`, anchor `tiler.compiler.request-subject.v6`). The domain stepped when the fifth semantic-identity subject (`shape_environment`) was folded; budget field set, widths, and order did not force that step. Stale `v5` still appears in *comments* inside `request.rs` only. Present-tense domain names in this ticket (Tom question; remove-branch encoding-step sentence) were corrected to `v6` with this note.
 - Scopes and pin-comment-pair corrections are above in their sections.
 
-## The question for Tom
+## The question for Tom — answered 2026-08-11
 
 **Do `region_members` and `region_live_values` — the two budget fields the governed profile can no longer fire — keep their slots in `tiler.compiler.request-subject.v6`?**
 
 - **Keep them.** They still bind for a program whose families realize region sequences (`request.rs`, anchor `both bounds still bind on a program whose`), and a budget is a *request* field rather than a plan property, so the governed profile's coincidence is a property of its declaration and not of the fields. Removing a field that a future non-governed budget set would need means re-adding it later at an identity-domain step.
 - **Remove them.** All fourteen budget words are constant across the entire encodable request space, so they distinguish no two requests and every future envelope widening becomes identity-neutral. This costs one identity-domain step now to avoid paying one on every subsequent widening.
 
-**Recommendation: keep them, and record why.** The constancy argument proves only that the bytes are *currently* non-distinguishing — which is a property of there being one reachable budget set, not of the fields. The moment a second budget set becomes reachable the bytes distinguish again, and `request.rs`, anchor `both bounds still bind on a program whose`, already names the program shape where the two bounds bind. Removing them buys identity-neutral widenings at the cost of making a future non-governed budget set an identity-domain change, and this repository's stated priority order puts correctness and long-term maintainability above that. The strongest counterpoint is that "a future budget set may exist" is speculative, and AGENTS.md warns against hardening unsupported assumptions — so if Tom judges a second budget set unlikely, removal is defensible and this recommendation should not be treated as close.
+**Accepted: keep them, and record why.** The current single public budget set does not make independently meaningful policy axes a derivation. `request.rs`, anchor `both bounds still bind on a program whose`, names the live staged shape where the two bounds differ from semantic counts. Keeping them preserves exact request/evidence binding at negligible host cost and avoids a `v6` → `v7` removal followed by a later reintroduction. The strongest counterpoint — that one reachable budget set makes the bytes constant over current public calls — is true but insufficient: current reachability is not a constructor-enforced derivation and cannot justify canonicalizing distinct compiler policies together.
 
-**Release trigger:** Tom answers. Nothing else unblocks it, and no other ticket depends on it.
+**Future trigger:** a second real budget policy or a public budget-policy request. That work must present one required complete typed policy, no silent default, and rederive its canonical carrier before implementation.
