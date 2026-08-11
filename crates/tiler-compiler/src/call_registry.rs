@@ -40,10 +40,6 @@ pub(crate) const MAX_OPAQUE_CALL_SUBJECT_BYTES: usize = 255;
 /// when the call's observable behaviour does, not when its implementation is
 /// merely rewritten.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[allow(
-    dead_code,
-    reason = "the call identity; lands with the registry that keys on it, ahead of the frontier integration"
-)]
 pub(crate) struct OpaqueCallIdentity {
     provider: &'static str,
     call: &'static str,
@@ -52,7 +48,7 @@ pub(crate) struct OpaqueCallIdentity {
 
 #[allow(
     dead_code,
-    reason = "see the type's own allow: reviewed draft accessors whose consumer is the not-yet-written frontier integration"
+    reason = "identity construction is provider-side and test-exercised; production installs no opaque-call provider until caller-supplied physical providers populate the registry"
 )]
 impl OpaqueCallIdentity {
     /// Builds a call identity, refusing a component outside the governed
@@ -164,7 +160,7 @@ impl fmt::Display for OpaqueCallIdentity {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
-    reason = "registration outcome for the seam this module provides"
+    reason = "only provider-side registry population returns this error, and production installs no opaque-call provider until caller-supplied physical providers reach the compile path"
 )]
 pub(crate) enum CallRegistrationError {
     /// Another entry already claims this identity.
@@ -184,10 +180,6 @@ impl fmt::Display for CallRegistrationError {
 
 /// One registered opaque call: its identity and its checked declaration.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "the registry entry; lands ahead of the frontier integration that reads it"
-)]
 pub(crate) struct RegisteredCall {
     identity: OpaqueCallIdentity,
     declaration: OpaqueCallDeclaration,
@@ -195,7 +187,7 @@ pub(crate) struct RegisteredCall {
 
 #[allow(
     dead_code,
-    reason = "see the type's own allow: reviewed draft accessors whose consumer is the not-yet-written frontier integration"
+    reason = "frontier admission reads the registered declaration directly; the identity accessor remains test-facing until production registry consumers enumerate entries"
 )]
 impl RegisteredCall {
     /// The call's governed identity.
@@ -215,17 +207,13 @@ impl RegisteredCall {
 
 /// The opaque calls available to one compilation.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "the registry; lands ahead of the frontier integration that will drive it"
-)]
 pub(crate) struct OpaqueCallRegistry {
     calls: Vec<RegisteredCall>,
 }
 
 #[allow(
     dead_code,
-    reason = "see the type's own allow: reviewed draft accessors whose consumer is the not-yet-written frontier integration"
+    reason = "production constructs the empty registry and performs lookup; registration and enumeration remain provider-side test seams until caller-supplied physical providers populate it"
 )]
 impl OpaqueCallRegistry {
     /// An empty registry.
@@ -281,10 +269,6 @@ impl OpaqueCallRegistry {
 /// is read or written, never *which* tensor it reads. Inferring would reintroduce
 /// exactly what `crate::call_abi`'s named parameters exist to prevent.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "the opaque proposal payload; lands with the frontier check that validates it"
-)]
 pub(crate) struct OpaqueCallProposal {
     call: OpaqueCallIdentity,
     bindings: Vec<(&'static str, TensorRole)>,
@@ -311,7 +295,7 @@ pub(crate) enum OpaqueCallProposalError {
 
 #[allow(
     dead_code,
-    reason = "see the type's own allow: accessors read by the frontier admission"
+    reason = "frontier admission reads proposal accessors, but proposal construction is test-only until a production opaque-call provider can propose one"
 )]
 impl OpaqueCallProposal {
     /// Builds a proposal whose complete ordered claim is exactly reportable.

@@ -1,8 +1,3 @@
-#![allow(
-    dead_code,
-    reason = "the honourability authority itself is on the compile path through assess_region and assess_contract; what stays unconstructed is the reserved declaration surface no governed profile yet uses — the emulated, relaxation-conditional, and unsupported honouring means, the relaxation requirement that names an authorization, the canonical dimension order, and the dimensions no admitted operation can consume — which only a target profile declaring something other than exact native support, or an operation vocabulary wider than this build's, can produce, and which `declare-metal-numerical-honourability` is the first to reach"
-)]
-
 //! Per-dimension, per-dtype numerical honourability, a peer of the capability
 //! authority.
 //!
@@ -161,10 +156,15 @@ impl DeclaredBehaviour {
         }
     }
 
-    /// Declares a compile-time governed-profile honourability guarantee.
+    /// Declares a governed-profile honourability fixture.
     ///
-    /// The overwhelmingly common shape: a portable profile fact known before any
-    /// artifact exists. A later-phase declaration states its phase explicitly.
+    /// Tests use this shorthand for a portable profile fact known before any
+    /// artifact exists. Production profile builders supply their fact source
+    /// explicitly through [`Self::new`].
+    #[allow(
+        dead_code,
+        reason = "test-fixture shorthand for a governed compile-profile row; production profile builders supply explicit fact sources through DeclaredBehaviour::new"
+    )]
     pub(crate) fn compile_profile(
         dimension: NumericalDimension,
         arithmetic: ArithmeticType,
@@ -216,6 +216,10 @@ impl DeclaredBehaviour {
 }
 
 /// Encodes declared rows with one canonical, deduplicated source table.
+#[allow(
+    dead_code,
+    reason = "test-facing raw-declaration identity projection; production encodes attributed facts after profile validation"
+)]
 pub(crate) fn encode_declared_behaviours(bytes: &mut Vec<u8>, declarations: &[DeclaredBehaviour]) {
     let declarations: Vec<_> = declarations.iter().collect();
     encode_declaration_table(bytes, &declarations);
@@ -694,6 +698,10 @@ impl NumericalRefusalEvidence {
     /// it is the only check that distinguishes a fact carried through the
     /// rejection pipeline from one rebuilt later with equal contents, which is
     /// exactly the reconstruction this type exists to rule out.
+    #[allow(
+        dead_code,
+        reason = "test-only pointer-identity witness that rejection pipelines retain the originating fact; production consumes the carried fact's contents"
+    )]
     pub(crate) fn cites_same_fact(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }

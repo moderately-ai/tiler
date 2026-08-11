@@ -307,10 +307,6 @@ pub(crate) struct RegionSelection {
     implementation: AdmittedImplementation,
 }
 
-#[allow(
-    dead_code,
-    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
-)]
 impl RegionSelection {
     /// Returns the cover region occurrence this selection implements.
     pub(crate) const fn occurrence(&self) -> &RegionOccurrenceIdentity {

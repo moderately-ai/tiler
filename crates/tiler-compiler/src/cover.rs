@@ -605,10 +605,6 @@ pub(crate) struct CoverCost {
     recomputed_elements: u64,
 }
 
-#[allow(
-    dead_code,
-    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
-)]
 impl CoverCost {
     /// Returns the cost-model key this estimate is attributed to.
     pub(crate) const fn model_key(&self) -> &'static str {

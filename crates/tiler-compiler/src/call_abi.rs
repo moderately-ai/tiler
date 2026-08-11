@@ -53,7 +53,7 @@ pub(crate) const fn valid_parameter_name(name: &str) -> bool {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[allow(
     dead_code,
-    reason = "slice of implement-opaque-physical-call-providers: the ABI vocabulary lands before the providers that declare one"
+    reason = "no production opaque-call provider declares an ABI; frontier admission consumes these roles from test providers until caller-supplied physical providers reach the compile path"
 )]
 pub(crate) enum ParameterRole {
     /// Read by the call, never written.
@@ -68,10 +68,6 @@ pub(crate) enum ParameterRole {
     InOut,
 }
 
-#[allow(
-    dead_code,
-    reason = "see the module header: the role vocabulary and its access predicates land ahead of the seam that consumes them"
-)]
 impl ParameterRole {
     /// The governed canonical key naming this role.
     pub(crate) const fn key(self) -> &'static str {
@@ -120,7 +116,7 @@ impl fmt::Display for ParameterRole {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
-    reason = "the layout direction; lands with the spec that carries it"
+    reason = "no production opaque-call provider constructs a parameter layout; frontier admission consumes it from test providers until caller-supplied physical providers reach the compile path"
 )]
 pub(crate) enum ParameterLayout {
     /// The call requires this of the tensor bound to the parameter.
@@ -165,10 +161,6 @@ impl ParameterLayout {
 /// and a guess would be a claim the provider never made — the same reasoning
 /// that keeps `CallEffects` from having a `Default`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "the parameter spec; lands with the ABI it declares, ahead of the admission that reads it"
-)]
 pub(crate) struct ParameterSpec {
     /// The parameter's name, unique within its ABI.
     pub(crate) name: &'static str,
@@ -184,10 +176,6 @@ pub(crate) struct ParameterSpec {
 
 /// One declared parameter of an opaque call.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "see the module header: the parameter type lands with the ABI it belongs to"
-)]
 pub(crate) struct CallParameter {
     spec: ParameterSpec,
     slot: u32,
@@ -195,7 +183,7 @@ pub(crate) struct CallParameter {
 
 #[allow(
     dead_code,
-    reason = "see the type's own allow: reviewed draft accessors whose consumer is the not-yet-written opaque-call seam"
+    reason = "the derived slot is a test-facing declaration-order witness; production frontier admission matches parameters by name and role rather than reading slots"
 )]
 impl CallParameter {
     /// The parameter's declared name, unique within its ABI.
@@ -238,7 +226,7 @@ impl fmt::Display for CallParameter {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
-    reason = "declaration outcome for the seam the engine will build on"
+    reason = "only provider-side ABI construction returns this error, and production installs no opaque-call provider until caller-supplied physical providers reach the compile path"
 )]
 pub(crate) enum AbiError {
     /// Two parameters share a name.
@@ -312,17 +300,13 @@ impl fmt::Display for AbiError {
 
 /// The complete declared ABI of one opaque call.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "see the module header: the ABI lands ahead of the provider seam that carries it"
-)]
 pub(crate) struct CallAbi {
     parameters: Vec<CallParameter>,
 }
 
 #[allow(
     dead_code,
-    reason = "see the type's own allow: reviewed draft accessors whose consumer is the not-yet-written opaque-call seam"
+    reason = "ABI declaration and compatibility are exercised by tests; production frontier admission consumes an already-checked ABI until caller-supplied physical providers construct and compare one"
 )]
 impl CallAbi {
     /// Declares an ABI from `(name, role)` pairs, in binding-table order.
@@ -408,10 +392,6 @@ impl CallAbi {
 
 /// Why a parameter-to-tensor binding was refused.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "binding outcome for the opaque-call admission that will validate one"
-)]
 pub(crate) enum BindingError {
     /// A parameter the ABI declares is not bound.
     UnboundParameter(&'static str),
@@ -471,10 +451,6 @@ impl fmt::Display for BindingError {
 /// *that* region with *this* parameter on that tensor. Inferring it from a
 /// parameter's role or slot would reintroduce exactly what this module's named
 /// parameters exist to prevent — `In` does not tell you which input.
-#[allow(
-    dead_code,
-    reason = "the binding check, landed with its tests ahead of the admission that calls it"
-)]
 pub(crate) fn check_bindings<Role: Copy + Eq>(
     abi: &CallAbi,
     bindings: &[(&'static str, Role)],

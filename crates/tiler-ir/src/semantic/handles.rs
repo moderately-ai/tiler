@@ -164,8 +164,13 @@ mod tests {
         assert_eq!(last, super::GraphId(u64::MAX - 1));
     }
 
-    #[allow(dead_code)]
-    struct NonSendMarker(Rc<()>);
+    struct NonSendMarker(
+        #[allow(
+            dead_code,
+            reason = "the unread Rc field makes this test marker non-Send; its value has no consumer, and the admission disappears if typed-handle auto-trait encoding no longer needs that witness"
+        )]
+        Rc<()>,
+    );
     impl ValueTypeMarker for NonSendMarker {}
 
     #[test]

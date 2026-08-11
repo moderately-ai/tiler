@@ -39,8 +39,8 @@ use super::super::model::{
     ArtifactProgramData, ArtifactSchema, BackendPayloadDescriptor, BindingData,
     CanonicalArtifactProgramIdentity, DeferredPredicateData, InterfaceEntryData, LaunchData,
     RoutingPolicy, SchemaVersion, SelectedProvider, StageDependencyData, StageDependencyReason,
-    VariantData, canonical_deferred_order, canonical_precondition_order, deferred_key,
-    encode_identity, stage_key,
+    VariantData, canonical_deferred_order, canonical_precondition_order, encode_identity,
+    stage_key,
 };
 use super::super::realization::codec::{
     ArtifactCrossCheck, RealizationCodecError, validate_against_artifact,
@@ -636,6 +636,10 @@ impl ArtifactEnvelope {
     /// # Errors
     ///
     /// Returns the same diagnostics as [`ArtifactEnvelope::project`].
+    #[allow(
+        dead_code,
+        reason = "test-facing projection convenience; production projects from ArtifactProgramData while codec tests exercise the verified-program wrapper, so remove when a production caller needs that wrapper spelling"
+    )]
     pub(crate) fn of(
         artifact: &super::super::VerifiedArtifactProgram,
     ) -> Result<Self, ArtifactDiagnostic> {

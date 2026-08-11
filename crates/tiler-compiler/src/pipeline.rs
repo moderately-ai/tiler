@@ -197,7 +197,7 @@ impl ProgramAlternativeKind {
 
     #[allow(
         dead_code,
-        reason = "stable presentation name of the plan shape, read by diagnostics and by this module's tests"
+        reason = "test-facing stable presentation name used in retained-alternative failure text until production trace rendering names this discriminator"
     )]
     const fn name(self) -> &'static str {
         match self {

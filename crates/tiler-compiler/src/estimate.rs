@@ -42,7 +42,7 @@ use core::fmt;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
-    reason = "unconsumed: the vocabulary for opaque-call pressure reporting. The admission landed without consuming it — its consumer is the run-path work that reports pressure for an admitted call (tracked by exercise-opaque-admissions-downstream-of-the-frontier), and until then the no-conversion-into-ResourceRequirements invariant holds vacuously"
+    reason = "unconsumed pressure-reporting vocabulary: opaque admission deliberately uses proven ResourceRequirements, and no production opaque-call run path reports uncertain pressure; until one does, the no-conversion-into-ResourceRequirements invariant holds vacuously"
 )]
 pub(crate) enum EstimateProvenance {
     /// The provider asserted it, and nothing here checked it.

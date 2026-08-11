@@ -28,7 +28,7 @@ use core::fmt;
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
-    reason = "declaration outcome for the opaque-call seam this vocabulary is being built for"
+    reason = "only provider-side placement construction returns this error, and production installs no opaque-call provider until caller-supplied physical providers reach the compile path"
 )]
 ///
 /// There is deliberately no "admits no domain" variant. `AdmittedMemoryDomains`
@@ -56,10 +56,6 @@ impl fmt::Display for PlacementError {
 
 /// Where an opaque call runs and what storage it may address.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "the placement declaration; lands ahead of the provider seam that carries it"
-)]
 pub(crate) struct CallPlacement {
     affinity: ExecutionAffinity,
     domains: AdmittedMemoryDomains,
@@ -67,7 +63,7 @@ pub(crate) struct CallPlacement {
 
 #[allow(
     dead_code,
-    reason = "see the type's own allow: reviewed draft accessors whose consumer is the not-yet-written opaque-call seam"
+    reason = "placement declaration and reachability are test-exercised; production frontier admission consumes an already-checked placement until caller-supplied physical providers construct one"
 )]
 impl CallPlacement {
     /// Declares a placement, refusing one this profile cannot satisfy.
