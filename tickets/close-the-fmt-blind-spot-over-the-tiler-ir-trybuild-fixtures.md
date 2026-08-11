@@ -1,7 +1,7 @@
 ---
 id: close-the-fmt-blind-spot-over-the-tiler-ir-trybuild-fixtures
 title: Close the fmt blind spot over the tiler-ir trybuild fixtures
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [close-the-fmt-blind-spot-over-the-trybuild-facade-fixtures]
@@ -9,9 +9,6 @@ scopes: [implementation/workspace, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: terra-ir-trybuild-fmt
-lease_expires_at: 1786416406
 ---
 ## Why this exists
 
