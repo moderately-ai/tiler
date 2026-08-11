@@ -43,6 +43,13 @@ path = "src/interactions.rs"
 name = "tree-width-table-analysis"
 path = "src/table.rs"
 
+# Audits raw-minimum and noise-plateau repeatability across the three opened
+# tree-width matrices. This is a device-free label-stability analysis, not a
+# selector fit and not another measuring-harness mode.
+[[bin]]
+name = "tree-width-label-stability-analysis"
+path = "src/stability.rs"
+
 # Its own workspace root, following `reduction-dispatch-crossover` beside it:
 # `make` never reaches here and the dependency set is the spike's own. The path
 # dependencies still resolve their `[lints]` through the repository workspace
