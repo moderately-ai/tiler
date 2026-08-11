@@ -1,7 +1,7 @@
 ---
 id: carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit
 title: Carry and check the derived index-arithmetic requirement before routing commit
-status: awaiting-decision
+status: todo
 priority: p1
 dependencies: []
 related: [emit-a-route-requirement-from-the-build-producer-so-a-family-authority-refusal-is-drivable, check-synchronization-realization-before-the-routing-commit, separate-metal-launch-index-from-index-and-address-width, declare-a-required-gpu-family-in-the-artifact]
@@ -124,6 +124,33 @@ New surface, all of it a labelled ADR 0075 draft in `tiler_metal::direct_require
 
 **Recommendation: accept the draft as built.** The non-optional neutral `CompleteU64` requirement states the one arithmetic every scheduled region already derives, while `AppleFamilyFloor` keeps Apple vocabulary in the Metal-owned comparison and prevents callers from minting their own threshold. The private witness makes removal of the pre-pipeline discharge a compile error. **Strongest counterpoint:** the single-variant public vocabularies reserve names before a second arithmetic or floor is reachable, and `AppleFamilyFloor` sits beside an observation vocabulary that begins at Apple5; Tom may prefer a private comparison until a second floor exists. That would require revising the public included set without removing the carried artifact requirement or the pre-commit check.
 
+## Accepted with visibility narrowing — 2026-08-11
+
+**Decision.** Tom accepted the exact surface below in the Codex coordination thread by replying `sounds good, accept` to the coordinator's decision packet. The relay source is Tom's direct response in that thread. The accepted surface preserves the tested draft's requirement, comparison, refusal, witness, artifact identity, and manifest schema, while narrowing two unused derivation details before the boundary is labelled accepted in source. This moves the ticket to `todo`; it is not complete until those visibility changes and their gates land.
+
+The accepted public surface is:
+
+- exhaustive `tiler_ir::schedule::IndexArithmetic`, currently `CompleteU64`;
+- non-optional `ResourceRequirements::index_arithmetic`;
+- exhaustive `tiler_metal::direct_requirement::AppleFamilyFloor`, currently `Apple3`;
+- `minimum_gpu_family` as the one readable map from a neutral arithmetic to its sourced Apple-family floor;
+- non-exhaustive `MetalIndexArithmeticRefusal`, its `rule`, `required`, and `floor` accessors, and its `Display` and `Error` implementations; and
+- `evaluate_index_arithmetic` as the sole public comparison of a carried requirement against a normalized live-device observation.
+
+The following remain or become crate-private:
+
+- `evaluate_against`, because a caller choosing a floor would create a second threshold authority;
+- `IndexArithmetic::of(KernelType)`, because an external consumer must read the requirement already derived into `ResourceRequirements` rather than deriving it again from KIR; and
+- `AppleFamilyFloor::apple_constant_value`, because exposing the raw SDK enumerator invites a caller to bypass the normalized observation path and create another device-comparison route.
+
+`REGION_INDEX_ARITHMETIC`, the private discharge witness, `MetalGpuFamily`, and everything in `tiler_metal::applicability` remain unchanged. The already-landed `tiler.kernel.v7`, `tiler.artifact-program.v16`, manifest schema `16.0`, artifact bytes, route-row population, ledger, and derived pins do not move for these visibility-only corrections.
+
+**Included behaviour.** Every entry carries the derived requirement once; the Metal-owned comparison maps `CompleteU64` to the sourced Apple3 floor; every named observable family clears it; `NoneNamed` remains `Unknown` and refuses as `UndecidableBelowVocabulary`; no observation refuses as `Unobserved`; and the private discharge witness makes pipeline preparation unreachable until the comparison succeeds.
+
+**Excluded surface.** This acceptance does not widen `MetalGpuFamily` to Apple3/Apple4, publish raw Apple-family constants, let callers supply a comparison floor, mint a backend route row, teach the neutral runtime Apple vocabulary, claim a below-Apple3 hardware measurement, or change any feasibility, identity, or schema authority.
+
+**Strongest counterpoint accepted with the decision.** Both narrowed methods are deterministic and tested, so leaving them public would not create an immediate arithmetic error. The smaller surface is preferred because neither has an out-of-crate consumer and each exposes a construction detail the one-authority design tells consumers not to use.
+
 ## Support-matrix rung
 
 This advances **no** support-matrix or dtype row. It moves one row of the *maturity* ladder for the derived-requirement class only: index arithmetic goes from **reserved type** (a compiler-internal `CapabilityAxis` with no artifact carrier) to **tested guarantee** for the producer-to-decoder carry and the device comparison, and to **empirical evidence** bounded to one Apple9 host row for the positive live case. The negative device case has **`Unknown`** authority and no measurement, by construction: no device below Apple3 is reachable.
@@ -140,4 +167,4 @@ The original outcome found unasserted BF16 byte lengths in `docs/dtype-support.m
 
 ## Closes when
 
-Tom accepts or revises the exact draft surface, the acceptance provenance is recorded, and any requested revision preserves the one-authority and pre-routing-discharge invariants.
+The two accepted visibility narrowings land with source labels and tests aligned; the acceptance provenance remains recorded; the one-authority and pre-routing-discharge invariants are preserved; and targeted IR/Metal checks plus repository publication gates pass.
