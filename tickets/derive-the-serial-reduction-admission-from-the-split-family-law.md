@@ -1,7 +1,7 @@
 ---
 id: derive-the-serial-reduction-admission-from-the-split-family-law
 title: Derive the serial reduction admission from the split family law
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: sol-serial-admission
+lease_expires_at: 1786414720
 ---
 ## User-visible outcome
 

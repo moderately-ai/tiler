@@ -1,7 +1,7 @@
 ---
 id: resync-the-kani-encoder-injectivity-shim-after-index-arithmetic
 title: Resync the Kani encoder-injectivity shim after IndexArithmetic
-status: todo
+status: in-progress
 priority: p3
 dependencies: [spike-kani-bounded-verification-on-one-inexhaustible-encoder]
 related: [spike-kani-bounded-verification-on-one-inexhaustible-encoder]
@@ -9,6 +9,9 @@ scopes: [research/verification]
 shared_scopes: [project/tickets]
 paths: []
 tags: [verification, spike, kani, identity, maintenance]
+claimed_from: todo
+assignee: sol-kani-resync
+lease_expires_at: 1786414719
 ---
 
 ## User-visible outcome
