@@ -2542,9 +2542,10 @@ fn render_cost(
 
 /// Renders one numerical-honourability record.
 ///
-/// Every part is written, including arithmetic dtype and declaring profile,
-/// because honourability can differ by dtype and a rejection whose declarer is
-/// unnamed is not explainable.
+/// Every rendered part is written, including the complete resolved dtype and
+/// declaring profile. The separate arithmetic enum remains canonical identity
+/// input because honourability can differ by arithmetic dtype; a rejection
+/// whose declarer is unnamed is not explainable.
 fn render_honourability(
     output: &mut String,
     dimension: &PredicateKey,
