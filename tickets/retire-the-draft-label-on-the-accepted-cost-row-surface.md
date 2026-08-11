@@ -1,7 +1,7 @@
 ---
 id: retire-the-draft-label-on-the-accepted-cost-row-surface
 title: Retire the draft label on the accepted cost row surface
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [accept-the-measured-cost-row-public-surface]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/optimizer]
 shared_scopes: [project/tickets, research/embedding]
 paths: []
 tags: [docs, public-boundary]
-claimed_from: todo
-assignee: terra-cost-row-label
-lease_expires_at: 1786419903
 ---
 ## What this owes
 
