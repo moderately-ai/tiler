@@ -49,6 +49,12 @@ These findings repair the safety premise without changing the valid built-in ele
 
 Making a public enum opaque is source-breaking even in this pre-production workspace. Tom approved this narrow healing direction on 2026-08-11 after the safe-Rust panic, identity alias, and foreign-result probe were presented. The exact revised constructor/read surface remains a labelled draft until its implementation diff is reviewed.
 
+### Exact representation accepted — Tom, 2026-08-11
+
+**Provenance.** Tom accepted directly in the interactive orchestration session after reviewing the ranked alternatives against Tiler host-runtime overhead, correctness, fail-closed strictness, and long-term maintenance. The accepted option is an opaque public `SourcedShape` over a private representation. Public read-only `rank`, `extents`, `as_static`, `without_axes`, `Display`, equality, and `From<Shape>` remain; direct public symbolic construction does not. Symbolic shapes are constructed only through host builders that normalize and validate them against their exact environment.
+
+**Explicit exclusions.** No public checked symbolic-shape constructor, no retained public representation enum, no compatibility spelling, no inferred policy, and no fallback. This acceptance authorizes the source-breaking healing shape above; it does not authorize the external symbolic-provider seam deferred to `design-an-explicit-symbolic-inference-policy-for-external-providers`.
+
 Do not add a public custom-registry-plus-environment constructor, a provider-selectable symbolic policy, a compatibility representation, or a silent fallback. Those belong to `design-an-explicit-symbolic-inference-policy-for-external-providers`. Stop if normalized existing subjects need new canonical bytes or if a second environment authority appears.
 
 ## Closes when
