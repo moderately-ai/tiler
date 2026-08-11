@@ -197,8 +197,9 @@ saturated — as a **measured cost row**.
 [`activate-measured-reduction-selection-from-a-target-cost-row`](../../tickets/activate-measured-reduction-selection-from-a-target-cost-row.md)
 is the accepted decision; the
 [authority ledger](../research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md)
-carries the row and its boundary, and the exact public spelling of the
-declaration pair is a reviewed draft boundary under ADR 0075.
+carries the row and its boundary, and Tom accepted the declaration pair's exact
+public spelling on 2026-08-07 under
+[`accept-the-measured-cost-row-public-surface`](../../tickets/accept-the-measured-cost-row-public-surface.md).
 
 Five properties of that landing are the shape a later calibrated term is
 expected to take, and each is a constraint rather than a description:
