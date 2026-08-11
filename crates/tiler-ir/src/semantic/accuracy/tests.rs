@@ -5,7 +5,6 @@
 //! accepted contract into a refusal, or pins a value whose derivation is a claim
 //! about a specification rather than about this code.
 
-use super::rational::{ReductionPathCounts, take_reduction_path_counts};
 use super::*;
 use crate::semantic::{
     F32, NormativeDefinitionRef, OpKey, ResolvedValueType, TypeKey,
@@ -160,53 +159,6 @@ fn a_dyadic_denominator_reduces_by_the_general_divisor() {
     assert_eq!(shared_a_factor, 96 * 12 * 2);
 }
 
-/// A dyadic denominator must not silently fall back to the general gcd path.
-///
-/// The value assertion keeps the observed call attached to real normalization,
-/// while the exact path census protects the value-preserving cost distinction.
-/// Replacing the dyadic branch with the module's observed general reduction mechanism
-/// leaves the value unchanged but increments the general-call count.
-#[test]
-fn a_dyadic_reduction_never_enters_the_general_gcd_path() {
-    let _ = take_reduction_path_counts();
-
-    let reduced = ExactRational::from_ratio(6, 8).expect("a nonzero denominator");
-
-    assert_eq!(
-        reduced.to_sign_magnitude_ratio(),
-        (ExactSign::Positive, vec![3], vec![4])
-    );
-    assert_eq!(
-        take_reduction_path_counts(),
-        ReductionPathCounts {
-            total: 1,
-            general: 0,
-        },
-        "the observed dyadic normalization must avoid the general gcd path"
-    );
-}
-
-/// A non-dyadic denominator still takes the general path and reduces correctly.
-#[test]
-fn a_non_dyadic_reduction_keeps_the_general_gcd_path() {
-    let _ = take_reduction_path_counts();
-
-    let reduced = ExactRational::from_ratio(6, 15).expect("a nonzero denominator");
-
-    assert_eq!(
-        reduced.to_sign_magnitude_ratio(),
-        (ExactSign::Positive, vec![2], vec![5])
-    );
-    assert_eq!(
-        take_reduction_path_counts(),
-        ReductionPathCounts {
-            total: 1,
-            general: 1,
-        },
-        "the observed non-dyadic normalization must retain the general gcd path"
-    );
-}
-
 /// The widest dyadic pair the decode boundary admits is decided, both ways.
 ///
 /// [`MAX_EXACT_RATIONAL_MAGNITUDE_BYTES`] is what an outside caller may present,
@@ -216,7 +168,6 @@ fn a_non_dyadic_reduction_keeps_the_general_gcd_path() {
 /// the invariant that keeps one number from acquiring two spellings.
 #[test]
 fn the_widest_dyadic_decode_is_decided_both_ways() {
-    let _ = take_reduction_path_counts();
     let mut denominator = vec![0_u8; MAX_EXACT_RATIONAL_MAGNITUDE_BYTES];
     denominator[0] = 1;
 
@@ -240,20 +191,7 @@ fn the_widest_dyadic_decode_is_decided_both_ways() {
         Err(error) => assert_eq!(error, ExactRationalError::NotInLowestTerms),
         Ok(_) => panic!("an even magnitude shares the denominator's factor of two"),
     }
-    assert_eq!(
-        take_reduction_path_counts(),
-        ReductionPathCounts {
-            total: 2,
-            general: 0,
-        },
-        "the widest admitted pair must retain bounded dyadic reduction"
-    );
-}
 
-/// Zero magnitude keeps its separate dyadic answer and decoder refusal.
-#[test]
-fn zero_magnitude_keeps_its_dyadic_reduction_answer() {
-    let _ = take_reduction_path_counts();
     // Zero is the one magnitude whose divisor is the denominator itself, which no
     // shift expresses, so the reduction answers it apart. Two rules refuse this
     // pair — that answer, and the decoder's own zero rule below it — and breaking
@@ -265,14 +203,6 @@ fn zero_magnitude_keeps_its_dyadic_reduction_answer() {
         ExactRationalError::NotInLowestTerms
     );
     assert!(ExactRational::from_sign_magnitude_ratio(ExactSign::Zero, &[], &[1]).is_ok());
-    assert_eq!(
-        take_reduction_path_counts(),
-        ReductionPathCounts {
-            total: 2,
-            general: 0,
-        },
-        "zero over a dyadic denominator must not enter the general gcd path"
-    );
 }
 
 /// A second spelling of one number is refused on decode, not renormalized.

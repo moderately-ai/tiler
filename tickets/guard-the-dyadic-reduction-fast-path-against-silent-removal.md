@@ -11,7 +11,7 @@ paths: []
 tags: [performance, test-coverage]
 claimed_from: todo
 assignee: sol-dyadic-guard
-lease_expires_at: 1786410519
+lease_expires_at: 1786412983
 ---
 ## The gap, reported by the worker who created it
 
@@ -48,26 +48,10 @@ Filed 2026-08-07 by the coordinator at integration, from a gap the landing worke
 
 ## Outcome
 
-Implemented 2026-08-10 without changing the reduction's value, public surface, or identity. The exact-base Fact audit at `fbf7f32ea8093e01a53c226f3c27cb9664f91813` verified every claim above against the completed parent ticket, the full rational implementation and accuracy tests, `num-bigint 0.4.8`'s `BigUint` gcd and trailing-zero implementations, the module construction and consumers, and the live ticket graph; no repair or scope expansion was required.
+Recorded the authorized no-guard decision on 2026-08-10 without changing reduction behaviour, public surface, or identity. The exact-base Fact audit at `fbf7f32ea8093e01a53c226f3c27cb9664f91813` verified every claim above against the completed parent ticket, the full rational implementation and accuracy tests, `num-bigint 0.4.8`'s `BigUint` gcd and trailing-zero implementations, the module construction and consumers, and the live ticket graph; no scope expansion was required.
 
-The guard is a test-only thread-local census around the real `reduction_divisor` subject. Every helper invocation increments an exact total, and the sole general-gcd mechanism increments a general count. Focused tests require a dyadic normalization, zero magnitude, and both widest admitted decode cases to perform zero general reductions; a separate non-dyadic case requires the general mechanism and its unchanged reduced value. Thread-local state prevents parallel unit tests from contributing to each other's counts, and every observation is behind `#[cfg(test)]`, so non-test builds carry no counter or branch.
+An initial test-only path census was rejected in independent review. A fully qualified general gcd can replace the release expression while a `debug_assert` still evaluates the shift and satisfies every debug-only observer; that bypass passed the focused test, the full `tiler-ir` nextest suite, and Clippy with warnings denied. Moving the observer into a helper does not repair the proof because the same debug assertion can call the helper while release executes gcd. The earlier raw-method E0599 perturbation therefore guarded one Rust spelling, not the cost-bearing subject, and none of that instrumentation remains.
 
-The `num_integer::Integer` trait capability is deliberately scoped inside the test-only `observed_general_reduction_divisor` and the non-test general arm; unrelated floor and ceiling calls use fully qualified trait syntax. This ties the observation to the general mechanism rather than to a manually labelled dyadic arm without adding a wrapper call to production builds: routing the dyadic case through the named observed mechanism increments the count, while replacing the actual shift expression with a raw `magnitude.gcd(denominator)` does not silently bypass it — that subject perturbation failed compilation with:
+The remaining mechanisms are inadmissible for the reasons now recorded at `reduction_divisor`: a source-text census is a brittle spelling pin, timing and runtime blow-up are host-sensitive, a permanent dependency or hot-path counter adds the cost being protected, and uncommitted dependency instrumentation is measurement rather than an in-tree regression guard. No deterministic, profile-independent guard over the actual release mechanism remains.
 
-```text
-error[E0599]: no method named `gcd` found for reference `&BigUint` in the current scope
-help: trait `Integer` which provides `gcd` is implemented but not in scope
-```
-
-Independently deleting only the total-call observation, while leaving the shift and assertions intact, made `a_dyadic_reduction_never_enters_the_general_gcd_path` fail with:
-
-```text
-left: ReductionPathCounts { total: 0, general: 0 }
-right: ReductionPathCounts { total: 1, general: 0 }
-```
-
-The original operand-population census remains deliberately temporary. Its exact recipe and `cargo nextest run -p tiler-reference --test gcd_census_temp --no-capture` command are now cited at `reduction_divisor`, so the measured 62.9 % / 100 % shares remain reproducible without adding a production counter.
-
-### Verification
-
-The exact source commit `1319e6d0837b58ee23fcea6bba5292d8faef4d61` passed `make full` on 2026-08-10: workspace nextest ran 3,290 tests with 3,290 passed and 8 skipped, the release numerical gate ran 1,132 tests with 1,132 passed and 3 skipped, and workspace check, Clippy with warnings denied, doctests, rustdoc with warnings denied, formatting, citations, ticket lint, and shellcheck all passed. This paragraph is the only later change and carries that green gate under the repository's ticket-only delta rule; citations and `tkt lint` were rerun on the record commit before publication.
+The original operand-population census remains deliberately temporary. Its exact recipe and `cargo nextest run -p tiler-reference --test gcd_census_temp --no-capture` command are cited at `reduction_divisor`, so changing the branch has an explicit remeasurement obligation rather than an overclaimed test.
