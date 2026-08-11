@@ -2448,6 +2448,16 @@ impl SemanticRegistryProvider for StandardSemantics {
                 super::broadcast::broadcast_f32_op(),
                 IndexRealizationLaw::broadcast_f32(),
             ),
+            // The literal slice's first law row. Its realization is one
+            // payload-preserving region whose read coordinate is the result
+            // coordinate plus the semantic window offset. Tag 13 is append-only,
+            // so this row moves the count-prefixed sidecar and complete law
+            // registry identity while every earlier row and the semantic
+            // snapshot remain byte-identical.
+            (
+                super::slice::slice_f32_op(),
+                IndexRealizationLaw::slice_f32(),
+            ),
             (
                 super::contraction::strict_tensor_contraction_f32_op(),
                 IndexRealizationLaw::strict_tensor_contraction_f32(),
@@ -3166,6 +3176,171 @@ mod tests {
             crate::index::FrozenIndexRealizationLawRegistry::from_semantic(add, add_scalars)
                 .unwrap();
         assert_ne!(multiply_laws.identity(), add_laws.identity());
+    }
+
+    /// The slice enters as one revision-one row and changes no earlier row.
+    ///
+    /// The fifteen old row pins were captured at exact base `946e0328`, before
+    /// the slice law existed. Each row is checked independently rather than by
+    /// slicing the new sidecar: rows are ordered by operation key, so inserting a
+    /// new key in the middle moves later byte offsets without changing any row.
+    /// The semantic snapshot pin stays the base value because law rows are a
+    /// sidecar. The complete law-registry pin moves from
+    /// `2b382beb419307175cd2bdb516c0b316be5c0e6b0d81ed4a09c09903b89de105`
+    /// to the asserted value because the sidecar count and one row changed.
+    #[test]
+    fn the_standard_slice_law_is_one_append_only_revision_one_row() {
+        const DOMAIN: &[u8] = b"tiler.test.index-realization-law-row-pin\0";
+        let semantic = FrozenSemanticRegistry::standard().unwrap();
+        let scalars = crate::index::FrozenScalarRegistry::standard().unwrap();
+        let laws = crate::index::FrozenIndexRealizationLawRegistry::from_semantic(
+            semantic.clone(),
+            scalars,
+        )
+        .unwrap();
+        assert_eq!(
+            tiler_digest::DigestAlgorithm::GOVERNED
+                .digest(DOMAIN, semantic.snapshot_identity().as_bytes())
+                .label(),
+            "72a5c44e73a9fb76471f1f2105b80da6f51a6ba1ecc24a24e249bf25e16e8dd4",
+            "the law sidecar must not move the semantic snapshot"
+        );
+        assert!(
+            laws.identity()
+                .as_bytes()
+                .starts_with(b"tiler.ir.index-realization-law-registry.v1\0"),
+            "the append retains the existing law-registry identity domain"
+        );
+        assert_eq!(
+            tiler_digest::DigestAlgorithm::GOVERNED
+                .digest(DOMAIN, laws.identity().as_bytes())
+                .label(),
+            "ddfb4dc459d7ca538708e276ccc4897b6fd14be99b3e7a535929ea0daee202e5",
+            "the complete law-registry identity pins the appended row"
+        );
+        assert_eq!(
+            semantic.encode_index_realization_law_sidecar().len(),
+            1_766,
+            "the 1,680-byte base sidecar gains exactly the 86-byte slice row"
+        );
+        assert_eq!(semantic.index_realization_laws().len(), 16);
+
+        let expected_old_rows = [
+            (
+                "tiler::add-bf16@1",
+                121,
+                "874aa164e1d79f53a66ec717745217b326d6426f9ceb482c8275e51ac6266428",
+            ),
+            (
+                "tiler::add-f32@1",
+                119,
+                "3c90faa8a3a9597e97fee6c1627c6363f6726a345996b9e993bce31e146382f0",
+            ),
+            (
+                "tiler::broadcast-f32@1",
+                90,
+                "5d9235ca1f0cd5023a7210a103c0e296220618d45c35e241af31bf35ecdb27ee",
+            ),
+            (
+                "tiler::concatenate-f32@1",
+                92,
+                "7bcb8314d30d05177bdbadaa1a88df243fe97a61b9465162973212f08a7e10ec",
+            ),
+            (
+                "tiler::constant-bf16@1",
+                135,
+                "048b1ab3102b8a8ca8b02de0fd08a510ae8477f6cb6aa905d6dc1faff26f4343",
+            ),
+            (
+                "tiler::constant-f32@1",
+                133,
+                "72c5e4e06235d0e5e88ebc688c88387266f76e7da592ade566a6ace9666cd67d",
+            ),
+            (
+                "tiler::dequantize-strict-affine@1",
+                168,
+                "52fd3bdf53d0b4044e8c6fcf66defdb8b5ce041aefe8ab6e14c08cfc9f3fef12",
+            ),
+            (
+                "tiler::multiply-bf16@1",
+                131,
+                "82527d3441dc01110009c64500f36c85fdbb3d336343aac6fb4793c8385ca8a7",
+            ),
+            (
+                "tiler::multiply-f32@1",
+                129,
+                "dc686967cfca420aa6b7caa66f74eff4ad3d9d77716be484ace37475864fc670",
+            ),
+            (
+                "tiler::reindex-f32@1",
+                88,
+                "d739ba855abf03f77bceea4820569af8fed5ac808084f724b3b86a5c315046aa",
+            ),
+            (
+                "tiler::rms-norm-f32@1",
+                93,
+                "533ea96240673b400797f5dbfa2390ed47b718dd5df476dc90a75509624d41ee",
+            ),
+            (
+                "tiler::silu-f32@1",
+                81,
+                "1653431aac7a37a1e72e6c38e5020f4aea98e2adf8d716808159a0e568848473",
+            ),
+            (
+                "tiler::softmax-f32@1",
+                88,
+                "f62f50874cadd808c50ae2a09419323dbcf34b0783588dfdf70268644f97d621",
+            ),
+            (
+                "tiler::strict-serial-sum-f32@1",
+                98,
+                "993157c3878b339435e016125f957fdc7261c7a7d230f8426bf7d9b5e1d056c0",
+            ),
+            (
+                "tiler::strict-tensor-contraction-f32@1",
+                106,
+                "a13d88ea0635ea660822cec452acbf089d9621e480f15ee45425ab680e5d6e53",
+            ),
+        ];
+        let old_rows = semantic
+            .index_realization_laws()
+            .filter(|(operation, _)| *operation != &crate::semantic::slice::slice_f32_op())
+            .collect::<Vec<_>>();
+        assert_eq!(old_rows.len(), expected_old_rows.len());
+        for ((operation, _), (expected_operation, expected_len, expected_digest)) in
+            old_rows.into_iter().zip(expected_old_rows)
+        {
+            let row = semantic
+                .encode_index_realization_law_row_for(operation)
+                .unwrap();
+            assert_eq!(operation.to_string(), expected_operation);
+            assert_eq!(row.len(), expected_len, "{operation} row width moved");
+            assert_eq!(
+                tiler_digest::DigestAlgorithm::GOVERNED
+                    .digest(DOMAIN, &row)
+                    .label(),
+                expected_digest,
+                "{operation} row bytes moved"
+            );
+        }
+
+        let slice_operation = crate::semantic::slice::slice_f32_op();
+        let slice = semantic.index_realization_law(&slice_operation).unwrap();
+        assert_eq!(
+            slice.revision, 1,
+            "the first law row starts at revision one"
+        );
+        assert_eq!(slice.law, IndexRealizationLaw::slice_f32());
+        let slice_row = semantic
+            .encode_index_realization_law_row_for(&slice_operation)
+            .unwrap();
+        assert_eq!(slice_row.len(), 86);
+        assert_eq!(
+            tiler_digest::DigestAlgorithm::GOVERNED
+                .digest(DOMAIN, &slice_row)
+                .label(),
+            "f06152d8c886ec305aeb758f8537aa399df51e7316639069189b9535dae22703"
+        );
     }
 
     #[test]

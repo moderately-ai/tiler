@@ -2437,15 +2437,14 @@ mod tests {
         governed_realization_laws, governed_scalars,
     };
     use crate::capability::{
-        IndexAccessLoweringContext, IndexAccessLoweringProvider, IndexAccessSequenceContext,
-        LoweringCapabilityRegistryBuilder, LoweringCapabilityRevision, LoweringEmitError,
-        LoweringSignature,
+        IndexAccessLoweringContext, IndexAccessLoweringProvider, LoweringCapabilityRegistryBuilder,
+        LoweringCapabilityRevision, LoweringEmitError, LoweringSignature,
     };
     use crate::legality::{IndexRefinement, RefinementError, refine_index_region};
     use std::sync::Arc;
     use tiler_ir::index::{
         DomainRole, IndexInteger, IndexRefinementSubject, IndexRegionDiagnostic,
-        JointPartitionProofView, NumericalContractIdentity, ScalarAttributes, TensorRole,
+        JointPartitionProofView, NumericalContractIdentity, ScalarAttributes,
         WriteOwnershipProofView, add_f32_scalar_op, constant_f32_scalar_op, divide_f32_scalar_op,
         multiply_f32_scalar_op, rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
     };
@@ -4082,12 +4081,10 @@ mod tests {
     // The structural families' access maps
     // ---------------------------------------------------------------------
     //
-    // Reindex and broadcast below refine the emitted region *and* execute it.
-    // Slice cannot yet refine because its separately owned realization law is
-    // absent, so its case resolves and drives the real provider directly through
-    // the same structural builder before executing the result. Structural
-    // verification proves the interface and ownership, but which element each
-    // result coordinate reads is exactly what it does not check and is the whole
+    // Reindex, broadcast, and slice below refine the emitted region against the
+    // independently registered law *and* execute it. Structural verification
+    // proves the interface and ownership, but which element each result
+    // coordinate reads is exactly what it does not check and is the whole
     // content of these families.
     //
     // The fixtures are ascending integers rather than exceptional payloads, so a
@@ -4141,84 +4138,6 @@ mod tests {
         );
         let tensor = bit_tensor(input, &bits);
         evaluate_refined(&refinement, &[(0, &tensor)])
-    }
-
-    /// Resolves, emits, structurally verifies, and executes one slice capability.
-    ///
-    /// This deliberately stops before semantic refinement: the slice realization
-    /// law is a separate feasibility boundary, and M5 evidence must show what the
-    /// capability emits without implying that later authority already exists.
-    fn emitted_slice_result(selection: &SliceSelection, input: Shape) -> Vec<u32> {
-        let scalars = governed_scalars().unwrap();
-        let registry = governed_lowering_capabilities(&scalars).unwrap();
-        let mut program = SemanticProgramBuilder::try_standard().unwrap();
-        let value = program
-            .input::<F32>(InputKey::new("slice-input").unwrap(), input.clone())
-            .unwrap();
-        let result = program
-            .apply(
-                slice_f32_op(),
-                slice_attributes(selection),
-                &[value.erase()],
-            )
-            .unwrap()[0];
-        program
-            .output_resolved(OutputKey::new("slice-result").unwrap(), result)
-            .unwrap();
-        let program = program.build().unwrap();
-        let subject = IndexRefinementSubject::derive(
-            &program,
-            program.operations().next().unwrap().id(),
-            contract(),
-        )
-        .unwrap();
-        let signature = LoweringSignature::new(
-            subject.signature().operands().iter().cloned(),
-            subject.signature().results().iter().cloned(),
-        )
-        .unwrap();
-        let capability = registry
-            .resolve_index_access(subject.operation(), &signature)
-            .unwrap();
-        assert_eq!(capability.operation(), &slice_f32_op());
-
-        let provider = capability
-            .index_access_provider()
-            .expect("the resolved capability is index/access lowering");
-        let mut emitted = IndexAccessSequenceContext::new(&scalars, &subject);
-        provider.lower_sequence(&mut emitted).unwrap();
-        assert_eq!(
-            emitted.stage_count(),
-            1,
-            "the slice capability emits exactly one region"
-        );
-        let emitted = emitted.finish().expect("the emitted region is structural");
-        let region = emitted.final_stage();
-        let inputs: Vec<_> = region
-            .tensors()
-            .filter(|tensor| tensor.role() == TensorRole::Input)
-            .collect();
-        let [boundary] = inputs.as_slice() else {
-            panic!("one slice operand emits one input boundary")
-        };
-
-        let count = input.element_count().expect("a test shape is bounded");
-        let bits: Vec<u32> = (0..count)
-            .map(|value| u32::try_from(value).expect("a test operand is small"))
-            .collect();
-        let tensor = bit_tensor(input, &bits);
-        let evaluator = IndexRegionEvaluator::new(
-            FrozenReferenceRegistry::standard().unwrap(),
-            FrozenScalarReferenceRegistry::standard().unwrap(),
-        );
-        let evaluation = evaluator
-            .evaluate(
-                region,
-                IndexRegionAuthority::new(&scalars),
-                &[IndexRegionInput::new(boundary.id(), &tensor)],
-            )
-            .expect("the emitted slice region executes on the independent oracle");
-        output_bits(&evaluation.outputs()[0])
     }
 
     /// Every admitted reindex form, emitted and executed against a hand-derived
@@ -4403,9 +4322,14 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(
-            emitted_slice_result(&selection, Shape::from_dims([3, 2, 5])),
+            structural_result(
+                slice_f32_op(),
+                slice_attributes(&selection),
+                Shape::from_dims([3, 2, 5]),
+                Shape::from_dims([2, 2, 2]),
+            ),
             vec![12, 13, 17, 18, 22, 23, 27, 28],
-            "the nonzero offsets select the last two coordinates from the last two outer slabs"
+            "exact refinement admits the provider only when both nonzero offsets match the law"
         );
     }
 
