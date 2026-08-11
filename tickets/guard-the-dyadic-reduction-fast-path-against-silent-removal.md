@@ -67,3 +67,7 @@ right: ReductionPathCounts { total: 1, general: 0 }
 ```
 
 The original operand-population census remains deliberately temporary. Its exact recipe and `cargo nextest run -p tiler-reference --test gcd_census_temp --no-capture` command are now cited at `reduction_divisor`, so the measured 62.9 % / 100 % shares remain reproducible without adding a production counter.
+
+### Verification
+
+The exact source commit `1319e6d0837b58ee23fcea6bba5292d8faef4d61` passed `make full` on 2026-08-10: workspace nextest ran 3,290 tests with 3,290 passed and 8 skipped, the release numerical gate ran 1,132 tests with 1,132 passed and 3 skipped, and workspace check, Clippy with warnings denied, doctests, rustdoc with warnings denied, formatting, citations, ticket lint, and shellcheck all passed. This paragraph is the only later change and carries that green gate under the repository's ticket-only delta rule; citations and `tkt lint` were rerun on the record commit before publication.
