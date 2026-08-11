@@ -68,3 +68,5 @@ Tom accepted in this conversation the shared, strict contributor-coverage direct
 - Append the new topology under tag `0x36` with a separately tagged coverage payload, preserving every existing schedule byte and the current schedule identity domain.
 
 The exact subgroup-coordinate/output-map carrier was not part of the presented acceptance and a later source audit proved it cannot be omitted for the full `threads_per_workgroup % width == 0` model. `decide-the-subgroup-coordinate-binding-and-output-map` owns that remaining public decision. This ticket is blocked rather than falsely marked accepted or implementation-ready.
+
+**Decision resolved — 2026-08-11.** Tom accepted the required direct subgroup coordinate/output binding: workgroup ordinal, subgroup index within the workgroup, and lane index within the subgroup are explicit topology identity and governed KIR sources. Output ordinal and the sole writer derive from that binding and `result_lane`; no relation is inferred from `LocalLinearInvocation`. This ticket remains blocked only on the shared contributor-coverage implementation.

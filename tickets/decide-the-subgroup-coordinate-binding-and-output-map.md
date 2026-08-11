@@ -1,14 +1,14 @@
 ---
 id: decide-the-subgroup-coordinate-binding-and-output-map
 title: Decide the subgroup coordinate binding and output map
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [accept-adr-0094-subgroup-execution-tier]
 related: [admit-subgroup-bindings-into-the-schedule-vocabulary, admit-subgroup-typed-values-and-collectives-into-the-kernel-ir, compose-the-two-level-subgroup-and-workgroup-reduction]
 scopes: [implementation/ir, implementation/compiler, research/scheduling, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [scheduling, subgroup, coordinates, ownership, public-boundary, decision, needs-tom]
+tags: [scheduling, subgroup, coordinates, ownership, public-boundary, decision]
 ---
 ## User-visible outcome
 
@@ -39,3 +39,25 @@ The ownership path also needs an explicit mapping: current schedule admission eq
 ## Closes when
 
 Tom accepts one exact required carrier or explicitly narrows the first subgroup slice to one subgroup per workgroup, with no uncarried enum variant, inferred relation, or silent fallback.
+
+## Accepted decision — 2026-08-11
+
+Tom accepted option 1 in this conversation: `SubgroupTree` carries one required direct coordinate/output binding with abstract sources for the workgroup ordinal, subgroup index within that workgroup, and lane index within that subgroup. The carrier is part of the topology's canonical identity and is consumed by governed KIR builtins; it is not wrapped in `LocalCoordinates`, projected from `LocalLinearInvocation`, or supplied by a backend convention.
+
+The initial mapping is exact and derived:
+
+```text
+subgroups_per_workgroup = threads_per_workgroup / subgroup_width
+output_ordinal = workgroup_ordinal * subgroups_per_workgroup + subgroup_index
+writer = lane_index == result_lane
+```
+
+Intrinsic verification requires nonzero supported width, exact workgroup divisibility, complete participating subgroups, `result_lane < width`, one writer per output, and every shuffle source remaining inside the same subgroup. The implementation must additionally refuse any launch tail whose activity cannot prove complete subgroups; it may not infer a partial-workgroup rule from vendor behavior.
+
+Target availability and schedule meaning stay separate. The target profile and prepared pipeline must provide the exact coordinate/width authority the verified schedule requires. Silence, an unknown source, or any mismatch refuses before routing commit and never retries another coordinate map, subgroup width, provider, or backend.
+
+This decision adds constant-size schedule/KIR state and fixed checked arithmetic only. It makes no kernel-performance claim.
+
+## Outcome
+
+The remaining public decision is closed. Implementation stays in `admit-subgroup-bindings-into-the-schedule-vocabulary` and `admit-subgroup-typed-values-and-collectives-into-the-kernel-ir`, both still gated by their complete prerequisites.

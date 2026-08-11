@@ -27,6 +27,7 @@ The structured kernel IR can express a value that lives per subgroup lane and a 
 ## Implementation keys
 
 - Subgroup-typed values and the shuffle vocabulary the record derives, with the lane a shuffle reads named explicitly rather than inferred from position.
+- Governed workgroup-ordinal, subgroup-index, and subgroup-lane sources matching the accepted direct coordinate/output binding. A local-linear invocation index is never decomposed into these values by convention; absence of an exact backend realization is a typed refusal.
 - Stated combine order on the reduction topology is owned by [`admit-subgroup-bindings-into-the-schedule-vocabulary`](admit-subgroup-bindings-into-the-schedule-vocabulary.md). This ticket admits the kernel pieces that build the tree: subgroup-typed values, an explicit shuffle (source lane named), and ordinary arithmetic — not a reduction collective. Reduction collectives are refused by name (ADR 0094 decision 8: building the tree from shuffles and ordinary additions is what makes the tier statable).
 - The lane identity's proof obligation lands as one concept with the CPU tier's, per [the subgroup execution tier](../docs/research/scheduling/subgroup-execution-tier.md), anchor `becomes the second construct in the vocabulary needing a proved reduction identity`; read [`admit-lane-typed-values-and-masked-memory-into-the-kernel-ir`](admit-lane-typed-values-and-masked-memory-into-the-kernel-ir.md) against this ticket before choosing a shape.
 - Identity encoding is additive at every site: appended tags only, no existing tag or field position moves, and the kernel identity domain does not step.
@@ -35,6 +36,8 @@ The structured kernel IR can express a value that lives per subgroup lane and a 
 ## Required failure-path evidence
 
 Each observed failing against an accepted neighbour: a shuffle whose source lane is outside the subgroup; a shuffle crossing a subgroup boundary; a reduction collective relying on an unspecified hardware order; and a subgroup-typed value read from an invocation outside the subgroup that produced it. (Stated combine order on the topology — including an unstated-order failure path — is the schedule ticket's obligation, not this one's.)
+
+The coordinate binding adds three independent subjects: perturb the workgroup ordinal, subgroup index, and subgroup lane separately and observe the ownership or same-subgroup verifier reject each one. A lowering that substitutes `LocalInvocationIndex` for any of them must fail its exact source/identity check rather than produce an approximate mapping.
 
 ## Non-goals
 
