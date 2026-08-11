@@ -6,7 +6,7 @@ priority: p3
 dependencies: [define-the-model-level-conformance-corpus, implement-analytical-component-cost-model, emit-analytical-costs-through-the-typed-cost-vocabulary]
 related: [implement-workload-selected-quantized-parameter-maps, derive-the-capability-set-for-search-discovered-flash-class-attention-kernels, derive-the-oracle-for-a-permitted-divergence-candidate, prototype-quantized-value-vertical]
 scopes: [research/numerics, research/cost-model, research/program-planning]
-shared_scopes: [project/tickets]
+shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [research, numerics, cost-model, trigger-fired]
 claimed_from: todo
@@ -23,7 +23,7 @@ Precision becomes a search dimension jointly with the schedule — the SageAtten
 
 ## Trigger
 
-`define-the-model-level-conformance-corpus` reaching named model-level corpus rows with fixed required outcomes (pass / refused / failed / disagreed) for model-level hazards, plus any cost authority landing — both, not either. The numerical-contract permitted-divergence oracle is a separate object owned by `derive-the-oracle-for-a-permitted-divergence-candidate`, not a family of corpus rows.
+`define-the-model-level-conformance-corpus` reaching named model-level corpus rows with exact inputs and stated required outcomes for model-level hazards, plus any cost authority landing — both, not either. Most rows require one of pass, refused, or disagreed; `A-tie` remains explicitly `Unknown`, and `A-fallback-after-commit` requires a pre-commit refusal or a post-commit failure according to when its condition becomes visible. The numerical-contract permitted-divergence oracle is a separate object owned by `derive-the-oracle-for-a-permitted-divergence-candidate`, not a family of corpus rows.
 
 ## Trigger check log
 
@@ -31,6 +31,7 @@ Precision becomes a search dimension jointly with the schedule — the SageAtten
   - **Correction — 2026-08-10.** The cost-absence clause was false under the same `^(pub )?` grep failure recorded on `design-the-measured-feedback-tuning-loop-against-the-autotuning-and-adaptive-execution-literature`: `pub(crate)` cost types and `ANALYTICAL_MODEL_KEY` already existed in `crates/tiler-compiler`, and structural cost also predated that log. The cost reading on this day is superseded by the 2026-08-09 fire; whether the corpus frontmatter was still non-`done` on 2026-08-05 is not re-derived here.
 - 2026-08-09 — **fired.** `define-the-model-level-conformance-corpus`, `implement-analytical-component-cost-model`, and `emit-analytical-costs-through-the-typed-cost-vocabulary` are all `done`. The corpus supplies named rows with fixed required outcomes (pass / refused / failed / disagreed) for model-level hazards, while the compiler now carries structural and analytical cost authorities with typed cost assessments. Calibration is still future work, but the trigger asked for *any* cost authority, not calibrated device truth; this ticket is therefore `todo` and must decide how uncalibrated versus measured costs constrain the first co-search scope.
   - **Correction — 2026-08-10.** Earlier fire-log wording said "named permitted-divergence/refusal rows"; those are model-level corpus required-outcome rows, not the numerical-contract permitted-divergence oracle. That derivation is independently `done` on `derive-the-oracle-for-a-permitted-divergence-candidate`.
+  - **Correction — 2026-08-10.** "Fixed required outcomes (pass / refused / failed / disagreed)" overstates the row-level closure. `A-tie` is named with exact search evidence but remains `Unknown`, and `A-fallback-after-commit` requires refusal or failure according to the stage at which its condition becomes visible. The corpus and cost prerequisites are still delivered, so the fire verdict is unchanged.
 
 ## Required work
 
@@ -46,6 +47,22 @@ Bounded research scope only — produce a first co-search envelope the board can
 ## Closes when
 
 A scoping record or ticket Outcome decides the first co-search envelope with each of the Required-work decisions stated so a reader can refute them: precision space, accuracy stage, identity encoding, cost ranking under the no-semantic-cost-pruning invariant, primary-source eliminations, and landing home. Status moves only after that record exists; fire alone does not close this ticket.
+
+## Research outcome — 2026-08-10
+
+**Fact.** [First precision-schedule co-search envelope](../docs/research/program-planning/precision-schedule-co-search-envelope.md) is the durable scoping record. It lands in `research/program-planning` because its subject is phase ordering and ownership across semantic candidates, hard accuracy admission, physical schedules, identity composition, and selection. Shared `contracts/navigation` is scheduling metadata for the same change: `ticketsplease.toml` routes the hand-maintained `docs/research/README.md` catalog there rather than to the record's research scope.
+
+**Proposal.** The first research comparison set is the pinned F32 baseline plus the selected whole-profile per-output-channel strict-affine U8 assignment over all 196 weighted projections, excluding the tied embedding. It is not yet an executable co-search population. F32 is the comparison reference, so an F32-relative approximation threshold is inapplicable rather than silently passed; concrete F32 plans still owe semantic, target, schedule, and workload execution-conformance evidence. U8 remains non-admitted until the per-axis map/input authority exists and an accepted policy disposes the exact retained C1 evidence — 17 of 18 greedy positions and median whole-vocabulary deviation `1.08e-1`. If admitted, U8 retains both materialized and fused exact-decode schedules; F32 retains its exact contraction schedules and the exact BF16-storage/F32-ingestion control. Candidate-specific approximation admission is separate from workload execution-conformance coverage and from each schedule's exact or permitted-divergence realization oracle. Complete alternative identity reuses the existing semantic-candidate-plus-selected-plan composition; the record specifies no identity bytes or domain. Within-assignment schedule ranking remains valid, structural cost remains a retained-plan view, analytical cost is reported but does not choose precision, and automatic cross-precision selection waits for both an admitted pair and an applicable measured/calibrated row. The current fold-step row does not cover the U8 decode/contraction trade.
+
+**Fact.** The primary-source eliminations cover Precimonious, HiFPTuner, HAQ, SmoothQuant, SageAttention v9, and SageAttention2 v7 with exact publication identifiers. SageAttention-class activation is an expansion trigger, not the first population, because its attention semantics, smoothing, Q/K/P/V maps, target instruction profile, and corpus are not delivered.
+
+Workflow status intentionally remains `in-progress` for coordinator review and integration; this worker does not close the ticket.
+
+## Exact-hash review correction — 2026-08-10
+
+**Correction, reviewed at `b205d1c2d08a02de1f9581bd51d6147fc1d502de`.** That candidate said `P0` was “always retained” while applying one universal model-level stage that excluded every `Unknown` or corpus miss. The governing qualification record says every current Tiler conformance row is `Unknown`, and `A-tie` has no input, so the proposed stage would also have excluded `P0` and left no executable population. It also conflated execution-conformance coverage with the separate question whether `P1` is an acceptable approximation of the F32 model. The corrected record makes the F32-relative approximation obligation inapplicable to its own `P0` reference without waiving `P0`'s execution obligations, keeps `A-tie` as conformance `Unknown`, and leaves `P1` non-admitted until an accepted policy disposes the measured 17-of-18 evidence. No threshold or executable co-search capability is inferred.
+
+**Second-review correction, reviewed at `2cbe48636a99d64bddb136ae454e32731a060ded`.** The authority's thirteen named entries comprise twelve live rows plus withdrawn historical `A-capacity`, not thirteen live rows with required dispositions. The record now states that census exactly; live `A-tie` remains conformance `Unknown`.
 
 ## Explicit non-goals
 
