@@ -5,15 +5,15 @@
 //! `crates/tiler-ir` does not compile under Kani 0.67.0's bundled rustc
 //! (1.93.0-nightly, 2025-11-21). The diagnostic is recorded in the README and in
 //! `docs/research/verification/kani-bounded-encoder-verification.md`. Every encoder
-//! below is therefore a **verbatim text copy** of a function that lives in the
-//! crates, not the function itself.
+//! below is therefore a **token-content copy under `guard.sh`'s normalization**
+//! of a function that lives in the crates, not the function itself.
 //!
 //! **A proof here proves the copy, not the source.** The two are tied by exactly
 //! one thing: `guard.sh` re-extracts each named function from its source file and
-//! byte-compares it against the copy here, so a source edit that is not mirrored
-//! here fails the guard instead of silently leaving a stale proof standing. That
-//! is a *text* tie, and it is weaker than compiling the real crate in three ways
-//! worth naming:
+//! compares normalized token content against the copy here, so a semantic source
+//! edit that is not mirrored here fails the guard instead of silently leaving a
+//! stale proof standing. That is a *text-derived token* tie, and it is weaker
+//! than compiling the real crate in three ways worth naming:
 //!
 //! - it does not tie the *types*. `SubnormalMode` below is a copy too, and a
 //!   variant added to the real enum widens the real domain without touching this
@@ -33,7 +33,7 @@
 //! **whole** input type where the type is finite-width, which is the thing an
 //! enumerated test could not reach for a `u32` field. Kani discharges these
 //! symbolically through CBMC, so `push_resources_injective` really does quantify
-//! over all ~2^161 ordered input pairs rather than sampling them.
+//! over all ~2^299 ordered input pairs rather than sampling them.
 //!
 //! Where a domain is not finite-width — `push_numerical` carries a `String` — the
 //! proof is bounded, the bound is in the harness name, and what lies outside it
@@ -168,6 +168,13 @@ pub enum TensorRole {
     Output,
 }
 
+/// @source: crates/tiler-ir/src/schedule/model.rs :: IndexArithmetic
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum IndexArithmetic {
+    CompleteU64,
+}
+
 /// @source: crates/tiler-ir/src/schedule/model.rs :: ResourceRequirements
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -176,6 +183,7 @@ pub struct ResourceRequirements {
     pub threads_per_workgroup: u32,
     pub local_memory_bytes: u64,
     pub requires_device_memory: bool,
+    pub index_arithmetic: IndexArithmetic,
     pub synchronization: Option<SynchronizationSubject>,
     pub input_subnormals: SubnormalMode,
     pub result_subnormals: SubnormalMode,
@@ -203,8 +211,8 @@ pub struct NumericalFacts {
 }
 
 // ---------------------------------------------------------------------------
-// Copied encoders. Every body below is byte-identical to its source; `guard.sh`
-// is what says so. Do not reformat this region.
+// Copied encoders. Every body below is token-equivalent to its source under
+// `guard.sh`'s documented normalization; the guard is what says so.
 // ---------------------------------------------------------------------------
 
 /// @source: crates/tiler-ir/src/identity.rs :: push_len
@@ -320,6 +328,13 @@ pub const fn memory_ordering_tag(ordering: MemoryOrdering) -> u8 {
     }
 }
 
+/// @source: crates/tiler-artifact/src/program/model.rs :: index_arithmetic_tag
+pub const fn index_arithmetic_tag(index_arithmetic: IndexArithmetic) -> u8 {
+    match index_arithmetic {
+        IndexArithmetic::CompleteU64 => 0x01,
+    }
+}
+
 /// @source: crates/tiler-artifact/src/program/model.rs :: push_synchronization
 pub fn push_synchronization(bytes: &mut Vec<u8>, subject: Option<SynchronizationSubject>) {
     match subject {
@@ -343,6 +358,7 @@ pub fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirements) {
         threads_per_workgroup,
         local_memory_bytes,
         requires_device_memory,
+        index_arithmetic,
         synchronization,
         input_subnormals,
         result_subnormals,
@@ -357,6 +373,7 @@ pub fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirements) {
     bytes.extend_from_slice(&threads_per_workgroup.to_be_bytes());
     bytes.extend_from_slice(&local_memory_bytes.to_be_bytes());
     bytes.push(u8::from(requires_device_memory));
+    bytes.push(index_arithmetic_tag(index_arithmetic));
     push_synchronization(bytes, synchronization);
     bytes.push(subnormal_tag(input_subnormals));
     bytes.push(subnormal_tag(result_subnormals));
@@ -480,16 +497,18 @@ mod proofs {
 
     /// Injective over the whole `ResourceRequirements` domain, unbounded head included.
     ///
-    /// The domain is 2^32 x 2^32 x 2^64 x 2 x 649 x 3^2 x 2^4 x 4^2, about 2^80.5
-    /// values and so about 2^161 ordered pairs. The exhaustive-finite work could
-    /// only reach the 1 495 296-value tail with the head held fixed; this covers
-    /// every head.
+    /// The domain is 2^32 x 2^32 x 2^64 x 2 x 1 x 649 x 3^2 x 2^4 x 4^2,
+    /// about 2^149.5 values and so about 2^299 ordered pairs. The type-derived
+    /// `kani::Arbitrary` value covers all of `IndexArithmetic`; its current
+    /// single variant scales the cardinality by one rather than narrowing the
+    /// proof. The exhaustive-finite work could only reach the 1 495 296-value
+    /// tail with the head held fixed; this covers every head.
     ///
-    /// Unwind 33 bounds the output comparison, not the input: the record is at
-    /// most 32 bytes (4 + 4 + 8 + 1 + 7 + 8), so no path reaches a 33rd `memcmp`
+    /// Unwind 34 bounds the output comparison, not the input: the record is at
+    /// most 33 bytes (4 + 4 + 8 + 1 + 1 + 7 + 8), so no path reaches a 34th `memcmp`
     /// iteration and the unwinding assertion proves it. Nothing lies outside.
     #[kani::proof]
-    #[kani::unwind(33)]
+    #[kani::unwind(34)]
     fn push_resources_injective() {
         let a: ResourceRequirements = kani::any();
         let b: ResourceRequirements = kani::any();
@@ -517,10 +536,10 @@ mod proofs {
     ///
     /// **Genuinely bounded, unlike the harnesses above.** The trailing runs are
     /// exactly 4 bytes each. A defect that only shows up under a longer tail, or
-    /// under two tails of *different* lengths, is outside this proof. Unwind 37
-    /// covers the 32-byte record plus the 4-byte tail with one to spare.
+    /// under two tails of *different* lengths, is outside this proof. Unwind 38
+    /// covers the 33-byte record plus the 4-byte tail with one to spare.
     #[kani::proof]
-    #[kani::unwind(37)]
+    #[kani::unwind(38)]
     fn push_resources_prefix_free_tail_4() {
         let a: ResourceRequirements = kani::any();
         let b: ResourceRequirements = kani::any();

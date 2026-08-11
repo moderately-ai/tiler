@@ -119,7 +119,7 @@ done < <(grep '@source:' "${shim}")
 # populations: a marker syntax that silently stopped matching would compare
 # nothing and report no divergence, and "nothing ran" would then be
 # indistinguishable from "nothing drifted".
-expected=28
+expected=30
 if [[ "${checked}" -ne "${expected}" ]]; then
     printf 'GUARD POPULATION CHANGED: compared %d items, expected %d.\n' \
         "${checked}" "${expected}" >&2
