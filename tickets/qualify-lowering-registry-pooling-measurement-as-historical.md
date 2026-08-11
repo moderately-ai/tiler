@@ -1,7 +1,7 @@
 ---
 id: qualify-lowering-registry-pooling-measurement-as-historical
 title: Qualify the lowering-registry pooling measurement as historical
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [intern-the-lowering-registry-s-shared-authority-identities, correct-the-slice-normative-definition-and-recompute-compiler-identities]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, compiler, measurement]
+claimed_from: todo
+assignee: terra-pooling-history
+lease_expires_at: 1786415646
 ---
 
 `crates/tiler-compiler/src/capability.rs`, anchor `Why a pool and not an inline
