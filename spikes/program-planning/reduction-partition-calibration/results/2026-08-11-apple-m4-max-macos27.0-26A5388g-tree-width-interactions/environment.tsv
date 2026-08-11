@@ -1,0 +1,57 @@
+key	value
+environment.date_utc.primary_start	2026-08-11T10:02:50Z
+environment.date_utc.primary_end	2026-08-11T10:06:56Z
+environment.date_utc.repeat_start	2026-08-11T10:07:04Z
+environment.date_utc.repeat_end	2026-08-11T10:11:13Z
+environment.os.product	macOS
+environment.os.version	27.0
+environment.os.build	26A5388g
+environment.architecture	arm64
+environment.device	Apple M4 Max
+environment.apple_gpu_family	apple9
+environment.cpu.logical_cores	14
+environment.developer_dir	/Applications/Xcode.app/Contents/Developer
+environment.default_developer_dir	/Applications/Xcode-beta.app/Contents/Developer
+environment.xcode	Xcode 26.6 Build version 17F113
+environment.sdk.macosx.version	26.5
+environment.sdk.macosx.build	25F70
+environment.offline_compiler	Apple metal version 32023.883 (metalfe-32023.883)
+environment.offline_linker	AIR-LLD 32023.883 (metalfe-32023.883) (compatible with legacy metallib linker)
+environment.rustc	rustc 1.99.0-nightly (eff8269f7 2026-07-18)
+environment.toolchain	nightly-2026-07-19-aarch64-apple-darwin
+environment.repository_base	b0c41639f9ad266879ef52dfaee8de5e35eb47f9
+host.occupancy	coordinator-reserved quiet window; primary then repeat ran sequentially; zero cargo, rustc, rustdoc, nextest, clippy-driver, or make processes before and after each timed run
+host.load_before.primary	4.33 3.79 3.75
+host.load_after.primary	3.35 3.64 3.70
+host.load_before.repeat	3.14 3.58 3.68
+host.load_after.repeat	2.60 3.21 3.50
+matrix.rows	8,528,1056,2112,8192
+matrix.anchor_contributors	780,1042
+matrix.fit_contributors	774,783,900,1006,1082,1280
+matrix.held_out_contributors	775,785,899,1008,1094,1282
+matrix.shapes	70
+matrix.arithmetic_variants_per_run	625
+matrix.source_max_threadgroup_bytes	2564
+matrix.prepared_max_threadgroup_bytes	2576
+measurement.metric	wall-clock commit-to-completed difference quotient
+measurement.warmup	8
+measurement.repetitions	30
+measurement.batch	64
+measurement.harness_relation	retained source and lock digests identify the harness build inputs; the before/after executable digest identifies the unretained timed binary; no byte-identical rebuild claim
+timed.executable.sha256	f9bac263c0a140f5843667550a0b5373cc7a21c784dbefb79f837bf4fc6c7b29
+timed.executable.size_bytes	7823936
+timed.executable.mtime_utc	2026-08-11T10:00:57Z
+timed.executable.retention	digest and observed metadata only; target/release build product is not checked in
+hash.main	5fb4126280c1eb24286cc80329826daa95534f6a5ca8c97773627c9bfd120cff
+hash.regions	1a7d4f492fef25d0ea719c8e47bfccac36e9b724e7bf79f0e2873c1b5d61ab96
+hash.buffer	a3f8303eb323c147c21b2ef2547d89e8e1cb0b0f205be66bb33b96b9c08b03fe
+hash.analysis_wrapper	dfac931d60f09d00e26a348958bdf28aa6faa6c4dbe86291d2510a9ba3c7299b
+hash.analysis_shared	c4f2f807fb90c8b31743d04b362dc4945002350e893ee7b2e0b1fb4c961d8741
+hash.cargo_toml	ba3662567080d744ab6f1032b756b642b393285e39005b4c405594466d50ef75
+hash.cargo_lock	4c73b106f913746318feca579f8b82d03739557e5e3f59d2f84d6feb2d8b6255
+hash.compiler_physical	40a2f48a4a10383e1e1775c73a1fe95aacb2e1f2674cbbc8022533ff4ef1adac
+hash.compiler_measured_cost	c814919adb6732147be8d5f561107164eb501a1fb870a360a030263b621a0cd1
+hash.compiler_target	bdf94113119120adcacd850d29498d349a02f22074cc0f496129c5a812bcf804
+hash.metal_declaration	f2c2c634ff5084ca0467b83f8bfe691365ccadfc8a73f5ca71f2c1de592d904f
+hash.sweep	8b9598b0295c394626eda8c645c4605030a77e825650c63594fefbeb4fddcec2
+hash.repeat	0434185aed33c21404b06b561f5742fae36469a264c46d251e5417c8237e4b87

@@ -199,6 +199,22 @@ const SHAPE_AWARE_CONTRIBUTORS: [u64; 12] = [
     780, 1_042, 756, 779, 840, 1_018, 1_020, 768, 781, 960, 1_022, 1_046,
 ];
 
+/// Rows in the frozen fresh interaction matrix.
+///
+/// Relative to the measured 1,056-fold-step saturation row these produce the
+/// exact clipped regime coordinate `{-1, -1, 0, 1, 1}`. None appeared in the
+/// predecessor matrix, so even the two recurrence anchors are fresh cells.
+const INTERACTION_ROWS: [u64; 5] = [8, 528, 1_056, 2_112, 8_192];
+
+/// Contributors in the frozen fresh interaction matrix.
+///
+/// The first two are historical recurrence anchors, the next six are the only
+/// fit population, and the final six are sealed held-out contributors. Every
+/// fit and held-out contributor is absent from all retained predecessor TSVs.
+const INTERACTION_CONTRIBUTORS: [u64; 14] = [
+    780, 1_042, 774, 783, 900, 1_006, 1_082, 1_280, 775, 785, 899, 1_008, 1_094, 1_282,
+];
+
 /// Refuses a matrix drift before touching the device.
 ///
 /// The analyzer independently pins the same values, but this assertion keeps a
@@ -229,6 +245,35 @@ fn assert_shape_aware_population() {
         variants_per_row * SHAPE_AWARE_ROWS.len(),
         616,
         "the frozen shape-aware variant population moved"
+    );
+}
+
+/// Refuses a fresh-interaction matrix drift before touching the device.
+fn assert_interaction_population() {
+    assert_eq!(
+        INTERACTION_ROWS,
+        [8, 528, 1_056, 2_112, 8_192],
+        "the frozen interaction row population moved"
+    );
+    assert_eq!(
+        INTERACTION_CONTRIBUTORS,
+        [
+            780, 1_042, 774, 783, 900, 1_006, 1_082, 1_280, 775, 785, 899, 1_008, 1_094, 1_282,
+        ],
+        "the frozen interaction contributor population moved"
+    );
+    let variants_per_row: usize = INTERACTION_CONTRIBUTORS
+        .into_iter()
+        .map(|contributors| regions::admissible_partitions(contributors).len())
+        .sum();
+    assert_eq!(
+        variants_per_row, 125,
+        "the frozen interaction width population moved"
+    );
+    assert_eq!(
+        variants_per_row * INTERACTION_ROWS.len(),
+        625,
+        "the frozen interaction variant population moved"
     );
 }
 
@@ -285,6 +330,10 @@ enum RunMode {
     ShapeAwareTreeWidth,
     /// The shape-aware matrix's anchors and oracle, without timing.
     VerifyShapeAwareTreeWidth,
+    /// The fresh row-regime/divisor-interaction matrix, including timing.
+    TreeWidthInteractions,
+    /// The fresh interaction matrix's complete device path, without timing.
+    VerifyTreeWidthInteractions,
 }
 
 impl RunMode {
@@ -301,10 +350,15 @@ impl RunMode {
             [argument] if argument == "--verify-shape-aware-tree-width" => {
                 Self::VerifyShapeAwareTreeWidth
             }
+            [argument] if argument == "--tree-width-interactions" => Self::TreeWidthInteractions,
+            [argument] if argument == "--verify-tree-width-interactions" => {
+                Self::VerifyTreeWidthInteractions
+            }
             _ => panic!(
                 "usage: reduction-partition-sweep [--tree-width-excursion|\
                  --verify-tree-width-excursion|--shape-aware-tree-width|\
-                 --verify-shape-aware-tree-width]"
+                 --verify-shape-aware-tree-width|--tree-width-interactions|\
+                 --verify-tree-width-interactions]"
             ),
         }
     }
@@ -319,6 +373,9 @@ impl RunMode {
             Self::ShapeAwareTreeWidth | Self::VerifyShapeAwareTreeWidth => {
                 "reduction-shape-aware-tree-width"
             }
+            Self::TreeWidthInteractions | Self::VerifyTreeWidthInteractions => {
+                "reduction-tree-width-interactions"
+            }
         }
     }
 
@@ -326,7 +383,9 @@ impl RunMode {
     const fn timed(self) -> bool {
         !matches!(
             self,
-            Self::VerifyTreeWidthExcursion | Self::VerifyShapeAwareTreeWidth
+            Self::VerifyTreeWidthExcursion
+                | Self::VerifyShapeAwareTreeWidth
+                | Self::VerifyTreeWidthInteractions
         )
     }
 
@@ -342,6 +401,19 @@ impl RunMode {
             Self::ShapeAwareTreeWidth | Self::VerifyShapeAwareTreeWidth
         )
     }
+
+    /// Whether this is the fresh interaction study.
+    const fn interactions(self) -> bool {
+        matches!(
+            self,
+            Self::TreeWidthInteractions | Self::VerifyTreeWidthInteractions
+        )
+    }
+
+    /// Whether this mode records executable and quiet-host custody.
+    const fn custodied(self) -> bool {
+        self.shape_aware() || self.interactions()
+    }
 }
 
 #[allow(
@@ -352,6 +424,9 @@ fn main() {
     let mode = RunMode::from_args();
     if mode.shape_aware() {
         assert_shape_aware_population();
+    }
+    if mode.interactions() {
+        assert_interaction_population();
     }
     let declaration = BoundMetalCompileDeclaration::first_macos_apple9()
         .expect("the authoritative macOS Apple9 declaration binds");
@@ -398,13 +473,13 @@ fn main() {
         "# device_max_threadgroup_memory\t{}",
         device.max_threadgroup_memory_length(),
     );
-    if mode.shape_aware() {
+    if mode.custodied() {
         let occupancy = concurrent_build_processes();
         println!("# concurrent_build_processes_before\t{occupancy}");
         if mode.timed() {
             assert_eq!(
                 occupancy, 0,
-                "the shape-aware timed run requires no concurrent Cargo, rustc, or make process"
+                "the timed tree-width study requires no concurrent Cargo, rustc, or make process"
             );
         }
         println!("# executable_sha256_before\t{}", executable_sha256());
@@ -430,7 +505,18 @@ fn main() {
     let mut attempted = 0_usize;
     let mut measured = 0_usize;
     let mut declined = 0_usize;
-    let shapes: Vec<(u64, u64)> = if mode.shape_aware() {
+    let mut widest_prepared_workgroup = 0_u64;
+    let mut maximum_prepared_threadgroup_bytes = 0_u64;
+    let shapes: Vec<(u64, u64)> = if mode.interactions() {
+        INTERACTION_ROWS
+            .into_iter()
+            .flat_map(|rows| {
+                INTERACTION_CONTRIBUTORS
+                    .into_iter()
+                    .map(move |contributors| (rows, contributors))
+            })
+            .collect()
+    } else if mode.shape_aware() {
         SHAPE_AWARE_ROWS
             .into_iter()
             .flat_map(|rows| {
@@ -456,6 +542,31 @@ fn main() {
         attempted += counts.0;
         measured += counts.1;
         declined += counts.2;
+        widest_prepared_workgroup = widest_prepared_workgroup.max(counts.3);
+        maximum_prepared_threadgroup_bytes = maximum_prepared_threadgroup_bytes.max(counts.4);
+    }
+
+    if mode.interactions() {
+        assert_eq!(
+            attempted, 625,
+            "the frozen interaction attempt census moved"
+        );
+        assert_eq!(
+            measured, 625,
+            "the frozen interaction admitted/verified census moved"
+        );
+        assert_eq!(
+            declined, 0,
+            "the frozen interaction matrix gained a target decline"
+        );
+        assert_eq!(
+            widest_prepared_workgroup, 641,
+            "the frozen interaction prepared workgroup maximum moved"
+        );
+        assert_eq!(
+            maximum_prepared_threadgroup_bytes, 2_576,
+            "the frozen interaction prepared threadgroup allocation maximum moved"
+        );
     }
 
     println!();
@@ -470,15 +581,17 @@ fn main() {
         }
     );
     println!("# variants_declined\t{declined}");
+    println!("# widest_prepared_workgroup\t{widest_prepared_workgroup}");
+    println!("# maximum_prepared_threadgroup_bytes\t{maximum_prepared_threadgroup_bytes}");
     println!("# load_after\t{}", load_average());
-    if mode.shape_aware() {
+    if mode.custodied() {
         println!("# executable_sha256_after\t{}", executable_sha256());
         let occupancy = concurrent_build_processes();
         println!("# concurrent_build_processes_after\t{occupancy}");
         if mode.timed() {
             assert_eq!(
                 occupancy, 0,
-                "the shape-aware timed run ended with a concurrent Cargo, rustc, or make process"
+                "the timed tree-width study ended with a concurrent Cargo, rustc, or make process"
             );
         }
     }
@@ -499,7 +612,7 @@ fn measure_shape(
     declaration: &BoundMetalCompileDeclaration,
     subject: Subject,
     mode: RunMode,
-) -> (usize, usize, usize) {
+) -> (usize, usize, usize, u64, u64) {
     let Subject { rows, contributors } = subject;
     let elements = rows * contributors;
     let program = reduction_program(rows, contributors);
@@ -632,6 +745,16 @@ fn measure_shape(
     )]
     let expected = contributors as f32;
     verify(queue, &prepared, expected, subject);
+    let widest_prepared_workgroup = prepared
+        .iter()
+        .map(|variant| variant.widest_workgroup)
+        .max()
+        .unwrap_or(0);
+    let maximum_prepared_threadgroup_bytes = prepared
+        .iter()
+        .map(|variant| variant.threadgroup_bytes)
+        .max()
+        .unwrap_or(0);
     if !mode.timed() {
         println!(
             "# verified\t{}x{}\t{} variant(s)",
@@ -639,7 +762,13 @@ fn measure_shape(
             contributors,
             prepared.len()
         );
-        return (attempted, prepared.len(), declines.len());
+        return (
+            attempted,
+            prepared.len(),
+            declines.len(),
+            widest_prepared_workgroup,
+            maximum_prepared_threadgroup_bytes,
+        );
     }
     warm(queue, &prepared);
     let single = timed_rounds(queue, &prepared, 1);
@@ -654,7 +783,13 @@ fn measure_shape(
         &batched,
         &declines,
     );
-    (attempted, prepared.len(), declines.len())
+    (
+        attempted,
+        prepared.len(),
+        declines.len(),
+        widest_prepared_workgroup,
+        maximum_prepared_threadgroup_bytes,
+    )
 }
 
 /// Writes one shape's measured rows and its declined ones.
