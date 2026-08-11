@@ -615,8 +615,8 @@ pub enum ScalarProgram {
     /// a partial pass that applied it would transform a fragment and one that did
     /// not would be computing [`Self::SquaredSerialSum`] under this variant's name.
     /// A split of this family therefore needs a *pair* of programs rather than a
-    /// partition of one, which no cover states; `multi_pass_family` and
-    /// `cooperative_family` answer `None` and the topology is refused.
+    /// partition of one, which no cover states; `split_family` classifies this
+    /// variant as serial-only and every parallel topology is refused.
     ///
     /// `empty_identity_bits` is the value the *fold* commits over an empty
     /// contributor domain, and the epilogue transforms that value like any other:
