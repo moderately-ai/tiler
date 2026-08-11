@@ -1,14 +1,14 @@
 ---
 id: accept-the-literal-offset-slice-realization-law
 title: Accept the literal-offset slice realization law
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [admit-an-index-realization-law-for-the-literal-offset-slice]
-scopes: []
+scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
-tags: []
+tags: [decision, api, ir, indexing]
 ---
 # Accept the literal-offset slice realization law
 
@@ -44,6 +44,25 @@ merge do not satisfy it.
 
 ## Acceptance
 
-Only Tom closes this ticket after accepting or rejecting the exact variant,
+Only Tom could close this ticket by accepting or rejecting the exact variant,
 constructor, encoding, registration, and included/excluded semantics above.
-Until then it remains `awaiting-decision` and satisfies no dependent.
+Before the decision it remained `awaiting-decision` and satisfied no dependent.
+
+## Accepted — 2026-08-11
+
+**Tom accepted the exact surface as presented** in the live coordination
+session, via the message `sounds good, accept`. The acceptance includes
+`IndexRealizationLaw::Slice { selection_attribute }`,
+`IndexRealizationLaw::slice_f32()`, append-only tag `13`, and the revision-`1`
+standard row for `tiler::slice-f32@1`, with exactly these semantics:
+`WholeAxis -> d`, literal `Window { offset, .. } -> d + offset`, identity output
+writes, and no scalar operation.
+
+The accepted surface has no silent fallback. A missing law, malformed or wrong
+attribute, wrong arity or binding, inconsistent result shape, or provider/law
+coordinate mismatch remains a typed refusal. Strided and symbolic offsets,
+clamping, wrapping, view-versus-copy planning, scheduled-region vocabulary,
+physical planning, and backend realization remain excluded. Acceptance changes
+the public maturity label only; it adds no new implementation, runtime path,
+identity byte, or compatibility promise beyond the already-landed pre-alpha
+surface.

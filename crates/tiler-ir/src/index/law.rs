@@ -146,12 +146,12 @@ pub enum IndexRealizationLaw {
     /// offsets, scheduling, and backend realization; those forms are rejected by
     /// the semantic grammar before a subject can carry them.
     ///
-    /// **Draft boundary.** ADR 0075 classifies this variant as additive growth of
-    /// an existing public `#[non_exhaustive]` type, which the coordinator may
-    /// merge after that record's four gates. The operative working contract still
-    /// keeps the exact variant, its `const` constructor, its tag-13 encoding, and
-    /// the standard `tiler::slice-f32@1` registration as a labelled draft awaiting
-    /// Tom's acceptance at [`accept-the-literal-offset-slice-realization-law`].
+    /// **Accepted public surface.** Tom accepted the exact variant, its `const`
+    /// constructor, append-only tag-13 encoding, and standard
+    /// `tiler::slice-f32@1` revision-1 registration on 2026-08-11 under
+    /// [`accept-the-literal-offset-slice-realization-law`]. The acceptance is
+    /// limited to the included and excluded surface above; it grants no strided
+    /// or symbolic selection, storage choice, schedule, or backend realization.
     ///
     /// [`accept-the-literal-offset-slice-realization-law`]: ../../../../tickets/accept-the-literal-offset-slice-realization-law.md
     Slice {
