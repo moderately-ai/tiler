@@ -6442,16 +6442,17 @@ const fn mismatch_rule(rule: &'static str) -> RequestError {
 /// `None`, so a reindex this profile cannot bind never falls through to be
 /// reported as an unrecognized operation set.
 ///
-/// **The operand must be a value this walk reads rather than computes.** A
-/// structural occurrence over a value the *same region* computes would need the
-/// region to address an intermediate it also produces, which this region shape
-/// has no access to bind — and admitting it by materializing the intermediate
-/// would add the observable rounding boundary the family's admission
-/// deliberately excludes. It is refused by name. An epilogue's staged operand is
-/// a different case and is admitted: another region already materialized it, so
-/// the rounding boundary is the cover's rather than one this occurrence
-/// introduced, and the read binds the materialization edge the cover hands the
-/// region.
+/// **The operand must already be a value this walk reads rather than computes.**
+/// A direct mapped-only occurrence over a value another region would materialize
+/// does not discover that boundary: on the first walk the producer result is not
+/// yet a staged leaf, so it refuses under `structural-operand`. If another dense
+/// occurrence first discovers the boundary, replay does make the producer result
+/// a staged leaf and this function recognizes the mapped read, but
+/// [`record_leaf`] then refuses it as a second read of the unordinalled
+/// [`TensorRole::Intermediate`] under `structural-access-conflict`. Thus neither
+/// path currently admits a structural read of a staged operand; materializing a
+/// same-region computed value would additionally introduce an observable rounding
+/// boundary the structural family's admission deliberately excludes.
 ///
 /// # Errors
 ///

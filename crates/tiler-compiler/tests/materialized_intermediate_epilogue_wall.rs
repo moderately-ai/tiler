@@ -77,6 +77,13 @@
 //! for, and stopped. It now *names* that operand instead, which is the whole
 //! change — the value a cover materializes is exactly the value the walk could
 //! not absorb.
+//!
+//! A mapped-only structural occurrence over that same producer is not an
+//! admitted epilogue today. It contributes addressing rather than a per-point
+//! body, so the first walk asks whether the contraction result is already a leaf
+//! before any occurrence has discovered it as a materialization boundary;
+//! [`a_structural_read_of_a_materialized_contraction_refuses_by_name`] pins the
+//! resulting `structural-operand` refusal beside the bare producer.
 
 use tiler_compiler::session::{
     CompileFailureClass, CompileRequest, NumericalContract, TargetCompileFailure, compile,
@@ -92,16 +99,17 @@ use tiler_ir::schedule::{
 };
 use tiler_ir::semantic::{
     CANONICAL_F32_ARITHMETIC_NAN_BITS, ContractionIndex, ContractionIndexStructure, F32,
-    F32Constant, F32Multiply, F32TensorContraction, InputKey, OutputKey, SemanticProgram,
-    SemanticProgramBuilder, StrictSerialF32Sum,
+    F32Constant, F32Multiply, F32Reindex, F32TensorContraction, InputKey, OutputKey, ReindexForm,
+    SemanticProgram, SemanticProgramBuilder, StrictSerialF32Sum,
 };
 use tiler_ir::shape::{Axis, Shape};
 
-/// Every numerical contract a caller can state.
+/// The five named F32 contract points this boundary suite exercises.
 ///
-/// Stated exhaustively rather than sampled, for the reason the sibling boundary
-/// files state it: recognition is structural, so a contract that changed the
-/// outcome would mean the boundary moved for a reason this file does not model.
+/// Named together rather than sampled at one preset because recognition is
+/// structural: a point that changed the outcome would mean the boundary moved
+/// for a reason this file does not model. This is not the complete population of
+/// caller-composable numerical contracts.
 const CONTRACTS: [NumericalContract; 5] = [
     NumericalContract::STRICT_F32,
     NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
@@ -111,7 +119,7 @@ const CONTRACTS: [NumericalContract; 5] = [
 ];
 
 // ---------------------------------------------------------------------------
-// What the caller sees: both epilogue shapes refuse at the request boundary
+// What the caller sees: admitted arithmetic chains and a bounded structural refusal
 // ---------------------------------------------------------------------------
 
 /// The contraction structure `mk,nk->mn`, the one `contraction_direct_path` uses.
@@ -165,6 +173,35 @@ fn contraction_with_epilogue() -> SemanticProgram {
     let scaled = F32Multiply::apply(&mut builder, projected, two).unwrap();
     builder
         .output(OutputKey::new("scaled").unwrap(), scaled)
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// `reversed = reverse(contract(a, b))` — a mapped-only structural read of a
+/// result the contraction would otherwise materialize.
+///
+/// Unlike [`contraction_with_epilogue`], the outer occurrence contributes no
+/// per-point arithmetic that can discover the producer as a materialization
+/// boundary. The structural recognizer therefore sees the contraction result
+/// before it is a staged leaf and refuses it under `structural-operand`.
+fn contraction_with_structural_epilogue() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 2]))
+        .unwrap();
+    let b = builder
+        .input::<F32>(InputKey::new("b").unwrap(), Shape::from_dims([2, 2]))
+        .unwrap();
+    let projected =
+        F32TensorContraction::apply(&mut builder, &projection_structure(), a, b).unwrap();
+    let reversed = F32Reindex::apply(
+        &mut builder,
+        &ReindexForm::reverse_axis(Axis::new(1)).expect("an axis reversal is admitted"),
+        projected,
+    )
+    .unwrap();
+    builder
+        .output(OutputKey::new("reversed").unwrap(), reversed)
         .unwrap();
     builder.build().unwrap()
 }
@@ -268,6 +305,39 @@ fn an_elementwise_epilogue_over_a_contraction_compiles_as_a_chain() {
                 rule: "operation-set"
             }),
             "{contract:?} admitted a chain two materialization boundaries deep",
+        );
+    }
+}
+
+/// A direct structural read of a materialized contraction result refuses by
+/// name, while the same contraction without that read compiles.
+///
+/// This is distinct from a structural occurrence over a computed per-point
+/// value: the contraction is a family the compiler can materialize as a producer
+/// region, but a mapped-only walk never discovers that boundary before the
+/// structural recognizer asks whether its operand is already a leaf.
+#[test]
+fn a_structural_read_of_a_materialized_contraction_refuses_by_name() {
+    let control = bare_contraction();
+    let structural = contraction_with_structural_epilogue();
+    assert_eq!(
+        structural.operation_count(),
+        control.operation_count() + 1,
+        "the refused program adds exactly the reindex occurrence",
+    );
+
+    for contract in CONTRACTS {
+        assert_eq!(
+            compile_under(&control, contract),
+            Ok(()),
+            "{contract:?} refused the bare contraction, so the structural refusal below would not be attributable to the staged operand",
+        );
+        assert_eq!(
+            compile_under(&structural, contract),
+            Err(CompileFailureClass::UnsupportedCapability {
+                rule: "structural-operand"
+            }),
+            "{contract:?} did not refuse the mapped-only structural read by name",
         );
     }
 }

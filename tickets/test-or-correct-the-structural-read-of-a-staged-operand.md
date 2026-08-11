@@ -31,3 +31,13 @@ Perturb the subject, not the expectation: replace the reindex with one `F32Silu`
 ## Closes when
 
 The doc comment states both tested refusal paths, the direct mapped-only public regression pins `structural-operand` with its admitted bare-contraction neighbour, and any desired admission remains separate from this correctness repair.
+
+## Worker evidence — 2026-08-11
+
+**Fact audit at base `4aaccb8206a922a940aacb06d53d7614889d089f`.** Both Facts above are verified after reading `crates/tiler-compiler/src/request.rs`, `crates/tiler-compiler/tests/composed_family_recognition.rs`, and `crates/tiler-compiler/tests/materialized_intermediate_epilogue_wall.rs` in full. The existing public `reverse(silu(a))` row is a same-region computed operand, while the new subject is the direct mapped-only read of a contraction result the compiler otherwise materializes; no existing test pinned that subject. No ticket Fact needed repair.
+
+**Delivered boundary.** `recognize_structural_read` now states both current paths rather than claiming a user-visible staged-operand admission: direct `reverse(contract(a, b))` reaches `structural-operand` before the producer is a staged leaf, while a dense read that first discovers the edge makes the mapped occurrence a second unordinalled staged read and `record_leaf` returns `structural-access-conflict`. The public compile regression runs the direct case under all five named F32 contracts exercised by this boundary suite beside the bare contraction, which compiles under the identical requests.
+
+**Subject perturbation.** The regression's reindex alone was replaced with `F32Silu` over the same contraction result while its refusal assertion stayed unchanged. The first contract failed with `left: Ok(())` and `right: Err(UnsupportedCapability { rule: "structural-operand" })`; the reindex was restored before the final checks. This also establishes that the assertion reaches the changed occurrence before any contract-dependent later feasibility can hide it.
+
+**Independent-review correction — 2026-08-11, exact candidate `2332cd8cf9690e1ca96dd38b75fcd038e7cde5ab`.** The candidate called those five named F32 points “all five statable numerical contracts,” and the adjacent test comment called them every contract a caller can state. Both population claims were false: callers can compose many other F32 dimension vectors and BF16 contracts also exist. The repaired wording names only the five F32 points this suite actually runs. Review otherwise found no defect in the refusal, control, perturbation, or boundary description.
