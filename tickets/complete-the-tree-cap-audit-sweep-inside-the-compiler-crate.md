@@ -51,9 +51,11 @@ workspace unsafe-site inventory failed: unsafe-sites.crates/tiler-compiler/src/p
 
 The test-only trace's `std::thread_local!` spelling is replaced by the accepted
 unqualified `thread_local!` spelling without an import. The trace, its
-`cfg(test)` boundary, and the two watched failures are otherwise unchanged. A
-new exact-tip gate captures its complete output and exit status in a
-commit-unique log before this follow-up is reported green.
+`cfg(test)` boundary, and the two watched failures are otherwise unchanged.
+The coordinator reran `make full` directly in the exact `d3ad2efc` worktree and
+observed its terminal exit status `0`: 3,287 workspace tests and 1,132 release
+tests passed, followed by ticket lint and shellcheck. No redirected log is cited;
+the earlier missing-status mistake is not repaired by inventing one.
 
 ## The three items
 
