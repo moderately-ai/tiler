@@ -1,52 +1,77 @@
 ---
 id: reconcile-the-operation-identity-and-governed-key-grammars
 title: Reconcile the operation-identity and governed-key grammars
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
-related: [reconcile-the-two-target-profile-key-grammars]
-scopes: [implementation/ir, implementation/compiler, contracts/decisions, implementation/runtime, research/cache]
+related: [reconcile-the-two-target-profile-key-grammars, replace-flat-selected-lowering-capability-keys-with-structured-subjects, frame-provider-identities-before-using-them-as-explain-keys]
+scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/build, implementation/runtime, contracts/foundation, contracts/artifacts, contracts/decisions, research/artifacts, research/cache, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, validation, extensions, decision, needs-tom, public-boundary]
 ---
 ## User-visible outcome
 
-A capability key composed from a legally registered operation is either always a legal governed key, or the registration that would compose an illegal one is refused where it is made rather than at packaging time.
+A selected lowering capability is identified by its structured family and exact operation key. No legal operation key is narrowed to fit a downstream text grammar, and no delimiter join, case fold, truncation, default, or fallback may make two capabilities compare as one.
 
-## Why this slice exists
+## Source-first audit at the decision base
 
-**Fact, reverified 2026-08-09.** `crates/tiler-compiler/src/lowering.rs`'s `governed_capability_key` composes `tiler.capability.{family}.{namespace}.{name}.v{version}` from an `OpKey`. `OpKey`'s components are validated by `validate_component` in `crates/tiler-ir/src/semantic/types.rs`, which admits `byte.is_ascii_alphanumeric()` — **uppercase included** — and `MAX_IDENTITY_COMPONENT_BYTES` = 255 per component. `tiler_artifact::program`'s governed keys admit ASCII lowercase, digits, `.`, `-`, `_` within `MAX_GOVERNED_KEY_BYTES` = 256. Three grammars, not the two `reconcile-the-two-target-profile-key-grammars` named.
+The accepted decision was rederived at exact base `b03d1e7699d4f7cfbfb6ee7a903e2d2fbe16af18` before this record changed.
 
-**Measurement**, a throwaway integration test in `tiler-build` (which depends on both crates), run once and deleted:
+- **Verified.** `governed_capability_key` in `crates/tiler-compiler/src/lowering.rs` infallibly formats `tiler.capability.{family}.{namespace}.{name}.v{version}`. The only live family is `index-access`.
+- **Verified.** `OpKey` uses the shared identity-component validator in `crates/tiler-ir/src/semantic/types.rs`: each component is nonempty, at most 255 bytes, and admits ASCII alphanumeric bytes, including uppercase, plus internal `.`, `_`, and `-`.
+- **Verified.** Artifact `CapabilityKey` is at most 256 bytes and admits only lowercase governed text.
+- **Historical and imprecise.** The ticket's `scalar` measurements predated retirement of that family. The live `index-access` spelling puts the first uppercase byte at 30 rather than 24 and reaches 544 rather than 538 bytes for two maximum components. The mismatch remains, but the old absolute measurements were not current facts.
+- **False census.** There are seven downstream `CapabilityKey::new` conversions, not three: five `.expect()` assertions, one correctly propagated `?`, and one lossy remapping. The five assertions are brittle, but the audited governed spike/prototype paths do not demonstrate reachability from an external registration; the production build path already propagates a typed error.
+- **False bound claim.** The former 66-byte statement was copied from a source scan of governed key literals, not a typed census of legal `OpKey` values.
+- **False as complete options.** Neither former Option A nor Option B makes the composed identity injective. Legal distinct keys `OpKey::new("a.b", "c", 1)` and `OpKey::new("a", "b.c", 1)` both flatten to `tiler.capability.index-access.a.b.c.v1`.
+- **Verified failure mechanism.** `ConflatedCapabilityKey` compares equal structured operations with differing signatures; it does not reject two distinct operations whose flattened strings collide. Both registrations can therefore succeed under the same provider and capability revision.
+- **Verified consequence.** The lowering-registry identity remains sound because its encoder length-frames the operation components. The defect begins in `LoweringProviderIdentity { provider, capability_key: String, capability_revision }`. Both resolved-provider populations sort and deduplicate that lossy record, and public `SelectedCapability` plus artifact `SelectedProvider` retain only the flattened string. The artifact cannot recover a boundary already erased by the compiler projection.
 
-- `OpKey::new("Acme", "MyOp", 1)` succeeds. The composed key is `tiler.capability.scalar.Acme.MyOp.v1`, and `CapabilityKey::new` returns `Err(NoncanonicalKeyByte { kind: Capability, index: 24, value: 65 })`.
-- `OpKey::new(&"a".repeat(255), &"a".repeat(255), 1)` succeeds. The composed key is 538 bytes, and `CapabilityKey::new` returns `Err(KeyTooLong { kind: Capability, bytes: 538, limit: 256 })`. **This half predates the grammar change** and is reachable today.
+The last discovery changes the purpose from choosing where a text-grammar refusal occurs to defining an injective selected-capability identity. Preserving the old packet would have replaced one false claim with another.
 
-**Fact correction, 2026-08-09.** The scalar registration named by the original measurement no longer exists. The live public producer is `LoweringCapabilityRegistryBuilder::register_index_access` (`crates/tiler-compiler/src/capability.rs`, source anchor `pub fn register_index_access`), which takes an `OpKey`, so the mismatch remains reachable through one public boundary rather than two. `governed_capability_key` still returns `String` and is infallible. The prototype and cache spike still wrap it with `CapabilityKey::new(selected.capability_key()).expect(...)`, so those two producer-side inputs can still panic instead of reporting the registration error where it is caused.
+## Decision — accepted 2026-08-11
 
-**Inference.** Refusing an uppercase capability key is correct: it would compare unequal to the key every reader sees, which is what the governed alphabet exists to prevent. What is wrong is the site. A derivation that turns a legal input into an identity its consumer refuses has to fail at the derivation, or the input grammar has to be the one that says no.
+**Accepted by Tom in the live decision round, relayed by the coordinating agent: carry a structured selected-lowering capability subject end to end.**
 
-Every in-tree operation key is lowercase and at most 66 bytes, so nothing in the tree is affected today; this is reachable only by an out-of-crate registration.
+The compiler-owned subject is the closed lowering-family tag plus the exact `OpKey`. Provider identity and capability revision remain separate fields. The existing one-signature-per-`(family, operation, provider)` guard remains load-bearing; this decision does not add the signature to the human capability subject or reopen signature multiplicity.
 
-## Implementation keys
+The neutral artifact representation carries a governed capability-family key plus the exact structured `OpKey`. It length-frames family, operation namespace, operation name, and semantic version independently. A display spelling may exist for diagnostics, but it is never equality, ordering, deduplication, cache, receipt, or artifact identity authority.
 
-- Decide between the two shapes before changing a byte. Narrowing `validate_component` to lowercase reconciles all three grammars at the source, but it is a wider change than capability keys — it governs `TypeKey`, `OpKey`, `ScalarOpKey`, provider identities, and every canonical type identity, and it is a **public boundary narrowing** in `tiler-ir` that refuses inputs legal today. Making `governed_capability_key` fallible keeps the identity grammar as it is but adds a `LoweringRegistryError` variant, which is a public boundary widening in `tiler-compiler`. Both are Tom's under ADR 0075.
-- A lowercase *fold* is not a third option and must be eliminated explicitly: folding makes `Acme` and `acme` mint one capability key for two operations, which is a silent identity collision — strictly worse than the refusal.
-- The length half is independent of the alphabet half and is live today. Nothing between the composition and the wrap bounds the composed length, and two of the three wrap sites panic.
-- Whichever shape wins, the `.expect()` at the two spike/prototype wrap sites is a panic on a producer-side input and should become a typed refusal.
+This is intentionally liberal at the semantic boundary: every `OpKey` legal today remains legal. The family key retains its own governed bound, each operation component retains its own bound, and the enclosing artifact budgets bound the complete record. The lossy 256-byte combined-text ceiling is removed rather than imposed retroactively on operation identity.
 
-## Scope repair — 2026-08-09
+No legacy parser may reinterpret the ambiguous flattened string. There is no lowercase fold, delimiter escape fallback, truncation, digest substitution, default family, or late packaging normalization.
 
-`implementation/runtime` and `research/cache` are declared because the required panic removal names `prototypes/serial-sum-run` and `spikes/cache/build-tool-exercise` explicitly. The previous IR/compiler-only declaration could not complete its own implementation key.
+## Ranked alternatives
 
-## Decision packet — 2026-08-09
+1. **Accepted — structured fields.** Injective and fail-closed, removes repeated formatting/revalidation, and keeps semantic identity independent of one artifact text projection.
+2. **Opaque compiler-minted canonical bytes.** Correct and strict, but less readable and duplicates minting/receiving bounds across layers.
+3. **Versioned injective escaped text.** Correct if every delimiter, uppercase byte, and escape marker is encoded, but adds a second grammar and may still refuse otherwise legal maximum keys under the old combined bound.
+4. **Operation-specific narrowing plus an aggregate bound.** Can be made correct, but couples the semantic extension vocabulary to one downstream projection and conflicts with the alpha preference to avoid arbitrary limits.
+5. **Registration-time collision scanning.** Local and increasingly costly; it does not establish a globally injective representation.
+6. **Former Option B, former Option A, folding, truncation, or status quo.** Rejected because the dotted-component collision survives or identity is silently changed.
 
-- **Option A — narrow every operation/type identity component to the governed lowercase grammar.** This prevents invalid composition at the source but rejects public inputs legal today across more identities than capability keys.
-- **Option B — make capability-key composition fallible (recommended).** Preserve the broader operation grammar, add a typed `LoweringRegistryError` for noncanonical or overlong composed keys, and remove downstream `.expect()` panics. This localizes the restriction to the consumer that actually has it.
+## Identity and compatibility consequences
 
-Lowercasing is excluded because it collides distinct operation identities. Tom must select the public-boundary change before implementation.
+The implementation must replace public `SelectedCapability::capability_key() -> &str`, the private lossy lowering-provider record, and artifact `SelectedProvider.capability` coherently. At the implementation base it must rederive the complete identity population; the audited expectation is:
 
-## Closes when
+- lowering-registry, semantic-graph, refinement, and kernel-program identity grammars do not step merely for this carrier replacement;
+- artifact provider-key domain `v2` moves to `v3`;
+- artifact-program identity `v16` moves to `v17`;
+- manifest schema `16.0` moves to `17.0` because the repeated selected-provider row changes shape;
+- derived artifact, manifest, proof-sidecar artifact subject, envelope digest, and expansion-cache artifact facet are deliberately rebaselined;
+- no old-domain fallback is admitted.
 
-The composition cannot produce a key its consumer refuses — either because the input grammar no longer admits one, or because the composition reports it — with the decision recorded and the failing case watched failing.
+These versions are an audited expectation, not permission to copy stale absolute values: the implementation worker must rederive them at its exact base and reconcile concurrent schema changes.
+
+## Delivery graph
+
+[`replace-flat-selected-lowering-capability-keys-with-structured-subjects`](replace-flat-selected-lowering-capability-keys-with-structured-subjects.md) owns the public/API, codec, identity, panic-removal, fixture, and contract implementation.
+
+The audit also found a separate delimiter join in explain-only provider references: `ProviderRef::registered` joins provider namespace and name with `.` even though both components admit dots. [`frame-provider-identities-before-using-them-as-explain-keys`](frame-provider-identities-before-using-them-as-explain-keys.md) owns that independently scoped correctness repair; it is not silently folded into artifact capability identity.
+
+The selected-physical-provenance artifact migration depends on the structured capability migration so two branches do not independently claim the same next artifact schema version.
+
+## Outcome
+
+The exact public direction is accepted and the stale Facts, option packet, scope population, close condition, and identity consequences are repaired. Implementation remains ticketed work; this decision does not authorize a partial text-validation patch.

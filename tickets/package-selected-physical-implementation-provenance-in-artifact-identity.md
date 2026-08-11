@@ -3,8 +3,8 @@ id: package-selected-physical-implementation-provenance-in-artifact-identity
 title: Package selected physical implementation provenance in artifact identity
 status: todo
 priority: p1
-dependencies: [disclose-the-physical-provider-environment-a-compilation-was-offered, publish-occurrence-bound-selected-physical-implementation-evidence]
-related: [disclose-offered-and-selected-physical-provider-sets-separately]
+dependencies: [disclose-the-physical-provider-environment-a-compilation-was-offered, publish-occurrence-bound-selected-physical-implementation-evidence, replace-flat-selected-lowering-capability-keys-with-structured-subjects]
+related: [disclose-offered-and-selected-physical-provider-sets-separately, reconcile-the-operation-identity-and-governed-key-grammars]
 scopes: [implementation/artifact, implementation/build, contracts/artifacts, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
