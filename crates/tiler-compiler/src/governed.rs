@@ -34,11 +34,12 @@ use tiler_ir::semantic::{
     F32_CONSTANT_BITS_ATTRIBUTE, MAX_CONCATENATE_OPERANDS, MIN_CONCATENATE_OPERANDS, OpKey,
     OperationAttributes, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE,
     RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_REDUCED_AXES_ATTRIBUTE, ReindexForm, ReindexFormKind,
-    ResolvedValueType, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
-    STRICT_AFFINE_ZERO_POINT_ROLE, StrictAffineU4, TypeKey, add_bf16_op, add_f32_op,
-    broadcast_f32_op, concatenate_axis, concatenate_f32_op, concatenate_result_shape,
-    constant_bf16_op, constant_f32_op, dequantize_strict_affine_op, multiply_bf16_op,
-    multiply_f32_op, reindex_f32_op, rms_norm_f32_op, silu_f32_op, strict_serial_sum_f32_op,
+    ResolvedValueType, SLICE_SELECTION_ATTRIBUTE, STRICT_AFFINE_CODES_ROLE,
+    STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE, SliceAxisSelection, SliceSelection,
+    StrictAffineU4, TypeKey, add_bf16_op, add_f32_op, broadcast_f32_op, concatenate_axis,
+    concatenate_f32_op, concatenate_result_shape, constant_bf16_op, constant_f32_op,
+    dequantize_strict_affine_op, multiply_bf16_op, multiply_f32_op, reindex_f32_op,
+    rms_norm_f32_op, silu_f32_op, slice_f32_op, strict_serial_sum_f32_op,
     strict_tensor_contraction_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape, SourcedExtent};
@@ -234,12 +235,12 @@ impl GovernedIndexAccess {
 
 /// How many index-access capabilities the governed profile ships.
 ///
-/// Thirteen fixed-signature families plus the concatenation's one registration
+/// Fourteen fixed-signature families plus the concatenation's one registration
 /// per admitted operand arity. Named so a test can count the frozen registry
 /// against a number stated here rather than against whatever the list happens to
 /// hold.
 #[cfg(test)]
-pub(crate) const GOVERNED_INDEX_ACCESS_CAPABILITIES: usize = 20;
+pub(crate) const GOVERNED_INDEX_ACCESS_CAPABILITIES: usize = 21;
 
 /// Returns the shipped index-access capabilities in canonical family order.
 ///
@@ -394,6 +395,17 @@ pub(crate) fn governed_index_access_capabilities()
             signature: LoweringSignature::new([f32_type.clone()], [f32_type.clone()])?,
             emitted: Vec::new(),
             implementation: Arc::new(GovernedBroadcastF32),
+        },
+        GovernedIndexAccess {
+            provider: governed_provider("slice-f32"),
+            operation: slice_f32_op(),
+            signature: LoweringSignature::new([f32_type.clone()], [f32_type.clone()])?,
+            // Deliberately empty, for the same semantic reason as the two
+            // structural neighbours: a slice applies no scalar operation. The
+            // value written is the value read, so the emitted region reaches no
+            // scalar authority.
+            emitted: Vec::new(),
+            implementation: Arc::new(GovernedSliceF32),
         },
         GovernedIndexAccess {
             provider: governed_provider("strict-tensor-contraction-f32"),
@@ -2117,6 +2129,64 @@ impl IndexAccessLoweringProvider for GovernedBroadcastF32 {
     }
 }
 
+/// Emits the access relation realizing one `tiler::slice-f32@1` occurrence.
+///
+/// Every result coordinate reads the corresponding operand coordinate, displaced
+/// by the literal window offset on a restricted axis. The write remains the
+/// identity over the whole result domain, so one ordinary root owns the result;
+/// this is not a view-versus-copy choice and introduces no partitioned write.
+struct GovernedSliceF32;
+
+impl IndexAccessLoweringProvider for GovernedSliceF32 {
+    fn lower(&self, context: &mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError> {
+        let occurrence = context.occurrence();
+        let ([input], [result]) = (occurrence.inputs(), occurrence.results()) else {
+            return Err(occurrence_error("slice-arity"));
+        };
+        if occurrence.operands() != [0] {
+            return Err(occurrence_error("slice-operand-binding"));
+        }
+        let [field] = occurrence.attributes().fields() else {
+            return Err(occurrence_error("slice-attributes"));
+        };
+        if field.id() != SLICE_SELECTION_ATTRIBUTE {
+            return Err(occurrence_error("slice-attribute-key"));
+        }
+        let selection = SliceSelection::from_canonical_value(field.value())
+            .map_err(|_| occurrence_error("slice-selection"))?;
+        let input_shape = input.shape().clone();
+        let result_shape = result.shape().clone();
+        let input_type = input.value_type().clone();
+        let result_type = result.value_type().clone();
+        if selection
+            .result_shape(&input_shape)
+            .map_err(|_| occurrence_error("slice-selection"))?
+            != result_shape
+        {
+            return Err(occurrence_error("slice-result-shape"));
+        }
+
+        let dimensions = declare_parallel_domain(context, &result_shape)?;
+        let coordinates = dimension_expressions(context, &dimensions)?;
+        let mut operand_coordinates = Vec::with_capacity(selection.axes().len());
+        for (selection, coordinate) in selection.axes().iter().zip(&coordinates) {
+            operand_coordinates.push(match selection {
+                SliceAxisSelection::WholeAxis => *coordinate,
+                SliceAxisSelection::Window { offset, .. } => context.linear_combination(
+                    IndexInteger::from_u64(*offset),
+                    &[(IndexInteger::from_u64(1), *coordinate)],
+                )?,
+            });
+        }
+
+        let tensor = context.input_tensor(input_type, input_shape)?;
+        let value = context.read(tensor, &dimensions, &operand_coordinates)?;
+        let output = context.output_tensor(result_type, result_shape)?;
+        let write = context.write(output, &dimensions, &coordinates)?;
+        context.output(write, value)
+    }
+}
+
 /// Emits the partitioned write realizing one `tiler::concatenate-f32@1`
 /// occurrence.
 ///
@@ -2367,14 +2437,15 @@ mod tests {
         governed_realization_laws, governed_scalars,
     };
     use crate::capability::{
-        IndexAccessLoweringContext, IndexAccessLoweringProvider, LoweringCapabilityRegistryBuilder,
-        LoweringCapabilityRevision, LoweringEmitError, LoweringSignature,
+        IndexAccessLoweringContext, IndexAccessLoweringProvider, IndexAccessSequenceContext,
+        LoweringCapabilityRegistryBuilder, LoweringCapabilityRevision, LoweringEmitError,
+        LoweringSignature,
     };
     use crate::legality::{IndexRefinement, RefinementError, refine_index_region};
     use std::sync::Arc;
     use tiler_ir::index::{
         DomainRole, IndexInteger, IndexRefinementSubject, IndexRegionDiagnostic,
-        JointPartitionProofView, NumericalContractIdentity, ScalarAttributes,
+        JointPartitionProofView, NumericalContractIdentity, ScalarAttributes, TensorRole,
         WriteOwnershipProofView, add_f32_scalar_op, constant_f32_scalar_op, divide_f32_scalar_op,
         multiply_f32_scalar_op, rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
     };
@@ -2387,12 +2458,12 @@ mod tests {
         F32_CONSTANT_BITS_ATTRIBUTE, InputKey, MAX_CONCATENATE_OPERANDS, MIN_CONCATENATE_OPERANDS,
         OpKey, OperationAttributes, OutputKey, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE,
         REINDEX_MAPPING_ATTRIBUTE, RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_REDUCED_AXES_ATTRIBUTE,
-        ReindexForm, ResolvedValueType, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
-        STRICT_AFFINE_ZERO_POINT_ROLE, SemanticProgramBuilder, StrictAffineU4, TypeKey, U4,
-        add_f32_op, broadcast_f32_op, concatenate_f32_axis_attribute, concatenate_f32_op,
-        constant_f32_op, dequantize_strict_affine_op, multiply_f32_op, reindex_f32_op,
-        rms_norm_f32_eps_attribute, rms_norm_f32_op, strict_serial_sum_f32_op,
-        strict_tensor_contraction_f32_op,
+        ReindexForm, ResolvedValueType, SLICE_SELECTION_ATTRIBUTE, STRICT_AFFINE_CODES_ROLE,
+        STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE, SemanticProgramBuilder,
+        SliceAxisSelection, SliceSelection, StrictAffineU4, TypeKey, U4, add_f32_op,
+        broadcast_f32_op, concatenate_f32_axis_attribute, concatenate_f32_op, constant_f32_op,
+        dequantize_strict_affine_op, multiply_f32_op, reindex_f32_op, rms_norm_f32_eps_attribute,
+        rms_norm_f32_op, slice_f32_op, strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
     };
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3242,6 +3313,60 @@ mod tests {
         );
     }
 
+    /// The slice contributes exactly one capability with no scalar authority.
+    #[test]
+    fn the_slice_capability_population_is_exactly_one_and_emits_no_scalar() {
+        let capabilities = super::governed_index_access_capabilities().unwrap();
+        let slices: Vec<_> = capabilities
+            .iter()
+            .filter(|capability| capability.operation() == &slice_f32_op())
+            .collect();
+        let [slice] = slices.as_slice() else {
+            panic!(
+                "the governed population contains exactly one slice capability, not {}",
+                slices.len()
+            )
+        };
+        assert!(
+            slice.emitted().is_empty(),
+            "a selection transports one value and applies no scalar operation"
+        );
+    }
+
+    /// The three unary structural neighbours resolve by operation key to their
+    /// exact real providers, despite carrying the same unary F32 signature.
+    #[test]
+    fn the_structural_unary_keys_resolve_their_exact_real_providers() {
+        let scalars = governed_scalars().unwrap();
+        let registry = governed_lowering_capabilities(&scalars).unwrap();
+        let unary = LoweringSignature::new([f32_type()], [f32_type()]).unwrap();
+        for (operation, provider) in [
+            (reindex_f32_op(), super::governed_provider("reindex-f32")),
+            (
+                broadcast_f32_op(),
+                super::governed_provider("broadcast-f32"),
+            ),
+            (slice_f32_op(), super::governed_provider("slice-f32")),
+        ] {
+            let resolved = registry
+                .resolve_index_access(&operation, &unary)
+                .unwrap_or_else(|error| {
+                    panic!("{operation} must resolve by its exact key: {error}")
+                });
+            assert_eq!(
+                resolved.operation(),
+                &operation,
+                "the common unary signature does not conflate structural operation keys"
+            );
+            assert_eq!(resolved.signature(), &unary);
+            assert_eq!(
+                resolved.provider(),
+                &provider,
+                "each structural key selects its exact real provider"
+            );
+        }
+    }
+
     #[test]
     fn the_governed_constant_lowering_refines_its_occurrence() {
         let refinement = refine(
@@ -3954,14 +4079,16 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // The two structural families' access maps
+    // The structural families' access maps
     // ---------------------------------------------------------------------
     //
-    // Every case below refines the emitted region *and* executes it, because a
-    // coordinate map that refines proves only that the region is well formed
-    // against its occurrence — the interface, the ownership, the reached
-    // authority. Which element each result coordinate reads is exactly what
-    // refinement does not check, and it is the whole content of these families.
+    // Reindex and broadcast below refine the emitted region *and* execute it.
+    // Slice cannot yet refine because its separately owned realization law is
+    // absent, so its case resolves and drives the real provider directly through
+    // the same structural builder before executing the result. Structural
+    // verification proves the interface and ownership, but which element each
+    // result coordinate reads is exactly what it does not check and is the whole
+    // content of these families.
     //
     // The fixtures are ascending integers rather than exceptional payloads, so a
     // wrong coordinate map produces a wrong *value* and not a coincidence. The
@@ -3979,6 +4106,14 @@ mod tests {
         OperationAttributes::new([CanonicalField::new(
             BROADCAST_AXIS_MAPPING_ATTRIBUTE,
             mapping.canonical_value().clone(),
+        )])
+        .unwrap()
+    }
+
+    fn slice_attributes(selection: &SliceSelection) -> OperationAttributes {
+        OperationAttributes::new([CanonicalField::new(
+            SLICE_SELECTION_ATTRIBUTE,
+            selection.canonical_value().clone(),
         )])
         .unwrap()
     }
@@ -4006,6 +4141,84 @@ mod tests {
         );
         let tensor = bit_tensor(input, &bits);
         evaluate_refined(&refinement, &[(0, &tensor)])
+    }
+
+    /// Resolves, emits, structurally verifies, and executes one slice capability.
+    ///
+    /// This deliberately stops before semantic refinement: the slice realization
+    /// law is a separate feasibility boundary, and M5 evidence must show what the
+    /// capability emits without implying that later authority already exists.
+    fn emitted_slice_result(selection: &SliceSelection, input: Shape) -> Vec<u32> {
+        let scalars = governed_scalars().unwrap();
+        let registry = governed_lowering_capabilities(&scalars).unwrap();
+        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+        let value = program
+            .input::<F32>(InputKey::new("slice-input").unwrap(), input.clone())
+            .unwrap();
+        let result = program
+            .apply(
+                slice_f32_op(),
+                slice_attributes(selection),
+                &[value.erase()],
+            )
+            .unwrap()[0];
+        program
+            .output_resolved(OutputKey::new("slice-result").unwrap(), result)
+            .unwrap();
+        let program = program.build().unwrap();
+        let subject = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            contract(),
+        )
+        .unwrap();
+        let signature = LoweringSignature::new(
+            subject.signature().operands().iter().cloned(),
+            subject.signature().results().iter().cloned(),
+        )
+        .unwrap();
+        let capability = registry
+            .resolve_index_access(subject.operation(), &signature)
+            .unwrap();
+        assert_eq!(capability.operation(), &slice_f32_op());
+
+        let provider = capability
+            .index_access_provider()
+            .expect("the resolved capability is index/access lowering");
+        let mut emitted = IndexAccessSequenceContext::new(&scalars, &subject);
+        provider.lower_sequence(&mut emitted).unwrap();
+        assert_eq!(
+            emitted.stage_count(),
+            1,
+            "the slice capability emits exactly one region"
+        );
+        let emitted = emitted.finish().expect("the emitted region is structural");
+        let region = emitted.final_stage();
+        let inputs: Vec<_> = region
+            .tensors()
+            .filter(|tensor| tensor.role() == TensorRole::Input)
+            .collect();
+        let [boundary] = inputs.as_slice() else {
+            panic!("one slice operand emits one input boundary")
+        };
+
+        let count = input.element_count().expect("a test shape is bounded");
+        let bits: Vec<u32> = (0..count)
+            .map(|value| u32::try_from(value).expect("a test operand is small"))
+            .collect();
+        let tensor = bit_tensor(input, &bits);
+        let evaluator = IndexRegionEvaluator::new(
+            FrozenReferenceRegistry::standard().unwrap(),
+            FrozenScalarReferenceRegistry::standard().unwrap(),
+        );
+        let evaluation = evaluator
+            .evaluate(
+                region,
+                IndexRegionAuthority::new(&scalars),
+                &[IndexRegionInput::new(boundary.id(), &tensor)],
+            )
+            .expect("the emitted slice region executes on the independent oracle");
+        output_bits(&evaluation.outputs()[0])
     }
 
     /// Every admitted reindex form, emitted and executed against a hand-derived
@@ -4173,7 +4386,30 @@ mod tests {
         );
     }
 
-    /// Neither family may rewrite a payload it only transports.
+    /// Whole axes stay identity coordinates and each window adds its own literal
+    /// offset to the corresponding result dimension.
+    #[test]
+    fn the_governed_slice_region_reads_the_literal_offset_on_every_restricted_axis() {
+        let selection = SliceSelection::new([
+            SliceAxisSelection::Window {
+                offset: 1,
+                extent: Extent::new(2),
+            },
+            SliceAxisSelection::WholeAxis,
+            SliceAxisSelection::Window {
+                offset: 2,
+                extent: Extent::new(2),
+            },
+        ])
+        .unwrap();
+        assert_eq!(
+            emitted_slice_result(&selection, Shape::from_dims([3, 2, 5])),
+            vec![12, 13, 17, 18, 22, 23, 27, 28],
+            "the nonzero offsets select the last two coordinates from the last two outer slabs"
+        );
+    }
+
+    /// Neither already-refinable structural family may rewrite a transported payload.
     ///
     /// The arithmetic families canonicalize every NaN they produce, and that rule
     /// must not leak into a family that produces nothing. A structural region
