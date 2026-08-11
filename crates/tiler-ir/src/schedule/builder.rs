@@ -1011,8 +1011,19 @@ fn verify_serial_semantics(
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
-    let contributors = contributor_count(axes, &read.map)
-        .map_err(|_| ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
+    // Preserve the serial admission boundary this refactor inherited. An
+    // identity-seeded fold validates the identity it carries and does not need
+    // to count contributors; only an identity-less fold owes a proven non-empty
+    // domain. Counting every family here would turn contributor-count
+    // canonicality and overflow into new serial-sum refusals unrelated to the
+    // empty-domain value this check owns.
+    let contributors = match family.empty_domain {
+        EmptyDomainContract::Identity { .. } => None,
+        EmptyDomainContract::NoIdentity => Some(
+            contributor_count(axes, &read.map)
+                .map_err(|_| ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?,
+        ),
+    };
     if !empty_domain_is_satisfied(family.empty_domain, contributors) {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
@@ -1156,13 +1167,19 @@ impl SplitFamily<'_> {
     }
 }
 
-/// Decides one family's empty-domain obligation against a pass's contributors.
+/// Decides one family's empty-domain obligation against an optional count.
 ///
 /// The identity-seeded arm requires the strict sum's `+0.0`, which every family
 /// carrying an identity here shares — required at each admission rather than at
 /// one of them, so a split cannot introduce a second empty-domain answer. The
 /// identity-less arm requires a non-empty domain, which is what replaces the
 /// constant the family has no correct value for.
+///
+/// `contributors` is absent only at the serial admission of an identity-seeded
+/// fold, where the count is irrelevant to the identity check and deriving it
+/// would impose a new canonical-axes and overflow obligation. Parallel
+/// admissions already require a count for their split structure and pass it
+/// through. The identity-less arm requires a present, nonzero count.
 ///
 /// **Non-emptiness of the whole sequence is non-emptiness of every partition
 /// under an exactly covering split**, which is why this needs no per-partition
@@ -1183,10 +1200,15 @@ impl SplitFamily<'_> {
 /// identity is what would discharge it instead — the separation
 /// [`ScalarProgram::StrictSerialMaximum`] records. Nothing here admits such a
 /// split; this notes which premise a later one would have to replace.
-const fn empty_domain_is_satisfied(contract: EmptyDomainContract, contributors: u64) -> bool {
+const fn empty_domain_is_satisfied(
+    contract: EmptyDomainContract,
+    contributors: Option<u64>,
+) -> bool {
     match contract {
         EmptyDomainContract::Identity { bits } => bits == 0.0_f32.to_bits(),
-        EmptyDomainContract::NoIdentity => contributors != 0,
+        EmptyDomainContract::NoIdentity => {
+            matches!(contributors, Some(contributors) if contributors != 0)
+        }
     }
 }
 
@@ -1389,7 +1411,7 @@ fn verify_multi_pass_semantics(
     // agreement block above because the identity-less arm is a statement *about*
     // that count, and the identity-carrying arm's constant is checked here for the
     // same reason it is checked in the serial arms: one empty-domain answer.
-    if !empty_domain_is_satisfied(family.empty_domain, contributors) {
+    if !empty_domain_is_satisfied(family.empty_domain, Some(contributors)) {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
     let partial_shape = partial_reduction_shape(output_shape, *partition)
@@ -1545,7 +1567,7 @@ fn verify_cooperative_semantics(
     // here shares it. Required at the same place the serial and multi-pass
     // admissions require it, so a tile cannot introduce a second empty-domain
     // answer.
-    if !empty_domain_is_satisfied(family.empty_domain, contributors) {
+    if !empty_domain_is_satisfied(family.empty_domain, Some(contributors)) {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
     // The iteration domain is the output shape with one trailing participant
@@ -4842,6 +4864,172 @@ mod tests {
             cooperative_family_builder(contracted, FIRST_INPUT)
                 .build()
                 .is_err()
+        );
+    }
+
+    /// Restates the complete serial fixture over one input shape and axis list.
+    ///
+    /// Every construction and consumption site moves together so the resulting
+    /// region isolates whether serial empty-domain admission newly requires a
+    /// contributor count. The base serial arms compared these facts structurally
+    /// but did not canonicalize or multiply the axes of an identity-seeded fold.
+    fn restate_serial_reduction_domain(
+        builder: &mut ScheduledRegionBuilder,
+        input: Shape,
+        axes: Vec<Axis>,
+    ) {
+        let output = input.without_axes(&axes);
+        let output_elements = element_count(&output).expect("the retained fixture shape fits u64");
+        builder.iteration_shape = Some(output.clone());
+
+        let LogicalAccess::ReductionContributor {
+            input_shape,
+            output_shape,
+            axes: access_axes,
+            ..
+        } = &mut builder.accesses[0].map
+        else {
+            panic!("the serial fixture has a contributor access")
+        };
+        *input_shape = input.clone();
+        *output_shape = output.clone();
+        *access_axes = axes.clone();
+
+        let BoundsProofKind::ReductionDomain {
+            input_shape,
+            output_shape,
+            axes: proof_axes,
+            ..
+        } = &mut builder.bounds_proofs[0].kind
+        else {
+            panic!("the serial fixture has a contributor proof")
+        };
+        *input_shape = input;
+        *output_shape = output;
+        *proof_axes = axes.clone();
+        builder.bounds_proofs[1].kind = BoundsProofKind::LinearRange {
+            element_count: output_elements,
+        };
+        builder.ownership_proof.as_mut().unwrap().kind =
+            OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: output_elements,
+            };
+
+        match builder
+            .scalar_program
+            .as_mut()
+            .expect("the serial fixture has a scalar program")
+        {
+            ScalarProgram::StrictSerialSum {
+                axes: scalar_axes, ..
+            }
+            | ScalarProgram::FusedMultiplyAddSerialSum {
+                axes: scalar_axes, ..
+            }
+            | ScalarProgram::SquaredSerialSum {
+                axes: scalar_axes, ..
+            }
+            | ScalarProgram::SquaredSerialSumThenEpilogue {
+                axes: scalar_axes, ..
+            }
+            | ScalarProgram::StrictSerialMaximum {
+                axes: scalar_axes, ..
+            } => *scalar_axes = axes.clone(),
+            ScalarProgram::PointwiseF32(_)
+            | ScalarProgram::PointwiseBf16(_)
+            | ScalarProgram::StrictAffineU4Dequantize { .. }
+            | ScalarProgram::StrictTensorContraction { .. } => {
+                panic!("the fixture has a serial fold program")
+            }
+        }
+        let schedule = builder
+            .schedule
+            .as_mut()
+            .expect("the serial fixture has a schedule");
+        let ReductionTopology::Serial {
+            axes: scheduled_axes,
+            ..
+        } = &mut schedule.reduction
+        else {
+            panic!("the serial fixture has a serial topology")
+        };
+        *scheduled_axes = axes;
+        schedule.work_items = output_elements;
+        schedule.launch.grid_threads = output_elements;
+    }
+
+    /// Identity-seeded serial folds preserve the exact base admission boundary:
+    /// empty-domain verification validates their identity without counting the
+    /// contributors.
+    ///
+    /// Duplicate and out-of-range axes and an overflowing reduced-extent product
+    /// are not endorsed as a new contract here; they are deliberately pinned as
+    /// admitted because this private refactor may not narrow the pre-existing
+    /// serial set. Maximum is the adjacent control: its missing identity makes a
+    /// successful contributor count load-bearing, so the same duplicate axes are
+    /// refused. A wrong sum identity is the other control and stays refused even
+    /// though no count is derived.
+    #[test]
+    fn identity_seeded_serial_folds_do_not_require_a_contributor_count() {
+        let duplicate_axes = vec![Axis::new(1), Axis::new(1)];
+        for (name, scalar) in serial_fold_families()
+            .into_iter()
+            .filter(|(_, scalar)| !matches!(scalar, ScalarProgram::StrictSerialMaximum { .. }))
+        {
+            let mut builder = serial_reduction_builder(scalar);
+            restate_serial_reduction_domain(
+                &mut builder,
+                Shape::from_dims([2, 6]),
+                duplicate_axes.clone(),
+            );
+            builder
+                .build()
+                .unwrap_or_else(|error| panic!("{name} narrowed on duplicate axes: {error:?}"));
+        }
+
+        for (name, input, axes) in [
+            (
+                "out-of-range axis",
+                Shape::from_dims([2, 6]),
+                vec![Axis::new(2)],
+            ),
+            (
+                "overflowing contributor product",
+                Shape::from_dims([u64::MAX, 2]),
+                vec![Axis::new(0), Axis::new(1)],
+            ),
+        ] {
+            let mut builder = serial_reduction_builder(bare_sum(vec![Axis::new(1)]));
+            restate_serial_reduction_domain(&mut builder, input, axes);
+            builder
+                .build()
+                .unwrap_or_else(|error| panic!("serial sum narrowed on {name}: {error:?}"));
+        }
+
+        let mut maximum = serial_reduction_builder(maximum_scalar());
+        restate_serial_reduction_domain(&mut maximum, Shape::from_dims([2, 6]), duplicate_axes);
+        assert_eq!(
+            maximum.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "an identity-less fold still owes a countable, non-empty domain",
+        );
+
+        let mut wrong_identity = bare_sum(vec![Axis::new(1)]);
+        let ScalarProgram::StrictSerialSum {
+            empty_identity_bits,
+            ..
+        } = &mut wrong_identity
+        else {
+            unreachable!()
+        };
+        *empty_identity_bits = (-0.0_f32).to_bits();
+        assert_eq!(
+            serial_reduction_builder(wrong_identity)
+                .build()
+                .unwrap_err()
+                .diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "skipping the count does not skip identity validation",
         );
     }
 
