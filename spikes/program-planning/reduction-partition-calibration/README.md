@@ -279,6 +279,23 @@ cargo run --release --bin tree-width-interactions-analysis -- \
   results/<date>-<host>-tree-width-interactions/sweep.tsv \
   results/<date>-<host>-tree-width-interactions/repeat.tsv \
   results/<date>-<host>-tree-width-interactions/environment.tsv
+
+# Frozen target-private table versus prime-factor-signature study. Verify and
+# build before the reserved window; run primary and repeat from that same binary.
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  cargo run --release --bin reduction-partition-sweep -- \
+  --verify-tree-width-table
+cargo build --release --bin reduction-partition-sweep
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  target/release/reduction-partition-sweep --tree-width-table \
+  > results/<date>-<host>-tree-width-table/sweep.tsv
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  target/release/reduction-partition-sweep --tree-width-table \
+  > results/<date>-<host>-tree-width-table/repeat.tsv
+cargo run --release --bin tree-width-table-analysis -- \
+  results/<date>-<host>-tree-width-table/sweep.tsv \
+  results/<date>-<host>-tree-width-table/repeat.tsv \
+  results/<date>-<host>-tree-width-table/environment.tsv
 ```
 
 `DEVELOPER_DIR` selects the offline toolchain the [authority ledger](../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md)'s compilation-environment row names. On the host that produced the retained result the default selection *is* a newer Xcode, so the variable is load-bearing rather than defensive.

@@ -85,3 +85,7 @@ The pre-timing direct verifier reported 70 cells, 1,265/1,265 verified, zero dec
 - executable custody: an altered after digest failed `ending executable digest does not match retained custody`.
 
 [`audit-the-stability-of-tree-width-optimum-labels-across-retained-matrices`](audit-the-stability-of-tree-width-optimum-labels-across-retained-matrices.md) owns the device-free remainder. It may assess label and plateau repeatability across opened rows, but none of the three matrices may fit or validate another selector; a later candidate requires a fresh predeclared matrix and a separate pre-lowering-observable/authority proof.
+
+## Review correction — 2026-08-11
+
+Independent exact-hash review of `1b2984fcedf0a48b9919a0c76766ef258643691d` found one Medium reproducibility gap: the retained README named this result reproducible but its `Running it` section omitted the table/signature mode. The README now records the exact untimed verification, pre-window build, same-binary primary and repeat, and device-free analyzer invocations. This correction changes no harness source, retained result, environment record, analysis, or timing claim.
