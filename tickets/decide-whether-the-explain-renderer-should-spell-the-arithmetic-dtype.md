@@ -1,7 +1,7 @@
 ---
 id: decide-whether-the-explain-renderer-should-spell-the-arithmetic-dtype
 title: Correct the explain renderer's stale arithmetic-dtype claim
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, explainability, drift]
-claimed_from: todo
-assignee: terra-explain-dtype
-lease_expires_at: 1786414719
 ---
 ## User-visible outcome
 
