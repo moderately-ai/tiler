@@ -17,11 +17,12 @@ ticket: "spike-kani-bounded-verification-on-one-inexhaustible-encoder"
 
 **Status:** complete, with a blocked primary path and a positive secondary result
 
-**Reviewed:** 2026-08-07
+**Reviewed:** 2026-08-10
 
 ## Traceability
 
 - **Work record:** [spike-kani-bounded-verification-on-one-inexhaustible-encoder](../../../tickets/spike-kani-bounded-verification-on-one-inexhaustible-encoder.md).
+- **Maintenance record:** [resync-the-kani-encoder-injectivity-shim-after-index-arithmetic](../../../tickets/resync-the-kani-encoder-injectivity-shim-after-index-arithmetic.md).
 - **Predecessor:** [prove-the-exhaustible-encoder-injectivity-claims-natively](../../../tickets/prove-the-exhaustible-encoder-injectivity-claims-natively.md) supplied the inexhaustible-encoder menu this spike selects from.
 - **Reproduction:** [Kani bounded verification of inexhaustible identity encoders](../../../spikes/verification/kani-encoder-injectivity/README.md).
 - **Host:** Apple M3 Pro, macOS 27.0 (build 26A5388g), `aarch64-apple-darwin`. Every timing below is from this host and bounded to it.
@@ -30,7 +31,7 @@ ticket: "spike-kani-bounded-verification-on-one-inexhaustible-encoder"
 
 **Fact.** The ticket's stop condition fired: `crates/tiler-ir` does not compile under Kani 0.67.0's bundled rustc. Nine errors from three independent causes, listed below. The primary path — a `#[cfg(kani)]` harness against the real crate — is **blocked on toolchain convergence**.
 
-**Fact.** Against verbatim copies of the encoders, Kani proves injectivity, and for three of the four target encoders it proves it over the **entire** input domain with no residual bound — including the full 2^32 ordinal ranges that defeated the exhaustive-finite work. `push_resources` injectivity over all ~2^161 ordered input pairs discharges in 72 s.
+**Fact.** Against guarded token-content copies of the encoders, Kani proves injectivity, and for three of the four target encoders it proves it over the **entire** input domain with no residual bound — including the full 2^32 ordinal ranges that defeated the exhaustive-finite work. The original `push_resources` copy discharged in 72 s; the current copy, re-synced after `IndexArithmetic`, discharges in 92.85 s wall time over about 2^299 ordered input pairs.
 
 **Fact.** The cost driver is not the input domain. CBMC quantifies over a `u32` symbolically at no measurable cost. The driver is the `Vec<u8>` **output**: comparing two vectors lowers to `memcmp` over a length CBMC knows only symbolically, and without an explicit unwind bound the loop unwinds forever.
 
@@ -49,7 +50,7 @@ ticket: "spike-kani-bounded-verification-on-one-inexhaustible-encoder"
 | Kani installs its own toolchain bundle and ignores `rust-toolchain.toml` | **true, and now measured rather than inferred** | `cargo kani setup` reported `[3/5] Installing rust toolchain version: nightly-2025-11-21-aarch64-apple-darwin`, and the failure diagnostic from inside this repository reads `this compiler was built on 2025-11-20`. The pin was in scope by ancestry and was not used. |
 | latest Kani release bundles ~`nightly-2025-11-21` | **true** | Kani 0.67.0, published 2026-01-16, release notes "Upgrade Rust toolchain to 2025-11-21". |
 | Kani ships "monthly releases each pinning their own nightly" | **stale, and it matters** | Monthly held through mid-2025 (0.60 2025-03-06 … 0.64 2025-07-03). It has since slowed: 0.65.0 2025-08-07, 0.66.0 2025-11-06, 0.67.0 2026-01-16, and **no release in the ~7 months since**. The ticket's re-probe condition was written assuming a cadence that would close the gap soon; it will not necessarily. |
-| `push_resources` has a finite tail of 1 495 296 values over an unbounded head | **true** | `fn push_resources` in `crates/tiler-artifact/src/program/model.rs`. Head is `u32`, `u32`, `u64`, `bool`; tail is 649 × 3² × 2⁴ × 4² = 1 495 296. |
+| `push_resources` has a finite tail of 1 495 296 values over an unbounded head | **true** | `fn push_resources` in `crates/tiler-artifact/src/program/model.rs`. Head is `u32`, `u32`, `u64`, `bool`; tail is 649 × 3² × 2⁴ × 4² = 1 495 296, making about 2^149.512 total values. |
 | `push_numerical` has a finite tail of 2 304 values | **true** | `fn push_numerical`, same file. 3² × 2⁴ × 4² = 2 304, behind a length-framed `String` and a `u32`. |
 | `push_tensor_role` and `push_component_role` are "a single `u32` each, no recursion" | **true, with one imprecision** | `pub struct InputOrdinal(u32)` in `crates/tiler-ir/src/schedule/handles.rs`, `pub struct EncodedComponentRole(u32)` in `crates/tiler-ir/src/semantic/types.rs`. Both `new` admit every `u32`, so the domains really are 2^32 + 2 and 2^32 + 1. The predecessor's Outcome describes both as "three shapes"; `push_component_role` has two. Immaterial to the selection. |
 | Tom authorized the Kani toolchain installation | **recorded, relayed** | Ticket trigger log, 2026-08-06 "later — fired", relayed by the coordinator. Not independently verifiable from the repository; the install proceeded on that record. |
@@ -90,7 +91,7 @@ So a Kani release bundling anything from roughly 2026-05 onward would unblock th
 
 The ticket permits a shim fallback only if the record states that a shim proof proves a copy and names the guard that would tie them. Both are done.
 
-`spikes/verification/kani-encoder-injectivity/src/lib.rs` holds verbatim copies of 13 encoder functions and 15 type definitions. `guard.sh` re-extracts each named item from its source file and compares token content — comments, formatting, and visibility normalized away; renamed fields, added variants, changed tag literals, dropped writes, and reordered writes not. It asserts its own population (28) so a marker syntax that stopped matching fails loudly rather than reporting a clean zero.
+`spikes/verification/kani-encoder-injectivity/src/lib.rs` initially held guarded copies of 13 encoder functions and 15 type definitions. After the 2026-08-10 re-sync it holds 14 functions and 16 type definitions: `IndexArithmetic` and `index_arithmetic_tag` are now first-class guarded subjects. `guard.sh` re-extracts each named item from its source file and compares token content — comments, formatting, and visibility normalized away; renamed fields, added variants, changed tag literals, dropped writes, and reordered writes not. It asserts its own population (30) so a marker syntax that stopped matching fails loudly rather than reporting a clean zero.
 
 **The guard was watched failing before being trusted**, on four planted drifts:
 
@@ -100,6 +101,8 @@ The ticket permits a shim fallback only if the record states that a shim proof p
 | variant `Invented` added to copied `MemoryOrdering` | exit 1, `DRIFT: MemoryOrdering` |
 | `bytes.push(permission_tag(signed_zero));` deleted from copied `push_resources` | exit 1, `DRIFT: push_resources` |
 | one `@source:` marker deleted | exit 1, `GUARD POPULATION CHANGED: compared 27 items, expected 28` |
+
+The 2026-08-10 re-sync perturbed the newly copied subject too: changing the copied `IndexArithmetic::CompleteU64` tag from `0x01` to `0x02` produced exit 1, `DRIFT: index_arithmetic_tag`, and `1 of 30 copied items have drifted from their sources.` After restoration, the guard reported `30 copied items match their sources.`
 
 **What the tie does not cover, stated plainly.** It is a text tie. It catches a source edit not mirrored into the copy, which is the drift that would leave a stale proof standing. It does not tie the *callers* — fixed width and prefix-freeness matter relative to what a record writes next, and no caller is copied. And nothing forces it to run: no `make` target reaches the directory, by the standing spikes discipline. **A proof in this spike is evidence about Tiler's encoders only as strong as someone's willingness to run `guard.sh`.**
 
@@ -123,10 +126,23 @@ Wall-clock is the whole `cargo kani --harness` invocation; verification time is 
 | --- | --- | --- | --- | --- | --- | --- |
 | `push_tensor_role_injective` | 2^32 + 2 values, all pairs | 6 | 3 s | 1.44 s | 0 of 427 failed | SUCCESS |
 | `push_component_role_injective` | 2^32 + 1 values, all pairs | 6 | 3 s | 1.00 s | 0 of 410 failed | SUCCESS |
-| `push_resources_injective` | ~2^80.5 values, ~2^161 pairs | 33 | 72 s | 71.63 s | 0 of 628 failed | SUCCESS |
+| `push_resources_injective` | ~2^149.5 values, ~2^299 pairs | 33 | 72 s | 71.63 s | 0 of 628 failed | SUCCESS |
 | `push_resources_prefix_free_tail_4` | above, plus two 4-byte tails | 37 | 184 s | 182.86 s | 0 of 629 failed | SUCCESS |
 | `push_numerical_injective_fixed_key` | 2^32 x 2 304, key concrete | 51 | 3 s | 1.46 s | 0 of 579 failed | none needed |
 | `push_numerical_injective_key_len_0` | above, key symbolic, ≤ 0 bytes | 21 | **>900 s, capped** | — | — | never reached |
+
+### Re-synced resource results after `IndexArithmetic` (2026-08-10)
+
+`ResourceRequirements` now includes the type-derived `IndexArithmetic` domain. Its only current variant, `CompleteU64`, multiplies the earlier cardinality by one. Recomputing the whole type gives 2^32 × 2^32 × 2^64 × 2 × 1 × 1 495 296, or about 2^149.512 values and 2^299.024 ordered pairs. Its fixed one-byte tag raises the maximum record width from 32 to 33 bytes; the unwind bounds therefore rise by one.
+
+Kani 0.67.0, CBMC 6.8.0, and CaDiCaL 2.0.0; Apple M3 Pro, macOS 27.0 (26A5388g), `aarch64-apple-darwin`:
+
+| harness | domain | unwind | wall | verification | checks | unwinding assertion |
+| --- | --- | --- | --- | --- | --- | --- |
+| `push_resources_injective` | ~2^149.5 values, ~2^299 pairs | 34 | 92.85 s | 91.239296 s | 0 of 628 failed | SUCCESS |
+| `push_resources_prefix_free_tail_4` | above, plus two 4-byte tails | 38 | 271.60 s | 269.94125 s | 0 of 629 failed | SUCCESS |
+
+The complete proof remains complete; the four-byte-tail proof keeps its original bound. Both runs reported the known `caller_location (1)` and `foreign function (2)` unsupported-construct classes, but no reachable violation: each summary classified six checks unreachable and every remaining check successful. Timings are one run each on the coordination host and are evidence of tractability, not performance baselines.
 
 ### The string encoder is out of reach, and the reason is not the encoder
 
@@ -160,7 +176,7 @@ That distinction is the difference between a bounded model check and a proof, an
 
 ## What this would be worth if the primary path unblocked
 
-**Inference.** Three of the predecessor's named inexhaustible encoders move from "unverified framing argument" to complete proof, at a cost between 1 s and 72 s each. The 2^32 ordinals are the interesting part: they are not reachable by enumeration at any test budget, and they are reachable by CBMC essentially for free, because a SAT solver does not walk a domain.
+**Inference.** Three of the predecessor's named inexhaustible encoders move from "unverified framing argument" to complete proof, at a measured cost between 1 s and 93 s each. The 2^32 ordinals are the interesting part: they are not reachable by enumeration at any test budget, and they are reachable by CBMC essentially for free, because a SAT solver does not walk a domain.
 
 **Inference, and the limit.** This does not generalize to most of the list. The predecessor named roughly fourteen slice/vector encoders, nine string encoders, and six structurally recursive ones. Each of those needs a bound that is a *guess about workloads* rather than a fact about the encoder, and a guessed bound cannot carry an unwinding-assertion completeness argument. For those, a Kani result would be genuinely bounded evidence and would need its own evidence class or an explicit bound field — which is the classification question the ticket routes back to the claims-ledger discussion with Tom, and which this spike does not decide.
 

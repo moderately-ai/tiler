@@ -9,7 +9,7 @@ implementation_status: "spike-only"
 evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.verification.kani-bounded-encoder-verification"]
 entrypoints: ["spikes/verification/kani-encoder-injectivity/guard.sh", "spikes/verification/kani-encoder-injectivity/src/lib.rs"]
-last_verified: "2026-08-07"
+last_verified: "2026-08-10"
 ticket: "spike-kani-bounded-verification-on-one-inexhaustible-encoder"
 ---
 
@@ -25,7 +25,7 @@ The full write-up, including the per-Fact audit of the ticket and the evidence-c
 
 **Fact.** `crates/tiler-ir` does **not** compile under Kani 0.67.0's bundled rustc, so the stop condition in the ticket fired.
 
-**Fact.** Kani nonetheless proves the encoders' injectivity over *copies* of them, and for the finite-width encoders it proves it over the entire domain with no residual bound — including all 2^32 ordinals that the exhaustive-finite work could not reach. `push_resources`, whose domain is about 2^161 ordered pairs, discharges in 72 s.
+**Fact.** Kani nonetheless proves the encoders' injectivity over *copies* of them, and for the finite-width encoders it proves it over the entire domain with no residual bound — including all 2^32 ordinals that the exhaustive-finite work could not reach. The current `push_resources`, whose domain is about 2^299 ordered pairs, discharges in 92.85 s wall time.
 
 **Fact.** The cost driver is not the input domain, which CBMC handles symbolically for free. It is the `Vec<u8>` output, whose symbolic length makes the comparison's `memcmp` unwind without bound until an explicit unwind bound is supplied — and that bound is *provably* sufficient, not merely asserted, because each encoder has a known maximum output width and CBMC checks it.
 
@@ -98,9 +98,26 @@ A compiler built on 2025-11-20 is `nightly-2025-11-21`, which is Kani's bundle a
 | `` `[u64; RANK]` is forbidden as the type of a const generic parameter `` | 4 | `semantic/shape_evidence.rs:32`, `shape/evidence.rs:63,65,67`. Downstream of the first: the nightly suggests the older, broader `adt_const_params`. |
 | `` error[E0658]: use of unstable library feature `atomic_try_update` `` | 4 | `index/handles.rs:13`, `kernel/handles.rs:24`, `program/handles.rs:24`, `semantic/handles.rs:14`. Stable at the repository's pin, unstable at Kani's. |
 
-So every encoder and every type it ranges over is a **verbatim copy** in `src/lib.rs`, and `guard.sh` is the only thing tying the copies to the sources. Read the module documentation in `src/lib.rs` for what that tie does and does not cover — it is a text tie, and its three named holes matter to any claim built on these proofs.
+So every encoder and every type it ranges over is a **token-content copy under the guard's normalization** in `src/lib.rs`, and `guard.sh` is the only thing tying the copies to the sources. Read the module documentation in `src/lib.rs` for what that tie does and does not cover — it is a text-derived token tie, and its three named holes matter to any claim built on these proofs.
 
 `guard.sh` was watched failing on four planted drifts before being trusted: a changed tag literal, an added enum variant, a dropped `bytes.push`, and a deleted marker (the population check). Each produced exit 1 naming the divergence.
+
+## Resource-proof re-sync after `IndexArithmetic`
+
+**Measurement, 2026-08-10.** Maintenance ticket [`resync-the-kani-encoder-injectivity-shim-after-index-arithmetic`](../../../tickets/resync-the-kani-encoder-injectivity-shim-after-index-arithmetic.md) reattached the copied `ResourceRequirements` and `push_resources` to live source after the record gained `index_arithmetic: IndexArithmetic`. The shim now also copies and guards the `IndexArithmetic` type and `index_arithmetic_tag` helper, raising the asserted guard population from 28 to 30.
+
+`IndexArithmetic` has one type-derived variant, `CompleteU64`. It therefore multiplies the resource domain by one. The two `u32` fields, `u64`, boolean, and 1 495 296-value finite tail make about 2^149.512 values and 2^299.024 ordered pairs. Its fixed one-byte tag does widen the maximum encoded record from 32 to 33 bytes, so the complete injectivity proof's unwind rises from 33 to 34 and the four-byte-tail proof's from 37 to 38.
+
+Kani 0.67.0, CBMC 6.8.0, and CaDiCaL 2.0.0 on the same Apple M3 Pro / macOS 27.0 (26A5388g) host:
+
+| harness | domain | unwind | wall | verification | checks | unwinding assertion |
+| --- | --- | --- | --- | --- | --- | --- |
+| `push_resources_injective` | ~2^149.5 values, ~2^299 pairs | 34 | 92.85 s | 91.239296 s | 0 of 628 failed | SUCCESS |
+| `push_resources_prefix_free_tail_4` | above, plus two 4-byte tails | 38 | 271.60 s | 269.94125 s | 0 of 629 failed | SUCCESS |
+
+The first proof remains complete over its whole type-derived input domain. The second remains genuinely bounded to two equal-length four-byte tails. Both runs reported the same `caller_location (1)` and `foreign function (2)` unsupported-construct classes as the original spike; all reached paths were discharged, with six checks classified unreachable. These are single-run wall measurements on a coordination host, not performance baselines.
+
+The re-synced guard was also perturbed at its subject: changing the copied `IndexArithmetic::CompleteU64` tag from `0x01` to `0x02` made it exit 1 with `DRIFT: index_arithmetic_tag` and `1 of 30 copied items have drifted from their sources.` The source copy was then restored and the guard returned `30 copied items match their sources.`
 
 ## Re-probe condition
 

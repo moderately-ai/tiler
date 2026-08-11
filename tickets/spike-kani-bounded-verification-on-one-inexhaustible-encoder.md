@@ -62,7 +62,7 @@ Kani 0.67.0, CBMC 6.8.0, CaDiCaL 2.0.0. Apple M3 Pro, macOS 27.0 (26A5388g).
 | --- | --- | --- | --- | --- | --- | --- |
 | `push_tensor_role_injective` | 2^32 + 2 values, all pairs | 6 | 3 s | 1.44 s | 0 of 427 failed | SUCCESS |
 | `push_component_role_injective` | 2^32 + 1 values, all pairs | 6 | 3 s | 1.00 s | 0 of 410 failed | SUCCESS |
-| `push_resources_injective` | ~2^80.5 values, ~2^161 pairs | 33 | 72 s | 71.63 s | 0 of 628 failed | SUCCESS |
+| `push_resources_injective` | ~2^149.5 values, ~2^299 pairs | 33 | 72 s | 71.63 s | 0 of 628 failed | SUCCESS |
 | `push_resources_prefix_free_tail_4` | above, plus two 4-byte tails | 37 | 184 s | 182.86 s | 0 of 629 failed | SUCCESS |
 | `push_numerical_injective_fixed_key` | 2^32 x 2 304, key concrete | 51 | 3 s | 1.46 s | 0 of 579 failed | none needed |
 | `push_numerical_injective_key_len_0` | above, key symbolic, ≤ 0 bytes | 21 | **>900 s, capped** | — | — | never reached |
@@ -105,7 +105,7 @@ Landed at merge `8d7ff18f`'s ancestor (worker commit `6c567c66`). Spike under `s
 | --- | --- | --- |
 | `push_tensor_role_injective` (2³²+2, all pairs) | 1.44 s | complete |
 | `push_component_role_injective` (2³²+1) | 1.00 s | complete |
-| `push_resources_injective` (~2¹⁶¹ pairs) | 71.6 s | complete |
+| `push_resources_injective` (~2²⁹⁹ pairs) | 71.6 s | complete |
 | `push_resources_prefix_free_tail_4` | 182.9 s | bounded, 4-byte tails |
 | `push_numerical_injective_fixed_key` | 1.46 s | narrow, key concrete |
 | `push_numerical_injective_key_len_0` | **>900 s, capped** | no verdict |
@@ -133,5 +133,7 @@ The string encoder capped at the **smallest symbolic bound that exists** — an 
 `kani-verifier` 0.67.0 plus two nightlies (`nightly-2025-11-21` bundled, `nightly-2026-05-03` for the bracket) now exist on this host. The worker reports the install predated the coordinator's authorization note, on this ticket's own trigger log. **The evidence environment is unaffected**: the pinned toolchain is unchanged, `1.97.0` remains default, and nothing in the repository's gate invokes Kani. Recorded rather than assumed harmless.
 
 The spike is tied to the crate by `guard.sh` — 28 items, token-content comparison, asserting its own population — **watched failing on four planted drifts** before being trusted. Catalog rows were filed as `catalog-the-kani-verification-research-and-spike` (now `done`).
+
+**Correction — 2026-08-10 (resource-domain arithmetic).** The recorded resource-domain exponent omitted 69 fixed-width head bits. The two `u32` fields, `u64`, boolean, and 1 495 296-value finite tail make about 2^149.512 values and 2^299.024 ordered pairs. The Kani harness was symbolic over those fields, so this correction strengthens the stated population without changing the proof, its checks, or its completeness classification.
 
 **Correction — 2026-08-10 (guard drift).** As of base `c99ac54950f2` and re-checked on the current tree, `./spikes/verification/kani-encoder-injectivity/guard.sh` exits 1 with two real drifts: live `ResourceRequirements` gained `index_arithmetic: IndexArithmetic`, and `push_resources` writes `index_arithmetic_tag(...)` before synchronization. The guard is doing its job; the land-time complete `push_resources_*` proofs no longer attach to current source text. Tensor-role and component-role copies still match. Maintenance remainder: `resync-the-kani-encoder-injectivity-shim-after-index-arithmetic` (`status: todo`).
