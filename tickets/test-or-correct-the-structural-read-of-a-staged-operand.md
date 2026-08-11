@@ -1,7 +1,7 @@
 ---
 id: test-or-correct-the-structural-read-of-a-staged-operand
 title: Test or correct the structural read of a staged operand
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [admit-elementwise-epilogues-over-a-materialized-intermediate, move-the-structural-row-to-r6-and-retire-its-backend-residual]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, correctness, doc-claim, structural, tests]
-claimed_from: todo
-assignee: terra-structural-staged-read
-lease_expires_at: 1786425351
 ---
 
 ## The claim, and what the source actually does
@@ -41,3 +38,7 @@ The doc comment states both tested refusal paths, the direct mapped-only public 
 **Subject perturbation.** The regression's reindex alone was replaced with `F32Silu` over the same contraction result while its refusal assertion stayed unchanged. The first contract failed with `left: Ok(())` and `right: Err(UnsupportedCapability { rule: "structural-operand" })`; the reindex was restored before the final checks. This also establishes that the assertion reaches the changed occurrence before any contract-dependent later feasibility can hide it.
 
 **Independent-review correction — 2026-08-11, exact candidate `2332cd8cf9690e1ca96dd38b75fcd038e7cde5ab`.** The candidate called those five named F32 points “all five statable numerical contracts,” and the adjacent test comment called them every contract a caller can state. Both population claims were false: callers can compose many other F32 dimension vectors and BF16 contracts also exist. The repaired wording names only the five F32 points this suite actually runs. Review otherwise found no defect in the refusal, control, perturbation, or boundary description.
+
+## Outcome — 2026-08-11
+
+Delivered at `f5f222ed28b54f27d4ee574b54c410bb5e9267ba`. The source comment now names both actual staged-structural refusal paths, and the public compiler regression pins direct `reverse(contract(a, b))` as `UnsupportedCapability { rule: "structural-operand" }` beside its admitted bare-contraction control for the five named F32 points this suite exercises. The required `F32Silu` subject perturbation failed the unchanged assertion with `left: Ok(())`; independent review found no executable defect after correcting the bounded population wording.
