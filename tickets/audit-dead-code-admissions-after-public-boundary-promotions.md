@@ -1,7 +1,7 @@
 ---
 id: audit-dead-code-admissions-after-public-boundary-promotions
 title: Audit dead-code admissions after public-boundary promotions
-status: in-progress
+status: done
 priority: p3
 dependencies: [promote-the-symbolic-index-profile-to-a-public-boundary, promote-the-metal-aot-compilation-identity, expose-the-governed-fact-field-vocabulary, expose-the-numerical-contract-preference-list, wire-the-delivered-realization-record-into-the-artifact]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [maintenance, lints, public-boundary, deferred]
-claimed_from: todo
-assignee: sol-dead-code-audit
-lease_expires_at: 1786441447
 ---
 Re-audit production `dead_code` admissions after the current public-boundary
 promotion wave makes the intended producers and consumers reachable.
@@ -104,3 +101,7 @@ and the full gate passes.
 
 - 2026-08-04 — **FIRED, partially; reactivated to `todo`.** The ticket's own trigger admits a partial sweep "if a *subsystem* completes — all of `tiler-ir`'s promotions, or all of `tiler-artifact`'s". [`promote-the-symbolic-index-profile-to-a-public-boundary`](promote-the-symbolic-index-profile-to-a-public-boundary.md) is `done`, which is the whole of `tiler-ir`'s promotion set, and [`promote-the-metal-aot-compilation-identity`](promote-the-metal-aot-compilation-identity.md) is `done`, which is `tiler-metal-aot`'s. Both partial sweeps were owed by the promotion that closed them and neither was run. **The inventory has also moved and the 2026-07-28 table is stale**: the file-scope admissions are now eight rather than twelve, `crates/tiler-ir/src/index/sourced.rs`, `crates/tiler-ir/src/shape/env.rs`, `crates/tiler-cache/src/expansion/{collect,preflight}.rs`, and `crates/tiler-metal-aot/src/{family,identity}.rs` are gone, and `crates/tiler-compiler/src/policy.rs` and `crates/tiler-compiler/src/target/accuracy.rs` are new. Reproduce: `grep -rn -B2 dead_code crates/*/src --include='*.rs' | grep '#!\[allow('` prints eight lines. The *item*-level admissions in the two completed subsystems are what the partial sweep now owes; the frontmatter dependencies still gate the full five-promotion sweep on [`wire-the-delivered-realization-record-into-the-artifact`](wire-the-delivered-realization-record-into-the-artifact.md), which is `todo`, so this sits at `todo` waiting on that edge rather than at `deferred` waiting on nothing.
 - 2026-08-09 — **FIRED in full.** All five frontmatter dependencies are now `done`, including `wire-the-delivered-realization-record-into-the-artifact`; the dated 2026-08-04 statement that the full sweep still waits on that edge is historical. A multiline-aware current scan finds seven **direct-inner** admissions: artifact `program/codec/mod.rs`; compiler `policy.rs`, `boundary.rs`, `explain.rs`, and `target/{accuracy,honourability,feasibility}.rs`. The 2026-08-11 correction above adds the conditional file-scope forms that scan omitted. The complete sweep is current `todo` work and must re-read each retained reason clause rather than inheriting either historical table.
+
+## Integration
+
+- 2026-08-11 — Candidate `2de8c61b12330a8450b05ce4016af7478bb7f380` received an independent exact-hash review with no findings and was integrated into `main` by merge commit `5d2fbf6ff0bb9e04e06a8bf27d172e076a1246fa`. The exact completed-tree full-gate result is recorded by the coordinator commit that closes this ticket.
