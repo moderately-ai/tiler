@@ -1,7 +1,7 @@
 ---
 id: requalify-the-compiler-statement-of-the-reference-work-bound
 title: Requalify the compiler's statement of the reference work bound
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [stage-contractions-inside-whole-program-reference-evaluation]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, reference, contraction]
-claimed_from: todo
-assignee: terra-reference-bound
-lease_expires_at: 1786418733
 ---
 ## User-visible outcome
 
