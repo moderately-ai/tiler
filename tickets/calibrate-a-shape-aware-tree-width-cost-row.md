@@ -1,7 +1,7 @@
 ---
 id: calibrate-a-shape-aware-tree-width-cost-row
 title: Calibrate a shape-aware tree-width cost row
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [measure-the-tree-width-excursion-past-the-cap, activate-measured-reduction-selection-from-a-target-cost-row, test-row-regime-divisor-interactions-on-a-fresh-tree-width-matrix]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [reductions, scheduling, measurement]
-claimed_from: todo
-assignee: sol-tree-cost-row
-lease_expires_at: 1786445695
 ---
 ## The question
 
@@ -92,3 +89,7 @@ The retained-result, environment, and executable-custody subjects do not exist u
 ## Closes when
 
 A retained qualified-host record either supports one explicit shape-aware participant-selection row under held-out scoring, or shows that this finite population still cannot support one and names the next discriminating unknown. The outcome must state whether the dense-lattice below-cap optimum and sparse-cutoff reversal recur, the worst and median regret of every candidate, repeat variance, exact environment, and unsupported profiles. No production selection changes in this ticket.
+
+## Integration
+
+- 2026-08-11 — Candidate `ee1bab24cbbd7f5821b3cede606b2bd64b30b37c` received an independent exact-hash review with no findings and was integrated into `main` by merge commit `459ab3b95e5aaf4d646bbe82baabbb6ee199eb5a`. The review independently reproduced the complete 1,232-row analysis and the 51-key custody census. This delta changes only `docs/`, the standalone spike workspace, and tickets; it touches none of the repository full-gate invalidation paths, so it carries exact-main full gate `477634a1d251afd8cdb116947df3c33fd8b7e7ae`. Citations and ticket lint are rerun on the closing commit.
