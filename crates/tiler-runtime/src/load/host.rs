@@ -11,6 +11,18 @@
 //! is the correct division: the loader is not the authority on what a machine
 //! is.
 //!
+//! # One explicit backend choice per routing attempt
+//!
+//! An [`ExecutionEnvironment`] is deliberately one atomic choice, not one row
+//! in a fallback set. The user or consumer selects the backend approach before
+//! calling `DecodedProgram::preflight` or `DecodedProgram::prepare`, and the
+//! loader validates this exact target-profile, backend-family, representation,
+//! and dtype declaration. It never retries another family. A caller may inspect
+//! a preflight refusal and explicitly begin a different attempt before any
+//! routing commit, but that second attempt is application policy rather than a
+//! silent loader fallback. Producer stable priority still chooses among
+//! compatible variants within the one stated family.
+//!
 //! # Why compatibility is a classification and not a boolean
 //!
 //! ADR 0043 requires a declared target profile to carry both a governed key and

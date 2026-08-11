@@ -1,11 +1,11 @@
 ---
 id: decide-whether-a-loading-host-may-state-several-backend-families
 title: Decide whether a loading host may state several backend families
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [expose-explicit-backend-provider-and-selection-policy-composition, select-executable-variants-across-registered-backend-families, route-a-custom-backend-through-an-independently-selected-adapter, exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio, express-the-typed-backend-family-selection-policy]
-scopes: [contracts/decisions]
+scopes: [contracts/decisions, implementation/runtime]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [backend-providers, public-boundary, runtime, decision, needs-tom]
@@ -36,12 +36,21 @@ Both are correctness-capable and neither is eliminated by an accepted record, wh
 
 **Recommendation: Option A**, on the ground that the refusal quality is the whole point of the feature. The composition ticket's obligation is to reject "policy that permits no executable route **before work**", and only the layer holding both the stated set and the packaged portfolio can decide that in one place.
 
-## Closes when
+## Accepted third position — 2026-08-11
 
-Tom picks A or B, or names a third shape; the answer is recorded where the host model is defined rather than only here — ADR 0090 item 4's host-statement inventory and `crates/tiler-runtime/src/load/host.rs` docs, plus any new decision fragment Tom requires; and [`express-the-typed-backend-family-selection-policy`](express-the-typed-backend-family-selection-policy.md) Implementation keys are rewritten against the chosen option. Do not reopen the terminal composition parent to rewrite its family-policy key again — that key was already split into express on 2026-08-09. Acceptance provenance — who, date, venue, relay source — is recorded.
+**Decision — one routing attempt names exactly one backend approach, explicitly.** Tom rejected automatic cross-family selection and both surviving positions above in the T3 Code orchestration conversation: "no silent fallbacks... users MUST specify the approach they want to use... this is where prechecks/preflight come in". A loading host continues to state exactly one [`ExecutionEnvironment`](../crates/tiler-runtime/src/load/host.rs) per attempt. The user or consumer explicitly chooses Metal, CUDA, CPU, or another backend family before routing; `preflight` or `prepare` validates that exact profile/backend/representation/dtype declaration and refuses a mismatched artifact before allocation, preparation, or routing commit.
+
+This answer is intentionally stronger than Option B. No consumer facade receives an ordered family policy that silently retries another backend. A caller may inspect a refusal and make a new, explicit attempt under another environment, but that is a new application decision after the first preflight ended and before any commit. Metal bytes presented under a Linux CUDA environment refuse, CUDA bytes presented under Metal refuse, and an artifact with no route for the explicitly chosen family refuses; none falls through to a different family.
+
+The decision does **not** remove ordinary variant selection inside the chosen backend family. The producer's stable priority may still choose among compatible plans for the one stated environment, and an ineligible variant's guard is still not evaluated. It removes only cross-family policy and fallback. One route, one environment, one live device, and one command stream remain the initial profile; multi-device execution and mixed-family variants remain unsupported.
+
+No artifact field, artifact identity, runtime identity, or public Rust surface changes. The existing singular `ExecutionEnvironment` and `DecodedProgram::{preflight, prepare}` boundary is the accepted shape.
+
+## Outcome
+
+Closed by Tom's direct 2026-08-11 decision in the T3 Code orchestration conversation. ADR 0090 item 4 and the runtime host documentation now state the explicit-single-family rule. [`express-the-typed-backend-family-selection-policy`](express-the-typed-backend-family-selection-policy.md) is closed `wontdo`, and the portfolio proof is rewritten around explicit per-family attempts rather than an automatic Metal-or-CPU policy. No implementation remains on this decision.
 
 ## Graph maintenance
 
-- Only Tom closes this. It is not research: both options were compared on correctness, maintainability, and refusal quality, and both survive.
-- Option B requires `implementation/frontend`, which the composition ticket does not declare; whichever option is chosen, add the scopes it needs to the implementing ticket rather than editing out of scope.
-- Do not build the policy vocabulary against either option before this closes. A vocabulary that cannot change an outcome is the failure this node exists to prevent.
+- The rejected set-valued loader and consumer-facade retry policy remain here as alternatives considered, not as implementation reservations.
+- A future request for automatic cross-family fallback must return as a new product decision with a use case that justifies overturning the explicit-selection rule.

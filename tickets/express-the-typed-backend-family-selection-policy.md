@@ -1,7 +1,9 @@
 ---
 id: express-the-typed-backend-family-selection-policy
 title: Express the typed backend-family selection policy
-status: todo
+status: closed
+closed_reason: wontdo
+closed_note: Tom requires one explicitly selected backend environment per routing attempt and forbids automatic cross-family fallback.
 priority: p1
 dependencies: [decide-whether-a-loading-host-may-state-several-backend-families]
 related: [expose-explicit-backend-provider-and-selection-policy-composition, select-executable-variants-across-registered-backend-families, exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio]
@@ -13,6 +15,12 @@ tags: [backend-providers, pluggability, implementation, runtime, selection]
 ## User-visible outcome
 
 A consumer that links more than one backend states allowed, required, or fallback-only backend-family policy as typed input, and a policy permitting no executable route is refused before any routing work rather than discovered as an absent variant.
+
+## Closed — 2026-08-11
+
+Tom rejected this outcome in the T3 Code orchestration conversation. A user must explicitly select one backend approach for each routing attempt; `preflight` or `prepare` validates that exact singular [`ExecutionEnvironment`](../crates/tiler-runtime/src/load/host.rs), and the loader never silently retries another backend family. A caller may make a separate explicit attempt after a preflight refusal and before any commit, but there is no allowed/required/fallback-only cross-family vocabulary to implement.
+
+This is `wontdo`, not delivered work. The existing within-family stable-priority variant selection remains; what is rejected is automatic selection or fallback **between** backend families. The accepted decision and provenance are recorded in [`decide-whether-a-loading-host-may-state-several-backend-families`](decide-whether-a-loading-host-may-state-several-backend-families.md).
 
 ## Why this is separate from its parent
 
