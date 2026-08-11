@@ -1,11 +1,11 @@
 ---
 id: declare-metal-subgroup-realization-facts-in-the-target-profile
 title: Declare Metal subgroup realization facts as atomic target facts
-status: awaiting-decision
+status: blocked
 priority: p2
-dependencies: [accept-adr-0094-subgroup-execution-tier]
-related: [design-the-subgroup-execution-tier, declare-cpu-vector-realization-facts-in-the-target-profile, correct-the-subgroup-threads-route-dimension-meaning]
-scopes: [implementation/compiler, implementation/metal, contracts/decisions]
+dependencies: [accept-adr-0094-subgroup-execution-tier, admit-an-atomic-subgroup-realization-subject-to-target-profiles, decide-the-prepared-subgroup-width-equality-gate, measure-metal-thread-execution-width-across-prepared-pipelines]
+related: [design-the-subgroup-execution-tier, declare-cpu-vector-realization-facts-in-the-target-profile, correct-the-subgroup-threads-route-dimension-meaning, correct-the-metal-profile-authority-ledgers-stale-identity-pins]
+scopes: [implementation/compiler, implementation/metal, implementation/build, research/target-profiles, contracts/decisions, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [target-profiles, metal, subgroup, execution-hierarchy, feasibility, public-boundary, decision, needs-tom]
@@ -50,3 +50,33 @@ The research record explicitly reserved the `SubgroupRealization` subject and bu
 ## Closes when
 
 The subject and its declaration path exist and are read by feasibility under whole-subject equality, every refusal above is checked by a check observed failing, no unobserved subject is defaulted, and the profile subject and its builder method have gone to Tom rather than been self-accepted. Residual ownership of public-boundary item 6 and the `threadExecutionWidth` measurement deferral is reported rather than absorbed or dropped.
+
+## Source-first decision correction — 2026-08-11
+
+The packet's field list was incomplete. Width and shuffle kind without arithmetic type could let f32 evidence admit a future BF16/F16/F64 schedule. Conversely, out-of-range behavior is irrelevant to the only admitted XOR butterfly: for power-of-two width, every `lane ^ mask` remains in range. Making it compulsory would turn irrelevant absent evidence into a false `Unknown` refusal.
+
+The generic `TargetProfileBuilder` cannot implement the packet's “wrong target family” refusal because it carries no backend-family authority. Metal-specific correspondence belongs to `BoundMetalCompileDeclaration` or another Metal-owned factory. The generic builder validates the typed row, its evidence, duplicates, contradictions, and descriptor bounds.
+
+No current authority licenses a standard Metal width row. MSL fixes no numeric SIMD-group width, the Apple9 ledger contains no subgroup realization, and ADR 0094 requires a prepared-pipeline `threadExecutionWidth` equality before routing commit. A public declaration surface may land inert; a production `Realized` row may not.
+
+## Accepted decision — 2026-08-11
+
+Tom accepted a required atomic whole-use subject:
+
+```text
+SubgroupRealizationSubject {
+    width: SubgroupWidth,
+    arithmetic: ArithmeticType,
+    transfer: SubgroupTransfer::InRangeXorShuffle,
+}
+```
+
+- Match the whole subject by exact equality. Independent dimension rows and `supports_subgroups` are forbidden.
+- The support vocabulary is `Realized` / `Unrealizable`; silence and every neighbouring subject are `Unknown`. No default, inherited family row, or deferred-success arm exists.
+- Normative and measured declarations use distinct required methods and existing distinct source types.
+- Result lane, combine order/arithmetic, coordinate mapping, contributor coverage, activity, and padding identity remain schedule/intrinsic obligations and are not duplicated into this target subject.
+- The generic builder does not guess a target family. Metal-owned binding validates that any Metal row matches the Metal compilation/profile evidence.
+- The feasibility rule-set identity advances for the new predicate. Every row field, verdict, phase, authority, validity, and source is canonical identity. A conditional domain-separated row family preserves silent-profile descriptor bytes where the existing grammar permits it; exact domain and pin effects are rederived at implementation.
+- This carrier may land before a production row, but no subgroup route becomes executable until the measurement and prepared-width gate below are complete.
+
+Delivery is split into `admit-an-atomic-subgroup-realization-subject-to-target-profiles`, `decide-the-prepared-subgroup-width-equality-gate`, and `measure-metal-thread-execution-width-across-prepared-pipelines`. This ticket now owns only the eventual evidence-backed standard Metal declaration and remains blocked on all three.
