@@ -1,7 +1,7 @@
 ---
 id: test-or-correct-the-structural-read-of-a-staged-operand
 title: Test or correct the structural read of a staged operand
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [admit-elementwise-epilogues-over-a-materialized-intermediate, move-the-structural-row-to-r6-and-retire-its-backend-residual]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, correctness, doc-claim, structural, tests]
+claimed_from: todo
+assignee: terra-structural-staged-read
+lease_expires_at: 1786425351
 ---
 
 ## The claim, and what the source actually does
