@@ -104,4 +104,4 @@ and the full gate passes.
 
 ## Integration
 
-- 2026-08-11 — Candidate `2de8c61b12330a8450b05ce4016af7478bb7f380` received an independent exact-hash review with no findings and was integrated into `main` by merge commit `5d2fbf6ff0bb9e04e06a8bf27d172e076a1246fa`. The exact completed-tree full-gate result is recorded by the coordinator commit that closes this ticket.
+- 2026-08-11 — Candidate `2de8c61b12330a8450b05ce4016af7478bb7f380` received an independent exact-hash review with no findings and was integrated into `main` by merge commit `5d2fbf6ff0bb9e04e06a8bf27d172e076a1246fa`. Exact completed-tree commit `477634a1d251afd8cdb116947df3c33fd8b7e7ae` passed `make full`: 3,303 workspace tests passed with 8 skipped; 1,138 release compiler/reference tests passed with 3 skipped; doctests, rustdoc and Clippy with warnings denied, citations, ticket lint, and shellcheck passed. This final ticket-only gate record carries that exact green result under the repository gate policy.
