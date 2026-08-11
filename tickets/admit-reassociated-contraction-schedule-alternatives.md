@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/ir, implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, physical-planning, reductions, contraction, numerics]
-claimed_from: todo
-assignee: sol-contraction-schedules
-lease_expires_at: 1786439940
 ---
 ## User-visible outcome
 
