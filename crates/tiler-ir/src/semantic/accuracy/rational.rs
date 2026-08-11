@@ -22,12 +22,13 @@
 //! unsatisfiable predicate, and constructing one must be a typed refusal rather
 //! than a contract nothing can conform to.
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt;
 
 use num_bigint::{BigInt, BigUint, Sign};
-use num_integer::Integer;
 use num_traits::{One, Signed, Zero};
 
 use crate::identity::push_len;
@@ -471,7 +472,7 @@ impl ExactRational {
     #[must_use]
     pub fn floor_to_binary_grid(&self, fraction_bits: u32) -> Self {
         let scaled = &self.numerator << u64::from(fraction_bits);
-        let quotient = scaled.div_floor(&to_int(&self.denominator));
+        let quotient = num_integer::Integer::div_floor(&scaled, &to_int(&self.denominator));
         Self::normalize(quotient, BigUint::one())
             .scale_by_power_of_two(-i32::try_from(fraction_bits).expect("a grid width fits i32"))
     }
@@ -485,7 +486,7 @@ impl ExactRational {
     #[must_use]
     pub fn ceil_to_binary_grid(&self, fraction_bits: u32) -> Self {
         let scaled = &self.numerator << u64::from(fraction_bits);
-        let quotient = scaled.div_ceil(&to_int(&self.denominator));
+        let quotient = num_integer::Integer::div_ceil(&scaled, &to_int(&self.denominator));
         Self::normalize(quotient, BigUint::one())
             .scale_by_power_of_two(-i32::try_from(fraction_bits).expect("a grid width fits i32"))
     }
@@ -514,7 +515,10 @@ impl ExactRational {
             });
         }
         let shift = u64::from(fraction_bits) * 2;
-        let scaled = (self.numerator.magnitude() << shift).div_floor(&self.denominator);
+        let scaled = num_integer::Integer::div_floor(
+            &(self.numerator.magnitude() << shift),
+            &self.denominator,
+        );
         let root = scaled.sqrt();
         let exponent = -i32::try_from(fraction_bits).expect("a grid width fits i32");
         let lower = Self::normalize(BigInt::from(root.clone()), BigUint::one())
@@ -703,9 +707,70 @@ fn power_of_two_exponent(value: &BigUint) -> Option<u64> {
     (bits != 0 && value.trailing_zeros() == Some(bits - 1)).then(|| bits - 1)
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ReductionPathCounts {
+    pub(super) total: u64,
+    pub(super) general: u64,
+}
+
+#[cfg(test)]
+impl ReductionPathCounts {
+    const ZERO: Self = Self {
+        total: 0,
+        general: 0,
+    };
+}
+
+#[cfg(test)]
+thread_local! {
+    static REDUCTION_PATH_COUNTS: Cell<ReductionPathCounts> = const {
+        Cell::new(ReductionPathCounts::ZERO)
+    };
+}
+
+#[cfg(test)]
+fn observe_reduction_call() {
+    REDUCTION_PATH_COUNTS.set(REDUCTION_PATH_COUNTS.get().with_total_incremented());
+}
+
+#[cfg(test)]
+impl ReductionPathCounts {
+    fn with_total_incremented(mut self) -> Self {
+        self.total = self
+            .total
+            .checked_add(1)
+            .expect("a unit test path count fits u64");
+        self
+    }
+
+    fn with_general_incremented(mut self) -> Self {
+        self.general = self
+            .general
+            .checked_add(1)
+            .expect("a unit test path count fits u64");
+        self
+    }
+}
+
+#[cfg(test)]
+fn observe_general_reduction() {
+    REDUCTION_PATH_COUNTS.set(REDUCTION_PATH_COUNTS.get().with_general_incremented());
+}
+
+/// Returns and resets this test thread's reduction-path observations.
+///
+/// Thread-local state keeps independently scheduled unit tests from contributing
+/// to one another's counts. The whole seam is absent from non-test builds, so it
+/// adds no work to the production arithmetic path.
+#[cfg(test)]
+pub(super) fn take_reduction_path_counts() -> ReductionPathCounts {
+    REDUCTION_PATH_COUNTS.replace(ReductionPathCounts::ZERO)
+}
+
 /// Returns `gcd(magnitude, denominator)`, by a shift when the denominator is dyadic.
 ///
-/// Identical to [`Integer::gcd`] at every input, including the zero magnitude,
+/// Identical to [`num_integer::Integer::gcd`] at every input, including the zero magnitude,
 /// where both answer `denominator`. It exists because the general algorithm's
 /// *cost* on a dyadic denominator is out of all proportion to its answer:
 /// `num-bigint`'s `BigUint::gcd` is Stein's binary algorithm, which shifts the
@@ -725,19 +790,43 @@ fn power_of_two_exponent(value: &BigUint) -> Option<u64> {
 /// value it carries past that point has a power-of-two denominator, and so does
 /// every product of two of them.
 ///
+/// The population census remains reproducible from `### Reproducing the census`
+/// in `tickets/bound-the-exact-rational-gcd-cost-in-certified-enclosures.md`;
+/// its temporary harness runs with
+/// `cargo nextest run -p tiler-reference --test gcd_census_temp --no-capture`.
+///
 /// The symmetric case — a dyadic *magnitude* against an odd denominator — is not
 /// taken, because the same census measured it at 480 calls (0.7 %) carrying 6,168
 /// iterations (0.066 %). It would be a branch whose cost is paid on every call to
 /// remove work that is not there.
 fn reduction_divisor(magnitude: &BigUint, denominator: &BigUint) -> BigUint {
+    #[cfg(test)]
+    observe_reduction_call();
     let Some(exponent) = power_of_two_exponent(denominator) else {
-        return magnitude.gcd(denominator);
+        #[cfg(test)]
+        return observed_general_reduction_divisor(magnitude, denominator);
+        #[cfg(not(test))]
+        {
+            use num_integer::Integer as _;
+            return magnitude.gcd(denominator);
+        }
     };
     let Some(twos) = magnitude.trailing_zeros() else {
         // `gcd(0, d)` is `d`, which the shift below cannot express.
         return denominator.clone();
     };
     BigUint::one() << exponent.min(twos)
+}
+
+#[cfg(test)]
+fn observed_general_reduction_divisor(magnitude: &BigUint, denominator: &BigUint) -> BigUint {
+    // Keep the trait capability at the mechanism that observes general gcd
+    // calls. A raw `.gcd` substituted into the dyadic arm then fails to compile;
+    // routing through this named mechanism makes the regression test say no.
+    use num_integer::Integer as _;
+    #[cfg(test)]
+    observe_general_reduction();
+    magnitude.gcd(denominator)
 }
 
 fn validate_magnitude(magnitude: &[u8]) -> Result<(), ExactRationalError> {
