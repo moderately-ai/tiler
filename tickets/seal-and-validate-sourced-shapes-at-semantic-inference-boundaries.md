@@ -1,7 +1,7 @@
 ---
 id: seal-and-validate-sourced-shapes-at-semantic-inference-boundaries
 title: Seal and validate sourced shapes at semantic inference boundaries
-status: todo
+status: in-progress
 priority: p0
 dependencies: []
 related: [resolve-semantic-shape-inference-over-symbolic-extents, promote-the-symbolic-index-profile-to-a-public-boundary]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, semantic-graph, correctness, public-boundary]
+claimed_from: todo
+assignee: sol-sourced-shape-seal
+lease_expires_at: 1786470100
 ---
 
 ## User-visible outcome
