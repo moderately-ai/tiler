@@ -1,7 +1,7 @@
 ---
 id: name-the-fact-source-on-retained-write-ownership-evidence
 title: Name the fact source on retained write-ownership evidence
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [bound-a-symbolic-index-coefficient-interval-from-its-declared-extent]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [indexing, proofs]
+claimed_from: todo
+assignee: sol-fact-source
+lease_expires_at: 1786430540
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: scope-launch-granularity-optimization-for-the-decode-dominated-regime
 title: Scope launch-granularity optimization for the decode-dominated regime
-status: in-progress
+status: todo
 priority: p3
 dependencies: [prototype-metal-runtime-proof]
 related: [decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode]
@@ -9,9 +9,6 @@ scopes: [research/program-planning, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, performance, runtime, trigger-fired]
-claimed_from: todo
-assignee: sol-launch-scope
-lease_expires_at: 1786423431
 ---
 ## User-visible outcome
 
