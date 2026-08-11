@@ -6,8 +6,8 @@ title: "Concatenate fusion role and lowering"
 topics: ["indexing", "access", "fusion", "lowering", "operation-families", "concatenate", "write-ownership"]
 catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
-disposition: "pending"
-implementation_status: "not-started"
+disposition: "adopted"
+implementation_status: "implemented"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.ir", "tiler.contract.fusion-and-scheduling"]
 depends_on: ["tiler.research.indexing.index-access-model", "tiler.research.shapes.sequence-extending-tensor-family", "tiler.research.semantic-graph.operation-family-delivery-graph"]
@@ -16,13 +16,13 @@ ticket: "scope-the-concatenate-fusion-role-and-lowering"
 
 # Concatenate fusion role and lowering
 
-- **Status:** scoping record for track **O-07**'s two owed rungs. It registers nothing, moves no support-matrix rung, and accepts no public boundary. Its outcome is two eliminations, one restated open-question trigger, and four filed tickets.
+- **Status:** completed scoping record for track **O-07**'s M4 and M5 questions. Its M4 `CoordinateRelation` proposal was adopted and delivered R5; its M5 partitioned-write conclusion also landed, with seven exact-signature capabilities and the accepted `PartitionedConcatenate` realization law. This record itself registered nothing or moved a support-matrix rung; the accepted law boundary was decided by its owner. Its outcome is two eliminations, one restated open-question trigger, and four filed tickets.
 - **Ticket:** [`scope-the-concatenate-fusion-role-and-lowering`](../../../tickets/scope-the-concatenate-fusion-role-and-lowering.md).
 - **Research date:** 2026-08-05, against the tree at `d5960e81`.
 
 ## Traceability
 
-- **The partition this record sits in:** [Operation-family delivery graph](../semantic-graph/operation-family-delivery-graph.md) track **O-07**, whose M4 cell reads *owed, and newly owned* and whose M5 cell reads *owed, and the alternative is a fork*. That record owns the partition and the rung vocabulary; this one answers only O-07's two cells.
+- **The partition this record sits in:** [Operation-family delivery graph](../semantic-graph/operation-family-delivery-graph.md) track **O-07**, whose M4 cell read *owed, and newly owned* and whose M5 cell read *owed, and the alternative is a fork* at this record's base. That record owns the partition and the rung vocabulary; this one answers only O-07's two cells. **Restated 2026-08-10:** M4 landed under [`admit-a-fusion-role-for-the-sequence-extension-concatenate`](../../../tickets/admit-a-fusion-role-for-the-sequence-extension-concatenate.md) and the support matrix records R5; M5 landed under [`lower-the-concatenate-occurrence-through-partitioned-writes`](../../../tickets/lower-the-concatenate-occurrence-through-partitioned-writes.md), with its public law accepted by [`accept-the-partitioned-concatenate-realization-law`](../../../tickets/accept-the-partitioned-concatenate-realization-law.md).
 - **The delivered state this record consumes and never restates:** the [operation-family support matrix](../../roadmap.md#operation-family-support-matrix)'s `Sequence extension` row. It is the sole maturity ledger and **no rung moves here.**
 - **The access language this record is bounded by:** [Symbolic index and access model](index-access-model.md) and [ADR 0046](../../decisions/0046-separate-logical-access-from-storage-addressing.md). The piecewise reservation this record tests against is that record's own — "Finite piecewise/guarded maps may be added as an explicit ordered-or-disjoint case set, but only with a verifier proving cases cover the domain and overlap consistently."
 - **The semantic elimination this record inherits rather than reopens:** [Sequence-extending tensor family](../shapes/sequence-extending-tensor-family.md) eliminated the windowed-mutation and out-of-program mechanisms and selected a pure semantic join. That elimination stands; this record starts from the family as registered and asks only what fusion role it takes and how it lowers.
@@ -43,11 +43,13 @@ Claims are labelled **Fact** when traced to inspected source at that commit, **I
 
 ### What a role has to answer for
 
-**Fact.** The fusion authority is `crates/tiler-compiler/src/fusion_legality.rs`. `FusionOperationRole` (`:132-223`) has six variants; `FusionNumericalCapabilities::governed()` (`:268-335`) maps nine operation keys onto them; `classify` (`:349-351`) is a checked lookup and `derive_member` returns `Ok(None)` for an unregistered family (`:1037-1039`), which `derive_fusion_legality` converts into `FusionLegality::Unknown` with obligation `OperationCapabilitiesResolved` and reason `"unsupported-operation-capability"` (`:940-953`). That is exactly the state the ticket's user-visible outcome asks to leave.
+**Fact — at this record's `d5960e81` research base.** The fusion authority is `crates/tiler-compiler/src/fusion_legality.rs`. `FusionOperationRole` (`:132-223`) has six variants; `FusionNumericalCapabilities::governed()` (`:268-335`) maps nine operation keys onto them; `classify` (`:349-351`) is a checked lookup and `derive_member` returns `Ok(None)` for an unregistered family (`:1037-1039`), which `derive_fusion_legality` converts into `FusionLegality::Unknown` with obligation `OperationCapabilitiesResolved` and reason `"unsupported-operation-capability"` (`:940-953`). That is exactly the state the ticket's user-visible outcome asked to leave.
+
+**Restated 2026-08-10 — live census.** `rg -c -F 'roles.insert(' crates/tiler-compiler/src/fusion_legality.rs` returns **15**, and `is_exact_governed_same_family_pointwise`'s `CoordinateRelation` arm is closed over `reindex_f32_op()`, `broadcast_f32_op()`, `concatenate_f32_op()`, and `slice_f32_op()`. The nine-key premise is the record's historical research state, not its live inventory.
 
 **Fact.** Nine obligations exist (`:372-391`) and `derive_obligations` (`:1063-1163`) discharges each one from the members' roles, their reached definitions, their derived purity, their dtype homogeneity, and the numerical contract. Nothing in that function, or in `derive_fusion_legality` (`:922-967`), resolves an index-access lowering capability, consults a realization law, or reaches the request boundary.
 
-**Inference — M4 is independent of M5, and this is the most schedulable finding in the record.** The fusion role can be registered and its legality derived with no lowering in existence. The two rungs are separately dispatchable and the fusion role does not wait on the lowering fork, on Q-SHAPE-006, or on anything in `crates/tiler-ir/src/index/`. The corpus already runs in this configuration in both directions: the contraction has a lowering and no role, and the two structural families have both and are still unreachable at the request boundary.
+**Inference — M4 was independent of M5 at this record's base, and this was the most schedulable finding in the record.** The fusion role could be registered and its legality derived with no lowering in existence. The two rungs were separately dispatchable and the fusion role did not wait on the lowering fork, on Q-SHAPE-006, or on anything in `crates/tiler-ir/src/index/`. At that base, the contraction had a lowering and no role, while the two structural families had both and remained unreachable at the request boundary. The later role and lowering landings do not change the independence conclusion.
 
 ### The elimination
 
@@ -55,7 +57,7 @@ Four candidates. Each is tested against what `derive_obligations` actually does,
 
 | Candidate | Survives? | Ground |
 | --- | --- | --- |
-| **No role — leave the family `Unknown`** | **No.** | It is the present state and it is what the ticket exists to end. `Unknown` is a fail-closed refusal, so it is not *wrong*; it is an absence of derivation. The family is pure, bit-preserving, dtype-homogeneous by construction, and reduction-free, so every obligation the authority can ask has an answer. Declining to state it is conservatism with no premise. |
+| **No role — leave the family `Unknown`** | **No.** | At this record's base, it was the present state and what the ticket existed to end. `Unknown` is a fail-closed refusal, so it is not *wrong*; it is an absence of derivation. The family is pure, bit-preserving, dtype-homogeneous by construction, and reduction-free, so every obligation the authority can ask has an answer. Declining to state it is conservatism with no premise. |
 | **`ValueSource`** | **No.** | Its contract (`fusion_legality.rs:139-141`) is a member that "contributes a value and no reordering, conversion, or reduction obligation of its own", and the `CoordinateRelation` doc (`:205-212`) draws the distinction explicitly: "a value source contributes a value the region did not otherwise have, while a coordinate relation contributes an access map over a value the region already has." Every element of a concatenation's result is an element of an operand already at the region's boundary. Classifying it as a value source would make `region_structure` (`:1303-1325`) report a region as holding one more independent value than it does — the failure the doc names. |
 | **A new seventh role** | **No.** | A new role must earn itself by either deriving an obligation differently or falling outside the four structural buckets. It does neither. Every one of the nine obligations derives for a concatenate exactly as it does for a reindex (walked below), so a new variant would carry no distinct derivation. And `FusionRegionStructure`'s four role counts must sum to `members` (`:511-538`, and the reason is stated twice at `:184-188` and `:522-529`): a fifth count field moves the content identity of **every** region this vocabulary can already encode. That is an identity-domain step paid for zero derivational difference. |
 | **`CoordinateRelation`** | **Yes.** | It is the role whose stated contract the family satisfies term for term, and the one whose derivation is already correct for it. |
@@ -69,17 +71,19 @@ Four candidates. Each is tested against what `derive_obligations` actually does,
 5. `ExceptionalValues` (`:1146-1159`) — compares the contract's canonical arithmetic NaN pattern against the governed one. A concatenation performs no arithmetic and therefore reaches no arithmetic result boundary at which a canonicalization could be added or removed; its normative definition guarantees an exceptional payload survives bit for bit. Discharged as `NormativeGuarantee` under the governed contract, on the same premise as the two existing coordinate relations.
 6-9. The four reduction obligations (`push_reduction_obligations`, `:1217-1266`) — `is_reduction()` is false for `CoordinateRelation` (`:230-237`), so identity/empty-domain and contributor order discharge as `SoundProof` vacuously, reassociation discharges because `!has_reduction`, and operand permutation discharges unconditionally.
 
-**Fact — the one decision the role forces, and where.** `is_exact_governed_same_family_pointwise` (`:1165-1214`) is deliberately closed over exact keys, and its `CoordinateRelation` arm (`:1187-1189`) matches only `reindex_f32_op()` and `broadcast_f32_op()`. Its comment states both the soundness argument — "inserting a pure data movement between two adds cannot introduce a product to fuse" — and the reason for the closure — "a future capability could classify another contraction-capable family as a coordinate relation". A member that falls through reaches the exhaustive arm at `:1204-1210` and returns `false`.
+**Fact — the one decision the role forced at this record's base, and where.** `is_exact_governed_same_family_pointwise` (`:1165-1214`) was deliberately closed over exact keys, and its `CoordinateRelation` arm (`:1187-1189`) then matched only `reindex_f32_op()` and `broadcast_f32_op()`. Its comment stated both the soundness argument — "inserting a pure data movement between two adds cannot introduce a product to fuse" — and the reason for the closure — "a future capability could classify another contraction-capable family as a coordinate relation". A member that fell through reached the exhaustive arm at `:1204-1210` and returned `false`.
 
 **Inference — the arm should be extended to the concatenate key, and this must be decided rather than inherited.** The soundness argument transfers verbatim: a concatenation introduces no multiply, no add, and no adjacency between them, so inserting one between two adds cannot create a product to fuse. The closure exists so that this transfer is stated per key rather than assumed by role, which is precisely what extending it does.
 
 **Fact — what not extending it would cost, and it is not zero.** `strict_contract` (`policy.rs:714-734`) sets `contraction: NumericalPermission::Forbidden`, so under the governed contract the `else if` branch at `:1107-1111` discharges `ArithmeticContraction` as a `NormativeGuarantee` anyway. Under a contract permitting contraction, a member falling through returns `Unknown` with reason `"unrealized-contraction"` (`:1113-1116`), and `first_unknown` (`:1286-1300`) makes the whole candidate `Unknown`. **Inference:** leaving the arm unextended would silently defer every fused candidate containing a concatenate under any contraction-permitting contract, for a reason the family's own semantics refute.
 
-**Fact — arity is not an obstacle, checked rather than assumed.** Every family holding a role today is fixed-arity (zero, one, or two operands) and the concatenate is two through eight. Nothing in the derivation is arity-sensitive: `region_structure` (`:1303-1325`) counts members by role predicate and reads `boundary_inputs` from the candidate rather than from any operation's arity, `derive_obligations` iterates members, and `member_is_homogeneous` iterates whatever operand encodings the member has. A variadic member changes the candidate's boundary-input count, which is already a per-candidate quantity.
+**Fact — arity was not an obstacle, checked rather than assumed.** At this record's base every family holding a role was fixed-arity (zero, one, or two operands) and the concatenate was two through eight. Nothing in the derivation was arity-sensitive: `region_structure` (`:1303-1325`) counts members by role predicate and reads `boundary_inputs` from the candidate rather than from any operation's arity, `derive_obligations` iterates members, and `member_is_homogeneous` iterates whatever operand encodings the member has. A variadic member changes the candidate's boundary-input count, which is already a per-candidate quantity.
 
 **Fact — registering the role does not move the pinned explain digest.** `ExplainWriter::new` (`explain.rs:1219-1235`) folds `FusionNumericalCapabilities::governed().provider()` — the `ProviderIdentity`, namespace, name, and revision — into the allowed-provider set. It does not fold the role table. `GOVERNED_PROVIDER_REVISION` has been `1` since the module was introduced (`git log -S "GOVERNED_PROVIDER_REVISION: u32 = " -- crates/tiler-compiler/src/fusion_legality.rs` returns exactly one commit, `1f541d60`), including across the landing that added the reindex and broadcast roles. **Inference:** on that precedent, adding a role is not an output-affecting revision bump, and the pinned `"tiler-explain-v7 request=45467875b9574962"` at `explain.rs:4050` is unaffected. The implementation ticket must still confirm this on its own merged tree rather than inherit it, because the ledger comments at `explain.rs:4008-4021` record two occasions on which a concatenate-related change moved that digest for a different reason. *(Dated 2026-08-06: the implementation landed, confirmed the non-movement on its tree, and the quoted pin value has since moved several times for unrelated changes — read the current value from `explain.rs`'s own ledger, never from this record.)*
 
 **Proposal — the disposition.** *The sequence-extension concatenate takes the existing `CoordinateRelation` fusion role, with `is_exact_governed_same_family_pointwise`'s coordinate-relation arm extended to its key.* No new role, no new obligation, no new structural count, no public boundary. `FusionOperationRole` is a private enum and `FusionNumericalCapabilities` is `pub(crate)`, so this proposal reaches no public item; the matrix rung it would satisfy remains the matrix's to move.
+
+**Fact — adopted 2026-08-10.** [`admit-a-fusion-role-for-the-sequence-extension-concatenate`](../../../tickets/admit-a-fusion-role-for-the-sequence-extension-concatenate.md) registered the existing role and the per-key arm decision, delivering the support matrix's R5 criterion. The M5 conclusion also landed as documented below, so the record is adopted rather than partially adopted.
 
 ## Question 2 — the lowering fork
 
@@ -129,6 +133,8 @@ The delivery graph said the partitioned alternative "stays inside the admitted l
 
 **Proposal — the disposition.** *The sequence-extension concatenate lowers as a partitioned write: one write root per operand over one output value, each total over its own contiguous partition of the concatenated axis, with joint coverage and disjointness proved across the roots. The piecewise read is eliminated.* This is a research disposition. The public boundary it would eventually reach — a variant on the `#[non_exhaustive]` `WriteOwnershipProofView` — is Tom's, and is named in the filed ticket rather than pre-authorized here.
 
+**Fact — adopted and implemented 2026-08-07.** [`lower-the-concatenate-occurrence-through-partitioned-writes`](../../../tickets/lower-the-concatenate-occurrence-through-partitioned-writes.md) landed the selected partitioned write with seven arity-specific capabilities and verifies and refines every admitted arity against `IndexRealizationLaw::PartitionedConcatenate`; [`accept-the-partitioned-concatenate-realization-law`](../../../tickets/accept-the-partitioned-concatenate-realization-law.md) accepted that public law. The historical proposal and its public-boundary caution remain the basis on which those landings were evaluated.
+
 ## Question 3 — the inner-axis realization, checked rather than inherited
 
 The ticket requires checking, not inheriting, the matrix row's assertion that an inner-axis concatenate's loss of the contiguous-window realization is an applicability predicate on a physical candidate rather than a second semantic identity.
@@ -156,7 +162,9 @@ The ticket requires checking, not inheriting, the matrix row's assertion that an
 Each is one command from the repository root, with the positive control that proves it can return something.
 
 ```sh
-# 1. The fusion-role table holds eleven keys and the concatenate is among them.
+# 1. Historical census: this record's base held nine keys without concatenate;
+#    the 2026-08-06 restatement recorded eleven keys with it. Live, the table
+#    holds fifteen keys and includes concatenate as a CoordinateRelation.
 grep -n 'roles.insert(' -A 1 crates/tiler-compiler/src/fusion_legality.rs
 #    Positive control: the same read finds reindex_f32_op and broadcast_f32_op,
 #    so a key is read out of a list with members rather than out of an empty
@@ -164,19 +172,22 @@ grep -n 'roles.insert(' -A 1 crates/tiler-compiler/src/fusion_legality.rs
 #    Restated 2026-08-06: this read "nine keys and no concatenate", which was
 #    the state the elimination below ran against. The disposition it supports
 #    landed under `admit-a-fusion-role-for-the-sequence-extension-concatenate`,
-#    so what this check observes is the registration rather than its absence.
+#    so the eleven-key intermediate state observed the registration. Restated
+#    2026-08-10: the source-safe live census is fifteen registrations.
 #    `-A 1` is needed because most entries span two lines and the bare match
 #    shows no key.
 
-# 2. The coordinate-relation arm of the contraction proof is closed over three
-#    exact keys, the concatenate among them.
+# 2. Historical census: the arm had two keys at this record's base and three
+#    after concatenate's admission. Live, the CoordinateRelation arm is closed
+#    over four exact keys, including concatenate and slice.
 grep -n 'fn is_exact_governed_same_family_pointwise' -A 50 crates/tiler-compiler/src/fusion_legality.rs
 #    Positive control: the same read finds the ValueSource arm's constant guard,
 #    so the match is being read rather than a comment.
 #    Restated 2026-08-06: this read "closed over two keys" — reindex and
 #    broadcast — which is what the extension proposed below started from. The
-#    extension landed with the per-key transfer this record argued for, so the
-#    arm is still closed and only its membership moved.
+#    extension landed with the per-key transfer this record argued for, making
+#    the arm three-key at that point. Restated 2026-08-10: slice is the fourth
+#    exact key; the arm remains closed.
 
 # 3. The refusal list's current state: the subset write-domain rule, the
 #    partition path that replaced the construction-time refusals, the
@@ -223,7 +234,7 @@ grep -n 'FusionNumericalCapabilities::governed().provider()' -B 8 crates/tiler-c
 ## What this record does not decide
 
 - **Any matrix rung.** O-07 stays where the matrix has it. A record delivers nothing; the tickets below do.
-- **The public boundary of a partitioned write-ownership proof.** `WriteOwnershipProofView` is `pub` and `#[non_exhaustive]`; a variant on it is a public boundary and is Tom's under ADR 0075. The filed ticket names it as a stop rather than pre-authorizing it.
+- **The public boundary of a partitioned write-ownership proof.** At this record's base, `WriteOwnershipProofView` was `pub` and `#[non_exhaustive]`, so its variant was a public boundary for Tom under ADR 0075. The separately filed owner carried that decision; the accepted concatenate realization law is a distinct public surface and does not reopen the proof boundary here.
 - **The in-place append into a caller-retained allocation.** Still [`scope-an-in-place-append-into-a-caller-retained-allocation`](../../../tickets/scope-an-in-place-append-into-a-caller-retained-allocation.md)'s under Q-PLAN-015. This record establishes that the partitioned-write contract is a shared prerequisite of both, not that either is authorized.
 - **Whether a partitioned write is proved per-partition or jointly, and by which proof form.** The obligation is stated — partition-relative totality, joint coverage, disjointness — and its decidability for contiguous static ranges is argued; the exact proof kind, its canonical encoding, and its budget are implementation work.
 - **Any cost claim.** No schedule for a concatenation has been measured at any shape. The residency arithmetic cited above is the sequence-extending record's, restated with its label intact.
