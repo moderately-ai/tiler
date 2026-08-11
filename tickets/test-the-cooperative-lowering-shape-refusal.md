@@ -1,7 +1,7 @@
 ---
 id: test-the-cooperative-lowering-shape-refusal
 title: Test the cooperative lowering-shape refusal
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [implement-the-two-dimensional-staging-relation-and-step-the-schedule-domain-to-v5, record-adr-0097-as-implemented-and-correct-the-navigation-staging-claims]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, testing]
+claimed_from: todo
+assignee: terra-cooperative-refusal
+lease_expires_at: 1786418733
 ---
 ## User-visible outcome
 

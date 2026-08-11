@@ -1,7 +1,7 @@
 ---
 id: scope-precision-schedule-co-search-under-accuracy-obligations
 title: Scope precision-schedule co-search under accuracy obligations
-status: todo
+status: in-progress
 priority: p3
 dependencies: [define-the-model-level-conformance-corpus, implement-analytical-component-cost-model, emit-analytical-costs-through-the-typed-cost-vocabulary]
 related: [implement-workload-selected-quantized-parameter-maps, derive-the-capability-set-for-search-discovered-flash-class-attention-kernels, derive-the-oracle-for-a-permitted-divergence-candidate, prototype-quantized-value-vertical]
@@ -9,6 +9,9 @@ scopes: [research/numerics, research/cost-model, research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, cost-model, trigger-fired]
+claimed_from: todo
+assignee: sol-precision-cosearch
+lease_expires_at: 1786418733
 ---
 ## User-visible outcome
 
