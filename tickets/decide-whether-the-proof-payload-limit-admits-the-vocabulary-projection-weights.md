@@ -1,7 +1,7 @@
 ---
 id: decide-whether-the-proof-payload-limit-admits-the-vocabulary-projection-weights
 title: Decide whether the proof payload limit admits the vocabulary-projection weights
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [route-the-realization-conformance-half-into-the-conformance-crate]
@@ -106,3 +106,22 @@ Phase B repair against `docs/research/documentation/ticket-audit-2026-08-10/repo
 - **Findings population item 5.** Dropped the false claim that `cases_for` lacks a `1 × 8192 × 1024` operand-table row; `ProofFamily::L3CorrectnessCell` synthesizes operands for every `L3_CORRECTNESS_CELLS` extent.
 - **Census.** "six crates" → "five crates" for named constants equal to `16 * 1024 * 1024` under `crates/` (`tiler-ir`, `tiler-artifact`, `tiler-reference`, `tiler-compiler`, `tiler-conformance`).
 - **Authority wording.** Closing condition and recommendation no longer cite ADR 0075 alone for a *value* move of an already-public constant; they name Tom's public-contract decision (ADR 0075 still covers promotion/signature categories).
+
+## Decision — retire the independent payload limit
+
+**Accepted by Tom on 2026-08-11 in the Codex coordination thread.** Tom stated a general preference for liberal alpha limits over prematurely excluding supported shapes and delegated the exact choice to the coordinator under Tiler's fail-closed constraints. After an exact-base re-audit at `62df964ef529aadee4649d4eb9c155152b8c92be`, the chosen contract is:
+
+- Remove the independent public `MAX_PROOF_PAYLOAD_BYTES` constant and the `ProofLimitKind::PayloadBytes` classification. One payload has no separate semantic size policy.
+- Retain `MAX_PROOF_SIDECAR_BYTES` as the one complete byte authority. A sidecar exceeding 256 MiB still refuses atomically and yields no decoded or verified partial value.
+- Before removing the early individual check, make producer accounting honest: compute checked cumulative manifest, identity, framed-payload, and complete-sidecar sizes before proportional cloning or output growth; consume or move caller-owned payload vectors rather than cloning them where ownership permits; reserve only after the exact total is known.
+- Admit the `w_vocab_slice` conformance member as a consequence of the general container rule. Its complete payload content is 33,591,296 bytes, comfortably below the unchanged 256 MiB total; do not special-case its dimensions.
+- Do not split, compress, reference externally, or silently omit a large payload. Each would add a distinct storage/resolution contract and none reduces the bytes the current proof runner must materialize and upload.
+- Do not step `SIDECAR_FORMAT` or `MANIFEST_SCHEMA` for this admission-policy change. The wire grammar and canonical content are unchanged; old readers continue to refuse a payload beyond their local policy as typed `Limit`, never as a fallback.
+
+**Correction to the 2026-08-07 resource claim.** The 16 MiB check does cap the largest individual producer clone and decoder `to_vec`, but it does not establish the advertised aggregate bound: many payloads may already fill the 256 MiB container, and producer `place`, `derive_identity`, `encode_manifest`, and `encode` currently allocate before their aggregate checks. The accepted contract's claim that every limit is checked before proportional allocation in both directions is false until [`enforce-proof-sidecar-byte-budgets-before-producer-allocation`](enforce-proof-sidecar-byte-budgets-before-producer-allocation.md) lands.
+
+**Identity and compatibility.** No current content identity folds a `MAX_PROOF_*` value, so retiring this limit moves no existing sidecar, artifact, envelope, or cache identity. Routing the vocabulary cell adds a new conformance member. A later format-minor step has its own latent compatibility problem—parsed minor versions are discarded before identity derivation and canonical re-encoding—which is preserved in [`make-proof-sidecar-minor-version-compatibility-real-before-the-first-step`](make-proof-sidecar-minor-version-compatibility-real-before-the-first-step.md) rather than being triggered here.
+
+## Outcome
+
+The payload-limit decision is complete. [`enforce-proof-sidecar-byte-budgets-before-producer-allocation`](enforce-proof-sidecar-byte-budgets-before-producer-allocation.md) owns the prerequisite resource-safety repair, and [`retire-the-independent-proof-payload-limit-and-route-the-vocabulary-cell`](retire-the-independent-proof-payload-limit-and-route-the-vocabulary-cell.md) owns the public-surface removal and conformance population. No worker may replace 16 MiB with another round per-payload number.
