@@ -1,7 +1,7 @@
 ---
 id: audit-the-stability-of-tree-width-optimum-labels-across-retained-matrices
 title: Audit the stability of tree-width optimum labels across retained matrices
-status: in-progress
+status: done
 priority: p3
 dependencies: [compare-a-target-private-tree-width-table-with-a-prime-factor-signature]
 related: []
@@ -9,9 +9,6 @@ scopes: [research/program-planning, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [reductions, scheduling, research]
-claimed_from: todo
-assignee: sol-tree-label-stability
-lease_expires_at: 1786458718
 ---
 ## The question
 
@@ -92,3 +89,7 @@ Retain a replayable analyzer, input digests, exact population census, thresholds
 - noise: changing only shape-aware's multiplier from `2.0` to `1.0` failed the unchanged source-specific self-check with `shape-aware retained noise multiplier moved`, `left: 4607182418800017408`, `right: 4611686018427387904`.
 
 The result and population probes recomputed the disposable result and environment digests so a stale custody row could not mask the semantic assertion under test. The repository subjects were restored, the analyzer was rebuilt, `--self-check` passed at 188/2,506/5,012, and the exact retained replay passed again. No Metal command, device timing, measuring-harness mode, or production path ran in this audit.
+
+## Integration — 2026-08-11
+
+Integrated reviewed candidate `826640ce40eeef6ca75450130c044375f01ec3d1` in merge `54aa02446517b5d3110dd629068e494c45a6df74`. Independent review recomputed every one of the 188 cell metrics and all 16 frozen aggregates from the six retained TSVs, reproduced the four passing study-by-role subsets and `stable-named-subsets-only` verdict, reran all five subject perturbations, and reported no findings. The exact candidate passed spike formatting, check, test, Clippy and rustdoc with warnings denied, citations, ticket lint, diff-check, and scope guard. The latest exact source-tree full gate at `477634a1d251afd8cdb116947df3c33fd8b7e7ae` carries because this delta touches only `spikes/` and `tickets/`; citations and ticket lint were rerun on the integrated closure commit.
