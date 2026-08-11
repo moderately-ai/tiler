@@ -4,7 +4,7 @@ title: Accept or revise ADR 0108 on siting a data-dependent index coordinate
 status: blocked
 priority: p1
 dependencies: [revise-adr-0108-with-a-complete-data-dependent-index-vertical]
-related: [admit-the-indirect-access-class-into-the-index-layer, admit-an-indirect-gather-family-for-tied-embedding-lookup, emit-the-indirect-gather-on-metal, accept-adr-0107-indirect-gather-semantic-family]
+related: [admit-the-indirect-access-class-into-the-index-layer, admit-an-indirect-gather-family-for-tied-embedding-lookup, admit-the-selected-data-dependent-index-representation, admit-an-invocation-scoped-gather-index-validation-receipt, emit-the-indirect-gather-on-metal, accept-adr-0107-indirect-gather-semantic-family]
 scopes: [contracts/decisions, contracts/foundation, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []

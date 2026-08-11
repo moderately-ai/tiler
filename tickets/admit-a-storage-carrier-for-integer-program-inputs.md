@@ -4,7 +4,7 @@ title: Admit a storage carrier for integer program inputs
 status: awaiting-decision
 priority: p1
 dependencies: [admit-an-indirect-gather-family-for-tied-embedding-lookup, reclassify-language-model-work-as-a-conformance-track]
-related: [design-model-ingestion-and-complete-execution, enumerate-the-mature-tensor-dtype-taxonomy, route-an-embedded-artifact-through-a-consumer-storage-seam, admit-the-bf16-type-and-carrier-into-every-total-map]
+related: [design-model-ingestion-and-complete-execution, enumerate-the-mature-tensor-dtype-taxonomy, route-an-embedded-artifact-through-a-consumer-storage-seam, admit-the-bf16-type-and-carrier-into-every-total-map, admit-an-invocation-scoped-gather-index-validation-receipt]
 scopes: [implementation/ir, implementation/artifact, implementation/frontend, contracts/artifacts, implementation/compiler, implementation/metal, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []

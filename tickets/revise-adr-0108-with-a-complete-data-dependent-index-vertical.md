@@ -1,7 +1,7 @@
 ---
 id: revise-adr-0108-with-a-complete-data-dependent-index-vertical
 title: Revise ADR 0108 with a complete data-dependent index vertical
-status: awaiting-decision
+status: todo
 priority: p1
 dependencies: [accept-adr-0109-fail-closed-on-unknown-index-domain-proof]
 related: [accept-adr-0108-data-dependent-index-coordinate-siting, admit-the-indirect-access-class-into-the-index-layer, emit-the-indirect-gather-on-metal, admit-a-storage-carrier-for-integer-program-inputs]
@@ -119,6 +119,18 @@ Tom chooses the authority under which the revision continues:
 The choice does not accept either nested-expression or tagged-access public spelling. Their exact public surfaces still return separately after the comparison. **Strongest counterpoint to option 1:** it may leave gather permanently semantic-only even though `decide_gather_index` was deliberately factored for host validation; option 2 can unlock the real workload, but only by adding the missing run-time and identity authority honestly.
 
 After Tom answers, return this node to `todo` under the selected authority. The dependent ADR 0108 acceptance node remains blocked until the revised proposal is complete.
+
+## Direction accepted for the revision — 2026-08-11
+
+Tom selected option 2 in the T3 Code orchestration conversation, conditional on a deliberately strict narrow first pass and on every excluded lane remaining explicit in tickets and documentation. This acceptance authorizes the revision to design **invocation-bound preflight validation**; it does not accept either logical representation or any public Rust spelling.
+
+The revised proposal must preserve static proof as the zero-runtime-cost first lane. Its only initial dynamic lane is a host-visible `tiler::u32@1` program input whose exact values are validated by Tiler against the exact gathered extent before routing commit. Successful validation mints an invocation-scoped, sealed receipt over an immutable snapshot owned by the validated binding. The receipt is bound to the gather occurrence, extent, value type, and snapshot; it cannot be reused after a value or binding changes and it is consumed by the exact attempt it authorizes.
+
+This is a narrow supersession proposal for ADR 0109 decision 2, not a general permission to execute `Unknown`. Compilation may carry only the selected gather representation's **mandatory named validation obligation** toward preflight; no invocation receives executable authority until that obligation has a matching receipt. An absent, stale, mismatched, unanswerable, or failed validation refuses. An out-of-range value remains a semantic failure naming position, value, and extent; it never becomes a plan miss, clamp, wrap, alternate route, reference execution, or backend fallback.
+
+Mutable zero-copy inputs, device-resident or device-produced indices, validation inside the gather kernel, caller assertions, and generalization beyond gather are excluded from the first pass and now have explicit follow-up tickets or rejection text. The representation comparison must still choose between the complete nested-read and tagged-access candidates, account for every identity-domain consequence, and return every consequential public surface separately under ADR 0075.
+
+Acceptance provenance: Tom's direct 2026-08-11 message, “okay so long as we are strict with our narrow first pass... and have proper tickets/comments/documentation for future work and are not leaving work missing from the tree”.
 
 ## Closes when
 

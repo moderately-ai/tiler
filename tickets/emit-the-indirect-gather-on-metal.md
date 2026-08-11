@@ -3,8 +3,8 @@ id: emit-the-indirect-gather-on-metal
 title: Emit the indirect gather on Metal
 status: blocked
 priority: p3
-dependencies: [accept-adr-0108-data-dependent-index-coordinate-siting, admit-a-storage-carrier-for-integer-program-inputs]
-related: [admit-an-indirect-gather-family-for-tied-embedding-lookup, admit-a-storage-carrier-for-integer-program-inputs]
+dependencies: [accept-adr-0108-data-dependent-index-coordinate-siting, admit-the-selected-data-dependent-index-representation, admit-a-storage-carrier-for-integer-program-inputs, admit-an-invocation-scoped-gather-index-validation-receipt, accept-the-invocation-scoped-gather-validation-public-surface]
+related: [admit-an-indirect-gather-family-for-tied-embedding-lookup, admit-a-storage-carrier-for-integer-program-inputs, validate-device-resident-gather-indices-before-dispatch, admit-a-zero-copy-exclusive-lease-for-validated-gather-indices]
 scopes: [implementation/metal, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -31,6 +31,8 @@ admitted IR.
 three variants, `U8`, `F32`, and `Bf16`; none carries the `tiler::u32@1` index
 operand. [`admit-a-storage-carrier-for-integer-program-inputs`](admit-a-storage-carrier-for-integer-program-inputs.md)
 owns that independent prerequisite and is now a direct dependency.
+
+**Accepted sequencing — no implied validation.** ADR 0108's 2026-08-11 direction permits only a host-visible immutable-snapshot preflight lane in the first pass. [`admit-the-selected-data-dependent-index-representation`](admit-the-selected-data-dependent-index-representation.md) must first admit the accepted IR form. [`admit-an-invocation-scoped-gather-index-validation-receipt`](admit-an-invocation-scoped-gather-index-validation-receipt.md) must then carry and consume the exact mandatory obligation, and its public surface must be accepted separately. Emission cannot infer validation from forming an address and cannot make a device-side check part of this ticket.
 
 The old dependency on
 [`admit-the-indirect-access-class-into-the-index-layer`](admit-the-indirect-access-class-into-the-index-layer.md)

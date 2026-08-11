@@ -17,6 +17,8 @@ ticket: "revise-adr-0108-with-a-complete-data-dependent-index-vertical"
 
 **Status:** proposed — returned for revision on 2026-08-08.
 
+**Direction accepted for revision — 2026-08-11.** Tom authorized the revision to design a narrowly invocation-bound validation lane while keeping this ADR proposed. Static proof remains first. The only initial dynamic subject is a host-visible `tiler::u32@1` input validated before routing commit into a sealed receipt over an immutable snapshot; the receipt is scoped to the exact occurrence, extent, type, binding, and invocation and supplies no timeless program proof. Missing, stale, mismatched, or failed validation refuses without clamp, wrap, plan substitution, reference execution, or backend fallback. Mutable zero-copy and device-resident inputs remain unsupported and have named deferred owners. This direction permits the revision to propose the exact narrow supersession of ADR 0109 decision 2 that such a receipt requires; it accepts neither representation candidate, no public API, and no identity-domain change. Direct provenance is Tom's T3 Code instruction that the first pass remain strict and narrow and that every future lane stay represented in the work tree.
+
 **Decision provenance.** In the 2026-08-08 interactive orchestration session,
 Tom delegated the coordinator to make the correct decision after independent
 source audit. The resulting decision was **not to accept this record as written**
