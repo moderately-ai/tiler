@@ -599,6 +599,82 @@ mod tests {
         (Toolchain::with_launcher(launcher), counter)
     }
 
+    /// A fake toolchain that keys every stage's output to the AOT target.
+    ///
+    /// The two declarations in the retention test share a compiler profile, so
+    /// position-specific text must come from the target that reaches the real
+    /// driver invocation rather than from a second test-only association table.
+    /// `metal` receives that target in its `-target` flag and carries it into
+    /// the fake AIR bytes; `metallib` then reads those bytes, as it would read
+    /// the preceding stage's output. Thus a transposition of the `StageOutputs`
+    /// run is observable at the retention seam, while the test continues to
+    /// drive the actual prepare/compile/publish/cache path.
+    fn positioned_warning_toolchain(directory: &Path) -> (Toolchain, PathBuf) {
+        let counter = directory.join("compiler-invocations");
+        let metal = directory.join("metal");
+        let metallib = directory.join("metallib");
+        let launcher = directory.join("xcrun");
+        write_executable(
+            &metal,
+            &format!(
+                "#!/bin/sh\n\\
+                 if [ \"$1\" = \"--version\" ]; then echo 'Metal positioned-v1'; exit 0; fi\n\\
+                 target=''\n\\
+                 while [ \"$#\" -gt 0 ]; do\n\\
+                   if [ \"$1\" = \"-target\" ]; then shift; target=\"$1\"; fi\n\\
+                   if [ \"$1\" = \"-o\" ]; then\n\\
+                     shift\n\\
+                     case \"$target\" in\n\\
+                       air64-apple-macos26.0) printf '%s' '{MACOS_METAL_WARNING}' >&2; printf AIR-macos > \"$1\" ;;\n\\
+                       air64-apple-ios26.0) printf '%s' '{IOS_METAL_WARNING}' >&2; printf AIR-ios > \"$1\" ;;\n\\
+                       *) exit 1 ;;\n\\
+                     esac\n\\
+                     printf 'metal\\n' >> '{}'\n\\
+                     exit 0\n\\
+                   fi\n\\
+                   shift\n\\
+                 done\n\\
+                 exit 1\n",
+                counter.display(),
+            ),
+        );
+        write_executable(
+            &metallib,
+            &format!(
+                "#!/bin/sh\n\\
+                 if [ \"$1\" = \"--version\" ]; then echo 'metallib positioned-v1'; exit 0; fi\n\\
+                 case \"$(cat \"$1\")\" in\n\\
+                   AIR-macos) printf '%s' '{MACOS_METALLIB_WARNING}' >&2 ;;\n\\
+                   AIR-ios) printf '%s' '{IOS_METALLIB_WARNING}' >&2 ;;\n\\
+                   *) exit 1 ;;\n\\
+                 esac\n\\
+                 printf 'metallib\\n' >> '{}'\n\\
+                 while [ \"$#\" -gt 0 ]; do\n\\
+                   if [ \"$1\" = \"-o\" ]; then shift; printf MTLBpositioned > \"$1\"; exit 0; fi\n\\
+                   shift\n\\
+                 done\n\\
+                 exit 1\n",
+                counter.display(),
+            ),
+        );
+        write_executable(
+            &launcher,
+            &format!(
+                "#!/bin/sh\n\\
+                 shift 2\n\\
+                 case \"$1\" in\n\\
+                   --find) if [ \"$2\" = \"metal\" ]; then echo '{}'; else echo '{}'; fi ;;\n\\
+                   --show-sdk-version) echo 26.5 ;;\n\\
+                   --show-sdk-build-version) echo 25F70 ;;\n\\
+                   *) exit 1 ;;\n\\
+                 esac\n",
+                metal.display(),
+                metallib.display(),
+            ),
+        );
+        (Toolchain::with_launcher(launcher), counter)
+    }
+
     fn artifact_identity(resolution: &Resolution) -> Vec<u8> {
         match resolution {
             Resolution::Hit { entry, .. } | Resolution::Published { entry, .. } => {
@@ -674,6 +750,10 @@ mod tests {
     /// the other's label and a reader would act on the wrong tool's opinion.
     const METAL_WARNING: &str = "warning: the front end has an opinion";
     const METALLIB_WARNING: &str = "warning: the linker has another";
+    const MACOS_METAL_WARNING: &str = "macos front end warning";
+    const MACOS_METALLIB_WARNING: &str = "macos linker warning";
+    const IOS_METAL_WARNING: &str = "ios front end warning";
+    const IOS_METALLIB_WARNING: &str = "ios linker warning";
 
     /// Whether one byte run occurs inside another.
     fn contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -882,6 +962,88 @@ mod tests {
             "a stage under the bound states its own length",
         );
         assert!(!linker.is_truncated());
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// Every delivery position keeps each stage's own diagnostic and stated total.
+    ///
+    /// This drives the public plan/cache seam over the test-only second
+    /// declaration, publishes once, then reads the retention from a validated
+    /// cache hit. The four source strings deliberately differ by both position
+    /// and stage: a test that observes only position 0, swaps the positions, or
+    /// labels either position as the other cannot satisfy this census.
+    #[test]
+    fn every_multi_position_stage_is_retained_under_its_own_governed_label() {
+        let directory = scratch("multi-position-retention");
+        let cache = ExpansionCache::open(directory.join("cache"));
+        let (toolchain, counter) = positioned_warning_toolchain(&directory);
+        let program = semantic_program();
+        let first = declaration();
+        let second = BoundMetalCompileDeclaration::second_artifact_family_fixture()
+            .expect("the test-only second artifact family assembles");
+        let compilation = declared_compilation(&first, &program);
+        let plan = compilation.selected().expect("one selected plan");
+        let declarations = [first, second];
+
+        let published = accept_or_publish_metal_plan(
+            &cache,
+            &toolchain,
+            &program,
+            plan,
+            &declarations,
+            OptimizationLevel::Default,
+        )
+        .expect("the two-position warning compilation publishes");
+        assert!(matches!(
+            published.resolution(),
+            Resolution::Published { .. }
+        ));
+        let hit = accept_or_publish_metal_plan(
+            &cache,
+            &toolchain,
+            &program,
+            plan,
+            &declarations,
+            OptimizationLevel::Default,
+        )
+        .expect("the two-position entry returns from its validated cache hit");
+        let Resolution::Hit { entry, .. } = hit.resolution() else {
+            panic!("the second two-position run hits");
+        };
+        assert_eq!(
+            std::fs::read_to_string(&counter)
+                .expect("the miss wrote its counter")
+                .lines()
+                .count(),
+            4,
+            "one publication compiles two stages at each of two delivery positions",
+        );
+
+        let expected = [
+            ("tiler.metal.0.metal", MACOS_METAL_WARNING.as_bytes()),
+            ("tiler.metal.0.metallib", MACOS_METALLIB_WARNING.as_bytes()),
+            ("tiler.metal.1.metal", IOS_METAL_WARNING.as_bytes()),
+            ("tiler.metal.1.metallib", IOS_METALLIB_WARNING.as_bytes()),
+        ];
+        let retained = entry.retained_debug();
+        assert_eq!(
+            retained.runs().len(),
+            expected.len(),
+            "each stage at each delivery position has one retained run",
+        );
+        let actual: Vec<_> = retained
+            .runs()
+            .iter()
+            .map(|run| (run.label(), run.as_bytes(), run.total_bytes()))
+            .collect();
+        let expected_with_totals: Vec<_> = expected
+            .iter()
+            .map(|(label, bytes)| (*label, *bytes, bytes.len() as u64))
+            .collect();
+        assert_eq!(
+            actual, expected_with_totals,
+            "every run preserves its governed label, its own stage bytes, and its stated total",
+        );
         let _ = std::fs::remove_dir_all(directory);
     }
 
