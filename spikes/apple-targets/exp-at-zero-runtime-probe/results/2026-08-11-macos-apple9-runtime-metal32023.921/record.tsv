@@ -1,0 +1,56 @@
+environment.architecture	arm64
+environment.clang_path	/Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang
+environment.clang_version	Apple clang version 21.0.0 (clang-2100.3.27.1)
+environment.device	Apple M4 Max
+environment.device_registry_id	4294968656
+environment.gpu_family_apple9	supported
+environment.metal_path	/Users/tsanterre/Library/Developer/DVTDownloads/MetalToolchain/mounts/e0303a069097c7034cc5befc63a7a7c2c8ee7720/Metal.xctoolchain/usr/bin/metal
+environment.metal_version	Apple metal version 32023.921 (metalfe-32023.921)
+environment.os_build	26A5388g
+environment.os_name	macOS
+environment.os_version	27.0
+environment.runtime_compiler.images	/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/32023/Libraries/libllvm-flatbuffers.dylib | /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/32023/Libraries/libGPUCompilerUtils.dylib
+environment.runtime_compiler.version	Apple metal version 32023.921 (metalfe-32023.921)
+environment.runtime_compiler.version_source	serialized-MTLBinaryArchive
+environment.sdk_build	26A5388f
+environment.sdk_name	macosx
+environment.sdk_path	/Applications/Xcode-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk
+environment.sdk_version	27.0
+environment.xcode_build	27A5228h
+environment.xcode_path	/Applications/Xcode-beta.app/Contents/Developer
+environment.xcode_version	27.0
+measurement.exact_at_zero	true
+measurement.input.0	00000000
+measurement.input.1	80000000
+measurement.input.count	2
+measurement.result.0	3f800000
+measurement.result.1	3f800000
+measurement.result.count	2
+measurement.route	MTLDevice.newLibraryWithSource
+measurement.scope	runtime-compiler-only-not-production-aot
+probe.compile_options	math=safe,fpfun=precise,lang=4.0,opt=default
+probe.date_utc	2026-08-11T04:37:51Z
+probe.harness_sha256	46d47e35f240d3747106325f6f5ce4dd427e35ccb3d2547f9bfbdfb057fef3c7
+probe.host_source_sha256	31a3e02f6cba8628006e5d0f84e51890d2e00d98259f842432278b78f4bc4ee6
+probe.kernel_expression	precise::exp(input[tid])
+probe.kernel_function	exp_at_zero
+probe.kernel_sha256	cb6c7673b11e6e365e5accec716b485508dcdbf22e776fc2a035c759275a7594
+probe.repository_base_revision	6277a3fa940a4f6f7fddbd96a84895a3cea73b39
+producer.host_output_sha256	58bff246b13aecbd3e44673b9a02fc57e7866b8222d6a35f25e8e2721917d203
+producer.invocation_sha256	434cde0021a641186c68cd05490f5a5ec49d85cc9f1466c8da448d58f1f5f711
+producer.manifest_sha256	2712b4ff65a8e180e2a2bffe5dcbc4da2f7d445809d18a35c5dcbde4205ad774
+producer.runtime_compiler_sha256	b16f5e99f0d845b3c2d0899a106d56905fa8ccae11238400073b1f14eb978755
+profile.dtype	f32
+profile.execution.architecture	arm64
+profile.execution.device	Apple M4 Max
+profile.execution.os_build	26A5388g
+profile.execution.os_name	macOS
+profile.execution.os_version	27.0
+profile.key	tiler.metal.macos-apple9.msl4-0.f32-bf16.v1
+profile.offline.compiler_build	metalfe-32023.883
+profile.offline.compiler_version	32023.883
+profile.offline.sdk_build	25F70
+profile.offline.sdk_version	26.5
+profile.offline.xcode_build	17F113
+profile.offline.xcode_version	26.6
+schema	tiler.apple-exp-zero-runtime/v1

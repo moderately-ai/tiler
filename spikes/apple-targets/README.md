@@ -8,14 +8,14 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.apple-targets.compatibility", "tiler.research.apple-targets.numerical-behaviour", "tiler.research.target-profiles.first-macos-metal-compile-profile-authority-ledger", "tiler.research.reference.permitted-divergence-oracle"]
-entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/replay_retained_compatibility_record.sh", "spikes/apple-targets/validate_numerical_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py", "spikes/apple-targets/bfloat_dispatch_probe.py", "spikes/apple-targets/aot-runtime-compiler-observer/run.sh", "spikes/apple-targets/code-domain-integer-decode/decode_probe.py", "spikes/apple-targets/code-domain-integer-decode/decode_probe_host.m", "spikes/apple-targets/code-domain-integer-decode/validate_decode_record.py", "spikes/apple-targets/code-domain-integer-decode/test_decode_probe.py", "spikes/apple-targets/contraction-pragma-runtime-probe/pragma_probe.py", "spikes/apple-targets/evaluation-order-probe/order_probe.py"]
-last_verified: "2026-08-06"
+entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/replay_retained_compatibility_record.sh", "spikes/apple-targets/validate_numerical_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py", "spikes/apple-targets/bfloat_dispatch_probe.py", "spikes/apple-targets/aot-runtime-compiler-observer/run.sh", "spikes/apple-targets/code-domain-integer-decode/decode_probe.py", "spikes/apple-targets/code-domain-integer-decode/decode_probe_host.m", "spikes/apple-targets/code-domain-integer-decode/validate_decode_record.py", "spikes/apple-targets/code-domain-integer-decode/test_decode_probe.py", "spikes/apple-targets/contraction-pragma-runtime-probe/pragma_probe.py", "spikes/apple-targets/evaluation-order-probe/order_probe.py", "spikes/apple-targets/exp-at-zero-runtime-probe/probe.py"]
+last_verified: "2026-08-11"
 ticket: "apple-artifact-compatibility"
 ---
 
 # Apple Metal target compatibility and numerical spikes
 
-Six independent probes share this directory. The
+Seven independent probes share this directory. The
 compatibility probe answers which artifact families and deployment minima
 produce which bytes. The numerical probe answers what Apple GPU scalar
 arithmetic actually does to subnormals, signed zero, and contraction — and, since
@@ -31,12 +31,20 @@ The evaluation-order probe asks whether an emitted floating-point evaluation
 *order* survives either compiler, which is the property a plan's pinned reduction
 grouping rests on. None downloads or installs a toolchain component.
 
-**Five of the six share a host row and the evaluation-order probe does not.** It
-was measured after this host's `xcode-select` moved to Xcode 27.0 and an offline
+The runtime exponential-at-zero probe asks the narrow exact-bit question the tree-fold online-softmax bound left open: what `precise::exp` returns for buffer-supplied positive and negative zero on the current Apple9 execution row.
+
+**Five of the seven share one build-tool row; the evaluation-order and runtime exponential-at-zero probes use its successor.** They
+were measured after this host's `xcode-select` moved to Xcode 27.0 and an offline
 `metalfe-32023.921`, where every other retained record here names Xcode 26.6 and
 an offline `metalfe-32023.883`. Its rows and theirs are not rows of one table,
 and a difference between them is not evidence of drift until one is re-run on the
 other's toolchain.
+
+## Runtime exponential at signed zero
+
+The [sibling harness](exp-at-zero-runtime-probe/README.md) reuses `numerical_probe_host.m` to runtime-compile one two-lane F32 kernel with the production emitter's `precise::exp` spelling and explicit `math=safe,fpfun=precise,lang=4.0,opt=default`. Its 2026-08-11 retained record binds the one authoritative `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1` hardware row, the current host build toolchain, and the separately identified OS runtime compiler. On an Apple M4 Max reporting Apple9, both `00000000` and `80000000` returned `3f800000`, exactly binary32 `1.0`.
+
+This is not an offline-compiler replay. The production AOT profile still names Xcode 26.6 and `metalfe-32023.883`; the runtime source route measured here identifies `metalfe-32023.921` from compiler text recovered after the producer scanned a serialized binary archive and before atomic publication. The raw archive is not retained, so neither archive replay nor transfer of the bits across compilers is claimed. Kernel, input, result, compiler-source-label, and Xcode-version perturbations were each watched failing against the retained producer evidence.
 
 ## Evaluation-order probe
 
