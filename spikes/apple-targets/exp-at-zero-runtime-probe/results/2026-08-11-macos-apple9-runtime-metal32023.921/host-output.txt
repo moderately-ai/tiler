@@ -1,0 +1,12 @@
+device=Apple M4 Max
+registry-id=4294968656
+gpu-family-apple9=supported
+case=runtime.exp-at-zero
+compilation=source
+dtype=f32
+applied=math=safe,fpfun=precise,lang=4.0,opt=default
+archive=runtime.metalar
+result=3f800000
+result=3f800000
+runtime-compiler-image=/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/32023/Libraries/libllvm-flatbuffers.dylib
+runtime-compiler-image=/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/32023/Libraries/libGPUCompilerUtils.dylib

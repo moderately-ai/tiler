@@ -51,6 +51,7 @@ The rows below are **maintained by hand**, like the [research catalog](../docs/r
 
 ### Numerical operations
 
+- [Metal runtime precise exponential at signed zero](apple-targets/exp-at-zero-runtime-probe/README.md) — reproducible; bounded-measurement; supports: [Apple GPU numerical behaviour](../docs/research/apple-targets/numerical-behaviour.md), [The tree-fold form of the online-softmax rescaling bound](../docs/research/numerics/tree-fold-online-softmax-bound.md)
 - [Metal emitted-evaluation-order probe](apple-targets/evaluation-order-probe/README.md) — reproducible; bounded-measurement; supports: [Apple GPU numerical behaviour](../docs/research/apple-targets/numerical-behaviour.md), [The oracle for a permitted-divergence candidate](../docs/research/reference/permitted-divergence-oracle.md)
 - [BF16 through the second-dtype seams](numerics/bf16-second-dtype/README.md) — reproducible; executable-model, exhaustive-finite, bounded-measurement; supports: [Mature tensor dtype taxonomy](../docs/research/numerics/mature-dtype-taxonomy.md), [Apple GPU numerical behaviour](../docs/research/apple-targets/numerical-behaviour.md), [BF16 computation, accumulator, and conversion](../docs/research/numerics/bf16-computation-accumulator-and-conversion.md)
 - [The delivered-realization record, redesigned from typed evidence](numerics/delivered-realization-record/README.md) — reproducible; executable-model, exhaustive-finite; supports: [The delivered numerical realization record](../docs/research/numerics/delivered-numerical-realization-record.md)
