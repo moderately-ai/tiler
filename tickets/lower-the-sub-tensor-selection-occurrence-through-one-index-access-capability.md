@@ -1,7 +1,7 @@
 ---
 id: lower-the-sub-tensor-selection-occurrence-through-one-index-access-capability
 title: Lower the sub-tensor selection occurrence through one index-access capability
-status: in-progress
+status: done
 priority: p2
 dependencies: [admit-the-sub-tensor-selection-family]
 related: [scope-the-sub-tensor-selection-fusion-role, admit-a-fusion-role-for-the-sub-tensor-selection-slice, lower-a-two-region-occurrence-through-one-index-access-capability, lower-the-concatenate-occurrence-through-partitioned-writes, admit-the-structural-families-into-the-scheduled-region-vocabulary, decide-the-source-bearing-slice-offset-boundary, admit-an-index-realization-law-for-the-literal-offset-slice]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, research/semantic-graph]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, lowering, indexing, slice]
-claimed_from: todo
-assignee: terra-slice-lowering
-lease_expires_at: 1786430540
 ---
 ## User-visible outcome
 
