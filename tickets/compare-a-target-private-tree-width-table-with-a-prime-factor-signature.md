@@ -1,7 +1,7 @@
 ---
 id: compare-a-target-private-tree-width-table-with-a-prime-factor-signature
 title: Compare a target-private tree-width table with a prime-factor signature
-status: in-progress
+status: done
 priority: p3
 dependencies: [test-row-regime-divisor-interactions-on-a-fresh-tree-width-matrix]
 related: [calibrate-a-shape-aware-tree-width-cost-row]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [reductions, scheduling, measurement]
-claimed_from: todo
-assignee: sol-tree-width-table
-lease_expires_at: 1786454506
 ---
 ## The question
 
@@ -89,3 +86,7 @@ The pre-timing direct verifier reported 70 cells, 1,265/1,265 verified, zero dec
 ## Review correction — 2026-08-11
 
 Independent exact-hash review of `1b2984fcedf0a48b9919a0c76766ef258643691d` found one Medium reproducibility gap: the retained README named this result reproducible but its `Running it` section omitted the table/signature mode. The README now records the exact untimed verification, pre-window build, same-binary primary and repeat, and device-free analyzer invocations. This correction changes no harness source, retained result, environment record, analysis, or timing claim.
+
+## Integration
+
+- 2026-08-11 — Corrected candidate `fef1e41d7bbdb11ffe686994189ccee0e04e3f67` received an independent exact-hash re-review with no findings and was integrated into `main` by merge commit `6714cae789a308099a860259e80e5ced58af5802`. The review independently reconstructed all 2,530 measured rows, both policies' six-fold objectives, the 65-key environment record, and the load-bearing complexity gate. This spike/docs/tickets-only delta touches none of the repository full-gate invalidation paths and carries exact-main full gate `477634a1d251afd8cdb116947df3c33fd8b7e7ae`; citations and ticket lint are rerun on this closing commit.
