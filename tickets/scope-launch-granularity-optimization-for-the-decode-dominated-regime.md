@@ -1,7 +1,7 @@
 ---
 id: scope-launch-granularity-optimization-for-the-decode-dominated-regime
 title: Scope launch-granularity optimization for the decode-dominated regime
-status: todo
+status: deferred
 priority: p3
 dependencies: [prototype-metal-runtime-proof]
 related: [decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode]
