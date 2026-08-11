@@ -27,9 +27,10 @@ use crate::semantic::{
     CanonicalValueView, ContractionIndex, ContractionIndexStructure, EncodedComponentRole,
     F32_CONSTANT_BITS_ATTRIBUTE, OperationAttributes, REDUCTION_AXES_ATTRIBUTE,
     REINDEX_MAPPING_ATTRIBUTE, RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_REDUCED_AXES_ATTRIBUTE,
-    ReindexForm, ReindexFormKind, ResolvedValueType, SOFTMAX_REDUCED_AXES_ATTRIBUTE,
-    STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
-    StrictAffineU4, TypeKey, concatenate_axis, concatenate_result_shape,
+    ReindexForm, ReindexFormKind, ResolvedValueType, SLICE_SELECTION_ATTRIBUTE,
+    SOFTMAX_REDUCED_AXES_ATTRIBUTE, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
+    STRICT_AFFINE_ZERO_POINT_ROLE, SliceAxisSelection, SliceSelection, StrictAffineU4, TypeKey,
+    concatenate_axis, concatenate_result_shape,
 };
 use crate::shape::{Axis, Extent, Shape, SourcedExtent};
 
@@ -128,6 +129,34 @@ pub enum IndexRealizationLaw {
     Broadcast {
         /// Attribute containing the canonical broadcast map.
         mapping_attribute: AttributeFieldId,
+    },
+    /// Payload-preserving literal-offset sub-tensor selection.
+    ///
+    /// One result dimension exists for every operand dimension. A whole-axis
+    /// selection reads operand coordinate `d`; a literal window reads `d +
+    /// offset`, where `offset` is the exact `u64` payload in the named semantic
+    /// attribute. The write is identity over the result domain. This law
+    /// therefore states the access relation only: it chooses neither a view nor
+    /// a copy and reaches no scalar operation.
+    ///
+    /// **Included and excluded surface.** The variant reads the complete
+    /// [`SliceSelection`] grammar admitted today: [`SliceAxisSelection::WholeAxis`]
+    /// and [`SliceAxisSelection::Window`] with a literal offset and extent. It
+    /// deliberately excludes strided windows, source-bearing or symbolic
+    /// offsets, scheduling, and backend realization; those forms are rejected by
+    /// the semantic grammar before a subject can carry them.
+    ///
+    /// **Draft boundary.** ADR 0075 classifies this variant as additive growth of
+    /// an existing public `#[non_exhaustive]` type, which the coordinator may
+    /// merge after that record's four gates. The operative working contract still
+    /// keeps the exact variant, its `const` constructor, its tag-13 encoding, and
+    /// the standard `tiler::slice-f32@1` registration as a labelled draft awaiting
+    /// Tom's acceptance at [`accept-the-literal-offset-slice-realization-law`].
+    ///
+    /// [`accept-the-literal-offset-slice-realization-law`]: ../../../../tickets/accept-the-literal-offset-slice-realization-law.md
+    Slice {
+        /// Attribute containing the canonical literal selection.
+        selection_attribute: AttributeFieldId,
     },
     /// Strict contraction over an explicit index-structure attribute.
     StrictTensorContractionF32 {
@@ -345,6 +374,7 @@ impl IndexRealizationLaw {
             | Self::StrictSerialSumF32 { .. }
             | Self::Reindex { .. }
             | Self::Broadcast { .. }
+            | Self::Slice { .. }
             | Self::StagedStrictSerialSumThenPointwiseF32 { .. }
             | Self::StagedRootMeanSquareScaleF32 { .. }
             | Self::StagedSoftmaxF32 { .. }
@@ -432,6 +462,14 @@ impl IndexRealizationLaw {
         }
     }
 
+    /// Standard literal-offset slice-f32 law.
+    #[must_use]
+    pub const fn slice_f32() -> Self {
+        Self::Slice {
+            selection_attribute: SLICE_SELECTION_ATTRIBUTE,
+        }
+    }
+
     /// Standard concatenate-f32 law, as `tiler::concatenate-f32@1` registers it.
     ///
     /// Names that family's own axis identifier. It is record-local — the reindex
@@ -456,8 +494,8 @@ impl IndexRealizationLaw {
     /// Standard staged strict-serial-sum-then-multiply-f32 law.
     ///
     /// A constructor for the governed spelling of the staged form, one of the
-    /// three of this law's twelve variants whose realization is a region
-    /// *sequence*; the other nine are single-region, and
+    /// three of this law's thirteen variants whose realization is a region
+    /// *sequence*; the other ten are single-region, and
     /// `realizes_region_sequence` decides which is which in one match over the
     /// closed enum. No standard operation carries this row: the
     /// normalization, which is the family this shape was derived for, needs a fold
@@ -607,6 +645,9 @@ impl IndexRealizationLaw {
                 Self::Broadcast { mapping_attribute } => {
                     realize_broadcast(&mut context, *mapping_attribute)?;
                 }
+                Self::Slice {
+                    selection_attribute,
+                } => realize_slice(&mut context, *selection_attribute)?,
                 Self::PartitionedConcatenate { axis_attribute } => {
                     realize_concatenate(&mut context, *axis_attribute)?;
                 }
@@ -760,6 +801,20 @@ impl IndexRealizationLaw {
                 // for its pair.
                 output.push(12);
                 output.extend_from_slice(&axis_attribute.get().to_be_bytes());
+            }
+            Self::Slice {
+                selection_attribute,
+            } => {
+                // Tag 13 is append-only. Tags 1..=12 and their payloads are
+                // unchanged, so every pre-existing row remains byte-identical;
+                // only the newly registered slice row enters the sidecar.
+                //
+                // Injectivity at this site: the first byte discriminates this
+                // variant from the five older one-attribute payloads, and the
+                // remaining four bytes injectively encode the record-local
+                // selection field identifier.
+                output.push(13);
+                output.extend_from_slice(&selection_attribute.get().to_be_bytes());
             }
         }
     }
@@ -1957,6 +2012,65 @@ fn realize_broadcast(
     let write = context.write(output, &dimensions, &coordinates)?;
     context.output(write, value)
 }
+
+/// Emits the total literal selection relation of one slice occurrence.
+///
+/// The occurrence is re-derived rather than trusted: the named field must be the
+/// complete attribute record and its selection must derive the declared result
+/// shape from the declared operand. That makes every coordinate below a function
+/// of semantic facts this law actually read.
+fn realize_slice(
+    context: &mut LawContext<'_>,
+    attribute: AttributeFieldId,
+) -> Result<(), IndexRealizationLawError> {
+    let ([input], [result]) = (context.subject.inputs(), context.subject.results()) else {
+        return Err(unsupported("slice-arity"));
+    };
+    if context.subject.operands() != [0] {
+        return Err(unsupported("slice-operand-binding"));
+    }
+    let [field] = context.subject.attributes().fields() else {
+        return Err(unsupported("slice-attributes"));
+    };
+    if field.id() != attribute {
+        return Err(unsupported("slice-attribute-key"));
+    }
+    let selection = SliceSelection::from_canonical_value(field.value())
+        .map_err(|_| unsupported("slice-selection"))?;
+    let input_shape = input.shape().clone();
+    let result_shape = result.shape().clone();
+    if selection
+        .result_shape(&input_shape)
+        .map_err(|_| unsupported("slice-selection"))?
+        != result_shape
+    {
+        return Err(unsupported("slice-result-shape"));
+    }
+
+    let dimensions = declare_parallel_domain(context, &result_shape)?;
+    let coordinates = dimension_expressions(context, &dimensions)?;
+    let mut operand_coordinates = Vec::with_capacity(selection.axes().len());
+    for (selection, coordinate) in selection.axes().iter().zip(&coordinates) {
+        operand_coordinates.push(match selection {
+            SliceAxisSelection::WholeAxis => *coordinate,
+            SliceAxisSelection::Window { offset, .. } => context.linear_combination(
+                IndexInteger::from_u64(*offset),
+                &[(IndexInteger::from_u64(1), *coordinate)],
+            )?,
+        });
+    }
+
+    let tensor = context.tensor(TensorRole::Input, input.value_type().clone(), input_shape)?;
+    let value = context.read(tensor, &dimensions, &operand_coordinates)?;
+    let output = context.tensor(
+        TensorRole::Output,
+        result.value_type().clone(),
+        result_shape,
+    )?;
+    let write = context.write(output, &dimensions, &coordinates)?;
+    context.output(write, value)
+}
+
 /// Emits the partitioned write realizing one concatenation.
 ///
 /// The occurrence is re-derived rather than trusted: the axis attribute must
@@ -4446,6 +4560,58 @@ mod tests {
                 .unwrap()
                 .canonical_identity()
         );
+    }
+
+    /// Every law variant has one distinct leading tag, sized from the type.
+    ///
+    /// The array length is `variant_count`, so adding a variant without adding a
+    /// representative is a build error at this census. The slice is the
+    /// append-only thirteenth row: every earlier representative retains its old
+    /// tag, and changing only the slice's record-local field changes only its
+    /// four-byte payload.
+    #[test]
+    fn every_law_variant_has_one_append_only_encoding_tag() {
+        let laws: [IndexRealizationLaw; std::mem::variant_count::<IndexRealizationLaw>()] = [
+            IndexRealizationLaw::constant_f32(),
+            IndexRealizationLaw::multiply_f32(),
+            IndexRealizationLaw::PreciseSiluF32,
+            IndexRealizationLaw::strict_serial_sum_f32(),
+            IndexRealizationLaw::reindex_f32(),
+            IndexRealizationLaw::broadcast_f32(),
+            IndexRealizationLaw::strict_tensor_contraction_f32(),
+            IndexRealizationLaw::strict_affine_u4_dequantize(),
+            IndexRealizationLaw::staged_strict_serial_sum_then_multiply_f32(),
+            IndexRealizationLaw::staged_root_mean_square_scale_f32(),
+            IndexRealizationLaw::staged_softmax_f32(),
+            IndexRealizationLaw::concatenate_f32(),
+            IndexRealizationLaw::slice_f32(),
+        ];
+        let encodings = laws
+            .iter()
+            .map(|law| {
+                let mut encoded = Vec::new();
+                law.encode(&mut encoded);
+                encoded
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            encodings
+                .iter()
+                .map(|encoded| encoded[0])
+                .collect::<Vec<_>>(),
+            (1_u8..=13).collect::<Vec<_>>()
+        );
+
+        let slice = encodings.last().unwrap();
+        let mut moved_selection = Vec::new();
+        IndexRealizationLaw::Slice {
+            selection_attribute: AttributeFieldId::new(SLICE_SELECTION_ATTRIBUTE.get() + 1),
+        }
+        .encode(&mut moved_selection);
+        assert_eq!(slice.first(), Some(&13));
+        assert_eq!(moved_selection.first(), Some(&13));
+        assert_ne!(slice, &moved_selection);
+        assert!(encodings[..12].iter().all(|encoded| encoded[0] < 13));
     }
 
     #[test]

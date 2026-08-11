@@ -1445,8 +1445,8 @@ impl IndexRefinementDomainProof {
 /// The accessors are named for what they return because a one-stage
 /// realization makes stage and realization indistinguishable, and a reader who
 /// learned an accessor there would otherwise carry that reading into the first
-/// chain met. That is still most of what a reader sees — nine of
-/// [`IndexRealizationLaw`](super::IndexRealizationLaw)'s twelve variants are
+/// chain met. That is still most of what a reader sees — ten of
+/// [`IndexRealizationLaw`](super::IndexRealizationLaw)'s thirteen variants are
 /// single-region — but it is no longer all of it: the standard semantic
 /// authority registers staged laws for `tiler::rms-norm-f32@1` and
 /// `tiler::softmax-f32@1`, so a chain reaches these accessors from the governed
@@ -6183,10 +6183,10 @@ mod tests {
     /// half.** `tiler::rms-norm-f32@1` carries `StagedRootMeanSquareScaleF32`
     /// and `tiler::softmax-f32@1` carries `StagedSoftmaxF32`, so both answer
     /// true; `tiler::multiply-f32@1` carries a single-region law and answers
-    /// false; `tiler::slice-f32@1` is a registered *operation* the standard
-    /// authority carries no law for and answers false rather than panicking. The
-    /// agreement then shows the query is the same fact read from the same row
-    /// rather than a second account of it: for a derived subject,
+    /// false; `tiler::slice-f32@1` carries its literal selection law and also
+    /// answers false because that law realizes one region. The agreement then
+    /// shows the query is the same fact read from the same row rather than a
+    /// second account of it: for a derived subject,
     /// [`ResolvedIndexRealization::realizes_region_sequence`] answers
     /// identically for both families.
     #[test]
@@ -6204,7 +6204,11 @@ mod tests {
         assert!(!laws.family_realizes_region_sequence(&crate::semantic::multiply_f32_op()));
         assert!(
             !laws.family_realizes_region_sequence(&crate::semantic::slice_f32_op()),
-            "a registered operation the authority carries no law for realizes no sequence"
+            "the registered literal slice law realizes one region, not a sequence"
+        );
+        assert_eq!(
+            laws.family_realization_law(&crate::semantic::slice_f32_op()),
+            Some(&super::super::IndexRealizationLaw::slice_f32())
         );
 
         // One program holding both families, so the resolved answers come from
