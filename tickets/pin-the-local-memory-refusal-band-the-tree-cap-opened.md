@@ -1,7 +1,7 @@
 ---
 id: pin-the-local-memory-refusal-band-the-tree-cap-opened
 title: Pin the local-memory refusal band the tree cap opened
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [cap-the-tree-reduction-participants-at-the-measured-256, activate-measured-reduction-selection-from-a-target-cost-row]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [reductions, scheduling, evidence-gap]
-claimed_from: todo
-assignee: terra-local-memory-band
-lease_expires_at: 1786423430
 ---
 ## User-visible outcome
 
@@ -42,3 +39,9 @@ The band's refusal and its admitted neighbour are both pinned at 8,192 contribut
 ## Graph maintenance
 
 Filed 2026-08-07 by the coordinator at integration of the tree cap, from a consequence that ticket's worker found and recorded rather than smoothed over. It is a separate ticket because it is a bounded evidence gap in a different authority — target feasibility — from the partition rule that exposed it.
+
+## Outcome — 2026-08-10
+
+Delivered at `1e61350a1335a5011263769e9a5e75d2f122205c`. `the_capped_tree_refuses_the_local_memory_band_and_admits_its_neighbour` constructs the real 8,192-contributor capped tree, observes the exact typed `local-memory-bytes` refusal at 512 available versus 1,024 required, and verifies the identical region at the admitted 1,024-byte neighbour. `capped_tree_partition` now cites that synthetic regression without treating the row as a production capability.
+
+The watched subject perturbation changed only the 512-byte test row to 1,024 bytes. The unchanged refusal assertion then failed with `the 512-byte profile must refuse the capped tree: VerifiedScheduledRegion ...`, whose requirements reported `local_memory_bytes: 1024`; the perturbation was restored. Independent exact-hash review found no defect. Compiler nextest (824 passed, 1 skipped), doctests, warning-denied Clippy and rustdoc, formatting, citations, ticket lint, diff-check, scope guard, and the worker's exact-tip `make full` passed.
