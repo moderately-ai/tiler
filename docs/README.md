@@ -36,7 +36,7 @@ Use the [glossary](glossary.md) whenever a typed compiler term is unfamiliar. It
   [fusion and scheduling](compiler/fusion-and-scheduling.md), and
   [cost model](compiler/cost-model.md).
 - **Understand artifacts and execution:** [artifact ABI](artifact-abi.md),
-  [Metal](backends/metal.md), [frontends](integration/frontends.md), and
+  [Metal](backends/metal.md), [CPU](backends/cpu.md), [frontends](integration/frontends.md), and
   [Candle](integration/candle.md).
 - **Understand the invocation ownership boundary:** [vision](vision.md),
   [architecture](architecture.md#semantic-invocations-and-consumer-owned-composition),

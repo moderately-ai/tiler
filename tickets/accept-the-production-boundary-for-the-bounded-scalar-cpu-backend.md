@@ -1,11 +1,11 @@
 ---
 id: accept-the-production-boundary-for-the-bounded-scalar-cpu-backend
 title: Accept the production boundary for the bounded scalar CPU backend
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [join-build-time-producers-to-runtime-adapters-through-artifact-identity]
 related: [prototype-a-bounded-scalar-cpu-backend-vertical, design-the-cpu-vector-lane-tier, exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio, share-one-structured-kernel-interpreter]
-scopes: [contracts/artifacts, contracts/decisions, research/target-profiles, research/runtime]
+scopes: [contracts/artifacts, contracts/decisions, contracts/foundation, contracts/navigation, research/target-profiles, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [cpu, backend-providers, decision, needs-tom, public-boundary]
@@ -17,6 +17,14 @@ Tiler has an accepted, consumer-nameable scalar CPU backend boundary parallel to
 ## Accepted direction — 2026-08-12
 
 Tom accepted production CPU execution as the destination of the host-KIR work and rejected leaving either test `KirMachine` as the repository's CPU implementation. The bounded scalar vertical is the source evidence and starting point. This ticket does **not** reopen whether CPU is a real sibling backend; it decides the exact production crate/responsibility/API boundary needed to promote it.
+
+## Accepted boundary — 2026-08-12
+
+Tom accepted the revised three-package recommendation in this Codex session after explicitly confirming that CPU is the real device/backend sibling to Metal, not a mock or fake implementation. The accepted packages are `tiler-cpu-image` for the governed scalar-image grammar, checked codec, and pure decoded-image engine; `tiler-cpu` for target declaration, verified-KIR translation, and payload production; and `tiler-cpu-runtime` for live host qualification, the exact runtime adapter, allocation, execution, and completion. The direction is recorded durably as [ADR 0110](../docs/decisions/0110-split-the-bounded-scalar-cpu-backend-at-the-production-process-boundaries.md).
+
+The accepted runtime constructor requires an explicit execution-resource policy with no default: an alpha caller may state `Unbounded` deliberately, while bounded policies are proved against checked worst-case work and bytes before commit. The scalar image remains an explicitly selected correctness/debug representation when native CPU code arrives. No backend registry, one-crate feature partition, semantic-oracle reuse, or automatic Metal/CPU/native/scalar fallback is admitted.
+
+Tom also confirmed that retiring the two test interpreters means physical deletion, not deprecation or compatibility wrappers. [`delete-the-two-host-kir-simulators`](delete-the-two-host-kir-simulators.md) remains ordered after production conformance so the old paths disappear only when authoritative evidence subsumes them.
 
 ## Source-first Facts at `449d54b864b849993692e8bf12117f9064f76b4d`
 
