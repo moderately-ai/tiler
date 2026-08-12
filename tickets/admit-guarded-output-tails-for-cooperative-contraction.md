@@ -1,7 +1,7 @@
 ---
 id: admit-guarded-output-tails-for-cooperative-contraction
 title: Admit guarded output tails for the cooperative contraction
-status: awaiting-decision
+status: todo
 priority: p1
 dependencies: [admit-a-cooperative-tile-over-shared-operands]
 related: [realize-the-tiled-contraction-schedule-and-its-metal-emission, realize-the-strict-contraction-on-metal, admit-predicated-fixed-vector-map-tails]
@@ -94,6 +94,14 @@ The guarded-load operation expands the public KIR for one physical family, and a
 ## Decision request
 
 Accept the generic predicated iteration-tail plus role-checked scalar guarded-load boundary above; revise it; or keep cooperative contraction exact-only. Acceptance chooses the schedule/KIR public surface and its strict proof relation. It does not authorize the Metal implementation, cost selection, contracted-axis padding, a general value-yielding conditional, or vector masked-memory support.
+
+## Accepted decision — 2026-08-12
+
+Tom accepted the recommended complete boundary in the live Codex coordination thread by replying `okay agreeed, next decision`. The relay source is Tom's direct response in that thread.
+
+The accepted public surface is `TailPolicy::Predicated` with no payload plus the narrow scalar guarded-load KIR operation and the role-sensitive proof relation above. The first admitted composition is the blocked-workgroup cooperative F32 contraction only. Row activity authorizes the left load, column activity authorizes the right load, their conjunction authorizes the output store, staged stores and barriers remain unconditional, and the inactive `+0.0f` value is an unobservable canonical filler rather than contributor padding or a numerical identity.
+
+The acceptance does not authorize a general value-yielding conditional, vector masked memory, contracted-axis padding, implicit direct substitution, backend-inferred guards, or Metal emission. Exact tails remain byte-for-byte and behaviorally unchanged. Independent complete direct and tiled alternatives may still participate in ordinary physical selection and ADR 0051 pre-commit routing; the guarded proposal itself may never normalize into another approach.
 
 ## Activation and closure
 
