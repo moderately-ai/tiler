@@ -1,18 +1,18 @@
 ---
 id: discharge-the-derived-requirements-in-the-candle-metal-adapter
 title: Accept or revise derived-requirement discharge in the Candle Metal adapter
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [check-synchronization-realization-before-the-routing-commit, carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit, prototype-candle-metal-adapter, correct-the-reversed-requirement-order-in-the-serial-sum-run-doc-comment]
 scopes: [implementation/candle]
 shared_scopes: [project/tickets]
 paths: []
-tags: [public-boundary, needs-tom]
+tags: []
 ---
 ## User-visible outcome
 
-`prototypes/candle-metal-adapter` refuses, by name and before the routing commit, a route whose entries require a synchronization realization this backend cannot deliver or an index arithmetic this bound device does not establish — the two obligations the verified program derives and no artifact row carries.
+`prototypes/candle-metal-adapter` refuses, by name and before the routing commit, a route whose entries require a synchronization realization this backend cannot deliver or an index arithmetic this bound device does not establish — two obligations carried by each entry's fixed `ResourceRequirements`, with no separate route-requirement row restating them.
 
 ## Fact audit
 
@@ -60,15 +60,25 @@ Five properties, perturbed separately, each quoted in the worker report:
 - **Unsupported:** no artifact this workspace produces requires a subject Metal declines or an arithmetic outside `CompleteU64`, so the refusing path is unreachable from a real route today. It is a delivery-time guard against a producer that built for a different backend.
 - **Not constructible:** `IndexArithmetic` has one variant, so two entries cannot differ in it and the index pass's own per-entry behaviour has no negative fixture. `minimum_gpu_family`'s wildcard-free match is what stops a widened vocabulary reaching this decision unclassified.
 
-## Decision boundary — the prototype surface is built, not accepted
+## Historical decision-boundary classification — corrected below
 
-The adapter implementation and tests described above have landed. What remains is Tom's public-boundary answer: accept or revise the additive `RouteRefusal::{SynchronizationUnrealizable, IndexArithmeticUnsupported}` variants and the witness-bearing `prepare_entries` seam that makes discharge precede pipeline construction.
+When the implementation landed, this ticket said Tom still had to accept or revise the additive `RouteRefusal::{SynchronizationUnrealizable, IndexArithmeticUnsupported}` variants and the witness-bearing `prepare_entries` seam that makes discharge precede pipeline construction. That classification ignored the binary target's private module boundary and is corrected in the dated disposition below.
 
 **Recommendation: accept the draft as built.** The two variants retain the owning typed causes, preserve the device-free-before-device-dependent refusal order, and make deletion or forgery of the discharge step a compile failure. **Strongest counterpoint:** `RouteRefusal` is deliberately exhaustive rather than `#[non_exhaustive]`, so even an additive variant is a breaking promise to downstream matches; Tom may prefer a nested derived-requirement refusal before accepting more top-level variants.
 
-This ticket is therefore `awaiting-decision`, not complete implementation work. The worker's implementation result is evidence for the decision; it is not acceptance provenance. If Tom accepts it, no further out-of-scope remainder is attached to this node — the reversed-order serial-sum-run comment repair is already done (see Graph maintenance). If he revises it, return this node to `todo` with the exact replacement surface rather than editing the prototype under a parked decision.
+The original packet therefore parked the ticket as `awaiting-decision`. The corrected disposition establishes that no cross-crate public promise existed and closes the already-tested implementation.
 
 ## Graph maintenance
 
 - **Corrected outside this ticket.** [`correct-the-reversed-requirement-order-in-the-serial-sum-run-doc-comment`](correct-the-reversed-requirement-order-in-the-serial-sum-run-doc-comment.md) is `done`. `resolve_prepared_route` now states the actual live-device → direct-requirement → pipeline-preparation order and preserves the retired wording only inside its dated correction, so a grep hit is not evidence that the reversed claim remains live.
-- The new `RouteRefusal` variants are an additive-to-the-crate but **breaking** change to an enum deliberately not `#[non_exhaustive]`; nothing outside `refusal.rs` matches it exhaustively, so no other site changed.
+- **Corrected below.** The earlier packet called the new `RouteRefusal` variants breaking because the enum is deliberately not `#[non_exhaustive]`. That ignored Rust reachability: the enum lives under a private module of a binary-only package, so it has no downstream match surface.
+
+## Corrected disposition — 2026-08-12
+
+Tom accepted the implemented behavior after a current-main, source-first audit, but not the ticket's public-boundary premise. `tiler-prototype-candle` has only a binary target, `main.rs` declares every module privately, and nothing outside the package can name `RouteRefusal`. Its `pub` spelling is therefore module-sharing visibility inside this binary, not a downstream exhaustive-match promise. The `public-boundary` and `needs-tom` tags were removed and this already-delivered ticket is complete.
+
+The user-visible and refusal prose is also imprecise where it says no artifact row carries these requirements. Each entry's fixed artifact record encodes its complete `ResourceRequirements`, including `index_arithmetic` and the synchronization presence/subject. What is deliberately absent is a second `RouteRequirement` or backend-feature row restating those already-derived facts. The implementation correctly reads the verified entry record and compares it through `tiler_metal`'s owning authorities.
+
+The accepted implementation remains unchanged: every entry's synchronization is checked before any entry's index arithmetic; both passes precede pipeline construction; `DirectRequirementsDischarged` remains mandatory at `build_pipelines`; and the two direct, typed `RouteRefusal` variants retain the owning causes. A nested refusal adds no correctness or compatibility value in this private binary. Current-main verification ran `cargo test -p tiler-prototype-candle -- --nocapture`: 18 unit tests and the dependency-direction integration test passed.
+
+Making this prototype's approximately 42 module-sharing `pub` items explicitly `pub(crate)` could prevent accidental exposure if a root module is later published, but that is one coherent visibility-hygiene sweep rather than unfinished work on these two variants. It is not required to close this correctness ticket and must not be inferred as authorization to create a public Candle crate.
