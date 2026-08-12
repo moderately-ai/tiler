@@ -1,9 +1,9 @@
 ---
 id: define-the-widening-relation-over-a-symbolic-broadcast-extent
 title: Define the widening relation when a broadcast result extent is a symbol
-status: awaiting-decision
+status: done
 priority: p2
-dependencies: [relocate-the-sourced-extent-vocabulary-to-the-shape-module, carry-a-sourced-shape-on-semantic-values, seal-and-validate-sourced-shapes-at-semantic-inference-boundaries]
+dependencies: [relocate-the-sourced-extent-vocabulary-to-the-shape-module, carry-a-sourced-shape-on-semantic-values]
 related: [decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode, resolve-semantic-shape-inference-over-symbolic-extents, assemble-the-decoder-layer-program, assemble-the-causal-self-attention-block-program, design-model-ingestion-and-complete-execution, design-autoregressive-state-and-kv-cache, deliver-an-artifact-family-from-a-symbolic-region]
 scopes: [research/shapes, implementation/ir]
 shared_scopes: [project/tickets]
@@ -35,6 +35,31 @@ One decoder-layer program serves every admissible new-position count, including 
 - Whether the literal-extent refusals `relation-does-not-widen` and `no-many-to-one-relation` stay exactly as they are for a literal extent — the position this ticket recommends, because their injectivity ground is sound over literals and only over literals.
 - What the index-access lowering derives for a degenerate widening, since `BroadcastAxisSource` is deliberately not `#[non_exhaustive]` precisely so that a relation the lowering has not seen is a build error.
 
+## Accepted decision — 2026-08-12
+
+**Provenance.** Tom accepted this decision directly in the interactive orchestration session after reviewing the current-source Fact audit, identity consequence, physical-consumer contradiction, host proof cost, first implementation tranche, and strongest counterargument. His response was `okay agreeed, next decision`.
+
+Replace the governed built-in `tiler::broadcast-f32@1` completely with `tiler::broadcast-f32@2`; do not retain parallel v1 and v2 built-in paths in this pre-production repository. V2 carries sourced result extents under a new mapping encoding and semantic definition. ADR 0052 requires the semantic-version change because the admitted attribute grammar and meaning change and no separately governed compatibility rule exists.
+
+A literal `Replicate` or `StretchUnit` result extent must remain at least two, and a wholly one-to-one literal mapping remains refused. Those refusals preserve the canonical reindex spelling. A symbolic many-to-one result extent is admitted only when the program's exact `ExtentSources` proves it positive. It may bind to one, including when the environment determines it is always one; at that binding the same authored parametric relation degenerates to a bijection without refusal, fallback, graph rewrite, or alternative semantic operation. A symbol that may be zero is refused during semantic construction.
+
+`FromOperand` requires proved equality between the operand and declared result extent. `StretchUnit` additionally requires its operand extent to be proved equal to literal one. Construction is split between context-free canonical syntax and environment-dependent semantic application; no second environment authority and no public unchecked sourced-shape route is admitted.
+
+The existing concrete `LogicalAccess::BroadcastReplication` and `LogicalAccess::ReindexBijection` remain exact and MECE over their current subjects. A new tagged parametric broadcast access relation carries the sourced relation through index and schedule IR. It may degenerate at one; replication-only reasoning is permitted only when the environment proves actual widening. The compiler must not specialize the semantic graph or schedule identity at the request boundary.
+
+Validation must solve the environment once per mapping and then check all axes, rather than invoking the current independently solving proof queries once per axis. The intended bound is one environment solve plus `O(rank)` mapping work and transient storage, with no derived solver cache entering canonical identity.
+
+**Explicit exclusions.** No literal relaxation, zero binding, implicit unit-axis insertion, binding-time graph rewrite, fallback, parallel retained v1 implementation, second caller-supplied environment, or misclassification as one of the existing concrete access variants. Empty-domain broadcasting remains a separate future semantic decision.
+
+## Current-base Fact audit — 2026-08-12, exact base `196f6ccedd34dbf8876dfed26f32cf28dd93f99a`
+
+- **Verified:** `BroadcastAxisMapping::new` enforces the two literal canonicality refusals, carries `Vec<Extent>`, and owns the `tiler.broadcast-axis-mapping.v1` encoding; `BroadcastF32::infer` accepts only static operand shapes.
+- **Verified:** `a_single_new_position_changes_six_widenings` still pins 58 operations at `T = 10`, 62 at `T = 1`, broadcast 11 to 9, and reindex 16 to 22. Targeted nextest reran this check successfully.
+- **Verified:** `BroadcastReplication` requires actual widening by element count and explicitly refuses an extent-one rank pad. Consequently the old packet's phrase “what the index-access lowering derives” understated a required new physical relation and could not be closed in `semantic/broadcast.rs` alone.
+- **Verified:** ADR 0052, anchor `Schema evolution changes an operation's semantic version`, makes an operation-key step mandatory absent a separate compatibility rule.
+- **Imprecise:** the former dependency on sourced-shape sealing was an implementation-readiness gate, not a prerequisite to deciding semantics. It now blocks the first implementation child instead of this completed decision.
+- **False as a complete graph:** no ticket depended on this decision, while the one-artifact delivery claim required its physical and artifact consequences. The accepted tranche below repairs that omission.
+
 ## Do not
 
 - Do not relax the literal-extent refusals as a shortcut to equal occurrence counts. It leaves the declared extents row-dependent, so it does not deliver one identity, and it costs the injectivity the refusals exist for.
@@ -42,16 +67,23 @@ One decoder-layer program serves every admissible new-position count, including 
 - Do not admit chunked decode (`T >= 2` always, one-token chunk padded) as an answer. It equalizes the occurrence count and delivers no identity, because the mapping still declares a literal `[2, 1024]` against `[10, 1024]`; it appends a position to the retained `K` and `V` that no admitted family can remove; and truncating a `[8, C+2, 128]` row-major payload is a copy rather than a re-declared extent.
 - Do not repair this by widening a consuming family's signature — for instance `tiler::rms-norm-f32@1` accepting a weight of the reduced axis's extent. It removes four of the six widenings and leaves fifty-four against fifty-six, and it reintroduces the implicit broadcasting the broadcast family's own definition forecloses.
 
+## Implementation tranche
+
+- [`replace-broadcast-f32-v1-with-sourced-broadcast-f32-v2-semantics`](replace-broadcast-f32-v1-with-sourced-broadcast-f32-v2-semantics.md) owns the semantic replacement and is blocked by sourced-shape sealing.
+- [`carry-the-parametric-broadcast-relation-through-index-and-schedule-ir`](carry-the-parametric-broadcast-relation-through-index-and-schedule-ir.md) owns the non-concrete access carrier and its total verifier/lowering consequences.
+- [`admit-parametric-symbolic-broadcast-at-the-compiler-request-boundary`](admit-parametric-symbolic-broadcast-at-the-compiler-request-boundary.md) owns unspecialized compiler admission.
+- [`prove-one-decoder-artifact-across-symbolic-broadcast-bindings`](prove-one-decoder-artifact-across-symbolic-broadcast-bindings.md) owns the end-to-end identity proof and record updates.
+
 ## Closes when
 
-Tom has decided the meaning of a many-to-one relation at a symbolic result extent that may bind to one, the decision is recorded as an accepted decision rather than a proposal, and either the decoder layer verifies at both C1 rows as one graph with one occurrence signature — with `decoder_layer.rs`'s two count assertions collapsed to one and the perturbation that made them differ retained as the check that can still fail — or the impossibility is durable and L6, L5 and L8 carry the corrected count unconditionally.
+Tom has decided and the exact accepted semantics, identity rule, physical carrier, exclusions, and hard-linked implementation tranche are durable. Implementation evidence and the decoder-layer count collapse belong to the child tickets rather than being falsely claimed by this decision record.
 
 ## Graph maintenance
 
 - Filed 2026-08-05 by [`decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode`](decide-whether-one-decoder-layer-graph-can-serve-prefill-and-decode.md), which ran the elimination and corrected the three records rather than taking the vocabulary change.
 - Depends on [`relocate-the-sourced-extent-vocabulary-to-the-shape-module`](relocate-the-sourced-extent-vocabulary-to-the-shape-module.md) and [`carry-a-sourced-shape-on-semantic-values`](carry-a-sourced-shape-on-semantic-values.md): a predicate over a sourced extent on a mapping was not designable before the sourced vocabulary lived in `tiler_ir::shape` and a semantic value could carry one. Both are now `done`; their completion is what ripens this ticket into a decision rather than silently answering it.
 - Related to [`resolve-semantic-shape-inference-over-symbolic-extents`](resolve-semantic-shape-inference-over-symbolic-extents.md) rather than dependent on it: that ticket routes the *elementwise* rule through `proves_equal`, and this one is the same question for a shape-declaring attribute, which its record does not reach.
-- **Dependency correction — 2026-08-11.** The elementwise decision remains related rather than a prerequisite, but this ticket now depends on [`seal-and-validate-sourced-shapes-at-semantic-inference-boundaries`](seal-and-validate-sourced-shapes-at-semantic-inference-boundaries.md). Independent review proved the shared public `SourcedShape` representation does not enforce normalization and can produce a safe-Rust panic or duplicate canonical spelling; a new sourced broadcast mapping must not be designed or implemented on that unsafe representation. The provider-specific narrowing ticket is not a dependency because this mapping question is governed-family semantics, not external provider participation.
+- **Dependency correction — 2026-08-11, refined at acceptance 2026-08-12.** Independent review proved the shared public `SourcedShape` representation does not enforce normalization and can produce a safe-Rust panic or duplicate canonical spelling. That is a hard implementation gate but did not prevent deciding the semantics after the exact unsafe representation and accepted repair were known. The dependency therefore moved to [`replace-broadcast-f32-v1-with-sourced-broadcast-f32-v2-semantics`](replace-broadcast-f32-v1-with-sourced-broadcast-f32-v2-semantics.md), while this decision retains only its completed vocabulary prerequisites. The provider-specific narrowing ticket remains unrelated to this governed-family decision.
 - Declared `research/shapes` because the addendum belongs beside the symbolic-extent record, and `implementation/ir` because `crates/tiler-ir/src/semantic/broadcast.rs` is where the predicate and the normative definition live.
 
 ## Trigger check log
