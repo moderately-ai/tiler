@@ -3,7 +3,7 @@ id: admit-a-position-selecting-slice-for-the-rotary-table
 title: Derive the decode step's rotary position through the sub-tensor selection family
 status: todo
 priority: p2
-dependencies: [integrate-the-autoregressive-decode-loop, reclassify-language-model-work-as-a-conformance-track, admit-the-sub-tensor-selection-family, decide-the-source-bearing-slice-offset-boundary]
+dependencies: [integrate-the-autoregressive-decode-loop, reclassify-language-model-work-as-a-conformance-track, admit-the-sub-tensor-selection-family, admit-source-bearing-slice-selection-semantics, preserve-source-bearing-slice-offsets-through-index-refinement, admit-live-extent-operands-to-payload-indexing, evaluate-retained-shape-relations-before-routing-commit]
 related: [design-autoregressive-state-and-kv-cache, admit-the-reindex-and-broadcast-operation-families, compose-rotary-position-embedding-from-reindex-and-broadcast]
 scopes: [implementation/ir, implementation/reference, contracts/navigation]
 shared_scopes: [project/tickets]
@@ -28,7 +28,7 @@ A slice removes the **inconsistency** mode — the cache saying `C = 14` while t
 
 **Split on 2026-08-04 under [`reclassify-language-model-work-as-a-conformance-track`](reclassify-language-model-work-as-a-conformance-track.md), corrected 2026-08-09.** This section previously carried the family's design as well as its trigger, which made a generic operation family reachable only behind a complete consumer decode loop. [`admit-the-sub-tensor-selection-family`](admit-the-sub-tensor-selection-family.md) has since landed the literal-offset form. Its former index-vocabulary premise is retired: `crates/tiler-ir/src/index/model.rs`, anchor `pub(super) struct LinearTermData`, now carries `SourcedIndexInteger` coefficients, so `t + C` is expressible as `C * 1`. The remaining gap is the semantic selection grammar: `crates/tiler-ir/src/semantic/slice.rs`, anchors `pub enum SliceAxisSelection`, `offset: u64`, and `(SLICE_RELATION_SYMBOLIC_WINDOW, _)`, carries only a literal offset and refuses the reserved symbolic relation before decoding its fields.
 
-What stays here is the consumer application: **binding the whole `[max_positions, 128]` table and selecting rows `C … C + T` from the same bound source that fixes the cache**, so the decode program cannot state position two ways. `C` is a bound symbol, so this application needs a source-bearing Slice selection rather than the delivered literal one. [`decide-the-source-bearing-slice-offset-boundary`](decide-the-source-bearing-slice-offset-boundary.md) owns the consequential attribute-versus-operand, bounds, reference, and identity choice; this ticket consumes the accepted answer rather than silently choosing it.
+What stays here is the consumer application: **binding the whole `[max_positions, 128]` table and selecting rows `C … C + T` from the same bound source that fixes the cache**, so the decode program cannot state position two ways. `C` is a bound symbol, so this application needs a source-bearing Slice selection rather than the delivered literal one. [`decide-the-source-bearing-slice-offset-boundary`](decide-the-source-bearing-slice-offset-boundary.md) accepted `SourcedExtent` in the canonical window relation with `ShapeEnv` as the sole binding authority. The semantic/reference and index-refinement carriers implement that boundary; the retained-relation and live-extent carriers make its runtime proof and payload use executable. This ticket consumes those answers rather than restating or weakening them.
 
 ## Closes when
 
