@@ -1,7 +1,7 @@
 ---
 id: admit-typed-byte-alignment-and-effective-program-view-guarantees
 title: Admit typed byte alignment and effective program-view guarantees
-status: blocked
+status: todo
 priority: p1
 dependencies: [separate-vector-operand-alignment-from-target-realization]
 related: [derive-boundary-alignment-from-the-element-type, carry-the-byte-offset-of-a-partial-binding-view]

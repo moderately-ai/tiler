@@ -1,7 +1,7 @@
 ---
 id: separate-vector-operand-alignment-from-target-realization
 title: Separate implementation access alignment from target realization identity
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [admit-vector-lane-bindings-into-the-schedule-vocabulary, declare-cpu-vector-realization-facts-in-the-target-profile, define-plural-operation-specific-vector-realization-requirements, prove-the-first-real-fixed-vector-cpu-execution-approach]
@@ -85,6 +85,12 @@ No item is `deferred`. The decision node is parked only for Tom's public-boundar
 ## Decision request
 
 Accept the complete authority split and first tranche above; revise a named carrier; or keep vector execution unavailable. Accepting this ticket authorizes the exact public boundaries and graph, not their implementation or a broader vector form.
+
+## Accepted decision — 2026-08-12
+
+Tom accepted the complete authority split and first implementation tranche in this conversation by replying `okay agreeed, next decision` after reviewing the exact five-subject model, the role-safe alignment vocabulary, the complete selected-access population, the existing artifact binding field, the pre-commit runtime evidence report, and the real NEON natural-versus-stronger-address evidence boundary.
+
+The accepted decision keeps target realization identity MECE by separating target capability from implementation access requirements and actual storage guarantees. It requires typed failure for unknown or insufficient runtime evidence, makes a post-commit allocator contradiction terminal, and introduces no mock provider, fake aligned-only device, or artifact schema field. The proposal identity step and the four implementation tickets remain as stated above; this decision record is complete, while implementation authority remains with those dependent tickets.
 
 ## Closes when
 
