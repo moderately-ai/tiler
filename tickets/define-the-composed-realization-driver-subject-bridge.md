@@ -1,7 +1,7 @@
 ---
 id: define-the-composed-realization-driver-subject-bridge
 title: Define the composed realization driver's subject bridge
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: [retain-the-selected-semantic-candidate-for-the-conformance-oracle, decide-the-safe-cross-crate-composed-reference-boundary]
 related: [retain-each-plan-alternative-s-verified-semantic-candidate, implement-the-composed-realization-evaluation-driver, accept-the-composed-realization-evaluation-surface, accept-the-realization-witness-surface]
@@ -124,10 +124,12 @@ The callback and closed event enum are more API machinery than a scoped opaque s
 - Attempt to pass a device-produced tensor into the safe reference session and retain compile-fail evidence that no such parameter exists.
 - Pin nonzero multi-stage, multi-edge, and split populations plus a zero-edge control; assert producer-before-materialization-before-consumer ordering.
 
-## Decision still required
+## Decision — accepted 2026-08-12
 
-Tom must accept or reject the exact one-shot prevalidated event SPI, its language-public/doc-hidden visibility, the first-slice synthetic/staged refusal, and the test-only wrapper signature. No equal-correctness alternative remains nondominated under the present no-consumer/no-measurement constraints.
+Tom accepted the recommended boundary in the live decision round, relayed first-hand by the coordinator in this ticket's conversation: one language-public `#[doc(hidden)]` prevalidated event SPI on `PlanAlternative`, driven as a one-shot closure; a closed initial `Begin` / `Stage` / semantic `Materialization` / `Split` / `Complete` census; all compiler subject validation completed before `Begin`; exact reuse of the `CoverAssembly` authority and retained execution-order schedules; and a named first-slice refusal for staged or synthetic assembly values that have no semantic `ValueId`.
+
+The supported `tiler-conformance` wrapper remains `pub(crate)` and test-only, accepts one complete `PlanAlternative` plus explicit reference registry/work authority and declared inputs, and obtains the bridge internally. The acceptance deliberately does not claim callback lifetimes prevent extraction: owner binding, whole-projection validation, complete-stream finalization, and reference-side validation against the same retained `P'` are the correctness controls. No fallback, standalone accessor, caller-mintable recipe, persistent projection, artifact record, cache entry, canonical identity, or schema step is accepted.
 
 ## Closes when
 
-Tom has accepted the exact bridge and wrapper shape, the ticket records the decision provenance, and the implementation ticket is corrected from its stale `one public driver` wording to the accepted `pub(crate)` test-only supported wrapper with the event SPI and first-slice refusal population.
+Tom has accepted the exact bridge and wrapper shape, this ticket records the decision provenance, and the implementation ticket is corrected from its stale `one public driver` wording to the accepted `pub(crate)` test-only supported wrapper with the event SPI and first-slice refusal population.

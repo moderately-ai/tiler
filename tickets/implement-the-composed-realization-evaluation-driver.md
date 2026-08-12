@@ -12,7 +12,7 @@ tags: [implementation, public-boundary, conformance, reference, numerics, correc
 ---
 ## User-visible outcome
 
-One public conformance entry computes expected bits from the exact semantic candidate and the exact ordered realization the selected plan declared, including plans that spend reassociation in both a semantic rewrite and a physical reduction split.
+One supported test-only conformance entry computes expected bits from the exact semantic candidate and the exact ordered realization the selected plan declared, including plans that spend reassociation in both a semantic rewrite and a physical reduction split.
 
 ## Authority and prerequisites
 
@@ -22,7 +22,8 @@ Tom accepted the driver as the sole public composition entry through [`accept-th
 
 ## Required delivery
 
-- Implement the accepted test-only `tiler-conformance` entry over the complete `PlanAlternative`, explicit frozen reference registry/work authority, and declared input bindings. It must obtain every candidate/stage/value association from the compiler-minted bridge, never from caller-provided parallel arrays or keys.
+- Implement the accepted test-only `tiler-conformance` entry over the complete `PlanAlternative`, explicit frozen reference registry/work authority, and declared input bindings. It must obtain every candidate/stage/value association by internally invoking the accepted one-shot `visit_composed_realization`-shaped SPI, never from caller-provided parallel arrays, detached subjects, recipes, or keys.
+- Implement the compiler SPI as the exact accepted closed event census: `Begin`, execution-ordered `Stage`, semantic `Materialization`, multi-pass `Split`, and `Complete`. Factor and reuse the `CoverAssembly` derivation, compare the reconstructed regions to the retained schedules/program stages, validate the complete owner/identity/handle/dependency census before `Begin`, and surface callback failures separately. Refuse staged or synthetic assembly values with no semantic `ValueId` by a named typed cause in the first slice; never coerce their assembly ordinals into semantic handles.
 - Implement the reference evaluator's crate-private raw pin/observe primitive plus the safe language-public cross-crate composed-evaluation session. The session accepts no caller-provided internal tensor and owns the observation/fold/pin chain. Typed refusals cover invalid or unreachable values, type/shape disagreement, incomplete witness discharge, unsupported freedoms/topologies, and registry/subject mismatch.
 - Drive the retained `P'` through the plan's ordered stage/materialization sequence and the existing declared-order fold evaluators. Refuse every unsupported population from the composed-realization record by name; never silently run the strict baseline interpretation.
 - Repair `the_assembled_split_program_matches_the_partitioned_sum_oracle` so its expected prologue comes from `P'`, not `kernels[0]`. Replace or extend the fixture so `P' != P` and both semantic and physical reassociation change the exact bits.
@@ -39,4 +40,4 @@ Artifact-only replay, a public pinning primitive, a plan type in `tiler-referenc
 
 ## Closes when
 
-The complete accepted population evaluates through the one public driver, every named unsupported case refuses, the provenance regression is discriminating, no other public composition/pinning entry exists, and targeted compiler/reference/conformance checks plus exact-base guard are green.
+The complete accepted population evaluates through the one `pub(crate)` test-only supported wrapper, the closed compiler event stream and safe reference session are total over that population, every named unsupported case refuses, the provenance regression is discriminating, no raw public composition/pinning entry exists, and targeted compiler/reference/conformance checks plus exact-base guard are green.
