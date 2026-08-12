@@ -1,7 +1,7 @@
 ---
 id: accept-adr-0108-data-dependent-index-coordinate-siting
 title: Accept or revise ADR 0108 on siting a data-dependent index coordinate
-status: blocked
+status: done
 priority: p1
 dependencies: [revise-adr-0108-with-a-complete-data-dependent-index-vertical]
 related: [admit-the-indirect-access-class-into-the-index-layer, admit-an-indirect-gather-family-for-tied-embedding-lookup, admit-the-selected-data-dependent-index-representation, admit-an-invocation-scoped-gather-index-validation-receipt, emit-the-indirect-gather-on-metal, accept-adr-0107-indirect-gather-semantic-family]
@@ -92,3 +92,7 @@ provenance. If a representation is accepted, the coordinator must file and add
 the separate IR-admission implementation dependency to
 [`emit-the-indirect-gather-on-metal`](emit-the-indirect-gather-on-metal.md) before
 that ticket can leave `blocked`. Acceptance alone must not make emission ready.
+
+## Acceptance — 2026-08-12
+
+Tom accepted the revised ADR 0108 tagged-access decision in the T3 Code orchestration conversation with “okay agreeed, next decision”. The accepted form and strict conditional-coverage boundary are recorded in ADR 0108 and the completed revision ticket. This acceptance satisfies the design dependency only: the selected representation, invocation receipt, public surfaces, and backend emission remain separate implementation work in dependency order.

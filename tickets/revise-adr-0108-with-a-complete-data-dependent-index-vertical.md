@@ -1,7 +1,7 @@
 ---
 id: revise-adr-0108-with-a-complete-data-dependent-index-vertical
 title: Revise ADR 0108 with a complete data-dependent index vertical
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [accept-adr-0109-fail-closed-on-unknown-index-domain-proof]
 related: [accept-adr-0108-data-dependent-index-coordinate-siting, admit-the-indirect-access-class-into-the-index-layer, emit-the-indirect-gather-on-metal, admit-a-storage-carrier-for-integer-program-inputs]
@@ -176,6 +176,10 @@ The access sum is intentionally less universal. If a second accepted operation r
 ### Identity and compatibility boundary
 
 Use index access tag `0x03` and a separately assigned schedule access tag, with every variable run length-framed. Preserve tags `0x01` and `0x02` and every old direct payload byte. Existing direct index-region, schedule, kernel, artifact, and cache identities remain byte-identical. New gather subjects receive new identities naturally. The conditional coverage requirement is timeless identity; the observed values, immutable snapshot, receipt nonce/generation, and validation result are invocation evidence and never enter reusable identities. The receipt implementation must prove old binaries reject the new requirement before interpreting or dispatching it; if the existing artifact grammar cannot provide that fence through a fresh tagged row and required feature, it must take the appropriate major schema/domain step rather than rely on lockstep deployment prose.
+
+## Decision accepted — 2026-08-12
+
+Tom accepted the complete tagged-access recommendation in the T3 Code orchestration conversation with “okay agreeed, next decision”. The accepted boundary includes the gather-specific access sum, distinct static-proof and invocation-validation states, conditional coverage without dispatch authority, immutable host snapshot, schedule projection, compatibility fence, exclusions, and concrete second-consumer reversal trigger. It accepts no Rust spelling; that remains with the dependent public-boundary and implementation work.
 
 ## Closes when
 

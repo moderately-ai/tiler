@@ -5,7 +5,7 @@ kind: "decision"
 title: "Choose how a data-dependent index coordinate enters the index layer"
 topics: ["indexing", "semantics", "ir", "gather", "verification"]
 catalog_group: "physical-planning-lowering"
-decision_status: "proposed"
+decision_status: "accepted"
 implementation_status: "none"
 applies_to: ["tiler.contract.ir"]
 evidence: ["tiler.research.shapes.transformer-operation-and-shape-surface"]
@@ -15,7 +15,9 @@ ticket: "revise-adr-0108-with-a-complete-data-dependent-index-vertical"
 
 # 0108: Choose how a data-dependent index coordinate enters the index layer
 
-**Status:** proposed — returned for revision on 2026-08-08.
+**Status:** accepted on 2026-08-12.
+
+**Acceptance provenance.** Tom accepted the revised tagged-access decision in the T3 Code orchestration conversation on 2026-08-12 with “okay agreeed, next decision”. This acceptance includes the gather-specific logical representation, conditional-coverage boundary, invocation-scoped validation authority, strict first-pass exclusions, identity rules, and reversal trigger below. It accepts no public Rust spelling and authorizes no implementation beyond the dependent tickets.
 
 **Direction accepted for revision — 2026-08-11.** Tom authorized the revision to design a narrowly invocation-bound validation lane while keeping this ADR proposed. Static proof remains first. The only initial dynamic subject is a host-visible `tiler::u32@1` input validated before routing commit into a sealed receipt over an immutable snapshot; the receipt is scoped to the exact occurrence, extent, type, binding, and invocation and supplies no timeless program proof. Missing, stale, mismatched, or failed validation refuses without clamp, wrap, plan substitution, reference execution, or backend fallback. Mutable zero-copy and device-resident inputs remain unsupported and have named deferred owners. This direction permits the revision to propose the exact narrow supersession of ADR 0109 decision 2 that such a receipt requires; it accepts neither representation candidate, no public API, and no identity-domain change. Direct provenance is Tom's T3 Code instruction that the first pass remain strict and narrow and that every future lane stay represented in the work tree.
 
@@ -53,36 +55,23 @@ silently mint the existing executable coverage identity.
 
 ## Decision
 
-**No index-layer representation is selected or admitted by this revision.** The
-proposal is returned for a complete vertical comparison of two candidates:
+Represent the first data-dependent coordinate as an **append-only tagged gather access**, not as a tensor-reading `IndexNode`.
 
-1. a first-class, verified nested read/value expression that names its source
-   tensor and source coordinates; and
-2. an append-only tagged access representation whose new tag and framed payload
-   denote the data-dependent read while preserving every previously encodable
-   access byte-for-byte.
+The logical access vocabulary becomes a closed sum. Existing direct reads and writes retain their current tensor, mode, domain, rank-equal coordinate list, proof rules, and canonical bytes. The new gather read names one F32 source tensor, one U32 index tensor, the gathered source axis, one shared output iteration domain, one direct coordinate per index-tensor axis, and one direct coordinate per non-gathered source axis. The gathered source coordinate is exactly the U32 value read from the index tensor at the stated index coordinates.
 
-The comparison belongs to
-[`revise-adr-0108-with-a-complete-data-dependent-index-vertical`](../../tickets/revise-adr-0108-with-a-complete-data-dependent-index-vertical.md).
-It must carry each candidate through bounds and host validation, reachability,
-typing, proof subjects, compaction, canonical identity, public authoring and
-inspection, reference semantics, compiler explanation, `LogicalAccess`, and the
-work graph. It may select a representation, defer with a non-circular trigger,
-or show that neither candidate is yet supportable. It may not implement either.
-Any candidate relying on host or per-dispatch validation must either prove how all
-retained index-domain obligations are discharged before executable coverage under
-ADR 0109, or return to Tom with an explicit proposal to supersede ADR 0109
-decision 2. Decision 4 confirms that no present ADR 0109 authority supplies the
-required run-time or identity contract; a future decision would have to add that
-authority, not “supersede” the historical scope statement. The comparison may
-not reinterpret a run-time observation as a timeless proof to avoid that
-decision.
+Construction proves the source rank is nonzero, the axis is in range, both tensors are program inputs in the first pass, both direct-coordinate runs have their required ranks and stay inside the shared domain, and source/index/result shapes satisfy the semantic gather relation. A U32 index widens losslessly into the verifier's unsigned coordinate space before ordinary checked address arithmetic. Signed reinterpretation, truncation to a target address width, clamp, wrap, inferred axes, recursive indirection, scatter, and data-dependent result shapes have no spelling.
 
-Until that comparison is decided, the exact five-node, three-class,
-three-unknown-reason census is a useful negative boundary rather than evidence
-for either candidate. The existing type-sized checks remain at 5/3/3 and make an
-unreviewed widening loud. They do not reserve a fourth reason or promise what any
-future widening looks like.
+Public authoring and inspection must expose this distinction as a truthful checked sum. Existing `TensorAccessRef::tensor` and `coordinates` cannot continue pretending every access names one tensor and one coordinate run. Exact Rust names remain an ADR 0075 decision for the implementation ticket.
+
+Each gather access carries one intrinsic gather-index bounds requirement over the exact access, index tensor and type, source axis and extent, and semantic occurrence. Its resolution is total: a named timeless proof may establish `StaticallyProved`, or the host-visible first pass carries `InvocationValidationRequired`. The latter is a known mandatory execution precondition, not an `IndexDomainUnknownReason` and not a proof-engine miss.
+
+Compilation may package conditional coverage only when the complete invocation requirement enters program and artifact identity. That does not grant dispatch authority. Runtime validates every value in the exact host-visible U32 binding against the exact gathered extent using the same semantic rule as `decide_gather_index`, copies the values into receipt-owned immutable storage, and binds the sealed receipt to the occurrence, type, extent, binding, snapshot, and invocation attempt. Only consumption of that exact receipt may mint the non-`Clone` preflight that reaches the infallible routing commit. Missing, stale, crossed, reused, unanswerable, or failed evidence refuses before commit.
+
+This narrowly supersedes ADR 0109 decision 2: a named conditional requirement may reach packaged coverage, but one invocation becomes executable only after timeless proof or its exact invocation receipt. Arbitrary `Unknown` remains non-executable. The receipt and observed values are invocation evidence, never timeless proof or reusable artifact/cache identity.
+
+At schedule level, the source read gains an append-only gather-source `LogicalAccess` relation carrying source shape, result shape, gathered axis, index-input ordinal, and index shape. The index input remains an ordinary U32 read. Both are derived from one checked realization law and cross-validated; a caller cannot author two independent, contradictory accounts. Physical lowering may map this relation to storage addressing but may not change its index interpretation or bounds rule.
+
+Use fresh, framed tags for the index access and scheduled relation. Preserve access tags `0x01` and `0x02` and every old direct payload byte. Existing direct identities therefore remain byte-identical; new gather subjects receive new identities naturally. The conditional requirement is identity-bearing. Snapshot bytes, validation results, and receipt generation are ephemeral and excluded. The artifact carrier must include a compatibility fence that makes older readers refuse before dispatch; if a fresh tagged row plus required feature cannot establish that, the owning implementation takes the required major schema/domain step.
 
 ## Why the previous proposal was returned
 
@@ -148,52 +137,13 @@ must precede any IR-admission implementation; the admitted IR and integer storag
 carrier must in turn precede emission. A dependent implementation ticket cannot
 be the event that authorizes its own prerequisite.
 
-## Required revision
-
-The replacement decision must answer, for both candidates and from exact current
-source:
-
-- where the nested source tensor, its coordinate tuple, and the outer gathered
-  coordinate live;
-- which bounds are static, which may be host-validated, and which object retains
-  each result without treating a run-time observation as timeless program proof;
-- how every retained index-domain obligation is proved before executable coverage
-  as ADR 0109 decision 2 requires, or the exact supersession of decision 2 that
-  must return to Tom before a run-time-validation route can be selected; ADR 0109
-  decision 4 is the record that no present run-time or identity authority exists,
-  not a second prohibition to supersede;
-- the logical `tiler::u32@1` index contract, any conversion to physical address
-  width, and the refusal of signed or lossy interpretations;
-- source-tensor and expression reachability, rank equality, nested-access bounds,
-  predicate ownership, and the subject named by proof or disproof;
-- compaction, remapping, alpha-equivalence, canonical encoding, identity-domain
-  consequences, and whether old bytes really remain unchanged;
-- complete public authoring, view, error, validation, and explanation surfaces
-  under [ADR 0075](0075-scope-public-boundary-approval-by-change-category.md);
-- the reference oracle and the compiler's fail-closed recognition, discharge,
-  refusal, and explanation path;
-- the relation to scheduled `LogicalAccess` without collapsing logical access
-  meaning into storage addressing; and
-- a dependency order in which a selected design is accepted, its IR form is
-  separately admitted and verified, and only then can backend emission become
-  ready.
-
 ## Consequences
 
-- ADR 0108 remains `proposed`; no ADR 0108 public boundary is accepted or labelled
-  as a draft by this outcome.
-- ADR 0107 and ADR 0046 remain accepted and unchanged in authority. The current
-  no-admission boundary and typed request refusal remain in force.
-- ADR 0109 decision 2 remains accepted and governs every candidate's executable
-  boundary. Decision 4 confirms that ADR 0109 supplied no run-time or identity
-  authority, and this revision supplies none either.
-- Q-SHAPE-007 remains open on both the index-layer design and the unfired scatter
-  half.
-- The access-record and nested-expression candidates both remain open until the
-  complete vertical comparison is reviewed.
-- `emit-the-indirect-gather-on-metal` stays structurally blocked on eventual ADR
-  acceptance, a separately admitted IR representation, and the integer storage
-  carrier. No form is implemented here.
+- The separate index-representation and invocation-receipt tickets own implementation. This ADR selects meaning and authority but adds no Rust surface or executable route.
+- Static proof remains the zero-runtime-cost preferred lane. The host-visible immutable-copy lane is the only initial dynamic lane.
+- Mutable zero-copy, device-resident or device-produced indices, inline-kernel validation, caller assertions, and generalization beyond gather remain explicitly deferred or unsupported.
+- The expression vocabulary stays pure. A second accepted consumer requiring nested tensor-derived coordinates is the trigger to reconsider it.
+- ADR 0107's semantic family and ADR 0046's logical-access/storage-addressing separation remain intact. ADR 0109 continues to refuse every unnamed or unresolved `Unknown` before execution.
 
 ## Alternatives considered
 
@@ -202,12 +152,8 @@ Rejected because its identity, rank, residual-reason, public-surface, and trigge
 arguments are not supported by the current source, and because the proposed node
 does not yet constitute a complete verified logical read.
 
-**Select the tagged access representation in this correction.** Also rejected.
-The audit reopens that candidate by disproving two reasons used to close it; it
-does not establish the candidate's bounds, proof-subject, authoring, schedule, or
-compiler contract. Selecting it without the vertical comparison would repeat the
-same error in the other direction.
+**Use a broader generic nonrecursive indirect access.** Rejected for the first slice. It can be made sound, but freezes generalized source, value, and address semantics before a second consumer exists and adds invalid states without runtime benefit.
 
-**Admit either form now.** Rejected. Research and a corrected proposed record do
-not authorize implementation, and no reviewed representation yet satisfies ADR
-0046 end to end.
+**Add a tensor-reading `IndexNode`.** Rejected. Its composability is real, but it merges typed logical effects into a pure coordinate algebra and recursively widens reachability, compaction, alpha identity, proof ownership, and reference evaluation. Reconsider only when a concrete second consumer cannot be represented without duplicating access meaning.
+
+**Admit either form directly from this ADR.** Rejected. Acceptance selects the architecture; the separately scoped implementation and public-boundary tickets still own admission, exact Rust spelling, tests, and identity migration evidence.
