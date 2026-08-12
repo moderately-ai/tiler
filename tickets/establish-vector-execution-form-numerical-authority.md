@@ -1,7 +1,7 @@
 ---
 id: establish-vector-execution-form-numerical-authority
 title: Establish numerical authority for exact arithmetic execution forms
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [declare-cpu-vector-realization-facts-in-the-target-profile, define-plural-operation-specific-vector-realization-requirements, earn-cpu-feature-level-execution-environments-from-host-observation]
@@ -111,6 +111,12 @@ Exact rows are more verbose than one dtype-wide declaration and can repeat the s
 
 Accept the exact, provider-versioned arithmetic execution subject and the strict composition above; revise it; or keep vector arithmetic unavailable. Implementation remains blocked on the accepted vector schedule/requirement carrier and host-earned CPU feature qualification.
 
-## Closes when
+## Accepted decision — 2026-08-12
 
-The accepted subject is implemented through schedule derivation, target resolution, explain evidence, delivered realization, artifact translation, and the real CPU backend; every perturbation above has been observed failing; scalar evidence cannot satisfy a vector obligation; and no mock or compile-host inference supplies missing authority.
+Tom accepted the recommended exact, provider-versioned arithmetic execution subject in live review relayed through Codex. The five authority classes remain orthogonal; target evidence matches the complete execution subject exactly; scalar epilogues require both scalar and packed rows; no provider, variant, lane form, operation, or numerical dimension implies another; and absent authority remains `Unknown` rather than falling back.
+
+This ticket records the public-boundary decision and is complete. [`declare-cpu-vector-realization-facts-in-the-target-profile`](declare-cpu-vector-realization-facts-in-the-target-profile.md) and its prerequisite chain own implementation through target declarations, schedule derivation, host qualification, delivered realization, artifact translation, and the real CPU backend. They must preserve the failure evidence and identity consequences above rather than reinterpret this acceptance as implementation authorization by itself.
+
+## Decision closes when
+
+The accepted subject, its authority split, identity consequences, strongest counterpoint, reversal evidence, and implementation handoff are recorded durably. Complete.
