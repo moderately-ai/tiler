@@ -72,3 +72,7 @@ One design dominates the string and opaque-byte alternatives:
 ## Strongest counterpoint and reversal evidence
 
 Retaining `ProviderIdentity` directly makes a private explain record depend on a public IR type and may clone two component strings where the flat key cloned one. That dependency already exists in the constructor, ADR 0073 explicitly permits compiler-internal subjects, and the trace budget makes the allocation difference bounded. Reverse to an opaque received identity only if a second crate must read canonical traces and the ADR 0073 trigger relocates the vocabulary into `tiler-ir`; at that point a cross-crate opaque carrier may reduce coupling. No such consumer exists now.
+
+## Accepted direction — 2026-08-12
+
+Tom accepted the corrected closed `Compiler | Registered(ProviderIdentity)` authority representation and its explain-only schema/renderer migration in the direct coordination thread by replying `okay agreeed, next decision`. This acceptance confirms the implementation boundary above: structured equality and encoding, separate unambiguous rendering, no reserved provider spelling, no opaque-byte public API, and no artifact or provider-selection change. The ticket remains `todo` for implementation and independent review.
