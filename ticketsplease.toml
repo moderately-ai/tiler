@@ -124,6 +124,7 @@ satisfies_dependents = false
 "implementation/build" = ["crates/tiler-build/**"]
 "implementation/frontend" = ["crates/tiler/**", "crates/tiler-macros/**", "crates/tiler-frontend-*/**"]
 "implementation/conformance" = ["crates/tiler-conformance/**"]
+"implementation/cpu" = ["crates/tiler-cpu/**"]
 "implementation/candle" = ["crates/tiler-candle/**", "prototypes/candle-*/**"]
 
 # Optionally map a scope to its owning crate so the Rust backend can expand
@@ -142,7 +143,16 @@ satisfies_dependents = false
 "implementation/frontend" = "tiler-macros"
 "implementation/conformance" = "tiler-conformance"
 
-# The Candle scope has no crate mapping until its owning crate is admitted, and that stays true now that a member occupies its globs: `prototypes/candle-metal-adapter` (`tiler-prototype-candle`) was admitted 2026-08-01 under `prototype-candle-metal-adapter`, and it is deliberately *not* mapped here. Nothing may depend on a prototype, so it has no reverse dependents to expand, and a mapping would have to be moved rather than added when `crates/tiler-candle` arrives -- which is exactly the "temporary prototype entry" that ticket forbids leaving behind. The Metal-AOT, runtime, cache, and build mappings now name their real owners, tiler-metal-aot, tiler-runtime, tiler-cache, and tiler-build. Each crate-admission ticket must atomically add the real workspace package and add or move its mapping here.
+# The CPU and Candle scopes have no crate mapping until their owning crates are
+# admitted. `implementation/cpu` reserves the scheduling area selected by the
+# accepted 2026-08-12 direction; its admission ticket must atomically add the
+# real package and its mapping rather than leaving a temporary prototype entry.
+# `implementation/candle` stays unmapped now that a prototype occupies its
+# globs: `prototypes/candle-metal-adapter` (`tiler-prototype-candle`) is
+# deliberately not a component other crates may depend on. The Metal-AOT,
+# runtime, cache, and build mappings name their real owners. Each crate-admission
+# ticket must atomically add the real workspace package and add or move its
+# mapping here.
 #
 # The frontend scope owns two crates, `tiler` and `tiler-macros`, and both are
 # covered by its globs above. It maps to `tiler-macros` because that is the one

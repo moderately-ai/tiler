@@ -1,7 +1,7 @@
 ---
 id: share-one-structured-kernel-interpreter
 title: Share one structured-kernel interpreter between the IR and compiler tests
-status: awaiting-decision
+status: closed
 priority: p3
 dependencies: []
 related: [lower-a-loop-carried-cooperative-body, implement-the-single-workgroup-synchronized-reduction-strategy]
@@ -9,8 +9,33 @@ scopes: [implementation/ir, implementation/compiler, implementation/workspace, i
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, decision, needs-tom, public-boundary]
+closed_reason: superseded
+closed_note: "Tom rejected both sharing options on 2026-08-12. The real destination is the production scalar CPU backend; authoritative-evidence migration precedes physical deletion of both test simulators."
 ---
-## User-visible outcome
+## Terminal outcome — superseded 2026-08-12
+
+Tom rejected both Option A and Option B. Neither test `KirMachine` becomes shared, public, doc-hidden, or a workspace support crate. Both are physically deleted after their legitimate assertions move to independent reference semantics, structural IR/compiler verification, or execution through a real CPU or Metal backend.
+
+The replacement graph is:
+
+- [`accept-the-production-boundary-for-the-bounded-scalar-cpu-backend`](accept-the-production-boundary-for-the-bounded-scalar-cpu-backend.md) — accept the exact production ownership/API boundary;
+- [`promote-the-bounded-scalar-cpu-vertical-into-a-production-backend`](promote-the-bounded-scalar-cpu-vertical-into-a-production-backend.md) — land the real serialized-image CPU path;
+- [`execute-the-loop-carried-cooperative-kernel-on-a-real-backend`](execute-the-loop-carried-cooperative-kernel-on-a-real-backend.md) — replace the one multi-round execution claim that currently exists only in the IR simulator;
+- [`replace-host-kir-simulator-claims-with-authoritative-evidence`](replace-host-kir-simulator-claims-with-authoritative-evidence.md) — migrate the complete consumer census; and
+- [`delete-the-two-host-kir-simulators`](delete-the-two-host-kir-simulators.md) — remove every simulator and compatibility surface.
+
+### Fact repair at `449d54b864b849993692e8bf12117f9064f76b4d`
+
+- **Verified:** two private `KirMachine` implementations exist and differ in barrier nesting, multi-round handling, buffers, BF16, and operation vocabulary.
+- **False:** one interpreter can answer “what does this verified kernel compute.” `VerifiedKernel` does not carry the complete launch geometry; both machines infer participants from a staging allocation, and neither covers the live KIR vocabulary.
+- **False:** the copies merely need identical semantics. They are non-authoritative test simulators, while `tiler-reference` owns semantic meaning and a backend owns execution.
+- **False:** a dev-only crate avoids the architectural defect. It hides the API but institutionalizes a second execution implementation with no product consumer.
+- **Imprecise:** the named population was two conformance tests. Compiler pipeline and conformance modules have many additional consumers spanning access maps, bindings, staged values, BF16, nonlinear expressions, reductions, and split plans.
+- **Verified replacement:** `spikes/target-profiles/scalar-cpu-vertical`, anchor `A second backend, materially different from Metal`, already proves the correct shape: translate verified KIR to versioned payload bytes, decode without compiler objects, qualify the actual host, route, execute, and compare independently with `tiler-reference`.
+
+The historical packet below is retained to explain what was rejected; it is not live guidance.
+
+## Historical user-visible outcome
 
 One interpreter answers "what does this verified kernel compute", and both crates' conformance tests read it. Until then there are two, they disagree about what a body may contain, and the weaker one on barrier-nesting / multi-round executability is the one the pipeline tests use — not a weaker overall feature surface (the pipeline machine is richer on multi-buffer binding, bf16, and op vocabulary).
 
