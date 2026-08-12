@@ -1,18 +1,18 @@
 ---
 id: carry-the-exhausted-resource-through-the-budget-refusal
-title: Accept or revise the exhausted-resource budget-refusal surface
-status: awaiting-decision
+title: Implement the three-way exhausted-resource budget report surface
+status: todo
 priority: p3
 dependencies: []
 related: [measure-executable-coverage-identity-growth-against-the-program-identity-bound]
 scopes: [implementation/compiler, implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
-tags: [compiler, diagnostics, public-boundary, needs-tom]
+tags: [compiler, diagnostics, public-boundary]
 ---
 ## User-visible outcome
 
-A caller whose compilation stops on a deterministic budget learns which budget, what its limit was, and what the program asked for — instead of the single word `BudgetExhausted`.
+A caller whose compilation stops on a deterministic budget learns which budget, what its limit was, the value the compiler compared, and whether that value is an exact demand, a conservative planning envelope, or a lower bound from truncated search — instead of the single word `BudgetExhausted` or a falsely uniform `actual`.
 
 ## Why this exists
 
@@ -58,24 +58,43 @@ Every claim above was re-read at this base before any edit. **Every one of the f
 
 **Correction — 2026-08-10.** Present-tense "Why this exists" prose that claimed `class_of` maps budget refusals to a unit `CompileFailureClass::BudgetExhausted` and that "the information is discarded at the boundary" is **false of the current tree** and was only true as the pre-delivery defect at base `acc26984`. The draft surface is landed: `CompileFailureClass::BudgetExhausted { resource, limit, actual }`, public `BudgetResource` / `BudgetRefusal`, frontend `rendered_refusal` struct arm, and regression `a_chain_past_the_program_size_bound_names_the_budget_it_exhausted`. The 2026-08-08 table's unit-arm anchors are historical only (`git show acc26984:…`); they do not resolve in HEAD. Ticket remains `awaiting-decision` until Tom accepts or revises the exact public surface (Decision boundary). Optional out-of-scope drift: the identity-growth spike README/WALLS still describe the unit-variant gap.
 
-## Decision boundary — the implementation is built, not accepted
+## Fact audit — 2026-08-12, at base `9167caa9`
 
-The source now contains the complete draft described below: public `BudgetResource` and `BudgetRefusal` vocabularies, a payload-bearing `CompileFailureClass::BudgetExhausted`, exhaustive mappings from all thirteen internal resources, and the frontend rendering change. That makes this an acceptance ticket now, not an implementation ticket.
+The acceptance audit re-read the complete ticket, ADR 0074, all thirteen resource mappings, all four refusal producers, `check_program_budgets`, the public session projection, the macro renderer, and the correctness-bearing tests. Three targeted tests passed: `only_the_search_bounds_report_a_truncated_demand`, `each_widened_budget_refuses_the_program_one_step_past_it`, and `a_chain_past_the_program_size_bound_names_the_budget_it_exhausted`.
 
-Tom decides whether to accept that exact caller-visible surface. **Recommendation: accept it as built.** A closed typed vocabulary is what lets a caller distinguish an exact demand from a lower bound without re-reading compiler source, and the public failure already promises structured classification. **Strongest counterpoint:** the compiler currently exposes only the five program-scoped rows through the public request path, so publishing all thirteen rows commits names for truncation paths a caller cannot yet reach. If that counterpoint wins, revise the public projection rather than silently treating the worker's 2026-08-08 type choice as acceptance.
+**Verified:** carrying a typed `BudgetResource`, the declared limit, and the compared value is the correct public direction. The thirteen-row vocabulary is complete over the four current producers; only the five request-stage rows are publicly reachable under governed budgets today, but keeping the total internal-to-public mapping avoids a second lossy projection.
 
-The phrase **“Decided 2026-08-08” below records the implementation choice made by the worker; it is not Tom's acceptance provenance.** This ticket remains `awaiting-decision` until Tom accepts or revises the exact public enum variants, fields, exhaustiveness posture, and rendering behavior.
+**False, decision-changing:** the 2026-08-08 statement that `actual` is exact for eight resources and a lower bound for five. It has **three** meanings. `SemanticValues`, `SemanticOperations`, `RegionMembers`, `RegionBoundaryOutputs`, and `RegionLiveValues` report exact completed counts. `Regions`, `HostExpressionNodes`, and `Buffers` report conservative pre-search planning envelopes. `RegionCandidatesPerSeed`, `RegionExpansions`, `RegionCovers`, `RegionCoverExpansions`, and `PhysicalPlanCombinations` report lower bounds from incomplete enumeration. The source states the distinction directly: `check_program_budgets` calls the regions value `The largest shape this profile may assemble`, calls host-expression nodes an `upper bound over every plan`, and calls buffers `The widest buffer count any plan for this request could reach`. It also supplies a counterexample: one input and one output produce the envelope value nine while the widest one-input chain declares seven, because `an upper bound over every reachable plan cannot also be each plan's exact count`.
+
+**False:** `BudgetRefusal`'s claim that there is no third answer and its `Bounding` documentation that every member is a submitted program's own count or an exact candidate count. A completely evaluated envelope is not an exact plan demand. It is true that the current request gate performs no later search after refusing one; it is false that the reported number is therefore the program's exact resource requirement.
+
+**False for the envelope rows:** the macro renderer's statement that every `Bounding` value is `a fact about the region's size`. The value is a fact about the governed admission policy's conservative envelope and may exceed what a particular reachable plan uses.
+
+**Verified:** these meanings are mutually exclusive when classified by their provenance rather than by bare numeric inequalities. An exact value is mathematically both an upper and lower bound, so the durable categories are: completed exact demand; conservative planning envelope computed before selection; and lower bound recorded where enumeration stopped.
+
+**Verified:** this public diagnostic correction changes no deterministic budget value, request-subject bytes, artifact schema, artifact/cache identity, or compiler/runtime algorithm. It changes the pre-alpha Rust output vocabulary and frontend wording only.
+
+## Decision — accepted 2026-08-12 by Tom, relayed in the active Codex session
+
+Retain the typed thirteen-row `BudgetResource` and payload-bearing `CompileFailureClass::BudgetExhausted`, but **revise the landed two-way surface before treating it as accepted**.
+
+- Replace `BudgetRefusal::{Bounding, Truncated}` with a closed three-way report vocabulary whose meanings are `ExactDemand`, `PlanningUpperBound`, and `SearchLowerBound` (exact names may follow repository naming conventions, but those three semantics are fixed).
+- Replace the public field name `actual` with the neutral `reported`; its documentation must direct the caller to the resource's report kind.
+- Keep one total, wildcard-free `BudgetResource -> report kind` mapping as the authority. Do not store a second independently variable kind beside the resource.
+- Keep the report-kind enum closed. `tiler-macros` maps every case totally to caller advice, so a new meaning must stop the build until that consumer defines its rendering; this is ADR 0074's fail-loud total-consumer boundary.
+- Render exact demand, conservative envelope, and truncated-search lower bound separately. An envelope message must say that a particular plan may use less; a lower-bound message must not present the value as the budget required for success.
+- Keep all thirteen resource variants and keep `BudgetResource` `#[non_exhaustive]`. Public reachability of only five rows today does not justify duplicating or narrowing the compiler's complete refusal vocabulary.
+
+The categories are MECE over the current vocabulary because they are defined by how the value was produced, not by whether the number can be described abstractly as a bound. Future-proofing is fail-loud rather than a claim that a fourth provenance can never exist: a genuinely new meaning adds a deliberate report-kind variant and breaks every total owner until it is classified and rendered.
 
 ## Required work
 
-**Delivered draft pending Tom's acceptance** (do not re-implement; see Decision boundary). The implementation choice is recorded as **“Decided 2026-08-08”** only in the worker sense — not acceptance provenance.
-
-- **Delivered:** `resource`, `limit`, and `actual` are carried through `CompileFailureClass::BudgetExhausted` as a payload variant, matching the shape sibling arms use for structured detail, with an exhaustive mapping and no wildcard arm on the budget path.
-- **Delivered, pending acceptance of the exact vocabulary:** `resource` is a typed enumeration, `BudgetResource`, not `&'static str`. **Worker selection 2026-08-08, pending Tom's acceptance.** The item's own reasoning — a closed set a caller may match totally — is not the load-bearing one, and ADR 0074 convention 5's clause test does not decide this: that test picks whether a type is `#[non_exhaustive]`, not whether it is a string. Two things decide it. First, ADR 0074 **convention 1** already names this case in its own words: a variant carries "the exhausted resource with its attempted and permitted quantities". Second, and dispositive, `actual` is an exact quantity for eight resources and a lower bound for five — a `&'static str` cannot tell a caller which, so the same source reading the ticket exists to remove would come straight back. `BudgetResource::refusal()` answers it in one total match. Convention 5's clause test *was* applied, to the attribute: `BudgetResource` is 5a and carries `#[non_exhaustive]`; `BudgetRefusal` is a closed two-way split and deliberately does not.
-- **Delivered:** regression that a compilation exceeding one budget reports that budget's name, limit, and actual (`a_chain_past_the_program_size_bound_names_the_budget_it_exhausted`); the test was watched failing before the fix.
-- **Delivered with the work:** the exhausted-resource strings were four separate tables. They are now one, `BudgetResource::key()`, with each authority delegating to it, so the key a refusal reports and the key its explain record carries cannot drift apart. Every one of the thirteen strings is byte-identical to the string it replaced.
-
-**Still open (this ticket's remaining work):** Tom accepts or revises the exact public enum variants, fields, exhaustiveness posture, and rendering behavior. No further product implementation is required unless that decision revises the surface.
+- Preserve the already-landed typed resource and central stable-key authority.
+- Implement the accepted three-way report-kind mapping and rename the public numeric field.
+- Repair compiler, pipeline, session, optimizer, frontend, spike, and test prose that says eight values are exact or treats every non-search value as a region-size fact.
+- Add an exhaustive thirteen-resource classification test sized from `BudgetResource` and perturb each of the three provenance classes.
+- Add a regression proving at least one planning envelope differs from the exact demand of a reachable plan; use the source's one-input/one-output host-expression counterexample rather than changing an assertion alone.
+- Keep the exact-demand and search-lower-bound public regressions, update the macro rendering tests for all three messages, and watch the new envelope classification fail before the fix.
 
 ## Explicit non-goals
 
@@ -89,4 +108,4 @@ That arm needed more than a `{ .. }` to be correct. Its message said the compile
 
 ## Closes when
 
-Tom accepts or revises the exact public failure surface, and a public caller can name the exhausted resource, its limit, and the value that exceeded it from the typed failure alone, with a regression test that was watched failing first.
+The accepted three-way public failure surface is implemented; a caller can name the exhausted resource, its limit, the reported value, and that value's provenance without reading compiler source; all thirteen resources map exactly once; exact demand, planning envelope, and search lower bound each have a watched-failing regression and distinct frontend rendering; and the stale two-way claims are removed from current contracts and evidence.
