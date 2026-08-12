@@ -406,6 +406,8 @@ So the core quantitative vocabulary is narrow by derivation: `RouteResourceDimen
 
 ### The governed digest
 
+**Accepted boundary, not yet implemented — 2026-08-12.** [ADR 0111](decisions/0111-separate-externally-specified-raw-hashes-from-governed-tiler-digests.md) separates an externally specified raw digest record from every governed subject below. The accepted external path names the exact algorithm from the external record and returns an opaque result type that cannot convert to or from the governed `Digest`; it adds no domain, tag, wire field, artifact identity, or alternate spelling of any pre-image in this contract. The envelope and sidecar continue to use only the governed domain-separated path described here.
+
 **Fact.** The envelope names its digest algorithm by an explicit header tag and a reader never infers one from a digest width. `0x01` is `tiler.digest.sha-256.v1`, the only admitted value in this build. The envelope governs **seven** domain separators as fixed NUL-terminated crate constants, so `H(domain || bytes)` genuinely separates its subjects rather than colliding a longer domain with a shorter one plus leading content. Four are digest arguments:
 
 ```text

@@ -1,68 +1,72 @@
 ---
 id: route-the-two-hand-rolled-test-hashes-through-the-digest-crate-or-record-why-not
-title: Decide and route the three raw conformance hashes through the digest authority
-status: awaiting-decision
+title: Route the four workspace raw conformance hashes through the digest authority
+status: todo
 priority: p3
 dependencies: []
 related: [site-the-governed-digest-so-layered-identity-encoders-can-reach-it]
-scopes: [implementation/compiler, implementation/reference, implementation/conformance, implementation/workspace, implementation/cargo-lock, implementation/digest, contracts/artifacts]
+scopes: [implementation/compiler, implementation/reference, implementation/conformance, implementation/runtime, implementation/workspace, implementation/cargo-lock, implementation/digest, contracts/artifacts, contracts/foundation, contracts/decisions, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
-tags: [decision, needs-tom, public-boundary]
+tags: [implementation, public-boundary, identity, conformance]
 ---
 ## User-visible outcome
 
-Every workspace-authored raw SHA-256 conformance hash routes through the one digest implementation without changing the retained external digest bytes, or the artifact contract records why raw external hashes are an explicit exception to the governed-domain rule.
+Every Cargo-workspace member that reproduces an externally specified raw SHA-256 result uses the one digest implementation, without changing retained external digest bytes or weakening the governed-domain rule.
 
-## Per-Fact audit — 2026-08-09
+## Decision — accepted 2026-08-12
 
-- **False population.** There are **three** hand-written SHA-256 copies outside `tiler-digest` under `crates/`, not two: `crates/tiler-compiler/src/governed/contraction_conformance.rs`, `crates/tiler-reference/tests/contraction_profile_cells.rs`, and the later `crates/tiler-conformance/src/envelope.rs` copy anchored at `pub(crate) fn sha256_hex`. Together with `tiler-digest`'s `sha2::Sha256`, the **crates** population has four implementations. Absolute "the workspace has four" is false: `prototypes/serial-sum-run/src/proof.rs` is a fourth hand-rolled raw-external twin (same L3 retained-digest subject class and domain-refusal rationale), and spikes carry further local digests plus one direct `sha2::Sha256` use. Those residual sites are outside this ticket's declared scopes (see Residual sites and Closes when).
-- **Verified common subject.** All three local copies hash exact little-endian row-major `f32` result bytes and compare them with retained external `CC_SHA256` records. Their FIPS-vector checks establish the required bytes are ordinary, undomained FIPS SHA-256.
-- **False reachability premise.** Compiler and reference cannot name a transitive `tiler-digest` dependency; they need direct dev-dependencies, which changes both manifests and the workspace lockfile. Conformance already reaches the algorithm through its artifact dependency, but its own comment refuses that API because it requires a domain. The required implementation population is therefore compiler, reference, conformance, workspace manifests, and Cargo.lock.
-- **Verified authority conflict.** `tiler-digest` says every governed subject carries a real domain and exposes only `digest(domain, bytes)` / `digest_qualified`. Its tests use `b""` solely to reproduce published FIPS vectors. The three callers are not Tiler identities: they reproduce external device/probe records whose pre-image is the raw result bytes. Adding a `tiler.*` domain would change every retained digest and stop comparing the same evidence.
-- **Verified one-authority rule, but it does not answer the exception.** ADR 0104 and the digest crate require one mapping from governed algorithm to implementation. They do not decide whether an external raw conformance record may call that implementation with an empty domain or needs a separately named raw-external API/contract.
+Tom accepted [ADR 0111](../docs/decisions/0111-separate-externally-specified-raw-hashes-from-governed-tiler-digests.md) in the live coordination session. Implement its separately typed raw-external boundary:
 
-The original two-site scope was incomplete. `implementation/conformance`, `implementation/workspace`, `implementation/cargo-lock`, `implementation/digest`, and `contracts/artifacts` are now declared before a decision or implementation is attempted.
+- `Digest` remains exclusively the result of a Tiler-governed, domain-separated pre-image.
+- Add opaque `ExternalDigest`, with no conversion to or from `Digest` and no wire constructor.
+- Add `DigestAlgorithm::digest_external_record(bytes) -> ExternalDigest` and route retained `CC_SHA256` evidence through the explicit `DigestAlgorithm::Sha256` variant, never `GOVERNED`.
+- Share one private algorithm dispatch inside `tiler-digest`; do not add a second SHA implementation, a synthetic domain, or a consumer dependency on `sha2`.
 
-**Id note.** The stable ticket id still says "two"; the title and body say three. Do not rename the id.
+## Per-Fact audit — 2026-08-12 at `02ab5153`
 
-## Fact audit — 2026-08-10
+- **False population and close condition.** The Cargo workspace has **four** handwritten raw SHA-256 copies outside `tiler-digest`, not three: `crates/tiler-compiler/src/governed/contraction_conformance.rs`, `crates/tiler-reference/tests/contraction_profile_cells.rs`, `crates/tiler-conformance/src/envelope.rs`, and `prototypes/serial-sum-run/src/proof.rs`. `Cargo.toml` lists the prototype as a workspace member. Treating it as a reason-recorded residual would contradict this ticket's outcome, so `implementation/runtime` is now in scope and all four copies must be deleted.
+- **Verified common subject.** All four copies hash exact little-endian row-major `f32` result bytes and compare them with retained external `CC_SHA256` records. Their FIPS-vector checks establish that the required bytes are ordinary, undomained FIPS SHA-256.
+- **Verified producer distinction.** The three crate sites and the prototype reconstruct the bytes independently of the retained string; conformance and the prototype additionally hash device readback. Centralizing only the digest algorithm does not merge the result producer with the external expected value.
+- **False future-compatibility premise in the old recommendation.** `DigestAlgorithm::GOVERNED` means the algorithm this Tiler build writes, while the external record means SHA-256 permanently. Calling `GOVERNED.digest(b"", bytes)` would silently follow a future Tiler algorithm change. The exact `Sha256` variant must be stated at every external-record call.
+- **Verified authority conflict.** `tiler-digest` currently documents only two governed, domain-bearing pre-image shapes. Its tests use `b""` only to reproduce published vectors. A public empty-domain convention would make a raw external record look like a governed Tiler subject; a distinct result type preserves the subject split.
+- **Verified reachability with a contract correction.** Compiler's copy is behind `#[cfg(test)]` and reference's is an integration test, so both need direct development dependencies on `tiler-digest`. Conformance and the prototype use their helpers from device-reaching paths and need direct normal dependencies. ADR 0106 and `docs/architecture.md` currently say conformance reaches `tiler-digest` transitively and deliberately does not name it; once source names the new API, that description must be corrected rather than silently contradicted.
+- **Verified identity consequence.** These strings are evidence observations, not artifact or layered identities. Routing them through the same SHA-256 implementation changes no retained bytes, artifact schema, digest tag, identity domain, cache key, or canonical encoding.
+- **Verified independent byte-order check.** `crates/tiler-conformance/src/envelope/tests.rs`, anchor `the_digest_helper_reproduces_the_published_vectors`, checks little-endian `1.0f32`, rejects its big-endian spelling, and rejects element reordering. The compiler, reference, and prototype also pin FIPS vectors; the shared implementation's own suite adds complete padding-residue evidence.
+- **Imprecise residual description.** `spikes/cache/cache_harness.rs` and `spikes/artifacts/artifact_envelope.rs` contain local `sha256` implementations, and the decoder-allocation harness uses `sha2::Sha256` directly. They are repository-authored but are not Cargo-workspace members or gate authorities. Keep them as explicit standalone-experiment exceptions; do not claim a repository-wide grep is empty.
 
-**Correction — 2026-08-10.** The independent little-endian byte-order check already exists at the conformance site for the current local helper: `crates/tiler-conformance/src/envelope/tests.rs` `the_digest_helper_reproduces_the_published_vectors` asserts `result_digest(&[0x3f80_0000])` equals `sha256_hex` of LE `00 00 80 3f`, inequality for BE, and row-major order inequality. Post-decision work re-binds that check to the routed implementation rather than introducing it from zero. Compiler and reference still only run the two FIPS vectors. After any shared route, still require the two subject perturbations (`to_be_bytes`, non-empty domain) each reddening a retained-digest comparison, then restore both.
+**Id note.** The stable ticket id still says “two”. Keep it for graph identity; the title and body carry the corrected population.
 
-## Residual sites (out of declared scopes)
+## Required delivery
 
-These hits remain after routing only the three named crate callers. They are not in this ticket's required work or scopes; close conditions record reasons rather than demanding they vanish:
+### Digest authority
 
-- `prototypes/serial-sum-run/src/proof.rs` — fourth hand-rolled raw-external SHA-256 twin for the same retained L3 digest subject class; exploratory prototype, not gate-owned under current scopes. If Tom chooses option 1 or 2 and this ticket stays crates-only, file a remainder (likely needing `implementation/runtime`) so the full-tree census can close with a recorded route or reason rather than an unmentioned hit.
-- `spikes/cache/cache_harness.rs`, `spikes/artifacts/artifact_envelope.rs` — hand-rolled digests in exploratory spikes (out of gate).
-- `spikes/artifacts/decoder-allocation/harness` — direct `sha2::Sha256` use in a spike (out of gate).
+- Factor one private SHA-256 dispatch shared by governed and external calls.
+- Add `ExternalDigest` as an opaque, fixed-width result with exact-byte and lowercase-label observation only. No public constructor, `from_wire`, `From`, `Into`, comparison bridge, or serialization with `Digest`.
+- Add the explicit external-record method on `DigestAlgorithm`. Document that callers select the algorithm variant named by the external record and that `GOVERNED` is not that authority.
+- Move the published FIPS-vector reproduction onto the external path. Retain governed-domain, qualified-preimage, tag, padding, and performance tests on their actual subjects.
+- Add a compile-time or source-population check strong enough that the four migrated callers cannot drift back to `GOVERNED.digest(b"", ...)` or a local SHA implementation unnoticed.
 
-## Decision boundary
+### Consumers and dependencies
 
-Tom decides how external raw digest evidence reaches the governed implementation while preserving the external bytes:
+- Route all four helpers through `DigestAlgorithm::Sha256.digest_external_record` while preserving each `to_le_bytes()` pre-image and retained string.
+- Delete all four compression implementations and their obsolete “cannot reach the digest” explanations.
+- Add direct development dependencies for compiler/reference and direct normal dependencies for conformance/prototype. Update `Cargo.lock` and the live architecture dependency block atomically.
+- Correct ADR 0106's retained transitive-only statement with a dated note rather than rewriting its historical accepted text.
 
-1. **Admit an explicit empty-domain exception** for published FIPS vectors and externally defined raw device/probe records. Route all three sites through `DigestAlgorithm::GOVERNED.digest(b"", bytes)` and document that this is not a governed Tiler subject.
-2. **Add an explicit raw-external SHA entry point** whose name and documentation make the exception unambiguous, while still mapping to the same sole implementation.
-3. **Keep local copies.** This preserves the current domain API but abandons the digest crate's structural one-implementation purpose for three byte-identical implementations.
+### Evidence
 
-**Recommendation: option 1.** The raw bytes are fixed by external evidence, the existing implementation already exposes exactly those bytes for its FIPS vectors, and a documented external-record exception avoids inventing a second algorithm surface. **Strongest counterpoint:** passing `b""` through a public API whose crate documentation says every governed subject has a real domain makes a test-only convention look like a supported subject class; an explicit raw-external method is clearer if this exception is expected to grow.
-
-No synthetic domain is an option: it would no longer reproduce the retained records.
-
-## Required work after the decision
-
-- Route all three crate callers under the declared scopes, not only the two the original ticket named.
-- Preserve every retained digest string and the exact `to_le_bytes()` pre-image.
-- Re-bind the existing independent raw-byte-order check at the conformance site to the routed helper; do not prove a helper by comparing it only with itself. Still require LE + non-empty-domain subject perturbations after any shared route.
-- Remove the three hand-written compression implementations and their stale Cargo/reachability explanations if either shared route is accepted.
-- Record the external-raw exception in the digest/artifact authority at the narrowest accepted surface.
-- Perturb the subject twice: change `to_le_bytes()` to `to_be_bytes()`, then change the accepted raw-domain input to a non-empty domain. Each must fail a retained-digest comparison; restore both before gates.
+- Re-bind the existing conformance little-endian and row-order test to the shared path.
+- Preserve FIPS vector checks at the owning digest surface; consumer tests should pin their subject encoding and retained comparisons, not duplicate the algorithm's complete vector suite without a distinct purpose.
+- Perturb `to_le_bytes()` to `to_be_bytes()` and show a retained comparison failing. Separately substitute a governed non-empty-domain result and show a retained comparison failing. Restore both before gates and quote both failure messages in the outcome.
+- Census Cargo-workspace sources and assert the only `sha2::Sha256` implementation remains in `tiler-digest`; record the three standalone spike exceptions separately.
 
 ## Explicit non-goals
 
-No new `tiler.*` domain, retained digest rebaseline, digest algorithm/tag change, identity-domain step, artifact wire change, or direct `sha2` dependency in consumer crates. No required edit of prototypes or spikes under this ticket's scopes.
+No new `tiler.*` domain, retained digest rebaseline, governed algorithm/tag change, artifact wire or identity-domain step, direct `sha2` dependency in a consumer, conversion between the two digest result types, or required edit of standalone `spikes/` trees.
+
+No attempt to make the external result authentic. It reproduces an externally recorded digest; the provenance and trustworthiness of that record remain the evidence owner's responsibility.
 
 ## Closes when
 
-Tom resolves the raw-external boundary; all three crate-scoped workspace-authored copies are routed or explicitly justified against that decision; retained digests and byte order are independently checked on the routed path (conformance LE check re-bound, not invented); and the `fn sha256|Sha256::` census **within declared scopes** contains only the governed implementation plus sites whose current reason is recorded. Residual prototype and spike sites listed above count as reason-recorded for this ticket; they do not block close unless Tom expands scope or a post-decision remainder owns the prototype twin.
+The separately typed raw-external surface is implemented and documented; all four Cargo-workspace copies are deleted and routed through explicit SHA-256 selection; direct dependency records and architecture prose match source; retained strings are unchanged; byte-order, element-order, algorithm-selection, and domain-substitution checks reach their subjects; `tkt guard`, package tests, Clippy, rustdoc, workspace nextest/doc-tests, and the repository gate pass; and the outcome records the exact census and both demonstrated perturbation failures.
