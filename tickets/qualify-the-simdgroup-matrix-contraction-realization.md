@@ -1,10 +1,10 @@
 ---
 id: qualify-the-simdgroup-matrix-contraction-realization
 title: Qualify or refuse the simdgroup-matrix contraction realization
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: [realize-the-contraction-through-the-appendable-direct-path]
-related: [realize-the-tiled-contraction-schedule-and-its-metal-emission, carry-the-dtype-on-the-metal-subnormal-flush-fact, declare-metal-numerical-honourability, exercise-opaque-admissions-downstream-of-the-frontier]
+related: [realize-the-tiled-contraction-schedule-and-its-metal-emission, carry-the-dtype-on-the-metal-subnormal-flush-fact, declare-metal-numerical-honourability, exercise-opaque-admissions-downstream-of-the-frontier, pin-the-strict-contraction-simdgroup-refusal, research-an-explicit-seeded-fused-contraction-operation]
 scopes: [implementation/metal, contracts/artifacts, research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
@@ -52,3 +52,17 @@ Making it the default. `M`-padding. Any claim about another Apple GPU family, an
 ## Closes when
 
 Tom chooses one branch. The route is then either designed as a distinct keyed operation with complete public, target, artifact, identity, reference, and conformance consequences, or refused specifically for the current registered operation with its reason recorded. The `contraction_pair` and `negative_zero_seed` observations are reproduced by whatever check the accepted outcome installs.
+
+## Source-first corrections — 2026-08-12
+
+- **False host attribution repaired.** The four-cell timing ratios were measured on the M3 Pro/macOS `26A5378n` timing host. The M4 Max/macOS `26A5388g` record owns the retained correctness observations and finite topology attribution. They are separate evidence populations.
+- **Incomplete shape statement repaired.** The simdgroup path refuses both the `M = 1` decode shape and the `M = 10` C1 shape because its retained kernel requires `M`, `N`, and `K` to be multiples of eight.
+- **Imprecise implementation state repaired.** Production already fails closed structurally: the strict contraction lowering writes a first-product seed and separate multiply/canonicalize/add/canonicalize steps, and its Metal regression forbids `simdgroup`, `multiply_accumulate`, `fma`, and `mad`. What remained undecided was the durable realization classification and its evidence record, not whether the current emitter silently selected the instruction.
+- **Unsafe evolution wording repaired.** `tiler::strict-tensor-contraction-f32@1` may not be revised in place to acquire seeded fused semantics. Any such semantics require a distinct `OpKey`, reference meaning, validation, and identity.
+- **Overbroad schema consequence repaired.** A future distinct semantic operation does not by itself require new fixed artifact realization fields. Its reached semantic and schedule identities already move. Artifact schema widening is owed only if that future design introduces a genuinely new delivered physical fact.
+
+## Accepted decision — 2026-08-12
+
+Tom accepted the recommended refusal in this thread. `simdgroup_multiply_accumulate` is not a realization of `tiler::strict-tensor-contraction-f32@1` because it is fused where the operation requires separate rounding, starts from `+0.0` where the operation starts from the first product, and cannot establish the operation's per-combine NaN boundary or unpublished internal order/precision. The finite eight-case, twenty-two-topology record remains bounded empirical evidence and cannot discharge those hard obligations.
+
+The current operation and production path remain unchanged, so this decision itself moves no semantic, schedule, artifact, cache, schema, or identity domain. [Pin the strict refusal](pin-the-strict-contraction-simdgroup-refusal.md) owns the durable typed classification and retained-observation regressions. [Research a distinct seeded fused operation](research-an-explicit-seeded-fused-contraction-operation.md) is deferred until a caller need and evidence capable of defining portable reference semantics both exist; no target-specific opaque “whatever Apple does” operation is authorized.
