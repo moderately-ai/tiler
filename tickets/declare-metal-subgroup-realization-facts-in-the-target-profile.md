@@ -3,8 +3,8 @@ id: declare-metal-subgroup-realization-facts-in-the-target-profile
 title: Declare Metal subgroup realization facts as atomic target facts
 status: blocked
 priority: p2
-dependencies: [accept-adr-0094-subgroup-execution-tier, admit-an-atomic-subgroup-realization-subject-to-target-profiles, decide-the-prepared-subgroup-width-equality-gate, measure-metal-thread-execution-width-across-prepared-pipelines]
-related: [design-the-subgroup-execution-tier, declare-cpu-vector-realization-facts-in-the-target-profile, correct-the-subgroup-threads-route-dimension-meaning, correct-the-metal-profile-authority-ledgers-stale-identity-pins]
+dependencies: [accept-adr-0094-subgroup-execution-tier, admit-an-atomic-subgroup-realization-subject-to-target-profiles, decide-the-prepared-subgroup-width-equality-gate, carry-subgroup-width-through-exact-prepared-entry-equality, measure-metal-thread-execution-width-across-prepared-pipelines]
+related: [design-the-subgroup-execution-tier, declare-cpu-vector-realization-facts-in-the-target-profile, correct-the-subgroup-threads-route-dimension-meaning, correct-the-metal-profile-authority-ledgers-stale-identity-pins, make-prepared-entry-observations-typed-and-key-dispatched, generalize-deferred-target-provenance-beyond-capability-axes, bind-prepared-pipeline-caches-to-loader-derived-route-identity]
 scopes: [implementation/compiler, implementation/metal, implementation/build, research/target-profiles, contracts/decisions, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
@@ -79,4 +79,4 @@ SubgroupRealizationSubject {
 - The feasibility rule-set identity advances for the new predicate. Every row field, verdict, phase, authority, validity, and source is canonical identity. A conditional domain-separated row family preserves silent-profile descriptor bytes where the existing grammar permits it; exact domain and pin effects are rederived at implementation.
 - This carrier may land before a production row, but no subgroup route becomes executable until the measurement and prepared-width gate below are complete.
 
-Delivery is split into `admit-an-atomic-subgroup-realization-subject-to-target-profiles`, `decide-the-prepared-subgroup-width-equality-gate`, and `measure-metal-thread-execution-width-across-prepared-pipelines`. This ticket now owns only the eventual evidence-backed standard Metal declaration and remains blocked on all three.
+Delivery is split into `admit-an-atomic-subgroup-realization-subject-to-target-profiles`, the completed `decide-the-prepared-subgroup-width-equality-gate`, its implementation ticket `carry-subgroup-width-through-exact-prepared-entry-equality`, and `measure-metal-thread-execution-width-across-prepared-pipelines`. This ticket now owns only the eventual evidence-backed standard Metal declaration and remains blocked on the unfinished delivery tickets.
