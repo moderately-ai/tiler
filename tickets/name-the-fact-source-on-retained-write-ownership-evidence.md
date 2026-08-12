@@ -1,14 +1,14 @@
 ---
 id: name-the-fact-source-on-retained-write-ownership-evidence
 title: Name the fact source on retained write-ownership evidence
-status: awaiting-decision
+status: todo
 priority: p2
 dependencies: []
-related: [bound-a-symbolic-index-coefficient-interval-from-its-declared-extent]
+related: [bound-a-symbolic-index-coefficient-interval-from-its-declared-extent, accept-the-partitioned-write-ownership-proof-boundary]
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
-tags: [indexing, proofs]
+tags: [indexing, proofs, public-boundary]
 ---
 ## User-visible outcome
 
@@ -53,3 +53,32 @@ Filed 2026-08-07 by the worker of the bounds half, from a remainder that a live 
 **Option B — preserve the accepted variants and design an additive evidence wrapper.** Keep every accepted variant signature byte-for-byte and introduce a separate total wrapper/accessor carrying `{ proof, facts }`. This avoids changing the accepted vocabulary. The strongest counterpoint is that retaining the old source-less accessor or value gives callers two competing views, while replacing its return type is itself a breaking signature change; a satisfactory wrapper therefore needs an explicit compatibility and deprecation shape rather than the optional sibling this ticket rejects.
 
 **Recommendation.** Choose Option A. The proof rule is already settled, the candidate demonstrates exact propagation over standalone and joint ownership, and no identity bytes move; the remaining choice is solely whether those accepted public variants may acquire the field-bearing shapes. Until Tom accepts one exact surface, the implementation stays on its branch and this ticket remains `awaiting-decision`.
+
+## Corrected public-boundary acceptance — 2026-08-12
+
+**Decision — accepted by Tom in the live coordination session, superseding the exact candidate shape above.** Prior implementation and prior acceptance are evidence, not a presumption that a public shape is optimal. The fresh audit found two contradictory states in candidate `849f0bcd`: a partition member repeated the same source on both the outer proof and its nested joint proof, so public construction could make them disagree; and private `VerifiedAccessData` retained an ownership source even when it retained no ownership proof. The candidate must be revised rather than merged unchanged.
+
+The accepted ownership surface carries each source exactly once:
+
+```rust
+pub enum WriteOwnershipProofView {
+    CoordinatePermutation { facts: IndexDomainFactSource },
+    Exhaustive { points: u64, facts: IndexDomainFactSource },
+    PartitionMember { joint: JointPartitionProofView },
+}
+
+pub enum JointPartitionProofView {
+    Interval { facts: IndexDomainFactSource },
+    Exhaustive { points: u64, facts: IndexDomainFactSource },
+}
+```
+
+Both enums expose a total `facts()` accessor. `WriteOwnershipProofView::facts()` delegates through `joint.facts()` for `PartitionMember`, so extracting the joint evidence never loses its source and no value can state two answers. The private `WriteOwnershipProof` and `JointPartitionProof` mirror these shapes; `VerifiedAccessData` gets no separate `ownership_facts` field and a read access retains no meaningless ownership provenance.
+
+This acceptance also closes the previously unaccepted shared premise-source vocabulary already used by the bounds half: exact exhaustive `IndexDomainFactSource::{Program, ShapeEnvironment}` with its existing governed tags and one-sided meaning, `DischargedIndexDomainPredicate::facts()`, and the existing field-bearing `BoundsProofView` variants and total `facts()` accessor. `Program` is the strong claim that the complete proof population was literal. `ShapeEnvironment` is the weaker claim that at least one declared symbol participated, not that the environment was uniquely necessary. No optional or source-less compatibility accessor is retained in this pre-alpha tree.
+
+The environment-determined unit-coefficient path is accepted with the carrier. `coordinate_offset_dimension` may treat a symbolic coefficient proved exactly one as the unit coefficient for interval partitioning while the expression and canonical identity continue to name the symbol. Every other symbolic coefficient still declines to the joint enumeration; normalization remains unchanged.
+
+**Identity and performance.** Ownership proof views remain outside `encode_region`, and the fact-source values and tags already enter discharged index-domain assessment identity under `tiler.index-region.v11`. This correction introduces no new encoded tag, moves no existing canonical byte or pin, and needs no domain step. It adds no allocation or asymptotic work: one small source tag is retained inside each existing proof value and `facts()` is constant time.
+
+**Required evidence before integration.** Rebase the useful propagation work onto current `main`; cover static and symbolic coordinate-permutation and single-write exhaustive proofs, literal/symbolic/mixed interval partitions, and literal/symbolic/mixed exhaustive partitions; prove the outer partition accessor equals the nested source by construction rather than assertion; perturb a determined coefficient from one to two; and byte-compare representative pre-existing canonical region identities. Remove the superseded draft labels for every accepted fact-source item. The old candidate's green gate does not carry across this source-shape correction or the current-main rebase.
