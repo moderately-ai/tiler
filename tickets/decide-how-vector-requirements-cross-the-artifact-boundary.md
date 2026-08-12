@@ -1,9 +1,9 @@
 ---
 id: decide-how-vector-requirements-cross-the-artifact-boundary
 title: Decide how vector requirements cross the artifact boundary
-status: awaiting-decision
+status: blocked
 priority: p1
-dependencies: [define-plural-operation-specific-vector-realization-requirements, package-selected-physical-implementation-provenance-in-artifact-identity]
+dependencies: [define-plural-operation-specific-vector-realization-requirements, package-selected-physical-implementation-provenance-in-artifact-identity, admit-fixed-vector-ssa-and-unmasked-memory-into-kernel-ir]
 related: [declare-cpu-vector-realization-facts-in-the-target-profile, establish-vector-execution-form-numerical-authority]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/artifacts, contracts/decisions]
 shared_scopes: [project/tickets]

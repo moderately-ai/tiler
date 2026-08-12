@@ -3,7 +3,7 @@ id: admit-scalar-epilogue-fixed-vector-map-tails
 title: Admit scalar-epilogue fixed-vector map tails
 status: todo
 priority: p2
-dependencies: [admit-vector-lane-bindings-into-the-schedule-vocabulary, admit-lane-typed-values-and-masked-memory-into-the-kernel-ir, declare-cpu-vector-realization-facts-in-the-target-profile, establish-vector-execution-form-numerical-authority]
+dependencies: [admit-vector-lane-bindings-into-the-schedule-vocabulary, declare-cpu-vector-realization-facts-in-the-target-profile, establish-vector-execution-form-numerical-authority, admit-fixed-vector-ssa-and-unmasked-memory-into-kernel-ir]
 related: []
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/cpu, contracts/decisions, contracts/numerics]
 shared_scopes: [project/tickets]

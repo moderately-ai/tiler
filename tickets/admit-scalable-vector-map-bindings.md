@@ -3,7 +3,7 @@ id: admit-scalable-vector-map-bindings
 title: Admit scalable-vector map bindings
 status: deferred
 priority: p2
-dependencies: [admit-vector-lane-bindings-into-the-schedule-vocabulary, admit-lane-typed-values-and-masked-memory-into-the-kernel-ir, declare-cpu-vector-realization-facts-in-the-target-profile]
+dependencies: [admit-vector-lane-bindings-into-the-schedule-vocabulary, declare-cpu-vector-realization-facts-in-the-target-profile, admit-fixed-vector-ssa-and-unmasked-memory-into-kernel-ir]
 related: []
 scopes: [implementation/ir, implementation/compiler, implementation/cpu, contracts/decisions]
 shared_scopes: [project/tickets]

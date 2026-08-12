@@ -4,7 +4,7 @@ title: Admit the first vector-lane schedule boundary
 status: todo
 priority: p2
 dependencies: [accept-adr-0093-cpu-vector-lane-tier]
-related: [design-the-cpu-vector-lane-tier, admit-shared-contributor-coverage-and-reduction-padding-identity, declare-cpu-vector-realization-facts-in-the-target-profile, define-plural-operation-specific-vector-realization-requirements, admit-lane-typed-values-and-masked-memory-into-the-kernel-ir]
+related: [design-the-cpu-vector-lane-tier, admit-shared-contributor-coverage-and-reduction-padding-identity, declare-cpu-vector-realization-facts-in-the-target-profile, define-plural-operation-specific-vector-realization-requirements, admit-fixed-vector-ssa-and-unmasked-memory-into-kernel-ir]
 scopes: [implementation/ir, implementation/compiler, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
@@ -37,7 +37,7 @@ The first admitted combination is deliberately narrow:
 - `TailPolicy::Exact` only;
 - map-parallel regions whose existing ownership proof establishes one owner for every output;
 - literal `N` and `W` with checked `N mod W == 0`;
-- the existing logical `work_items` and launch population continue to count scalar output invocations, while the binding groups those invocations into exact packets of `W` lanes;
+- logical `work_items` continues to count the `N` scalar output positions, while `launch.grid_threads` counts the `N / W` fixed-vector packets; packet `p`, lane `l` owns scalar output `pW + l`;
 - no numerical permission is consumed merely by grouping independent outputs;
 - every lane-shaped arithmetic or memory operation later emitted must be explicit in KIR and in the plural target-requirement carrier; absence leaves the plan non-executable rather than authorizing scalarization.
 
@@ -86,6 +86,8 @@ Accept the exact fixed-vector map slice and split the broader forms into their e
 Tom accepted the recommended exact fixed-vector map slice in the live Codex coordination thread by replying `okay agreeed, next decision`. The relay source is Tom's direct response in that thread.
 
 The accepted public boundary is exactly `VectorLaneCount` with a checked `u64` value of at least two and `ExecutionBinding::FixedVectorMap { lanes }`, admitted initially only with `TailPolicy::Exact`. Width one remains the existing scalar map rather than a second vector spelling. The verifier derives exact divisibility, scalar-output coverage, ownership, and bounds without consulting a target or consuming any numerical-order permission. No power-of-two rule, architecture preset, default, independent lane-count budget, implicit mask, scalar peeling, or backend scalarization is accepted.
+
+**Accepted correction — 2026-08-12.** The earlier phrase that the launch population continued to count scalar outputs was false against `LaunchPlan::grid_threads`, whose current invariant is the number of executing invocations. Tom accepted the source-first correction while accepting the real fixed-vector CPU prerequisite: `work_items = N` remains the logical scalar-output population, `launch.grid_threads = N / W` is the exact packet population, and packet `p`, lane `l` owns output `pW + l`. No implementation may retain `grid_threads = N` and ask an emitter to reinterpret the builtin, because that would execute `N * W` lane positions under a launch identity claiming only `N` outputs.
 
 Predicated tails, scalar epilogues, contributor partitions, and scalable maps remain separate public boundaries. They are now owned by [`admit-predicated-fixed-vector-map-tails`](admit-predicated-fixed-vector-map-tails.md), [`admit-scalar-epilogue-fixed-vector-map-tails`](admit-scalar-epilogue-fixed-vector-map-tails.md), [`admit-fixed-vector-contributor-partitions`](admit-fixed-vector-contributor-partitions.md), and [`admit-scalable-vector-map-bindings`](admit-scalable-vector-map-bindings.md). None may reinterpret `FixedVectorMap` or count a mock, simulator, Candle adapter, or reference evaluator as its runtime consumer.
 

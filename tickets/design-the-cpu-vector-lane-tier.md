@@ -4,7 +4,7 @@ title: Design the CPU vector-lane tier and its backend consumption
 status: done
 priority: p2
 dependencies: []
-related: [prototype-a-bounded-scalar-cpu-backend-vertical, exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio, design-the-subgroup-execution-tier, drive-an-external-physical-implementation-provider-through-compilation, land-the-cpu-vector-lane-tier-adr, admit-vector-lane-bindings-into-the-schedule-vocabulary, admit-lane-typed-values-and-masked-memory-into-the-kernel-ir, declare-cpu-vector-realization-facts-in-the-target-profile, accept-adr-0093-cpu-vector-lane-tier]
+related: [prototype-a-bounded-scalar-cpu-backend-vertical, exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio, design-the-subgroup-execution-tier, drive-an-external-physical-implementation-provider-through-compilation, land-the-cpu-vector-lane-tier-adr, admit-vector-lane-bindings-into-the-schedule-vocabulary, declare-cpu-vector-realization-facts-in-the-target-profile, accept-adr-0093-cpu-vector-lane-tier, admit-fixed-vector-ssa-and-unmasked-memory-into-kernel-ir]
 scopes: [research/scheduling, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []

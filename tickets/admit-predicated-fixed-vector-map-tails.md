@@ -3,7 +3,7 @@ id: admit-predicated-fixed-vector-map-tails
 title: Admit predicated fixed-vector map tails
 status: todo
 priority: p2
-dependencies: [admit-vector-lane-bindings-into-the-schedule-vocabulary, admit-lane-typed-values-and-masked-memory-into-the-kernel-ir, declare-cpu-vector-realization-facts-in-the-target-profile]
+dependencies: [admit-vector-lane-bindings-into-the-schedule-vocabulary, declare-cpu-vector-realization-facts-in-the-target-profile, admit-fixed-vector-ssa-and-unmasked-memory-into-kernel-ir]
 related: []
 scopes: [implementation/ir, implementation/compiler, implementation/cpu, contracts/decisions, contracts/optimizer]
 shared_scopes: [project/tickets]

@@ -3,7 +3,7 @@ id: admit-fixed-vector-contributor-partitions
 title: Admit fixed-vector contributor partitions
 status: todo
 priority: p2
-dependencies: [admit-vector-lane-bindings-into-the-schedule-vocabulary, admit-shared-contributor-coverage-and-reduction-padding-identity, admit-lane-typed-values-and-masked-memory-into-the-kernel-ir]
+dependencies: [admit-vector-lane-bindings-into-the-schedule-vocabulary, admit-shared-contributor-coverage-and-reduction-padding-identity, admit-fixed-vector-ssa-and-unmasked-memory-into-kernel-ir]
 related: []
 scopes: [implementation/ir, implementation/compiler, implementation/cpu, contracts/decisions, contracts/numerics]
 shared_scopes: [project/tickets]

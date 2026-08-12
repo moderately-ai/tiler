@@ -3,7 +3,7 @@ id: define-plural-operation-specific-vector-realization-requirements
 title: Define plural operation-specific vector realization requirements
 status: todo
 priority: p1
-dependencies: [admit-vector-lane-bindings-into-the-schedule-vocabulary]
+dependencies: [admit-vector-lane-bindings-into-the-schedule-vocabulary, admit-fixed-vector-ssa-and-unmasked-memory-into-kernel-ir]
 related: [declare-cpu-vector-realization-facts-in-the-target-profile, separate-vector-operand-alignment-from-target-realization, establish-vector-execution-form-numerical-authority]
 scopes: [implementation/ir, implementation/compiler, contracts/decisions, contracts/optimizer]
 shared_scopes: [project/tickets]

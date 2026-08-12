@@ -4,7 +4,7 @@ title: Admit subgroup coordinates and exact XOR register transfer into the struc
 status: blocked
 priority: p2
 dependencies: [admit-subgroup-bindings-into-the-schedule-vocabulary, accept-adr-0094-subgroup-execution-tier, admit-guarded-output-tails-for-cooperative-contraction]
-related: [design-the-subgroup-execution-tier, decide-the-subgroup-coordinate-binding-and-output-map, admit-shared-contributor-coverage-and-reduction-padding-identity, admit-an-atomic-subgroup-realization-subject-to-target-profiles, admit-lane-typed-values-and-masked-memory-into-the-kernel-ir, close-the-memory-and-execution-scope-vocabulary-with-an-ir-tripwire]
+related: [design-the-subgroup-execution-tier, decide-the-subgroup-coordinate-binding-and-output-map, admit-shared-contributor-coverage-and-reduction-padding-identity, admit-an-atomic-subgroup-realization-subject-to-target-profiles, close-the-memory-and-execution-scope-vocabulary-with-an-ir-tripwire, admit-fixed-vector-ssa-and-unmasked-memory-into-kernel-ir]
 scopes: [implementation/ir, implementation/compiler, contracts/foundation, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
