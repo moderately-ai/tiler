@@ -3,7 +3,7 @@ id: narrow-symbolic-inference-and-restore-host-owned-refusals
 title: Narrow symbolic inference and restore host-owned refusals
 status: todo
 priority: p1
-dependencies: [seal-and-validate-sourced-shapes-at-semantic-inference-boundaries]
+dependencies: [resolve-semantic-shape-inference-over-symbolic-extents, seal-and-validate-sourced-shapes-at-semantic-inference-boundaries, retain-one-derived-proof-summary-per-shape-environment]
 related: [resolve-semantic-shape-inference-over-symbolic-extents]
 scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]
@@ -29,6 +29,7 @@ The first symbolic-inference release is intentionally narrow: built-in governed 
 
 ## Work
 
+- Add one required private `ShapeInferenceParticipation::{LiteralOnly, GovernedEnvironmentAware}` value to every `OperationDefinition`. Replace the ambiguous public constructor with an explicitly literal-only constructor and keep governed environment-aware construction crate-private. Encode the fixed tag in both operation-definition identity populations; step `tiler.semantic-registry.v7` to `v8` and `tiler.semantic-definition-projection.v5` to `v6`, updating domain pins and every transitive golden.
 - Restore the public provider-facing value constructor to a static `Shape` input. Keep a crate-private sourced constructor for governed semantic inference; preserve a total, non-panicking read view over retained facts.
 - Make `FrozenSemanticRegistry::infer_operation_with_extent_sources`, `OperationInferenceRequest::extent_sources`, the sourced static-shape helper, and host extent-error construction/inspection crate-private for the narrow release. The ordinary public `infer_operation` mechanically rejects any symbolic operand before invoking a callback.
 - Move `SymbolicExtentUnsupported` out of `ExtentSourceError` into a typed semantic operation-capability refusal. Preserve operation key/operand or axis/symbol detail sufficient for remediation; do not report it as an environment failure or silently substitute a provider message.
@@ -55,6 +56,8 @@ The first symbolic-inference release is intentionally narrow: built-in governed 
 ## Public boundary and acceptance
 
 This deliberately revises the broader public surface proposed by `resolve-semantic-shape-inference-over-symbolic-extents`. Tom approved the narrow direction on 2026-08-11: built-in environment-aware elementwise behavior stays; the premature external symbolic-provider surface retreats until an explicit required policy and host proof protocol exist. The exact revised signatures remain a labelled draft until reviewed in the implementation diff.
+
+**Final architecture accepted 2026-08-12.** Tom accepted the required two-mode internal policy, public literal-only construction, governed crate-private construction, fixed identity tag, host-owned semantic refusal, and no-default/no-fallback posture in the ChatGPT coordination thread. Implementation review still verifies the exact Rust spellings and exclusions, but does not reopen these semantics without contradictory source evidence.
 
 ## Closes when
 

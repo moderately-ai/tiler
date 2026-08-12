@@ -1,9 +1,9 @@
 ---
 id: resolve-semantic-shape-inference-over-symbolic-extents
 title: Resolve semantic shape inference over symbolic extents
-status: awaiting-decision
+status: done
 priority: p1
-dependencies: [carry-a-sourced-shape-on-semantic-values, narrow-symbolic-inference-and-restore-host-owned-refusals]
+dependencies: []
 related: [carry-symbolic-extents-into-the-semantic-program, design-an-explicit-symbolic-inference-policy-for-external-providers]
 scopes: [implementation/ir]
 shared_scopes: [project/tickets]
@@ -118,4 +118,18 @@ The recommendation above to **accept the draft as built is withdrawn**. Tom appr
 
 ## Closes when
 
-Both healing dependencies are `done`; independent review confirms the safe-Rust panic, duplicate spelling, foreign-result admission, forged-host-error route, refusal misclassification, and byte-accounting defect are closed; then Tom accepts the exact repaired included/excluded public surface without weakening sourced-equality authority or typed fail-closed evidence.
+Tom accepts the exact repaired included/excluded public surface without weakening sourced-equality authority or typed fail-closed evidence. Implementation and its independent verification remain in the hard-linked delivery tickets; this decision ticket is not an implementation gate.
+
+## Final decision — accepted 2026-08-12
+
+**Provenance.** Tom accepted this exact revised boundary directly in the ChatGPT coordination thread after reviewing the current-base Fact audit, ranked alternatives, identity effects, host-work bound, and first implementation tranche. This supersedes the earlier sequencing that left the decision ticket dependent on its own implementation review.
+
+Every operation definition carries one required, exhaustive, internally encoded shape-inference participation mode: `LiteralOnly` or `GovernedEnvironmentAware`. There is no default, optional policy, provider-selected mode, structural-equality substitute, or fallback between modes. Public extension construction admits only `LiteralOnly`; the governed mode is crate-private until a concrete external symbolic provider justifies a separately accepted host-proof protocol.
+
+The public provider path preflights every operand before callback, exposes no `ExtentSources`, accepts only statically constructed result facts, and cannot construct or inspect a host-authoritative extent failure. A symbolic operand reaches a literal-only definition as a typed host-owned semantic capability refusal naming the exact operation/provider/operand/axis/symbol. Governed inference receives the exact program environment, and the host independently admits every operand and result extent before graph mutation. `SymbolicExtentUnsupported` therefore leaves `ExtentSourceError`; absence of family support is not an environment failure.
+
+The participation tag enters both the complete registry identity and the reached-definition projection. The implementation steps `tiler.semantic-registry.v7` to `v8` and `tiler.semantic-definition-projection.v5` to `v6`; affected registry, graph, request, artifact, and cache subjects move transitively. The artifact wire grammar does not change merely because its nested semantic subject changes. Normalized sourced-shape bytes remain unchanged.
+
+The accepted performance boundary retains one immutable proof summary per verified shape environment, derived from its canonical semantic constraints and excluded from canonical identity. Equality-class, interval, determined-value, and positivity queries reuse it instead of resolving the same constraint system once per axis. Environment construction performs one solve; later inference remains linear in total rank with constant- or logarithmic-time proof queries.
+
+The delivery graph is explicit: sourced-shape sealing makes malformed values unrepresentable; the proof-summary ticket bounds repeated proof work; the narrowing ticket implements the required policy, preflight, error ownership, and identity steps; symbolic broadcast v2 and real symbolic frontend construction depend on those implementation tickets directly. A future external environment-aware provider is new public work, not a hidden continuation or compatibility obligation.
