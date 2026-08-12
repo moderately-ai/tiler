@@ -5703,7 +5703,7 @@ impl From<ElementwiseRefusal> for RequestError {
     /// contributor walk is the only caller that reaches it with a `Folded`
     /// finding, and it discards the finding because [`NormalizedSerialSum`]
     /// carries no producer field to hang the boundary on — so `sum(sum(x) * 2.0)`
-    /// reports `operation-set` here rather than reaching
+    /// reports `reduction-contributor-materialization` here rather than reaching
     /// [`StagedOperandAdmission`]'s guard, which never runs for it.
     /// [`name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set`](../../../tickets/name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set.md)
     /// owns the rule name.
@@ -5712,7 +5712,7 @@ impl From<ElementwiseRefusal> for RequestError {
             ElementwiseRefusal::Refused(error) => error,
             ElementwiseRefusal::Folded(_) => Self::UnsupportedCapability {
                 phase: "strategy",
-                rule: "operation-set",
+                rule: "reduction-contributor-materialization",
             },
         }
     }
@@ -7031,7 +7031,7 @@ fn recognize_epilogue_producer(
 ///   carries no producer field for the boundary to hang on, so the discovery is
 ///   discarded before any admission is consulted.
 ///   [`name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set`](../../../tickets/name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set.md)
-///   owns the rule name it currently shares with the vocabulary refusal.
+///   owns its `reduction-contributor-materialization` rule.
 ///
 /// # Why `NoEdge` stays, measured rather than argued
 ///
@@ -7236,7 +7236,9 @@ fn recognize_staged_family(
 /// property: `sum-signature`, `sum-output`, `sum-shape`, `sum-axes*`, and
 /// `input-rank` for the reduction itself, `operation-set` when the recognized
 /// occurrences do not cover the program, and every rule
-/// [`recognize_elementwise`] reports for the contributor walk.
+/// [`recognize_elementwise`] reports for the contributor walk, including
+/// `reduction-contributor-materialization` when that walk reaches a value a
+/// recognized folding or staged family materializes.
 fn recognize_reduction(
     program: &SemanticProgram,
     result: ValueId,
@@ -7740,7 +7742,7 @@ mod tests {
     use tiler_ir::schedule::FlushedZeroSign;
     use tiler_ir::semantic::{
         Bf16Add, Bf16Constant, Bf16Multiply, CanonicalValue, CanonicalValueKind, F32Add,
-        F32Constant, F32Gather, F32Multiply, NormativeDefinitionRef, OperationArity,
+        F32Constant, F32Gather, F32Multiply, F32RmsNorm, NormativeDefinitionRef, OperationArity,
         OperationAttributeSchema, OperationAttributes, OperationConformance, OperationDefinition,
         OperationDefinitionFacts, OperationEffect, OperationInferenceError, OperationInferencer,
         OperationSchema, ProviderDiagnosticCode, ProviderIdentity, RegistryError,
@@ -10130,11 +10132,10 @@ mod tests {
         );
         assert_eq!(chain.reads[0].0, BoundaryRead::Staged);
 
-        // `operation-set`, from the one side the discovery deliberately does not
-        // open: a fold whose *contributors* are another fold's result. The chain
-        // the recognizer admits is one materialization boundary deep, and a
-        // prologue reading a staged value would make it two, so it is refused
-        // rather than silently flattened.
+        // `reduction-contributor-materialization`, from the one side the
+        // discovery deliberately does not open: a fold whose *contributors*
+        // cross a materialization boundary. The producer is recognized; what
+        // is missing is a place on `NormalizedSerialSum` to retain it.
         //
         // **Which of the three folded-value walls refuses it was measured, not
         // read off the shape.** It is `From<ElementwiseRefusal>`'s flattening:
@@ -10145,9 +10146,10 @@ mod tests {
         // `leaves.staged.is_none()` condition is *true* here, so that guard does
         // not fire either. Watched on 2026-08-08: renaming this arm's rule to a
         // probe string made this row report the probe, while renaming the
-        // `leaves.staged.is_none()` arm's left it reporting `operation-set`.
+        // `leaves.staged.is_none()` arm's left it reporting the contributor
+        // materialization rule.
         // `name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set`
-        // owns the rule name this refusal currently shares.
+        // owns that stable rule name.
         //
         // The accepted neighbour is the same fold over the same scaling of the
         // *declared input*, so the difference between them is exactly where the
@@ -10182,7 +10184,36 @@ mod tests {
         ));
         assert_eq!(
             recognize(&folded_prologue(true)).unwrap_err(),
-            "operation-set"
+            "reduction-contributor-materialization"
+        );
+
+        // The key names the failed contributor relation rather than the
+        // producer family. A staged family reaches the same retained fact as a
+        // nested reduction: it is recognized as a materializing producer, and
+        // the serial-sum normal form has nowhere to bind that producer.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let value = builder
+            .input::<F32>(InputKey::new("value").unwrap(), Shape::from_dims([2, 4]))
+            .unwrap();
+        let weight = builder
+            .input::<F32>(InputKey::new("weight").unwrap(), Shape::from_dims([2, 4]))
+            .unwrap();
+        let normalized = F32RmsNorm::apply(
+            &mut builder,
+            value,
+            weight,
+            Axis::new(1),
+            1.0e-6_f32.to_bits(),
+        )
+        .unwrap();
+        let reduced = StrictSerialF32Sum::apply(&mut builder, normalized, [Axis::new(1)]).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), reduced)
+            .unwrap();
+        let staged_contributor = builder.build().unwrap();
+        assert_eq!(
+            recognize(&staged_contributor).unwrap_err(),
+            "reduction-contributor-materialization"
         );
     }
 

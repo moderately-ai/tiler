@@ -351,11 +351,10 @@ fn a_contraction_with_an_elementwise_epilogue_compiles_as_a_chain() {
         );
     }
 
-    // The neighbour that still refuses, and it refuses for the reason the
-    // epilogue admission is bounded by rather than for the reason the name above
-    // used to state: a fold whose own contributors are another fold's result
-    // needs two staged reads in one region, and nothing attributes the second to
-    // a materialization edge.
+    // The neighbour that still refuses, and it refuses for the exact relation
+    // the serial-reduction normal form cannot retain: its contributor walk
+    // reaches a materialized producer. The producer family is not the rule;
+    // reduction-contributor materialization is.
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let activations = builder
         .input::<F32>(
@@ -381,9 +380,9 @@ fn a_contraction_with_an_elementwise_epilogue_compiles_as_a_chain() {
         assert_eq!(
             compile_under(&nested, contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "operation-set"
+                rule: "reduction-contributor-materialization"
             }),
-            "{contract:?} admitted a chain two materialization boundaries deep",
+            "{contract:?} did not name the materialization boundary in the reduction contributor",
         );
     }
 }

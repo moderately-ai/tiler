@@ -22,7 +22,8 @@
 //!   [`admit-a-scheduled-region-that-reads-two-materialization-edges`] owns it.
 //! - `sum(sum(x) * 2.0)` refuses because `NormalizedSerialSum` carries no
 //!   producer field for a fold's prologue to hang a boundary on, so the discovery
-//!   is discarded before any admission runs. That one *is* about depth, but its
+//!   is discarded before any admission runs. It reports
+//!   `reduction-contributor-materialization`: that one *is* about depth, but its
 //!   wall is structural rather than the guard's.
 //!   [`name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set`]
 //!   owns its rule name.

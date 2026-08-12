@@ -302,9 +302,9 @@ fn an_elementwise_epilogue_over_a_contraction_compiles_as_a_chain() {
         assert_eq!(
             compile_under(&nested_contraction_chain(), contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "operation-set"
+                rule: "reduction-contributor-materialization"
             }),
-            "{contract:?} admitted a chain two materialization boundaries deep",
+            "{contract:?} did not name the materialization boundary in the reduction contributor",
         );
     }
 }
@@ -368,9 +368,9 @@ fn an_elementwise_epilogue_over_a_reduction_compiles_as_a_chain() {
         assert_eq!(
             compile_under(&nested_reduction_chain(), contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "operation-set"
+                rule: "reduction-contributor-materialization"
             }),
-            "{contract:?} admitted a chain two materialization boundaries deep",
+            "{contract:?} did not name the materialization boundary in the reduction contributor",
         );
     }
 }

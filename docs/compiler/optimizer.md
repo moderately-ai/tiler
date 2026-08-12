@@ -74,6 +74,8 @@ explain reason on the selected plan, not this failure class. A verifier failure
 is invalid compiler output and remains a hard error rather than a costed
 rejection.
 
+Stable reason keys name the failed relation, not whichever operation happened to expose it. `operation-set` means the recognizer found no admitted operation vocabulary for an occurrence. `reduction-contributor-materialization` instead means the serial-reduction contributor walk reached a recognized value that must cross a materialization boundary, while the retained serial-reduction normal form has no producer relation to carry that boundary. A nested reduction, a contraction, and a registered staged family therefore share this one key: splitting it by producer family would mix the failure cause with its subject and would make every new materializing family widen the public reason vocabulary. The classification changes no admission; the program remains a typed missing compilation capability until that producer relation is representable.
+
 An exhausted index proof budget is not itself any failure class: the structurally verified index region retains the exact residual predicate and typed `ResourceLimit` reason because the subject was not disproved. The current compiler still cannot continue to executable planning without refinement evidence. After independently checking scalar authority and the occurrence interface so a harder provider defect cannot be masked, the named semantic-discharge stage assesses every exact residual and stops before cover or frontier construction unless all are proved. [Index-region refinement](#refinement-requires-discharged-index-domain-evidence) owns that boundary.
 
 ## Planning model
