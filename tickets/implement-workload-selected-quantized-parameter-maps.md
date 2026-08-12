@@ -1,7 +1,7 @@
 ---
 id: implement-workload-selected-quantized-parameter-maps
 title: Implement the workload-selected quantized parameter maps
-status: awaiting-decision
+status: todo
 priority: p2
 dependencies: [prototype-quantized-value-vertical, scope-first-quantized-lm-profile, admit-a-strict-affine-index-realization-law]
 related: [implement-first-quantized-backend-profile, implement-first-runtime-semantic-value-precondition-enforcement]
@@ -190,6 +190,19 @@ registry.
 4. Rank- or extent-bearing maps, shape inference, optional/default attributes,
    raw contract construction, or a generic map expression language: rejected.
    Each duplicates authority, admits ambiguity, or speculates beyond a consumer.
+
+## Public-boundary acceptance — 2026-08-12
+
+Tom accepted the revised decision packet in the live Codex session on
+2026-08-12 after the exact-main Fact audit and Pareto review. Acceptance covers
+the axis-only canonical map, fallible application against the logical shape,
+the governed U8/F32 type factory, the exact selected axis-0 reference/index
+capability, the generalized dequantize law, and the resolved-value conformance
+extension. It also accepts the stated exclusions: no rank or extent in map
+identity, no inferred/default map, no non-per-tensor `Assemble` or `Quantize`
+surface, no encoded-value transformation system, and no executable physical or
+ABI projection in this ticket. Implementation remains pending and must preserve
+the failure, identity, and dependency boundaries above.
 
 ## Closes when
 
