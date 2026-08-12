@@ -1,7 +1,7 @@
 ---
 id: earn-cpu-feature-level-execution-environments-from-host-observation
 title: Earn CPU feature-level execution environments from host observation
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [declare-cpu-vector-realization-facts-in-the-target-profile, name-a-host-process-availability-phase, promote-the-bounded-scalar-cpu-vertical-into-a-production-backend]
@@ -77,3 +77,7 @@ The implementation must perturb independently: each required ISA predicate; OS, 
 ### Strongest counterpoint and reversal evidence
 
 The shared exact profile pin couples runtime releases to target-profile descriptor changes. That is deliberate correspondence, but it carries maintenance cost. Replace it with a more general observed-host qualification protocol only if a bounded implementation proves that the runtime can validate every host-sensitive fact used by feasibility without reimplementing target-profile semantics or permitting omitted requirements. No such complete projection exists today.
+
+## Accepted decision — 2026-08-12
+
+Tom accepted the recommended shared governed CPU execution contract, explicit approach selection, static host qualification, execution-thread treatment of mutable numerical state, and exact producer/runtime profile correspondence. Extra host features may satisfy an explicitly selected lesser approach, but never select another approach implicitly. Host observations remain ephemeral evidence; route-specific requirements remain available without duplicating complete profile eligibility; no host-process availability phase is added by this decision. The real consumer is the accepted `tiler-cpu-runtime` production sibling, with no mock, fake device, Candle path, architecture preset, artifact-profile echo, or silent scalar fallback.
