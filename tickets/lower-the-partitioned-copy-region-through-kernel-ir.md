@@ -3,7 +3,7 @@ id: lower-the-partitioned-copy-region-through-kernel-ir
 title: Lower the partitioned-copy region through kernel IR
 status: todo
 priority: p1
-dependencies: [admit-the-partitioned-copy-scheduled-region]
+dependencies: [admit-the-partitioned-copy-scheduled-region, admit-an-explicit-non-arithmetic-region-and-delivery-state]
 related: [plan-concatenate-through-one-partitioned-copy-entry]
 scopes: [implementation/ir, implementation/compiler, contracts/foundation]
 shared_scopes: [project/tickets]

@@ -3,7 +3,7 @@ id: admit-the-partitioned-copy-scheduled-region
 title: Admit the partitioned-copy scheduled region
 status: todo
 priority: p1
-dependencies: [admit-an-explicit-non-arithmetic-region-and-delivery-state, repair-the-scheduled-vocabulary-census-and-concatenate-law-standing]
+dependencies: [repair-the-scheduled-vocabulary-census-and-concatenate-law-standing]
 related: [lower-the-partitioned-copy-region-through-kernel-ir, lower-the-concatenate-occurrence-through-partitioned-writes]
 scopes: [implementation/ir, implementation/compiler, contracts/foundation, contracts/optimizer]
 shared_scopes: [project/tickets]
@@ -12,7 +12,7 @@ tags: [implementation, schedule, concatenate, ownership, public-boundary]
 ---
 ## Outcome
 
-One accepted partitioned concatenate index region projects into one canonical non-arithmetic scheduled `PartitionedCopy` region. It carries ordered operand members, distinct input bindings, one output, and exact source/destination subdomains while retaining zero-extent members and repeated operand occurrences.
+One accepted partitioned concatenate index region projects into the first canonical verifier-classified `RegionProgram::PartitionedCopy` region. It carries ordered operand members, distinct input bindings, one output, and exact source/destination subdomains while retaining zero-extent members and repeated operand occurrences.
 
 ## Strict construction
 

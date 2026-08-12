@@ -1,9 +1,9 @@
 ---
 id: admit-an-explicit-non-arithmetic-region-and-delivery-state
 title: Admit an explicit non-arithmetic region and delivery state
-status: awaiting-decision
+status: todo
 priority: p1
-dependencies: [admit-the-concatenate-family-into-the-scheduled-region-vocabulary]
+dependencies: [admit-the-partitioned-copy-scheduled-region]
 related: [admit-the-partitioned-copy-scheduled-region, derive-target-numerical-feasibility-from-reached-arithmetic-only]
 scopes: [implementation/ir, implementation/artifact, implementation/build, implementation/compiler, contracts/foundation, contracts/numerics, contracts/artifacts, contracts/optimizer]
 shared_scopes: [project/tickets]
@@ -12,11 +12,11 @@ tags: [implementation, public-boundary, numerics, artifacts, identity, strict, d
 ---
 ## Outcome
 
-A scheduled region, KIR entry, and artifact can state either arithmetic with its complete numerical realization or a bit-preserving non-arithmetic computation for which arithmetic numerical requirements and delivery are explicitly not applicable. Invalid mixed states are unrepresentable; no optional field, default profile, silent absence, or inferred strict realization exists.
+A scheduled region, KIR entry, and artifact can state either a value-changing floating-point computation with its complete numerical realization or a verifier-proved bit-preserving partitioned copy for which floating-point numerical requirements and delivery are explicitly not applicable. Invalid mixed states are unrepresentable; no optional field, default profile, silent absence, or inferred strict realization exists.
 
 ## Required boundary
 
-Use exhaustive typed sums at every owning boundary, conceptually `RegionProgram::Arithmetic { scalar, numerical } | PartitionedCopy(...)`, structural requirements plus `NumericalRequirements::{NotApplicable, Arithmetic(...)}`, and an equally explicit artifact delivery form. Exact names follow the source audit, but arithmetic without numerics, copy with numerics, and an unclassified empty state must be impossible.
+Use exhaustive typed sums at every owning boundary, conceptually `RegionProgram::Numerical { scalar, realization } | PartitionedCopy(...)`, structural requirements plus `EntryNumerics::{FloatingPoint(...), BitPreservingCopy}`, and an equally explicit artifact delivery form. Exact names follow the source audit, but a value-changing floating-point computation without numerics, a copy with floating-point numerics, and an unclassified empty state must be impossible.
 
 Preserve the caller's stated program contract as request meaning without asking a target to honour arithmetic a copy never executes. Mixed programs retain complete numerical delivery for arithmetic entries and explicitly classify copy entries as not applicable. Decode and construction reject unknown tags and inconsistent cross-entry claims.
 
@@ -86,6 +86,12 @@ The recommended explicit sums and artifact major step touch many total maps and 
 ## Decision request
 
 Accept the concrete computation-specific model and graph correction above; revise the classification or compatibility strategy; or keep partitioned-copy scheduling blocked. Acceptance authorizes the public shape and dependency repair, not implementation around any unfinished schedule, KIR, artifact, or feasibility prerequisite.
+
+## Accepted decision — 2026-08-12
+
+Tom accepted the concrete computation-specific model and dependency correction in the direct coordination thread by replying `okay agreeed, next decision` after the revised packet above. The accepted boundary is the verifier-derived `Numerical | PartitionedCopy` schedule classification and its total downstream `FloatingPoint | BitPreservingCopy` projection. It does not authorize a generic caller-authored non-arithmetic state, a fake numerical realization, an optional/default field, or backend inference.
+
+The dependency graph is corrected with the acceptance: the concrete partitioned-copy schedule owns the first inhabited classification; this ticket carries the downstream KIR/resource/artifact/delivery projection; target feasibility derives only from reached classified programs; and KIR lowering waits for both the concrete program and the downstream numerical-use carrier. Implementation remains pending and must preserve or deliberately step each owning identity grammar as audited above.
 
 ## Closes when
 
