@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [alignment, placement, ir, public-boundary, correctness]
 ---
+## Acceptance
+
+Tom accepted this exact boundary on 2026-08-12 in ChatGPT, relayed by the repository coordinator. The accepted surface is the role-safe checked alignment vocabulary, effective alignment derived from the actual view byte offset, and byte-identical encoding for every previously valid value. The acceptance does not authorize target-provider access requirements, runtime pointer observation, vector KIR, allocator policy, or a new artifact field.
+
 ## User-visible outcome
 
 Every alignment value is checked once, requirements cannot be confused with guarantees, and a partial view advertises only the alignment its actual byte offset preserves.
