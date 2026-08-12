@@ -1,11 +1,11 @@
 ---
 id: declare-cpu-vector-realization-facts-in-the-target-profile
 title: Declare CPU vector realization facts as atomic target facts
-status: awaiting-decision
+status: blocked
 priority: p2
-dependencies: [accept-adr-0093-cpu-vector-lane-tier]
-related: [design-the-cpu-vector-lane-tier, name-a-host-process-availability-phase]
-scopes: [implementation/compiler, implementation/ir, contracts/decisions]
+dependencies: [accept-adr-0093-cpu-vector-lane-tier, admit-vector-lane-bindings-into-the-schedule-vocabulary, define-plural-operation-specific-vector-realization-requirements, separate-vector-operand-alignment-from-target-realization, establish-vector-execution-form-numerical-authority, earn-cpu-feature-level-execution-environments-from-host-observation, canonicalize-atomic-target-realization-declarations, decide-how-vector-requirements-cross-the-artifact-boundary]
+related: [design-the-cpu-vector-lane-tier, name-a-host-process-availability-phase, decide-how-vector-requirements-cross-the-artifact-boundary]
+scopes: [implementation/compiler, implementation/ir, implementation/artifact, implementation/runtime, contracts/decisions, contracts/artifacts, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [target-profiles, feasibility, cpu, simd, provenance, public-boundary, decision, needs-tom]
@@ -43,3 +43,27 @@ The atomic equality-matched subject and builder declaration are consequential pu
 ## Closes when
 
 The subject and its declaration path exist, feasibility composes it to all four outcomes, every check above is observed failing against an accepted neighbour, and no row anywhere is sourced from the compiling host. The honourability-key question is reported to Tom rather than answered here.
+
+## Source-first corrections — 2026-08-11
+
+The singular flat packet cannot represent the first realistic vector schedule. A predicated vector region needs arithmetic plus load and usually store realization simultaneously; the research's own SVE example declares arithmetic and masked load as two subjects. One `Option<VectorRealizationSubject>` would prove at most one and silently omit the rest.
+
+The six-field Cartesian product also admits meaningless states such as masked lane arithmetic and fault-suppressing stores, while the broad `lane arithmetic` class overclaims operations whose ISA and numerical behaviour differ. Gather is not yet statable without index type/width. Alignment is not an equality dimension: an operand proved 32-byte aligned satisfies a 16-byte requirement. The research explicitly left alignment as a subject-versus-applicability question, so the old packet stated an unresolved Proposal as settled.
+
+Three other premises were false or incomplete. Synchronization `None` is encoded as an explicit presence byte in KIR and artifact resource records rather than “no artifact field.” Existing variant eligibility compares a caller-stated execution environment and performs no CPUID/HWCAP qualification. Existing numerical subjects are explicitly scalar and cannot silently attest packed vector execution or a scalar epilogue's two paths.
+
+## Accepted decision — 2026-08-11
+
+Tom accepted a bounded-by-existing-structural-budgets canonical collection of algebraic, exact-operation vector requirements, with an arithmetic-only first implementation slice:
+
+- `VectorShape::Fixed(nonzero literal lanes)` and `VectorShape::Scalable` remain distinct exact identities. A scalable length is cost-only and never defaults a fixed width.
+- Each requirement names one legal operation-specific subject. Arithmetic, contiguous load, and contiguous store are separate closed variants with only their meaningful fields. Gather waits for index type/width semantics; ordered horizontal accumulation remains below the schedule boundary under ADR 0093.
+- A region carries a sorted, duplicate-refusing collection because it may require several realizations simultaneously. Empty is canonical absence, not permission; every nonempty member must resolve.
+- Target declarations match each exact operation subject atomically and state `Realized` or `Unrealizable`. Silence and every neighbouring subject are `Unknown`. No per-dimension facts, quantitative width axis, wildcard row, inherited feature, or compile-host inference exists.
+- Operand alignment is a separately related applicability obligation: actual/proved alignment must meet the selected realization's stated minimum. Stronger alignment satisfies weaker. It is never whole-subject equality and is never silently assumed.
+- Runtime eligibility must earn the exact feature-level execution environment from CPUID/HWCAP or equivalent backend-owned observation before matching it. A caller-stated target triple or artifact profile is not evidence.
+- Vector numerical execution needs its own explicit authority. Scalar rows cannot attest packed instructions; scalar epilogues stay unavailable until one source proves both paths or distinct path facts compose explicitly.
+- Do not invent a separate vector-row count cap during alpha. Existing complete profile/artifact structural bounds govern until measurement demonstrates a narrower resource need.
+- The first implementation slice may carry only exact arithmetic operations whose schedule, numerical authority, and host qualification are complete. That narrow slice uses the final plural carrier and must not add temporary flat/default APIs.
+
+Identity and artifact delivery are explicit work, not implied compatibility. The new requirement population enters schedule/KIR identity and the feasibility rule-set identity. If carried in the fixed artifact resource record it requires the corresponding major schema and artifact-domain migration; preserving non-vector bytes through a conditional side table is acceptable only after injectivity and ownership are proved. The linked tickets own these prerequisites, and this ticket remains blocked until they finish.
