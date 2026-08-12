@@ -124,7 +124,7 @@ satisfies_dependents = false
 "implementation/build" = ["crates/tiler-build/**"]
 "implementation/frontend" = ["crates/tiler/**", "crates/tiler-macros/**", "crates/tiler-frontend-*/**"]
 "implementation/conformance" = ["crates/tiler-conformance/**"]
-"implementation/cpu" = ["crates/tiler-cpu/**"]
+"implementation/cpu" = ["crates/tiler-cpu*/**"]
 "implementation/candle" = ["crates/tiler-candle/**", "prototypes/candle-*/**"]
 
 # Optionally map a scope to its owning crate so the Rust backend can expand

@@ -3,7 +3,7 @@ id: promote-the-bounded-scalar-cpu-vertical-into-a-production-backend
 title: Promote the bounded scalar CPU vertical into a production backend
 status: todo
 priority: p1
-dependencies: [accept-the-production-boundary-for-the-bounded-scalar-cpu-backend]
+dependencies: [accept-the-production-boundary-for-the-bounded-scalar-cpu-backend, make-prepared-entry-observations-typed-and-key-dispatched]
 related: [prototype-a-bounded-scalar-cpu-backend-vertical, exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio, earn-cpu-feature-level-execution-environments-from-host-observation]
 scopes: [implementation/cpu, implementation/ir, implementation/artifact, implementation/build, implementation/runtime, implementation/conformance, implementation/workspace, implementation/cargo-lock, contracts/artifacts, contracts/foundation]
 shared_scopes: [project/tickets]
@@ -20,11 +20,14 @@ An explicitly selected CPU attempt can compile, package, route, and execute the 
 - Promote the spike's versioned scalar-image translation and independently validated decoder rather than executing compiler-owned handles at runtime.
 - Preserve its explicit host-process observation and pre-commit numerical/layout refusals; do not trust an artifact's restatement of its own target as host evidence.
 - Route publication through the neutral build/cache/correspondence seam and route execution through the accepted artifact/runtime adapter seam.
+- Repair the spike's staging: `plan_dispatch` may size and refuse but allocates nothing; only the committed `RoutedDispatch` may acquire program storage. Decode/prepare state remains reversible and disposable before commit.
+- Return typed `Unrecognized` for every live/prepared property key the bounded scalar backend does not own. Never use a numeric sentinel merely because the initial profile carries zero such rows.
 - Retain `tiler.cpu.scalar` and the accepted representation spelling under one governed owner; step the representation if the production grammar is not byte-for-byte the spike grammar.
 - Keep every unsupported KIR type, operation, address space, barrier, vector, thread, and numerical realization a typed refusal. Never widen the target profile because the executor happens to implement an operation.
 - Add cross-layer CPU conformance using independent `tiler-reference` results and subject perturbations for payload identity, decoder grammar, host profile, routing environment, numerical realization, launch geometry, buffer offsets/extents, and operation semantics.
 - Update `docs/backends/cpu.md`, architecture/component ownership, catalogs, and the support matrix to distinguish scalar production support from vector/threaded reservations.
-- Add the admitted CPU crate to the workspace and atomically map `implementation/cpu` to its package in `ticketsplease.toml`.
+- Add the admitted CPU packages to the workspace and atomically map `implementation/cpu` to the package whose reverse dependents the accepted boundary says the guard must expand.
+- Take one explicit execution-resource policy at adapter construction. Prove bounded policies against checked worst-case launch × loop × instruction work and allocation bytes; an explicitly unbounded alpha policy remains available without becoming a hidden default.
 
 ## Acceptance
 
