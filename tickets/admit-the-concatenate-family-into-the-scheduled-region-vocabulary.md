@@ -1,10 +1,10 @@
 ---
 id: admit-the-concatenate-family-into-the-scheduled-region-vocabulary
 title: Admit the concatenate family into the scheduled region vocabulary
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
-related: [scope-the-concatenate-fusion-role-and-lowering, admit-the-structural-families-into-the-scheduled-region-vocabulary, admit-a-fusion-role-for-the-sequence-extension-concatenate, lower-the-concatenate-occurrence-through-partitioned-writes, accept-the-partitioned-concatenate-realization-law, accept-the-partitioned-write-ownership-proof-boundary, accept-the-sub-domain-write-domain-surface]
+related: [scope-the-concatenate-fusion-role-and-lowering, admit-the-structural-families-into-the-scheduled-region-vocabulary, admit-a-fusion-role-for-the-sequence-extension-concatenate, lower-the-concatenate-occurrence-through-partitioned-writes, accept-the-partitioned-concatenate-realization-law, accept-the-partitioned-write-ownership-proof-boundary, accept-the-sub-domain-write-domain-surface, admit-an-explicit-non-arithmetic-region-and-delivery-state, admit-the-partitioned-copy-scheduled-region, lower-the-partitioned-copy-region-through-kernel-ir, derive-target-numerical-feasibility-from-reached-arithmetic-only, plan-concatenate-through-one-partitioned-copy-entry, repair-the-scheduled-vocabulary-census-and-concatenate-law-standing]
 scopes: [implementation/compiler, implementation/ir, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
@@ -49,3 +49,29 @@ Admitting a family into the region vocabulary is likely to move pinned identitie
 ## Closes when
 
 A concatenate occurrence reaches a scheduled region and a kernel that writes its partitioned output; the `UNPLANNED_OPERATIONS` entry is superseded with its reason recorded; any surviving refusal is asserted and watched failing; and every moved pin is enumerated and recomputed on the merged tree.
+
+## Source-first corrections — 2026-08-12
+
+- **The missing population was understated.** The gap is not only schedule and kernel. Current `IndexRegion` requires one `ScalarProgram` and one `NumericalRealization`; resource derivation copies numerical fields; KIR and artifact entry records also require numerical claims. Concatenate is a bit-preserving copy and deliberately has no arithmetic capability row, so an explicit non-arithmetic region, requirement, delivery, and request-feasibility state is a prerequisite rather than fixture churn.
+- **The slice comparison is false at this tree.** Slice now has `IndexRealizationLaw::slice_f32()` and a governed `GovernedSliceF32` lowering. It remains a separate single-root scheduling outcome, but it is no longer an uninstalled-provider comparator.
+- **The optimizer census is stale.** Its “three-family” paragraph still describes reindex and broadcast as lacking scheduled access maps even though both have landed, and it omits newly lowered slice from the current wall population. The whole census and reasons must be re-derived, not merely have its number decremented.
+- **Option B was not a reuse option.** The accepted concatenate law is one region, current regions prove total ownership individually, kernel-program verification rejects multiple stage writers, and artifacts carry no joint cross-entry shared-output proof. Splitting one occurrence into two through eight kernels would require a new multi-kernel shared-writer architecture and reopen the accepted law.
+- **Identity consequences are conditional, not blanket.** The concatenate law and lowering-registry identities already moved when those rows landed. Append-only new schedule/program tags may preserve every existing byte; fixed KIR/artifact numerical records may require domain or schema movement if they become explicit sums. Every version and pin must be re-derived from the exact selected encoding rather than assumed here.
+- **The accepted law still carries stale source standing.** `IndexRealizationLaw::PartitionedConcatenate` says it awaits the already-completed acceptance ticket. That label and the stale optimizer census are owned by [the bounded repair](repair-the-scheduled-vocabulary-census-and-concatenate-law-standing.md).
+
+## Accepted decision — 2026-08-12
+
+Tom accepted the strengthened one-region option in this thread. One whole concatenate occurrence becomes one scheduled `PartitionedCopy` program, one verified KIR, one backend entry, and one dispatch. It preserves the accepted operand-ordered partition law, including zero-extent members and two members for `concat(x, x)` even when they share one input binding.
+
+The public boundary is an exhaustive arithmetic-versus-copy sum, not `ScalarProgram::Copy`, optional fields, or a fabricated strict numerical realization. A copy entry explicitly states that arithmetic numerical requirements and delivery are not applicable; silence, a nearby profile, and a default are not interpretations. Construction derives checked prefix offsets, requires the member rectangles to be pairwise disjoint and jointly exhaustive, and refuses overflow, gaps, overlap, rank/type disagreement, or unsupported maps by typed cause. Boundary buffers may be deduplicated, while ordered operand members may not.
+
+The canonical first implementation is one output-domain/root-partition kernel with specialized ownership verification. It may use several mutually exclusive predicated stores only under one proof that exactly one member supplies every output position. Generic one-store verification is not weakened. A flattened-output source selector and an N-kernel realization are later explicit physical alternatives only after proving equivalent ownership; neither is an implicit fallback.
+
+The accepted dependency chain is:
+
+1. [explicit non-arithmetic region and delivery state](admit-an-explicit-non-arithmetic-region-and-delivery-state.md);
+2. [the partitioned-copy scheduled region](admit-the-partitioned-copy-scheduled-region.md) and [reached-arithmetic feasibility](derive-target-numerical-feasibility-from-reached-arithmetic-only.md);
+3. [its exact KIR lowering and verifier](lower-the-partitioned-copy-region-through-kernel-ir.md); and
+4. [one-entry compiler, Metal, build, artifact, and conformance integration](plan-concatenate-through-one-partitioned-copy-entry.md).
+
+The decision is recorded here; it does not authorize silently implementing around an unfinished prerequisite and does not itself move production or identity bytes.
