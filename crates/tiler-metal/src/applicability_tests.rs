@@ -22,7 +22,7 @@ use std::path::Path;
 use crate::applicability::{
     AppleGpuFamilyConstant, MetalGpuFamily, MetalGpuFamilySupport, MetalHostApplicabilityPolicy,
     MetalHostApplicabilityRefusal, MetalHostObservation, MetalHostPredicate,
-    evaluate_metal_host_applicability, observe_highest_gpu_family,
+    evaluate_metal_host_applicability, try_observe_highest_gpu_family,
 };
 
 /// The exact row `FIRST_MACOS_APPLE9` was transcribed from.
@@ -454,11 +454,33 @@ fn record_probe(
     supported: impl Fn(AppleGpuFamilyConstant) -> bool,
 ) -> (Vec<AppleGpuFamilyConstant>, MetalGpuFamilySupport) {
     let mut asked = Vec::new();
-    let observed = observe_highest_gpu_family(|family| {
+    let observed = try_observe_highest_gpu_family::<core::convert::Infallible>(|family| {
         asked.push(family);
-        supported(family)
-    });
+        Ok(supported(family))
+    })
+    .unwrap_or_else(|never| match never {});
     (asked, observed)
+}
+
+/// A failed query aborts the whole highest-first observation.
+///
+/// Apple9 answers no, Apple8 cannot be named, and Apple7 would answer yes. The
+/// result must be Apple8's error and the walk must never ask Apple7; treating the
+/// failed query as `false` would manufacture `Highest(Apple7)` from an
+/// incomplete observation.
+#[test]
+fn a_failed_query_aborts_before_any_lower_family_is_asked() {
+    let mut asked = Vec::new();
+    let result = try_observe_highest_gpu_family(|family| {
+        asked.push(family.value());
+        match family.value() {
+            1009 => Ok(false),
+            1008 => Err(family),
+            lower => panic!("the walk continued to lower family {lower} after an error"),
+        }
+    });
+    assert_eq!(result, Err(MetalGpuFamily::Apple8.apple_constant()));
+    assert_eq!(asked, [1009, 1008]);
 }
 
 /// Each family carries the enumerator Apple's SDK declares for it.

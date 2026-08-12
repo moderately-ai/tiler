@@ -122,13 +122,12 @@ use tiler_ir::semantic::{
     SemanticProgram, SemanticProgramBuilder,
 };
 use tiler_ir::shape::Shape;
-use tiler_metal::applicability::{MetalGpuFamily, MetalGpuFamilySupport};
+use tiler_metal::applicability::{AppleGpuFamilyConstant, MetalGpuFamily, MetalGpuFamilySupport};
 use tiler_runtime::load::{
     DTypeDispatch, DecodedProgram, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest,
     LoadRejection, Preflight, VariantIneligibility,
 };
 
-use crate::applicability::ProbedGpuFamily;
 use crate::device_preflight::PreflightRefusal;
 use crate::serial_sum::{F32_BYTES, INPUT_KEY, OUTPUT_KEY, compile_under, serial_sum_program};
 
@@ -1453,7 +1452,7 @@ pub(crate) const METAL_MINIMUM_GPU_FAMILY_VERSION: u32 = 1;
 /// from a family table here would report a documentation constant as a device
 /// observation.
 pub(crate) fn decide_live_device_requirement(
-    observed: ProbedGpuFamily,
+    observed: Result<MetalGpuFamilySupport, AppleGpuFamilyConstant>,
     request: LiveDeviceRequest<'_>,
 ) -> LiveDeviceObservation {
     // Exhaustive on both the kind and the dimension: a row this adapter has never
@@ -1475,15 +1474,13 @@ pub(crate) fn decide_live_device_requirement(
             // lower one, so the ordering decides support without a second device
             // call. A device naming none of them satisfies no family requirement.
             let supported = match observed {
-                ProbedGpuFamily::Answered(MetalGpuFamilySupport::Highest(highest)) => {
-                    highest >= required
-                }
-                ProbedGpuFamily::Answered(MetalGpuFamilySupport::NoneNamed) => false,
+                Ok(MetalGpuFamilySupport::Highest(highest)) => highest >= required,
+                Ok(MetalGpuFamilySupport::NoneNamed) => false,
                 // This adapter owns the row and still has no observation to decide
                 // it from, which is what `Unrecognized` is for: it refuses the
                 // route. `Feature(false)` would be this adapter reporting a device
                 // that answered no to a question its binding could not put.
-                ProbedGpuFamily::Unnameable(_) => return LiveDeviceObservation::Unrecognized,
+                Err(_) => return LiveDeviceObservation::Unrecognized,
             };
             LiveDeviceObservation::Feature(supported)
         }

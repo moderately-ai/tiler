@@ -291,7 +291,7 @@ impl Error for MetalIndexArithmeticRefusal {}
 ///
 /// Deterministic and pure: nothing here reads a device, a process, an
 /// environment variable, or an artifact. The observation is the caller's, made
-/// through [`observe_highest_gpu_family`](crate::applicability::observe_highest_gpu_family)
+/// through [`try_observe_highest_gpu_family`](crate::applicability::try_observe_highest_gpu_family)
 /// so the families probed and the family named stay one authority.
 ///
 /// `None` is a device nobody asked, which refuses under

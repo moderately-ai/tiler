@@ -1,65 +1,89 @@
 ---
 id: decide-the-unnameable-gpu-enumerator-channel
 title: Add a fallible GPU-enumerator channel when a second binding needs it
-status: awaiting-decision
+status: done
 priority: p3
 dependencies: []
 related: [close-the-serial-sum-run-gpu-family-probe-table, close-the-metal-gpu-family-out-of-crate-total-map, widen-the-metal-gpu-family-vocabulary-to-apple10]
-scopes: [implementation/metal]
+scopes: [implementation/metal, implementation/runtime, implementation/conformance, implementation/candle, contracts/decisions, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [api-conventions, metal, adr-0074, trigger-fired]
 ---
-## The question, atomically
 
-Should `tiler_metal::applicability::observe_highest_gpu_family` grow a channel for "the caller's binding cannot name this enumerator", or does each such binding keep refusing locally?
+## Outcome
 
-This is a public-boundary addition to an accepted-draft surface (ADR 0074 §7), so it is Tom's, and it was deliberately left open by `close-the-serial-sum-run-gpu-family-probe-table` rather than self-accepted.
+Accepted by Tom on 2026-08-12 in the live review and implemented from exact base `2c75f0a1dfd9ebb5666d66ff3c955c03b47a5926`.
 
-## What is already true
+`tiler_metal::applicability` now owns a generic fallible highest-family walk:
 
-**Fact.** `observe_highest_gpu_family` takes `impl FnMut(AppleGpuFamilyConstant) -> bool`. `bool` is total: a caller has no way to say "I could not put this question to the device". The vocabulary owns the population and the order; the caller owns the crossing into its own Metal binding, and that crossing can fail.
+```rust
+pub fn try_observe_highest_gpu_family<E>(
+    supports_family: impl FnMut(AppleGpuFamilyConstant) -> Result<bool, E>,
+) -> Result<MetalGpuFamilySupport, E>
+```
 
-**Fact — three workspace members bind Metal for this observation; two use the raw-value-less shape.** `objc2-metal` 0.3.2 models `MTLGPUFamily` as `MTLGPUFamily(pub NSInteger)`, so `AppleGpuFamilyConstant::value()` crosses directly and no enumerator is unnameable; `prototypes/candle-metal-adapter/src/adapter.rs::observed_apple_family` is two lines with no failure case. `metal` 0.33.0 models it as a `#[repr(i64)]` Rust enum, `#[non_exhaustive]`, with no `TryFrom` and no constructor from a raw value (`metal-0.33.0/src/device.rs` ends at `Apple9 = 1009`), and it stops at `Apple9` while the macOS 26.5 SDK declares `MTLGPUFamilyApple10 = 1010`. That raw-value-less shape is used by **two** independent consumers: `prototypes/serial-sum-run` and `crates/tiler-conformance` (the latter does not depend on the former; both re-derive `binding_apple_enumerator` / `ProbedGpuFamily` / discard-the-walk). **Correction — 2026-08-10.** Earlier text said the failure lived in "exactly one of the two bindings" and treated the generalization as having one instance; that census was accurate when filed and is false as present-tense description after `tiler-conformance` copied the metal probe.
+The first error aborts the whole highest-first walk and no lower family is queried. A binding that cannot name an enumerator therefore cannot manufacture `Highest(lower)` by treating an unasked question as `false`. The old total `observe_highest_gpu_family` entry point was removed rather than retained as a compatibility path; this is pre-production software and leaving it reachable would preserve the exact misuse the decision closes.
 
-**Fact — the local refusal is implemented and green in both metal-shaped consumers.** `prototypes/serial-sum-run/src/proof.rs` and `crates/tiler-conformance/src/{dispatch,applicability,envelope}.rs` each carry `ProbedGpuFamily`, a `binding_apple_enumerator` partial map joined on Apple's own enumerator value, a compile-time `MetalGpuFamily::COUNT == 5` assertion, and the two refusals: host observation leaves the predicate unstated (`Unobserved` / GpuFamily), and the route-requirement adapter answers `LiveDeviceObservation::Unrecognized`. serial-sum-run's pair was watched failing under `close-the-serial-sum-run-gpu-family-probe-table`; conformance's pair is tested under the same names (`an_unnameable_enumerator_leaves_the_family_predicate_unobserved`, dispatch COUNT / nameability pins).
+The two `metal` 0.33.0 consumers return `Err(AppleGpuFamilyConstant)` directly from their partial raw-value crossing. Their duplicate `ProbedGpuFamily` enums, captured side channels, and discard-after-the-walk logic were deleted. The total `objc2-metal` consumer uses `Infallible`, so it states that its transparent newtype crossing cannot fail without inventing a fourth semantic state.
 
-## What the local shape costs, stated rather than dismissed
+This is a Rust API change only. No artifact, request, target-profile, cache, canonical identity, schema, or domain bytes move.
 
-**Inference.** The local shape's correctness argument is not obvious, and it is the part a second binding would have to rediscover: because the walk is highest-first and stops at the first supported family, one unnameable enumerator invalidates the *whole* walk and not merely its own query — `Highest(lower)` would otherwise be an understatement wearing the shape of a most-specific claim. Both metal-shaped consumers implement that by capturing a flag in the closure and discarding the observation if it was ever set. A third `metal`-shaped binding that reasoned only about the one query would produce a plausible, green, wrong answer.
+## Source-first Fact audit
 
-**Inference.** A channel in `tiler-metal` would also let the crate *name* the outcome, so explain output could tell "no device answered this" from "the device answered no" without each consumer inventing a type for it. Both metal-shaped consumers had to invent `ProbedGpuFamily` for exactly that distinction.
+Read at exact base `2c75f0a1dfd9ebb5666d66ff3c955c03b47a5926` before editing.
 
-## The elimination, so it can be refuted rather than only the conclusion
+- **Verified — the old channel was total.** `crates/tiler-metal/src/applicability.rs`, anchor `pub fn observe_highest_gpu_family`, accepted `FnMut(AppleGpuFamilyConstant) -> bool` and therefore could not represent a question the binding could not ask.
+- **Verified — three workspace consumers use two foreign binding shapes.** `prototypes/candle-metal-adapter/src/adapter.rs`, anchor `pub fn observed_apple_family`, crosses the raw value into `objc2_metal::MTLGPUFamily`, a transparent newtype in resolved `objc2-metal` 0.3.2. `crates/tiler-conformance/src/dispatch.rs` and `prototypes/serial-sum-run/src/proof.rs`, anchor `binding_apple_enumerator`, use `metal` 0.33.0's non-exhaustive Rust enum and cannot construct an enumerator from an arbitrary raw value. The Candle manifest requests 0.3.1 compatibly, while `Cargo.lock` resolves 0.3.2; the earlier ticket text that stated only one version without this distinction was imprecise.
+- **Verified — the trigger fired.** Both `metal` consumers independently carried `binding_apple_enumerator`, a private `ProbedGpuFamily`, a captured unnameable flag, and the same whole-walk discard rule. This is the second independent instance the 2026-08-01 deferral named.
+- **Verified — whole-walk invalidation is required.** The governed walk is highest first and stops at the first supported family. Continuing after an unasked higher family can report a lower family as the highest observed one, an understatement shaped like a complete observation.
+- **Imprecise — the generic channel does not make `tiler-metal` the owner of every error vocabulary.** The caller owns the crossing and its concrete error; `tiler-metal` owns the ordering and propagation rule. `Result<MetalGpuFamilySupport, E>` preserves that division without a backend-specific failure enum in the neutral vocabulary.
+- **Verified — no identity consequence exists.** The observation and its error are live process evidence only and enter no canonical encoder or identity derivation.
+- **Repaired — scopes were underdeclared.** Claim-time scopes now cover `implementation/metal`, `implementation/runtime`, `implementation/conformance`, and `implementation/candle`, plus the shared ticket record.
 
-- **Answer `false` on an unnameable enumerator.** Eliminated on correctness: it reports a question nobody asked as a device that answered no. Watched producing `GpuFamilyMismatch { required: Apple9, observed: NoneNamed }` — the closed defect in new clothes.
-- **Make `AppleGpuFamilyConstant` convertible into `metal::MTLGPUFamily` inside `tiler-metal`.** Eliminated on the architectural contract: `tiler-metal` names no Metal runtime type, and this would make the compiler crate depend on one consumer's choice of binding.
-- **`unsafe` transmute of the raw value into the binding's enum.** Eliminated: ADR 0079's first condition is unmet because a safe route exists, and the value may not be a valid enumerator at all, which is UB rather than a lint question.
+## Decision and eliminated alternatives
 
-Two candidates survive, which is why this is a question and not a research task:
+Use generic `Result`, not `Option<bool>` and not a new public three-state enum. The present state space is already mutually exclusive and exhaustive: `Ok(true)` means the device answered yes, `Ok(false)` means it answered no, and `Err(E)` means the caller could not obtain an answer. `E` preserves the crossing's own typed cause and leaves room for a later binding to carry more detail without widening `tiler-metal` again. A named enum becomes justified only if a genuinely distinct fourth semantic state appears; adding one now would duplicate `Result` and force every consumer to translate between isomorphic vocabularies.
 
-- **Keep the local refusal (status quo).** No new public surface; each binding that needs it reimplements it; a `bool` closure stays the simplest thing that could work for the binding shape that cannot fail.
-- **Add a fallible channel** — `observe_highest_gpu_family` returning a `Result`, or a closure returning `Option<bool>` with a third `MetalGpuFamilySupport`-adjacent outcome. Every binding of the `metal` shape gets the discard-the-walk semantics from the authority that owns the walk, rather than each reimplementing it.
+- **Status quo local refusal:** correct but duplicates subtle ordering logic; eliminated after the trigger produced two independent implementations.
+- **Treat an unnameable enumerator as `false`:** eliminated on correctness because it turns an unasked question into a device answer and may understate the highest supported family.
+- **Return `Option<bool>` from the callback:** can encode the current states but erases the reason and cannot preserve a future binding's typed crossing error.
+- **Add `Unnameable` to `MetalGpuFamilySupport`:** puts a caller/binding failure inside the device-answer vocabulary and cannot represent richer crossing failures without repeated enum growth.
+- **Keep the old total wrapper beside the fallible function:** eliminated because it preserves the tempting wrong path and gives future consumers two authorities for the same walk.
+- **Use `unsafe` to manufacture a foreign enum:** eliminated under ADR 0079 because safe typed refusal exists and an invalid Rust enum discriminant would be undefined behavior.
 
-## Recommendation
+## Correctness evidence
 
-**Proposal (historical — 2026-08-01).** Defer, with a trigger, rather than add the surface then. At filing the generalization had one metal-shaped instance, and a `Result` return would force `prototypes/candle-metal-adapter` — which structurally cannot produce the failure — to handle an outcome it can never see, which is the kind of obligation ADR 0074's conventions exist to avoid minting speculatively. The trigger is concrete: **a second consumer that binds Metal through a raw-value-less enum**, or the moment `widen-the-metal-gpu-family-vocabulary-to-apple10` lands and the runner's compile-time assertion fires — at which point the discard-the-walk reasoning has to be re-derived by whoever repairs the binding, and that is the evidence that it belongs in the crate.
+The owning unit test records the exact queries. Apple9 answers `false`, Apple8 returns `Err`, and any Apple7-or-lower query panics. The accepted implementation returns Apple8's error after exactly `[1009, 1008]`.
 
-The counterpoint Tom should weigh against that: the reasoning is subtle *now*, and the cost of the channel is small, so "wait for a second instance" is also how one binding's correct-but-undiscoverable argument becomes two bindings' divergent ones. **Correction — 2026-08-10.** That second instance has arrived (`crates/tiler-conformance`); see Trigger check log. The deferral decision remains accepted; this node is the implementation carrier and is `todo` because trigger A has fired.
+The subject was perturbed by replacing `?` with `unwrap_or(false)`. `cargo test -p tiler-metal a_failed_query_aborts_before_any_lower_family_is_asked` failed with:
 
-## Closes when
+```text
+the walk continued to lower family 1007 after an error
+```
 
-Tom accepts the exact public channel signature under ADR 0074 §7 (or reaffirms permanent local-only with a new trigger — that would be a new decision, not this deferral contract). If the channel lands, `tiler-metal` grows it under `implementation/metal`; `prototypes/serial-sum-run` and `crates/tiler-conformance` move onto it and drop their private `ProbedGpuFamily` / probe copies; `prototypes/candle-metal-adapter` is updated to the new signature even though it cannot produce Unnameable. Claim-time scopes must add `implementation/runtime`, `implementation/conformance`, and the candle adapter scope as consumer edits require — current board scopes list only `implementation/metal` for the channel land site.
-
-~~If the deferral is accepted, the trigger above is recorded on `widen-the-metal-gpu-family-vocabulary-to-apple10` and this closes.~~ **Correction — 2026-08-10.** That branch is superseded by the 2026-08-09 carrier repair: deferral was accepted, this ticket stays open as the implementation carrier, and widen does not host this ticket's trigger.
-
-## Deferral (2026-08-01)
-
-Tom approved the recommendation: defer. The runner is fail-closed regardless, and the general fallible-probe channel activates on the recorded triggers — a second raw-value-less binding needing the same decision, or `widen-the-metal-gpu-family-vocabulary-to-apple10` firing the build error the counted-population assertion now guarantees.
-
-The decision is therefore complete. This node remains the implementation carrier for the accepted trigger; its old “Decide whether” title and `decision` tag were stale and were repaired on 2026-08-09. **Correction — 2026-08-10.** Trigger A has fired (see log); board status is `todo` rather than pure deferred dormancy. Exact `Result` vs `Option<bool>` / third-outcome shape remains Tom's under ADR 0074 §7 when the channel is implemented.
+The correct propagation was then restored and the test passed. This demonstrates that the check reaches the ordering rule itself rather than merely exercising an assertion.
 
 ## Trigger check log
 
-- 2026-08-04 — **not fired.** Both recorded triggers were unmet at that recheck: the workspace then appeared to bind Metal through exactly two crates with only `prototypes/serial-sum-run` (`metal` 0.33.0) on the raw-value-less shape; and [`widen-the-metal-gpu-family-vocabulary-to-apple10`](widen-the-metal-gpu-family-vocabulary-to-apple10.md) recorded its own deferral the same day, so the counted-population assertion had not been made to fire. Recheck command used then: `grep -rn 'objc2-metal\|^metal = \|metal = "' prototypes/*/Cargo.toml` — **structurally blind** to `crates/*/Cargo.toml` (so it could not have seen a later `tiler-conformance` fire).
-- 2026-08-10 — **fired** (trigger A). `crates/tiler-conformance` binds Metal through workspace `metal` 0.33.0 and reimplements `binding_apple_enumerator`, `ProbedGpuFamily`, discard-the-walk, `MetalGpuFamily::COUNT == 5`, and Unobserved/Unrecognized refusals independently of serial-sum-run — the second raw-value-less consumer the Recommendation named. Trigger B still **not fired**: [`widen-the-metal-gpu-family-vocabulary-to-apple10`](widen-the-metal-gpu-family-vocabulary-to-apple10.md) remains `deferred`; vocabulary still five variants Apple5–Apple9. Recheck: `rg -n 'binding_apple_enumerator|ProbedGpuFamily' prototypes crates/tiler-conformance`; `rg -n 'metal\.workspace|objc2-metal|^metal' prototypes/*/Cargo.toml crates/*/Cargo.toml`; `rg -n '^status:' tickets/widen-the-metal-gpu-family-vocabulary-to-apple10.md`.
+- 2026-08-01 — **not fired.** Tom accepted deferral until a second raw-value-less consumer needed the same rule or the Apple10 vocabulary widening forced the binding mismatch.
+- 2026-08-10 — **fired.** `crates/tiler-conformance` independently reproduced the `metal`-binding probe, private result enum, captured side channel, and fail-closed mappings already present in `prototypes/serial-sum-run`. The Apple10 vocabulary widening remained deferred.
+- 2026-08-12 — **resolved.** Tom accepted the generic fallible channel after a fresh exact-base audit and asked for the implementation and consumer migration.
+
+## Verification
+
+- `cargo check -p tiler-metal -p tiler-conformance -p tiler-prototype-run -p tiler-prototype-candle --all-targets`
+- `cargo test -p tiler-metal applicability_tests`
+- `cargo test -p tiler-conformance unnameable_enumerator`
+- `cargo test -p tiler-prototype-run unnameable_enumerator`
+- `cargo test -p tiler-prototype-run a_family_row_is_unrecognized_when_the_binding_could_not_ask`
+- `cargo test -p tiler-metal` — 132 unit tests plus nine doctests passed.
+- `cargo test -p tiler-prototype-run --all-targets` — 46 tests passed.
+- `cargo test -p tiler-prototype-candle --all-targets` — 19 tests passed.
+- `cargo clippy -p tiler-metal -p tiler-conformance --all-targets -- -D warnings`
+- `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler-metal -p tiler-conformance --no-deps`
+- `make citations` — 1,187 pinned citations and 6,484 local Markdown links resolved.
+- `tkt lint --format json`
+- `git diff --check`
+
+`make full` passed citations, formatting, workspace check, and the workspace Clippy gate, then stopped in nextest at test 1,420 of 3,304 on the pre-existing host-row mismatch: the current host reports macOS build `26A5406e` while `MetalHostApplicabilityPolicy::FIRST_MACOS_APPLE9` intentionally requires retained build `26A5388g`. `serial_sum::tests::this_host_is_refused_the_right_to_offer_the_declared_profile` therefore observed `OsBuild` rather than the test's expected later `NativeTranslationAuthority`. The same unrelated environment drift was already recorded before this ticket; the exact migrated packages and all affected device-free refusal paths pass above.

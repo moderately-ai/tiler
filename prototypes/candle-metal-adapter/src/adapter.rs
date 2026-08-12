@@ -104,7 +104,7 @@ use tiler_artifact::program::{
 };
 use tiler_ir::schedule::ResourceRequirements;
 use tiler_metal::applicability::{
-    MetalGpuFamily, MetalGpuFamilySupport, observe_highest_gpu_family,
+    MetalGpuFamily, MetalGpuFamilySupport, try_observe_highest_gpu_family,
 };
 use tiler_metal::direct_requirement::evaluate_index_arithmetic;
 use tiler_metal::synchronization_requirement::evaluate_synchronization;
@@ -839,7 +839,10 @@ fn device_facts(device: &MetalDevice) -> DeviceFacts {
 /// family does this device claim" would let the two answers drift.
 pub fn observed_apple_family(device: &MetalDevice) -> MetalGpuFamilySupport {
     let raw = device.metal_device().as_ref();
-    observe_highest_gpu_family(|family| raw.supportsFamily(MTLGPUFamily(family.value())))
+    try_observe_highest_gpu_family::<core::convert::Infallible>(|family| {
+        Ok(raw.supportsFamily(MTLGPUFamily(family.value())))
+    })
+    .unwrap_or_else(|never| match never {})
 }
 
 /// Reads a canonical family payload through the governed vocabulary's own spelling.

@@ -41,41 +41,17 @@ use tiler_metal::applicability::{
     MetalHostApplicabilityRefusal, MetalHostObservation, evaluate_metal_host_applicability,
 };
 
-/// What a Metal binding could learn about the Apple families a device supports.
-///
-/// Two outcomes rather than a bare [`MetalGpuFamilySupport`], because "the
-/// device named no family this vocabulary knows" and "this binding could not
-/// ask" are different facts with different repairs — the first is a host to
-/// change and the second is a Metal binding to upgrade — and a measurement
-/// boundary that collapsed them would report an unasked question as an answer.
-///
-/// Declared here rather than beside the probe that fills it, because it names
-/// only governed `tiler-metal` types: a host with no Metal binding at all can
-/// still state, compare, and refuse one.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ProbedGpuFamily {
-    /// The governed vocabulary's own answer, from a walk a binding completed.
-    Answered(MetalGpuFamilySupport),
-    /// The vocabulary named an enumerator the binding cannot, so the device was
-    /// never asked and there is no answer to report.
-    Unnameable(AppleGpuFamilyConstant),
-}
-
-impl std::fmt::Display for ProbedGpuFamily {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Answered(MetalGpuFamilySupport::Highest(family)) => {
-                formatter.write_str(family.as_str())
-            }
-            Self::Answered(MetalGpuFamilySupport::NoneNamed) => {
-                formatter.write_str("no named Apple family")
-            }
-            Self::Unnameable(constant) => write!(
-                formatter,
-                "unobserved: the governed vocabulary names MTLGPUFamily {constant}, which this \
-                 binding cannot name, so this device was never asked",
-            ),
-        }
+/// Renders one completed or failed governed GPU-family observation.
+pub(crate) fn describe_probed_gpu_family(
+    probed: Result<MetalGpuFamilySupport, AppleGpuFamilyConstant>,
+) -> String {
+    match probed {
+        Ok(MetalGpuFamilySupport::Highest(family)) => family.as_str().to_owned(),
+        Ok(MetalGpuFamilySupport::NoneNamed) => "no named Apple family".to_owned(),
+        Err(constant) => format!(
+            "unobserved: the governed vocabulary names MTLGPUFamily {constant}, which this \
+             binding cannot name, so this device was never asked",
+        ),
     }
 }
 
@@ -134,11 +110,11 @@ pub(crate) fn observe_host_environment() -> MetalHostObservation {
 /// asked.
 pub(crate) fn stating_probed_family(
     observation: MetalHostObservation,
-    probed: ProbedGpuFamily,
+    probed: Result<MetalGpuFamilySupport, AppleGpuFamilyConstant>,
 ) -> MetalHostObservation {
     match probed {
-        ProbedGpuFamily::Answered(support) => observation.observing_gpu_family(support),
-        ProbedGpuFamily::Unnameable(_) => observation,
+        Ok(support) => observation.observing_gpu_family(support),
+        Err(_) => observation,
     }
 }
 
@@ -183,9 +159,13 @@ pub(crate) fn refuse_to_offer_the_declared_profile(
 }
 
 /// Renders one observation for a run's own output.
-pub(crate) fn describe(observation: &MetalHostObservation, probed: ProbedGpuFamily) -> String {
+pub(crate) fn describe(
+    observation: &MetalHostObservation,
+    probed: Result<MetalGpuFamilySupport, AppleGpuFamilyConstant>,
+) -> String {
+    let family = describe_probed_gpu_family(probed);
     format!(
-        "os {}/{}/{}, arch {}, device {}, family {probed}",
+        "os {}/{}/{}, arch {}, device {}, family {family}",
         observation.os_family().unwrap_or("unobserved"),
         observation.os_version().unwrap_or("unobserved"),
         observation.os_build().unwrap_or("unobserved"),
@@ -203,7 +183,7 @@ mod tests {
     };
 
     use super::{
-        ProbedGpuFamily, describe, normalized_architecture, observe_host_environment,
+        describe, describe_probed_gpu_family, normalized_architecture, observe_host_environment,
         refuse_to_offer_the_declared_profile, stating_probed_family,
     };
 
@@ -321,7 +301,7 @@ mod tests {
 
         let answered = stating_probed_family(
             measured.clone(),
-            ProbedGpuFamily::Answered(MetalGpuFamilySupport::Highest(policy.gpu_family())),
+            Ok(MetalGpuFamilySupport::Highest(policy.gpu_family())),
         );
         assert_eq!(
             evaluate_metal_host_applicability(policy, &answered)
@@ -331,10 +311,8 @@ mod tests {
             "an answered probe must carry the row past the GPU-family predicate",
         );
 
-        let unnameable = stating_probed_family(
-            measured,
-            ProbedGpuFamily::Unnameable(MetalGpuFamily::Apple9.apple_constant()),
-        );
+        let unnameable =
+            stating_probed_family(measured, Err(MetalGpuFamily::Apple9.apple_constant()));
         assert_eq!(
             evaluate_metal_host_applicability(policy, &unnameable)
                 .expect_err("no host earns a receipt"),
@@ -349,15 +327,16 @@ mod tests {
     /// question as an answer.
     #[test]
     fn a_probed_family_renders_the_question_it_could_not_ask() {
-        let answered =
-            ProbedGpuFamily::Answered(MetalGpuFamilySupport::Highest(MetalGpuFamily::Apple9));
-        assert_eq!(answered.to_string(), MetalGpuFamily::Apple9.as_str());
+        let answered = Ok(MetalGpuFamilySupport::Highest(MetalGpuFamily::Apple9));
         assert_eq!(
-            ProbedGpuFamily::Answered(MetalGpuFamilySupport::NoneNamed).to_string(),
+            describe_probed_gpu_family(answered),
+            MetalGpuFamily::Apple9.as_str(),
+        );
+        assert_eq!(
+            describe_probed_gpu_family(Ok(MetalGpuFamilySupport::NoneNamed)),
             "no named Apple family",
         );
-        let unnameable =
-            ProbedGpuFamily::Unnameable(MetalGpuFamily::Apple9.apple_constant()).to_string();
+        let unnameable = describe_probed_gpu_family(Err(MetalGpuFamily::Apple9.apple_constant()));
         assert!(
             unnameable.contains("never asked"),
             "an unasked question must not render as a device that answered: {unnameable}",

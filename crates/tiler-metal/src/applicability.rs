@@ -9,11 +9,12 @@
 //! Metal hardware.
 //!
 //! The second function,
-//! [`observe_highest_gpu_family`](crate::applicability::observe_highest_gpu_family),
+//! [`try_observe_highest_gpu_family`](crate::applicability::try_observe_highest_gpu_family),
 //! is on the observing side of that split and is still device-free: it walks
 //! [`MetalGpuFamily::ALL`](crate::applicability::MetalGpuFamily::ALL) and asks
-//! the caller one yes-or-no question per family, so the *population* an adapter
-//! probes is this crate's rather than a table written beside each device call.
+//! the caller one fallible yes-or-no question per family, so the *population*
+//! and abort-the-whole-walk rule are this crate's rather than tables and side
+//! channels written beside each device call.
 //!
 //! # It refuses on every host, and that is the decision rather than a gap
 //!
@@ -114,7 +115,7 @@
 //! - **Device name** exactly as `MTLDevice.name` reports it (`Apple M4 Max`).
 //!
 //! The **GPU family** is the one field an adapter does not spell for itself.
-//! It calls [`observe_highest_gpu_family`](crate::applicability::observe_highest_gpu_family)
+//! It calls [`try_observe_highest_gpu_family`](crate::applicability::try_observe_highest_gpu_family)
 //! and forwards each enumerator to its own `supportsFamily`, so the families
 //! probed and the family named are one authority rather than two.
 //!
@@ -130,7 +131,7 @@ use std::error::Error;
 /// declares `MTLGPUFamilyApple1 = 1001` through `MTLGPUFamilyApple10 = 1010`,
 /// and this vocabulary names five of those ten. A family Apple ships and this
 /// enum does not name is not observable through
-/// [`observe_highest_gpu_family`] and is reported as
+/// [`try_observe_highest_gpu_family`] and is reported as
 /// [`MetalGpuFamilySupport::NoneNamed`] or as a lower family, which is a
 /// deliberate consequence of scoping the vocabulary to measured rows rather
 /// than an oversight. Widening to `Apple10` is deferred until a retained
@@ -145,7 +146,7 @@ use std::error::Error;
 /// crate classifies it by exhaustive match", which was false:
 /// `prototypes/serial-sum-run` pairs every variant with its Apple counterpart,
 /// and `prototypes/candle-metal-adapter` did the same until
-/// [`observe_highest_gpu_family`] gave it a probe that names no family at all.
+/// [`try_observe_highest_gpu_family`] gave it a probe that names no family at all.
 /// A pairing like that is 5b's total map — every variant must contribute the
 /// Apple constant it alone determines, and there is no constant a wildcard
 /// could return — so the attribute forced such a consumer to choose between an
@@ -176,7 +177,7 @@ pub enum MetalGpuFamily {
 impl MetalGpuFamily {
     /// Every Apple family this vocabulary names, lowest first.
     ///
-    /// Ascending order is load-bearing: [`observe_highest_gpu_family`] walks
+    /// Ascending order is load-bearing: [`try_observe_highest_gpu_family`] walks
     /// this list in reverse so a cumulative device answers the most specific
     /// true statement about itself on the first query, and the const assertion
     /// below rejects a member inserted out of order.
@@ -304,11 +305,12 @@ impl fmt::Display for AppleGpuFamilyConstant {
 /// Observes the highest Apple family a device reports supporting.
 ///
 /// The caller supplies one thing — whether the bound device supports the
-/// enumerator it is handed — and this walks [`MetalGpuFamily::ALL`] in reverse,
-/// stopping at the first supported family. Highest first because Apple's
-/// families are cumulative, so the highest supported one is the most specific
-/// true statement a device makes about itself, and the walk costs one device
-/// query on a device that supports the newest family this vocabulary names.
+/// enumerator it is handed, or why it could not ask — and this walks
+/// [`MetalGpuFamily::ALL`] in reverse, stopping at the first supported family or
+/// the first failed query. Highest first because Apple's families are
+/// cumulative, so the highest supported one is the most specific true statement
+/// a device makes about itself, and the walk costs one device query on a device
+/// that supports the newest family this vocabulary names.
 ///
 /// # Why the walk is here and not at the call site
 ///
@@ -323,31 +325,48 @@ impl fmt::Display for AppleGpuFamilyConstant {
 ///
 /// ```
 /// use tiler_metal::applicability::{
-///     MetalGpuFamily, MetalGpuFamilySupport, observe_highest_gpu_family,
+///     MetalGpuFamily, MetalGpuFamilySupport, try_observe_highest_gpu_family,
 /// };
 ///
 /// // A device that claims Apple7 and everything below it.
-/// let observed = observe_highest_gpu_family(|family| family.value() <= 1007);
-/// assert_eq!(observed, MetalGpuFamilySupport::Highest(MetalGpuFamily::Apple7));
+/// let observed = try_observe_highest_gpu_family::<core::convert::Infallible>(|family| {
+///     Ok(family.value() <= 1007)
+/// });
+/// assert_eq!(observed, Ok(MetalGpuFamilySupport::Highest(MetalGpuFamily::Apple7)));
 ///
 /// // A device that claims none of them is a different answer from a device
 /// // nobody asked, and this is the first of the two.
 /// assert_eq!(
-///     observe_highest_gpu_family(|_| false),
-///     MetalGpuFamilySupport::NoneNamed,
+///     try_observe_highest_gpu_family::<core::convert::Infallible>(|_| Ok(false)),
+///     Ok(MetalGpuFamilySupport::NoneNamed),
+/// );
+///
+/// // A binding that cannot name one enumerator has no family observation. The
+/// // error aborts the whole highest-first walk rather than being treated as a
+/// // device answer of `false`.
+/// assert_eq!(
+///     try_observe_highest_gpu_family(|family| {
+///         (family.value() != 1009).then_some(false).ok_or(family)
+///     }),
+///     Err(MetalGpuFamily::Apple9.apple_constant()),
 /// );
 /// ```
-pub fn observe_highest_gpu_family(
-    mut supports_family: impl FnMut(AppleGpuFamilyConstant) -> bool,
-) -> MetalGpuFamilySupport {
-    MetalGpuFamily::ALL
-        .into_iter()
-        .rev()
-        .find(|family| supports_family(family.apple_constant()))
-        .map_or(
-            MetalGpuFamilySupport::NoneNamed,
-            MetalGpuFamilySupport::Highest,
-        )
+///
+/// # Errors
+///
+/// Returns the first error produced by `supports_family` and asks no lower
+/// family afterward. One failed query invalidates the entire highest-family
+/// observation: continuing could report a lower family as though every higher
+/// family had answered `false`.
+pub fn try_observe_highest_gpu_family<E>(
+    mut supports_family: impl FnMut(AppleGpuFamilyConstant) -> Result<bool, E>,
+) -> Result<MetalGpuFamilySupport, E> {
+    for family in MetalGpuFamily::ALL.into_iter().rev() {
+        if supports_family(family.apple_constant())? {
+            return Ok(MetalGpuFamilySupport::Highest(family));
+        }
+    }
+    Ok(MetalGpuFamilySupport::NoneNamed)
 }
 
 /// What a device reported about the Apple GPU families it supports.

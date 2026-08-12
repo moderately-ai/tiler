@@ -39,10 +39,13 @@ use metal::{
     MTLCommandBufferStatus, MTLGPUFamily, MTLResourceOptions, MTLSize,
 };
 use tiler_metal::applicability::{
-    AppleGpuFamilyConstant, MetalGpuFamily, MetalHostObservation, observe_highest_gpu_family,
+    AppleGpuFamilyConstant, MetalGpuFamily, MetalGpuFamilySupport, MetalHostObservation,
+    try_observe_highest_gpu_family,
 };
 
-use crate::applicability::{ProbedGpuFamily, observe_host_environment, stating_probed_family};
+use crate::applicability::{
+    describe_probed_gpu_family, observe_host_environment, stating_probed_family,
+};
 use crate::device_preflight::{PreflightRefusal, local_memory_fits, workgroup_fits};
 
 /// Every Apple `MTLGPUFamily` enumerator `metal` 0.33.0 names, ascending.
@@ -123,27 +126,18 @@ const _: () = {
 /// Asks one device about exactly the families the governed vocabulary names.
 ///
 /// One unnameable enumerator discards the whole walk rather than only its own
-/// query, because [`observe_highest_gpu_family`] walks highest first and stops
+/// query, because [`try_observe_highest_gpu_family`] walks highest first and stops
 /// at the first supported family: a family above the one that answered would
 /// leave `Highest(lower)` an understatement wearing the shape of a
 /// most-specific claim.
-pub(crate) fn probe_apple_families(device: &Device) -> ProbedGpuFamily {
-    let mut unnameable = None;
-    let observed = observe_highest_gpu_family(|constant| {
-        if let Some(enumerator) = binding_apple_enumerator(constant) {
-            device.supports_family(enumerator)
-        } else {
-            unnameable = Some(constant);
-            // Not an answer: the caller discards this walk entirely. Returning
-            // `false` is only how this closure declines to end the walk on a
-            // family it never asked about.
-            false
-        }
-    });
-    unnameable.map_or(
-        ProbedGpuFamily::Answered(observed),
-        ProbedGpuFamily::Unnameable,
-    )
+pub(crate) fn probe_apple_families(
+    device: &Device,
+) -> Result<MetalGpuFamilySupport, AppleGpuFamilyConstant> {
+    try_observe_highest_gpu_family(|constant| {
+        binding_apple_enumerator(constant)
+            .map(|enumerator| device.supports_family(enumerator))
+            .ok_or(constant)
+    })
 }
 
 /// The launch this dispatch encodes, in threads.
@@ -403,7 +397,7 @@ pub(crate) struct DeviceFacts {
     /// The working set this device recommends staying within.
     pub(crate) recommended_working_set: u64,
     /// The highest Apple family it claims, or why it was never asked.
-    pub(crate) apple_family: ProbedGpuFamily,
+    pub(crate) apple_family: Result<MetalGpuFamilySupport, AppleGpuFamilyConstant>,
 }
 
 impl fmt::Display for DeviceFacts {
@@ -413,7 +407,7 @@ impl fmt::Display for DeviceFacts {
             "{} ({}), {} thread(s) per threadgroup, {} byte(s) of threadgroup memory, buffers to \
              {} byte(s), working set {} byte(s)",
             self.name,
-            self.apple_family,
+            describe_probed_gpu_family(self.apple_family),
             self.max_threads_per_threadgroup,
             self.max_threadgroup_memory_length,
             self.max_buffer_length,
@@ -434,7 +428,12 @@ impl fmt::Display for DeviceFacts {
 /// into it, so a caller can report the exact enumerator a refusal is about; a
 /// probe hidden in here could only leave the predicate unobserved without saying
 /// why.
-pub(crate) fn observe_metal_host(device: &Device) -> (MetalHostObservation, ProbedGpuFamily) {
+pub(crate) fn observe_metal_host(
+    device: &Device,
+) -> (
+    MetalHostObservation,
+    Result<MetalGpuFamilySupport, AppleGpuFamilyConstant>,
+) {
     let probed = probe_apple_families(device);
     let observation = stating_probed_family(
         observe_host_environment().observing_device_name(device.name()),
@@ -677,8 +676,8 @@ mod tests {
     /// Apple declares `MTLGPUFamilyApple10 = 1010` in the macOS 26.5 SDK and
     /// this binding stops at Apple9, so the moment the governed vocabulary
     /// widens, the probe meets an enumerator it cannot name. Pinned here because
-    /// every refusal built on that outcome — `ProbedGpuFamily::Unnameable`, the
-    /// unobserved GPU-family predicate, and the `Unrecognized` family row — is
+    /// every refusal built on that outcome — the failed probe, the unobserved
+    /// GPU-family predicate, and the `Unrecognized` family row — is
     /// only worth writing while it is true. A binding that gained the enumerator
     /// makes this fail and say so.
     #[test]

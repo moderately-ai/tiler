@@ -199,7 +199,7 @@ pub(crate) mod host {
     use tiler_metal_aot::record::ResolvedToolchain;
 
     use super::MeasurementBoundary;
-    use crate::applicability::{normalized_architecture, sw_vers};
+    use crate::applicability::{describe_probed_gpu_family, normalized_architecture, sw_vers};
     use crate::dispatch::probe_apple_families;
 
     /// Everything a measured half needs from this host, resolved before it runs.
@@ -289,7 +289,7 @@ pub(crate) mod host {
             os_build: observed_field("-buildVersion"),
             architecture: normalized_architecture(std::env::consts::ARCH).to_owned(),
             device_name: host.device.name().to_owned(),
-            gpu_family: probe_apple_families(&host.device).to_string(),
+            gpu_family: describe_probed_gpu_family(probe_apple_families(&host.device)),
             metal_compiler: host.resolved.metal.version.clone(),
             metallib_linker: host.resolved.metallib.version.clone(),
             sdk: format!(
