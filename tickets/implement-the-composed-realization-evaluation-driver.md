@@ -4,7 +4,7 @@ title: Implement the composed realization evaluation driver
 status: todo
 priority: p2
 dependencies: [retain-each-plan-alternative-s-verified-semantic-candidate, define-the-composed-realization-driver-subject-bridge]
-related: [accept-the-composed-realization-evaluation-surface, compose-a-declared-reduction-topology-into-a-semantic-program-evaluation]
+related: [accept-the-composed-realization-evaluation-surface, compose-a-declared-reduction-topology-into-a-semantic-program-evaluation, decide-the-safe-cross-crate-composed-reference-boundary]
 scopes: [implementation/compiler, implementation/conformance, implementation/ir, implementation/reference, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
@@ -17,6 +17,8 @@ One public conformance entry computes expected bits from the exact semantic cand
 ## Authority and prerequisites
 
 Tom accepted the driver as the sole public composition entry through [`accept-the-composed-realization-evaluation-surface`](accept-the-composed-realization-evaluation-surface.md), retained the `ValueId` pin/observe primitive crate-private, and on 2026-08-12 fixed `tiler-conformance` as the driver's home. Implement only after the mandatory candidate retention and exact subject bridge are complete.
+
+**Readiness correction, 2026-08-12 at `1ff5e90b`.** The sentence above records the accepted intent but not an implementable Rust boundary: sibling crate `tiler-conformance` cannot call a crate-private `tiler-reference` item, and `ReferenceNumericalConformance::from_realization` refuses the reassociation this driver must discharge. [`decide-the-safe-cross-crate-composed-reference-boundary`](decide-the-safe-cross-crate-composed-reference-boundary.md) now decides the safe no-caller-tensor reference operation and whether the first conformance driver remains test-only. The exact delivery bullets below are provisional where they demand a public driver or a cross-crate crate-private primitive; do not implement them until that decision and the dependent compiler-subject decision replace those spellings.
 
 ## Required delivery
 
