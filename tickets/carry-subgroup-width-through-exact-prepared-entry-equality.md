@@ -3,7 +3,7 @@ id: carry-subgroup-width-through-exact-prepared-entry-equality
 title: Carry subgroup width through exact prepared-entry equality
 status: todo
 priority: p1
-dependencies: [admit-an-atomic-subgroup-realization-subject-to-target-profiles, make-prepared-entry-observations-typed-and-key-dispatched, generalize-deferred-target-provenance-beyond-capability-axes, bind-prepared-pipeline-caches-to-loader-derived-route-identity]
+dependencies: [admit-an-atomic-subgroup-realization-subject-to-target-profiles, make-prepared-entry-observations-typed-and-key-dispatched, generalize-deferred-target-provenance-beyond-capability-axes]
 related: [decide-the-prepared-subgroup-width-equality-gate, declare-metal-subgroup-realization-facts-in-the-target-profile, measure-metal-thread-execution-width-across-prepared-pipelines]
 scopes: [implementation/compiler, implementation/artifact, implementation/build, implementation/runtime, implementation/metal, implementation/candle, contracts/optimizer, contracts/artifacts, contracts/decisions]
 shared_scopes: [project/tickets]

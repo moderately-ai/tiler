@@ -1,7 +1,7 @@
 ---
 id: bind-prepared-pipeline-caches-to-loader-derived-route-identity
 title: Decide whether to retain the non-reusable Candle pipeline cache
-status: awaiting-decision
+status: todo
 priority: p1
 dependencies: []
 related: [prototype-candle-metal-adapter, bind-runtime-library-and-pipeline-caches-to-exact-payload-bytes, decide-the-prepared-subgroup-width-equality-gate, carry-subgroup-width-through-exact-prepared-entry-equality]
@@ -27,6 +27,10 @@ Tiler does not retain a cache-shaped prototype abstraction that cannot produce a
 ## Decision
 
 Choose whether to preserve and widen the prototype cache now or delete it until a real reusable owner exists.
+
+## Accepted — 2026-08-12
+
+Tom accepted physical deletion of the non-reusable prototype cache in this Codex session. The implementation removes the cache module, keys, caller-stated artifact identity, occupancy reporting, cache-only refusal vocabulary, tests, and prose rather than retaining deprecated aliases or empty compatibility wrappers. Direct per-invocation library and pipeline retention remains. A persistent cache returns only for a named accepted owner that outlives one route attempt, through the separately triggered ticket named below.
 
 ### Recommended — delete the current cache rather than repair it speculatively
 
