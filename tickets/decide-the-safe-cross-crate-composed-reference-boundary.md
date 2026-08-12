@@ -1,7 +1,7 @@
 ---
 id: decide-the-safe-cross-crate-composed-reference-boundary
 title: Decide the safe cross-crate composed-reference boundary
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: [retain-the-selected-semantic-candidate-for-the-conformance-oracle]
 related: [define-the-composed-realization-driver-subject-bridge, implement-the-composed-realization-evaluation-driver, accept-the-composed-realization-evaluation-surface, accept-the-realization-witness-surface]
@@ -74,6 +74,12 @@ A new narrow reusable oracle crate depending only on compiler, IR, and reference
 | Raw pin API, strict/default evaluation, or caller-built free parts | Rejected | Rejected | Superficially cheap | Creates a silent-wrong or vacuous oracle and permanent authority ambiguity |
 
 No option changes kernel execution, artifact/schema/cache identity, or ordinary compilation cost. An eager retained recipe is unnecessary; derive it only when conformance runs, and measure before caching it.
+
+## Decision — accepted 2026-08-12
+
+Tom accepted the recommended narrow first pass in the live decision round, relayed first-hand by the coordinator in this ticket's conversation: raw tensor pin/observe remains private inside `tiler-reference`; the cross-crate reference mechanism is a safe, plan-neutral composed-evaluation session that accepts no caller-provided intermediate tensor; every registry and work authority is explicit; the plan-binding `tiler-conformance` wrapper remains `pub(crate)` and test-only; and public activation waits for a named non-test consumer. The new-oracle-crate alternative remains the reconsideration candidate at that trigger, not work silently omitted from the tree.
+
+This supersedes the two incompatible readings in the earlier records. `sole public composition entry` now means **sole supported plan-conformance entry**: the language-public cross-crate reference mechanism is safe because the reference owns every intermediate, not because rustdoc hides it. `crate-private` continues to apply to the raw tensor-taking primitive only. No strict, governed-registry, baseline, unsubjected, or unsupported-topology default is admitted.
 
 ## Non-goals
 
