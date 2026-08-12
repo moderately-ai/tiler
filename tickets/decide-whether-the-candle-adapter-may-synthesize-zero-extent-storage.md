@@ -1,7 +1,7 @@
 ---
 id: decide-whether-the-candle-adapter-may-synthesize-zero-extent-storage
 title: Decide whether the Candle adapter may synthesize storage for a zero-extent tensor
-status: awaiting-decision
+status: todo
 priority: p3
 dependencies: []
 related: [route-a-zero-extent-program-through-candle-metal-storage, prototype-candle-metal-adapter]
@@ -64,6 +64,14 @@ The corrected ranking is: (1) explicit artifact-derived zero-tensor construction
 The strongest counterpoint to option 1 is that Candle documents `Tensor::from_storage` with a caller obligation to ensure shape/storage compatibility rather than checking it. That does not make the route unsound; it makes the Tiler helper the validation owner. The decision reverses if a source or execution probe shows that a zero-count `MetalStorage` over a rounded allocation cannot survive Candle's normal `Tensor`, layout, custom-op, or lifetime paths, or if constructing the sentinel requires bypassing Candle's allocator. Current source shows the opposite, but the landing must prove the full empty-domain route on hardware and retain the old `Tensor::from_vec` failure as the comparison that explains why the helper exists.
 
 This is a consumer-only Rust and storage-policy change. The tensor shape, dtype, accessible range, artifact bytes, plan identity, payload, cache identity, and kernel are unchanged; the sentinel's allocation identity is invocation/device evidence only. No artifact, manifest, semantic, schedule, kernel, or cache domain steps.
+
+## Accepted — 2026-08-12
+
+Tom accepted the corrected option 1 in the live Codex review by replying `okay agreeed, next decision`. The adapter may explicitly construct the artifact's declared zero-element input as a genuine Candle `Tensor` over a minimum Candle-managed sentinel allocation, with logical element count zero and artifact-derived accessible extent zero, and then use the unchanged ordinary Tensor route. The construction is explicit and fallible; it is never a default for an omitted nonempty input.
+
+No public semantic input enum or fourth routed backing class is accepted. Empty and nonempty inputs remain the same Tensor value kind, distinguished by their existing device, dtype, shape, layout, storage, and autograd data. A private construction-state enum may be introduced later only if implementation discovers another non-Tensor representation that cannot first become an honest Candle `Tensor`.
+
+The accepted first pass is input-only and no-autograd. It does not admit empty outputs, raw placeholder binding without a Tensor, unrelated anchor tensors, widened accessible ranges, mutable or aliased views, other dtypes, foreign devices, or any kernel whose verified input window is nonzero. Hardware evidence must route both retained empty-domain members and perturb the count, shape, dtype, device, accessible extent, and lifetime independently before the ticket closes.
 
 ## Trigger check log
 
