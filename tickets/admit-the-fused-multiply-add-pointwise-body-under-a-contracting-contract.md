@@ -1,14 +1,14 @@
 ---
 id: admit-the-fused-multiply-add-pointwise-body-under-a-contracting-contract
 title: Admit a fused multiply-then-add pointwise body under a contraction-permitting contract
-status: awaiting-decision
+status: blocked
 priority: p2
-dependencies: [admit-multi-input-tensors-in-the-scheduled-region-vocabulary]
-related: [admit-multi-input-elementwise-programs-at-the-compiler-boundary, prototype-inline-aot-integration-proof, derive-physical-proposals-from-the-cover-region-subject]
+dependencies: [admit-multi-input-tensors-in-the-scheduled-region-vocabulary, admit-a-scheduled-region-that-reads-two-materialization-edges]
+related: [admit-multi-input-elementwise-programs-at-the-compiler-boundary, prototype-inline-aot-integration-proof, derive-physical-proposals-from-the-cover-region-subject, represent-an-explicit-pointwise-contraction-choice]
 scopes: [implementation/compiler, implementation/ir, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, compiler, numerics, decision, needs-tom, architecture]
+tags: [implementation, compiler, numerics, architecture]
 ---
 ## Why this exists
 
@@ -55,6 +55,18 @@ This is an architecture fork, not an implementation-ready ticket. The two positi
 
 Tom needs to select the intended capability boundary. No worker should weaken `ArithmeticContraction` or silently select one architecture under this node.
 
+## Public-boundary acceptance — 2026-08-12
+
+**Decision — accepted by Tom in the live coordination session.** The apparent A/B fork was false: the materialized realization is the complete fail-closed baseline, and an explicit contraction realization is a later costed optimization. They serve different obligations and both belong in the planning portfolio.
+
+The first vertical is the materialized baseline. It must spell checked pointwise fragments from the exact cover membership, and every external leaf must bind either a declared input or one specifically identified cross-region materialization edge. A region that consumes two materializations therefore depends on the canonical edge-ordinal boundary owned by [`admit-a-second-read-of-one-materialized-intermediate-in-an-elementwise-region`](admit-a-second-read-of-one-materialized-intermediate-in-an-elementwise-region.md) and the distinct-edge assembly owned by [`admit-a-scheduled-region-that-reads-two-materialization-edges`](admit-a-scheduled-region-that-reads-two-materialization-edges.md). It must not infer an edge from access position, extent, or cover order. A fully materialized cover is an ordinary compile-time alternative under `RelaxedF32`, selected by the same verified feasibility and cost machinery as every other plan; it is not a silent runtime fallback.
+
+The later optimization is [`represent-an-explicit-pointwise-contraction-choice`](represent-an-explicit-pointwise-contraction-choice.md). A boolean permission is insufficient because one pointwise DAG may contain several or overlapping multiply/add sites. The physical program must identify every contracted site explicitly and carry that choice through schedule verification, kernel lowering and verification, emission, reference/conformance evidence, realization witnesses, explain, and canonical identity. This is ADR 0015's *permission over an unfused body*, not the deferred semantic FMA family whose single rounding is program meaning.
+
+The existing contraction-legality rule remains load-bearing. Until one of these complete realizations exists, `unrealized-contraction` remains `Unknown`; no provider or backend may infer a contraction choice from a permissive contract, compiler flag, or emitted `multiply + add` spelling. Existing subject bytes remain stable only where the new carriers are append-only and preserve every old arm verbatim; each owning implementation ticket must prove that at its encoder rather than assume a domain step or its absence.
+
+**Graph consequence.** This ticket now owns the materialized baseline and is blocked on the distinct-edge carrier. The explicit contracted realization is a separate later ticket blocked on this baseline, so availability lands before the performance alternative and neither can silently substitute for the other.
+
 ## Closes when
 
-Either a recognized pointwise body holding a multiply adjacent to an add compiles under `RelaxedF32` to a complete verified plan whose contraction behaviour is declared rather than inherited, or the refusal is preserved deliberately and carries a typed reason naming the contraction obligation — and in both cases the boundary test's contract pair is updated in the same change, with the one-input control retained so the result stays evidence about the adjacency.
+A recognized pointwise body holding a multiply adjacent to an add compiles under `RelaxedF32` through a complete verified materialized cover whose fragments bind every declared input and materialization edge exactly; the same provider still refuses a mixed fused region under `unrealized-contraction`; `(a * b) + (c * d)` proves that two distinct materialization edges cannot alias; and the boundary test's contract pair is updated in the same change with the one-input control retained so the result stays evidence about the adjacency. The explicit contracted optimization remains the dependent ticket above and is not required to close this baseline.

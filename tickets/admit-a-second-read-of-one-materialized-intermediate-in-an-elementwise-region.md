@@ -1,14 +1,14 @@
 ---
 id: admit-a-second-read-of-one-materialized-intermediate-in-an-elementwise-region
 title: Admit a second read of one materialized intermediate in an elementwise region
-status: awaiting-decision
+status: todo
 priority: p3
 dependencies: []
 related: [admit-two-reads-of-one-declared-input-in-an-elementwise-region, admit-a-scheduled-region-that-reads-two-materialization-edges]
 scopes: [implementation/ir, implementation/compiler, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [decision, needs-tom, public-boundary, identity]
+tags: [implementation, public-boundary, identity]
 ---
 ## User-visible outcome
 
@@ -35,3 +35,9 @@ The source audit above already eliminates “just allow a second `Intermediate`�
 **Option B — retain `Intermediate` and add a separately tagged attributed form.** Existing bytes remain available for the one-edge shorthand, while only multi-edge regions use the payload. This avoids moving old identities, but creates two semantic spellings of an intermediate read and forces every verifier and builder to decide when the shorthand is legal. That ambiguity is permanent maintenance cost and makes canonicalization a new obligation.
 
 **Recommendation.** Accept Option A with the field name `edge_ordinal` and the exact meaning “ordinal of the materialization edge in the verified cover account.” Correctness and one canonical spelling outweigh preserving experimental identity bytes. Acceptance authorizes the representation and identity step only; the implementation still owes all failure-path and bit-agreement evidence above.
+
+## Public-boundary acceptance — 2026-08-12
+
+**Decision — Option A accepted by Tom in the live coordination session.** Replace the unit role with the single canonical attributed form `Intermediate { edge_ordinal }`; do not retain an unattributed shorthand. The ordinal names an edge in the verified cover account, not a semantic value, access position, extent, or region-local temporary. Construction and assembly must reject missing, duplicate, foreign, and mis-bound ordinals before lowering, with no inference or default.
+
+This acceptance is shared by both consumers already in the graph: repeated reads of one edge and reads of two distinct edges. The implementation owns one coherent schedule/kernel identity migration across every total encoder and consumer. It must perturb the ordinal while holding shapes and access order fixed, show the resulting mis-binding refusal, and enumerate every moved identity pin on the merged tree.
