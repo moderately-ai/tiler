@@ -1,7 +1,7 @@
 ---
 id: generalize-deferred-target-provenance-beyond-capability-axes
 title: Generalize deferred target provenance beyond quantitative capability axes
-status: awaiting-decision
+status: todo
 priority: p1
 dependencies: [admit-an-atomic-subgroup-realization-subject-to-target-profiles]
 related: [decide-the-prepared-subgroup-width-equality-gate, carry-subgroup-width-through-exact-prepared-entry-equality]
@@ -60,6 +60,14 @@ The two private variants partition executable deferred predicates by proof shape
 ### Strongest counterpoint and reversal evidence
 
 The append-only escape makes the proposal encoder slightly less visually uniform than retagging every arm. That cost is bounded to one documented helper and its injectivity tests. Reverse to a domain-wide retag only if implementation cannot prove structural separation from every capability-axis encoding, or if a decoder is introduced that cannot reject or frame the escape. Neither is true at this base.
+
+## Accepted boundary — 2026-08-12
+
+Tom accepted the recommended private exhaustive subject enum and append-only identity strategy in this conversation. Executable deferred provenance distinguishes quantitative capability axes from subgroup-width confirmation of the complete atomic subgroup realization. The compiler derives and validates the requirement from that subject; no independent subgroup capability axis, reconstructed subject, fallback, or subgroup-specific artifact row is admitted.
+
+The unused public `PreparedEntryTargetRequirementRef::capability_axis()` accessor is removed without replacement. The supported artifact translation retains only `entry()` and the complete generic `requirement()`. A future public subject view requires a named external consumer and a separate boundary review.
+
+Existing capability proposal and explain bytes remain unchanged. New atomic subjects use structurally disjoint append-only proposal encoding and a fresh explain event carrying the complete subject. Deferred numerical dimensions remain a separate non-executable family. The atomic subgroup delivery owns the single feasibility-rule-set vocabulary advance.
 
 ## Required delivery after acceptance
 
