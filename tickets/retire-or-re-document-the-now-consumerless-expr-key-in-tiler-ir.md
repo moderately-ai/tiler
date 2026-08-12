@@ -1,7 +1,7 @@
 ---
 id: retire-or-re-document-the-now-consumerless-expr-key-in-tiler-ir
 title: Retire or re-document the now-consumerless expr_key in tiler-ir
-status: awaiting-decision
+status: todo
 priority: p2
 dependencies: []
 related: [replace-the-codec-arena-content-key-with-the-existing-comparator, encode-artifact-abi-identity-in-linear-space]
@@ -40,3 +40,19 @@ The ticket already contains the complete two-option comparison and a recommendat
 ## Scope repair — 2026-08-09
 
 `implementation/artifact` is declared because the retire branch must replace the cross-crate codec regression that is the function's sole remaining consumer; IR-only scope could not preserve the ticket's own closing condition.
+
+## Corrected public-boundary acceptance — 2026-08-12
+
+Tom accepted retirement after a current-main, source-first audit. This reverses the ticket's original recommendation to keep the public function: previously completed or accepted work is evidence to re-check, not a reason to preserve an imperfect surface.
+
+The accepted boundary is:
+
+- delete public `tiler_ir::program::abi::expr_key` and its then-unused `EXPR_DOMAIN`;
+- retain `compare_expr_nodes` as the sole live canonical arena-order authority;
+- preserve the five-node schema-13 historical ordering as a fixed artifact-codec fixture, and keep the real parser assertions that comparator order is accepted while the historical key order is rejected;
+- retain the exact historical explanation in the artifact ABI contract, while rewriting live Rust documentation to describe the retired standalone subtree key without linking to a supported function; and
+- do not add a private, test-only, or artifact-local generic copy of the old encoder unless new evidence identifies a consumer that needs to evaluate arbitrary schema-13 keys.
+
+The old relation is no longer an authority. A fixed historical permutation plus the production parser is executable compatibility evidence without retaining a quadratic encoder as public API. Removing the function changes no production encoding, manifest schema, canonical identity, cache key, domain separator, or pin because no production path reaches it. The source break is deliberate in this pre-production crate.
+
+The implementation must keep the negative controls load-bearing: perturbing the comparator toward the historical order must make the canonical-order/parser tests fail, and the production Rust census must report no `expr_key` reference after removal. Run the affected artifact tests, `cargo doc` for touched packages, the repository gates required by the final diff, `tkt lint`, `make citations`, and `git diff --check`.
