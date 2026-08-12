@@ -1,10 +1,10 @@
 ---
 id: admit-vector-lane-bindings-into-the-schedule-vocabulary
-title: Admit vector-lane bindings and their tail policies into the schedule vocabulary
+title: Admit the first vector-lane schedule boundary
 status: awaiting-decision
 priority: p2
-dependencies: [accept-adr-0093-cpu-vector-lane-tier, admit-shared-contributor-coverage-and-reduction-padding-identity]
-related: [design-the-cpu-vector-lane-tier, represent-cooperative-workgroup-reduction-dataflow, declare-cpu-vector-realization-facts-in-the-target-profile, admit-lane-typed-values-and-masked-memory-into-the-kernel-ir]
+dependencies: [accept-adr-0093-cpu-vector-lane-tier]
+related: [design-the-cpu-vector-lane-tier, admit-shared-contributor-coverage-and-reduction-padding-identity, declare-cpu-vector-realization-facts-in-the-target-profile, define-plural-operation-specific-vector-realization-requirements, admit-lane-typed-values-and-masked-memory-into-the-kernel-ir]
 scopes: [implementation/ir, implementation/compiler, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
@@ -12,39 +12,75 @@ tags: [scheduling, ir, cpu, simd, execution-hierarchy, public-boundary, decision
 ---
 ## User-visible outcome
 
-A scheduled region can state that its work is spread across vector lanes, and the intrinsic verifier discharges — or refuses, by name — every obligation that spread creates: coverage, ownership, bounds under the chosen tail policy, and the numerical permissions a lane partition consumes.
+A scheduled region can state one exact fixed-width vector assignment over independent output coordinates. The verifier proves coverage, ownership, and bounds without consuming numerical-order permission, and every broader vector form remains unavailable until its own required authority and real CPU consumer exist.
 
-## Why now
+## Source-first Fact audit — 2026-08-12
 
-**Fact.** `ExecutionBinding` has one variant, `GlobalLinearInvocation`; `TailPolicy` has one variant, `Exact`; `ReductionTopology` has five variants and none is a vector topology. Nothing in the implemented vocabulary represents a vector lane. All three enums are `#[non_exhaustive]` under ADR 0074 convention 5a, so each widening is additive by construction.
+1. **Verified.** `ExecutionBinding` has only `GlobalLinearInvocation`, `TailPolicy` has only `Exact`, and `ReductionTopology` has five variants with no vector topology. `verify_intrinsic`, anchor `schedule.binding != ExecutionBinding::GlobalLinearInvocation`, rejects every other binding before family verification. No production vector schedule exists.
+2. **Verified.** The existing ownership proposition is already the right one for a lane-over-map schedule. `OwnershipProofKind::OneGlobalInvocationPerOutput` states one owner per output, and the accepted CPU research treats each active lane as that invocation. Assigning independent output positions to lanes changes no operand, rounding site, or contributor order and consumes no reassociation, permutation, contraction, or signed-zero permission.
+3. **False in the old packet.** Contributor padding is not a `TailPolicy`. The accepted [`admit-shared-contributor-coverage-and-reduction-padding-identity`](admit-shared-contributor-coverage-and-reduction-padding-identity.md) boundary places exact-versus-identity-padded coverage inside the reduction topology and preserves `KernelSchedule::tail` for iteration-domain launch coverage. The old `IdentityPadded` tail bullet and failure case are retired.
+4. **Imprecise in the old packet.** A generic `ExecutionBinding::FixedVectorLane` does not say whether the lane binds the output map or a reduction's contributor partition. The two cases have different ownership, coverage, numerical, and KIR obligations. Encoding the distinction only through a second field permits misleading cross-field combinations and makes every consumer reconstruct which axis the lane means.
+5. **Verified.** A fixed map assignment with `TailPolicy::Exact` is completely answerable now: for logical iteration count `N` and literal lane count `W >= 2`, intrinsic verification requires `N mod W == 0`; lane `l` in packet `p` owns linear output `pW + l`; the existing bounds and ownership proofs cover exactly the same `N` coordinates. No target fact or runtime observation is needed to establish that relation.
+6. **Not implementation-ready beyond that slice.** A predicated tail needs lane-mask KIR, explicit inactive-lane load/store semantics, and a target fact for the exact masked memory form. A scalar epilogue needs two exact execution realizations and numerical authority for both paths. A contributor-partition binding needs the shared coverage/identity carrier. A scalable map binding needs width-agnostic KIR and a real scalable CPU representation. None of those production consumers exists.
+7. **Verified identity consequence.** `push_schedule`, anchors `let ExecutionBinding::GlobalLinearInvocation` and `bytes.push(0x01)`, can preserve every existing schedule byte by retaining tag `0x01` and appending a fresh tag plus the fixed lane count for the new binding. The current `tiler.schedule.v5` domain need not step for that additive arm. Later KIR, artifact, and selected-realization carriers own their own version consequences.
+8. **Verified real-consumer boundary.** The accepted production CPU split is `tiler-cpu-image`, `tiler-cpu`, and `tiler-cpu-runtime`; vector execution belongs to a future explicit native fixed-vector approach in the latter two packages. The scalar image, Candle, a KIR simulator, a mock provider, and the reference evaluator are not consumers and cannot make this schedule executable.
 
-The design and its eliminations are [the CPU vector-lane tier](../docs/research/scheduling/cpu-vector-lane-tier.md); this ticket implements it and should not re-derive it.
+## Recommended first public surface
 
-## Implementation keys
+Add one opaque value and one execution-binding arm:
 
-- **`ExecutionBinding::FixedVectorLane { lanes }` and `ExecutionBinding::ScalableVectorLane`.** The width is a literal on the fixed variant, for the identity and intrinsic-verification reasons the record derives; the scalable variant carries no width at all.
-- **`TailPolicy` gains `Predicated`, `ScalarEpilogue`, and `IdentityPadded { .. }`.** Each derives a *different* target requirement, and the verifier must not treat them as interchangeable. `ScalableVectorLane` admits `Predicated` alone; `Exact` and `ScalarEpilogue` are refused for it because neither `N mod W` nor an epilogue trip count is a compile-time quantity.
-- **A lane-partition reduction topology** carrying a `ContributorPartition`, a layout (contiguous or strided), and an accumulation `ArithmeticType`. Contiguous consumes `permits_reassociation`; strided consumes `permits_permutation` as well. Both are *required* rather than recorded, at the same place and by the same shape of check `verify_cooperative_semantics` and the multi-pass gate already use: topology flags must agree with the region's numerical realization, and order-sensitive families additionally require `family.consumes_reassociation && !*permits_reassociation` (the extrema family spends nothing and is the stated exception). It is refused outright for `ScalableVectorLane`, because `ContributorPartition::covers` is a product over a symbolic width.
-- **The padding identity is a stated field and is never derived from `empty_identity_bits`.** The verifier currently requires `empty_identity_bits == 0.0_f32.to_bits()`, that is `+0.0`, and `+0.0` is not a two-sided identity of `f32` addition — `(-0.0) + (+0.0) = +0.0`. `-0.0` is. A padded fold reusing the empty identity is wrong on exactly the rows whose true sum is `-0.0`.
-- **Identity encoding.** Every new variant takes an appended tag byte and every existing tag and field position stays put, so no previously encodable region's bytes move and the schedule identity domain does not step. `push_schedule` currently destructures `ExecutionBinding` and `TailPolicy` with irrefutable `let` bindings and pushes a constant `0x01` for each; both become matches, which is the build error that proves the widening reached the encoder.
-- **`ResourceRequirements`** gains whatever the target-facing derivation needs; see the sibling profile ticket, which owns the subject type.
+- `VectorLaneCount`, with a checked `u64` constructor requiring at least two lanes and a `get` reader. Width zero is invalid and width one is the existing scalar map under another spelling, so neither is representable. There is no power-of-two rule, architecture preset, default, or independent alpha policy cap.
+- `ExecutionBinding::FixedVectorMap { lanes: VectorLaneCount }`. The name states the axis it binds. It does not stand for a contributor partition, a horizontal reduction, a scalable vector, a worker thread, or a backend instruction choice.
 
-## Required failure-path evidence
+The first admitted combination is deliberately narrow:
 
-Each of these must be run against a case that must fail and observed failing, against an accepted neighbour: a lane binding whose predicate leaves a coordinate uncovered; two lanes owning one output; a `Predicated` tail on a region whose bounds proof does not admit the overrun address; a lane partition under a reassociation-forbidding contract; a strided lane partition under a permutation-forbidding contract; a lane partition whose `covers` fails; a lane partition on a scalable binding; an `IdentityPadded` policy whose padding value is `+0.0` under a signed-zero-forbidding contract.
+- `TailPolicy::Exact` only;
+- map-parallel regions whose existing ownership proof establishes one owner for every output;
+- literal `N` and `W` with checked `N mod W == 0`;
+- the existing logical `work_items` and launch population continue to count scalar output invocations, while the binding groups those invocations into exact packets of `W` lanes;
+- no numerical permission is consumed merely by grouping independent outputs;
+- every lane-shaped arithmetic or memory operation later emitted must be explicit in KIR and in the plural target-requirement carrier; absence leaves the plan non-executable rather than authorizing scalarization.
 
-## Non-goals
+The intrinsic verifier rejects zero width at construction, nondivisible coverage, wrong ownership count, unsupported reduction/binding combinations, and every non-`Exact` tail by distinct typed rules. It never rounds the iteration count, masks implicitly, peels a scalar tail, or asks a target to repair intrinsic coverage.
 
-Kernel-IR constructs (its own ticket). Target profile declarations (its own ticket). Emission of any kind. Any threading construct. Any performance claim.
+The encoder retains `GlobalLinearInvocation` as tag `0x01` and appends a fresh tag for `FixedVectorMap`, followed by the canonical big-endian lane count. Same-crate matches over `ExecutionBinding` remain exhaustive. Existing schedules stay byte-identical; new lane counts produce distinct identities.
 
-## Decision packet — 2026-08-09
+## Explicit successors, not hidden states
 
-ADR 0093 accepted the vector-tier model, not the exact public Rust spellings listed here. Tom must accept the `ExecutionBinding`, `TailPolicy`, lane-partition topology, and padding-identity surface as one boundary. Recommendation: accept the record-derived shape, including distinct fixed/scalable bindings and the stated padding identity; merging or defaulting those concepts would erase obligations the verifier must name.
+- Predicated fixed-map tails follow only after fixed lane masks, fault-suppressing masked memory, and exact target declarations exist.
+- Scalar epilogues follow only after the selected entry can carry both provider-versioned execution subjects and both numerical paths.
+- Fixed-vector contributor partitions follow the shared `ContributorCoverage` and `ReductionPaddingIdentity` implementation and receive their own topology; they do not overload `FixedVectorMap`.
+- Scalable vector maps follow a real scalable CPU representation and width-agnostic KIR. `ExecutionBinding` is already `#[non_exhaustive]`, so no dead reservation is required now.
+- A horizontal ordered accumulate that changes neither map nor partition remains instruction selection below the schedule boundary.
+
+Each successor must name its real `tiler-cpu` / `tiler-cpu-runtime` consumption path. Structural tests may verify the carrier, but no simulator, fake device, Candle adapter, or reference-evaluator vector mode counts as delivery.
+
+## Ranked options
+
+1. **Exact fixed-vector map slice above.** Best correctness and fail-closed behavior; smallest truthful public surface; no dead variants; no arbitrary cap; O(1) retained state and bounded arithmetic in verification; enough to exercise lane-shaped KIR, exact target facts, provider-versioned numerical authority, artifact delivery, and a real native CPU approach end to end.
+2. **Add fixed-map predicated and scalar-epilogue tails now.** Can be correct, but publishes requirements whose KIR and target consumers are still undecided. It offers more shapes while increasing invalid-state and cross-layer drift risk before a real backend can consume them.
+3. **Add the full old packet: fixed, scalable, map, partition, and all tails.** Architecturally broad but not implementation-ready. It couples four independently blocked authorities and would make several public variants constructible only to be refused everywhere.
+4. **Generic `FixedVectorLane` plus a separate topology field deciding what the lane means.** Reject: the public value is not MECE by itself, consumers must infer its axis from another field, and invalid pairings become representable.
+5. **Backend-inferred vectorization with no schedule/KIR carrier.** Reject: it changes execution form, bounds behavior, numerical authority, and artifact provenance outside verified identity.
+6. **Keep vector execution unavailable forever.** Correct but does not advance the accepted CPU vector path; it remains the temporary behavior until the first slice lands.
+
+## Strongest counterpoint and reversal evidence
+
+The narrow slice delays useful NEON tails, AVX/SVE predication, and contributor-lane reductions, and later additions will cause more public review. That cost is real. It is preferable to publishing dead or context-dependent states: the enums were deliberately made `#[non_exhaustive]` so evidence-backed variants can append without guessing them now. Reverse to a broader first landing only when one real native CPU producer and runtime can consume the broader form, its exact KIR and target facts are accepted, and a perturbation demonstrates that omitting or changing each new field produces a distinct refusal rather than a backend fallback.
+
+## Required evidence
+
+- Admit exact fixed-map pointwise work and one strict serial fold across independent outputs without granting a numerical permission.
+- Refuse lane counts zero and one at construction, naming invalidity and duplicate scalar spelling separately.
+- Refuse `N mod W != 0`, overflow in packet arithmetic, wrong output-owner population, and an unsupported reduction/binding combination independently.
+- Perturb binding tag and lane count and prove identity inequality; retain byte-identical pins for every old schedule.
+- Prove no target/profile/provider call occurs during intrinsic coverage verification.
+- Keep the candidate non-executable while KIR, target requirements, selected execution provenance, host qualification, and the real CPU native approach are absent.
+
+## Decision request
+
+Accept the exact fixed-vector map slice and split the broader forms into their evidence-backed successors; revise the slice; or keep vector schedules unavailable. Acceptance chooses a public schedule boundary, not implementation authorization for KIR, target declarations, artifacts, or a native CPU emitter.
 
 ## Closes when
 
-The vocabulary is admitted; every obligation in Required failure-path evidence is checked by a check observed failing; the identity encoding is exhaustive at every site (encoder matches fail to compile if a new variant is omitted); and the design record's *schedule-owned* intrinsic verdicts are constructible as tests: map under a strict contract consumes no permission; A3 double refusal (reassociation + covers); B2 padding identity and strided permutation refuse; B3 scalable partition refuse. Target-feasibility forks in the worked examples (A1 Proven on AVX / Rejected on NEON; A2 admissible on NEON) belong to the profile ticket's Realized/Unrealizable composition and are not required here — jointly closable only after both land.
-
-**Correction — 2026-08-10.** Reassociation admission wording and Closes when were over-narrow / over-broad relative to live `verify_cooperative_semantics` / multi-pass gates and Non-goals; Implementation keys and Closes when above carry the repaired shape.
-
-**Decision correction — 2026-08-11.** `TailPolicy::IdentityPadded` conflates two independent axes and is withdrawn from the contributor-padding design. `TailPolicy` governs iteration-domain launch tails; padding a lane-partition reduction extends its contributor sequence while every executing lane remains active. `Predicated` and `ScalarEpilogue` remain iteration-tail candidates. The lane-partition topology instead consumes the shared `ContributorCoverage` and typed `ReductionPaddingIdentity` owned by `admit-shared-contributor-coverage-and-reduction-padding-identity`. Existing `ContributorPartition::covers` remains exact, and no missing identity defaults to `empty_identity_bits`.
+Tom accepts the exact included and excluded surface above, the successor graph is filed, and implementation evidence proves the carrier through the real CPU path without widening the accepted scope.
