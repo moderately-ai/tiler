@@ -1,7 +1,7 @@
 ---
 id: share-identical-constants-in-the-pointwise-expression-canonical-form
 title: Share identical constants in the pointwise expression canonical form
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: [determine-whether-compiler-lowering-mints-duplicate-pointwise-constants]
 related: [implement-the-realization-witness-vocabulary, enumerate-the-freedom-sites-a-physical-plan-must-pin-for-a-permissive-conformance-oracle]
@@ -47,3 +47,50 @@ Tom has answered the canonical-form and identity-evolution questions using the p
 ## Scope repair — 2026-08-09
 
 The accepted-sharing branch explicitly requires reconciling the reference freedom-sites record and any moved compiler request, artifact, build/cache, and Metal-golden pins. `research/reference`, `implementation/compiler`, `implementation/artifact`, `implementation/build`, and `implementation/metal` are therefore declared now rather than left for an implementation worker to discover after the decision.
+
+## Decision — accepted 2026-08-12
+
+Tom accepted **retaining distinct equal-bit constant occurrences** in the physical pointwise-expression DAG. `PointwiseF32ExpressionBuilder::constant` and `PointwiseBf16ExpressionBuilder::constant` continue to add one physical definition per call. Reusing the returned handle remains the spelling for one shared definition. No builder-level constant hash-consing, numeric-equality folding, identity-domain step, downstream rebaseline, or implementation ticket follows from this decision.
+
+### Source-first Fact audit at `4845c6b4`
+
+- **Verified — the builders and canonicalizers preserve the authored DAG.** `pub fn constant` in `crates/tiler-ir/src/schedule/pointwise.rs` and `crates/tiler-ir/src/schedule/pointwise_bf16.rs` appends one draft node per call. `fn canonicalize_nodes` gives every reachable draft node a deterministic root-first-derived ordinal and does not perform value numbering. The retained expression documentation says it preserves operand order and DAG sharing; it does not say it quotients distinct physical definitions by value.
+- **Verified — the distinction reaches physical output rather than presentation alone.** `push_scalar_program` in `crates/tiler-ir/src/schedule/model.rs` encodes the complete node run. `emit_pointwise` and `emit_pointwise_bf16` in `crates/tiler-ir/src/kernel/lower.rs` emit one `KernelBuilder::constant` operation per retained constant node. `emit_constant` in `crates/tiler-metal/src/emit.rs` emits each resulting KIR constant as its own typed statement. Shared and duplicated constant occurrences therefore are distinct physical DAGs, KIRs, and backend source even when they compute the same binary function.
+- **Verified — the existing witness evidence is fail-closed.** `a_duplicated_constant_is_a_spelling_the_canonical_form_does_not_collapse` still proves four versus five retained nodes, different realization witnesses, and different scheduled-region identities. The witness remains intentionally non-`PartialEq`; the distinction cannot make two bit-different realizations compare equal.
+- **Verified — semantic equality is already owned by semantic normalization.** The prerequisite's `normalization_converges_duplicated_and_shared_constants_on_one_portfolio` proves that ordinary compilation's pure-operation common-subexpression rule merges equal semantic constant invocations before physical planning. The direct-recognition regression separately proves that the unnormalized physical mint preserves distinct semantic occurrences. These are different authorities rather than two incomplete implementations of one rule.
+- **False — the affected compiler population is provably empty.** The prerequisite already names rewrite-budget exhaustion as a path that retains the original graph. Independently, `root_mean_square_scale_plan` in `crates/tiler-compiler/src/physical.rs` synthesizes a folded-extent constant and an `eps` constant after semantic normalization. The semantic RMS-normalization contract admits any finite positive nonzero `eps`, so a one-contributor fold with `eps == 1.0` can give those two physical definitions equal bits. No retained-corpus census can turn builder behavior into a no-op authority.
+- **Imprecise — one binary function is the schedule-identity equivalence class.** The scheduled expression is a physical execution graph. Equal compound operations can likewise be represented once and shared or represented twice and recomputed; constants are not a principled exception to that occurrence axis. Deterministic canonicalization removes insertion-order spelling differences within one authored DAG. It does not erase topology or claim to produce a semantic normal form.
+- **Imprecise — input-leaf sharing is precedent for constant sharing.** One input leaf per ordinal is a binding invariant: two input nodes naming one ordinal would give one boundary read two canonical definitions. A constant has no corresponding external binding uniqueness rule. The two populations are therefore deliberately different.
+
+### Accepted boundary and ranking
+
+The ownership split is:
+
+1. semantic common-subexpression elimination decides when equal pure semantic operations are one semantic value;
+2. a physical producer decides whether its schedule reuses one returned value or defines the same literal more than once;
+3. schedule canonicalization deterministically orders that exact authored DAG; and
+4. schedule, KIR, artifact, and cache identities retain the resulting physical choice.
+
+This keeps the properties mutually exclusive and collectively exhaustive: semantic value equality, physical occurrence/sharing, canonical numbering, and downstream identity each have one authority. It also preserves constant insertion's O(1) host cost. Ordinary compilation already gets the node/KIR/source savings from semantic CSE; a measured remaining synthesis hotspot may explicitly reuse a physical handle without changing the public builder contract.
+
+Ranked by correctness, maintainability, then performance:
+
+1. **Retain exact constant occurrences and let producers reuse handles deliberately.** This is the accepted contract and the only option that preserves the exact physical DAG without adding work to every builder call.
+2. **Apply producer-local reuse at a measured synthesis site.** This can remove a known redundant physical definition while keeping the public occurrence rule explicit, but no measurement currently justifies such a follow-up.
+3. **Adopt a complete physical-expression value-numbering contract in a future decision.** If the project later decides schedules identify value-equivalent expression DAGs rather than exact physical computation DAGs, it must cover constants and compound pure nodes coherently and deliberately step the schedule identity authority. It is a different architecture, not this ticket's local cleanup.
+4. **Implicitly hash-cons constants alone.** Rejected: it silently removes one class of physical occurrence while leaving identical compound recomputations distinct, so it is neither a complete semantic canonical form nor an exact physical DAG.
+5. **Share by floating-point numeric equality.** Rejected: it would additionally collapse exact-bit distinctions such as signed zero and NaN payloads.
+
+The strongest counterpoint is that a duplicate literal consumes node budget and produces redundant KIR/backend source. The ordinary path already removes the semantic case. For the exceptional and physical-synthesis cases, preserving the producer's exact choice is preferable to a hidden builder optimization; evidence of a material hotspot would authorize explicit producer reuse or a separately decided complete value-numbering policy.
+
+### Identity and verification
+
+`tiler.schedule.v5` and every downstream identity domain, artifact/schema version, cache subject, and checked-in golden hold unchanged. A future complete value-numbering design would have to derive its own domain step and moved population; this decision does not grant an unversioned collapse.
+
+The acceptance audit reran:
+
+- `cargo test -p tiler-compiler request::tests::equal_constant_occurrences_remain_distinct_through_initial_recognition -- --exact --nocapture`;
+- `cargo test -p tiler-compiler pipeline::tests::normalization_converges_duplicated_and_shared_constants_on_one_portfolio -- --exact --nocapture`; and
+- `cargo test -p tiler-ir schedule::witness::tests::a_duplicated_constant_is_a_spelling_the_canonical_form_does_not_collapse -- --exact --nocapture`.
+
+All three passed. This ticket is complete by recording the accepted retain-distinct-occurrences branch; no production edit is owed.
