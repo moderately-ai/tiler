@@ -4,7 +4,7 @@ title: Admit lane-typed values and masked memory into the structured kernel IR
 status: blocked
 priority: p2
 dependencies: [admit-vector-lane-bindings-into-the-schedule-vocabulary]
-related: [design-the-cpu-vector-lane-tier, admit-subgroup-typed-values-and-collectives-into-the-kernel-ir]
+related: [design-the-cpu-vector-lane-tier, admit-subgroup-coordinates-and-xor-transfer-into-kernel-ir]
 scopes: [implementation/ir, implementation/artifact, implementation/metal, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []

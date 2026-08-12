@@ -1,7 +1,7 @@
 ---
-id: admit-subgroup-typed-values-and-collectives-into-the-kernel-ir
+id: admit-subgroup-coordinates-and-xor-transfer-into-kernel-ir
 title: Admit subgroup coordinates and exact XOR register transfer into the structured kernel IR
-status: awaiting-decision
+status: blocked
 priority: p2
 dependencies: [admit-subgroup-bindings-into-the-schedule-vocabulary, accept-adr-0094-subgroup-execution-tier, admit-guarded-output-tails-for-cooperative-contraction]
 related: [design-the-subgroup-execution-tier, decide-the-subgroup-coordinate-binding-and-output-map, admit-shared-contributor-coverage-and-reduction-padding-identity, admit-an-atomic-subgroup-realization-subject-to-target-profiles, admit-lane-typed-values-and-masked-memory-into-the-kernel-ir, close-the-memory-and-execution-scope-vocabulary-with-an-ir-tripwire]
@@ -12,13 +12,13 @@ tags: [kernel-ir, ir, metal, subgroup, execution-hierarchy, public-boundary]
 ---
 ## User-visible outcome
 
-The structured kernel IR can express a value that lives per subgroup lane and a shuffle that moves one, and the verifier discharges the obligations that creates — so a schedule stating a subgroup spread has a kernel-level construct to lower into rather than an emission gap.
+The structured kernel IR can read the exact workgroup/subgroup/lane coordinates a subgroup schedule states and move an ordinary F32 register value through the accepted XOR source relation. The verifier proves complete participation, source activity, tree order, and one-writer ownership without inventing a subgroup data type, barrier, or opaque reduction collective.
 
 ## Why now
 
 **Historical filing defect, since repaired.** [`accept-adr-0094-subgroup-execution-tier`](accept-adr-0094-subgroup-execution-tier.md), anchor `The three implementation tickets this node claims to release now exist`, records that the acceptance node initially named implementation work that had not yet been filed. Its later closure, anchor `Four tickets depend on this node, not three`, verifies the eventual dependent population. [`design-the-subgroup-execution-tier`](design-the-subgroup-execution-tier.md), anchor `Tickets filed`, preserves the proposal-era filing history. This ticket is the kernel-IR member of the repaired implementation set; the old “releases nothing today” statement is no longer current.
 
-**Resolved 2026-08-01, with status corrected 2026-08-09: this ticket is the one of the three that acceptance does *not* make ready.** [ADR 0094](../docs/decisions/0094-bind-a-subgroup-combine-to-a-register-transfer-tree.md) landed `accepted` and the acceptance node is `done` under its final id, which is why the link above no longer reads `accept-the-subgroup-execution-tier-adr`. This ticket declares a second dependency on [`admit-subgroup-bindings-into-the-schedule-vocabulary`](admit-subgroup-bindings-into-the-schedule-vocabulary.md), which is now `awaiting-decision`, not `todo` or terminal. It therefore stays out of `ready` until Tom resolves and the schedule boundary lands — the same asymmetry the CPU trio recorded, where the node's own text said three tickets were released and two actually were.
+**Resolved 2026-08-01, then accepted at its exact KIR boundary on 2026-08-12.** [ADR 0094](../docs/decisions/0094-bind-a-subgroup-combine-to-a-register-transfer-tree.md) landed `accepted`, the schedule and coordinate decisions are accepted, and this ticket's exact KIR surface is accepted below. Implementation remains blocked until the schedule and shared guarded-load dependencies land; acceptance does not make an unimplemented producer executable.
 
 **Fact — a shuffle needs no barrier, and that is the design's load-bearing negative result.** The 2026-08-01 addendum on [`add-subgroup-memory-scope-when-collectives-land`](add-subgroup-memory-scope-when-collectives-land.md) records it from Metal Shading Language Specification 4.1 §6.10.2: "SIMD-group functions allow threads in a SIMD-group to share data **without using threadgroup memory or requiring any synchronization operations, such as a barrier**." A shuffle names its source lane and its destination register in one operation that is both the transfer and the ordering, so a shuffle-tree reduction derives no visibility edge, declares no synchronization point, and never reaches `barrier_call` at all. A design that routes a shuffle through a barrier would be wrong, not merely conservative.
 
@@ -26,16 +26,17 @@ The structured kernel IR can express a value that lives per subgroup lane and a 
 
 ## Implementation keys
 
-- Subgroup-typed values and the shuffle vocabulary the record derives, with the lane a shuffle reads named explicitly rather than inferred from position.
+- Ordinary F32 SSA values plus the accepted `SubgroupShuffleXor` operation and checked mask; no subgroup-shaped value type.
 - Governed workgroup-ordinal, subgroup-index, and subgroup-lane sources matching the accepted direct coordinate/output binding. A local-linear invocation index is never decomposed into these values by convention; absence of an exact backend realization is a typed refusal.
-- Stated combine order on the reduction topology is owned by [`admit-subgroup-bindings-into-the-schedule-vocabulary`](admit-subgroup-bindings-into-the-schedule-vocabulary.md). This ticket admits the kernel pieces that build the tree: subgroup-typed values, an explicit shuffle (source lane named), and ordinary arithmetic — not a reduction collective. Reduction collectives are refused by name (ADR 0094 decision 8: building the tree from shuffles and ordinary additions is what makes the tier statable).
-- The lane identity's proof obligation lands as one concept with the CPU tier's, per [the subgroup execution tier](../docs/research/scheduling/subgroup-execution-tier.md), anchor `becomes the second construct in the vocabulary needing a proved reduction identity`; read [`admit-lane-typed-values-and-masked-memory-into-the-kernel-ir`](admit-lane-typed-values-and-masked-memory-into-the-kernel-ir.md) against this ticket before choosing a shape.
+- `IndexEqual` expresses the exact result-lane ownership guard. The schedule still owns which equality may authorize the store.
+- Stated combine order belongs to [`admit-subgroup-bindings-into-the-schedule-vocabulary`](admit-subgroup-bindings-into-the-schedule-vocabulary.md). This ticket admits only the kernel operations that realize that tree: explicit XOR shuffle plus ordinary arithmetic, never a reduction collective.
+- The shared guarded load injects the schedule's typed padding identity into out-of-range contributor positions while every lane remains active.
 - Identity encoding is additive at every site: appended tags only, no existing tag or field position moves, and the kernel identity domain does not step.
 - If this widens `ExecutionScope` or `MemoryScope`, the existing tripwire `barrier_scope_vocabulary_is_closed` / `the_barrier_scope_vocabularies_are_still_closed` (landed by [`close-the-memory-and-execution-scope-vocabulary-with-an-ir-tripwire`](close-the-memory-and-execution-scope-vocabulary-with-an-ir-tripwire.md)) must be *updated* in the same change.
 
 ## Required failure-path evidence
 
-Each observed failing against an accepted neighbour: a shuffle whose source lane is outside the subgroup; a shuffle crossing a subgroup boundary; a reduction collective relying on an unspecified hardware order; and a subgroup-typed value read from an invocation outside the subgroup that produced it. (Stated combine order on the topology — including an unstated-order failure path — is the schedule ticket's obligation, not this one's.)
+Each observed failing against an accepted neighbour: an invalid or out-of-width XOR mask; an omitted, duplicated, or reordered mask step; a shuffle under divergent control; a non-F32 transferred value; a reduction collective relying on an unspecified hardware order; and a store guarded by anything other than the exact result-lane equality. Stated combine order on the topology remains the schedule ticket's obligation.
 
 The coordinate binding adds three independent subjects: perturb the workgroup ordinal, subgroup index, and subgroup lane separately and observe the ownership or same-subgroup verifier reject each one. A lowering that substitutes `LocalInvocationIndex` for any of them must fail its exact source/identity check rather than produce an approximate mapping.
 
@@ -103,3 +104,13 @@ An arbitrary-source shuffle is more expressive and could avoid a later public op
 ## Decision request — 2026-08-12
 
 Accept the exact scalar-value/XOR-transfer boundary above; revise one included construct; or keep subgroup KIR unavailable. Acceptance chooses the public KIR vocabulary and verifier relation. It does not authorize schedule implementation, target declarations, backend emission, two-level composition, non-XOR transfers, another arithmetic type, a subgroup memory scope, or performance claims.
+
+## Accepted decision — 2026-08-12
+
+Tom accepted the recommended exact scalar-value/XOR-transfer boundary in the live Codex coordination thread by replying `okay agreeed, next decision`. The relay source is Tom's direct response in that thread.
+
+Structured KIR retains ordinary scalar SSA types and gains exactly the three governed coordinate builtins, `IndexEqual`, checked `SubgroupXorMask`, and scalar F32 `SubgroupShuffleXor` described above. Whole-kernel verification binds them to the exact accepted schedule width, ascending mask sequence, complete subgroup participation, direct coordinate sources, result-lane ownership, and typed reduction padding identity. The shared scalar `GuardedLoad` supplies padded contributor values; it is not duplicated as subgroup masked memory.
+
+No subgroup-shaped `KernelType`, arbitrary source-lane expression, opaque reduction collective, barrier, subgroup memory scope, local-linear decomposition, additional arithmetic type, backend inference, emission, or performance claim is accepted. Future transfer operations append only after their own schedule, activity, numerical, target, and real-consumer evidence exists.
+
+This ticket moves to dependency-blocked implementation state. Its implementation must consume the landed schedule and guarded-load authorities rather than reconstructing either in parallel.

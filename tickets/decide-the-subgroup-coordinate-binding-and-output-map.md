@@ -4,7 +4,7 @@ title: Decide the subgroup coordinate binding and output map
 status: done
 priority: p1
 dependencies: [accept-adr-0094-subgroup-execution-tier]
-related: [admit-subgroup-bindings-into-the-schedule-vocabulary, admit-subgroup-typed-values-and-collectives-into-the-kernel-ir, compose-the-two-level-subgroup-and-workgroup-reduction]
+related: [admit-subgroup-bindings-into-the-schedule-vocabulary, compose-the-two-level-subgroup-and-workgroup-reduction, admit-subgroup-coordinates-and-xor-transfer-into-kernel-ir]
 scopes: [implementation/ir, implementation/compiler, research/scheduling, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
@@ -60,4 +60,4 @@ This decision adds constant-size schedule/KIR state and fixed checked arithmetic
 
 ## Outcome
 
-The remaining public decision is closed. Implementation stays in `admit-subgroup-bindings-into-the-schedule-vocabulary` and `admit-subgroup-typed-values-and-collectives-into-the-kernel-ir`, both still gated by their complete prerequisites.
+The remaining public decision is closed. Implementation stays in `admit-subgroup-bindings-into-the-schedule-vocabulary` and `admit-subgroup-coordinates-and-xor-transfer-into-kernel-ir`, both still gated by their complete prerequisites.
