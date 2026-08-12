@@ -77,6 +77,19 @@ Treat questions answerable by reading or measurement as research. Before escalat
 
 When several valid priorities remain, ask one concrete question at a time. State what each option enables and prevents, give the strongest counterpoint, and recommend one. Small tensor examples expose differences efficiently.
 
+### Decision-packet readiness gate
+
+Do not present a consequential decision merely because one plausible answer has been found. Before a decision reaches Tom, apply this gate; Tom accepted it on 2026-08-12 through [`require-pareto-complete-decision-packets-before-tom-review`](tickets/require-pareto-complete-decision-packets-before-tom-review.md).
+
+1. Re-audit every ticket Fact at the exact current base, then read the relevant construction, validation, consumption, refusal, identity, schema, and dependency paths. A local API shape is not decision-ready while its consumer, owner, authority, or prerequisite remains unresolved.
+2. Enumerate every materially distinct option, including the status quo, a narrower fail-closed slice, the complete replacement, further bounded research, and deferral when each is genuinely applicable. Do not pad the list with cosmetic variants or knowingly dominated choices.
+3. Eliminate before ranking any option that can silently return a wrong result, invent or default missing authority, fall back across an unstated policy, conflate identities, omit validation, or claim a complete outcome while depending on unresolved work. Split missing prerequisites and healing work into the ticket graph instead of treating them as implementation detail.
+4. Compare the survivors on all key dimensions: correctness; fail-closed contract strictness; long-term maintainability and compatibility; and Tiler host runtime and memory. Keep kernel performance separate unless the decision is specifically about kernels. State identity, schema, public-surface, and unsupported-population consequences alongside the comparison.
+5. Present only the nondominated frontier. Every presented candidate must be top-tier on correctness and strictness, and no presented candidate may be worse than another on every key dimension. When one option dominates, recommend or take that option rather than manufacturing a choice. When a real trade-off survives, ask one concrete question between the frontier candidates.
+6. For every survivor, state its strongest counterargument, the evidence that could reverse it, the negative controls or subject perturbations that would test it, and the follow-up tickets/dependencies required to leave no work implicit. Use an independent derivation for public-boundary, identity, schema, numerical, or cross-layer decisions where being wrong could silently admit or misidentify a program.
+
+A matrix is a summary, not the analysis. Do not score an option green because a prerequisite was assumed, an unsupported population was omitted, or a failure was renamed. If further reading changes the purpose or option set, repair the ticket and repeat the gate before presenting it.
+
 Tom retains decisions about:
 
 - consequential public crate, module, trait, type, or call-site boundaries;
