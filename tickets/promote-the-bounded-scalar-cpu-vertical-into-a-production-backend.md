@@ -3,7 +3,7 @@ id: promote-the-bounded-scalar-cpu-vertical-into-a-production-backend
 title: Promote the bounded scalar CPU vertical into a production backend
 status: todo
 priority: p1
-dependencies: [accept-the-production-boundary-for-the-bounded-scalar-cpu-backend, make-prepared-entry-observations-typed-and-key-dispatched]
+dependencies: [accept-the-production-boundary-for-the-bounded-scalar-cpu-backend, make-prepared-entry-observations-typed-and-key-dispatched, package-selected-physical-implementation-provenance-in-artifact-identity, derive-artifact-binding-alignment-from-selected-access-requirements, prove-planned-binding-alignment-before-routing-commit]
 related: [prototype-a-bounded-scalar-cpu-backend-vertical, exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio, earn-cpu-feature-level-execution-environments-from-host-observation]
 scopes: [implementation/cpu, implementation/ir, implementation/artifact, implementation/build, implementation/runtime, implementation/conformance, implementation/workspace, implementation/cargo-lock, contracts/artifacts, contracts/foundation]
 shared_scopes: [project/tickets]
@@ -28,6 +28,7 @@ An explicitly selected CPU attempt can compile, package, route, and execute the 
 - Update `docs/backends/cpu.md`, architecture/component ownership, catalogs, and the support matrix to distinguish scalar production support from vector/threaded reservations.
 - Add the admitted CPU packages to the workspace and atomically map `implementation/cpu` to the package whose reverse dependents the accepted boundary says the guard must expand.
 - Take one explicit execution-resource policy at adapter construction. Prove bounded policies against checked worst-case launch × loop × instruction work and allocation bytes; an explicitly unbounded alpha policy remains available without becoming a hidden default.
+- Consume the artifact binding's exact alignment requirement. Report actual caller-storage and allocator alignment through the loader-owned pre-commit proof, and assert the allocator's guarantee after commit; never assume that a successful allocation or a carrier type implies the final subview address is aligned.
 
 ## Acceptance
 

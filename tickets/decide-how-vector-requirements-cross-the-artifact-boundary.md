@@ -3,7 +3,7 @@ id: decide-how-vector-requirements-cross-the-artifact-boundary
 title: Decide how vector requirements cross the artifact boundary
 status: blocked
 priority: p1
-dependencies: [define-plural-operation-specific-vector-realization-requirements, package-selected-physical-implementation-provenance-in-artifact-identity, admit-fixed-vector-ssa-and-unmasked-memory-into-kernel-ir]
+dependencies: [define-plural-operation-specific-vector-realization-requirements, package-selected-physical-implementation-provenance-in-artifact-identity, admit-fixed-vector-ssa-and-unmasked-memory-into-kernel-ir, derive-artifact-binding-alignment-from-selected-access-requirements]
 related: [declare-cpu-vector-realization-facts-in-the-target-profile, establish-vector-execution-form-numerical-authority]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/artifacts, contracts/decisions]
 shared_scopes: [project/tickets]
@@ -28,6 +28,8 @@ The binary above is incomplete and this ticket is not yet decision-ready.
 - Compile-only retention is insufficient once a native CPU payload exists: an artifact/runtime validator must be able to compare the entry's complete intrinsic vector requirements, selected execution realization, and delivered numerical evidence without compiler-private reconstruction. That does not mean one record should own all three subjects.
 
 The corrected frontier is therefore a coordinated two-carrier design: provider-independent plural intrinsic requirements in the fixed entry resource record, and provider/variant realization in occurrence-bound selected physical provenance plus delivered execution evidence. This ticket waits for both prerequisite carriers, then decides one coordinated schema migration and the exact cross-checks. It must not put a provider identity in `ResourceRequirements`, duplicate intrinsic requirements in a selected-provider row, or preserve old scalar bytes through an optional side table merely for compatibility.
+
+Alignment is deliberately not a third vector-requirement carrier. [`derive-artifact-binding-alignment-from-selected-access-requirements`](derive-artifact-binding-alignment-from-selected-access-requirements.md) uses the existing per-binding ABI field for the selected implementation's access applicability. This ticket must neither duplicate that value into the plural target subject nor make a target realization row imply an operand-address guarantee.
 
 ## Required evidence
 

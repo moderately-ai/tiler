@@ -3,7 +3,7 @@ id: declare-cpu-vector-realization-facts-in-the-target-profile
 title: Declare CPU vector realization facts as atomic target facts
 status: blocked
 priority: p2
-dependencies: [accept-adr-0093-cpu-vector-lane-tier, admit-vector-lane-bindings-into-the-schedule-vocabulary, define-plural-operation-specific-vector-realization-requirements, separate-vector-operand-alignment-from-target-realization, establish-vector-execution-form-numerical-authority, earn-cpu-feature-level-execution-environments-from-host-observation, canonicalize-atomic-target-realization-declarations, decide-how-vector-requirements-cross-the-artifact-boundary]
+dependencies: [accept-adr-0093-cpu-vector-lane-tier, admit-vector-lane-bindings-into-the-schedule-vocabulary, define-plural-operation-specific-vector-realization-requirements, carry-complete-access-alignment-requirements-on-physical-proposals, establish-vector-execution-form-numerical-authority, earn-cpu-feature-level-execution-environments-from-host-observation, canonicalize-atomic-target-realization-declarations, decide-how-vector-requirements-cross-the-artifact-boundary]
 related: [design-the-cpu-vector-lane-tier, name-a-host-process-availability-phase, decide-how-vector-requirements-cross-the-artifact-boundary]
 scopes: [implementation/compiler, implementation/ir, implementation/artifact, implementation/runtime, contracts/decisions, contracts/artifacts, contracts/numerics]
 shared_scopes: [project/tickets]
@@ -18,7 +18,9 @@ A target profile can declare which vector realizations it provides, and a lane-b
 
 **Fact.** `CapabilityAxis` is the quantitative space: every axis has a `u64` bound, a `Quantity` unit, and a comparison `Relation`. The relation a lane width would take is `AtMost`, and `satisfies(AtMost, 4, 8)` is true — so a profile declaring 8 lanes would admit a schedule requiring 4. **That is unsound**: realizing 8-lane arithmetic is not realizing 4-lane arithmetic, and on a scalable ISA at a given implemented length there may be no fixed narrower form at all. The design and its counterexamples are [CPU vector realization facts](../docs/research/target-profiles/cpu-vector-realization-facts.md).
 
-## Implementation keys
+## Historical implementation keys — superseded by the source-first correction and accepted decision below
+
+The bullets in this section are retained as the original packet for attribution. They are not current delivery instructions; the source-first correction and accepted decision below replace the singular carrier, flat Cartesian subject, alignment dimension, runtime premise, and numerical premise.
 
 - **One `VectorRealizationSubject` matched by equality**, carrying lane shape, element `ArithmeticType`, operation class, masking, address space, and alignment requirement. No per-dimension accessor and no per-dimension declaration method — the discipline `declare_synchronization_realization` already states ("no `declare_barrier_execution_scope`, no `declare_fenced_spaces`").
 - **Two-valued verdict, `Realized` or `Unrealizable`**, for `SynchronizationRealization`'s stated reason: a profile that could only stay silent about what it cannot do would make "unsupported" and "unmeasured" one state.

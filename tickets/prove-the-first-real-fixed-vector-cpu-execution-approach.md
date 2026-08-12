@@ -3,8 +3,8 @@ id: prove-the-first-real-fixed-vector-cpu-execution-approach
 title: Prove the first real fixed-vector CPU execution approach
 status: todo
 priority: p1
-dependencies: [accept-the-production-boundary-for-the-bounded-scalar-cpu-backend, admit-vector-lane-bindings-into-the-schedule-vocabulary, establish-vector-execution-form-numerical-authority, earn-cpu-feature-level-execution-environments-from-host-observation]
-related: [establish-vector-execution-form-numerical-authority, earn-cpu-feature-level-execution-environments-from-host-observation, promote-the-bounded-scalar-cpu-vertical-into-a-production-backend]
+dependencies: [promote-the-bounded-scalar-cpu-vertical-into-a-production-backend, admit-vector-lane-bindings-into-the-schedule-vocabulary, establish-vector-execution-form-numerical-authority, earn-cpu-feature-level-execution-environments-from-host-observation, carry-complete-access-alignment-requirements-on-physical-proposals, derive-artifact-binding-alignment-from-selected-access-requirements, prove-planned-binding-alignment-before-routing-commit]
+related: [establish-vector-execution-form-numerical-authority, earn-cpu-feature-level-execution-environments-from-host-observation, separate-vector-operand-alignment-from-target-realization]
 scopes: [research/target-profiles, research/runtime, research/scheduling]
 shared_scopes: [project/tickets]
 paths: []
@@ -26,6 +26,8 @@ The experiment owns a distinct, explicitly selected representation such as `tile
 
 The experiment may begin under `spikes/` while those production packages are being promoted, but it counts as delivery only when its retained path maps one-to-one onto those owners and carries no compiler object into runtime execution.
 
+The production scalar CPU path is now a hard prerequisite rather than merely related work. A retained vector experiment may use a private candidate KIR spelling, but its codec, artifact publication, runtime adapter, storage planning, and completion must extend the real `tiler-cpu-image` / `tiler-cpu` / `tiler-cpu-runtime` owners. This prevents a second spike architecture from becoming the only vector consumer.
+
 ## Exact first population
 
 - AArch64 Advanced SIMD, binary32, four lanes.
@@ -34,6 +36,17 @@ The experiment may begin under `spikes/` while those production packages are bei
 - Contiguous vector load, scalar broadcast, separate multiply and add, vector NaN canonicalization, and contiguous vector store.
 - An explicit `CpuExecutionApproach` and resource policy. There is no feature auto-selection, scalar fallback, architecture preset, or retry under another representation.
 - Independent `tiler-reference` comparison over ordinary values, both signed zeros, subnormals, infinities, and NaNs.
+
+## Complete alignment tranche
+
+The first NEON load/store form uses the carrier's natural four-byte requirement; the pinned `stdarch` implementation does not justify inventing a 16-byte instruction requirement. The experiment still exercises the complete accepted alignment architecture:
+
+- the selected physical proposal states one exact requirement for every vector memory access;
+- the build layer derives each existing artifact binding field from that selected requirement and its exact view;
+- `tiler-cpu-runtime` reports the actual final address guarantee for caller storage and the allocator guarantee for future storage before commit; and
+- the same real image runs from an exactly four-byte-aligned address and a stronger 16-byte-aligned address, while insufficient and unknown evidence refuses before the executor.
+
+No aligned-only fake instruction, mock provider, synthetic device, or metadata-only success counts. The requirement remains four in both successful runs; what changes is the real address guarantee, proving the divisibility relation without inventing a backend capability.
 
 Architecture-specific intrinsics are the leading implementation because they state the exact execution form. The pinned Rust `stdarch` source maps `vaddq_f32` to `fadd` and its vector load/store intrinsics to `ldr`/`str`, but that is discovery evidence rather than proof of Tiler's emitted program. The retained experiment must inspect its own optimized object or disassembly and prove vector arithmetic was neither scalarized nor contracted into `fmla`.
 
@@ -52,6 +65,7 @@ The first is the provisional recommendation because it makes lane shape readable
 
 - Width other than four, nondivisible extent, non-contiguous access, unsupported operation, dtype, tail, reduction, gather, mask, scalable shape, target feature, or numerical realization.
 - Artifact backend, representation, target profile, provider/variant, image grammar, and host feature each perturbed independently.
+- Access requirement, program-view offset, artifact binding requirement, observed address guarantee, allocator guarantee, and post-commit allocator breach each perturbed independently at their owning layer.
 - Multiply/add contraction, scalarized arithmetic, one omitted lane, wrong packet count, one out-of-bounds vector access, and NaN canonicalization removed independently.
 - CPU output compared against independent reference bits; no CPU executor code is shared with `tiler-reference`.
 

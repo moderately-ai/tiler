@@ -4,7 +4,7 @@ title: Publish occurrence-bound selected physical implementation evidence
 status: todo
 priority: p1
 dependencies: [disclose-the-physical-provider-environment-a-compilation-was-offered, accept-the-installed-physical-provider-public-surface]
-related: [accept-the-installed-physical-provider-public-surface, disclose-offered-and-selected-physical-provider-sets-separately]
+related: [accept-the-installed-physical-provider-public-surface, disclose-offered-and-selected-physical-provider-sets-separately, carry-complete-access-alignment-requirements-on-physical-proposals]
 scopes: [implementation/compiler, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
