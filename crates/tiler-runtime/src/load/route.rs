@@ -362,8 +362,11 @@ impl<'a> LiveDeviceRequest<'a> {
 ///
 /// # Public boundary status
 ///
-/// Labelled draft under ADR 0075. The type is `pub` so its shape can be reviewed
-/// as a whole. Tom has not accepted the exact included and excluded surface.
+/// **Accepted public surface.** Tom accepted this exact spelling on 2026-08-13
+/// under [`accept-the-prepared-entry-observation-surface`]. The type is `pub`
+/// so its shape can be reviewed as a whole.
+///
+/// [`accept-the-prepared-entry-observation-surface`]: ../../../../../tickets/accept-the-prepared-entry-observation-surface.md
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PreparedEntryObservation {
     /// The host measured this property on the named prepared entry.
@@ -387,7 +390,11 @@ pub enum PreparedEntryObservation {
 ///
 /// # Public boundary status
 ///
-/// Labelled draft under ADR 0075, with [`PreparedEntryObservation`].
+/// **Accepted public surface.** Tom accepted this exact spelling on 2026-08-13
+/// under [`accept-the-prepared-entry-observation-surface`], with
+/// [`PreparedEntryObservation`].
+///
+/// [`accept-the-prepared-entry-observation-surface`]: ../../../../../tickets/accept-the-prepared-entry-observation-surface.md
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PreparedEntryPropertySubject {
     /// Governed property key the request named.

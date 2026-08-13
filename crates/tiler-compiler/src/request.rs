@@ -6679,7 +6679,7 @@ const fn mismatch_rule(rule: &'static str) -> RequestError {
 /// `structural-relation` when the derived map is not one the region vocabulary
 /// admits. A reindex over a symbolic extent is still
 /// [`RequestError::UnsupportedSymbolicExtent`]. A sourced broadcast is the
-/// labelled-draft [`LogicalAccess::ParametricBroadcast`] carrier, not a folded
+/// accepted [`LogicalAccess::ParametricBroadcast`] carrier, not a folded
 /// concrete neighbour.
 fn recognize_structural_read(
     program: &SemanticProgram,

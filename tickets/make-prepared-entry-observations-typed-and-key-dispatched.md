@@ -41,4 +41,4 @@ Every prepared-property consumer is exhaustive over the typed observation, an un
 
 ## Outcome
 
-Landed at `b19bc60dd7a6f6bd35d880472885b62b2bf374d1`, merged to `main` at `0742e22dc5e3cc1e24b017f4bc2d4b0f0fde9c03`. `make full` on that hash: 3456 passed. The public observation surface is a labelled draft; Tom's packet is [`accept-the-prepared-entry-observation-surface`](accept-the-prepared-entry-observation-surface.md).
+Landed at `b19bc60dd7a6f6bd35d880472885b62b2bf374d1`, merged to `main` at `0742e22dc5e3cc1e24b017f4bc2d4b0f0fde9c03`. `make full` on that hash: 3456 passed. Tom accepted the exact public observation spelling on 2026-08-13 in [`accept-the-prepared-entry-observation-surface`](accept-the-prepared-entry-observation-surface.md).

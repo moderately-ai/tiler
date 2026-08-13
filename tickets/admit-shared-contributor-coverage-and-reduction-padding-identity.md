@@ -55,4 +55,4 @@ Coverage validation is checked integer arithmetic plus a bounded family-specific
 
 Both exact and identity-padded contributor coverage are canonically representable, malformed combinations are unrepresentable or typed refusals, old exact topologies retain their meaning and bytes, and the subgroup and vector schedule tickets can consume one shared concept.
 
-Coordinator `make full` on `d8a09031`: 3487 passed. Fast-forwarded to `main`. The Rust spelling is a labelled draft; Tom's packet is [`accept-the-contributor-coverage-and-padding-identity-surface`](accept-the-contributor-coverage-and-padding-identity-surface.md).
+Coordinator `make full` on `d8a09031`: 3487 passed. Fast-forwarded to `main`. Tom accepted the exact Rust spelling on 2026-08-13 in [`accept-the-contributor-coverage-and-padding-identity-surface`](accept-the-contributor-coverage-and-padding-identity-surface.md).

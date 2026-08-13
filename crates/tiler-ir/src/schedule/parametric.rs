@@ -1,10 +1,13 @@
 //! Parametric broadcast access: one sourced relation over its whole domain.
 //!
-//! [`LogicalAccess::ParametricBroadcast`] is a **labelled draft** under ADR 0075.
-//! Dependents must not treat it as accepted vocabulary. It is deliberately not
+//! [`LogicalAccess::ParametricBroadcast`] is an **accepted public surface**.
+//! Tom accepted this exact spelling on 2026-08-13 under
+//! [`accept-the-parametric-broadcast-access-surface`]. It is deliberately not
 //! [`LogicalAccess::BroadcastReplication`] and not [`LogicalAccess::ReindexBijection`]:
 //! those remain exact over their concrete subjects. Consumers match this carrier
 //! explicitly.
+//!
+//! [`accept-the-parametric-broadcast-access-surface`]: ../../../../../tickets/accept-the-parametric-broadcast-access-surface.md
 //!
 //! The carrier names the authored mapping and the environment identity needed
 //! to interpret it. It does not bind an extent, select a concrete neighbour, or

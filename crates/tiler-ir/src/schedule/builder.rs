@@ -1028,7 +1028,7 @@ fn reads_bind_boundary_tensors_in_order(reads: &[Access]) -> bool {
 ///   iteration domain exactly, so every operand element is read once.
 /// - [`LogicalAccess::BroadcastReplication`], whose decodes are required to name
 ///   distinct result axes and leave at least one replicated.
-/// - [`LogicalAccess::ParametricBroadcast`], the labelled-draft sourced carrier.
+/// - [`LogicalAccess::ParametricBroadcast`], the accepted sourced carrier.
 ///   Structural rank agreement is checked here; the environment proof is
 ///   [`super::parametric::interpret_parametric_broadcast`].
 ///

@@ -834,10 +834,13 @@ pub fn strict_partitioned_sum_under(
 /// How one cooperative tile lays `(round, participant)` cells onto its
 /// contributor sequence.
 ///
-/// **Labelled draft** under ADR 0075 until Tom accepts the exact included and
-/// excluded surface. Included: the two layouts below. Excluded: a general
-/// tiling algebra, a log-depth tree, and any layout whose cell index is not
-/// one of these two readings of a blocked `(round, participant)` pair.
+/// **Accepted public surface.** Tom accepted this exact spelling on 2026-08-13
+/// under [`accept-the-cooperative-grouping-public-surface`]. Included: the two
+/// layouts below. Excluded: a general tiling algebra, a log-depth tree, and any
+/// layout whose cell index is not one of these two readings of a blocked
+/// `(round, participant)` pair.
+///
+/// [`accept-the-cooperative-grouping-public-surface`]: ../../../../tickets/accept-the-cooperative-grouping-public-surface.md
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum CooperativeCellLayout {
     /// Participant `p` of round `r` owns the contiguous range at index
@@ -859,12 +862,15 @@ pub enum CooperativeCellLayout {
 /// The participant / round / contributor grouping one cooperative tile
 /// declares.
 ///
-/// **Labelled draft** under ADR 0075 until Tom accepts the exact included and
-/// excluded surface. A reassociating contract admits a *set* of results; what a
-/// plan can be checked against is the one order it selected. A two-level
-/// blocked split (`tiler_ir::schedule::ContributorPartition`) cannot state a
-/// round dimension, so a loop-carried tile needs this three-axis form rather
-/// than another local restatement of the same arithmetic.
+/// **Accepted public surface.** Tom accepted this exact spelling on 2026-08-13
+/// under [`accept-the-cooperative-grouping-public-surface`]. A reassociating
+/// contract admits a *set* of results; what a plan can be checked against is
+/// the one order it selected. A two-level blocked split
+/// (`tiler_ir::schedule::ContributorPartition`) cannot state a round
+/// dimension, so a loop-carried tile needs this three-axis form rather than
+/// another local restatement of the same arithmetic.
+///
+/// [`accept-the-cooperative-grouping-public-surface`]: ../../../../tickets/accept-the-cooperative-grouping-public-surface.md
 ///
 /// The layout is part of the grouping rather than a second function, because
 /// the neighbouring participant-major reading is a different *order of the

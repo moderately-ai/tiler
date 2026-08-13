@@ -1,7 +1,7 @@
 ---
 id: accept-the-contributor-coverage-and-padding-identity-surface
 title: Accept the contributor-coverage and padding-identity surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [admit-shared-contributor-coverage-and-reduction-padding-identity]
@@ -37,6 +37,12 @@ Tom accepts or revises the labelled-draft Rust spelling of the contributor-cover
 ## Recommendation
 
 Accept as drafted. The spelling follows the accepted model: required tagged coverage, identity only on the padded arm, verifier-derived pad count, suffix-only placement, no empty-identity fallback. Exact encodings keep prior bytes. **Strongest counterpoint:** renaming `partition` to `coverage` on two existing public variants is a breaking field change even for callers who only construct `Exact`.
+
+## Accepted — 2026-08-13
+
+**Tom accepted the exact surface as drafted**, with no named exclusion, in the live coordination session. The included set is `ContributorCoverage::{Exact, IdentityPadded}`, `ReductionPaddingIdentity::{F16, Bf16, F32, F64}`, `ContributorCoverageRule`, `ScheduledRegionDiagnostic::ContributorCoverage`, `KernelDiagnostic::PaddedContributorCoverage`, the `MultiPass` / `CooperativeWorkgroup` field rename `partition` → `coverage`, and the accessors `ContributorCoverage::partition`, `ReductionPaddingIdentity::arithmetic_type`, and `RealizationWitness::contributor_coverage`. Exact encodings write no suffix; padded coverage appends local tag `0x01` then `ArithmeticType::tag` plus exact-width bits.
+
+The 2026-08-11 model acceptance remains the earlier packet. This node is the included/excluded Rust spelling at `d8a09031`. In-code labels flip from labelled draft to accepted public surface.
 
 ## Closes when
 

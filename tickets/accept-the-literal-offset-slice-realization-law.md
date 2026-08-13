@@ -60,9 +60,13 @@ writes, and no scalar operation.
 
 The accepted surface has no silent fallback. A missing law, malformed or wrong
 attribute, wrong arity or binding, inconsistent result shape, or provider/law
-coordinate mismatch remains a typed refusal. Strided and symbolic offsets,
+coordinate mismatch remains a typed refusal. Strided offsets,
 clamping, wrapping, view-versus-copy planning, scheduled-region vocabulary,
 physical planning, and backend realization remain excluded. Acceptance changes
 the public maturity label only; it adds no new implementation, runtime path,
 identity byte, or compatibility promise beyond the already-landed pre-alpha
 surface.
+
+## Widened — 2026-08-13
+
+Tom accepted the source-bearing growth at `f903da13` without a law or provider revision bump, in [`accept-the-source-bearing-slice-realization`](accept-the-source-bearing-slice-realization.md). A source-bearing `Window` now realizes as `t + C` through the accepted sourced-addend vocabulary. Literal windows, tag 13, and revision 1 are unchanged. The 2026-08-11 exclusion of source-bearing offsets is superseded for this law.

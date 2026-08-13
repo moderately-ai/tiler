@@ -1,7 +1,7 @@
 ---
 id: accept-the-prepared-entry-observation-surface
 title: Accept the prepared-entry observation surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [make-prepared-entry-observations-typed-and-key-dispatched]
@@ -40,6 +40,12 @@ Adapters exact-match provider namespace, name, revision, and property key before
 ## Recommendation
 
 Accept as drafted. The old `u64` return is how a second legal key is admitted when an unrelated quantity equals the required value; `Unrecognized` vs `Quantity` is the same split already accepted for live-device rows. **Strongest counterpoint:** widening `UnsatisfiedDeferredPredicate` with `subject` and `observed` is a breaking field addition on an existing public variant, even for callers who only matched `variant`/`predicate`/`entry`.
+
+## Accepted — 2026-08-13
+
+**Tom accepted the exact surface as drafted**, with no named exclusion, in the live coordination session. The included set is `PreparedEntryObservation::{Quantity(u64), Unrecognized}` (exhaustive), `PreparedEntryPropertySubject`, `RuntimeAdapter::observe_prepared_entry` returning the observation rather than `u64`, `LoadRejection::UnownedPreparedEntryProperty`, and the `subject` / `observed` fields on `UnsatisfiedDeferredPredicate`. Adapters exact-match provider namespace, name, revision, and property key. There is no `Feature` arm, numeric sentinel, or adapter-owned satisfaction verdict.
+
+The implementation landing at `b19bc60d` remains the earlier packet. This node is the included/excluded Rust spelling. In-code labels flip from labelled draft to accepted public surface.
 
 ## Closes when
 

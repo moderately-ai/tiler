@@ -377,8 +377,11 @@ pub trait RuntimeAdapter {
     ///
     /// # Public boundary status
     ///
-    /// The observation type is a labelled draft under ADR 0075. There is no
-    /// compatibility method that maps an unknown property to a number.
+    /// **Accepted public surface.** Tom accepted `PreparedEntryObservation` on
+    /// 2026-08-13 under [`accept-the-prepared-entry-observation-surface`]. There
+    /// is no compatibility method that maps an unknown property to a number.
+    ///
+    /// [`accept-the-prepared-entry-observation-surface`]: ../../../../tickets/accept-the-prepared-entry-observation-surface.md
     fn observe_prepared_entry(
         &mut self,
         context: &LiveExecutionContext,

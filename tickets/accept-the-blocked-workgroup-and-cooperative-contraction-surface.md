@@ -1,7 +1,7 @@
 ---
 id: accept-the-blocked-workgroup-and-cooperative-contraction-surface
 title: Accept the blocked-workgroup and cooperative-contraction surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [admit-a-cooperative-tile-over-shared-operands]
@@ -27,6 +27,12 @@ Tom accepts or revises the exact Rust spelling of the blocked-workgroup binding 
 ## Recommendation
 
 Accept as drafted. The spelling follows the accepted model: sibling topology, required blocked binding, no new access map, no new proof kind, append-only tags. **Strongest counterpoint:** dropping `Copy` on `ExecutionBinding` is a public trait- impl change even for callers who only construct `GlobalLinearInvocation`.
+
+## Accepted — 2026-08-13
+
+**Tom accepted the exact surface as drafted**, with no named exclusion, in the live coordination session. The included set is `ExecutionBinding::BlockedWorkgroup { block, workgroups }` at tag `0x02` (`GlobalLinearInvocation` keeps `0x01`; `ExecutionBinding` is no longer `Copy`), `ReductionTopology::CooperativeContraction { tile, contracted_shape, contracted_tile, order, accumulation, permits_reassociation, permits_permutation }` at tag `0x37` (`0x36` stays reserved), `admit_exact_cooperative_contraction`, and `prove_blocked_bijection`. The owning write stays `LogicalAccess::LinearIdentity`. The proof kind stays `OneGlobalInvocationPerOutput`. The domain stays `tiler.schedule.v5`.
+
+Weakening `CooperativeWorkgroup`'s one-committer theorem, a new access map or proof kind, automatic fallback to a direct `Contraction`, consuming tag `0x36`, Metal lowering of the new topology, and guarded output tails remain excluded. In-code labels flip from labelled draft to accepted public surface.
 
 ## Closes when
 

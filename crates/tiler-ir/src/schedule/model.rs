@@ -348,9 +348,11 @@ pub enum LogicalAccess {
     },
     /// A sourced broadcast relation over its whole symbolic domain.
     ///
-    /// **Labelled draft under ADR 0075.** The exact included and excluded
-    /// surface is Tom's to accept; dependents must not treat this variant as
-    /// accepted vocabulary.
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-13 under [`accept-the-parametric-broadcast-access-surface`].
+    /// Dependents may treat this variant as accepted vocabulary.
+    ///
+    /// [`accept-the-parametric-broadcast-access-surface`]: ../../../../../tickets/accept-the-parametric-broadcast-access-surface.md
     ///
     /// The access relation of a sourced `tiler::broadcast-f32@2` mapping,
     /// including the bijective binding at one. It is **not**
@@ -810,12 +812,15 @@ pub enum ExecutionBinding {
     /// Hardware workgroup and local coordinates map once onto the contraction's
     /// logical output coordinates.
     ///
-    /// **Labelled draft** under ADR 0075: Tom accepted the *model* on
-    /// 2026-08-11 — an explicit blocked-workgroup binding, required rather than
-    /// defaulted, whose verifier supplies the bijection
-    /// [`OwnershipProofKind::OneGlobalInvocationPerOutput`] states. The exact
-    /// included and excluded Rust surface remains a labelled draft until Tom
-    /// accepts this spelling.
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-13 under
+    /// [`accept-the-blocked-workgroup-and-cooperative-contraction-surface`].
+    /// The 2026-08-11 model acceptance is the earlier packet: an explicit
+    /// blocked-workgroup binding, required rather than defaulted, whose
+    /// verifier supplies the bijection
+    /// [`OwnershipProofKind::OneGlobalInvocationPerOutput`] states.
+    ///
+    /// [`accept-the-blocked-workgroup-and-cooperative-contraction-surface`]: ../../../../../tickets/accept-the-blocked-workgroup-and-cooperative-contraction-surface.md
     ///
     /// Invocation at logical workgroup `w` and local `l` owns output coordinate
     /// `w[d] * block[d] + l[d]` on each output axis `d`. The binding is the
@@ -920,11 +925,11 @@ pub enum ReductionTopology {
         /// Whether this pass covers its contributor sequence exactly or extends
         /// it by proved identity values.
         ///
-        /// **Labelled draft** under ADR 0075: Tom accepted the *model* on
-        /// 2026-08-11 — a required tagged coverage, exact or identity-padded,
-        /// belonging to the reduction topology rather than to
-        /// [`KernelSchedule::tail`]. The exact included and excluded Rust
-        /// surface remains a labelled draft until Tom accepts this spelling.
+        /// **Accepted public surface.** Tom accepted this exact spelling on
+        /// 2026-08-13 under [`accept-the-contributor-coverage-and-padding-identity-surface`].
+        /// The 2026-08-11 model acceptance is the earlier packet.
+        ///
+        /// [`accept-the-contributor-coverage-and-padding-identity-surface`]: ../../../../../tickets/accept-the-contributor-coverage-and-padding-identity-surface.md
         coverage: ContributorCoverage,
         /// Reduced axes of *this pass*, in canonical ascending order.
         ///
@@ -1022,9 +1027,11 @@ pub enum ReductionTopology {
         /// per round, and whether that split covers the real sequence or a
         /// suffix-padded one.
         ///
-        /// **Labelled draft** under ADR 0075: Tom accepted the *model* on
-        /// 2026-08-11. The exact included and excluded Rust surface remains a
-        /// labelled draft until Tom accepts this spelling.
+        /// **Accepted public surface.** Tom accepted this exact spelling on
+        /// 2026-08-13 under [`accept-the-contributor-coverage-and-padding-identity-surface`].
+        /// The 2026-08-11 model acceptance is the earlier packet.
+        ///
+        /// [`accept-the-contributor-coverage-and-padding-identity-surface`]: ../../../../../tickets/accept-the-contributor-coverage-and-padding-identity-surface.md
         ///
         /// `contributors_per_partition` is what one participant folds on *one*
         /// round, so the sequence an exact split covers is
@@ -1074,13 +1081,15 @@ pub enum ReductionTopology {
     /// One workgroup's invocations each own an output position and cooperate by
     /// staging shared operand tiles.
     ///
-    /// **Labelled draft** under ADR 0075: Tom accepted the *model* on
-    /// 2026-08-11 — a sibling of [`Self::CooperativeWorkgroup`] with its own
-    /// semantic, commit, coverage, and shape verifier, reusing the
-    /// [`CooperativeTile`] dataflow record. The one-committer theorem on
-    /// [`Self::CooperativeWorkgroup`] is unchanged. The exact included and
-    /// excluded Rust surface remains a labelled draft until Tom accepts this
-    /// spelling.
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-13 under
+    /// [`accept-the-blocked-workgroup-and-cooperative-contraction-surface`].
+    /// The 2026-08-11 model acceptance is the earlier packet: a sibling of
+    /// [`Self::CooperativeWorkgroup`] with its own semantic, commit, coverage,
+    /// and shape verifier, reusing the [`CooperativeTile`] dataflow record. The
+    /// one-committer theorem on [`Self::CooperativeWorkgroup`] is unchanged.
+    ///
+    /// [`accept-the-blocked-workgroup-and-cooperative-contraction-surface`]: ../../../../../tickets/accept-the-blocked-workgroup-and-cooperative-contraction-surface.md
     ///
     /// The inverse relation: `commit` names every participant, the iteration
     /// domain *is* the output (no trailing participant axis), and
@@ -1202,10 +1211,13 @@ impl ContributorPartition {
 /// Whether a reduction topology covers its contributor sequence exactly or
 /// extends it by proved identity values.
 ///
-/// **Labelled draft** under ADR 0075: Tom accepted the *model* on 2026-08-11 —
-/// a required tagged coverage whose exact arm carries no identity and whose
-/// padded arm cannot omit one. The exact included and excluded Rust surface
-/// remains a labelled draft until Tom accepts this spelling.
+/// **Accepted public surface.** Tom accepted this exact spelling on 2026-08-13
+/// under [`accept-the-contributor-coverage-and-padding-identity-surface`]. The
+/// 2026-08-11 model acceptance is the earlier packet; this label is the
+/// included/excluded Rust surface. A required tagged coverage whose exact arm
+/// carries no identity and whose padded arm cannot omit one.
+///
+/// [`accept-the-contributor-coverage-and-padding-identity-surface`]: ../../../../../tickets/accept-the-contributor-coverage-and-padding-identity-surface.md
 ///
 /// `#[non_exhaustive]` under ADR 0074 convention 5a: every out-of-crate
 /// consumer constructs a variant or reads a field, and none classifies this
@@ -1253,11 +1265,14 @@ impl ContributorCoverage {
 
 /// An exact arithmetic value a padded contributor position holds.
 ///
-/// **Labelled draft** under ADR 0075: Tom accepted the *model* on 2026-08-11 —
-/// an opaque or width-discriminated exact-bit carrier whose format and bit
-/// width cannot disagree, proved two-sided-neutral by intrinsic verification
-/// rather than trusted as a statement. The exact included and excluded Rust
-/// surface remains a labelled draft until Tom accepts this spelling.
+/// **Accepted public surface.** Tom accepted this exact spelling on 2026-08-13
+/// under [`accept-the-contributor-coverage-and-padding-identity-surface`]. The
+/// 2026-08-11 model acceptance is the earlier packet. An opaque or
+/// width-discriminated exact-bit carrier whose format and bit width cannot
+/// disagree, proved two-sided-neutral by intrinsic verification rather than
+/// trusted as a statement.
+///
+/// [`accept-the-contributor-coverage-and-padding-identity-surface`]: ../../../../../tickets/accept-the-contributor-coverage-and-padding-identity-surface.md
 ///
 /// Each variant is the format's own width. A raw `u32` field would freeze an
 /// `f32`-only boundary and let a `bf16` payload occupy four bytes; pairing a

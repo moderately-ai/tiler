@@ -1,7 +1,7 @@
 ---
 id: accept-the-typed-byte-alignment-surface
 title: Accept the typed byte-alignment surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [admit-typed-byte-alignment-and-effective-program-view-guarantees]
@@ -36,6 +36,12 @@ Tom accepts or revises the labelled-draft Rust spelling of the role-safe alignme
 ## Recommendation
 
 Accept as drafted. The spelling follows the accepted model: one checked quantity, opaque roles, comparison only on the guarantee, effective view alignment from the actual offset, valid encodings still four big-endian bytes of the same quantity. **Strongest counterpoint:** promoting compiler-private `ByteAlignment` to a public IR type, plus two new public role wrappers, is a larger public surface than the model packet named.
+
+## Accepted — 2026-08-13
+
+**Tom accepted the exact surface as drafted**, with no named exclusion, in the live coordination session. The included set is `ByteAlignment`, `ByteAlignmentError`, `AlignmentRequirement`, `AlignmentGuarantee`, fallible `new`, `natural_for`, `bytes`, `from_alignment`, `alignment`, `AlignmentGuarantee::satisfies` / `after_offset`, value-spec requirements, allocation guarantees, `ViewRef::alignment()` as the allocation guarantee after the window offset, artifact `BindingRef` / `DecodedBinding` returning `AlignmentRequirement`, `KernelProgramBuildError::StageAccessAlignment`, and `ArtifactCodecError::InvalidAlignment`.
+
+The 2026-08-12 model acceptance remains the earlier packet. This node is the included/excluded Rust spelling at `90112675`. In-code labels flip from labelled draft to accepted public surface.
 
 ## Closes when
 

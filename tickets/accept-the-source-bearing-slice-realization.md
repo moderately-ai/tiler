@@ -1,7 +1,7 @@
 ---
 id: accept-the-source-bearing-slice-realization
 title: Accept the source-bearing Slice realization
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [preserve-source-bearing-slice-offsets-through-index-refinement, accept-the-literal-offset-slice-realization-law]
@@ -44,6 +44,12 @@ Tom accepts or revises the widened Slice-law interpretation so a source-bearing 
 ## Recommendation
 
 Accept as drafted. The encoding did not change; only previously refused source-bearing subjects now realize, and they do so through the already-accepted `SourcedIndexInteger` addend vocabulary. **Strongest counterpoint:** the 2026-08-11 acceptance named symbolic offsets as excluded, so growing the interpretation at revision 1 means two compilers that share tag 13 / revision 1 now disagree on whether those subjects realize.
+
+## Accepted — 2026-08-13
+
+**Tom accepted the exact growth as drafted**, with no named exclusion and without a law or provider revision bump, in the live coordination session. A source-bearing `Window` realizes as `t + C` through `sourced_linear_combination(C, [(1, t)])`. Literal windows keep the environment-free `d + offset` path. `SliceSelection::names_a_symbol` is an additive query. Tag 13, slice law revision 1, and `tiler::slice-f32@1` stay put. Strided windows, view-versus-copy, scheduled-region vocabulary, and a live-extent payload remain excluded.
+
+The 2026-08-11 exclusion of source-bearing offsets on this law is superseded by this node. The implementation landing at `f903da13` remains the earlier packet.
 
 ## Closes when
 

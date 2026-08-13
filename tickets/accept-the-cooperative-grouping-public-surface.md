@@ -1,7 +1,7 @@
 ---
 id: accept-the-cooperative-grouping-public-surface
 title: Accept the cooperative grouping public surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [execute-the-loop-carried-cooperative-kernel-on-a-real-backend]
@@ -27,6 +27,12 @@ Tom accepts or revises the labelled-draft cooperative grouping oracle so depende
 ## Recommendation
 
 Accept as drafted. The three-axis form is what a loop-carried tile needs and what a two-level `ContributorPartition` cannot state. **Strongest counterpoint:** public fields on `CooperativeGrouping` let a caller construct a zero-axis grouping that only the evaluators refuse.
+
+## Accepted — 2026-08-13
+
+**Tom accepted the exact surface as drafted**, with no named exclusion, in the live coordination session. The included set is `CooperativeCellLayout::{RoundMajor, ParticipantMajor}`, `CooperativeGrouping { participants, contributors_per_partition, rounds, layout }` with `declared` / `participant_major` / `covered_contributors` / `cell_index`, and `cooperative_grouped_sum` / `cooperative_grouped_sum_under`. A one-round `RoundMajor` grouping is bit-identical to `strict_partitioned_sum` at the same participant count.
+
+A second local production oracle, an inferred threaded CPU realization, a compiler `rounds > 1` request, and a live extent remain excluded. In-code labels flip from labelled draft to accepted public surface.
 
 ## Closes when
 

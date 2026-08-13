@@ -78,8 +78,8 @@ An exact-divisible cooperative contraction verifies under its explicit blocked e
 
 Exact-divisible first pass as accepted 2026-08-11.
 
-- `ReductionTopology::CooperativeContraction` (labelled draft) reuses `CooperativeTile`, with its own semantic / commit / coverage / shape verifier.
-- `ExecutionBinding::BlockedWorkgroup { block, workgroups }` (labelled draft) is required, never defaulted. The verifier proves `workgroups[d] * block[d] == output[d]` per axis: greater is overlap, lesser is gap.
+- `ReductionTopology::CooperativeContraction` (accepted 2026-08-13) reuses `CooperativeTile`, with its own semantic / commit / coverage / shape verifier.
+- `ExecutionBinding::BlockedWorkgroup { block, workgroups }` (accepted 2026-08-13) is required, never defaulted. The verifier proves `workgroups[d] * block[d] == output[d]` per axis: greater is overlap, lesser is gap.
 - Owning write stays `LogicalAccess::LinearIdentity`. Proof kind stays `OneGlobalInvocationPerOutput`. No new access map, no new proof kind, no `tiler.schedule.v6`.
 - `admit_exact_cooperative_contraction` is the typed preflight. It never returns a direct `Contraction` schedule.
 - Kernel lowering refuses the new topology as `CooperativeLoweringShape` (Metal body is out of scope).

@@ -673,11 +673,16 @@ impl SliceSelection {
 
     /// Returns whether any window offset names a `ShapeEnv` symbol.
     ///
-    /// Construction is shape-independent, so this is a fact about the
-    /// selection's spelling rather than about whether a program's environment
-    /// can prove the window. Law realization and compiler lowering use it to
-    /// open a source-aware region only when a symbol is present, so a literal
-    /// neighbour keeps the environment-free path.
+    /// **Accepted public surface.** Tom accepted this additive query, and the
+    /// source-bearing `t + C` realization it gates, on 2026-08-13 under
+    /// [`accept-the-source-bearing-slice-realization`]. Construction is
+    /// shape-independent, so this is a fact about the selection's spelling
+    /// rather than about whether a program's environment can prove the window.
+    /// Law realization and compiler lowering use it to open a source-aware
+    /// region only when a symbol is present, so a literal neighbour keeps the
+    /// environment-free path.
+    ///
+    /// [`accept-the-source-bearing-slice-realization`]: ../../../../../tickets/accept-the-source-bearing-slice-realization.md
     #[must_use]
     pub fn names_a_symbol(&self) -> bool {
         self.axes.iter().any(|selection| {

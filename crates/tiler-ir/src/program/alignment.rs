@@ -1,10 +1,11 @@
 //! Checked byte-alignment vocabulary for physical program values and allocations.
 //!
-//! **Labelled draft** under ADR 0075: Tom accepted the *model* on 2026-08-12 —
-//! one checked power-of-two authority, opaque requirement and guarantee roles,
-//! comparison only on the guarantee, and an effective view guarantee derived
-//! from the actual byte offset. The exact included and excluded Rust surface
-//! remains a labelled draft until Tom accepts this spelling.
+//! **Accepted public surface.** Tom accepted this exact spelling on 2026-08-13
+//! under [`accept-the-typed-byte-alignment-surface`]. The 2026-08-12 model
+//! acceptance is the earlier packet; this label is the included/excluded Rust
+//! surface.
+//!
+//! [`accept-the-typed-byte-alignment-surface`]: ../../../../../tickets/accept-the-typed-byte-alignment-surface.md
 //!
 //! Construction is fallible. Zero and non-powers of two are typed errors.
 //! There is no `Default`, no unchecked public constructor, and no rounding,
@@ -19,7 +20,7 @@ use super::model::StorageScalar;
 
 /// Why a byte count cannot be a byte alignment.
 ///
-/// **Labelled draft** under ADR 0075. The two cases are distinct because they
+/// **Accepted public surface.** The two cases are distinct because they
 /// fail for different reasons: zero is not a divisor of anything, and a
 /// non-power of two would make divisibility stop being the alignment relation.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -51,7 +52,7 @@ impl std::error::Error for ByteAlignmentError {}
 
 /// A checked positive power-of-two byte alignment.
 ///
-/// **Labelled draft** under ADR 0075. This is the single authority for the
+/// **Accepted public surface.** This is the single authority for the
 /// quantity. APIs that state a *direction* wrap it in
 /// [`AlignmentRequirement`] or [`AlignmentGuarantee`] so a caller cannot
 /// reverse the comparison.
@@ -125,7 +126,7 @@ impl fmt::Display for ByteAlignment {
 
 /// The minimum byte alignment an access or value requires.
 ///
-/// **Labelled draft** under ADR 0075. Opaque so it cannot be compared as if it
+/// **Accepted public surface.** Opaque so it cannot be compared as if it
 /// were a guarantee. The only satisfaction check is
 /// [`AlignmentGuarantee::satisfies`].
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -177,7 +178,7 @@ impl fmt::Display for AlignmentRequirement {
 
 /// The byte alignment an allocation or view is statically guaranteed to provide.
 ///
-/// **Labelled draft** under ADR 0075. Opaque so it cannot be compared as if it
+/// **Accepted public surface.** Opaque so it cannot be compared as if it
 /// were a requirement. [`Self::satisfies`] is the only comparison.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AlignmentGuarantee(ByteAlignment);
