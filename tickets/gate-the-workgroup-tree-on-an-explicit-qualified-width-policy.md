@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: []
 related: [carry-the-tree-participant-cap-as-a-target-profile-row, cap-the-tree-reduction-participants-at-the-measured-256, pin-the-local-memory-refusal-band-the-tree-cap-opened]
-scopes: [implementation/compiler, implementation/build]
+scopes: [implementation/compiler, implementation/build, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: [target-profiles, correctness, public-boundary]
@@ -26,6 +26,21 @@ The accepted semantic surface is one required policy choice for every target pro
 - no clamp, balanced substitution, inherited `256`, or retry after prepared-kernel refusal is permitted.
 
 The Rust spelling may follow the owning target-profile vocabulary, but it must preserve that exact closed one-variant meaning. If source-first implementation reading exposes two materially different public carriers, stop for review rather than choosing by convenience.
+
+## Fact audit at `e2071549`
+
+Re-read at this base before any edit. Verdicts:
+
+| Ticket / coordinator Fact | Verdict | Evidence |
+| --- | --- | --- |
+| `MEASURED_TREE_PARTICIPANT_CAP` is still a global `256` | **verified** | `crates/tiler-compiler/src/physical.rs`, `pub(crate) const MEASURED_TREE_PARTICIPANT_CAP: u64 = 256` |
+| `single_workgroup_tree_region` gated on reassociation only; no target-owned width policy | **verified at start** | Production body read `request.numerical_contract().reassociation` then `capped_tree_partition(contributors)`. It did not read `request.target_profile()` |
+| The selector takes only `contributors` | **verified at start** | `fn capped_tree_partition(contributors: u64)` |
+| `That ceiling is what keeps the rule a preference rather than a feasibility decision` | **verified** | Same file, `capped_tree_partition` doc; `256` still bounds the above-cap result to `509` |
+| `BoundMetalCompileDeclaration::first_macos_apple9` exists and did not declare a width policy | **verified** | `crates/tiler-build/src/metal_declaration.rs`, `FIRST_MACOS_APPLE9` carried `saturated_parallel_fold_steps` and no tree-width field |
+| One public carrier for the closed policy | **verified** | Target-profile `declare_*` / reader is the only public spelling. `LedgerRows` is crate-private. No second public `u64`/`Option` cap. Did not stop. |
+| Length mirror of `complete_descriptor` | **verified absent** | Encoder is the grammar; no separate length function. Conditional family, so `COMPLETE_PROFILE_DESCRIPTOR_DOMAIN` stays at `v11` |
+| Support-matrix / dtype-maturity row | **none moved** | Fail-closed policy gate on an existing strategy |
 
 ## Source-first decision audit at `e33811e4`
 
@@ -60,6 +75,24 @@ Perturb the policy declaration, not the assertion:
 - prove the existing qualified Apple9 partition census remains byte-for-byte/identity-equivalent wherever the chosen schedule is unchanged.
 
 Run the affected package checks, nextest plus doctests, Clippy and rustdoc with warnings denied, citations, ticket lint, exact-base diff check and guard, then exact-tip `make full` because production crates change.
+
+## Implementation at this branch
+
+Public carrier (one): `WorkgroupTreeWidthPolicy::MeasuredNearestCap256V1`, `WorkgroupTreeWidthPolicyResolution`, `declare_workgroup_tree_width_policy` / `declare_measured_workgroup_tree_width_policy`, `TargetProfile::workgroup_tree_width_policy`, `TargetProfileBuildError::DuplicateWorkgroupTreeWidthPolicy`. Encoded behind `tiler.target-profile.workgroup-tree-width-policy.v1`, written only when non-empty. `256` remains private in `MEASURED_TREE_PARTICIPANT_CAP`.
+
+Apple9 declares `MeasuredNearestCap256V1` from the same 2026-08-07 measured source as the other measured rows. `single_workgroup_tree_region` requires `Declared(MeasuredNearestCap256V1)` at `CompileProfile` and otherwise returns `WorkgroupTreeUnavailable::QualifiedWidthPolicyUndeclared`, mapped to `StrategyDeclineCause::TargetPolicyUndeclared`. Tree-exercising test profiles declare the policy; `workgroup_tree_target_without_width_policy_for_test` is the negative.
+
+Identity: descriptor `2,099` → `2,169` (+70, encoding-predicted). Standard Metal artifact `72d779eca944df675b9d26f2f688d8605bbeffe5ef835b780b7e3295793a982b`, cache subject `d35dbd21559351ab5a596fa88ef8ded753460e20ec18a6fced48caf4f9a43a36`, fixed content `77,061`. `research/target-profiles` was added for the authority ledger.
+
+Perturbations (subject, not assertion):
+
+- Apple9 `workgroup_tree_width_policy: None`: `the declared tree-width policy moved off the retained qualification` `left: Unknown` `right: Declared(MeasuredNearestCap256V1)`; portfolio `the single-workgroup tree is not in the portfolio: [(2, 1), (3, 1)]`.
+- Second profile omits the policy: `omitting_the_width_policy_offers_no_tree_and_does_not_inherit_a_width` holds; neither `256` nor `128` appears.
+- Policy tag `0x01` → `0x02`: `the standard Metal artifact identity moved` `left: "91b78fd3e68193bbe3ddd9e7b4786f6fd73f52ac06ab7c509a295d05f70d416a"` `right: "72d779eca944df675b9d26f2f688d8605bbeffe5ef835b780b7e3295793a982b"`.
+- Gate bypassed: `omitting_the_width_policy_offers_no_tree_and_does_not_inherit_a_width` `left: None` `right: Some(QualifiedWidthPolicyUndeclared)`.
+- Qualified partition census: `the_tree_widens_toward_the_cap_rather_than_truncating_at_it` still passes; `capped_tree_partition` is unchanged.
+
+Support-matrix / dtype-maturity: no row moved.
 
 ## Non-goals
 

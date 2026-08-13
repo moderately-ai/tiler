@@ -52,6 +52,19 @@
 //! distinct from a capability axis, with silence meaning *no preference* rather
 //! than *no plan*.
 //!
+//! The **workgroup-tree-width-policy** family is an **Accepted public surface**.
+//! Tom delegated the choice to the coordinator on 2026-08-11 under
+//! `gate-the-workgroup-tree-on-an-explicit-qualified-width-policy`:
+//! [`WorkgroupTreeWidthPolicy`], [`WorkgroupTreeWidthPolicyResolution`],
+//! [`TargetProfileBuilder::declare_workgroup_tree_width_policy`],
+//! [`TargetProfileBuilder::declare_measured_workgroup_tree_width_policy`],
+//! [`TargetProfile::workgroup_tree_width_policy`], and
+//! [`TargetProfileBuildError::DuplicateWorkgroupTreeWidthPolicy`]. One closed
+//! variant, no omitted/default case, and no public numeric cap: a profile that
+//! does not declare an accepted policy makes the single-workgroup tree
+//! unavailable with a typed reason. Silence is not a preference and is not a
+//! clamp onto `256`.
+//!
 //! Four exclusions were accepted with the evaluation-order-preservation family
 //! and are deliberate rather than gaps: no
 //! math-mode spelling, because `safe`/`relaxed`/`fast` are one backend driver's
@@ -262,6 +275,16 @@ const COST_ROW_DOMAIN: &[u8] = b"tiler.target-profile.cost-row.v1\0";
 /// family existed. Writing a zero count would move every existing profile's
 /// bytes to record nothing new. [`complete_descriptor`] states the derivation.
 const ELEMENTARY_REALIZATION_DOMAIN: &[u8] = b"tiler.target-profile.elementary-realization.v1\0";
+/// Domain separating the workgroup-tree-width-policy rows of one declaration.
+///
+/// Its own separator, for the reason the families above have one, and written
+/// **only when the family is non-empty** so a profile that never carried the
+/// family keeps the bytes it already encoded. Silence here is not a preference:
+/// it makes the single-workgroup tree unavailable. Writing a zero count would
+/// move every existing profile's identity to record that it still has no
+/// policy. [`complete_descriptor`] states the derivation.
+const WORKGROUP_TREE_WIDTH_POLICY_DOMAIN: &[u8] =
+    b"tiler.target-profile.workgroup-tree-width-policy.v1\0";
 
 /// Maximum byte length of one target-profile key.
 ///
@@ -1810,6 +1833,81 @@ pub enum TargetCostRowResolution {
     Unknown,
 }
 
+/// The closed tree-width policy a target must declare to offer the
+/// single-workgroup tree.
+///
+/// **Accepted public surface.** Tom delegated the choice to the coordinator on
+/// 2026-08-11 under `gate-the-workgroup-tree-on-an-explicit-qualified-width-policy`.
+///
+/// One variant, and there is deliberately no omitted/default case and no public
+/// numeric cap. A profile that does not declare an accepted policy makes the
+/// tree unavailable with a typed reason. The fixed internal `256` stays private
+/// to the partition rule this variant names.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum WorkgroupTreeWidthPolicy {
+    /// The existing nearest-admissible-width rule around the fixed internal
+    /// value `256`, ties going to the narrower. Qualified by the retained
+    /// 2026-08-07 Apple9 partition calibration.
+    MeasuredNearestCap256V1,
+}
+
+impl WorkgroupTreeWidthPolicy {
+    /// Returns the stable governed key naming this policy.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::MeasuredNearestCap256V1 => "workgroup-tree-width.measured-nearest-cap-256.v1",
+        }
+    }
+
+    const fn tag(self) -> u8 {
+        match self {
+            Self::MeasuredNearestCap256V1 => 0x01,
+        }
+    }
+}
+
+/// Result of a workgroup-tree-width-policy lookup.
+///
+/// **Accepted public surface**, with the declaration pair and reader.
+///
+/// [`Self::Unknown`] is the fail-closed answer: a profile that declares nothing
+/// does not offer the single-workgroup tree. It is not a preference, not a
+/// clamp onto `256`, and not a substitution of the balanced partition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkgroupTreeWidthPolicyResolution {
+    /// An exact declaration states this closed policy.
+    Declared(WorkgroupTreeWidthPolicy),
+    /// An exact declaration exists, but only from this later phase.
+    Deferred {
+        /// Earliest phase at which an exact declaration can resolve.
+        available_at: AvailabilityPhase,
+    },
+    /// No declaration exists, so the tree is unavailable.
+    Unknown,
+}
+
+/// One declared workgroup-tree-width policy and who vouches for it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct WorkgroupTreeWidthPolicyFact {
+    policy: WorkgroupTreeWidthPolicy,
+    source: Arc<FactSourceProvenance>,
+}
+
+impl WorkgroupTreeWidthPolicyFact {
+    fn validate(&self) -> Result<(), TargetProfileBuildError> {
+        if !self.source.is_valid() {
+            return Err(TargetProfileBuildError::InvalidProducerClaim);
+        }
+        Ok(())
+    }
+
+    fn encode(&self, bytes: &mut Vec<u8>, source_index: usize) {
+        bytes.push(self.policy.tag());
+        encode_compact_index(bytes, source_index);
+    }
+}
+
 /// One immutable, intrinsically checked target declaration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TargetProfile {
@@ -1825,6 +1923,7 @@ struct TargetProfileData {
     dispatchability: Box<[DTypeDispatchabilityFact]>,
     evaluation_order: Box<[EvaluationOrderFact]>,
     cost_rows: Box<[CostRowFact]>,
+    tree_width_policies: Box<[WorkgroupTreeWidthPolicyFact]>,
     elementary: Box<[ElementaryRealization]>,
     descriptor: Box<[u8]>,
 }
@@ -1840,6 +1939,7 @@ pub struct TargetProfileBuilder {
     synchronization: Vec<DeclaredSynchronizationRealization>,
     evaluation_order: Vec<EvaluationOrderFact>,
     cost_rows: Vec<CostRowFact>,
+    tree_width_policies: Vec<WorkgroupTreeWidthPolicyFact>,
     elementary: Vec<ElementaryRealization>,
 }
 
@@ -1858,6 +1958,7 @@ impl TargetProfileBuilder {
             synchronization: Vec::new(),
             evaluation_order: Vec::new(),
             cost_rows: Vec::new(),
+            tree_width_policies: Vec::new(),
             elementary: Vec::new(),
         }
     }
@@ -3050,6 +3151,74 @@ impl TargetProfileBuilder {
         Ok(())
     }
 
+    /// Declares the closed tree-width policy this target uses when it offers
+    /// the single-workgroup tree.
+    ///
+    /// **Accepted public surface**, accepted by Tom's 2026-08-11 delegation
+    /// under `gate-the-workgroup-tree-on-an-explicit-qualified-width-policy`,
+    /// with [`WorkgroupTreeWidthPolicyResolution`] and the measured constructor
+    /// below.
+    ///
+    /// This is **not a cost row and not a capability axis**. A cost row's
+    /// silence means no preference; this family's silence makes the tree
+    /// unavailable. A capability axis would make silence render a profile
+    /// unexecutable for a quantity no feasibility predicate reads. The policy
+    /// is a qualification on offering one strategy, decided before a region
+    /// exists. There is no public numeric cap, no default, and no clamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate row.
+    pub fn declare_workgroup_tree_width_policy(
+        &mut self,
+        policy: WorkgroupTreeWidthPolicy,
+        source: TargetFactSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_tree_width_policy(policy, source.0)
+    }
+
+    /// Declares a measured workgroup-tree-width policy.
+    ///
+    /// **Accepted public surface**, with the constructor above.
+    ///
+    /// The measured spelling is the one a target row is expected to use, and it
+    /// is the *only* one any production profile in this repository uses. Taking
+    /// [`TargetCompileProfileMeasurementSource`] rather than the general
+    /// [`TargetFactSource`] is what fixes its validity at
+    /// [`TargetFactValidityScope::MeasuredEnvironment`] and stops it widening
+    /// into a portable claim.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate row.
+    pub fn declare_measured_workgroup_tree_width_policy(
+        &mut self,
+        policy: WorkgroupTreeWidthPolicy,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_tree_width_policy(policy, source.0)
+    }
+
+    fn declare_tree_width_policy(
+        &mut self,
+        policy: WorkgroupTreeWidthPolicy,
+        source: Arc<FactSourceProvenance>,
+    ) -> Result<(), TargetProfileBuildError> {
+        let fact = WorkgroupTreeWidthPolicyFact { policy, source };
+        fact.validate()?;
+        if self
+            .tree_width_policies
+            .iter()
+            .any(|existing| existing.source.phase() == fact.source.phase())
+        {
+            return Err(TargetProfileBuildError::DuplicateWorkgroupTreeWidthPolicy {
+                phase: fact.source.phase(),
+            });
+        }
+        self.tree_width_policies.push(fact);
+        Ok(())
+    }
+
     fn declare_evaluation_order_with_source(
         &mut self,
         subject: ScalarArithmetic,
@@ -3253,6 +3422,20 @@ impl TargetProfileBuilder {
                 });
             }
         }
+        for fact in &self.tree_width_policies {
+            fact.validate()?;
+            if self
+                .tree_width_policies
+                .iter()
+                .filter(|candidate| candidate.source.phase() == fact.source.phase())
+                .count()
+                > 1
+            {
+                return Err(TargetProfileBuildError::DuplicateWorkgroupTreeWidthPolicy {
+                    phase: fact.source.phase(),
+                });
+            }
+        }
         for fact in &self.elementary {
             if self
                 .elementary
@@ -3298,6 +3481,8 @@ impl TargetProfileBuilder {
         // phase wins" scan deterministic rather than declaration-order dependent.
         self.cost_rows
             .sort_by_key(|fact| (fact.row, fact.source.phase()));
+        self.tree_width_policies
+            .sort_by_key(|fact| fact.source.phase());
         // Whole-row canonical encoding, so two profiles that declare the same
         // rows in different insertion orders share one identity, and distinct
         // contracts for one operation stay distinct candidates.
@@ -3354,6 +3539,7 @@ impl TargetProfileBuilder {
             &self.synchronization,
             &self.evaluation_order,
             &self.cost_rows,
+            &self.tree_width_policies,
             &self.elementary,
         );
         if descriptor.len() > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES {
@@ -3371,6 +3557,7 @@ impl TargetProfileBuilder {
             synchronization: _,
             evaluation_order,
             cost_rows,
+            tree_width_policies,
             elementary,
         } = self;
         Ok(TargetProfile {
@@ -3382,6 +3569,7 @@ impl TargetProfileBuilder {
                 dispatchability: dispatchability.into_boxed_slice(),
                 evaluation_order: evaluation_order.into_boxed_slice(),
                 cost_rows: cost_rows.into_boxed_slice(),
+                tree_width_policies: tree_width_policies.into_boxed_slice(),
                 elementary: elementary.into_boxed_slice(),
                 descriptor: descriptor.into_boxed_slice(),
             }),
@@ -3589,6 +3777,14 @@ impl SynchronizationSupport {
 /// that it still has no elementary row. Injectivity survives for the same
 /// reason as the two families above: every earlier section is self-delimiting,
 /// and this family's separator distinguishes its bytes from any continuation.
+///
+/// # The workgroup-tree-width-policy family is the same silence-as-absence
+///
+/// It is written last, behind its own separator, and only when it holds a row.
+/// An empty family and an absent family both mean no accepted policy, which is
+/// already what every profile encoded before this family existed. Writing a
+/// zero count would move every existing descriptor to record that it still has
+/// no policy. Injectivity survives for the same reason as the families above.
 /// The owning declaration domain therefore stays at `v11`.
 #[allow(
     clippy::too_many_arguments,
@@ -3603,6 +3799,7 @@ fn complete_descriptor(
     synchronization: &[DeclaredSynchronizationRealization],
     evaluation_order: &[EvaluationOrderFact],
     cost_rows: &[CostRowFact],
+    tree_width_policies: &[WorkgroupTreeWidthPolicyFact],
     elementary: &[ElementaryRealization],
 ) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -3621,6 +3818,7 @@ fn complete_descriptor(
         )
         .chain(evaluation_order.iter().map(|fact| fact.source.as_ref()))
         .chain(cost_rows.iter().map(|fact| fact.source.as_ref()))
+        .chain(tree_width_policies.iter().map(|fact| fact.source.as_ref()))
         .chain(elementary.iter().map(ElementaryRealization::source))
         .map(|source| (source.canonical_bytes(), source))
         .collect();
@@ -3736,6 +3934,19 @@ fn complete_descriptor(
             let source_index = sources
                 .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
                 .expect("every cost-row source was inserted into the source table");
+            fact.encode(&mut bytes, source_index);
+        }
+    }
+    if !tree_width_policies.is_empty() {
+        push_slice(&mut bytes, WORKGROUP_TREE_WIDTH_POLICY_DOMAIN);
+        push_len(&mut bytes, tree_width_policies.len());
+        for fact in tree_width_policies {
+            let source_bytes = fact.source.canonical_bytes();
+            let source_index = sources
+                .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
+                .expect(
+                    "every workgroup-tree-width-policy source was inserted into the source table",
+                );
             fact.encode(&mut bytes, source_index);
         }
     }
@@ -3937,6 +4148,40 @@ impl TargetProfile {
         }
     }
 
+    /// Resolves the closed tree-width policy this target declared, preferring
+    /// the latest declaration available through `available_phase`.
+    ///
+    /// **Accepted public surface**, accepted by Tom's 2026-08-11 delegation
+    /// under `gate-the-workgroup-tree-on-an-explicit-qualified-width-policy`.
+    ///
+    /// Returns [`WorkgroupTreeWidthPolicyResolution::Unknown`] for a profile
+    /// that declares nothing. That answer makes the single-workgroup tree
+    /// unavailable. It is never a clamp onto `256`, never a substitution of
+    /// the balanced partition, and never a preference.
+    #[must_use]
+    pub fn workgroup_tree_width_policy(
+        &self,
+        available_phase: AvailabilityPhase,
+    ) -> WorkgroupTreeWidthPolicyResolution {
+        let mut now = None;
+        let mut later = None;
+        for fact in &self.data.tree_width_policies {
+            let phase = fact.source.phase();
+            if phase <= available_phase {
+                now = Some(fact.policy);
+            } else if later.is_none() {
+                later = Some(phase);
+            }
+        }
+        match (now, later) {
+            (Some(policy), _) => WorkgroupTreeWidthPolicyResolution::Declared(policy),
+            (None, Some(available_at)) => {
+                WorkgroupTreeWidthPolicyResolution::Deferred { available_at }
+            }
+            (None, None) => WorkgroupTreeWidthPolicyResolution::Unknown,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn governed_without_numerical_declarations() -> Self {
         let mut builder = TargetProfileBuilder::governed();
@@ -4121,7 +4366,51 @@ impl TargetProfile {
         synchronization: Option<SynchronizationSupport>,
         saturated_parallel_fold_steps: Option<u64>,
     ) -> Self {
+        Self::workgroup_tree_target_parts_for_test(
+            local_memory_bytes,
+            grid_axis_threads,
+            synchronization,
+            saturated_parallel_fold_steps,
+            Some(WorkgroupTreeWidthPolicy::MeasuredNearestCap256V1),
+        )
+    }
+
+    /// The same widened test profile with no tree-width policy declared.
+    ///
+    /// The negative half of the policy gate: omission makes the tree unavailable
+    /// and must not substitute `256` or `governed_partition`.
+    #[cfg(test)]
+    pub(crate) fn workgroup_tree_target_without_width_policy_for_test(
+        local_memory_bytes: u64,
+        grid_axis_threads: u64,
+        synchronization: Option<SynchronizationSupport>,
+    ) -> Self {
+        Self::workgroup_tree_target_parts_for_test(
+            local_memory_bytes,
+            grid_axis_threads,
+            synchronization,
+            None,
+            None,
+        )
+    }
+
+    #[cfg(test)]
+    fn workgroup_tree_target_parts_for_test(
+        local_memory_bytes: u64,
+        grid_axis_threads: u64,
+        synchronization: Option<SynchronizationSupport>,
+        saturated_parallel_fold_steps: Option<u64>,
+        width_policy: Option<WorkgroupTreeWidthPolicy>,
+    ) -> Self {
         let mut builder = TargetProfileBuilder::governed();
+        if let Some(policy) = width_policy {
+            builder
+                .declare_workgroup_tree_width_policy(
+                    policy,
+                    TargetFactSource(governed_profile_source()),
+                )
+                .expect("the test tree-width-policy declaration is valid");
+        }
         if let Some(steps) = saturated_parallel_fold_steps {
             builder
                 .declare_saturated_parallel_fold_steps(
@@ -4320,6 +4609,17 @@ pub enum TargetProfileBuildError {
     DuplicateCostRow {
         /// Stable governed key of the row both declarations claimed.
         row: &'static str,
+        /// Availability phase at which both rows claimed authority.
+        phase: AvailabilityPhase,
+    },
+    /// The same workgroup-tree-width policy phase was declared twice.
+    ///
+    /// The variant is deliberately not part of that key: a profile stating two
+    /// policies at one phase has stated a contradiction, and admitting both
+    /// would leave whichever the sort put first deciding. One variant exists
+    /// today, so the refusal is a restatement; a second variant would still
+    /// refuse at the same phase rather than encode a choice.
+    DuplicateWorkgroupTreeWidthPolicy {
         /// Availability phase at which both rows claimed authority.
         phase: AvailabilityPhase,
     },
@@ -6725,6 +7025,131 @@ mod tests {
                 EvaluationOrderPreservation::Preserved,
             )
         );
+    }
+
+    /// Silence is `Unknown` and costs a profile that declares nothing not one
+    /// descriptor byte.
+    #[test]
+    fn a_profile_declaring_no_tree_width_policy_resolves_unknown() {
+        for profile in [
+            TargetProfile::governed(),
+            public_builder("acme.silent-tree-width.v1")
+                .try_build()
+                .unwrap(),
+        ] {
+            assert_eq!(
+                profile.workgroup_tree_width_policy(AvailabilityPhase::LaunchPreflight),
+                WorkgroupTreeWidthPolicyResolution::Unknown,
+            );
+            assert!(
+                !profile
+                    .canonical_descriptor()
+                    .windows(WORKGROUP_TREE_WIDTH_POLICY_DOMAIN.len())
+                    .any(|window| window == WORKGROUP_TREE_WIDTH_POLICY_DOMAIN),
+                "an undeclaring profile writes none of the family's bytes, which is \
+                 why the complete-declaration domain did not step"
+            );
+        }
+    }
+
+    #[test]
+    fn a_declared_tree_width_policy_resolves_and_moves_identity() {
+        let mut builder = TargetProfileBuilder::governed();
+        builder
+            .declare_workgroup_tree_width_policy(
+                WorkgroupTreeWidthPolicy::MeasuredNearestCap256V1,
+                public_external_source(1),
+            )
+            .unwrap();
+        let profile = builder.try_build().unwrap();
+        assert_eq!(
+            profile.workgroup_tree_width_policy(AvailabilityPhase::CompileProfile),
+            WorkgroupTreeWidthPolicyResolution::Declared(
+                WorkgroupTreeWidthPolicy::MeasuredNearestCap256V1
+            )
+        );
+        assert!(
+            profile
+                .canonical_descriptor()
+                .windows(WORKGROUP_TREE_WIDTH_POLICY_DOMAIN.len())
+                .any(|window| window == WORKGROUP_TREE_WIDTH_POLICY_DOMAIN)
+        );
+        assert_ne!(
+            profile.canonical_descriptor(),
+            TargetProfile::governed().canonical_descriptor()
+        );
+    }
+
+    #[test]
+    fn a_later_phase_tree_width_policy_defers_rather_than_resolving() {
+        let mut builder = TargetProfileBuilder::governed();
+        builder
+            .declare_workgroup_tree_width_policy(
+                WorkgroupTreeWidthPolicy::MeasuredNearestCap256V1,
+                device_runtime_source(),
+            )
+            .unwrap();
+        let profile = builder.try_build().unwrap();
+        assert_eq!(
+            profile.workgroup_tree_width_policy(AvailabilityPhase::CompileProfile),
+            WorkgroupTreeWidthPolicyResolution::Deferred {
+                available_at: AvailabilityPhase::LiveDevicePreflight,
+            }
+        );
+        assert_eq!(
+            profile.workgroup_tree_width_policy(AvailabilityPhase::LiveDevicePreflight),
+            WorkgroupTreeWidthPolicyResolution::Declared(
+                WorkgroupTreeWidthPolicy::MeasuredNearestCap256V1
+            )
+        );
+    }
+
+    #[test]
+    fn a_second_tree_width_policy_at_one_phase_is_refused_atomically() {
+        let source = public_external_source(1);
+        let mut builder = TargetProfileBuilder::governed();
+        builder
+            .declare_workgroup_tree_width_policy(
+                WorkgroupTreeWidthPolicy::MeasuredNearestCap256V1,
+                source.clone(),
+            )
+            .unwrap();
+        assert_eq!(
+            builder.declare_workgroup_tree_width_policy(
+                WorkgroupTreeWidthPolicy::MeasuredNearestCap256V1,
+                source,
+            ),
+            Err(TargetProfileBuildError::DuplicateWorkgroupTreeWidthPolicy {
+                phase: AvailabilityPhase::CompileProfile,
+            })
+        );
+        assert_eq!(
+            builder
+                .try_build()
+                .unwrap()
+                .workgroup_tree_width_policy(AvailabilityPhase::CompileProfile),
+            WorkgroupTreeWidthPolicyResolution::Declared(
+                WorkgroupTreeWidthPolicy::MeasuredNearestCap256V1
+            )
+        );
+    }
+
+    #[test]
+    fn changing_the_tree_width_policy_tag_moves_canonical_identity() {
+        let mut builder = TargetProfileBuilder::governed();
+        builder
+            .declare_workgroup_tree_width_policy(
+                WorkgroupTreeWidthPolicy::MeasuredNearestCap256V1,
+                public_external_source(1),
+            )
+            .unwrap();
+        let declared = builder.try_build().unwrap().canonical_descriptor().to_vec();
+        assert!(
+            declared
+                .windows(WORKGROUP_TREE_WIDTH_POLICY_DOMAIN.len())
+                .any(|window| window == WORKGROUP_TREE_WIDTH_POLICY_DOMAIN)
+        );
+        assert_ne!(declared, TargetProfile::governed().canonical_descriptor());
     }
 
     #[test]

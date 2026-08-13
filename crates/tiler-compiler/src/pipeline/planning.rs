@@ -185,7 +185,8 @@ fn classify_empty_frontier(frontier: &ImplementationFrontier) -> EmptyFrontierFa
                 cause:
                     crate::frontier::StrategyDeclineCause::NumericalPermissionRefused { .. }
                     | crate::frontier::StrategyDeclineCause::NoAdmissibleShape { .. }
-                    | crate::frontier::StrategyDeclineCause::Unrepresentable { .. },
+                    | crate::frontier::StrategyDeclineCause::Unrepresentable { .. }
+                    | crate::frontier::StrategyDeclineCause::TargetPolicyUndeclared { .. },
                 ..
             }
             | crate::frontier::FrontierRejection::Infeasible { .. }

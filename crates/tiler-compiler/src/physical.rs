@@ -2149,7 +2149,9 @@ pub(crate) fn governed_partition(contributors: u64) -> Option<ContributorPartiti
 /// **all seven folds**, with a held-out worst regret of **1.008** against the
 /// balanced choice's **1.216**, and both 64-encode runs of the matrix agree. It
 /// is not established for another Apple family, OS row, dtype, or device, and a
-/// second target profile should carry its own row rather than inherit this one.
+/// second target profile must declare an explicitly qualified tree-width policy
+/// rather than inherit this one. A numeric row is not required; omission makes
+/// the tree unavailable.
 ///
 /// It is also comfortably inside the workgroup width the calibration ran into:
 /// that sweep's eight declined variants are all at 2,048 participants and above,
@@ -2573,12 +2575,21 @@ pub(crate) const SINGLE_WORKGROUP_TREE_STRATEGY: &str = "tiler.reduction.single-
 ///
 /// A decline is a fact about *this request*, decided before any region exists,
 /// exactly as [`SplitUnavailable`] is. Every reason a *target* cannot run the
-/// strategy is deliberately absent from this vocabulary: workgroup memory,
-/// workgroup width, and the synchronization realization are resolved by the
-/// feasibility authority against the profile, so putting any of them here would
-/// let a preference decide legality and would hide the exact refusing bound.
+/// strategy *as a feasibility bound* is deliberately absent from this
+/// vocabulary: workgroup memory, workgroup width, and the synchronization
+/// realization are resolved by the feasibility authority against the profile,
+/// so putting any of them here would let a preference decide legality and would
+/// hide the exact refusing bound. The required width-policy qualification is
+/// here because it is decided before a region exists: omission does not invent
+/// a width, it withholds the strategy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum WorkgroupTreeUnavailable {
+    /// The target profile declared no accepted tree-width policy.
+    ///
+    /// The tree is offered only under an explicit closed policy. Silence is
+    /// not a default, not a clamp onto the internal `256`, and not a
+    /// substitution of [`governed_partition`].
+    QualifiedWidthPolicyUndeclared,
     /// The resolved numerical contract forbids reassociation.
     ///
     /// The tree regroups the declared contributor sequence, so this is the
@@ -2606,6 +2617,7 @@ impl WorkgroupTreeUnavailable {
     /// Returns the stable reason code naming this decline.
     pub(crate) const fn reason(self) -> &'static str {
         match self {
+            Self::QualifiedWidthPolicyUndeclared => "qualified-width-policy-undeclared",
             Self::ReassociationForbidden => "reassociation-forbidden",
             Self::NoAdmissibleParticipantCount { .. } => "no-admissible-participant-count",
             Self::Unrepresentable => "workgroup-tree-unrepresentable",
@@ -2690,8 +2702,8 @@ impl WorkgroupTreeUnavailable {
 /// # Errors
 ///
 /// Returns the typed [`WorkgroupTreeUnavailable`] the frontier records as a
-/// declined strategy. None of them is a compiler fault, and none of them is a
-/// target decision.
+/// declined strategy. None of them is a compiler fault. The policy-undeclared
+/// case is a request-time qualification, not a feasibility bound.
 pub(crate) fn single_workgroup_tree_region(
     request: &VerifiedTargetRequest,
     output: &NormalizedOutput,
@@ -2699,6 +2711,18 @@ pub(crate) fn single_workgroup_tree_region(
 ) -> Result<(ScheduledRegion, Vec<SemanticStage>), WorkgroupTreeUnavailable> {
     if request.numerical_contract().reassociation == NumericalPermission::Forbidden {
         return Err(WorkgroupTreeUnavailable::ReassociationForbidden);
+    }
+    match request
+        .target_profile()
+        .workgroup_tree_width_policy(AvailabilityPhase::CompileProfile)
+    {
+        crate::target::WorkgroupTreeWidthPolicyResolution::Declared(
+            crate::target::WorkgroupTreeWidthPolicy::MeasuredNearestCap256V1,
+        ) => {}
+        crate::target::WorkgroupTreeWidthPolicyResolution::Deferred { .. }
+        | crate::target::WorkgroupTreeWidthPolicyResolution::Unknown => {
+            return Err(WorkgroupTreeUnavailable::QualifiedWidthPolicyUndeclared);
+        }
     }
     let subject = output.serial_sum();
     // **Threaded like its siblings, and not currently observable through
@@ -4925,11 +4949,18 @@ mod tests {
             .output(OutputKey::new("retained").unwrap(), retained)
             .unwrap();
         let program = builder.build().unwrap();
-        let request = verify_planned_request(CompilationRequest::governed_under(
+        let mut request = CompilationRequest::governed_under(
             &program,
             StrictF32NumericalContract::governed_relaxed(),
-        ))
-        .unwrap();
+        );
+        request.target_profiles = vec![
+            crate::request::TargetProfile::workgroup_tree_target_for_test(
+                256,
+                1_024,
+                Some(crate::target::SynchronizationSupport::Realized),
+            ),
+        ];
+        let request = verify_planned_request(request).unwrap();
         request.for_target(0).unwrap()
     }
 

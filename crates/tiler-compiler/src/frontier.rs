@@ -1331,6 +1331,15 @@ pub enum StrategyDeclineCause {
         /// How many occurrences the region covers.
         covered: u32,
     },
+    /// The request's target profile declared no accepted policy the strategy
+    /// requires before it can be offered.
+    ///
+    /// Decided from the profile before any region exists. Silence is not a
+    /// default width and not a substitution of another partition rule.
+    TargetPolicyUndeclared {
+        /// Stable code naming the missing policy family.
+        policy: &'static str,
+    },
 }
 
 impl StrategyDeclineCause {
@@ -1341,7 +1350,8 @@ impl StrategyDeclineCause {
             Self::NumericalPermissionRefused { .. } => "numerical-permission-refused",
             Self::NoAdmissibleShape { rule, .. }
             | Self::Unrepresentable { rule }
-            | Self::UnspellableRegion { rule, .. } => rule,
+            | Self::UnspellableRegion { rule, .. }
+            | Self::TargetPolicyUndeclared { policy: rule } => rule,
         }
     }
 
@@ -1349,13 +1359,13 @@ impl StrategyDeclineCause {
     ///
     /// **Appends-only, carried by per-tag injectivity at this site rather than
     /// by a green gate.** Each variant writes a distinct leading tag byte —
-    /// `0x01`, `0x02`, `0x03`, `0x04` — and no variant writes another's, so two
-    /// causes can share an encoding only if one variant's payload equals its
-    /// own for two distinct values. Within `0x04` the rule is length-prefixed
-    /// and the count is a fixed four-byte field, so the payload is a bijection
-    /// onto `(rule, covered)`. `0x04` was unused before this variant existed,
-    /// so every previously encoded cause keeps its exact bytes and no pinned
-    /// identity moves.
+    /// `0x01`, `0x02`, `0x03`, `0x04`, `0x05` — and no variant writes another's,
+    /// so two causes can share an encoding only if one variant's payload equals
+    /// its own for two distinct values. Within `0x04` the rule is
+    /// length-prefixed and the count is a fixed four-byte field, so the payload
+    /// is a bijection onto `(rule, covered)`. `0x05` is the missing-policy
+    /// case. `0x05` was unused before this variant existed, so every previously
+    /// encoded cause keeps its exact bytes and no pinned identity moves.
     fn encode(self, output: &mut Vec<u8>) {
         match self {
             Self::NumericalPermissionRefused { dimension } => {
@@ -1375,6 +1385,10 @@ impl StrategyDeclineCause {
                 output.push(0x04);
                 push_slice(output, rule.as_bytes());
                 output.extend_from_slice(&covered.to_be_bytes());
+            }
+            Self::TargetPolicyUndeclared { policy } => {
+                output.push(0x05);
+                push_slice(output, policy.as_bytes());
             }
         }
     }
@@ -3725,6 +3739,11 @@ fn propose_workgroup_tree(
                     crate::physical::WorkgroupTreeUnavailable::Unrepresentable => {
                         StrategyDeclineCause::Unrepresentable {
                             rule: unavailable.reason(),
+                        }
+                    }
+                    crate::physical::WorkgroupTreeUnavailable::QualifiedWidthPolicyUndeclared => {
+                        StrategyDeclineCause::TargetPolicyUndeclared {
+                            policy: unavailable.reason(),
                         }
                     }
                 },
