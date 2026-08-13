@@ -1,7 +1,7 @@
 ---
 id: pin-the-strict-contraction-simdgroup-refusal
 title: Pin the strict-contraction simdgroup realization refusal
-status: review
+status: done
 priority: p1
 dependencies: [qualify-the-simdgroup-matrix-contraction-realization]
 related: [research-an-explicit-seeded-fused-contraction-operation, realize-the-contraction-through-the-appendable-direct-path]
@@ -9,9 +9,6 @@ scopes: [implementation/metal, implementation/compiler, implementation/ir, contr
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, numerics, contraction, correctness, refusal, strict]
-claimed_from: todo
-assignee: worker-strict-contraction-simdgroup
-lease_expires_at: 1786649004
 ---
 ## Outcome
 
@@ -61,3 +58,5 @@ Production subjects were broken independently and restored. Each load-bearing re
 - **NaN.** `emit_contraction_product` stopped canonicalizing the product. `the_contraction_kernel_canonicalizes_after_every_combine` failed with `each emitted product and sum commits the canonical payload:` and `left: 2` / `right: 4`.
 
 `fusion_seed_and_nan_subjects_fail_independently` keeps those three messages watchable on copies of the emitted text so a later change cannot make one assertion cover the other two.
+
+Coordinator `make full` on `9f8cc083`: 3475 passed. Merged to `main` at `eb64ff0397454e37139ea108e9fb0b09cdc52d0c`. No new public refusal surface; no additional Tom packet.

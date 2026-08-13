@@ -1,7 +1,7 @@
 ---
 id: preserve-governed-key-types-in-loader-eligibility-diagnostics
 title: Preserve governed key types in loader eligibility diagnostics
-status: review
+status: done
 priority: p1
 dependencies: [select-executable-variants-across-registered-backend-families]
 related: [accept-the-loader-variant-eligibility-vocabulary]
@@ -9,9 +9,6 @@ scopes: [implementation/runtime, implementation/candle, research/target-profiles
 shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, public-boundary, correctness]
-claimed_from: todo
-assignee: worker-loader-eligibility-keys
-lease_expires_at: 1786649004
 ---
 ## User-visible outcome
 
@@ -119,5 +116,7 @@ cargo check -p tiler --tests --offline
 **Measurement boundary.** Device-free host-side type and formatting change. No kernel work, no artifact bytes, no identity domain.
 
 **Unsupported cases.** `ForeignRouteRequirementOwner` still stores backend keys as `String`. No external consumer compatibility commitment was found.
+
+Coordinator `make full` on `18dee6df`: 3466 passed. Merged to `main` at `eb64ff0397454e37139ea108e9fb0b09cdc52d0c`. The changed variants remain labelled drafts on [`accept-the-loader-variant-eligibility-vocabulary`](accept-the-loader-variant-eligibility-vocabulary.md).
 
 **Stop conditions.** No dependency cycle, no artifact identity/bytes change, no external compatibility commitment.
