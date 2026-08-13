@@ -240,17 +240,22 @@ impl EquivalenceEvidence {
 /// One retained complete plan, assembled through structured KIR into a verified
 /// kernel program and a neutral artifact construction plan.
 ///
-/// The alternative owns one selected physical plan under one semantic origin.
-/// Its exact identity binds that origin, the rewritten semantic authority, the
-/// resolved contract, and the plan identity; its stable string is presentation
-/// only. Its cost is the plan's exact aggregate structural cost. Nothing here
+/// The alternative owns one selected physical plan under one semantic origin
+/// and the exact verified [`tiler_ir::semantic::SemanticProgram`] that origin
+/// produced. Missing candidate retention is unrepresentable: the field is
+/// mandatory, private, and never an `Option` or a side table. Its exact
+/// identity binds that origin, the rewritten semantic authority, the resolved
+/// contract, and the plan identity; its stable string is presentation only.
+/// Its cost is the plan's exact aggregate structural cost. Nothing here
 /// re-decides feasibility or legality; both were settled by the frontier and
 /// the fusion-legality authority before the plan was retained.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub(crate) struct ProgramAlternative {
     pub(crate) stable_id: String,
     pub(crate) identity: ProgramAlternativeIdentity,
     owner_key: String,
+    /// Exact verified candidate this plan implements.
+    semantic: tiler_ir::semantic::SemanticProgram,
     pub(crate) kind: ProgramAlternativeKind,
     pub(crate) plan: SelectedPlan,
     pub(crate) scheduled_regions: Vec<VerifiedScheduledRegion>,
@@ -271,6 +276,28 @@ pub(crate) struct ProgramAlternative {
     pub(crate) structural_cost: PlanStructuralCost,
     pub(crate) equivalence: EquivalenceEvidence,
 }
+
+/// Equality uses the retained candidate's verified [`tiler_ir::semantic::SemanticIdentity`],
+/// never the `Arc` pointer [`tiler_ir::semantic::SemanticProgram`] clones share.
+impl PartialEq for ProgramAlternative {
+    fn eq(&self, other: &Self) -> bool {
+        self.stable_id == other.stable_id
+            && self.identity == other.identity
+            && self.owner_key == other.owner_key
+            && self.semantic.semantic_identity() == other.semantic.semantic_identity()
+            && self.kind == other.kind
+            && self.plan == other.plan
+            && self.scheduled_regions == other.scheduled_regions
+            && self.kernels == other.kernels
+            && self.program == other.program
+            && self.artifact_plan == other.artifact_plan
+            && self.realization == other.realization
+            && self.structural_cost == other.structural_cost
+            && self.equivalence == other.equivalence
+    }
+}
+
+impl Eq for ProgramAlternative {}
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct ProgramAlternativeIdentity(Box<[u8]>);
@@ -1392,7 +1419,22 @@ fn verify_global_portfolio(
             &owner.request,
             &alternative.plan,
         );
-        if alternative.owner_key != owner.key || alternative.identity != identity {
+        // Re-derive the retained candidate's complete semantic identity and the
+        // alternative identity that candidate would mint. A swapped program, a
+        // candidate from another owner, or an identity moved without the
+        // program fails the same named rule: the owner key, stored identity,
+        // and retained graph must name one subject.
+        if alternative.owner_key != owner.key
+            || alternative.identity != identity
+            || alternative.semantic.semantic_identity() != owner.semantic.semantic_identity()
+            || alternative.identity
+                != ProgramAlternativeIdentity::new(
+                    owner.origin,
+                    &alternative.semantic,
+                    &owner.request,
+                    &alternative.plan,
+                )
+        {
             return Err(ProgramError::Structure {
                 rule: "semantic-portfolio-owner-binding",
             }

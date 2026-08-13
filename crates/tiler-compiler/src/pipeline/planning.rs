@@ -1093,6 +1093,7 @@ pub(super) fn build_alternative_for_origin(
         stable_id: identity.label(),
         identity,
         owner_key: owner.key.to_owned(),
+        semantic: semantic.clone(),
         kind,
         plan: plan.clone(),
         scheduled_regions: scheduled,

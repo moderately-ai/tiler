@@ -124,6 +124,16 @@ pub(super) fn verify_alternative(
     lowering: &ResolvedLowering,
     cause: Option<TerminalCause>,
 ) -> Result<(), TargetFailure> {
+    if alternative.semantic.semantic_identity() != semantic.semantic_identity() {
+        return Err(failure_at_source(
+            ProgramError::Structure {
+                rule: "portfolio-retained-semantic-binding",
+            }
+            .into(),
+            ExplainStage::ProgramVerification,
+            cause,
+        ));
+    }
     if alternative.stable_id != alternative.identity.label()
         || alternative.structural_cost != alternative.plan.cost()
         || alternative.kind
