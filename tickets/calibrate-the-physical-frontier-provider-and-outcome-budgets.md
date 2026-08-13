@@ -6,7 +6,7 @@ priority: p1
 dependencies: [decide-whether-the-implementation-frontier-owes-a-retention-budget]
 related: [replace-provider-offer-with-a-host-bounded-frontier-sink]
 scopes: [research/program-planning, implementation/compiler]
-shared_scopes: [project/tickets]
+shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [optimizer, budgets, measurement, host-performance]
 claimed_from: todo
