@@ -1,7 +1,7 @@
 ---
 id: refuse-unknown-fact-source-provenance-schemas-in-artifact-decode
 title: Refuse unknown fact-source provenance schemas in artifact decode
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [record-the-compilation-selection-in-target-measurement-provenance, carry-required-compilation-selection-identity-on-compile-profile-contexts]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/artifact, contracts/numerics, contrac
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, provenance, identity, correctness, fail-closed]
+claimed_from: todo
+assignee: worker-refuse-unknown-schema
+lease_expires_at: 1786631597
 ---
 ## User-visible outcome
 
