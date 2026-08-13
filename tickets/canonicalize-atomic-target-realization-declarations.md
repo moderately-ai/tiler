@@ -1,7 +1,7 @@
 ---
 id: canonicalize-atomic-target-realization-declarations
 title: Canonicalize atomic target realization declarations
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [declare-cpu-vector-realization-facts-in-the-target-profile, admit-the-first-typed-synchronization-point-and-atomic-target-authority]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [target-profiles, identity, canonicalization, correctness]
+claimed_from: todo
+assignee: worker-canonicalize-atomic
+lease_expires_at: 1786585709
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: make-loader-selection-refusal-formatting-total
 title: Make loader selection-refusal formatting total
-status: todo
+status: in-progress
 priority: p1
 dependencies: [select-executable-variants-across-registered-backend-families]
 related: [accept-the-loader-variant-eligibility-vocabulary]
@@ -9,6 +9,9 @@ scopes: [implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, correctness, diagnostics]
+claimed_from: todo
+assignee: worker-loader-refusal-fmt
+lease_expires_at: 1786585709
 ---
 ## User-visible outcome
 

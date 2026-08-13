@@ -1,7 +1,7 @@
 ---
 id: retain-one-derived-proof-summary-per-shape-environment
 title: Retain one derived proof summary per shape environment
-status: todo
+status: in-progress
 priority: p1
 dependencies: [resolve-semantic-shape-inference-over-symbolic-extents]
 related: [seal-and-validate-sourced-shapes-at-semantic-inference-boundaries, narrow-symbolic-inference-and-restore-host-owned-refusals, replace-broadcast-f32-v1-with-sourced-broadcast-f32-v2-semantics]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, constraints, performance, correctness, identity]
+claimed_from: todo
+assignee: worker-retain-proof-summary
+lease_expires_at: 1786585709
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: preserve-retained-tool-bytes-in-macro-read-back
 title: Preserve retained tool bytes in macro read-back
-status: todo
+status: in-progress
 priority: p1
 dependencies: [emit-from-a-populated-retention-in-the-inline-expansion]
 related: [accept-the-retention-read-back-s-caller-visible-boundary]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [frontend, diagnostics, correctness, public-boundary]
+claimed_from: todo
+assignee: worker-retained-tool-bytes
+lease_expires_at: 1786585710
 ---
 ## User-visible outcome
 

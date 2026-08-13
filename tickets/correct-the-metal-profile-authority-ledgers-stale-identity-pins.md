@@ -1,7 +1,7 @@
 ---
 id: correct-the-metal-profile-authority-ledgers-stale-identity-pins
 title: Correct the Metal profile authority ledger's stale identity pins
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [construct-and-bind-the-first-authoritative-metal-compile-profile, declare-metal-subgroup-realization-facts-in-the-target-profile]
@@ -9,6 +9,9 @@ scopes: [research/target-profiles, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, identity, target-profiles, correction]
+claimed_from: todo
+assignee: worker-metal-ledger-pins
+lease_expires_at: 1786585710
 ---
 ## User-visible outcome
 
