@@ -1,7 +1,7 @@
 ---
 id: prove-one-live-extent-artifact-payload-and-pipeline-at-two-n
 title: Prove one live-extent artifact payload and pipeline at two N
-status: review
+status: done
 priority: p1
 dependencies: [carry-live-extent-operands-through-the-artifact-envelope]
 related: [admit-live-extent-operands-to-payload-indexing, deliver-an-artifact-family-from-a-symbolic-region]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, implementation/build, implementation/metal, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, identity, runtime, metal]
-claimed_from: todo
-assignee: worker-prove-live-extent-two-n
-lease_expires_at: 1786662272
 ---
 ## User-visible outcome
 
