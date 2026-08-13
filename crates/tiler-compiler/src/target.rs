@@ -2017,27 +2017,6 @@ impl TargetProfileBuilder {
         Ok(())
     }
 
-    /// Declares whether this target realizes one *complete* synchronization
-    /// subject.
-    ///
-    /// The whole subject is one argument on purpose, and there is deliberately
-    /// no per-dimension spelling — no `declare_barrier_execution_scope`, no
-    /// `declare_fenced_spaces`. Each dimension is separately true of some
-    /// realization on some machine, so a profile able to state them
-    /// independently would let a caller's conjunction be satisfied by facts none
-    /// of which is about it. A target realizing two subjects declares two facts.
-    ///
-    /// The verdict is stated rather than implied by presence, so a measured
-    /// negative is recordable: an absent declaration is `Unknown` and rejects
-    /// before executable-frontier admission, while
-    /// [`SynchronizationSupport::Unrealizable`] is a typed refusal a caller can
-    /// act on.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TargetProfileBuildError`] when a fact for the same subject and
-    /// phase is already declared, or when the subject fences no memory domain —
-    /// a fence over nothing publishes nothing, so no handoff could consume it.
     /// Declares whether this target realizes one *complete* subgroup subject.
     ///
     /// **Labelled draft** under ADR 0075. The whole subject is one argument on
