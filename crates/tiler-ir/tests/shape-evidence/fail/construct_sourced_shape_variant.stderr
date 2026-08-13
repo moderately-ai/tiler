@@ -1,0 +1,5 @@
+error[E0599]: no associated function or constant named `Static` found for struct `SourcedShape` in the current scope
+ --> tests/shape-evidence/fail/construct_sourced_shape_variant.rs:4:27
+  |
+4 |     let _ = SourcedShape::Static(Shape::from_dims([2, 3]));
+  |                           ^^^^^^ associated function or constant not found in `SourcedShape`

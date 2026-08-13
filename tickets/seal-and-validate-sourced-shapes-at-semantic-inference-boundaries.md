@@ -1,7 +1,7 @@
 ---
 id: seal-and-validate-sourced-shapes-at-semantic-inference-boundaries
 title: Seal and validate sourced shapes at semantic inference boundaries
-status: in-progress
+status: review
 priority: p0
 dependencies: []
 related: [resolve-semantic-shape-inference-over-symbolic-extents, promote-the-symbolic-index-profile-to-a-public-boundary]
@@ -29,6 +29,10 @@ Every sourced semantic shape has one normalized spelling, every symbol retained 
 **Verified — normalized values already have one canonical encoding.** `SourcedShape::encode` length-frames the rank and encodes each `SourcedExtent`; a static boundary and its normalized sourced input deliberately encode the same logical bytes. The repair must preserve bytes for the admitted normalized population and remove the duplicate Rust spelling rather than re-encode it.
 
 These findings repair the safety premise without changing the valid built-in elementwise equality rule or this ticket's purpose.
+
+## Implementation-base re-audit — 2026-08-12, exact base `a776f58b763cbcf8d883c7d185879f12750a148d`
+
+**Verified — the four repaired Facts above still held at the claimed implementation base.** The complete owning files were re-read before editing: `crates/tiler-ir/src/shape/sourced.rs` still exposed `pub enum SourcedShape`; `FrozenSemanticRegistry::infer_operation_with_extent_sources` still validated only types around the provider call; `OperationInferenceOutputs::try_push` still charged a rank-times-`Extent` estimate; and `SourcedShape::encode` still supplied the already-correct normalized canonical bytes. No intervening commit changed the ticket's purpose or identity conclusion.
 
 ## Work
 
@@ -63,3 +67,22 @@ Do not add a public custom-registry-plus-environment constructor, a provider-sel
 ## Closes when
 
 The malformed-shape panic and duplicate spelling are unrepresentable, every operand/result symbol is admitted against the exact environment before retention, exact byte accounting is load-bearing, identity remains coherent, and the revised public shape surface has independent review.
+
+## Implementation evidence — 2026-08-12
+
+- `SourcedShape` is now an opaque public struct over a private normalized representation. The existing total read surface and `From<Shape>` remain; the symbolic constructor stays crate-private and rejects rank `MAX_SHAPE_RANK + 1`.
+- `FrozenSemanticRegistry::infer_operation_with_extent_sources` admits every operand before provider inference and every result before returning it. The no-environment entry treats any symbol as undeclared. `SemanticProgramBuilder::validate` independently rechecks every retained value against its one environment.
+- `OperationInferenceOutputs::try_push` charges the exact `SourcedShape::encoded_len`; the 16 MiB boundary test uses maximum-length symbol components and reaches the byte limit before the result-count limit.
+- No identity/domain value was changed. The complete `tiler-ir` test population, including existing identity pins, remains green.
+
+Load-bearing perturbations were run separately with assertions unchanged:
+
+- adding a public `SourcedShape::Static` spelling made trybuild report `Expected test case to fail to compile, but it succeeded`;
+- removing operand admission made `registry_refuses_an_undeclared_symbolic_operand_before_calling_the_provider` fail at `assertion failed: !called.load(Ordering::SeqCst)`;
+- removing result admission made the foreign-result test report `called Result::unwrap_err() on an Ok value`;
+- removing internal replay admission made the commitment test report `called Result::unwrap_err() on an Ok value: ()`;
+- restoring rank-only byte charging made the exact-byte test report `called Result::unwrap_err() on an Ok value: ()`;
+- bypassing literal normalization made the normalization test report `left: None`, `right: Some(Shape([Extent(2), Extent(3)]))`;
+- bypassing the symbolic-rank guard made the rank test accept the `MAX_SHAPE_RANK + 1` subject instead of returning `RankTooLarge`.
+
+Final checks: `cargo nextest run -p tiler-ir`; `cargo test -p tiler-ir --doc`; `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler-ir --no-deps`; `cargo clippy -p tiler-ir --all-targets -- -D warnings`; `cargo fmt --all -- --check`; `git diff --check`.

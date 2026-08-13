@@ -158,7 +158,8 @@ use std::sync::Arc;
 use crate::program::abi::AvailabilityPhase;
 
 use super::{
-    Axis, Extent, ExtentInterval, Shape, ShapeEnv, ShapeEnvIdentity, ShapeError, ShapeSymbol,
+    Axis, Extent, ExtentInterval, MAX_SHAPE_RANK, Shape, ShapeEnv, ShapeEnvIdentity, ShapeError,
+    ShapeSymbol,
 };
 
 /// The last availability phase a sourced extent may be read from.
@@ -270,7 +271,7 @@ impl std::fmt::Display for SourcedExtent {
 
 /// One tensor boundary's ordered extents, and where each one comes from.
 ///
-/// # Why an enum rather than a bare `Vec<SourcedExtent>`
+/// # Why the representation is private
 ///
 /// [`Shape`] is the crate's public fixed-shape vocabulary, and
 /// [`Self::as_static`] returns a *borrow* of one. A wholly static boundary must
@@ -283,10 +284,12 @@ impl std::fmt::Display for SourcedExtent {
 ///
 /// # The normalization invariant
 ///
-/// Construction collapses an all-literal extent vector into [`Self::Static`],
-/// so [`Self::Sourced`] holds at least one symbol and a boundary has exactly
-/// one spelling. That is what makes [`Self::as_static`] depend on the boundary
-/// rather than on which constructor authored it.
+/// Construction collapses an all-literal extent vector into the private static
+/// representation, so the private sourced representation holds at least one
+/// symbol and a boundary has exactly one spelling. Keeping that choice private
+/// makes the invariant true for safe callers rather than merely conventional.
+/// That is what makes [`Self::as_static`] depend on the boundary rather than on
+/// which constructor authored it.
 /// # Equality
 ///
 /// Structural, and sound because of the normalization invariant above: an
@@ -296,8 +299,12 @@ impl std::fmt::Display for SourcedExtent {
 /// still two different spellings — which is the same question
 /// [`Self::as_static`] answers and the one identity is a function of.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum SourcedShape {
-    /// Every extent was a literal fixed when the boundary was authored.
+pub struct SourcedShape(SourcedShapeRepr);
+
+/// Private normalized storage for [`SourcedShape`].
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum SourcedShapeRepr {
+    /// Every extent was a literal when the boundary was authored.
     Static(Shape),
     /// At least one extent is a declared `ShapeEnv` symbol.
     Sourced(Vec<SourcedExtent>),
@@ -314,32 +321,38 @@ impl SourcedShape {
     /// — which is where that layer's own rank and byte limits are enforced. A
     /// publicly constructible boundary would be one that bypassed them.
     pub(crate) const fn from_shape(shape: Shape) -> Self {
-        Self::Static(shape)
+        Self(SourcedShapeRepr::Static(shape))
     }
 
     /// Builds a boundary from ordered sourced extents, normalizing as above.
     ///
     /// # Errors
     ///
-    /// Returns [`ShapeError::RankTooLarge`] when an all-literal boundary's rank
-    /// exceeds the governed shape bound. A consuming layer's own, tighter rank
-    /// limit is checked separately by that layer's builder; this is the shape
-    /// vocabulary refusing to represent the normalized form at all, and the two
-    /// limits stay distinct rather than one standing in for the other.
+    /// Returns [`ShapeError::RankTooLarge`] when the boundary's rank exceeds the
+    /// governed shape bound. A consuming layer's own, tighter rank limit is
+    /// checked separately by that layer's builder; this is the shape vocabulary
+    /// refusing to represent the value at all, and the two limits stay distinct
+    /// rather than one standing in for the other.
     pub(crate) fn sourced(extents: Vec<SourcedExtent>) -> Result<Self, ShapeError> {
+        if extents.len() > MAX_SHAPE_RANK {
+            return Err(ShapeError::RankTooLarge {
+                rank: MAX_SHAPE_RANK.saturating_add(1),
+                limit: MAX_SHAPE_RANK,
+            });
+        }
         let literals: Option<Vec<Extent>> = extents.iter().map(SourcedExtent::as_static).collect();
         match literals {
-            Some(literals) => Shape::try_new(literals).map(Self::Static),
-            None => Ok(Self::Sourced(extents)),
+            Some(literals) => Shape::try_new(literals).map(Self::from_shape),
+            None => Ok(Self(SourcedShapeRepr::Sourced(extents))),
         }
     }
 
     /// Returns the logical rank.
     #[must_use]
     pub fn rank(&self) -> usize {
-        match self {
-            Self::Static(shape) => shape.rank(),
-            Self::Sourced(extents) => extents.len(),
+        match &self.0 {
+            SourcedShapeRepr::Static(shape) => shape.rank(),
+            SourcedShapeRepr::Sourced(extents) => extents.len(),
         }
     }
 
@@ -351,9 +364,9 @@ impl SourcedShape {
     /// of that rather than of what a particular environment resolves it to.
     #[must_use]
     pub const fn as_static(&self) -> Option<&Shape> {
-        match self {
-            Self::Static(shape) => Some(shape),
-            Self::Sourced(_) => None,
+        match &self.0 {
+            SourcedShapeRepr::Static(shape) => Some(shape),
+            SourcedShapeRepr::Sourced(_) => None,
         }
     }
 
@@ -368,9 +381,9 @@ impl SourcedShape {
         // Each arm indexes the slice whose length `rank()` returned, so both
         // indices are in range by construction; a panic here would be a broken
         // invariant rather than an input a caller can reach.
-        (0..self.rank()).map(move |axis| match self {
-            Self::Static(shape) => SourcedExtent::Static(shape.extents()[axis]),
-            Self::Sourced(extents) => extents[axis].clone(),
+        (0..self.rank()).map(move |axis| match &self.0 {
+            SourcedShapeRepr::Static(shape) => SourcedExtent::Static(shape.extents()[axis]),
+            SourcedShapeRepr::Sourced(extents) => extents[axis].clone(),
         })
     }
 
@@ -402,8 +415,8 @@ impl SourcedShape {
     /// contract depends on those.
     ///
     /// Renormalizing, so a boundary whose only symbolic axes were removed comes
-    /// back as [`Self::Static`] and a rank-collapsing reduction has one
-    /// spelling — the same invariant every other constructor holds.
+    /// back as a static shape and a rank-collapsing reduction has one spelling
+    /// — the same invariant every other constructor holds.
     ///
     /// # Panics
     ///
@@ -433,7 +446,7 @@ impl From<Shape> for SourcedShape {
     /// caller holding a [`Shape`] never reaches for the enum variant directly
     /// and the normalization invariant holds by construction.
     fn from(shape: Shape) -> Self {
-        Self::Static(shape)
+        Self::from_shape(shape)
     }
 }
 
@@ -442,7 +455,7 @@ impl std::fmt::Display for SourcedShape {
     ///
     /// Delegating to [`SourcedExtent`]'s rendering rather than restating it is
     /// what keeps a literal axis reading identically whether the boundary is
-    /// [`Self::Static`] or a normalized [`Self::Sourced`].
+    /// the private static representation or a normalized sourced one.
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("[")?;
         for (index, extent) in self.extents().enumerate() {
@@ -457,10 +470,9 @@ impl std::fmt::Display for SourcedShape {
 
 /// Frames a run of sourced extents: the length, then each extent's own bytes.
 ///
-/// The single definition of a boundary's framing. Both
-/// [`SourcedShape::encoded_len`] and [`SourcedShape::static_encoded_len`]
-/// delegate here so a boundary's byte length cannot be described two ways, in
-/// the same spirit as this crate's string framing.
+/// The single definition of a boundary's framing. [`SourcedShape::encoded_len`]
+/// delegates here so a boundary's byte length cannot be described separately
+/// from its encoder, in the same spirit as this crate's string framing.
 fn extents_encoded_len(extents: impl Iterator<Item = SourcedExtent>) -> usize {
     extents
         .map(|extent| extent.encoded_len())
@@ -594,6 +606,44 @@ impl std::fmt::Display for ExtentSourceError {
 }
 
 impl std::error::Error for ExtentSourceError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shape::SymbolScope;
+
+    fn symbol() -> ShapeSymbol {
+        ShapeSymbol::new(SymbolScope::new("shape-test").unwrap(), "n").unwrap()
+    }
+
+    #[test]
+    fn all_literal_sourced_shapes_normalize_to_the_static_representation() {
+        let sourced = SourcedShape::sourced(vec![
+            SourcedExtent::Static(Extent::new(2)),
+            SourcedExtent::Static(Extent::new(3)),
+        ])
+        .unwrap();
+        let static_shape = Shape::from_dims([2, 3]);
+
+        assert_eq!(sourced.as_static(), Some(&static_shape));
+        assert_eq!(sourced, SourcedShape::from(static_shape));
+    }
+
+    #[test]
+    fn symbolic_sourced_shapes_refuse_one_axis_beyond_the_shape_bound() {
+        let error =
+            SourcedShape::sourced(vec![SourcedExtent::Symbol(symbol()); MAX_SHAPE_RANK + 1])
+                .unwrap_err();
+
+        assert_eq!(
+            error,
+            ShapeError::RankTooLarge {
+                rank: MAX_SHAPE_RANK + 1,
+                limit: MAX_SHAPE_RANK,
+            }
+        );
+    }
+}
 
 /// Two extents a rule required to be one extent, and the axis they sit on.
 ///

@@ -932,15 +932,14 @@ mod tests {
     /// `every_dimension_is_visible_through_one_total_extent_view`, and it
     /// replaced the same defect: a `static_shape()` beside a symbol accessor
     /// made "wholly literal" and "symbolic" two independent answers whose
-    /// complementarity only a test held. [`SourcedShape`] is matched
-    /// exhaustively here instead, and both arms are taken by the one region
-    /// under test.
+    /// complementarity only a test held. [`SourcedShape`]'s total views exercise
+    /// both representations through the one region under test.
     ///
     /// The last assertion is the normalization invariant, and it is what keeps
     /// [`SourcedShape::as_static`] a fact about the boundary rather than about
     /// which constructor authored it: a boundary written through the *sourced*
-    /// path whose extents all turned out to be literals is a
-    /// [`SourcedShape::Static`].
+    /// path whose extents all turned out to be literals has the one static
+    /// representation.
     #[test]
     fn every_boundary_is_visible_through_one_total_shape_view() {
         let region = read_from_symbolic_axis(environment_over(
@@ -953,16 +952,13 @@ mod tests {
         let boundaries: Vec<_> = region
             .tensors()
             .map(|tensor| {
-                let sourced = match tensor.shape() {
-                    SourcedShape::Static(shape) => {
-                        assert_eq!(tensor.shape().as_static(), Some(shape));
-                        Vec::new()
-                    }
-                    SourcedShape::Sourced(extents) => extents
-                        .iter()
-                        .filter_map(|extent| extent.symbol().cloned())
-                        .collect::<Vec<_>>(),
-                };
+                let extents: Vec<_> = tensor.shape().extents().collect();
+                let all_static = extents.iter().all(|extent| extent.as_static().is_some());
+                let sourced = extents
+                    .iter()
+                    .filter_map(|extent| extent.symbol().cloned())
+                    .collect::<Vec<_>>();
+                assert_eq!(tensor.shape().as_static().is_some(), all_static);
                 (tensor.role(), sourced)
             })
             .collect();

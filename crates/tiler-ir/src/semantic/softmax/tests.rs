@@ -504,14 +504,16 @@ fn the_structural_rules_refuse_by_name() {
 /// to assert that no symbolic refusal *could* fire, on the ground that a
 /// [`ValueFact`] carried a fixed `Shape` and so had nothing symbolic to refuse.
 /// A fact now carries a [`SourcedShape`](crate::shape::SourcedShape), so the
-/// case is reachable and the family answers it: this key decides shapes over
-/// literal extents only and declines a symbolic operand rather than carrying one
-/// into a program its normative definition, reference evaluation, and numerical
-/// conformance are not stated over.
+/// case is reachable. This direct registry fixture supplies no shape
+/// environment, so the host refuses the symbol as undeclared before asking the
+/// family. Program construction with an environment separately proves that this
+/// family decides shapes over literal extents only and reports
+/// `SymbolicExtentUnsupported` there.
 ///
 /// The refusal is a *typed extent* failure rather than a family shape
 /// diagnostic, which is the discrimination that matters: the operand is not the
-/// wrong size, it is a size this rule has no way to read.
+/// wrong size, it names a source this direct registry call has no authority to
+/// interpret.
 #[test]
 fn a_symbolic_reduced_extent_is_refused_and_every_literal_one_infers() {
     // The reduced extent this workload grows is exercised at the static values a
@@ -544,10 +546,7 @@ fn a_symbolic_reduced_extent_is_refused_and_every_literal_one_infers() {
     };
     assert_eq!(
         rejection.source_error().extent_source(),
-        Some(&ExtentSourceError::SymbolicExtentUnsupported {
-            axis: Axis::new(1),
-            symbol,
-        }),
-        "the refusal names the axis and the symbol it could not read",
+        Some(&ExtentSourceError::UndeclaredSymbol { symbol }),
+        "the refusal names the symbol this call supplied no environment for",
     );
 }

@@ -1438,14 +1438,7 @@ impl<'a> OperationInferenceOutputs<'a> {
         let fact_bytes = fact
             .resolved_type
             .canonical_encoded_len()
-            .checked_add(std::mem::size_of::<u64>())
-            .and_then(|bytes| {
-                fact.shape
-                    .rank()
-                    .checked_mul(std::mem::size_of::<crate::shape::Extent>())
-                    .and_then(|shape_bytes| bytes.checked_add(shape_bytes))
-            })
-            .unwrap_or(usize::MAX);
+            .saturating_add(fact.shape.encoded_len());
         let Some(remaining_canonical_bytes) =
             self.remaining_canonical_bytes.checked_sub(fact_bytes)
         else {
@@ -2165,6 +2158,46 @@ mod tests {
         assert_eq!(error.code().as_str(), "tiler.schema.result-bytes");
         assert!(outputs.results.len() < MAX_OPERATION_RESULTS as usize);
         assert_eq!(outputs.finish(Ok(())).unwrap_err(), error);
+    }
+
+    #[test]
+    fn inference_outputs_charge_the_exact_symbolic_shape_encoding() {
+        let symbol = crate::shape::ShapeSymbol::new(
+            crate::shape::SymbolScope::new("s".repeat(128)).unwrap(),
+            "n".repeat(128),
+        )
+        .unwrap();
+        let shape =
+            crate::shape::SourcedShape::sourced(vec![
+                crate::shape::SourcedExtent::Symbol(symbol);
+                4_096
+            ])
+            .unwrap();
+        let fact = ValueFact::new(
+            ResolvedValueType::nominal(TypeKey::new("test", "symbolic", 1).unwrap()),
+            shape,
+        );
+        let fact_bytes = fact
+            .resolved_type
+            .canonical_encoded_len()
+            .checked_add(fact.shape.encoded_len())
+            .unwrap();
+        let fitting = MAX_OPERATION_RESULT_CANONICAL_BYTES / fact_bytes;
+        assert!(fitting < MAX_OPERATION_RESULTS as usize);
+
+        let schema = OperationSchema::new(
+            OperationArity::exact(0),
+            OperationArity::exact(MAX_OPERATION_RESULTS),
+            [],
+        )
+        .unwrap();
+        let mut outputs = OperationInferenceOutputs::new(&schema);
+        for _ in 0..fitting {
+            outputs.try_push(fact.clone()).unwrap();
+        }
+        let error = outputs.try_push(fact).unwrap_err();
+        assert_eq!(error.code().as_str(), "tiler.schema.result-bytes");
+        assert_eq!(outputs.results.len(), fitting);
     }
 
     #[test]

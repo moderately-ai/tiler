@@ -769,9 +769,9 @@ impl<'a> TensorRef<'a> {
     /// view for the same reason: [`SourcedShape::as_static`] answers the literal
     /// case from the boundary itself, so no caller has to hold the rule that a
     /// non-static boundary is therefore symbolic. A wholly literal boundary
-    /// normalizes to [`SourcedShape::Static`] whichever constructor authored it,
-    /// so `shape().as_static()` is a fact about the boundary rather than about
-    /// the call that made it.
+    /// normalizes to one private static representation whichever constructor
+    /// authored it, so `shape().as_static()` is a fact about the boundary rather
+    /// than about the call that made it.
     #[must_use]
     pub const fn shape(self) -> &'a SourcedShape {
         &self.data.shape

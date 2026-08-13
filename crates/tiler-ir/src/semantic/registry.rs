@@ -1709,6 +1709,8 @@ impl FrozenSemanticRegistry {
         for operand in operands {
             self.validate_type(operand.resolved_type())?;
         }
+        admit_value_fact_extents(operands, extent_sources)
+            .map_err(|source| operation_rejection(key, registered, source))?;
         for field in attributes.fields() {
             self.validate_canonical_value_types(field.value())?;
         }
@@ -1724,6 +1726,8 @@ impl FrozenSemanticRegistry {
         for result in &results {
             self.validate_type(result.resolved_type())?;
         }
+        admit_value_fact_extents(&results, extent_sources)
+            .map_err(|source| operation_rejection(key, registered, source))?;
         Ok(results)
     }
 
@@ -1889,6 +1893,38 @@ fn operation_rejection(
         provider: registered.provider.clone(),
         source,
     }))
+}
+
+/// Revalidates every symbolic fact against the exact environment offered for
+/// this application.
+///
+/// Providers propose facts; they do not establish that a symbol belongs to the
+/// applying program. Keeping this check beside the frozen registry entry point
+/// makes both ordinary insertion and later internal replay cross the same host
+/// authority before a fact can be retained.
+fn admit_value_fact_extents(
+    facts: &[ValueFact],
+    extent_sources: Option<&ExtentSources>,
+) -> Result<(), OperationInferenceError> {
+    for extent in facts.iter().flat_map(|fact| fact.shape().extents()) {
+        match extent_sources {
+            Some(sources) => {
+                sources
+                    .admit(&extent)
+                    .map_err(OperationInferenceError::from_extent_source)?;
+            }
+            None => {
+                if let Some(symbol) = extent.symbol() {
+                    return Err(OperationInferenceError::from_extent_source(
+                        ExtentSourceError::UndeclaredSymbol {
+                            symbol: symbol.clone(),
+                        },
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Collision-free canonical provenance for a complete frozen registry snapshot.

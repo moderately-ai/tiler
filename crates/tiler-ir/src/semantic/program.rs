@@ -1570,6 +1570,13 @@ impl SemanticProgramBuilder {
         if self
             .values
             .iter()
+            .any(|value| !self.shape_sources_are_admitted(&value.shape))
+        {
+            return Some("a value names a shape source outside this program's environment");
+        }
+        if self
+            .values
+            .iter()
             .any(|value| !self.semantic_registry.contains(&value.resolved_type))
         {
             return Some("a value type is absent from the frozen semantic registry");
@@ -1634,6 +1641,19 @@ impl SemanticProgramBuilder {
             return Some("an output references an invalid value");
         }
         None
+    }
+
+    /// Returns whether every symbol in `shape` is admitted by this program's
+    /// exact environment.
+    ///
+    /// This repeats the registry-boundary admission during internal replay so a
+    /// future constructor cannot bypass insertion validation and leave a
+    /// foreign result symbol in a verified program.
+    fn shape_sources_are_admitted(&self, shape: &SourcedShape) -> bool {
+        shape.extents().all(|extent| match &self.extent_sources {
+            Some(sources) => sources.admit(&extent).is_ok(),
+            None => extent.symbol().is_none(),
+        })
     }
 
     fn operation_contract_holds(&self, operation: &OperationData) -> bool {
@@ -1726,6 +1746,8 @@ fn validate_obligation_identity_bytes(actual: usize) -> Result<(), ProgramBuildF
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use super::super::EncodedNumericContract;
     use super::super::{
         AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueKind, F32, F32Add,
@@ -1915,7 +1937,7 @@ mod tests {
             let value = program.inputs().next().unwrap().value();
             let shape = program.shape(value).unwrap();
             assert!(
-                matches!(shape, SourcedShape::Static(_)),
+                shape.as_static().is_some(),
                 "{label}: an all-literal boundary normalizes to one spelling",
             );
             assert_eq!(
@@ -2582,6 +2604,144 @@ mod tests {
         }
     }
 
+    struct ObservingIdentity {
+        called: Arc<AtomicBool>,
+    }
+
+    impl OperationInferencer for ObservingIdentity {
+        fn infer(
+            &self,
+            request: OperationInferenceRequest<'_>,
+            outputs: &mut OperationInferenceOutputs<'_>,
+        ) -> Result<(), OperationInferenceError> {
+            self.called.store(true, Ordering::SeqCst);
+            outputs.try_push(request.operands()[0].clone())
+        }
+    }
+
+    struct ForeignSymbolResult {
+        symbol: ShapeSymbol,
+    }
+
+    impl OperationInferencer for ForeignSymbolResult {
+        fn infer(
+            &self,
+            _request: OperationInferenceRequest<'_>,
+            outputs: &mut OperationInferenceOutputs<'_>,
+        ) -> Result<(), OperationInferenceError> {
+            outputs.try_push(ValueFact::new(
+                F32::resolved_type(),
+                SourcedShape::sourced(vec![SourcedExtent::Symbol(self.symbol.clone())])
+                    .expect("the one-axis test shape is bounded"),
+            ))
+        }
+    }
+
+    struct SourcedBoundaryProvider {
+        operand_called: Arc<AtomicBool>,
+        foreign_result: ShapeSymbol,
+    }
+
+    impl SemanticRegistryProvider for SourcedBoundaryProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "sourced-boundary", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            registrar.register_operation(test_operation(
+                "observing-identity",
+                1,
+                Arc::new(ObservingIdentity {
+                    called: Arc::clone(&self.operand_called),
+                }),
+            ))?;
+            registrar.register_operation(test_operation(
+                "foreign-symbol-result",
+                1,
+                Arc::new(ForeignSymbolResult {
+                    symbol: self.foreign_result.clone(),
+                }),
+            ))
+        }
+    }
+
+    #[test]
+    fn registry_refuses_an_undeclared_symbolic_operand_before_calling_the_provider() {
+        let called = Arc::new(AtomicBool::new(false));
+        let foreign = ShapeSymbol::new(SymbolScope::new("foreign").unwrap(), "n").unwrap();
+        let provider = SourcedBoundaryProvider {
+            operand_called: Arc::clone(&called),
+            foreign_result: foreign.clone(),
+        };
+        let mut registry = SemanticRegistryBuilder::standard().unwrap();
+        registry.register_provider(&provider).unwrap();
+        let registry = registry.freeze().unwrap();
+        let operand = ValueFact::new(
+            F32::resolved_type(),
+            SourcedShape::sourced(vec![SourcedExtent::Symbol(foreign.clone())]).unwrap(),
+        );
+
+        let error = registry
+            .infer_operation(
+                &OpKey::new("test", "observing-identity", 1).unwrap(),
+                &[operand],
+                &OperationAttributes::empty(),
+            )
+            .unwrap_err();
+
+        assert!(!called.load(Ordering::SeqCst));
+        assert!(matches!(
+            error,
+            RegistryError::RejectedOperationApplication(rejection)
+                if matches!(
+                    rejection.source_error().extent_source(),
+                    Some(ExtentSourceError::UndeclaredSymbol { symbol }) if symbol == &foreign
+                )
+        ));
+    }
+
+    #[test]
+    fn builder_refuses_a_provider_result_from_outside_its_shape_environment() {
+        let called = Arc::new(AtomicBool::new(false));
+        let foreign = ShapeSymbol::new(SymbolScope::new("foreign").unwrap(), "result").unwrap();
+        let provider = SourcedBoundaryProvider {
+            operand_called: Arc::clone(&called),
+            foreign_result: foreign.clone(),
+        };
+        let mut registry = SemanticRegistryBuilder::standard().unwrap();
+        registry.register_provider(&provider).unwrap();
+        let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+        let input = builder
+            .input::<F32>(input_key("x"), Shape::from_dims([1]))
+            .unwrap();
+
+        let error = builder
+            .apply(
+                OpKey::new("test", "foreign-symbol-result", 1).unwrap(),
+                OperationAttributes::empty(),
+                &[input.erase()],
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            BuildError::ExtentSource(ExtentSourceError::UndeclaredSymbol { symbol: foreign })
+        );
+
+        let result = builder
+            .apply(
+                OpKey::new("test", "observing-identity", 1).unwrap(),
+                OperationAttributes::empty(),
+                &[input.erase()],
+            )
+            .expect("the paired static result is admitted");
+        assert_eq!(result.len(), 1);
+        assert!(called.load(Ordering::SeqCst));
+    }
+
     struct PreconditionPrecedenceProvider;
 
     impl SemanticRegistryProvider for PreconditionPrecedenceProvider {
@@ -3031,6 +3191,29 @@ mod tests {
             diagnostics.as_slice(),
             &[ValidationDiagnostic::InvalidInternalGraph {
                 reason: "an operation has no results",
+            }]
+        );
+        let error = builder.build().unwrap_err();
+        assert_eq!(error.diagnostics(), Some(&diagnostics));
+    }
+
+    #[test]
+    fn commitment_revalidates_every_retained_shape_source() {
+        let mut builder =
+            SemanticProgramBuilder::try_standard_with_shape_environment(env()).unwrap();
+        let value = builder
+            .input_sourced::<F32>(input_key("rows"), vec![SourcedExtent::Symbol(sym("n"))])
+            .unwrap();
+        builder.output(output_key("result"), value).unwrap();
+        let foreign = ShapeSymbol::new(SymbolScope::new("foreign").unwrap(), "n").unwrap();
+        builder.values[0].shape =
+            SourcedShape::sourced(vec![SourcedExtent::Symbol(foreign)]).unwrap();
+
+        let diagnostics = builder.validate().unwrap_err();
+        assert_eq!(
+            diagnostics.as_slice(),
+            &[ValidationDiagnostic::InvalidInternalGraph {
+                reason: "a value names a shape source outside this program's environment",
             }]
         );
         let error = builder.build().unwrap_err();
