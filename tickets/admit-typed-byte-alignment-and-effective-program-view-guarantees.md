@@ -1,7 +1,7 @@
 ---
 id: admit-typed-byte-alignment-and-effective-program-view-guarantees
 title: Admit typed byte alignment and effective program-view guarantees
-status: todo
+status: in-progress
 priority: p1
 dependencies: [separate-vector-operand-alignment-from-target-realization]
 related: [derive-boundary-alignment-from-the-element-type, carry-the-byte-offset-of-a-partial-binding-view]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, co
 shared_scopes: [project/tickets]
 paths: []
 tags: [alignment, placement, ir, public-boundary, correctness]
+claimed_from: todo
+assignee: worker-typed-byte-alignment
+lease_expires_at: 1786652180
 ---
 ## Acceptance
 
