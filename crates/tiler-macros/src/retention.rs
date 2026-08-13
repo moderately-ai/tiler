@@ -82,10 +82,23 @@
 //! [`spoken`] therefore selects on [`RetainedText::is_empty`], run by run, and
 //! keeps only the runs that have something to show.
 
-use core::fmt;
 use std::io;
 
 use tiler_cache::expansion::{DebugRetention, RetainedText};
+
+/// The phase the note may claim, and nothing later.
+///
+/// Reporting sits in [`crate::aot::deliver`] after cache/artifact acceptance and
+/// before payload-cardinality checks, delivery-plan construction, token
+/// emission, and `guarded_emission`. `fmt::Display` cannot carry invalid UTF-8,
+/// so this prose is written through [`SpokenRetention::write_to`] rather than
+/// formatted as the tool run itself.
+const PREAMBLE: &str = "the offline Metal toolchain wrote output while compiling this region's \
+     artifact, and it is retained beside the cache entry this expansion resolved to. Offline \
+     compilation plus cache/artifact acceptance succeeded — later frontend emission can still \
+     refuse. This is what the tools said rather than a refusal. No text a region declares reaches \
+     the emitted MSL, so this describes the source Tiler's own backend emitted rather than \
+     anything this invocation can change";
 
 /// The runs of one retention that actually have something to show.
 ///
@@ -99,30 +112,34 @@ pub(crate) struct SpokenRetention {
     runs: Vec<RetainedText>,
 }
 
-impl fmt::Display for SpokenRetention {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(
-            "the offline Metal toolchain wrote output while compiling this region's artifact, and \
-             it is retained beside the cache entry this expansion resolved to. The expansion \
-             succeeded — the artifact is compiled, validated, and embedded, and this is what the \
-             tools said rather than a refusal. No text a region declares reaches the emitted MSL, \
-             so this describes the source Tiler's own backend emitted rather than anything this \
-             invocation can change",
-        )?;
+impl SpokenRetention {
+    /// Writes the note through the process-facing `io::Write` seam.
+    ///
+    /// Order is provenance, then the tool's own bytes, then typed metadata.
+    /// `RetainedText::Display` is the cache's public lossy view and is not this
+    /// path: it trims and substitutes, and `fmt::Write` cannot carry an invalid
+    /// sequence even if it did not. Truncation and invalid-UTF-8 markers come
+    /// from [`RetainedText::is_truncated`] and [`RetainedText::is_valid_utf8`],
+    /// written after [`RetainedText::as_bytes`] so they are never inserted into
+    /// the run they describe.
+    fn write_to(&self, out: &mut impl io::Write) -> io::Result<()> {
+        write!(out, "`tiler::tensor!`: {PREAMBLE}")?;
         for run in &self.runs {
-            // Rendered through the cache's own `RetainedText` rather than by
-            // reaching for the bytes, so the truncation and invalid-UTF-8
-            // markers a reader needs to know a prefix from a whole diagnostic
-            // come from the authority that recorded them.
-            //
-            // The tool's own text is reproduced without re-indentation, and a
-            // real Apple diagnostic spans several lines. Faithfulness is worth
-            // more than a one-line message here: the retention was captured
-            // byte-preserving precisely so a reader can match it against a
-            // direct `metal` invocation, and rewrapping it would break that.
-            write!(formatter, "\n{run}")?;
+            write!(out, "\n{}: ", run.label())?;
+            out.write_all(run.as_bytes())?;
+            if !run.is_valid_utf8() {
+                write!(out, " [output was not valid UTF-8]")?;
+            }
+            if run.is_truncated() {
+                write!(
+                    out,
+                    " [truncated: {} of {} bytes retained]",
+                    run.as_bytes().len(),
+                    run.total_bytes(),
+                )?;
+            }
         }
-        Ok(())
+        writeln!(out)
     }
 }
 
@@ -146,7 +163,7 @@ fn reported_to(retention: &DebugRetention, out: &mut impl io::Write) -> Option<S
     let spoken = spoken(retention)?;
     // Best effort. A closed or failing standard error is not a reason to fail an
     // expansion whose artifact is correct either way.
-    let _ = writeln!(out, "`tiler::tensor!`: {spoken}");
+    let _ = spoken.write_to(out);
     Some(spoken)
 }
 

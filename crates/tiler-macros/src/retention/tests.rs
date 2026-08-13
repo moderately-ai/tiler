@@ -99,7 +99,7 @@ fn a_speaking_stage_is_reported_and_a_silent_one_beside_it_is_not_named() {
         "`tiler::tensor!`:",
         "tiler.metal.1.metal",
         "unused variable 'x'",
-        "The expansion succeeded",
+        "later frontend emission can still refuse",
         "rather than anything this invocation can change",
     ] {
         assert!(
@@ -194,25 +194,58 @@ fn a_truncated_run_says_that_it_is_one() {
     );
 }
 
-/// Bytes that are not UTF-8 are rendered, and said to be what they are.
+/// Bytes that are not UTF-8 are written exactly, and said to be what they are.
 ///
 /// A tool's output is whatever it wrote. The retention keeps the bytes and
-/// `RetainedText` answers which case a reader is in, so a lossy rendering must
-/// arrive labelled rather than silently standing in for the tool's text.
+/// `RetainedText` answers which case a reader is in, so a replacement character
+/// must not stand in for those bytes, and the typed marker must sit outside the
+/// run.
 #[test]
-fn a_run_that_is_not_utf8_is_rendered_and_labelled() {
+fn a_run_that_is_not_utf8_is_written_exactly_and_labelled() {
+    let diagnostic = [0xffu8, 0xfe, 0xfd];
     let retention = DebugRetention::none()
-        .retaining("tiler.metal.0.metal", &[0xffu8, 0xfe, 0xfd])
+        .retaining("tiler.metal.0.metal", &diagnostic)
         .expect("retainable");
 
     let mut written = Vec::new();
     assert!(reported_to(&retention, &mut written).is_some());
-    let message = String::from_utf8(written).expect("the message is text");
-
+    assert_exact_run(&written, "tiler.metal.0.metal", &diagnostic);
     assert!(
-        message.contains("not valid UTF-8"),
-        "a lossy rendering must not stand in unlabelled for what the tool wrote: {message}",
+        !contains_bytes(&written, "\u{FFFD}".as_bytes()),
+        "U+FFFD must not stand in for the tool's own bytes: {}",
+        String::from_utf8_lossy(&written),
     );
+    assert!(
+        contains_bytes(&written, b"not valid UTF-8"),
+        "a non-UTF-8 run must be labelled rather than left to look like text: {}",
+        String::from_utf8_lossy(&written),
+    );
+}
+
+/// A leading whitespace byte is part of the tool run, not decoration.
+#[test]
+fn a_leading_whitespace_byte_is_written_exactly() {
+    let diagnostic = b"  program_source:5:10: warning: unused variable 'x'";
+    let retention = DebugRetention::none()
+        .retaining("tiler.metal.0.metal", diagnostic)
+        .expect("retainable");
+
+    let mut written = Vec::new();
+    assert!(reported_to(&retention, &mut written).is_some());
+    assert_exact_run(&written, "tiler.metal.0.metal", diagnostic);
+}
+
+/// A trailing whitespace byte is part of the tool run, not decoration.
+#[test]
+fn a_trailing_whitespace_byte_is_written_exactly() {
+    let diagnostic = b"program_source:5:10: warning: unused variable 'x'  ";
+    let retention = DebugRetention::none()
+        .retaining("tiler.metal.0.metal", diagnostic)
+        .expect("retainable");
+
+    let mut written = Vec::new();
+    assert!(reported_to(&retention, &mut written).is_some());
+    assert_exact_run(&written, "tiler.metal.0.metal", diagnostic);
 }
 
 /// The producer's own "nothing was retained" run reaches a reader.
@@ -261,28 +294,86 @@ fn a_full_but_complete_run_is_not_reported_as_truncated() {
     );
 }
 
-/// The rendering is exercised directly, so the preamble is stated once and
-/// checked rather than only reached through a report.
+/// The rendering is exercised through the write seam, so the preamble is
+/// stated once and checked rather than only reached as formatted text.
 #[test]
 fn the_message_names_what_it_costs_and_who_it_is_about() {
-    let rendered = spoken(
-        &DebugRetention::none()
-            .retaining("tiler.metal.0.metal", b"something")
-            .expect("retainable"),
-    )
-    .expect("a speaking run renders")
-    .to_string();
+    let mut written = Vec::new();
+    assert!(
+        reported_to(
+            &DebugRetention::none()
+                .retaining("tiler.metal.0.metal", b"something")
+                .expect("retainable"),
+            &mut written,
+        )
+        .is_some()
+    );
+    let message = String::from_utf8(written).expect("the preamble is text");
 
     for required in [
-        "compiled, validated, and embedded",
+        "cache/artifact acceptance succeeded",
+        "later frontend emission can still refuse",
         "rather than a refusal",
         "No text a region declares reaches the emitted MSL",
     ] {
         assert!(
-            rendered.contains(required),
-            "the message must state `{required}`: {rendered}",
+            message.contains(required),
+            "the message must state `{required}`: {message}",
         );
     }
+    for retired in [
+        "The expansion succeeded",
+        "compiled, validated, and embedded",
+    ] {
+        assert!(
+            !message.contains(retired),
+            "the message must not claim a later phase (`{retired}`): {message}",
+        );
+    }
+}
+
+/// Whether `haystack` contains `needle` as a contiguous byte run.
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+/// Asserts the tool's own bytes follow `{label}: ` unaltered.
+///
+/// A search for the run anywhere in the note is the wrong check: the provenance
+/// separator is itself a space, so dropping a leading space of the tool run
+/// still leaves a two-space window in the written bytes. The bytes immediately
+/// after the label are the run, or the renderer trimmed it.
+fn assert_exact_run(written: &[u8], label: &str, run: &[u8]) {
+    assert!(
+        !run.is_empty(),
+        "the fixture must carry bytes, or this assertion states nothing",
+    );
+    let mut prefix = Vec::from(b"\n".as_slice());
+    prefix.extend_from_slice(label.as_bytes());
+    prefix.extend_from_slice(b": ");
+    let start = written
+        .windows(prefix.len())
+        .position(|window| window == prefix.as_slice())
+        .unwrap_or_else(|| {
+            panic!(
+                "the run's provenance must be written: {}",
+                String::from_utf8_lossy(written),
+            )
+        });
+    let body = &written[start + prefix.len()..];
+    assert!(
+        body.len() >= run.len(),
+        "the writer ended before the tool run was complete: {}",
+        String::from_utf8_lossy(written),
+    );
+    assert_eq!(
+        &body[..run.len()],
+        run,
+        "the tool's own bytes must follow the run provenance unaltered: {}",
+        String::from_utf8_lossy(written),
+    );
 }
 
 /// A quiet retention renders nothing at all, at the selection step.
