@@ -1,7 +1,7 @@
 ---
 id: admit-source-bearing-slice-selection-semantics
 title: Admit source-bearing Slice selection semantics
-status: in-progress
+status: review
 priority: p1
 dependencies: [decide-the-source-bearing-slice-offset-boundary]
 related: [admit-a-position-selecting-slice-for-the-rotary-table, evaluate-retained-shape-relations-before-routing-commit]
