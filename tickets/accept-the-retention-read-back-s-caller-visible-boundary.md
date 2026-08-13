@@ -1,7 +1,7 @@
 ---
 id: accept-the-retention-read-back-s-caller-visible-boundary
 title: Accept the retention read-back's caller-visible boundary
-status: in-progress
+status: review
 priority: p2
 dependencies: [preserve-retained-tool-bytes-in-macro-read-back]
 related: [emit-from-a-populated-retention-in-the-inline-expansion, measure-repeated-retention-note-cost-before-adding-deduplication]
