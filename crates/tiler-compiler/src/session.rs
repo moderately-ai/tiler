@@ -3072,7 +3072,7 @@ mod tests {
     /// because a strict serial sum's per-contributor step is `accumulator +
     /// contributor` with no product for a fused multiply-add to act on. The
     /// dimension is still *asked of the target*: `physical::region_proposal`
-    /// carries all four of the region realization's dimensions on every
+    /// carries every dimension the region realization states on every
     /// candidate, so the plan holds an honoured contraction fact and no row
     /// naming it.
     fn bare_reduction_program() -> SemanticProgram {
@@ -3181,6 +3181,60 @@ mod tests {
     impl PlanAlternativeExt for super::PlanAlternative<'_> {
         fn fused(&self) -> bool {
             self.is_fused()
+        }
+    }
+
+    /// A selected plan honours every realized dimension and delivers a row for
+    /// each one this program consumes.
+    ///
+    /// The four dimensions `region_proposal` used to drop — permutation, signed
+    /// zero, NaN assumptions, infinity assumptions — are named rather than
+    /// counted, so omitting any one production projection fails this test
+    /// without the assertion changing.
+    #[test]
+    fn a_selected_plan_delivers_every_realized_dimension() {
+        use std::collections::BTreeSet;
+        use tiler_ir::numerics::NumericalDimension;
+
+        let program = semantic_program();
+        let compilation = compile_governed(&program, NumericalContract::STRICT_F32)
+            .expect("the governed program compiles");
+        let plan = compilation.selected().expect("a selected alternative");
+        let honoured: BTreeSet<NumericalDimension> = plan
+            .alternative
+            .plan
+            .honoured()
+            .iter()
+            .map(crate::target::honourability::HonouredDimension::dimension)
+            .collect();
+        let realized: BTreeSet<NumericalDimension> =
+            crate::policy::REALIZED_DIMENSIONS.into_iter().collect();
+        assert_eq!(
+            honoured, realized,
+            "region feasibility must ask the target about every realized dimension",
+        );
+
+        let delivered: BTreeSet<NumericalDimension> = plan
+            .delivered_realization()
+            .obligations()
+            .map(crate::session::SelectedObligation::dimension)
+            .collect();
+        assert_eq!(
+            delivered, realized,
+            "the scale-then-reduce program consumes every realized dimension, so \
+             none may be missing from selected delivered evidence",
+        );
+        for dimension in [
+            NumericalDimension::Permutation,
+            NumericalDimension::SignedZero,
+            NumericalDimension::NanAssumptions,
+            NumericalDimension::InfinityAssumptions,
+        ] {
+            assert!(
+                delivered.contains(&dimension),
+                "{} must reach selected delivered evidence",
+                dimension.key(),
+            );
         }
     }
 
@@ -3405,9 +3459,10 @@ mod tests {
             .collect();
         assert_eq!(
             rows.len(),
-            11,
-            "four honoured dimensions over three arithmetic occurrences, less the \
-             one contraction the fold cannot consume",
+            21,
+            "eight honoured dimensions over three arithmetic occurrences, less the \
+             one contraction the fold cannot consume and the two permutation rows \
+             the pointwise multiply and add cannot consume",
         );
 
         // The constants consume nothing, so they are covered and unobligated.
@@ -3621,10 +3676,14 @@ mod tests {
                 NumericalDimension::ResultSubnormals,
                 NumericalDimension::Contraction,
                 NumericalDimension::Reassociation,
+                NumericalDimension::Permutation,
+                NumericalDimension::SignedZero,
+                NumericalDimension::NanAssumptions,
+                NumericalDimension::InfinityAssumptions,
             ]),
-            "the region proposal asks every candidate about the same four \
-             dimensions, so the honoured set is a property of the profile and \
-             the contract rather than of this program",
+            "the region proposal asks every candidate about every dimension the \
+             region realization states, so the honoured set is a property of \
+             the profile and the contract rather than of this program",
         );
 
         let covered: BTreeSet<u32> = plan
@@ -3658,8 +3717,8 @@ mod tests {
             .collect();
         assert_eq!(
             rows.len(),
-            3,
-            "three of the four honoured dimensions act on the one covered \
+            7,
+            "seven of the eight honoured dimensions act on the one covered \
              occurrence: {rows:?}",
         );
         let stated: BTreeSet<NumericalDimension> =
@@ -3670,6 +3729,10 @@ mod tests {
                 NumericalDimension::InputSubnormals,
                 NumericalDimension::ResultSubnormals,
                 NumericalDimension::Reassociation,
+                NumericalDimension::Permutation,
+                NumericalDimension::SignedZero,
+                NumericalDimension::NanAssumptions,
+                NumericalDimension::InfinityAssumptions,
             ]),
         );
         assert!(
