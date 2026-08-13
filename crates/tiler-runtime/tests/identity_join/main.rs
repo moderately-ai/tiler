@@ -524,8 +524,8 @@ fn a_declared_backend_family_this_host_does_not_have_is_filtered() {
     else {
         panic!("expected an unsupported representation");
     };
-    assert_eq!(declared_backend, moved.sidecar.backend);
-    assert_eq!(host_backend, sound.sidecar.backend);
+    assert_eq!(declared_backend.as_str(), moved.sidecar.backend);
+    assert_eq!(host_backend.as_str(), sound.sidecar.backend);
     assert_eq!(
         host.stages,
         [Stage::Bind],
@@ -575,8 +575,11 @@ fn a_declared_representation_this_host_does_not_read_is_filtered() {
     else {
         panic!("expected an unsupported representation");
     };
-    assert_eq!(declared_representation, moved.sidecar.representation);
-    assert_eq!(host_representation, sound.sidecar.representation);
+    assert_eq!(
+        declared_representation.as_str(),
+        moved.sidecar.representation
+    );
+    assert_eq!(host_representation.as_str(), sound.sidecar.representation);
     assert_eq!(host.stages, [Stage::Bind]);
     produced.discard();
 }

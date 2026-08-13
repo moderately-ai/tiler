@@ -36,7 +36,7 @@ use image::{ScalarEntry, ScalarImage, ScalarPayloadRefusal, encode};
 
 use tiler_artifact::program::{
     AbiFactBinder, AbiFacts, ArithmeticType, AvailabilityPhase, BackendKey,
-    RecordedArtifactProgramIdentity, RouteFeatureKey, RouteRequirementSubject,
+    RecordedArtifactProgramIdentity, RouteFeatureKey, RouteRequirementSubject, TargetProfileKey,
 };
 use tiler_reference::{
     FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
@@ -395,11 +395,14 @@ fn either_half_of_the_backend_representation_pair_filters_the_variant() {
             panic!("{perturbation:?}: expected an unsupported representation");
         };
         assert_eq!(entry, 0, "{perturbation:?}");
-        assert_eq!(declared_backend, fixture::BACKEND_KEY);
-        assert_eq!(declared_representation, fixture::REPRESENTATION_KEY);
+        assert_eq!(declared_backend.as_str(), fixture::BACKEND_KEY);
+        assert_eq!(
+            declared_representation.as_str(),
+            fixture::REPRESENTATION_KEY
+        );
         assert!(
-            host_backend != fixture::BACKEND_KEY
-                || host_representation != fixture::REPRESENTATION_KEY,
+            host_backend.as_str() != fixture::BACKEND_KEY
+                || host_representation.as_str() != fixture::REPRESENTATION_KEY,
             "{perturbation:?}: the exclusion must name what this host reported",
         );
         assert_eq!(host.stages, [Stage::Bind], "{perturbation:?}");
@@ -1572,7 +1575,7 @@ fn a_portfolio_this_host_cannot_execute_fails_closed() {
                 VariantIneligibility::UnsupportedRepresentation {
                     ref declared_backend,
                     ..
-                } if declared_backend == fixture::METAL_BACKEND_KEY,
+                } if declared_backend.as_str() == fixture::METAL_BACKEND_KEY,
             ),
             "each exclusion names the family this host is not: {excluded}",
         );
@@ -1826,7 +1829,9 @@ fn the_multi_entry_outcomes_sit_on_the_side_of_the_commit_they_belong_on() {
 ///
 /// Asserts the class and hands back the resolution, so a case states which of
 /// the two refusing resolutions it expects instead of restating the destructure.
-fn sole_dtype_exclusion(outcome: Outcome) -> (ArithmeticType, DTypeDispatchResolution, String) {
+fn sole_dtype_exclusion(
+    outcome: Outcome,
+) -> (ArithmeticType, DTypeDispatchResolution, TargetProfileKey) {
     match sole_exclusion(outcome, 1) {
         VariantIneligibility::UndispatchableDType {
             entry,
@@ -1852,7 +1857,7 @@ fn a_family_that_refuses_bf16_filters_a_bf16_variant_before_the_commit() {
     assert_eq!(arithmetic, ArithmeticType::Bf16);
     assert_eq!(resolution, DTypeDispatchResolution::Unsupported);
     assert_eq!(
-        profile,
+        profile.as_str(),
         fixture::PROFILE_KEY,
         "the refusal names the family that refused, not the one the artifact was built for",
     );

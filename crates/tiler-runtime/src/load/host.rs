@@ -82,7 +82,9 @@
 
 use std::collections::BTreeMap;
 
-use tiler_artifact::program::{ArithmeticType, BackendKey, RepresentationKey, TargetProfileRef};
+use tiler_artifact::program::{
+    ArithmeticType, BackendKey, RepresentationKey, TargetProfileKey, TargetProfileRef,
+};
 
 /// What a loading host offers, stated rather than discovered.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -169,13 +171,13 @@ impl ExecutionEnvironment {
     pub fn classify(&self, declared: &TargetProfileRef) -> TargetCompatibility {
         if declared.key != self.target_profile.key {
             return TargetCompatibility::ProfileKeyMismatch {
-                declared: declared.key.as_str().to_owned(),
-                host: self.target_profile.key.as_str().to_owned(),
+                declared: declared.key.clone(),
+                host: self.target_profile.key.clone(),
             };
         }
         if declared.descriptor != self.target_profile.descriptor {
             return TargetCompatibility::DescriptorMismatch {
-                key: declared.key.as_str().to_owned(),
+                key: declared.key.clone(),
             };
         }
         TargetCompatibility::Compatible
@@ -209,20 +211,26 @@ pub enum TargetCompatibility {
     /// The declared key and exact descriptor are both the host's own.
     Compatible,
     /// The artifact was built for a different target family entirely.
+    ///
+    /// **Labelled draft** under ADR 0075. `declared` and `host` are governed
+    /// [`TargetProfileKey`] values, not erased strings.
     ProfileKeyMismatch {
         /// Governed profile key the artifact declares.
-        declared: String,
+        declared: TargetProfileKey,
         /// Governed profile key this host offers.
-        host: String,
+        host: TargetProfileKey,
     },
     /// The family matches and the exact profile descriptor does not.
     ///
     /// Distinct from [`Self::ProfileKeyMismatch`] because it is the *same*
     /// target family under a descriptor this host does not offer, which is a
     /// rebuild rather than a wrong-artifact.
+    ///
+    /// **Labelled draft** under ADR 0075. `key` is a governed
+    /// [`TargetProfileKey`], not an erased string.
     DescriptorMismatch {
         /// The governed profile key both sides agree on.
-        key: String,
+        key: TargetProfileKey,
     },
 }
 
@@ -246,9 +254,13 @@ mod tests {
         TargetProfileRef,
     };
 
+    fn profile_key(key: &str) -> TargetProfileKey {
+        TargetProfileKey::new(key).expect("a governed profile key")
+    }
+
     fn profile(key: &str, descriptor: &[u8]) -> TargetProfileRef {
         TargetProfileRef {
-            key: TargetProfileKey::new(key).expect("a governed profile key"),
+            key: profile_key(key),
             descriptor: TargetProfileDescriptorDigest::from_bytes(descriptor)
                 .expect("a descriptor identity"),
         }
@@ -280,8 +292,8 @@ mod tests {
         assert_eq!(
             host.classify(&profile("tiler.target.apple-m1", b"descriptor-a")),
             TargetCompatibility::ProfileKeyMismatch {
-                declared: "tiler.target.apple-m1".to_owned(),
-                host: "tiler.target.apple-m4".to_owned(),
+                declared: profile_key("tiler.target.apple-m1"),
+                host: profile_key("tiler.target.apple-m4"),
             },
         );
     }
@@ -299,7 +311,7 @@ mod tests {
         assert_eq!(
             classification,
             TargetCompatibility::DescriptorMismatch {
-                key: "tiler.target.apple-m4".to_owned(),
+                key: profile_key("tiler.target.apple-m4"),
             },
         );
         assert!(!classification.is_compatible());

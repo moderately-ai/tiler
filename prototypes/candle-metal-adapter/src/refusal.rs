@@ -950,6 +950,7 @@ mod tests {
         RouteRefusal, TensorRefusal, fallback_availability,
     };
     use candle_core::DType;
+    use tiler_artifact::program::TargetProfileKey;
     use tiler_ir::schedule::{
         FencedSpaces, IndexArithmetic, MemoryOrdering, SynchronizationKind, SynchronizationScope,
         SynchronizationSubject,
@@ -1024,7 +1025,8 @@ mod tests {
             },
             TensorRefusal::IncompatibleTargetProfile {
                 classification: tiler_runtime::load::TargetCompatibility::DescriptorMismatch {
-                    key: "tiler.metal.macos-apple9.msl4-0.f32.v1".to_owned(),
+                    key: TargetProfileKey::new("tiler.metal.macos-apple9.msl4-0.f32.v1")
+                        .expect("a governed profile key"),
                 },
             },
             TensorRefusal::NoRealizableFallback {

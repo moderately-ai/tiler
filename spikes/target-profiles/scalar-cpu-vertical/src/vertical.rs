@@ -42,10 +42,9 @@ use std::fmt;
 
 use tiler_artifact::program::{
     AbiFactBinder, AbiFacts, ApproximationEnvelope, ArithmeticType, ArtifactCodecFailure,
-    ArtifactExecutionPolicy,
-    ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey, BackendEntryRef, BackendKey,
-    BindingKind, BindingSpec, BindingTarget, CANONICAL_DIMENSIONS, CapabilityKey,
-    CompilationEnvironment, DIMENSION_COUNT, DeliveredRealizationBuilder,
+    ArtifactExecutionPolicy, ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey,
+    BackendEntryRef, BackendKey, BindingKind, BindingSpec, BindingTarget, CANONICAL_DIMENSIONS,
+    CapabilityKey, CompilationEnvironment, DIMENSION_COUNT, DeliveredRealizationBuilder,
     DeliveredRealizationRecord, DimensionBehaviour, EntryRealization, EntrySpec,
     FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef, HonouringMeans, LaunchSpec,
     MaterializationRounding, NumericalDimension, NumericalObligationKey, NumericalPermission,
@@ -1347,7 +1346,8 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
                             host_backend,
                             host_representation,
                             ..
-                        } if host_backend == "tiler.metal" && host_representation == "metallib",
+                        } if host_backend.as_str() == "tiler.metal"
+                            && host_representation.as_str() == "metallib",
                     )
                 }) =>
             {
@@ -1385,8 +1385,8 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
                             host_backend,
                             host_representation,
                             ..
-                        } if host_backend == profile::BACKEND_KEY
-                            && host_representation == "tiler.cpu.scalar-image-v2",
+                        } if host_backend.as_str() == profile::BACKEND_KEY
+                            && host_representation.as_str() == "tiler.cpu.scalar-image-v2",
                     )
                 }) =>
             {

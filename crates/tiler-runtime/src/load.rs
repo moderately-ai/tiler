@@ -160,11 +160,11 @@ pub use route::{
 use route::RouteRequirementRefusal;
 use tiler_artifact::program::{
     AbiEvaluationError, AbiFacts, AbiValue, ArithmeticType, ArtifactCodecFailure,
-    ArtifactExecutionPolicy, BackendPayloadDescriptor, BindingTarget, BufferAccess,
+    ArtifactExecutionPolicy, BackendKey, BackendPayloadDescriptor, BindingTarget, BufferAccess,
     CanonicalArtifactProgramIdentity, DecodedArtifact, DecodedEntry, DecodedExpr, DecodedInput,
     DecodedOutput, DecodedVariant, NumericalPolicySubject, RecordedArtifactProgramIdentity,
-    RouteRequirement, RouteRequirementSubject, RoutingPolicy, SectionView, StageDependencyReason,
-    decode_artifact,
+    RepresentationKey, RouteRequirement, RouteRequirementSubject, RoutingPolicy, SectionView,
+    StageDependencyReason, TargetProfileKey, decode_artifact,
 };
 
 use std::error::Error;
@@ -710,10 +710,10 @@ impl DecodedProgram {
             {
                 return Err(VariantIneligibility::UnsupportedRepresentation {
                     entry,
-                    declared_backend: payload.backend.as_str().to_owned(),
-                    declared_representation: payload.representation.as_str().to_owned(),
-                    host_backend: environment.backend.as_str().to_owned(),
-                    host_representation: environment.representation.as_str().to_owned(),
+                    declared_backend: payload.backend.clone(),
+                    declared_representation: payload.representation.clone(),
+                    host_backend: environment.backend.clone(),
+                    host_representation: environment.representation.clone(),
                 });
             }
             // The payload's own compatibility contract, classified separately
@@ -741,7 +741,7 @@ impl DecodedProgram {
                     entry,
                     arithmetic,
                     resolution,
-                    host_profile: environment.target_profile.key.as_str().to_owned(),
+                    host_profile: environment.target_profile.key.clone(),
                 });
             }
         }
@@ -1281,17 +1281,22 @@ pub enum VariantIneligibility {
     /// The pair is compared whole: each half alone failing is enough, and both
     /// report here, because "this host cannot execute these bytes" is one
     /// finding with one remedy.
+    ///
+    /// **Labelled draft** under ADR 0075. The four key fields are the governed
+    /// [`tiler_artifact::program::BackendKey`] and
+    /// [`tiler_artifact::program::RepresentationKey`] values the loader already
+    /// compared, not erased strings.
     UnsupportedRepresentation {
         /// Position of the entry in the variant's own execution order.
         entry: usize,
         /// Governed backend family key that entry's payload declares.
-        declared_backend: String,
+        declared_backend: BackendKey,
         /// Governed executable representation key it declares.
-        declared_representation: String,
+        declared_representation: RepresentationKey,
         /// Governed backend family key this host stated.
-        host_backend: String,
+        host_backend: BackendKey,
         /// Governed executable representation key this host stated.
-        host_representation: String,
+        host_representation: RepresentationKey,
     },
     /// One entry's payload was built for a profile this host does not offer.
     PayloadProfile {
@@ -1312,6 +1317,10 @@ pub enum VariantIneligibility {
     /// `bfloat` module and fails at pipeline creation — one phase after ADR
     /// 0051's routing commit. Reported from the host's stated declaration here,
     /// so the refusal arrives while a fallback is still permitted.
+    ///
+    /// **Labelled draft** under ADR 0075. `host_profile` is the governed
+    /// [`tiler_artifact::program::TargetProfileKey`] the host stated, not an
+    /// erased string.
     UndispatchableDType {
         /// Position of the entry in the variant's own execution order.
         entry: usize,
@@ -1323,7 +1332,7 @@ pub enum VariantIneligibility {
         /// not produce this class.
         resolution: DTypeDispatchResolution,
         /// Governed target profile key this host stated, naming the family.
-        host_profile: String,
+        host_profile: TargetProfileKey,
     },
 }
 
@@ -1891,8 +1900,31 @@ mod tests {
     use std::cmp::Ordering;
     use std::error::Error;
     use tiler_artifact::program::{
-        ArtifactCodecFailure, MAX_ARTIFACT_VARIANTS, MAX_VARIANT_ENTRIES,
+        ArtifactCodecFailure, BackendKey, MAX_ARTIFACT_VARIANTS, MAX_VARIANT_ENTRIES,
+        RepresentationKey, TargetProfileKey,
     };
+
+    fn backend(text: &str) -> BackendKey {
+        BackendKey::new(text).expect("a governed backend key")
+    }
+
+    fn representation(text: &str) -> RepresentationKey {
+        RepresentationKey::new(text).expect("a governed representation key")
+    }
+
+    fn profile_key(text: &str) -> TargetProfileKey {
+        TargetProfileKey::new(text).expect("a governed profile key")
+    }
+
+    fn unsupported_pair(entry: usize) -> VariantIneligibility {
+        VariantIneligibility::UnsupportedRepresentation {
+            entry,
+            declared_backend: backend("tiler.metal"),
+            declared_representation: representation("metallib"),
+            host_backend: backend("tiler.test.scalar-host"),
+            host_representation: representation("tiler.test.scalar-host-image-v1"),
+        }
+    }
 
     /// Bytes that are not an artifact at all are refused as malformed.
     ///
@@ -1985,35 +2017,23 @@ mod tests {
         let rendered: Vec<String> = [
             VariantIneligibility::AssessedProfile {
                 classification: TargetCompatibility::DescriptorMismatch {
-                    key: "tiler.target.apple-m4".to_owned(),
+                    key: profile_key("tiler.target.apple-m4"),
                 },
             },
             VariantIneligibility::PayloadProfile {
                 entry: 0,
                 classification: TargetCompatibility::DescriptorMismatch {
-                    key: "tiler.target.apple-m4".to_owned(),
+                    key: profile_key("tiler.target.apple-m4"),
                 },
             },
             VariantIneligibility::PayloadProfile {
                 entry: 1,
                 classification: TargetCompatibility::DescriptorMismatch {
-                    key: "tiler.target.apple-m4".to_owned(),
+                    key: profile_key("tiler.target.apple-m4"),
                 },
             },
-            VariantIneligibility::UnsupportedRepresentation {
-                entry: 0,
-                declared_backend: "tiler.metal".to_owned(),
-                declared_representation: "metallib".to_owned(),
-                host_backend: "tiler.test.scalar-host".to_owned(),
-                host_representation: "tiler.test.scalar-host-image-v1".to_owned(),
-            },
-            VariantIneligibility::UnsupportedRepresentation {
-                entry: 1,
-                declared_backend: "tiler.metal".to_owned(),
-                declared_representation: "metallib".to_owned(),
-                host_backend: "tiler.test.scalar-host".to_owned(),
-                host_representation: "tiler.test.scalar-host-image-v1".to_owned(),
-            },
+            unsupported_pair(0),
+            unsupported_pair(1),
         ]
         .iter()
         .map(ToString::to_string)
@@ -2038,13 +2058,7 @@ mod tests {
     fn a_filtered_portfolio_and_an_unmatched_guard_are_separate_classes() {
         let filtered = vec![FilteredVariant {
             variant: 0,
-            reason: VariantIneligibility::UnsupportedRepresentation {
-                entry: 0,
-                declared_backend: "tiler.metal".to_owned(),
-                declared_representation: "metallib".to_owned(),
-                host_backend: "tiler.test.scalar-host".to_owned(),
-                host_representation: "tiler.test.scalar-host-image-v1".to_owned(),
-            },
+            reason: unsupported_pair(0),
         }];
         let ineligible = LoadRejection::NoEligibleVariant {
             packaged: 1,
@@ -2100,23 +2114,11 @@ mod tests {
         let filtered = vec![
             FilteredVariant {
                 variant: 0,
-                reason: VariantIneligibility::UnsupportedRepresentation {
-                    entry: 0,
-                    declared_backend: "tiler.metal".to_owned(),
-                    declared_representation: "metallib".to_owned(),
-                    host_backend: "tiler.test.scalar-host".to_owned(),
-                    host_representation: "tiler.test.scalar-host-image-v1".to_owned(),
-                },
+                reason: unsupported_pair(0),
             },
             FilteredVariant {
                 variant: 1,
-                reason: VariantIneligibility::UnsupportedRepresentation {
-                    entry: 0,
-                    declared_backend: "tiler.metal".to_owned(),
-                    declared_representation: "metallib".to_owned(),
-                    host_backend: "tiler.test.scalar-host".to_owned(),
-                    host_representation: "tiler.test.scalar-host-image-v1".to_owned(),
-                },
+                reason: unsupported_pair(0),
             },
         ];
         let rejection = LoadRejection::NoApplicableVariant {
@@ -2139,13 +2141,7 @@ mod tests {
             packaged: 2,
             filtered: vec![FilteredVariant {
                 variant: 0,
-                reason: VariantIneligibility::UnsupportedRepresentation {
-                    entry: 0,
-                    declared_backend: "tiler.metal".to_owned(),
-                    declared_representation: "metallib".to_owned(),
-                    host_backend: "tiler.test.scalar-host".to_owned(),
-                    host_representation: "tiler.test.scalar-host-image-v1".to_owned(),
-                },
+                reason: unsupported_pair(0),
             }],
         };
         let coherent_text = coherent.to_string();
