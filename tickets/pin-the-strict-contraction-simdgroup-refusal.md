@@ -1,7 +1,7 @@
 ---
 id: pin-the-strict-contraction-simdgroup-refusal
 title: Pin the strict-contraction simdgroup realization refusal
-status: todo
+status: in-progress
 priority: p1
 dependencies: [qualify-the-simdgroup-matrix-contraction-realization]
 related: [research-an-explicit-seeded-fused-contraction-operation, realize-the-contraction-through-the-appendable-direct-path]
@@ -9,6 +9,9 @@ scopes: [implementation/metal, implementation/compiler, implementation/ir, contr
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, numerics, contraction, correctness, refusal, strict]
+claimed_from: todo
+assignee: worker-strict-contraction-simdgroup
+lease_expires_at: 1786649004
 ---
 ## Outcome
 

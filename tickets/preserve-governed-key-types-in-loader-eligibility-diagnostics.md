@@ -1,7 +1,7 @@
 ---
 id: preserve-governed-key-types-in-loader-eligibility-diagnostics
 title: Preserve governed key types in loader eligibility diagnostics
-status: todo
+status: in-progress
 priority: p1
 dependencies: [select-executable-variants-across-registered-backend-families]
 related: [accept-the-loader-variant-eligibility-vocabulary]
@@ -9,6 +9,9 @@ scopes: [implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, public-boundary, correctness]
+claimed_from: todo
+assignee: worker-loader-eligibility-keys
+lease_expires_at: 1786649004
 ---
 ## User-visible outcome
 
