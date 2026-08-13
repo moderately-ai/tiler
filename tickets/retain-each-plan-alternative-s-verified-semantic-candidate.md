@@ -1,7 +1,7 @@
 ---
 id: retain-each-plan-alternative-s-verified-semantic-candidate
 title: Retain each plan alternative's verified semantic candidate
-status: todo
+status: in-progress
 priority: p2
 dependencies: [retain-the-selected-semantic-candidate-for-the-conformance-oracle]
 related: [define-the-composed-realization-driver-subject-bridge, implement-the-composed-realization-evaluation-driver]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, conformance, correctness]
+claimed_from: todo
+assignee: worker-retain-semantic-candidate
+lease_expires_at: 1786643165
 ---
 ## User-visible outcome
 
