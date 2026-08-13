@@ -48,6 +48,8 @@ Stop if compiler admission needs the bound extent value, if a second environment
 
 Recognition retains `LogicalAccess::ParametricBroadcast` for a sourced mapping and leaves `BroadcastReplication` / `ReindexBijection` for concrete maps. The request carries the program's own environment. Request-subject encoding writes the carrier as crate-internal tag `0x05` under `tiler.compiler.request-subject.v6`; previously encodable maps keep their bytes. `compile()` of a sourced broadcast-only program reaches physical selection; the governed physical provider declines `UnspellableRegion { rule: "parametric-broadcast" }`, reported as `UnsupportedCapability { phase: "planning", rule: "parametric-broadcast" }`. Same-shape symbolic elementwise without the carrier still declines at schedule as `symbolic-extent`. The governed physical-provider revision stays 1: previously admitted (non-parametric) context-to-offer is unchanged. Index refinement compares sourced boundary shapes so a parametric operand/result is not refused as `SymbolicBoundary`. Governed broadcast lowering emits the parametric realization against the program environment when the mapping names a symbol. The surface remains a labelled draft and is not self-accepted.
 
+**Corrected 2026-08-13:** Tom accepted the exact `LogicalAccess::ParametricBroadcast` spelling in [`accept-the-parametric-broadcast-access-surface`](accept-the-parametric-broadcast-access-surface.md). The 2026-08-13 audit's labelled-draft clause is historical. The crate-internal request-subject tag `0x05` is unchanged.
+
 ### Measurement boundary at this commit
 
 - **Strategy admits a sourced broadcast** as `ParametricBroadcast` with the authored mapping and environment identity.

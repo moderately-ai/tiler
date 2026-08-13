@@ -44,3 +44,5 @@ Delivered on this branch. The first multi-round cooperative kernel is compiled a
 **Measurement, 2026-08-13.** Host macOS 27.0 build `26A5406e` on `arm64`; device Apple M4 Max, GPU family Apple9; offline `Apple metal version 32023.921` / `AIR-LLD 32023.921`; SDK `macosx 27.0` build `26A5388f`; profile `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1`; AOT `air64-apple-macos26.0` under `metal4.0`; backend Metal; launch `6×3` read from the scheduled program. Not a threaded CPU realization.
 
 Public draft surface in `tiler-reference`: `CooperativeCellLayout`, `CooperativeGrouping`, `cooperative_grouped_sum`, `cooperative_grouped_sum_under`. Labelled draft under ADR 0075.
+
+**Corrected 2026-08-13:** Tom accepted that exact spelling in [`accept-the-cooperative-grouping-public-surface`](accept-the-cooperative-grouping-public-surface.md). The labelled-draft sentence above is historical.
