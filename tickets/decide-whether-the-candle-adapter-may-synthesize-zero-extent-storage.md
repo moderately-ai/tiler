@@ -76,7 +76,31 @@ No public semantic input enum or fourth routed backing class is accepted. Empty 
 
 The accepted first pass is input-only and no-autograd. It does not admit empty outputs, raw placeholder binding without a Tensor, unrelated anchor tensors, widened accessible ranges, mutable or aliased views, other dtypes, foreign devices, or any kernel whose verified input window is nonzero. Hardware evidence must route both retained empty-domain members and perturb the count, shape, dtype, device, accessible extent, and lifetime independently before the ticket closes.
 
+## Source re-audit at `b35bb34f` — 2026-08-13
+
+Per-Fact verdicts at this exact base, before any edit. The 2026-08-05 trigger log is historical: status is now `in-progress` implementation of the 2026-08-12 acceptance, not a deferred ticket.
+
+| Claim | Verdict | Evidence |
+| --- | --- | --- |
+| `empty-domain` artifact declares a `1 x 0` input | **Verified** | `prototypes/serial-sum-compile` `ROWS` is `1`; `REDUCTION_CLASSES` names `("empty-domain", 0)` |
+| Empty reduction reads the input never and publishes the identity | **Verified** | `a_zero_extent_reduction_commits_its_identity_without_a_loop_or_a_barrier` stores `F32Bits(0.0_f32.to_bits())` with zero `SerialLoop`s and zero `Barrier`s. Shape in that test is `[2, 0]`, not the published `[1, 0]`; the property is the same |
+| `route-a-zero-extent-program-through-candle-metal-storage` closed on `TensorRefusal::ZeroExtentInterface` | **Verified** | That ticket's Outcome; `bind_interface` still called `declared_extents_are_nonzero` on the input |
+| Refusal is decided from declared extents before any Candle tensor | **Verified** | `TilerPlan::load` → `bind_interface`; proof's empty-domain arm ran at load |
+| `Tensor::from_vec` fails at Candle 0.11.0 for that shape | **Verified** from source | `from_vec` → `storage_owned` → `new_buffer_with_data` with `size_of_val(&[])` = 0. Hardware re-check is owed |
+| `prototypes/serial-sum-run` allocates `needed.max(1)` | **Verified** | `device.new_buffer(needed.max(1), …)` and `placed.needed.max(1)` |
+| Candle adapter binds only caller storage or route-declared `Output` / `Internal` / shared | **Verified** | `Backing` is `CallerInput`, `Shared`, `Output`, `Internal` |
+| `MetalDevice::new_buffer` passes a zero logical byte count through `buf_size`; `0_usize.next_power_of_two()` is one byte | **Verified** | candle-core 0.11.0 `new_buffer` then `buf_size` |
+| `MetalStorage::new` records logical count and dtype separately | **Verified** | `MetalStorage::new(buffer, device, count, dtype)` |
+| `Tensor::from_storage` and `From<(Storage, Shape)>` publicly construct a contiguous tensor | **Verified** | `Tensor::from_storage` is `pub`; `impl<S: Into<Shape>> From<(Storage, S)> for Tensor` |
+| `MetalStorage` count 0 + `F32` + shape `[1, 0]` is compatible | **Verified** | both state zero logical elements |
+| `a_zero_extent_reduction_commits_its_identity_without_a_loop_or_a_barrier` is the kernel evidence | **Verified** | `crates/tiler-ir/src/kernel/tests.rs` |
+| Program/artifact builders require evaluated accessible bytes to equal the verified byte window | **Verified** | `AccessibleBytesDisagreement` when `computed != window.length` |
+| `RoutedBinding::accessible_bytes` retains the artifact-evaluated extent | **Verified** | `place_bindings` writes `unsigned(binding.accessible_bytes(), …)` |
+| Candle is pinned at 0.11.0 | **Verified** | `prototypes/candle-metal-adapter/Cargo.toml` |
+| 2026-08-05 log still describes a deferred ticket | **Imprecise as current status** | Frontmatter is `in-progress`; Accepted 2026-08-12; 2026-08-12 trigger fired by source audit. The 2026-08-05 entry remains historically accurate |
+
 ## Trigger check log
 
 - 2026-08-05 — **not fired.** Filed at `deferred` by `route-a-zero-extent-program-through-candle-metal-storage`'s typed-refusal close. Tom has not been asked and has not answered; Candle is pinned at 0.11.0, whose Metal allocator still returns `Metal error Failed to create metal resource: Buffer` for a `1 x 0` `f32` tensor, measured on macOS 27.0 (26A5388g) / Apple M4 Max. Recheck: `cargo run -p tiler-prototype-candle -- --artifact <base published by tiler-prototype-compile>` — the two `empty-domain` members print `REFUSED before any Candle storage is asked for` followed by the live allocator error while the trigger has not fired.
 - 2026-08-12 — **fired by source audit.** The standard `Tensor::from_vec` upload still asks Metal for a literal zero-length buffer and fails, but the same pinned Candle release publicly exposes a rounded typed-buffer allocation, `MetalStorage::new` with an independent logical count, and `Tensor::from_storage`. Their exact composition represents the zero-element tensor without a Tiler-private storage or route-backing class. The implementation still owes a hardware route and subject perturbations before claiming delivery.
+- 2026-08-13 — **implementation in progress at `b35bb34f`.** Status is no longer deferred. The 2026-08-05 `REFUSED before any Candle storage is asked for` close path is being replaced by explicit helper construction plus the ordinary Tensor route; `Tensor::from_vec` is retained as the comparison that explains why the helper exists.

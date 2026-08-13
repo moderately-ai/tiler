@@ -257,19 +257,13 @@ pub enum TensorRefusal {
         /// What disagreed.
         detail: String,
     },
-    /// The artifact declares an empty axis, and no Candle tensor has one.
+    /// The artifact declares an empty axis this first pass does not construct.
     ///
-    /// Decided from the artifact's own declared interface rather than from a
-    /// tensor, because at this Candle pin there is no tensor to decide it from:
-    /// the allocator sizes a request as `element_count * dtype.size_in_bytes()`
-    /// and `newBufferWithLength:options:` returns nil at length zero, so
-    /// `Tensor::from_vec(vec![], (1, 0), &metal)` fails before this adapter is
-    /// reached at all. Refusing from the declaration is what puts this adapter's
-    /// own name on the limitation instead of an allocator error from under it.
-    ///
-    /// A zero extent is a legitimate program — a reduction over an empty domain
-    /// publishes its identity element rather than a sum — so this names a
-    /// boundary of the Candle consumer and not a defect in the artifact.
+    /// Empty inputs are constructed by [`crate::wrapper::TilerPlan::empty_input_tensor`]
+    /// as a genuine Candle tensor over Candle's rounded sentinel allocation.
+    /// Empty outputs remain refused: the accepted first pass is input-only.
+    /// `Tensor::from_vec` still cannot upload a zero-length buffer at this pin,
+    /// which is why the helper exists rather than the ordinary upload path.
     ZeroExtentInterface {
         /// The interface key of the declared value carrying the empty axis.
         value: String,
@@ -277,6 +271,35 @@ pub enum TensorRefusal {
         axis: usize,
         /// The value's declared extents, outermost first.
         extents: Vec<u64>,
+    },
+    /// The empty-input helper was asked to construct a tensor for a nonempty declaration.
+    ///
+    /// Construction is explicit and fallible. It is never a default for an
+    /// omitted nonempty input.
+    EmptyConstructionOnNonemptyDeclaration {
+        /// Declared row extent.
+        rows: u64,
+        /// Declared column extent.
+        columns: u64,
+    },
+    /// Candle did not produce a Metal allocation at least as long as the sentinel.
+    EmptyInputSentinel {
+        /// Bytes the allocator reported, or zero when allocation failed.
+        held: u64,
+        /// Minimum bytes Candle's rounded `buf_size` must supply.
+        required: u64,
+        /// Candle's own account, when allocation failed rather than ran short.
+        detail: Option<String>,
+    },
+    /// The constructed storage's logical element count is not zero.
+    EmptyInputCount {
+        /// The logical count that was observed.
+        observed: usize,
+    },
+    /// An empty-domain input was asked to back a nonzero verified access window.
+    NonzeroVerifiedInputWindow {
+        /// The artifact-derived accessible extent that was not zero.
+        accessible_bytes: u64,
     },
     /// The artifact declares a target profile this host does not offer.
     ///
@@ -366,8 +389,39 @@ impl fmt::Display for TensorRefusal {
             } => write!(
                 formatter,
                 "candle.preflight.zero-extent: the artifact declares {value:?} with extents \
-                 {extents:?}, whose axis {axis} is empty, and this Candle pin's Metal allocator \
-                 refuses a zero-length buffer, so no Candle tensor of that shape exists to bind",
+                 {extents:?}, whose axis {axis} is empty, and this first pass constructs empty \
+                 inputs only",
+            ),
+            Self::EmptyConstructionOnNonemptyDeclaration { rows, columns } => write!(
+                formatter,
+                "candle.preflight.empty-input.nonempty-declaration: the empty-input helper \
+                 constructs a zero-element tensor and the artifact declares {rows}x{columns}",
+            ),
+            Self::EmptyInputSentinel {
+                held,
+                required,
+                detail,
+            } => match detail {
+                Some(detail) => write!(
+                    formatter,
+                    "candle.preflight.empty-input.sentinel: Candle did not allocate the {required} \
+                     byte sentinel ({detail})",
+                ),
+                None => write!(
+                    formatter,
+                    "candle.preflight.empty-input.sentinel: Candle allocated {held} byte(s) and \
+                     the sentinel requires {required}",
+                ),
+            },
+            Self::EmptyInputCount { observed } => write!(
+                formatter,
+                "candle.preflight.empty-input.count: constructed MetalStorage count is {observed} \
+                 and must be 0",
+            ),
+            Self::NonzeroVerifiedInputWindow { accessible_bytes } => write!(
+                formatter,
+                "candle.preflight.empty-input.window: the artifact-derived accessible extent is \
+                 {accessible_bytes} byte(s) and an empty input may bind only a zero window",
             ),
             Self::IncompatibleTargetProfile { classification } => write!(
                 formatter,
@@ -1019,9 +1073,22 @@ mod tests {
                 detail: "two inputs".to_owned(),
             },
             TensorRefusal::ZeroExtentInterface {
-                value: "input".to_owned(),
-                axis: 1,
-                extents: vec![1, 0],
+                value: "result".to_owned(),
+                axis: 0,
+                extents: vec![0],
+            },
+            TensorRefusal::EmptyConstructionOnNonemptyDeclaration {
+                rows: 1,
+                columns: 3,
+            },
+            TensorRefusal::EmptyInputSentinel {
+                held: 0,
+                required: 1,
+                detail: None,
+            },
+            TensorRefusal::EmptyInputCount { observed: 1 },
+            TensorRefusal::NonzeroVerifiedInputWindow {
+                accessible_bytes: 4,
             },
             TensorRefusal::IncompatibleTargetProfile {
                 classification: tiler_runtime::load::TargetCompatibility::DescriptorMismatch {
