@@ -133,10 +133,10 @@ fn a_softmax_program_is_refused_for_want_of_an_installed_lowering() {
         assert_eq!(
             compile_under(&program, contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "missing-capability"
+                rule: "accuracy.elementary.undischarged-evidence"
             }),
-            "the softmax is recognized and nothing installed lowers it, \
-             and {contract:?} is not what would change that"
+            "the softmax is refused for undischarged exceptional-value evidence \
+             before lowering is asked, and {contract:?} is not what would change that"
         );
     }
 }

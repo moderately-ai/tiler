@@ -268,11 +268,13 @@ fn composed_region_with_a_structural_occurrence() -> SemanticProgram {
 /// [`composed_region_with_a_structural_occurrence`] with the reversal moved
 /// behind the activation.
 ///
-/// `sum(reverse(silu(a)) + c, axis 1)`: the same admitted reversal over a value
+/// `sum(reverse(a + a) + c, axis 1)`: the same admitted reversal over a value
 /// the program *computes* rather than declares. The region binds one read per
 /// declared input, so there is no access for an intermediate the same region
 /// would also produce — and materializing one would add an observable rounding
 /// boundary the caller never asked for. It refuses under `structural-operand`.
+/// The computed operand is an add rather than an activation so the refusal is
+/// not swallowed by the earlier elementary-evidence gate.
 fn reversal_of_a_computed_value() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let a = builder
@@ -281,11 +283,11 @@ fn reversal_of_a_computed_value() -> SemanticProgram {
     let c = builder
         .input::<F32>(InputKey::new("c").unwrap(), domain())
         .unwrap();
-    let activated = F32Silu::apply(&mut builder, a).unwrap();
+    let computed = F32Add::apply(&mut builder, a, a).unwrap();
     let reversed = F32Reindex::apply(
         &mut builder,
         &ReindexForm::reverse_axis(Axis::new(1)).expect("an axis reversal is an admitted form"),
-        activated,
+        computed,
     )
     .unwrap();
     let biased = F32Add::apply(&mut builder, reversed, c).unwrap();
@@ -546,13 +548,12 @@ fn a_structural_occurrence_beside_an_elementary_one_compiles_as_a_mapped_read() 
         // missing vocabulary on this row rather than losing its accepted half.
         assert_eq!(
             compile_under(&accepted, contract),
-            if contract == CONTRACTION_PERMITTED {
-                Err(CompileFailureClass::NoFeasiblePlan)
-            } else {
-                Ok(())
-            },
-            "{contract:?} did not resolve the elementary neighbour as expected, so \
-             the refusal below would not be evidence about the missing vocabulary",
+            Err(CompileFailureClass::UnsupportedCapability {
+                rule: "accuracy.elementary.undischarged-evidence"
+            }),
+            "{contract:?} did not refuse the elementary neighbour for undischarged \
+             exceptional-value evidence, so the refusal below would not be \
+             evidence about the missing vocabulary",
         );
         // **The row this ticket flipped.** The reindex no longer refuses: its
         // axis reversal is the read map of the region its neighbour's
@@ -642,13 +643,12 @@ fn a_broadcast_widening_a_declared_weight_compiles_as_a_replication_relation() {
         );
         assert_eq!(
             compile_under(&accepted, contract),
-            if contract == CONTRACTION_PERMITTED {
-                Err(CompileFailureClass::NoFeasiblePlan)
-            } else {
-                Ok(())
-            },
-            "{contract:?} did not resolve the elementary neighbour as expected, so \
-             the refusal below would not be evidence about the missing relation",
+            Err(CompileFailureClass::UnsupportedCapability {
+                rule: "accuracy.elementary.undischarged-evidence"
+            }),
+            "{contract:?} did not refuse the elementary neighbour for undischarged \
+             exceptional-value evidence, so the refusal below would not be \
+             evidence about the missing relation",
         );
         // **The row this ticket flipped, and the workload's dominant structural
         // occurrence.** The `[2]` weight is read across the `[2, 2]` domain by a

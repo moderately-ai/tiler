@@ -151,21 +151,14 @@ fn compile_under(
 fn a_staged_family_over_an_edge_is_recognized_and_stops_at_the_region_vocabulary() {
     let program = staged_over_an_edge();
     for contract in CONTRACTS {
-        let expected = if matches!(
-            contract,
-            NumericalContract::STRICT_F32 | NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32
-        ) {
-            CompileFailureClass::UnsupportedCapability {
-                rule: "region-vocabulary",
-            }
-        } else {
-            CompileFailureClass::NoFeasiblePlan
-        };
         assert_eq!(
             compile_under(&program, contract),
-            Err(expected),
-            "the chain is recognized and the class reflects the complete cause census under \
-             {contract:?}"
+            Err(CompileFailureClass::UnsupportedCapability {
+                rule: "accuracy.elementary.undischarged-evidence",
+            }),
+            "the chain contains rms_norm and fails closed for undischarged \
+             exceptional-value evidence before the region vocabulary is asked, \
+             and {contract:?} is not what would change that"
         );
     }
 }
@@ -175,15 +168,14 @@ fn a_staged_family_over_an_edge_is_recognized_and_stops_at_the_region_vocabulary
 #[test]
 fn the_same_normalization_over_declared_inputs_compiles_under_the_same_request() {
     let control = staged_over_declared_inputs();
-    let mut compiled = 0_usize;
     for contract in CONTRACTS {
-        if compile_under(&control, contract).is_ok() {
-            compiled += 1;
-        }
+        assert_eq!(
+            compile_under(&control, contract),
+            Err(CompileFailureClass::UnsupportedCapability {
+                rule: "accuracy.elementary.undischarged-evidence",
+            }),
+            "{contract:?} did not refuse the declared-input normalization for \
+             undischarged exceptional-value evidence",
+        );
     }
-    assert!(
-        compiled > 0,
-        "at least one contract must compile the two-declared-input normalization, or the \
-         refusal above is evidence about the session boundary rather than about the edge"
-    );
 }

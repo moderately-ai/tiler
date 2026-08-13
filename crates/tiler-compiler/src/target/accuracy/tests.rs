@@ -1,7 +1,7 @@
 use tiler_ir::semantic::accuracy::{
     AccuracyContract, AccuracyContractForm, AccuracyDomain, AccuracyDomainClause,
-    AccuracyPredicate, ConformanceEvidenceClass, ConformanceEvidenceError, DomainBound,
-    DomainInterval, ExactRational, ExactTolerance, NamedElementaryDescriptorDigest,
+    AccuracyPredicate, ConformanceEvidence, ConformanceEvidenceClass, ConformanceEvidenceError,
+    DomainBound, DomainInterval, ExactRational, ExactTolerance, NamedElementaryDescriptorDigest,
     NamedElementaryProfileKey, OperandOrdinal, ReferenceResultClass, ReferenceResultConstraint,
     ReferenceRoundingRule, RefinementBasis, RefinementOutcome, RefinementUnknown,
     RegisteredImplicationRegistry, UlpFormat, refines, ulp_reference_gap_metric_key,
@@ -15,9 +15,10 @@ use tiler_ir::semantic::{
 };
 
 use super::{
-    APPLE_MSL_EXP_F32_ULP_BOUND, APPLE_ULP_TRANSLATION_FACTOR, ElementaryRefusalReason,
-    RelativeAccuracyDomain, RelativeAccuracyRefusalReason, apple_msl_ulp_metric_key,
-    assess_elementary_accuracy, elementary_relative_accuracy, elementary_relative_accuracy_from,
+    APPLE_MSL_EXP_F32_ULP_BOUND, APPLE_ULP_TRANSLATION_FACTOR, ElementaryEvidenceHalf,
+    ElementaryRealization, ElementaryRefusalReason, RelativeAccuracyDomain,
+    RelativeAccuracyRefusalReason, apple_msl_ulp_metric_key, assess_elementary_accuracy,
+    elementary_relative_accuracy, elementary_relative_accuracy_from,
     installed_elementary_realizations, installed_implication_registry,
     metal_f32_exceptional_value_evidence, metal_f32_exponential_bound_evidence,
     metal_f32_exponential_contract, metal_f32_normalization_exceptional_value_evidence,
@@ -30,22 +31,175 @@ fn required() -> AccuracyContract {
     silu_f32_exponential_accuracy_contract()
 }
 
-/// The installed Metal realization provably refines the resolved contract.
+fn fixture_reference(text: &str) -> NormativeDefinitionRef {
+    NormativeDefinitionRef::new(text).expect("a fixture evidence field is canonical")
+}
+
+/// A synthetic hard-discharging record. This is a test fixture, not a Metal claim.
+fn discharging_fixture(scope: &str, digest: &[u8]) -> ConformanceEvidence {
+    ConformanceEvidence::new(
+        ConformanceEvidenceClass::NormativeGuarantee,
+        fixture_reference(scope),
+        fixture_reference("synthetic both-halves fixture, not a Metal specification claim"),
+        fixture_reference("fixture.elementary.both-halves"),
+        fixture_reference("tiler test fixture, not a toolchain row"),
+        None,
+        None,
+        None,
+        digest,
+    )
+    .expect("the discharging fixture is well formed")
+}
+
+fn empirical_fixture(scope: &str, digest: &[u8]) -> ConformanceEvidence {
+    ConformanceEvidence::new(
+        ConformanceEvidenceClass::EmpiricalQualification,
+        fixture_reference(scope),
+        fixture_reference("synthetic empirical fixture"),
+        fixture_reference("fixture.elementary.empirical"),
+        fixture_reference("tiler test fixture"),
+        Some(fixture_reference("fixture device")),
+        Some(fixture_reference("fixture oracle")),
+        Some(fixture_reference("fixture corpus")),
+        digest,
+    )
+    .expect("the empirical fixture is well formed")
+}
+
+fn unknown_fixture(scope: &str, digest: &[u8]) -> ConformanceEvidence {
+    ConformanceEvidence::new(
+        ConformanceEvidenceClass::Unknown,
+        fixture_reference(scope),
+        fixture_reference("synthetic unknown fixture"),
+        fixture_reference("fixture.elementary.unknown"),
+        fixture_reference("tiler test fixture"),
+        None,
+        None,
+        None,
+        digest,
+    )
+    .expect("the unknown fixture is well formed")
+}
+
+fn realization_with(
+    contract: AccuracyContract,
+    bound: ConformanceEvidence,
+    exceptional: ConformanceEvidence,
+) -> ElementaryRealization {
+    ElementaryRealization::new(
+        contract.operation().clone(),
+        contract,
+        bound,
+        exceptional,
+        crate::target::honourability::governed_profile_source(),
+    )
+}
+
+fn discharging_activation() -> ElementaryRealization {
+    realization_with(
+        metal_f32_exponential_contract(),
+        discharging_fixture(
+            "fixture bound half for tiler::silu-f32@1",
+            b"fixture:silu-bound-v1",
+        ),
+        discharging_fixture(
+            "fixture exceptional half for tiler::silu-f32@1",
+            b"fixture:silu-exceptional-v1",
+        ),
+    )
+}
+
+fn discharging_normalization() -> ElementaryRealization {
+    realization_with(
+        metal_f32_reciprocal_square_root_contract(),
+        discharging_fixture(
+            "fixture bound half for tiler::rms-norm-f32@1",
+            b"fixture:rms-bound-v1",
+        ),
+        discharging_fixture(
+            "fixture exceptional half for tiler::rms-norm-f32@1",
+            b"fixture:rms-exceptional-v1",
+        ),
+    )
+}
+
+fn discharging_softmax() -> ElementaryRealization {
+    realization_with(
+        metal_f32_softmax_exponential_contract(),
+        discharging_fixture(
+            "fixture bound half for tiler::softmax-f32@1",
+            b"fixture:softmax-bound-v1",
+        ),
+        discharging_fixture(
+            "fixture exceptional half for tiler::softmax-f32@1",
+            b"fixture:softmax-exceptional-v1",
+        ),
+    )
+}
+
+fn discharging_installation() -> Vec<ElementaryRealization> {
+    vec![
+        discharging_activation(),
+        discharging_normalization(),
+        discharging_softmax(),
+    ]
+}
+
+fn assert_undischarged(
+    refusal: &super::ElementaryAccuracyRefusal,
+    operation: &tiler_ir::semantic::OpKey,
+    half: ElementaryEvidenceHalf,
+    class: ConformanceEvidenceClass,
+) {
+    assert_eq!(
+        refusal.diagnostic_code(),
+        "accuracy.elementary.undischarged-evidence"
+    );
+    assert_eq!(refusal.operation(), operation);
+    let ElementaryRefusalReason::UndischargedEvidence {
+        declaring_profile,
+        half: refused_half,
+        class: refused_class,
+    } = refusal.reason()
+    else {
+        panic!("expected undischarged evidence, got {refusal:?}");
+    };
+    assert_eq!(*refused_half, half);
+    assert_eq!(*refused_class, class);
+    assert!(declaring_profile.is_valid());
+}
+
+/// The installed Metal contract still refines, and admission still refuses.
 ///
-/// The admission is by the *registered* implication rather than by an identical
-/// contract or a tighter bound of the same shape, which is what makes the
-/// derivation load-bearing rather than decorative.
+/// Refinement and discharge are independent: the registered implication proves
+/// the bound containment, and the empirical exceptional half still cannot
+/// discharge. Collapsing those into one success would be the defect this ticket
+/// closes.
 #[test]
 fn the_metal_realization_refines_the_resolved_contract_through_the_registered_implication() {
-    let admission = assess_elementary_accuracy(
+    let outcome = refines(
+        &metal_f32_exponential_contract(),
+        &required(),
+        &installed_implication_registry(),
+    );
+    let RefinementOutcome::Refines {
+        basis: RefinementBasis::RegisteredImplication { .. },
+    } = outcome
+    else {
+        panic!("the Metal contract still refines through the registered implication: {outcome:?}");
+    };
+    let refusal = assess_elementary_accuracy(
         &required(),
         &installed_elementary_realizations(),
         &installed_implication_registry(),
     )
-    .expect("the installed realization refines the requirement");
-    let RefinementBasis::RegisteredImplication { .. } = admission.basis() else {
-        panic!("the admission rests on a registered implication: {admission:?}");
-    };
+    .expect_err("empirical exceptional evidence cannot admit the refining Metal row");
+    assert_undischarged(
+        &refusal,
+        &silu_f32_op(),
+        ElementaryEvidenceHalf::ExceptionalValue,
+        ConformanceEvidenceClass::EmpiricalQualification,
+    );
 }
 
 /// The translation is exact arithmetic, and it lands exactly on the requirement.
@@ -183,13 +337,12 @@ fn the_bound_is_normative_and_the_exceptional_behaviour_is_only_empirical() {
         }
     );
 
-    let admission = assess_elementary_accuracy(
-        &required(),
-        &installed_elementary_realizations(),
-        &installed_implication_registry(),
-    )
-    .expect("refines");
-    let discharge = admission.discharge();
+    let installed = installed_elementary_realizations();
+    let silu = installed
+        .iter()
+        .find(|row| row.operation() == &silu_f32_op())
+        .expect("the SiLU row is installed");
+    let discharge = silu.discharge();
     assert!(discharge.bound_is_discharged());
     assert!(
         !discharge.exceptional_is_discharged(),
@@ -198,6 +351,15 @@ fn the_bound_is_normative_and_the_exceptional_behaviour_is_only_empirical() {
     assert_eq!(
         discharge.exceptional_class(),
         ConformanceEvidenceClass::EmpiricalQualification
+    );
+    let refusal =
+        assess_elementary_accuracy(&required(), &installed, &installed_implication_registry())
+            .expect_err("a row that discharges only one half is not admitted");
+    assert_undischarged(
+        &refusal,
+        &silu_f32_op(),
+        ElementaryEvidenceHalf::ExceptionalValue,
+        ConformanceEvidenceClass::EmpiricalQualification,
     );
 }
 
@@ -242,23 +404,34 @@ fn the_normative_record_cites_the_retained_specification_digest() {
 // The normalization's reciprocal square root, whose contract needs no metric
 // ---------------------------------------------------------------------------
 
-/// The installed Metal realization refines the normalization's requirement.
+/// The installed Metal normalization contract still refines by identity.
 ///
-/// The admission rests on an *identical normalized contract* rather than on a
-/// registered implication, and that difference is the finding: what Metal
-/// promises for `rsqrt` and what `tiler::rms-norm-f32@1` requires are the same
-/// result set, so there is no translation to perform.
+/// Refinement is not admission: the exceptional half remains empirical, so
+/// assessment refuses the same row the identity proof would otherwise accept.
 #[test]
 fn the_metal_normalization_realization_refines_by_identity_rather_than_implication() {
-    let admission = assess_elementary_accuracy(
+    let outcome = refines(
+        &metal_f32_reciprocal_square_root_contract(),
+        &rms_norm_f32_rsqrt_accuracy_contract(),
+        &installed_implication_registry(),
+    );
+    assert_eq!(
+        outcome,
+        RefinementOutcome::Refines {
+            basis: RefinementBasis::IdenticalNormalizedContract
+        }
+    );
+    let refusal = assess_elementary_accuracy(
         &rms_norm_f32_rsqrt_accuracy_contract(),
         &installed_elementary_realizations(),
         &installed_implication_registry(),
     )
-    .expect("the installed realization refines the requirement");
-    assert_eq!(
-        admission.basis(),
-        &RefinementBasis::IdenticalNormalizedContract
+    .expect_err("empirical exceptional evidence cannot admit the normalizing Metal row");
+    assert_undischarged(
+        &refusal,
+        &rms_norm_f32_op(),
+        ElementaryEvidenceHalf::ExceptionalValue,
+        ConformanceEvidenceClass::EmpiricalQualification,
     );
 }
 
@@ -271,15 +444,16 @@ fn the_metal_normalization_realization_refines_by_identity_rather_than_implicati
 /// quietly restated the normalization's contract as a ULP bound would fail here.
 #[test]
 fn the_normalization_needs_no_registered_implication_at_all() {
-    let admission = assess_elementary_accuracy(
+    let outcome = refines(
+        &metal_f32_reciprocal_square_root_contract(),
         &rms_norm_f32_rsqrt_accuracy_contract(),
-        &installed_elementary_realizations(),
         &RegisteredImplicationRegistry::empty(),
-    )
-    .expect("a faithful requirement needs no implication");
+    );
     assert_eq!(
-        admission.basis(),
-        &RefinementBasis::IdenticalNormalizedContract
+        outcome,
+        RefinementOutcome::Refines {
+            basis: RefinementBasis::IdenticalNormalizedContract
+        }
     );
 
     let refusal = assess_elementary_accuracy(
@@ -401,23 +575,41 @@ fn the_installed_realizations_are_exactly_the_registered_families() {
 /// what shows one row serves both.
 #[test]
 fn the_softmax_exponential_refines_through_the_registered_implication() {
-    let admission = assess_elementary_accuracy(
+    let outcome = refines(
+        &metal_f32_softmax_exponential_contract(),
         &softmax_f32_exponential_accuracy_contract(),
-        &installed_elementary_realizations(),
+        &installed_implication_registry(),
+    );
+    let RefinementOutcome::Refines {
+        basis: RefinementBasis::RegisteredImplication { .. },
+    } = outcome
+    else {
+        panic!(
+            "the softmax Metal contract still refines through the registered implication: {outcome:?}"
+        );
+    };
+    let installed = installed_elementary_realizations();
+    let softmax = installed
+        .iter()
+        .find(|row| row.operation() == &softmax_f32_op())
+        .expect("the softmax row is installed");
+    assert!(softmax.discharge().bound_is_discharged());
+    assert!(!softmax.discharge().exceptional_is_discharged());
+    assert_eq!(
+        softmax.discharge().exceptional_class(),
+        ConformanceEvidenceClass::EmpiricalQualification
+    );
+    let refusal = assess_elementary_accuracy(
+        &softmax_f32_exponential_accuracy_contract(),
+        &installed,
         &installed_implication_registry(),
     )
-    .expect("the installed realization refines the softmax's requirement");
-    let RefinementBasis::RegisteredImplication { .. } = admission.basis() else {
-        panic!("the admission rests on a registered implication: {admission:?}");
-    };
-    // The bound half discharges a hard requirement and the exceptional half does
-    // not, exactly as the activation's does — the specification bounds `exp` and
-    // states no edge-case table for it.
-    assert!(admission.discharge().bound_is_discharged());
-    assert!(!admission.discharge().exceptional_is_discharged());
-    assert_eq!(
-        admission.discharge().exceptional_class(),
-        ConformanceEvidenceClass::EmpiricalQualification
+    .expect_err("empirical exceptional evidence cannot admit the softmax Metal row");
+    assert_undischarged(
+        &refusal,
+        &softmax_f32_op(),
+        ElementaryEvidenceHalf::ExceptionalValue,
+        ConformanceEvidenceClass::EmpiricalQualification,
     );
 }
 
@@ -503,6 +695,190 @@ fn each_family_carries_its_own_exceptional_value_corpus() {
     }
 }
 
+/// A fixture whose two halves both discharge is admitted.
+///
+/// This is the positive path the Metal rows cannot take: the contracts are the
+/// Metal ones, the evidence is a labelled test fixture, and both halves are
+/// `NormativeGuarantee`. Fabricating a Metal claim is not what this does.
+#[test]
+fn a_realization_whose_two_halves_discharge_is_admitted() {
+    let admission = assess_elementary_accuracy(
+        &required(),
+        &discharging_installation(),
+        &installed_implication_registry(),
+    )
+    .expect("both halves discharge");
+    let RefinementBasis::RegisteredImplication { .. } = admission.basis() else {
+        panic!("the fixture still uses the Metal contract and its implication: {admission:?}");
+    };
+    assert!(admission.discharge().bound_is_discharged());
+    assert!(admission.discharge().exceptional_is_discharged());
+
+    let declared = ElementaryRealization::declare(
+        metal_f32_exponential_contract().operation().clone(),
+        metal_f32_exponential_contract(),
+        discharging_fixture(
+            "declaration-bound fixture for tiler::silu-f32@1",
+            b"fixture:declare-silu-bound-v1",
+        ),
+        discharging_fixture(
+            "declaration-exceptional fixture for tiler::silu-f32@1",
+            b"fixture:declare-silu-exceptional-v1",
+        ),
+        crate::target::honourability::governed_profile_source(),
+    )
+    .expect("declaration of a both-halves row succeeds");
+    assert!(declared.require_discharged_halves().is_ok());
+}
+
+/// Declaration refuses a row whose exceptional half cannot discharge.
+///
+/// Same invariant as assessment, asked at the other boundary, so a future
+/// internal caller cannot assemble an admission-eligible row from empirical
+/// exceptional evidence.
+#[test]
+fn declaration_refuses_an_empirical_exceptional_half() {
+    let refusal = ElementaryRealization::declare(
+        metal_f32_exponential_contract().operation().clone(),
+        metal_f32_exponential_contract(),
+        metal_f32_exponential_bound_evidence().expect("well formed"),
+        metal_f32_exceptional_value_evidence().expect("well formed"),
+        crate::target::honourability::governed_profile_source(),
+    )
+    .expect_err("declaration cannot mint an admission-eligible Metal row");
+    assert_undischarged(
+        &refusal,
+        &silu_f32_op(),
+        ElementaryEvidenceHalf::ExceptionalValue,
+        ConformanceEvidenceClass::EmpiricalQualification,
+    );
+}
+
+/// Perturbing only the bound half refuses that half, assertion unchanged.
+///
+/// The fixture starts admitted. Replacing the bound record with empirical
+/// qualification, and nothing else, is the subject. The expected refusal is
+/// written before the perturbation so a later edit that also changes the
+/// assertion cannot manufacture a pass.
+#[test]
+fn perturbing_only_the_bound_half_refuses_that_half() {
+    let expected_half = ElementaryEvidenceHalf::Bound;
+    let expected_class = ConformanceEvidenceClass::EmpiricalQualification;
+    let admitted = assess_elementary_accuracy(
+        &required(),
+        &[discharging_activation()],
+        &installed_implication_registry(),
+    );
+    assert!(
+        admitted.is_ok(),
+        "the unperturbed fixture must admit: {admitted:?}"
+    );
+
+    let perturbed = realization_with(
+        metal_f32_exponential_contract(),
+        empirical_fixture(
+            "perturbed bound half for tiler::silu-f32@1",
+            b"fixture:silu-bound-empirical-v1",
+        ),
+        discharging_fixture(
+            "unperturbed exceptional half for tiler::silu-f32@1",
+            b"fixture:silu-exceptional-v1",
+        ),
+    );
+    let refusal =
+        assess_elementary_accuracy(&required(), &[perturbed], &installed_implication_registry())
+            .expect_err("an empirical bound half cannot discharge");
+    assert_undischarged(&refusal, &silu_f32_op(), expected_half, expected_class);
+}
+
+/// Perturbing only the exceptional half refuses that half, assertion unchanged.
+#[test]
+fn perturbing_only_the_exceptional_half_refuses_that_half() {
+    let expected_half = ElementaryEvidenceHalf::ExceptionalValue;
+    let expected_class = ConformanceEvidenceClass::EmpiricalQualification;
+    let admitted = assess_elementary_accuracy(
+        &required(),
+        &[discharging_activation()],
+        &installed_implication_registry(),
+    );
+    assert!(
+        admitted.is_ok(),
+        "the unperturbed fixture must admit: {admitted:?}"
+    );
+
+    let perturbed = realization_with(
+        metal_f32_exponential_contract(),
+        discharging_fixture(
+            "unperturbed bound half for tiler::silu-f32@1",
+            b"fixture:silu-bound-v1",
+        ),
+        empirical_fixture(
+            "perturbed exceptional half for tiler::silu-f32@1",
+            b"fixture:silu-exceptional-empirical-v1",
+        ),
+    );
+    let refusal =
+        assess_elementary_accuracy(&required(), &[perturbed], &installed_implication_registry())
+            .expect_err("an empirical exceptional half cannot discharge");
+    assert_undischarged(&refusal, &silu_f32_op(), expected_half, expected_class);
+}
+
+/// An `Unknown` bound half is a distinct class from empirical qualification.
+#[test]
+fn an_unknown_bound_half_is_refused_as_unknown_not_empirical() {
+    let expected_half = ElementaryEvidenceHalf::Bound;
+    let expected_class = ConformanceEvidenceClass::Unknown;
+    let perturbed = realization_with(
+        metal_f32_exponential_contract(),
+        unknown_fixture(
+            "unknown bound half for tiler::silu-f32@1",
+            b"fixture:silu-bound-unknown-v1",
+        ),
+        discharging_fixture(
+            "unperturbed exceptional half for tiler::silu-f32@1",
+            b"fixture:silu-exceptional-v1",
+        ),
+    );
+    let refusal =
+        assess_elementary_accuracy(&required(), &[perturbed], &installed_implication_registry())
+            .expect_err("unknown bound evidence cannot discharge");
+    assert_undischarged(&refusal, &silu_f32_op(), expected_half, expected_class);
+}
+
+/// The governed profile's installed Metal rows fail closed, and that is not
+/// an absent row.
+#[test]
+fn the_governed_profile_refuses_each_metal_row_as_undischarged_exceptional_evidence() {
+    for (operation, required_contract) in [
+        (silu_f32_op(), silu_f32_exponential_accuracy_contract()),
+        (rms_norm_f32_op(), rms_norm_f32_rsqrt_accuracy_contract()),
+        (
+            softmax_f32_op(),
+            softmax_f32_exponential_accuracy_contract(),
+        ),
+    ] {
+        let refusal = assess_elementary_accuracy(
+            &required_contract,
+            &installed_elementary_realizations(),
+            &installed_implication_registry(),
+        )
+        .expect_err("every current Metal row fails closed");
+        assert_undischarged(
+            &refusal,
+            &operation,
+            ElementaryEvidenceHalf::ExceptionalValue,
+            ConformanceEvidenceClass::EmpiricalQualification,
+        );
+        let number =
+            elementary_relative_accuracy(&operation, &crate::target::TargetProfile::governed())
+                .expect_err("an undischarged row yields no relative accuracy");
+        assert_eq!(
+            number.diagnostic_code(),
+            "accuracy.elementary.undischarged-evidence"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The numeric relative accuracy a parametric rewrite bound instantiates from
 // ---------------------------------------------------------------------------
@@ -568,9 +944,12 @@ fn whole_domain_clause(predicate: AccuracyPredicate) -> AccuracyDomainClause {
 /// `u` fail here instead of looking right.
 #[test]
 fn the_registered_softmax_accuracy_is_twenty_four_unit_roundoffs() {
-    let accuracy =
-        elementary_relative_accuracy(&softmax_f32_op(), &crate::target::TargetProfile::governed())
-            .expect("the governed profile realizes the softmax's exponential");
+    let accuracy = elementary_relative_accuracy_from(
+        &softmax_f32_op(),
+        &discharging_installation(),
+        &installed_implication_registry(),
+    )
+    .expect("a both-halves fixture realizes the softmax's exponential");
     assert_eq!(accuracy.operation(), &softmax_f32_op());
     assert_eq!(
         accuracy.bound().value(),
@@ -609,12 +988,18 @@ fn the_registered_softmax_accuracy_is_twenty_four_unit_roundoffs() {
 /// tolerance moved without the other's.
 #[test]
 fn the_two_exponentials_yield_one_relative_accuracy() {
-    let activation =
-        elementary_relative_accuracy(&silu_f32_op(), &crate::target::TargetProfile::governed())
-            .expect("the governed profile realizes the activation's exponential");
-    let softmax =
-        elementary_relative_accuracy(&softmax_f32_op(), &crate::target::TargetProfile::governed())
-            .expect("the governed profile realizes the softmax's exponential");
+    let activation = elementary_relative_accuracy_from(
+        &silu_f32_op(),
+        &discharging_installation(),
+        &installed_implication_registry(),
+    )
+    .expect("a both-halves fixture realizes the activation's exponential");
+    let softmax = elementary_relative_accuracy_from(
+        &softmax_f32_op(),
+        &discharging_installation(),
+        &installed_implication_registry(),
+    )
+    .expect("a both-halves fixture realizes the softmax's exponential");
     assert_eq!(SILU_F32_EXPONENTIAL_ULP_TOLERANCE, 12);
     assert_eq!(activation.bound(), softmax.bound());
     assert_eq!(activation.domain(), softmax.domain());
@@ -628,11 +1013,12 @@ fn the_two_exponentials_yield_one_relative_accuracy() {
 /// relative error is unbounded there exactly as the ULP conversion's is.
 #[test]
 fn the_faithful_normalization_requirement_gives_two_unit_roundoffs() {
-    let accuracy = elementary_relative_accuracy(
+    let accuracy = elementary_relative_accuracy_from(
         &rms_norm_f32_op(),
-        &crate::target::TargetProfile::governed(),
+        &discharging_installation(),
+        &installed_implication_registry(),
     )
-    .expect("the governed profile realizes the reciprocal square root");
+    .expect("a both-halves fixture realizes the reciprocal square root");
     assert_eq!(
         accuracy.bound().value(),
         &ExactRational::from_integer(2).multiply(&unit_roundoff())

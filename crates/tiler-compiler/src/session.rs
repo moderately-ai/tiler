@@ -722,6 +722,68 @@ impl TargetDTypeDispatchRefusal {
     }
 }
 
+/// Which half of an elementary realization failed to discharge.
+///
+/// Re-exported from the assessment authority so the public refusal and the
+/// internal check cannot name different halves.
+pub use crate::target::accuracy::ElementaryEvidenceHalf;
+
+/// Why one elementary accuracy obligation went unmet on a target.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TargetElementaryAccuracyReason {
+    /// No installed realization speaks about the operation.
+    NoInstalledRealization,
+    /// A realization was installed and could not be proved to refine the contract.
+    Unrefined,
+    /// A realization refined the contract, but a half's evidence cannot discharge.
+    UndischargedEvidence {
+        /// Which half failed to discharge.
+        half: ElementaryEvidenceHalf,
+        /// The evidence class that failed to discharge.
+        class: tiler_ir::semantic::accuracy::ConformanceEvidenceClass,
+    },
+}
+
+impl TargetElementaryAccuracyReason {
+    /// Returns the stable diagnostic code naming this reason.
+    #[must_use]
+    pub const fn diagnostic_code(self) -> &'static str {
+        match self {
+            Self::NoInstalledRealization => "accuracy.elementary.no-installed-realization",
+            Self::Unrefined => "accuracy.elementary.unrefined-realization",
+            Self::UndischargedEvidence { .. } => "accuracy.elementary.undischarged-evidence",
+        }
+    }
+}
+
+/// Target-local elementary-accuracy refusal for one registered family.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetElementaryAccuracyRefusal {
+    operation: tiler_ir::semantic::OpKey,
+    target_profile: TargetProfileKey,
+    reason: TargetElementaryAccuracyReason,
+}
+
+impl TargetElementaryAccuracyRefusal {
+    /// Returns the elementary family whose registered contract went unsatisfied.
+    #[must_use]
+    pub const fn operation(&self) -> &tiler_ir::semantic::OpKey {
+        &self.operation
+    }
+
+    /// Returns the target profile that was asked.
+    #[must_use]
+    pub const fn target_profile(&self) -> &TargetProfileKey {
+        &self.target_profile
+    }
+
+    /// Returns why the obligation went unmet.
+    #[must_use]
+    pub const fn reason(&self) -> TargetElementaryAccuracyReason {
+        self.reason
+    }
+}
+
 /// Recoverable typed detail for a pre-trace target-local refusal.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -730,6 +792,8 @@ pub enum TargetCompileRefusal {
     NumericalContract(TargetNumericalContractRefusal),
     /// One exact program dtype could not dispatch at compile profile.
     DTypeDispatch(TargetDTypeDispatchRefusal),
+    /// A registered elementary family has no admitting realization on this target.
+    ElementaryAccuracy(TargetElementaryAccuracyRefusal),
 }
 
 /// A refusal scoped to one otherwise valid target-profile slot.
@@ -1514,9 +1578,10 @@ const fn rule_of(error: &RequestError) -> &'static str {
         // `class_of` reports this refusal through its own typed fields instead.
         RequestError::BudgetExceeded { resource, .. } => resource.key(),
         RequestError::UnsupportedCapability { rule, .. } => rule,
-        // The refusing authority's own stable code, so the two findings it
-        // distinguishes — no installed realization, and an installed one that
-        // could not be proved to refine — reach a caller as different keys.
+        // The refusing authority's own stable code, so the three findings it
+        // distinguishes — no installed realization, an installed one that
+        // could not be proved to refine, and a refining one whose evidence
+        // cannot discharge — reach a caller as different keys.
         RequestError::UnrealizedElementaryAccuracy { reason, .. } => reason,
         RequestError::ShapeProductOverflow { role } => role,
     }
@@ -2510,6 +2575,31 @@ pub fn compile_governed(
     outcome
 }
 
+fn public_elementary_accuracy_reason(
+    reason: &'static str,
+    half: Option<ElementaryEvidenceHalf>,
+    class: Option<tiler_ir::semantic::accuracy::ConformanceEvidenceClass>,
+) -> Result<TargetElementaryAccuracyReason, CompileError> {
+    match (reason, half, class) {
+        ("accuracy.elementary.no-installed-realization", None, None) => {
+            Ok(TargetElementaryAccuracyReason::NoInstalledRealization)
+        }
+        ("accuracy.elementary.unrefined-realization", None, None) => {
+            Ok(TargetElementaryAccuracyReason::Unrefined)
+        }
+        ("accuracy.elementary.undischarged-evidence", Some(half), Some(class)) => {
+            Ok(TargetElementaryAccuracyReason::UndischargedEvidence { half, class })
+        }
+        _ => Err(CompileError::InvalidCompilerOutput(
+            crate::pipeline::CompilerOutputError::Program(
+                crate::program::ProgramError::Structure {
+                    rule: "public-elementary-accuracy-refusal",
+                },
+            ),
+        )),
+    }
+}
+
 fn target_compile_failure(error: CompileError) -> Result<TargetCompileFailure, CompileError> {
     let refusal = match target_request_refusal(&error) {
         Some(RequestError::NoResolvableNumericalContract {
@@ -2547,6 +2637,23 @@ fn target_compile_failure(error: CompileError) -> Result<TargetCompileFailure, C
                 },
             },
         )),
+        Some(RequestError::UnrealizedElementaryAccuracy {
+            operation,
+            target_profile,
+            reason,
+            undischarged_half,
+            undischarged_class,
+        }) => Some(TargetCompileRefusal::ElementaryAccuracy(
+            TargetElementaryAccuracyRefusal {
+                operation: operation.clone(),
+                target_profile: target_profile.clone(),
+                reason: public_elementary_accuracy_reason(
+                    reason,
+                    *undischarged_half,
+                    *undischarged_class,
+                )?,
+            },
+        )),
         Some(
             RequestError::UnsupportedRequestVersion
             | RequestError::EmptyTargetSet
@@ -2565,15 +2672,6 @@ fn target_compile_failure(error: CompileError) -> Result<TargetCompileFailure, C
             | RequestError::NoApplicableNumericalContract { .. }
             | RequestError::BudgetExceeded { .. }
             | RequestError::UnsupportedCapability { .. }
-            // Reaches a caller as [`CompileFailureClass::UnsupportedCapability`]
-            // carrying the refusing authority's own stable key, rather than as a
-            // structured refusal. A structured one would name the operation as
-            // well, and it is deliberately not added here: no public boundary
-            // lets a caller-built profile declare an elementary realization yet,
-            // so the only refusal this build can produce says "this profile
-            // declares none", which the key already says. The richer refusal
-            // belongs with the declaration it would explain.
-            | RequestError::UnrealizedElementaryAccuracy { .. }
             | RequestError::ShapeProductOverflow { .. },
         )
         | None => None,
@@ -2586,7 +2684,10 @@ fn target_compile_failure(error: CompileError) -> Result<TargetCompileFailure, C
 
 fn target_request_refusal(error: &CompileError) -> Option<&RequestError> {
     match error {
-        CompileError::NoFeasiblePlan(NoFeasiblePlanError::Request(error)) => Some(error),
+        CompileError::NoFeasiblePlan(NoFeasiblePlanError::Request(error))
+        | CompileError::UnsupportedCapability(
+            error @ RequestError::UnrealizedElementaryAccuracy { .. },
+        ) => Some(error),
         CompileError::Explained { source, .. } => target_request_refusal(source),
         CompileError::InvalidRequest(_)
         | CompileError::UnsupportedCapability(_)
@@ -2863,14 +2964,15 @@ mod tests {
 
     use super::{
         BudgetResource, CompilationRequest, CompileFailure, CompileFailureClass, CompileRequest,
-        NumericalContract, StrictF32NumericalContract, TargetCompileRefusal,
-        TargetNumericalRefusalDisposition, TargetNumericalRequirement, compile, compile_governed,
+        ElementaryEvidenceHalf, NumericalContract, StrictF32NumericalContract,
+        TargetCompileRefusal, TargetElementaryAccuracyReason, TargetNumericalRefusalDisposition,
+        TargetNumericalRequirement, compile, compile_governed,
     };
     use crate::pipeline::compile as compile_internal;
     use crate::target::{TargetProfile, TargetRequest};
     use tiler_ir::program::abi::{ExprNode, TargetPropertyRequirementRelation};
     use tiler_ir::semantic::{
-        F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
+        F32, F32Add, F32Constant, F32Multiply, F32Silu, InputKey, OutputKey, SemanticProgram,
         SemanticProgramBuilder, StrictSerialF32Sum,
     };
     use tiler_ir::shape::{Axis, Shape};
@@ -4060,6 +4162,56 @@ mod tests {
             failure.class(),
         );
         assert!(failure.explain().is_none());
+    }
+
+    /// The public structured refusal names the failing exceptional half.
+    ///
+    /// The governed Metal `SiLU` row still refines the registered contract. What
+    /// it cannot do is discharge exceptional-value evidence, and that is a
+    /// different repair from a missing or unrefined row.
+    #[test]
+    fn compile_governed_refuses_silu_as_undischarged_exceptional_evidence() {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([4]))
+            .unwrap();
+        let activated = F32Silu::apply(&mut builder, input).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), activated)
+            .unwrap();
+        let program = builder.build().unwrap();
+
+        let failure = compile_governed(&program, NumericalContract::STRICT_F32)
+            .expect_err("the governed Metal SiLU row cannot discharge both halves");
+        assert_eq!(
+            failure.class(),
+            CompileFailureClass::UnsupportedCapability {
+                rule: "accuracy.elementary.undischarged-evidence",
+            }
+        );
+        assert!(failure.explain().is_none());
+        let TargetCompileRefusal::ElementaryAccuracy(refusal) = failure
+            .refusal()
+            .expect("an undischarged elementary row retains structured detail")
+        else {
+            panic!(
+                "expected an elementary-accuracy refusal, got {:?}",
+                failure.refusal()
+            );
+        };
+        assert_eq!(refusal.operation(), &tiler_ir::semantic::silu_f32_op());
+        assert_eq!(
+            refusal.reason(),
+            TargetElementaryAccuracyReason::UndischargedEvidence {
+                half: ElementaryEvidenceHalf::ExceptionalValue,
+                class:
+                    tiler_ir::semantic::accuracy::ConformanceEvidenceClass::EmpiricalQualification,
+            }
+        );
+        assert_eq!(
+            refusal.reason().diagnostic_code(),
+            "accuracy.elementary.undischarged-evidence"
+        );
     }
 
     /// The boundary names both assessment identities an artifact must record.
