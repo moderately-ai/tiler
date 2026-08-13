@@ -777,8 +777,7 @@ impl ExtentSources {
         match extent {
             SourcedExtent::Static(value) => Some(*value),
             SourcedExtent::Symbol(symbol) => {
-                let interval = self.environment.extent_interval(symbol)?;
-                (interval.lower == interval.upper).then(|| Extent::new(interval.lower))
+                self.environment.determined_extent(symbol).map(Extent::new)
             }
         }
     }

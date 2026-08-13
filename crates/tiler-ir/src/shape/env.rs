@@ -73,6 +73,7 @@ use crate::identity::{push_len, push_slice};
 use crate::program::abi::{AvailabilityPhase, TargetPropertyKey};
 use crate::semantic::InputKey;
 
+pub(crate) mod census;
 pub(crate) mod constraint;
 
 // Flat re-export rather than a published `constraint` module: the constraint
@@ -768,7 +769,9 @@ impl ShapeEnvBuilder {
             .iter()
             .map(SemanticInputConstraint::relation)
             .collect();
-        constraint::decide(&bound, &relations)?;
+        let mut solution =
+            constraint::solve(&bound, &relations, constraint::SolveKind::SemanticClosure)?;
+        let summary = ExtentProofSummary::from_solution(&mut solution, bound.len());
 
         // Guards are decided separately and only for decidability. Their
         // failure is a planning outcome, not an invalid input, so a
@@ -787,6 +790,7 @@ impl ShapeEnvBuilder {
             constraints,
             guards,
             identity,
+            summary,
         })
     }
 
@@ -819,19 +823,85 @@ fn guard_verdict(
 ) -> Result<(), ShapeEnvError> {
     let mut with_guard = relations.to_vec();
     with_guard.push(guard.relation());
-    constraint::decide(bound, &with_guard)
+    constraint::decide(bound, &with_guard, constraint::SolveKind::GuardHypothesis)
+}
+
+/// One frozen proof fact per canonical symbol slot.
+///
+/// Class identifiers are the solver's normalized roots — the canonically least
+/// slot in each equality class. Intervals are the implied closed bounds, or
+/// `None` when a class bound left the extent domain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ExtentProofSlot {
+    class: usize,
+    interval: Option<ExtentInterval>,
+}
+
+/// Private derived projection of one successful semantic-closure solve.
+///
+/// One record per canonical symbol slot. Variant guards never enter it. It is
+/// not a public type, not an identity component, and not a second source of
+/// semantic facts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ExtentProofSummary {
+    slots: Vec<ExtentProofSlot>,
+}
+
+impl ExtentProofSummary {
+    fn from_solution(solution: &mut constraint::Solution, len: usize) -> Self {
+        Self {
+            slots: (0..len)
+                .map(|slot| ExtentProofSlot {
+                    class: solution.class_of(slot),
+                    interval: solution.interval(slot),
+                })
+                .collect(),
+        }
+    }
+
+    fn interval(&self, slot: usize) -> Option<ExtentInterval> {
+        self.slots[slot].interval
+    }
+
+    fn same_class(&self, left: usize, right: usize) -> bool {
+        self.slots[left].class == self.slots[right].class
+    }
 }
 
 /// A verified shape environment: every symbol declared once and bound once.
 ///
 /// Immutable and unforgeable — private fields, no unchecked constructor, and no
 /// mutable access to a draft — per the ADR 0071 lifecycle.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 pub struct ShapeEnv {
     entries: Vec<(ShapeSymbol, RootBinding)>,
     constraints: Vec<SemanticInputConstraint>,
     guards: Vec<VariantGuard>,
     identity: ShapeEnvIdentity,
+    summary: ExtentProofSummary,
+}
+
+impl PartialEq for ShapeEnv {
+    fn eq(&self, other: &Self) -> bool {
+        self.entries == other.entries
+            && self.constraints == other.constraints
+            && self.guards == other.guards
+            && self.identity == other.identity
+    }
+}
+
+impl Eq for ShapeEnv {}
+
+impl fmt::Debug for ShapeEnv {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ShapeEnv")
+            .field("entries", &self.entries)
+            .field("constraints", &self.constraints)
+            .field("guards", &self.guards)
+            .field("identity", &self.identity)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ShapeEnv {
@@ -839,12 +909,14 @@ impl ShapeEnv {
     ///
     /// Covers exactly what the contract names: "symbol declarations,
     /// root-binding provenance, and semantic constraints". Two things are
-    /// deliberately outside it. Nothing derived from the constraints is stored
-    /// at all, so no solver cache can leak into identity by omission. And
-    /// variant guards are excluded because they are not semantic constraints:
-    /// two environments describing the same program must have the same identity
-    /// whether or not a planner happened to record predicates for optimizations
-    /// it was considering.
+    /// deliberately outside it. The retained private proof summary is a
+    /// deterministic projection of those authored fields and is excluded from
+    /// these bytes, from equality, and from debug output — identity exclusion
+    /// does not require discarding the successful solve. And variant guards are
+    /// excluded because they are not semantic constraints: two environments
+    /// describing the same program must have the same identity whether or not a
+    /// planner happened to record predicates for optimizations it was
+    /// considering.
     #[must_use]
     pub const fn identity(&self) -> &ShapeEnvIdentity {
         &self.identity
@@ -876,10 +948,10 @@ impl ShapeEnv {
 
     /// Returns the guards no assignment can satisfy alongside this environment.
     ///
-    /// Recomputed rather than stored. The contract excludes "derived solver
-    /// caches" from canonical identity, and the simplest way to hold that is to
-    /// derive nothing that could be stored: the environment retains only what
-    /// was asserted.
+    /// Recomputed as a separate hypothetical solve over the authored semantic
+    /// relations plus exactly one guard. Those solves never enter or mutate the
+    /// retained semantic-closure summary: a guard such as `b >= a` against a
+    /// semantic `a >= b` is an equality cycle only when considered together.
     ///
     /// A guard listed here selects another valid plan or fallback; it does not
     /// make the program invalid, which is the distinction the contract draws
@@ -907,10 +979,14 @@ impl ShapeEnv {
     /// Resolves one symbol's root binding.
     #[must_use]
     pub fn binding(&self, symbol: &ShapeSymbol) -> Option<&RootBinding> {
+        self.slot(symbol).map(|slot| &self.entries[slot].1)
+    }
+
+    /// Binary-searches the canonical entry table for `symbol`.
+    fn slot(&self, symbol: &ShapeSymbol) -> Option<usize> {
         self.entries
-            .iter()
-            .find(|(held, _)| held == symbol)
-            .map(|(_, binding)| binding)
+            .binary_search_by(|(held, _)| held.cmp(symbol))
+            .ok()
     }
 
     /// Returns the latest phase any binding in this environment requires.
@@ -934,27 +1010,17 @@ impl ShapeEnv {
     /// constraint can exclude interior values — so it may be used to prove a
     /// bound and never to enumerate a domain.
     ///
-    /// Recomputed rather than stored, like [`Self::unsatisfiable_guards`]: the
-    /// contract excludes derived solver caches from canonical identity, and
-    /// storing nothing derived is how this module holds that.
+    /// Read from the summary retained at `build`. A representation change in
+    /// that summary cannot reach identity, equality, or debug output.
     ///
     /// Returns `None` for an undeclared symbol, and for a class whose bound
     /// left the extent domain, which carries nothing a consumer can prove
     /// against.
+    #[must_use]
     pub fn extent_interval(&self, symbol: &ShapeSymbol) -> Option<ExtentInterval> {
-        let slot = self.entries.iter().position(|(held, _)| held == symbol)?;
-        let relations: Vec<&ExtentRelation> = self
-            .constraints
-            .iter()
-            .map(SemanticInputConstraint::relation)
-            .collect();
-        // `build` already decided this exact set, so the solve cannot fail. It
-        // is still propagated as `None` rather than unwrapped: a panic here
-        // would convert a future refactor's mistake into a crash instead of a
-        // consumer-visible refusal.
-        constraint::solve(&self.entries, &relations)
-            .ok()?
-            .interval(slot)
+        census::INTERVAL_QUERIES.record();
+        let slot = self.slot(symbol)?;
+        self.summary.interval(slot)
     }
 
     /// Returns whether this environment proves a symbol is at least one.
@@ -983,22 +1049,26 @@ impl ShapeEnv {
     /// Unknown symbols are not proved, so the answer is `false` rather than an
     /// error: a caller asking about a symbol this environment never declared
     /// has not been told the divisor is positive.
+    #[must_use]
     pub fn proves_positive(&self, symbol: &ShapeSymbol) -> bool {
-        let Some(slot) = self.entries.iter().position(|(held, _)| held == symbol) else {
-            return false;
-        };
-        let relations: Vec<&ExtentRelation> = self
-            .constraints
-            .iter()
-            .map(SemanticInputConstraint::relation)
-            .collect();
-        // As in `extent_interval`: `build` already decided this exact set, and a
-        // failure is propagated as "not proved" rather than unwrapped, so a
-        // future refactor's mistake becomes a refusal instead of a crash.
-        constraint::solve(&self.entries, &relations)
-            .ok()
-            .and_then(|mut solution| solution.interval(slot))
+        census::POSITIVITY_QUERIES.record();
+        self.slot(symbol)
+            .and_then(|slot| self.summary.interval(slot))
             .is_some_and(|interval| interval.lower >= 1)
+    }
+
+    /// Returns the single value every model assigns `symbol`, if the summary
+    /// confines it to a point.
+    ///
+    /// Crate-internal: [`crate::shape::ExtentSources::determined`] is the
+    /// public determined-value query. This is the summary read that query
+    /// uses, so a literal still answers directly and a symbol never re-solves.
+    pub(crate) fn determined_extent(&self, symbol: &ShapeSymbol) -> Option<u64> {
+        census::DETERMINED_QUERIES.record();
+        let interval = self
+            .slot(symbol)
+            .and_then(|slot| self.summary.interval(slot))?;
+        (interval.lower == interval.upper).then_some(interval.lower)
     }
 
     /// Returns whether this environment forces two symbols to be equal.
@@ -1011,39 +1081,39 @@ impl ShapeEnv {
     /// exposes.
     ///
     /// One-sided: `true` proves equality in every model, `false` means the
-    /// environment does not prove it and never that the two differ. Recomputed
-    /// rather than stored, like every other query here, so no derived solver
-    /// state exists that could reach canonical identity.
+    /// environment does not prove it and never that the two differ. Read from
+    /// the summary retained at `build`, so a later query cannot re-solve the
+    /// semantic set or change identity.
     ///
     /// Returns `false` for a symbol this environment does not declare, which is
     /// the fail-closed answer: an undeclared symbol has no binding here and
     /// nothing this environment says can bear on it.
+    #[must_use]
     pub fn proves_equal(&self, left: &ShapeSymbol, right: &ShapeSymbol) -> bool {
-        let Some(left) = self.entries.iter().position(|(held, _)| held == left) else {
-            return false;
-        };
-        let Some(right) = self.entries.iter().position(|(held, _)| held == right) else {
-            return false;
-        };
-        let relations: Vec<&ExtentRelation> = self
-            .constraints
-            .iter()
-            .map(SemanticInputConstraint::relation)
-            .collect();
-        // As in `extent_interval`: `build` already decided this exact set, and a
-        // failure is propagated as "not proved" rather than unwrapped, so a
-        // future refactor's mistake becomes a refusal instead of a crash.
-        constraint::solve(&self.entries, &relations)
-            .is_ok_and(|mut solution| solution.same_class(left, right))
+        census::EQUALITY_QUERIES.record();
+        match (self.slot(left), self.slot(right)) {
+            (Some(left), Some(right)) => self.summary.same_class(left, right),
+            _ => false,
+        }
     }
 }
 
-/// Encodes one bound environment canonically.
-///
-/// Domain-separated and length-prefixed per ADR 0074, over the entries and
-/// constraints in the canonical order `build` established, so the bytes are a
-/// function of the environment rather than of authoring order. Guards are not
-/// encoded and no derived state exists to encode.
+#[cfg(test)]
+impl ShapeEnv {
+    /// Overwrites every summary slot without touching authored fields.
+    ///
+    /// The identity, equality, and debug tests use this to prove a summary
+    /// representation change cannot become an identity or diagnostic change.
+    fn with_perturbed_summary(&self) -> Self {
+        let mut clone = self.clone();
+        for slot in &mut clone.summary.slots {
+            slot.class = slot.class.wrapping_add(1);
+            slot.interval = Some(ExtentInterval { lower: 0, upper: 0 });
+        }
+        clone
+    }
+}
+
 /// Returns the identity of the environment that declares and constrains nothing.
 ///
 /// **Crate-internal, and total rather than optional on purpose.** A consumer
@@ -1071,6 +1141,12 @@ pub(crate) fn empty_environment_identity() -> &'static ShapeEnvIdentity {
     &EMPTY
 }
 
+/// Encodes one bound environment canonically.
+///
+/// Domain-separated and length-prefixed per ADR 0074, over the entries and
+/// constraints in the canonical order `build` established, so the bytes are a
+/// function of the environment rather than of authoring order. Guards are not
+/// encoded; the retained proof summary is not an identity component.
 fn encode_environment(
     entries: &[(ShapeSymbol, RootBinding)],
     constraints: &[SemanticInputConstraint],
@@ -2121,6 +2197,242 @@ mod tests {
         assert_eq!(
             ExtentRelation::factorization(term("n"), vec![ExtentTerm::Constant(8)]),
             Err(ShapeEnvError::DegenerateFactorization { factors: 1 })
+        );
+    }
+
+    /// Construction solves semantic closure once; later proof queries do not.
+    ///
+    /// This is the load-bearing census. Removing summary use from a query and
+    /// falling back to `constraint::solve` increments the semantic count on
+    /// the repeated queries below.
+    #[test]
+    fn an_unguarded_environment_solves_semantic_closure_once() {
+        let (env, census) = super::census::observe_all(|| {
+            let mut draft = draft_over(&["n", "m"]);
+            draft
+                .require(required(ExtentRelation::equal(term("n"), term("m"))))
+                .unwrap();
+            draft
+                .require(required(ExtentRelation::interval(term("n"), 2, 8).unwrap()))
+                .unwrap();
+            draft.build().unwrap()
+        });
+        assert_eq!(
+            census.semantic_closure,
+            1,
+            "{} must increment once at construction",
+            super::census::SEMANTIC_CLOSURE_SOLVES.name()
+        );
+        assert_eq!(
+            census.guard_hypothesis, 0,
+            "an unguarded construction must not run a guard-hypothesis solve"
+        );
+
+        let n = symbol("region/0", "n");
+        let m = symbol("region/0", "m");
+        let undeclared = symbol("region/0", "elsewhere");
+        let ((), semantic_during_queries) = super::census::SEMANTIC_CLOSURE_SOLVES.observe(|| {
+            for _ in 0..8 {
+                let _ = env.extent_interval(&n);
+                let _ = env.proves_positive(&n);
+                let _ = env.proves_equal(&n, &m);
+                let _ = env.determined_extent(&n);
+                let _ = env.extent_interval(&undeclared);
+                let _ = env.proves_positive(&undeclared);
+                let _ = env.proves_equal(&n, &undeclared);
+                let _ = env.determined_extent(&undeclared);
+            }
+        });
+        let ((), queries) = super::census::observe_all(|| {
+            for _ in 0..8 {
+                let _ = env.extent_interval(&n);
+                let _ = env.proves_positive(&n);
+                let _ = env.proves_equal(&n, &m);
+                let _ = env.determined_extent(&n);
+                let _ = env.extent_interval(&undeclared);
+                let _ = env.proves_positive(&undeclared);
+                let _ = env.proves_equal(&n, &undeclared);
+                let _ = env.determined_extent(&undeclared);
+            }
+        });
+        assert_eq!(
+            semantic_during_queries,
+            0,
+            "repeated proof queries must not increment {}",
+            super::census::SEMANTIC_CLOSURE_SOLVES.name()
+        );
+        assert_eq!(
+            (queries.semantic_closure, queries.guard_hypothesis),
+            (0, 0),
+            "repeated equality, interval, positivity, and determined-value queries \
+             must increment neither solve census"
+        );
+        assert_eq!(queries.interval, 16);
+        assert_eq!(queries.positivity, 16);
+        assert_eq!(queries.equality, 16);
+        assert_eq!(queries.determined, 16);
+    }
+
+    /// Guard-hypothesis solves are a separately counted population.
+    #[test]
+    fn a_guarded_environment_keeps_guard_solves_off_the_semantic_census() {
+        let unsatisfiable = ExtentRelation::divisible(term("n"), divisor(16));
+        let satisfiable = ExtentRelation::divisible(term("n"), divisor(8));
+        let n = symbol("region/0", "n");
+        let (env, construction) = super::census::observe_all(|| {
+            let mut draft = ShapeEnvBuilder::new();
+            draft.declare(n.clone()).unwrap();
+            draft.bind(&n, static_binding(24)).unwrap();
+            draft
+                .guard(VariantGuard::new(
+                    unsatisfiable,
+                    GuardApplicability::Storage,
+                ))
+                .unwrap();
+            draft
+                .guard(VariantGuard::new(
+                    satisfiable,
+                    GuardApplicability::DispatchSafety,
+                ))
+                .unwrap();
+            draft.build().unwrap()
+        });
+        assert_eq!(construction.semantic_closure, 1);
+        assert_eq!(
+            construction.guard_hypothesis, 2,
+            "construction decides each guard once for fragment membership"
+        );
+
+        let (unsatisfiable_guards, queries) = super::census::observe_all(|| {
+            let listed = env.unsatisfiable_guards();
+            let _ = env.proves_positive(&n);
+            let _ = env.extent_interval(&n);
+            let _ = env.determined_extent(&n);
+            listed
+        });
+        assert_eq!(unsatisfiable_guards.len(), 1);
+        assert_eq!(
+            queries.semantic_closure, 0,
+            "guard hypotheses and proof queries must not increment semantic closure"
+        );
+        assert_eq!(
+            queries.guard_hypothesis, 2,
+            "unsatisfiable_guards re-solves each guard independently"
+        );
+    }
+
+    /// Each one-sided proof question is decided by its own subject.
+    ///
+    /// Neighbours differ in one authored fact so a query that read the wrong
+    /// summary field, or that invented a bound, would fail the neighbour
+    /// rather than the assertion.
+    #[test]
+    fn proof_queries_follow_their_subject_and_stay_one_sided() {
+        let n = symbol("region/0", "n");
+        let m = symbol("region/0", "m");
+        let undeclared = symbol("region/0", "elsewhere");
+
+        let related = {
+            let mut draft = draft_over(&["n", "m"]);
+            draft
+                .require(required(ExtentRelation::equal(term("n"), term("m"))))
+                .unwrap();
+            draft.build().unwrap()
+        };
+        let unrelated = draft_over(&["n", "m"]).build().unwrap();
+        assert!(related.proves_equal(&n, &m));
+        assert!(
+            !unrelated.proves_equal(&n, &m),
+            "dropping the equality leaves the pair not proved, never proved different"
+        );
+        assert!(!related.proves_equal(&n, &undeclared));
+        assert!(!related.proves_equal(&undeclared, &m));
+
+        let pinned = {
+            let mut draft = draft_over(&["n"]);
+            draft
+                .require(required(ExtentRelation::equal(
+                    term("n"),
+                    ExtentTerm::Constant(4),
+                )))
+                .unwrap();
+            draft.build().unwrap()
+        };
+        let unpinned = draft_over(&["n"]).build().unwrap();
+        assert_eq!(pinned.determined_extent(&n), Some(4));
+        assert_eq!(
+            unpinned.determined_extent(&n),
+            None,
+            "an unconstrained symbol is not a convenient value"
+        );
+        assert_eq!(pinned.determined_extent(&undeclared), None);
+
+        let bounded = {
+            let mut draft = draft_over(&["n"]);
+            draft
+                .require(required(ExtentRelation::interval(term("n"), 2, 8).unwrap()))
+                .unwrap();
+            draft.build().unwrap()
+        };
+        let wide = draft_over(&["n"]).build().unwrap();
+        assert_eq!(
+            bounded.extent_interval(&n),
+            Some(super::ExtentInterval { lower: 2, upper: 8 })
+        );
+        assert_eq!(
+            wide.extent_interval(&n),
+            Some(super::ExtentInterval {
+                lower: 0,
+                upper: u64::MAX,
+            })
+        );
+        assert_eq!(bounded.extent_interval(&undeclared), None);
+
+        let positive = {
+            let mut draft = draft_over(&["n"]);
+            draft
+                .require(required(
+                    ExtentRelation::interval(term("n"), 1, 64).unwrap(),
+                ))
+                .unwrap();
+            draft.build().unwrap()
+        };
+        assert!(positive.proves_positive(&n));
+        assert!(
+            !wide.proves_positive(&n),
+            "an unconstrained extent is not proved positive"
+        );
+        assert!(!positive.proves_positive(&undeclared));
+    }
+
+    /// Perturbing the summary representation cannot change identity, equality,
+    /// or debug output.
+    #[test]
+    fn identity_equality_and_debug_exclude_the_proof_summary() {
+        let mut draft = draft_over(&["n", "m"]);
+        draft
+            .require(required(ExtentRelation::equal(term("n"), term("m"))))
+            .unwrap();
+        let env = draft.build().unwrap();
+        let perturbed = env.with_perturbed_summary();
+
+        assert_eq!(env.identity(), perturbed.identity());
+        assert_eq!(env.identity().as_bytes(), perturbed.identity().as_bytes());
+        assert_eq!(
+            env, perturbed,
+            "ShapeEnv equality observes authored fields only"
+        );
+        let debug = format!("{env:?}");
+        let perturbed_debug = format!("{perturbed:?}");
+        assert_eq!(debug, perturbed_debug);
+        assert!(
+            !debug.contains("summary") && !debug.contains("ExtentProof"),
+            "debug output must not name the retained summary: {debug}"
+        );
+        assert_ne!(
+            env.extent_interval(&symbol("region/0", "n")),
+            perturbed.extent_interval(&symbol("region/0", "n")),
+            "the perturbation must have changed the summary itself"
         );
     }
 }

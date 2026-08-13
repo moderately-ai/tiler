@@ -1126,6 +1126,75 @@ mod tests {
             .expect("a value available before device work may size an output");
     }
 
+    /// A sourced region that asks every summary query still solves once.
+    ///
+    /// The fixture is a write of `input[i / d]` into an output sized `m`, over
+    /// a domain sized `n`, with `n` determined, `m == n`, and `d` proved
+    /// positive. Construction therefore reads interval, equality, determined
+    /// value, and positivity from the retained summary.
+    #[test]
+    fn a_sourced_index_region_reuses_one_semantic_solve_across_every_query_kind() {
+        let (region, census) = crate::shape::env::census::observe_all(|| {
+            let environment = environment_over(
+                EXTENT_PHASE_CEILING,
+                &["n", "m", "d"],
+                &[
+                    ExtentRelation::equal(term("n"), ExtentTerm::Constant(8)),
+                    ExtentRelation::equal(term("m"), term("n")),
+                    ExtentRelation::interval(term("d"), 2, 8).unwrap(),
+                ],
+            );
+            let mut builder =
+                IndexRegionBuilder::new_with_shape_environment(registry(), environment).unwrap();
+            let input = builder
+                .tensor(TensorRole::Input, value_type(), Shape::from_dims([8]))
+                .unwrap();
+            let output = builder
+                .sourced_tensor(
+                    TensorRole::Output,
+                    value_type(),
+                    vec![SourcedExtent::Symbol(symbol("m"))],
+                )
+                .expect("m is declared");
+            let dimension = builder
+                .symbolic_dimension(DomainRole::Parallel, symbol("n"))
+                .expect("n is declared");
+            let coordinate = builder.dimension_expr(dimension).unwrap();
+            let quotient = builder
+                .floor_div(coordinate, SourcedExtent::Symbol(symbol("d")))
+                .expect("d is proved positive");
+            let value = builder.read(input, &[dimension], &[quotient]).unwrap();
+            let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
+            builder.output(write, value).unwrap();
+            builder.build().expect("the sourced region verifies")
+        });
+        assert!(
+            region
+                .accesses()
+                .any(|access| access.write_ownership_proof()
+                    == Some(WriteOwnershipProofView::CoordinatePermutation)),
+            "the write is owned through the environment's equality class"
+        );
+        assert_eq!(census.semantic_closure, 1);
+        assert_eq!(census.guard_hypothesis, 0);
+        assert!(
+            census.interval > 0,
+            "bounds proof must read the retained interval: {census:?}"
+        );
+        assert!(
+            census.equality > 0,
+            "ownership must read the retained equality class: {census:?}"
+        );
+        assert!(
+            census.determined > 0,
+            "a determined domain and divisor must read the retained point: {census:?}"
+        );
+        assert!(
+            census.positivity > 0,
+            "the symbolic divisor must read retained positivity: {census:?}"
+        );
+    }
+
     /// A dynamically shaped write is owned exactly when the environment proves
     /// the domain and boundary extents equal.
     ///

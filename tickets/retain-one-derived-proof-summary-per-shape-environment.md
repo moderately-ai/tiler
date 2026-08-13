@@ -17,6 +17,26 @@ lease_expires_at: 1786585709
 
 One verified symbolic environment solves its semantic closure once, then every semantic and index consumer asks the same immutable proof summary whether extents are equal, determined, positive, or bounded. A later symbolic broadcast uses that same path rather than introducing another solver authority.
 
+## Source-first Fact audit — 2026-08-12, exact base `612468048d541a1017640fc5dcbe5ff9160716cf`
+
+Re-read at this worker's base before any implementation edit. Earlier audits at `e2db0a66` and `f4d1f884` were treated as stale until each cited site was opened here.
+
+**Verified — environment construction still discards the successful semantic solution.** `ShapeEnvBuilder::build`, anchor `constraint::decide(&bound, &relations)?`, decides the canonical semantic relations and then constructs `ShapeEnv` with only `entries`, `constraints`, `guards`, and `identity`. `rg ExtentProofSummary crates/` is empty.
+
+**Verified — every public semantic proof query still resolves the same constraints again.** `ShapeEnv::extent_interval`, `ShapeEnv::proves_positive`, and `ShapeEnv::proves_equal` each rebuild the relation vector and call `constraint::solve`. Those three `constraint::solve` sites are the only ones under `crates/`. `ExtentSources::{determined,proves_positive,proves_equal,interval}` still delegate to those methods; `proves_equal` can still ask for two determined values after the equality-class query.
+
+**Verified — `elementwise_binary_shape` is still the live per-axis semantic consumer.** Anchor `sources.proves_equal(&left, &right)` in `crates/tiler-ir/src/semantic/registry.rs` still walks paired extents and asks once for every symbol-involving axis. Broadcast remains the literal-extent v1 family in `crates/tiler-ir/src/semantic/broadcast.rs`; sourced broadcast v2 is not a live consumer.
+
+**Verified — `IndexRegionBuilder` is the second live consumer.** Anchors `fn extent_interval`, `fn determined`, `fn extents_proved_equal`, and `fn admit_divisor` still ask the environment for intervals, determined values, equality, and positivity. `determined` currently reads a one-point interval rather than a distinct summary query.
+
+**Verified — the solver result is still the wrong retained shape.** `constraint::Solution` still holds a mutable `Classes` disjoint-set forest (`fn find` path-compresses) and per-class `Domains`. Retaining that object would put interior mutation on read-only proof queries.
+
+**Verified — identity exclusion is still written as if it required storing nothing derived.** `ShapeEnv::identity`, anchors `Nothing derived from the constraints is stored` and `storing nothing derived is how this module holds that`, still equate identity exclusion with discarding the successful solve. `docs/ir.md`, fragment `provenance, and semantic constraints but excludes derived solver caches`, still excludes derived caches from identity and does not itself forbid retaining a private summary.
+
+**Still false — one summary plus one guard is not sufficient to decide every guard.** Unchanged logical counterexample: a semantic `a >= b` with a candidate guard `b >= a` is an equality cycle only when considered together. Guard satisfiability stays a separate hypothetical solve over authored semantic relations plus exactly one guard.
+
+**Still an inference — a retained summary is not a second semantic authority.** Authored entries and semantic constraints remain the sole encoded subject; the summary is a projection of the successful solve.
+
 ## Source-first Fact audit — 2026-08-12, exact base `e2db0a66812604897cfb7f8a6c6b7a55f231cc41`
 
 **Verified — environment construction discards the proof state it just established.** `ShapeEnvBuilder::build`, anchor `constraint::decide(&bound, &relations)?`, decides the canonical semantic constraints and then retains only authored entries, constraints, guards, and identity. The current `ShapeEnv` documentation says storing nothing derived is how caches stay out of identity; exclusion from identity does not require discarding a deterministic immutable summary.
@@ -71,6 +91,18 @@ Retain one mandatory private frozen `ExtentProofSummary` directly in every verif
 Authored entries and semantic constraints remain the sole authority and the sole inputs to environment identity. The summary is excluded from canonical bytes, identity, serialization, equality, and debug output. Guards remain separate hypothetical solves over authored semantic relations plus one guard, with a separately named census; they never enter semantic closure.
 
 The accepted implementation order is this ticket, then `narrow-symbolic-inference-and-restore-host-owned-refusals`, then sourced broadcast v2. This decision does not authorize production implementation in the coordination turn that recorded it.
+
+## Implementation notes — 2026-08-12
+
+Subject perturbation of `ShapeEnv::proves_equal`: the summary read was replaced with `constraint::solve(..., SolveKind::SemanticClosure)` while leaving `an_unguarded_environment_solves_semantic_closure_once` unchanged. Failure text:
+
+```
+assertion `left == right` failed: repeated proof queries must not increment semantic-closure solve
+  left: 8
+ right: 0
+```
+
+The query implementation was restored to the retained summary. `rg ExtentProofSummary crates/` now matches only the private type and ticket-facing comments inside `tiler-ir`; the type is not re-exported.
 
 ## Non-goals
 

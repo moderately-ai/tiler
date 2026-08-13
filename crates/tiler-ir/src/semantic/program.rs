@@ -2257,6 +2257,38 @@ mod tests {
         }
     }
 
+    /// A maximum-rank symbolic elementwise walk reuses one semantic-closure solve.
+    #[test]
+    fn a_maximum_rank_symbolic_elementwise_uses_one_semantic_solve() {
+        let n = SourcedExtent::Symbol(sym("n"));
+        let extents = vec![n.clone(); 4_096];
+        let (product_extents, census) = crate::shape::env::census::observe_all(|| {
+            let environment = env();
+            let mut builder =
+                SemanticProgramBuilder::try_standard_with_shape_environment(environment).unwrap();
+            let a = builder
+                .input_sourced::<F32>(input_key("rows"), extents.clone())
+                .expect("a governed-rank symbolic input is admitted");
+            let b = builder
+                .input_sourced::<F32>(input_key("cols"), extents)
+                .expect("the matching operand is admitted");
+            let product = multiply(&mut builder, a, b)
+                .expect("one symbol against itself is one shape at every axis");
+            committed_result_extents(builder, product)
+        });
+        assert_eq!(product_extents, vec![n; 4_096]);
+        assert_eq!(
+            census.semantic_closure, 1,
+            "environment construction solves once; per-axis inference must not"
+        );
+        assert_eq!(census.guard_hypothesis, 0);
+        assert!(
+            census.equality >= 4_096,
+            "every symbolic axis asks the retained summary at least once: {}",
+            census.equality
+        );
+    }
+
     /// A family that decides shapes over literals only declines by name.
     ///
     /// The refusal is a *typed extent* failure and not a shape mismatch: the
