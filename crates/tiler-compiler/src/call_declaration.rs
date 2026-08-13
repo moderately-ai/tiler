@@ -387,6 +387,7 @@ mod tests {
             requires_device_memory: true,
             index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
             synchronization: None,
+            subgroup: None,
             input_subnormals: SubnormalMode::Preserve,
             result_subnormals: SubnormalMode::Preserve,
             contraction: NumericalPermission::Forbidden,

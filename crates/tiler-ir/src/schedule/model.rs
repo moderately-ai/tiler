@@ -21,6 +21,7 @@ use super::numerics::{
 };
 use super::pointwise::{PointwiseF32Expression, PointwiseF32Node};
 use super::pointwise_bf16::{PointwiseBf16Expression, PointwiseBf16Node};
+use super::subgroup::SubgroupRealizationSubject;
 use super::synchronization::{
     SynchronizationPlacement, SynchronizationPoint, SynchronizationSubject, required_subject,
 };
@@ -1433,6 +1434,20 @@ pub struct ResourceRequirements {
     /// many times it performs it. A count of points would be the barrier-count
     /// capacity `replace-or-justify-the-barrier-count-axis` retired.
     pub synchronization: Option<SynchronizationSubject>,
+    /// The subgroup realization the region's schedule requires, if any.
+    ///
+    /// **Labelled draft** under ADR 0075. `None` is the canonical absence a
+    /// schedule with no subgroup combine derives, and it is not a default
+    /// width: it emits no requirement, no target query, no explain row, and
+    /// no artifact field, so a target that declares nothing about subgroups
+    /// is *feasible* for such a region rather than merely untested. A `Some`
+    /// is the complete [`SubgroupRealizationSubject`] one atomic target fact
+    /// must equal.
+    ///
+    /// This ticket does not derive a `Some` from any admitted topology —
+    /// subgroup KIR emission is a separate ticket — so every region produced
+    /// here carries `None`.
+    pub subgroup: Option<SubgroupRealizationSubject>,
     /// Subnormal input handling the region's declared realization requires.
     pub input_subnormals: SubnormalMode,
     /// Subnormal result handling the region's declared realization requires.
@@ -1951,6 +1966,7 @@ pub(super) fn derive_requirements(region: &ScheduledRegion) -> ResourceRequireme
         requires_device_memory: true,
         index_arithmetic: REGION_INDEX_ARITHMETIC,
         synchronization: cooperative_synchronization_requirement(&region.schedule.reduction),
+        subgroup: None,
         input_subnormals: region.index.numerical.input_subnormals,
         result_subnormals: region.index.numerical.result_subnormals,
         contraction: region.index.numerical.contraction,

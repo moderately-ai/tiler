@@ -52,6 +52,18 @@
 //! distinct from a capability axis, with silence meaning *no preference* rather
 //! than *no plan*.
 //!
+//! The **subgroup-realization** family is a **labelled draft** under ADR 0075.
+//! Tom accepted the whole-subject *shape* on 2026-08-11 — one checked subject
+//! over a literal width, an exact arithmetic type, and an operation-specific
+//! transfer, matched only by equality, with `Realized` and `Unrealizable`
+//! explicit and silence/`Unknown` for neighbours — and has not accepted this
+//! crate's exact type, constructor, or error spelling.
+//! [`SubgroupSupport`], [`SubgroupRealizationResolution`],
+//! [`TargetProfileBuilder::declare_subgroup_realization`],
+//! [`TargetProfileBuilder::declare_measured_subgroup_realization`],
+//! [`TargetProfile::subgroup_realization`], and
+//! [`TargetProfileBuildError::DuplicateSubgroupRealization`] are that draft.
+//!
 //! The **workgroup-tree-width-policy** family is an **Accepted public surface**.
 //! Tom delegated the choice to the coordinator on 2026-08-11 under
 //! `gate-the-workgroup-tree-on-an-explicit-qualified-width-policy`:
@@ -205,15 +217,16 @@ use tiler_ir::program::abi::{
     AvailabilityPhase, TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
 };
 use tiler_ir::schedule::{
-    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
-    SynchronizationSubject,
+    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubgroupRealizationSubject,
+    SubnormalMode, SynchronizationSubject,
 };
 use tiler_ir::semantic::{F32, ResolvedValueType};
 
 use crate::target::feasibility::{
     CapabilityAxis, CapabilityFact, CapabilityQuery, CheckedTargetProfile,
-    DeclaredSynchronizationRealization, FactAuthority, FactProvenance, FactValidityScope,
-    FeasibilityError, MAX_TARGET_PROFILE_DESCRIPTOR_BYTES, SynchronizationRealization,
+    DeclaredSubgroupRealization, DeclaredSynchronizationRealization, FactAuthority, FactProvenance,
+    FactValidityScope, FeasibilityError, MAX_TARGET_PROFILE_DESCRIPTOR_BYTES, SubgroupRealization,
+    SynchronizationRealization,
 };
 use crate::target::honourability::{
     CompilerBuildIdentity, CompilerBuildRole, DeclaredBehaviour, DimensionBehaviour,
@@ -285,6 +298,16 @@ const ELEMENTARY_REALIZATION_DOMAIN: &[u8] = b"tiler.target-profile.elementary-r
 /// policy. [`complete_descriptor`] states the derivation.
 const WORKGROUP_TREE_WIDTH_POLICY_DOMAIN: &[u8] =
     b"tiler.target-profile.workgroup-tree-width-policy.v1\0";
+/// Domain separating the subgroup-realization rows of one declaration.
+///
+/// Its own separator, for the reason the families above have one, and written
+/// **only when the family is non-empty** so a profile that never carried the
+/// family keeps the bytes it already encoded. Silence here is `Unknown` for
+/// every subject: it is not a default width and not a neighbouring realization.
+/// Writing a zero count would move every existing profile's identity to record
+/// that it still has no subgroup row. [`complete_descriptor`] states the
+/// derivation.
+const SUBGROUP_REALIZATION_DOMAIN: &[u8] = b"tiler.target-profile.subgroup-realization.v1\0";
 
 /// Maximum byte length of one target-profile key.
 ///
@@ -1941,6 +1964,7 @@ pub struct TargetProfileBuilder {
     cost_rows: Vec<CostRowFact>,
     tree_width_policies: Vec<WorkgroupTreeWidthPolicyFact>,
     elementary: Vec<ElementaryRealization>,
+    subgroup: Vec<DeclaredSubgroupRealization>,
 }
 
 impl TargetProfileBuilder {
@@ -1960,6 +1984,7 @@ impl TargetProfileBuilder {
             cost_rows: Vec::new(),
             tree_width_policies: Vec::new(),
             elementary: Vec::new(),
+            subgroup: Vec::new(),
         }
     }
 
@@ -1989,6 +2014,110 @@ impl TargetProfileBuilder {
             return Err(TargetProfileBuildError::DuplicateElementaryRealization);
         }
         self.elementary.push(realization);
+        Ok(())
+    }
+
+    /// Declares whether this target realizes one *complete* synchronization
+    /// subject.
+    ///
+    /// The whole subject is one argument on purpose, and there is deliberately
+    /// no per-dimension spelling — no `declare_barrier_execution_scope`, no
+    /// `declare_fenced_spaces`. Each dimension is separately true of some
+    /// realization on some machine, so a profile able to state them
+    /// independently would let a caller's conjunction be satisfied by facts none
+    /// of which is about it. A target realizing two subjects declares two facts.
+    ///
+    /// The verdict is stated rather than implied by presence, so a measured
+    /// negative is recordable: an absent declaration is `Unknown` and rejects
+    /// before executable-frontier admission, while
+    /// [`SynchronizationSupport::Unrealizable`] is a typed refusal a caller can
+    /// act on.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TargetProfileBuildError`] when a fact for the same subject and
+    /// phase is already declared, or when the subject fences no memory domain —
+    /// a fence over nothing publishes nothing, so no handoff could consume it.
+    /// Declares whether this target realizes one *complete* subgroup subject.
+    ///
+    /// **Labelled draft** under ADR 0075. The whole subject is one argument on
+    /// purpose, and there is deliberately no per-dimension spelling — no
+    /// `declare_subgroup_width`, no `declare_subgroup_arithmetic`. Each
+    /// dimension is separately true of some realization on some machine, so a
+    /// profile able to state them independently would let a caller's conjunction
+    /// be satisfied by facts none of which is about it. A target realizing two
+    /// subjects declares two facts.
+    ///
+    /// The verdict is stated rather than implied by presence, so a measured
+    /// negative is recordable: an absent declaration is `Unknown` and rejects
+    /// before executable-frontier admission, while
+    /// [`SubgroupSupport::Unrealizable`] is a typed refusal a caller can act on.
+    ///
+    /// Generic construction validates provenance and structure. Backend-family
+    /// correspondence stays in the backend-owned binding layer; there is no
+    /// default row, inherited target-family row, or generic wrong-backend guess.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TargetProfileBuildError::DuplicateSubgroupRealization`] when a
+    /// fact for the same subject and phase is already declared.
+    pub fn declare_subgroup_realization(
+        &mut self,
+        subject: SubgroupRealizationSubject,
+        support: SubgroupSupport,
+        source: TargetFactSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_subgroup_with_source(subject, support, source.0)
+    }
+
+    /// Declares a measured subgroup realization.
+    ///
+    /// **Labelled draft** under ADR 0075, with the constructor above.
+    ///
+    /// Taking [`TargetCompileProfileMeasurementSource`] rather than the general
+    /// [`TargetFactSource`] is what fixes its validity at
+    /// [`TargetFactValidityScope::MeasuredEnvironment`] and stops it widening
+    /// into a portable claim.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TargetProfileBuildError::DuplicateSubgroupRealization`] when a
+    /// fact for the same subject and phase is already declared.
+    pub fn declare_measured_subgroup_realization(
+        &mut self,
+        subject: SubgroupRealizationSubject,
+        support: SubgroupSupport,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_subgroup_with_source(subject, support, source.0)
+    }
+
+    fn declare_subgroup_with_source(
+        &mut self,
+        subject: SubgroupRealizationSubject,
+        support: SubgroupSupport,
+        source: Arc<FactSourceProvenance>,
+    ) -> Result<(), TargetProfileBuildError> {
+        if !source.is_valid() {
+            return Err(TargetProfileBuildError::InvalidProducerClaim);
+        }
+        let realization = support.realization();
+        if let Some(existing) = self
+            .subgroup
+            .iter()
+            .find(|declared| declared.subject() == subject && declared.phase() == source.phase())
+        {
+            let exact_duplicate = existing.realization() == realization;
+            let contradiction = existing.realization() != realization;
+            if exact_duplicate || contradiction {
+                return Err(TargetProfileBuildError::DuplicateSubgroupRealization);
+            }
+        }
+        self.subgroup.push(DeclaredSubgroupRealization::new(
+            subject,
+            realization,
+            source,
+        ));
         Ok(())
     }
 
@@ -3447,6 +3576,26 @@ impl TargetProfileBuilder {
                 return Err(TargetProfileBuildError::DuplicateElementaryRealization);
             }
         }
+        for fact in &self.subgroup {
+            let key = fact.sort_key();
+            let same_key: Vec<_> = self
+                .subgroup
+                .iter()
+                .filter(|candidate| candidate.sort_key() == key)
+                .collect();
+            if same_key.len() <= 1 {
+                continue;
+            }
+            let exact_duplicate = same_key
+                .windows(2)
+                .any(|pair| pair[0].realization() == pair[1].realization());
+            let contradiction = same_key
+                .windows(2)
+                .any(|pair| pair[0].realization() != pair[1].realization());
+            if exact_duplicate || contradiction {
+                return Err(TargetProfileBuildError::DuplicateSubgroupRealization);
+            }
+        }
         Ok(())
     }
 
@@ -3488,6 +3637,12 @@ impl TargetProfileBuilder {
         // contracts for one operation stay distinct candidates.
         self.elementary
             .sort_by_cached_key(ElementaryRealization::sort_key);
+        // Subject, then phase — the complete uniqueness key, excluding the
+        // verdict so a contradiction cannot survive as two adjacent rows
+        // whose sort order would pick a winner. The complete descriptor
+        // encodes this family in the order this sort produces.
+        self.subgroup
+            .sort_by_key(DeclaredSubgroupRealization::sort_key);
     }
 
     fn freeze(mut self) -> Result<TargetProfile, TargetProfileBuildError> {
@@ -3527,6 +3682,10 @@ impl TargetProfileBuilder {
                 .iter()
                 .map(|declared| declared.clone().attributed_to(identity.clone()))
                 .collect(),
+            self.subgroup
+                .iter()
+                .map(|declared| declared.clone().attributed_to(identity.clone()))
+                .collect(),
         )
         .map_err(TargetProfileBuildError::from)?;
 
@@ -3541,6 +3700,7 @@ impl TargetProfileBuilder {
             &self.cost_rows,
             &self.tree_width_policies,
             &self.elementary,
+            &self.subgroup,
         );
         if descriptor.len() > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES {
             return Err(TargetProfileBuildError::DescriptorTooLong {
@@ -3559,6 +3719,7 @@ impl TargetProfileBuilder {
             cost_rows,
             tree_width_policies,
             elementary,
+            subgroup: _,
         } = self;
         Ok(TargetProfile {
             data: Arc::new(TargetProfileData {
@@ -3726,6 +3887,60 @@ impl SynchronizationSupport {
     }
 }
 
+/// Public subgroup-declaration disposition.
+///
+/// **Labelled draft** under ADR 0075. Tom accepted the two-valued *shape* on
+/// 2026-08-11 — `Realized` and `Unrealizable` are explicit; silence is
+/// `Unknown` — and has not accepted this crate's exact type spelling.
+///
+/// Two valued, and the negative is *statable*: a target that has been measured
+/// not to provide a realization records that, and a target that was never asked
+/// records nothing. Those are different states — a typed rejection and an
+/// `Unknown` — and a vocabulary with only a positive spelling would collapse
+/// them into one silence.
+///
+/// There is deliberately no "supported under a relaxation" spelling. A weaker
+/// realization is a *different subject*, so a target that provides one declares
+/// that subject; letting a caller's subject be satisfied by a neighbouring one
+/// is exactly the composition the atomic fact exists to prevent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SubgroupSupport {
+    /// The target realizes exactly the declared subject.
+    Realized,
+    /// The target explicitly does not realize it.
+    Unrealizable,
+}
+
+impl SubgroupSupport {
+    const fn realization(self) -> SubgroupRealization {
+        match self {
+            Self::Realized => SubgroupRealization::Realized,
+            Self::Unrealizable => SubgroupRealization::Unrealizable,
+        }
+    }
+}
+
+/// Result of a subgroup-realization lookup.
+///
+/// **Labelled draft** under ADR 0075, with [`SubgroupSupport`] and the
+/// declaration pair.
+///
+/// [`Self::Unknown`] is the fail-closed answer and the overwhelmingly common
+/// one: a profile that declares nothing about the subject answers it, and a
+/// consumer may not read a neighbouring subject's row in its place. There is
+/// deliberately no `Deferred` arm: no query vocabulary can ask a device whether
+/// it realizes one complete subgroup subject, so a later-phase fact is
+/// `Unknown` rather than a promise nothing can keep.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SubgroupRealizationResolution {
+    /// An exact declaration states the target realizes this subject.
+    Realized,
+    /// An exact declaration states the target does not realize it.
+    Unrealizable,
+    /// No exact declaration exists for this subject, or none is available yet.
+    Unknown,
+}
+
 /// Encodes one complete producer declaration.
 ///
 /// # Why the evaluation-order family did not step [`COMPLETE_PROFILE_DESCRIPTOR_DOMAIN`]
@@ -3786,6 +4001,17 @@ impl SynchronizationSupport {
 /// zero count would move every existing descriptor to record that it still has
 /// no policy. Injectivity survives for the same reason as the families above.
 /// The owning declaration domain therefore stays at `v11`.
+///
+/// # The subgroup-realization family is the same silence-as-absence
+///
+/// It is written last, behind its own separator, and only when it holds a row.
+/// An empty family and an absent family both mean `Unknown` for every subgroup
+/// subject, which is already what every profile encoded before this family
+/// existed — including every standard profile, which stays silent until its
+/// own evidence ticket and prepared-entry gate complete. Writing a zero count
+/// would move every existing descriptor to record that it still has no
+/// subgroup row. Injectivity survives for the same reason as the families
+/// above. The owning declaration domain therefore stays at `v11`.
 #[allow(
     clippy::too_many_arguments,
     reason = "one parameter per declared row family, threaded explicitly so the encoder reads as the grammar it writes; grouping them behind a struct would put the canonical byte order under two authorities"
@@ -3801,6 +4027,7 @@ fn complete_descriptor(
     cost_rows: &[CostRowFact],
     tree_width_policies: &[WorkgroupTreeWidthPolicyFact],
     elementary: &[ElementaryRealization],
+    subgroup: &[DeclaredSubgroupRealization],
 ) -> Vec<u8> {
     let mut bytes = Vec::new();
     push_slice(&mut bytes, COMPLETE_PROFILE_DESCRIPTOR_DOMAIN);
@@ -3820,6 +4047,7 @@ fn complete_descriptor(
         .chain(cost_rows.iter().map(|fact| fact.source.as_ref()))
         .chain(tree_width_policies.iter().map(|fact| fact.source.as_ref()))
         .chain(elementary.iter().map(ElementaryRealization::source))
+        .chain(subgroup.iter().map(DeclaredSubgroupRealization::source_ref))
         .map(|source| (source.canonical_bytes(), source))
         .collect();
     sources.sort_by(|left, right| left.0.cmp(&right.0));
@@ -3973,6 +4201,19 @@ fn complete_descriptor(
             encode_compact_index(&mut bytes, source_index);
         }
     }
+    if !subgroup.is_empty() {
+        push_slice(&mut bytes, SUBGROUP_REALIZATION_DOMAIN);
+        push_len(&mut bytes, subgroup.len());
+        for declared in subgroup {
+            declared.subject().encode(&mut bytes);
+            bytes.push(declared.realization().tag());
+            let source_bytes = declared.source_ref().canonical_bytes();
+            let source_index = sources
+                .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
+                .expect("every subgroup-realization source was inserted into the source table");
+            encode_compact_index(&mut bytes, source_index);
+        }
+    }
     bytes
 }
 
@@ -4021,6 +4262,44 @@ impl TargetProfile {
     #[must_use]
     pub fn declared_elementary_realizations(&self) -> &[ElementaryRealization] {
         &self.data.elementary
+    }
+
+    /// Resolves whether this target realizes one complete subgroup subject.
+    ///
+    /// **Labelled draft** under ADR 0075, with the declaration pair.
+    ///
+    /// The match is one equality over the whole subject. A neighbouring
+    /// width, arithmetic type, or transfer is `Unknown`, not a partial match.
+    /// Silence is `Unknown`. A later-phase fact is `Unknown` rather than
+    /// deferred: there is no query contract that could obtain the answer
+    /// before routing commits.
+    #[must_use]
+    pub fn subgroup_realization(
+        &self,
+        subject: SubgroupRealizationSubject,
+        available_phase: AvailabilityPhase,
+    ) -> SubgroupRealizationResolution {
+        let mut resolved: Option<&crate::target::feasibility::SubgroupRealizationFact> = None;
+        for fact in self.data.checked.subgroup() {
+            if fact.subject() != subject || fact.phase() > available_phase {
+                continue;
+            }
+            resolved = Some(match resolved {
+                Some(current) if current.phase() >= fact.phase() => current,
+                _ => fact,
+            });
+        }
+        match resolved {
+            None => SubgroupRealizationResolution::Unknown,
+            Some(fact) => match fact.realization() {
+                crate::target::feasibility::SubgroupRealization::Realized => {
+                    SubgroupRealizationResolution::Realized
+                }
+                crate::target::feasibility::SubgroupRealization::Unrealizable => {
+                    SubgroupRealizationResolution::Unrealizable
+                }
+            },
+        }
     }
 
     pub(crate) fn request_subject_bytes(&self) -> &[u8] {
@@ -4629,6 +4908,12 @@ pub enum TargetProfileBuildError {
     /// restatement of the verified contract, both evidence records, and the
     /// source is rejected. No row is replaced, merged, or preferred.
     DuplicateElementaryRealization,
+    /// The same subgroup subject was declared twice at one phase.
+    ///
+    /// The verdict is deliberately not part of that key: a profile declaring one
+    /// subject both realized and unrealizable has stated a contradiction, and
+    /// admitting both rows would leave whichever the sort put first deciding.
+    DuplicateSubgroupRealization,
     /// The canonical descriptor exceeded the artifact identity bound.
     DescriptorTooLong {
         /// Encoded byte length.
@@ -4683,7 +4968,8 @@ mod tests {
     };
     use tiler_ir::schedule::{
         ApproximationEnvelope, ArithmeticType, FencedSpaces, MaterializationRounding,
-        MemoryOrdering, SynchronizationKind, SynchronizationScope,
+        MemoryOrdering, SubgroupRealizationSubject, SubgroupTransfer, SubgroupWidth,
+        SynchronizationKind, SynchronizationScope,
     };
     use tiler_ir::semantic::{
         CanonicalValue, TypeArguments, TypeKey, builtin_scalar_value_type_facts,
@@ -5413,11 +5699,19 @@ mod tests {
                 &source,
             ))
             .unwrap();
+        builder
+            .declare_measured_subgroup_realization(
+                subgroup_subject(32, ArithmeticType::F32),
+                SubgroupSupport::Realized,
+                source.clone(),
+            )
+            .unwrap();
 
         assert_eq!(builder.quantitative.len(), 7);
         assert_eq!(builder.scalar.len(), 15);
         assert_eq!(builder.dispatchability.len(), 1);
         assert_eq!(builder.elementary.len(), 1);
+        assert_eq!(builder.subgroup.len(), 1);
         for provenance in builder
             .quantitative
             .iter()
@@ -5435,6 +5729,12 @@ mod tests {
                     .map(|declaration| declaration.source.as_ref()),
             )
             .chain(builder.elementary.iter().map(ElementaryRealization::source))
+            .chain(
+                builder
+                    .subgroup
+                    .iter()
+                    .map(DeclaredSubgroupRealization::source_ref),
+            )
         {
             assert_eq!(provenance.phase(), AvailabilityPhase::CompileProfile);
             assert_eq!(provenance.authority(), FactAuthority::MeasuredProfile);
@@ -6395,6 +6695,438 @@ mod tests {
         assert_ne!(
             realized.canonical_descriptor(),
             collective.canonical_descriptor()
+        );
+    }
+
+    fn subgroup_width(lanes: u32) -> SubgroupWidth {
+        SubgroupWidth::new(lanes).expect("nonzero width")
+    }
+
+    fn subgroup_subject(lanes: u32, arithmetic: ArithmeticType) -> SubgroupRealizationSubject {
+        SubgroupRealizationSubject::new(
+            subgroup_width(lanes),
+            arithmetic,
+            SubgroupTransfer::InRangeXorShuffle,
+        )
+        .expect("power-of-two width at least 2 defines an XOR shuffle")
+    }
+
+    /// Silence is `Unknown` for every subject, and it costs a profile that
+    /// declares nothing not one descriptor byte.
+    #[test]
+    fn a_profile_declaring_no_subgroup_row_resolves_unknown() {
+        let required = subgroup_subject(32, ArithmeticType::F32);
+        for profile in [
+            TargetProfile::governed(),
+            public_builder("acme.silent-subgroup.v1")
+                .try_build()
+                .unwrap(),
+        ] {
+            assert_eq!(
+                profile.subgroup_realization(required, AvailabilityPhase::LaunchPreflight),
+                SubgroupRealizationResolution::Unknown,
+            );
+            assert!(
+                !profile
+                    .canonical_descriptor()
+                    .windows(SUBGROUP_REALIZATION_DOMAIN.len())
+                    .any(|window| window == SUBGROUP_REALIZATION_DOMAIN),
+                "an undeclaring profile writes none of the family's bytes, which is \
+                 why the complete-declaration domain did not step"
+            );
+        }
+    }
+
+    #[test]
+    fn declared_subgroup_rows_resolve_by_whole_subject_equality() {
+        let source = public_external_source(1);
+        let required = subgroup_subject(32, ArithmeticType::F32);
+        let mut builder = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.subgroup-realized.v1".to_owned()).unwrap(),
+        );
+        builder
+            .declare_subgroup_realization(required, SubgroupSupport::Realized, source)
+            .unwrap();
+        let profile = builder.try_build().unwrap();
+        assert_eq!(
+            profile.subgroup_realization(required, AvailabilityPhase::CompileProfile),
+            SubgroupRealizationResolution::Realized
+        );
+        assert_eq!(
+            profile.subgroup_realization(
+                subgroup_subject(64, ArithmeticType::F32),
+                AvailabilityPhase::CompileProfile,
+            ),
+            SubgroupRealizationResolution::Unknown,
+            "a neighbouring width must not satisfy the required subject"
+        );
+        assert_eq!(
+            profile.subgroup_realization(
+                subgroup_subject(32, ArithmeticType::Bf16),
+                AvailabilityPhase::CompileProfile,
+            ),
+            SubgroupRealizationResolution::Unknown,
+            "a neighbouring arithmetic type must not satisfy the required subject"
+        );
+        assert!(
+            profile
+                .canonical_descriptor()
+                .windows(SUBGROUP_REALIZATION_DOMAIN.len())
+                .any(|window| window == SUBGROUP_REALIZATION_DOMAIN)
+        );
+    }
+
+    #[test]
+    fn a_declared_unrealizable_subgroup_is_explicit() {
+        let source = public_external_source(1);
+        let required = subgroup_subject(32, ArithmeticType::F32);
+        let mut builder = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.subgroup-unrealizable.v1".to_owned()).unwrap(),
+        );
+        builder
+            .declare_subgroup_realization(required, SubgroupSupport::Unrealizable, source)
+            .unwrap();
+        let profile = builder.try_build().unwrap();
+        assert_eq!(
+            profile.subgroup_realization(required, AvailabilityPhase::CompileProfile),
+            SubgroupRealizationResolution::Unrealizable
+        );
+    }
+
+    #[test]
+    fn a_later_phase_subgroup_row_is_unknown_rather_than_deferred() {
+        let required = subgroup_subject(32, ArithmeticType::F32);
+        let mut builder = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.subgroup-later.v1".to_owned()).unwrap(),
+        );
+        builder
+            .declare_subgroup_realization(
+                required,
+                SubgroupSupport::Realized,
+                device_runtime_source(),
+            )
+            .unwrap();
+        let profile = builder.try_build().unwrap();
+        assert_eq!(
+            profile.subgroup_realization(required, AvailabilityPhase::CompileProfile),
+            SubgroupRealizationResolution::Unknown,
+        );
+        assert_eq!(
+            profile.subgroup_realization(required, AvailabilityPhase::LiveDevicePreflight),
+            SubgroupRealizationResolution::Realized,
+        );
+    }
+
+    #[test]
+    fn an_exact_duplicate_subgroup_realization_is_refused_before_insertion() {
+        let source = public_external_source(1);
+        let required = subgroup_subject(32, ArithmeticType::F32);
+        let mut builder = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.subgroup-duplicate.v1".to_owned()).unwrap(),
+        );
+        builder
+            .declare_subgroup_realization(required, SubgroupSupport::Realized, source.clone())
+            .unwrap();
+        let len = builder.subgroup.len();
+        assert_eq!(
+            builder.declare_subgroup_realization(required, SubgroupSupport::Realized, source),
+            Err(TargetProfileBuildError::DuplicateSubgroupRealization)
+        );
+        assert_eq!(builder.subgroup.len(), len);
+    }
+
+    #[test]
+    fn a_contradictory_subgroup_verdict_is_refused_before_insertion() {
+        let source = public_external_source(1);
+        let required = subgroup_subject(32, ArithmeticType::F32);
+        for (first, second) in [
+            (SubgroupSupport::Realized, SubgroupSupport::Unrealizable),
+            (SubgroupSupport::Unrealizable, SubgroupSupport::Realized),
+        ] {
+            let mut builder = TargetProfileBuilder::new(
+                TargetProfileKey::new("test.subgroup-contradiction.v1".to_owned()).unwrap(),
+            );
+            builder
+                .declare_subgroup_realization(required, first, source.clone())
+                .unwrap();
+            let len = builder.subgroup.len();
+            assert_eq!(
+                builder.declare_subgroup_realization(required, second, source.clone()),
+                Err(TargetProfileBuildError::DuplicateSubgroupRealization),
+                "sort order must not choose a winner between {first:?} then {second:?}"
+            );
+            assert_eq!(builder.subgroup.len(), len);
+        }
+    }
+
+    #[test]
+    fn subgroup_insertion_order_is_not_identity() {
+        let source = public_external_source(1);
+        let first = subgroup_subject(32, ArithmeticType::F32);
+        let second = subgroup_subject(64, ArithmeticType::F32);
+        assert!(first < second, "the fixture relies on subject order");
+        let declare = |rows: [(SubgroupRealizationSubject, SubgroupSupport); 2]| {
+            let mut builder = TargetProfileBuilder::new(
+                TargetProfileKey::new("test.subgroup-order.v1".to_owned()).unwrap(),
+            );
+            for (subject, support) in rows {
+                builder
+                    .declare_subgroup_realization(subject, support, source.clone())
+                    .unwrap();
+            }
+            builder.try_build().unwrap()
+        };
+        let forward = declare([
+            (first, SubgroupSupport::Realized),
+            (second, SubgroupSupport::Unrealizable),
+        ]);
+        let reverse = declare([
+            (second, SubgroupSupport::Unrealizable),
+            (first, SubgroupSupport::Realized),
+        ]);
+        assert_eq!(
+            forward.canonical_descriptor(),
+            reverse.canonical_descriptor()
+        );
+        assert_eq!(
+            forward.checked().canonical_descriptor(),
+            reverse.checked().canonical_descriptor()
+        );
+    }
+
+    #[test]
+    fn subgroup_source_participates_in_complete_identity_independently() {
+        let required = subgroup_subject(32, ArithmeticType::F32);
+        let first = public_external_source(1);
+        let second = public_external_source(2);
+        let mut colliding = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.subgroup-source.v1".to_owned()).unwrap(),
+        );
+        colliding
+            .declare_subgroup_realization(required, SubgroupSupport::Realized, first.clone())
+            .unwrap();
+        assert_eq!(
+            colliding.declare_subgroup_realization(
+                required,
+                SubgroupSupport::Realized,
+                second.clone(),
+            ),
+            Err(TargetProfileBuildError::DuplicateSubgroupRealization)
+        );
+
+        let descriptor = |source: TargetFactSource| {
+            let mut builder = TargetProfileBuilder::new(
+                TargetProfileKey::new("test.subgroup-source.v1".to_owned()).unwrap(),
+            );
+            builder
+                .declare_subgroup_realization(required, SubgroupSupport::Realized, source)
+                .unwrap();
+            builder.try_build().unwrap()
+        };
+        let left = descriptor(first);
+        let right = descriptor(second);
+        assert_ne!(
+            left.canonical_descriptor(),
+            right.canonical_descriptor(),
+            "a source-revision change must move the complete declaration"
+        );
+        assert_eq!(
+            left.checked().canonical_descriptor(),
+            right.checked().canonical_descriptor(),
+            "the checked descriptor encodes phase, authority, and validity, not the source identity"
+        );
+    }
+
+    #[test]
+    fn measured_subgroup_declaration_uses_the_measured_source_authority() {
+        let required = subgroup_subject(32, ArithmeticType::F32);
+        let source = compile_profile_measurement_source("1.0", "build-1");
+        let mut builder = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.subgroup-measured.v1".to_owned()).unwrap(),
+        );
+        builder
+            .declare_measured_subgroup_realization(required, SubgroupSupport::Realized, source)
+            .unwrap();
+        let profile = builder.try_build().unwrap();
+        assert_eq!(
+            profile.subgroup_realization(required, AvailabilityPhase::CompileProfile),
+            SubgroupRealizationResolution::Realized
+        );
+        let fact = &profile.checked().subgroup()[0];
+        assert_eq!(fact.authority(), FactAuthority::MeasuredProfile);
+        assert_eq!(fact.validity(), FactValidityScope::MeasuredEnvironment);
+    }
+
+    #[test]
+    fn subgroup_subject_and_verdict_participate_in_identity_independently() {
+        let source = public_external_source(1);
+        let baseline = subgroup_subject(32, ArithmeticType::F32);
+        let descriptor = |subject, support| {
+            let mut builder = TargetProfileBuilder::new(
+                TargetProfileKey::new("test.subgroup-subject.v1".to_owned()).unwrap(),
+            );
+            builder
+                .declare_subgroup_realization(subject, support, source.clone())
+                .unwrap();
+            builder.try_build().unwrap()
+        };
+        let realized = descriptor(baseline, SubgroupSupport::Realized);
+        let refused = descriptor(baseline, SubgroupSupport::Unrealizable);
+        assert_ne!(
+            realized.canonical_descriptor(),
+            refused.canonical_descriptor()
+        );
+        assert_ne!(
+            realized.checked().canonical_descriptor(),
+            refused.checked().canonical_descriptor()
+        );
+        for (dimension, neighbour) in [
+            ("width", subgroup_subject(64, ArithmeticType::F32)),
+            ("arithmetic", subgroup_subject(32, ArithmeticType::Bf16)),
+        ] {
+            let other = descriptor(neighbour, SubgroupSupport::Realized);
+            assert_ne!(
+                realized.canonical_descriptor(),
+                other.canonical_descriptor(),
+                "the {dimension} dimension does not reach the complete descriptor"
+            );
+            assert_ne!(
+                realized.checked().canonical_descriptor(),
+                other.checked().canonical_descriptor(),
+                "the {dimension} dimension does not reach the checked descriptor"
+            );
+        }
+    }
+
+    #[test]
+    fn subgroup_perturbations_quote_distinct_failures() {
+        let required = subgroup_subject(32, ArithmeticType::F32);
+        let source = public_external_source(1);
+        let profile = |subject, support: SubgroupSupport| {
+            let mut builder = TargetProfileBuilder::new(
+                TargetProfileKey::new("test.subgroup-perturb.v1".to_owned()).unwrap(),
+            );
+            builder
+                .declare_subgroup_realization(subject, support, source.clone())
+                .unwrap();
+            builder.try_build().unwrap()
+        };
+        let realized = profile(required, SubgroupSupport::Realized);
+        assert_eq!(
+            format!(
+                "{:?}",
+                realized.subgroup_realization(required, AvailabilityPhase::CompileProfile)
+            ),
+            "Realized"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                realized.subgroup_realization(
+                    subgroup_subject(64, ArithmeticType::F32),
+                    AvailabilityPhase::CompileProfile,
+                )
+            ),
+            "Unknown",
+            "width perturbation must be Unknown"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                realized.subgroup_realization(
+                    subgroup_subject(32, ArithmeticType::Bf16),
+                    AvailabilityPhase::CompileProfile,
+                )
+            ),
+            "Unknown",
+            "arithmetic perturbation must be Unknown"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                profile(required, SubgroupSupport::Unrealizable)
+                    .subgroup_realization(required, AvailabilityPhase::CompileProfile)
+            ),
+            "Unrealizable"
+        );
+        let later = {
+            let mut builder = TargetProfileBuilder::new(
+                TargetProfileKey::new("test.subgroup-perturb-phase.v1".to_owned()).unwrap(),
+            );
+            builder
+                .declare_subgroup_realization(
+                    required,
+                    SubgroupSupport::Realized,
+                    device_runtime_source(),
+                )
+                .unwrap();
+            builder.try_build().unwrap()
+        };
+        assert_eq!(
+            format!(
+                "{:?}",
+                later.subgroup_realization(required, AvailabilityPhase::CompileProfile)
+            ),
+            "Unknown",
+            "compile-phase lookup of a later-phase row must be Unknown"
+        );
+        let silent = public_builder("test.subgroup-perturb-silence.v1")
+            .try_build()
+            .unwrap();
+        assert_eq!(
+            format!(
+                "{:?}",
+                silent.subgroup_realization(required, AvailabilityPhase::LaunchPreflight)
+            ),
+            "Unknown",
+            "silence must be Unknown"
+        );
+        let mut colliding = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.subgroup-perturb-source.v1".to_owned()).unwrap(),
+        );
+        colliding
+            .declare_subgroup_realization(required, SubgroupSupport::Realized, source)
+            .unwrap();
+        assert_eq!(
+            format!(
+                "{:?}",
+                colliding.declare_subgroup_realization(
+                    required,
+                    SubgroupSupport::Realized,
+                    public_external_source(2),
+                )
+            ),
+            "Err(DuplicateSubgroupRealization)",
+            "a second source at the same subject and phase must refuse"
+        );
+    }
+
+    #[test]
+    fn independently_true_subgroup_neighbours_compose_into_no_permission() {
+        let source = public_external_source(1);
+        let required = subgroup_subject(32, ArithmeticType::F32);
+        let mut builder = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.subgroup-compose.v1".to_owned()).unwrap(),
+        );
+        builder
+            .declare_subgroup_realization(
+                subgroup_subject(64, ArithmeticType::F32),
+                SubgroupSupport::Realized,
+                source.clone(),
+            )
+            .unwrap();
+        builder
+            .declare_subgroup_realization(
+                subgroup_subject(32, ArithmeticType::Bf16),
+                SubgroupSupport::Realized,
+                source,
+            )
+            .unwrap();
+        let profile = builder.try_build().unwrap();
+        assert_eq!(
+            profile.subgroup_realization(required, AvailabilityPhase::CompileProfile),
+            SubgroupRealizationResolution::Unknown,
+            "independently true neighbouring facts must not compose into a permission"
         );
     }
 

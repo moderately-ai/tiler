@@ -69,7 +69,7 @@ use tiler_ir::program::abi::{
     PreparedEntryTargetRequirement, TargetPropertyQuery, TargetPropertyRequirementRelation,
 };
 
-use tiler_ir::schedule::{ArithmeticType, SynchronizationSubject};
+use tiler_ir::schedule::{ArithmeticType, SubgroupRealizationSubject, SynchronizationSubject};
 
 use crate::explain::Quantity;
 pub(crate) use crate::target::TargetProfileIdentity;
@@ -125,6 +125,16 @@ const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v10\0
 /// layer's `FeasibilityRuleSetRef` carries both a key and a revision rather than
 /// one number.
 ///
+/// `v6` adds the atomic subgroup-realization predicate. This is a *vocabulary*
+/// widening rather than a revision: the rules now decide a predicate `v5` could
+/// not express at all, and a `v5` assessment of a subgroup-requiring candidate
+/// could only have been silent about it. The predicate is not a quantitative
+/// axis: a subject is matched by equality and has no bound to compare, which is
+/// the same reason the synchronization predicate is not one. A program that
+/// requires no subgroup still emits no row, so previously encodable *outcomes*
+/// of silent programs do not change; the key still mints because the rules can
+/// now decide a subject `v5` could not name.
+///
 /// `v5` adds the atomic synchronization-realization predicate. This is a
 /// *vocabulary* widening rather than a revision: the rules now decide a
 /// predicate `v4` could not express at all, and a `v4` assessment of a
@@ -151,7 +161,7 @@ const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v10\0
 /// predicate nor decide one, and it named an axis (`strict-f32`) this rule set
 /// no longer has.
 const GOVERNED_FEASIBILITY_RULE_SET_KEY: &str =
-    "tiler.feasibility.phased-capability-and-numerical-honourability.v5";
+    "tiler.feasibility.phased-capability-and-numerical-honourability.v6";
 
 /// Nonzero output-affecting revision of the governed feasibility rule set.
 ///
@@ -579,6 +589,161 @@ impl SynchronizationRealizationFact {
     }
 }
 
+/// Whether a target realizes one complete subgroup subject.
+///
+/// Two valued, and the negative is *statable*: a target that has been measured
+/// not to provide a realization records that, and a target that was never asked
+/// records nothing. Those are different states — a typed rejection and an
+/// `Unknown` — and a vocabulary with only a positive spelling would collapse
+/// them into one silence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SubgroupRealization {
+    /// The target realizes exactly this subject.
+    Realized,
+    /// The target does not realize this subject.
+    Unrealizable,
+}
+
+impl SubgroupRealization {
+    /// Returns the canonical tag naming this verdict in a descriptor encoding.
+    pub(crate) const fn tag(self) -> u8 {
+        match self {
+            Self::Realized => 0x01,
+            Self::Unrealizable => 0x02,
+        }
+    }
+
+    /// The stable identifier naming this verdict in an explanation.
+    pub(crate) const fn key(self) -> &'static str {
+        match self {
+            Self::Realized => "realized",
+            Self::Unrealizable => "unrealizable",
+        }
+    }
+}
+
+/// One target's verdict on one complete subgroup subject, before it is
+/// attributed to the profile declaring it.
+///
+/// **The subject is one value and is matched as one value.** Each of its three
+/// dimensions is separately true of some machine — a 32-lane simdgroup, an
+/// `f32` register file, an in-range XOR shuffle — so a profile declaring them
+/// independently would let their conjunction be inferred from facts none of
+/// which is about it. There is deliberately no accessor yielding one dimension
+/// of the subject, and [`CheckedTargetProfile::resolve_subgroup`] compares the
+/// whole value rather than reading a field.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DeclaredSubgroupRealization {
+    subject: SubgroupRealizationSubject,
+    realization: SubgroupRealization,
+    source: Arc<FactSourceProvenance>,
+}
+
+impl DeclaredSubgroupRealization {
+    /// Declares one verdict over one complete subject.
+    pub(crate) const fn new(
+        subject: SubgroupRealizationSubject,
+        realization: SubgroupRealization,
+        source: Arc<FactSourceProvenance>,
+    ) -> Self {
+        Self {
+            subject,
+            realization,
+            source,
+        }
+    }
+
+    /// The complete subject this declaration ranges over.
+    pub(crate) const fn subject(&self) -> SubgroupRealizationSubject {
+        self.subject
+    }
+
+    /// The verdict this declaration states.
+    pub(crate) const fn realization(&self) -> SubgroupRealization {
+        self.realization
+    }
+
+    /// The phase from which the declaration is available.
+    pub(crate) fn phase(&self) -> AvailabilityPhase {
+        self.source.phase()
+    }
+
+    /// The structured source qualifying the declaration.
+    pub(crate) fn source_ref(&self) -> &FactSourceProvenance {
+        &self.source
+    }
+
+    /// The canonical sort and uniqueness key: the subject and its phase.
+    ///
+    /// Deliberately *excluding* the verdict. A profile declaring one subject both
+    /// realized and unrealizable at one phase has stated a contradiction, and
+    /// keying on the verdict would let both rows coexist with whichever the sort
+    /// put first deciding.
+    pub(crate) fn sort_key(&self) -> (SubgroupRealizationSubject, AvailabilityPhase) {
+        (self.subject(), self.phase())
+    }
+
+    /// Attributes this declaration to the profile that makes it.
+    pub(crate) fn attributed_to(
+        self,
+        profile: impl Into<TargetProfileIdentity>,
+    ) -> SubgroupRealizationFact {
+        SubgroupRealizationFact {
+            declared: self,
+            provenance: FactProvenance::declared_by(profile),
+        }
+    }
+}
+
+/// One atomic, provenance-bearing target fact about a subgroup subject.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SubgroupRealizationFact {
+    declared: DeclaredSubgroupRealization,
+    provenance: FactProvenance,
+}
+
+impl SubgroupRealizationFact {
+    /// The complete subject this fact ranges over.
+    pub(crate) const fn subject(&self) -> SubgroupRealizationSubject {
+        self.declared.subject
+    }
+
+    /// Whether the target realizes that subject.
+    pub(crate) const fn realization(&self) -> SubgroupRealization {
+        self.declared.realization
+    }
+
+    /// The phase from which this fact is available.
+    pub(crate) fn phase(&self) -> AvailabilityPhase {
+        self.declared.source.phase()
+    }
+
+    /// The authority class supplying it.
+    pub(crate) fn authority(&self) -> FactAuthority {
+        self.declared.source.authority()
+    }
+
+    /// The scope over which it is valid.
+    pub(crate) fn validity(&self) -> FactValidityScope {
+        self.declared.source.validity()
+    }
+
+    /// The structured source qualifying the claim.
+    pub(crate) fn source(&self) -> &Arc<FactSourceProvenance> {
+        &self.declared.source
+    }
+
+    /// The profile that declared it.
+    pub(crate) const fn provenance(&self) -> &FactProvenance {
+        &self.provenance
+    }
+
+    /// The canonical sort and uniqueness key: the subject and its phase.
+    fn sort_key(&self) -> (SubgroupRealizationSubject, AvailabilityPhase) {
+        self.declared.sort_key()
+    }
+}
+
 /// A typed capability fact: a bound on one axis, available from a stated phase.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CapabilityFact {
@@ -680,6 +845,8 @@ pub(crate) struct CheckedTargetProfile {
     honourability: Vec<NumericalHonourabilityFact>,
     /// Canonical: sorted by `(subject, phase)`, unique per pair.
     synchronization: Vec<SynchronizationRealizationFact>,
+    /// Canonical: sorted by `(subject, phase)`, unique per pair.
+    subgroup: Vec<SubgroupRealizationFact>,
     /// The bounded canonical descriptor, derived once after validation.
     descriptor: Box<[u8]>,
 }
@@ -715,7 +882,14 @@ impl CheckedTargetProfile {
         queries: Vec<CapabilityQuery>,
         honourability: Vec<NumericalHonourabilityFact>,
     ) -> Result<Self, FeasibilityError> {
-        Self::new_complete(identity, facts, queries, honourability, Vec::new())
+        Self::new_complete(
+            identity,
+            facts,
+            queries,
+            honourability,
+            Vec::new(),
+            Vec::new(),
+        )
     }
 
     /// Builds a checked profile including its synchronization declaration.
@@ -725,6 +899,7 @@ impl CheckedTargetProfile {
         queries: Vec<CapabilityQuery>,
         honourability: Vec<NumericalHonourabilityFact>,
         synchronization: Vec<SynchronizationRealizationFact>,
+        subgroup: Vec<SubgroupRealizationFact>,
     ) -> Result<Self, FeasibilityError> {
         let identity = identity.into();
         let mut facts = facts;
@@ -777,6 +952,47 @@ impl CheckedTargetProfile {
         if contradiction {
             return Err(FeasibilityError::MalformedProfile {
                 rule: "contradictory-synchronization",
+            });
+        }
+        let mut subgroup = subgroup;
+        for fact in &subgroup {
+            if fact.provenance().profile() != &identity {
+                return Err(FeasibilityError::MalformedProfile {
+                    rule: "subgroup-provenance",
+                });
+            }
+            if !authority_matches_phase(fact.authority(), fact.phase()) {
+                return Err(FeasibilityError::MalformedProfile {
+                    rule: "subgroup-authority",
+                });
+            }
+            if !fact.source().is_valid() {
+                return Err(FeasibilityError::MalformedProfile {
+                    rule: "subgroup-source",
+                });
+            }
+        }
+        subgroup.sort_by_key(SubgroupRealizationFact::sort_key);
+        exact_duplicate = false;
+        contradiction = false;
+        for pair in subgroup.windows(2) {
+            if pair[0].sort_key() != pair[1].sort_key() {
+                continue;
+            }
+            if pair[0].realization() == pair[1].realization() {
+                exact_duplicate = true;
+            } else {
+                contradiction = true;
+            }
+        }
+        if exact_duplicate {
+            return Err(FeasibilityError::MalformedProfile {
+                rule: "duplicate-subgroup",
+            });
+        }
+        if contradiction {
+            return Err(FeasibilityError::MalformedProfile {
+                rule: "contradictory-subgroup",
             });
         }
         if identity.key().is_empty() {
@@ -877,6 +1093,7 @@ impl CheckedTargetProfile {
             &queries,
             &honourability,
             &synchronization,
+            &subgroup,
         );
         let descriptor_length = descriptor.len();
         if descriptor_length > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES {
@@ -891,6 +1108,7 @@ impl CheckedTargetProfile {
             queries,
             honourability,
             synchronization,
+            subgroup,
             descriptor: descriptor.into_boxed_slice(),
         })
     }
@@ -918,6 +1136,11 @@ impl CheckedTargetProfile {
     /// The checked synchronization-realization declaration, in canonical order.
     pub(crate) fn synchronization(&self) -> &[SynchronizationRealizationFact] {
         &self.synchronization
+    }
+
+    /// The checked subgroup-realization declaration, in canonical order.
+    pub(crate) fn subgroup(&self) -> &[SubgroupRealizationFact] {
+        &self.subgroup
     }
 
     /// Resolves one complete synchronization subject against this profile.
@@ -965,6 +1188,52 @@ impl CheckedTargetProfile {
                 }
                 SynchronizationRealization::Unrealizable => {
                     SynchronizationResolution::Unrealizable(UnrealizableSynchronization {
+                        subject,
+                        fact: fact.clone(),
+                    })
+                }
+            },
+        }
+    }
+
+    /// Resolves one complete subgroup subject against this profile.
+    ///
+    /// **The match is one equality over the whole subject**, which is what makes
+    /// the fact atomic rather than composable. A profile carrying a fact for a
+    /// subject differing in any one dimension resolves this subject as
+    /// [`SubgroupResolution::NoPath`], however many of its dimensions some other
+    /// fact happens to state — so a caller can never assemble a permission out
+    /// of rows about neighbouring realizations.
+    ///
+    /// A fact admissible only from a later phase also resolves as `NoPath`
+    /// rather than as a deferral: there is no query vocabulary that can ask a
+    /// device "do you execute a 32-lane `f32` in-range XOR shuffle". Deferring
+    /// without a query contract would be a promise nothing can keep, so the
+    /// unresolved case is `Unknown` and fails closed.
+    fn resolve_subgroup(
+        &self,
+        subject: SubgroupRealizationSubject,
+        available_phase: AvailabilityPhase,
+    ) -> SubgroupResolution {
+        let mut resolved: Option<&SubgroupRealizationFact> = None;
+        for fact in &self.subgroup {
+            if fact.subject() != subject || fact.phase() > available_phase {
+                continue;
+            }
+            resolved = Some(match resolved {
+                Some(current) if current.phase() >= fact.phase() => current,
+                _ => fact,
+            });
+        }
+        match resolved {
+            None => SubgroupResolution::NoPath,
+            Some(fact) => match fact.realization() {
+                SubgroupRealization::Realized => SubgroupResolution::Realized(RealizedSubgroup {
+                    subject,
+                    fact: fact.clone(),
+                }),
+                SubgroupRealization::Unrealizable => {
+                    SubgroupResolution::Unrealizable(UnrealizableSubgroup {
                         subject,
                         fact: fact.clone(),
                     })
@@ -1260,19 +1529,45 @@ impl CheckedTargetProfile {
                 }
             }
         }
+        // The subgroup requirement, resolved as one atomic subject. A candidate
+        // that requires none skips this entirely, which is what keeps the
+        // absence canonical: no predicate is resolved, so no evidence, no
+        // rejection, and no unknown mentions subgroup at all.
+        let mut realized_subgroup = None;
+        let mut unrealizable_subgroup = None;
+        let mut unknown_subgroup = None;
+        if let Some(subject) = proposal.subgroup {
+            match self.resolve_subgroup(subject, available_phase) {
+                SubgroupResolution::Realized(record) => realized_subgroup = Some(record),
+                SubgroupResolution::Unrealizable(record) => unrealizable_subgroup = Some(record),
+                SubgroupResolution::NoPath => {
+                    unknown_subgroup = Some(UnknownSubgroup { subject });
+                }
+            }
+        }
         // Precedence: rejected, then unknown, then deferred, then proven.
-        if !disproved.is_empty() || !unhonoured.is_empty() || unrealizable.is_some() {
+        if !disproved.is_empty()
+            || !unhonoured.is_empty()
+            || unrealizable.is_some()
+            || unrealizable_subgroup.is_some()
+        {
             return FeasibilityOutcome::Rejected(Rejection {
                 disproved,
                 unhonourable: unhonoured,
                 synchronization: unrealizable,
+                subgroup: unrealizable_subgroup,
             });
         }
-        if !unknown.is_empty() || !undeclared.is_empty() || unknown_synchronization.is_some() {
+        if !unknown.is_empty()
+            || !undeclared.is_empty()
+            || unknown_synchronization.is_some()
+            || unknown_subgroup.is_some()
+        {
             return FeasibilityOutcome::Unknown(UnknownSet {
                 predicates: unknown,
                 dimensions: undeclared,
                 synchronization: unknown_synchronization,
+                subgroup: unknown_subgroup,
             });
         }
         if !deferred.is_empty() || !deferred_dimensions.is_empty() {
@@ -1291,6 +1586,7 @@ impl CheckedTargetProfile {
                     predicates: proven,
                     honoured,
                     synchronization: realized,
+                    subgroup: realized_subgroup,
                 },
                 predicates: deferred,
                 dimensions: deferred_dimensions,
@@ -1300,6 +1596,7 @@ impl CheckedTargetProfile {
             predicates: proven,
             honoured,
             synchronization: realized,
+            subgroup: realized_subgroup,
         })
     }
 
@@ -1340,6 +1637,7 @@ fn canonical_profile_descriptor(
     queries: &[CapabilityQuery],
     honourability: &[NumericalHonourabilityFact],
     synchronization: &[SynchronizationRealizationFact],
+    subgroup: &[SubgroupRealizationFact],
 ) -> Vec<u8> {
     let mut bytes = Vec::new();
     push_slice(&mut bytes, PROFILE_DESCRIPTOR_DOMAIN);
@@ -1378,8 +1676,32 @@ fn canonical_profile_descriptor(
         bytes.push(fact.authority().tag());
         bytes.push(fact.validity().tag());
     }
+    // Written last, and written as nothing at all when the family is empty.
+    // Silent profiles keep the checked-descriptor bytes they encoded before
+    // this family existed, so `PROFILE_DESCRIPTOR_DOMAIN` stays at `v10`.
+    // Injectivity survives because every earlier section is self-delimiting
+    // and this family's separator distinguishes its bytes from any
+    // continuation. An empty family and an absent family both mean no
+    // subgroup realization was declared.
+    if !subgroup.is_empty() {
+        push_slice(&mut bytes, CHECKED_SUBGROUP_DOMAIN);
+        push_len(&mut bytes, subgroup.len());
+        for fact in subgroup {
+            fact.subject().encode(&mut bytes);
+            bytes.push(fact.realization().tag());
+            bytes.push(fact.phase().tag());
+            bytes.push(fact.authority().tag());
+            bytes.push(fact.validity().tag());
+        }
+    }
     bytes
 }
+
+/// Domain separating the subgroup-realization rows of one checked descriptor.
+///
+/// Written **only when the family is non-empty**, so a profile that never
+/// carried the family keeps the bytes it already encoded.
+const CHECKED_SUBGROUP_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.subgroup-realization.v1\0";
 
 /// Whether a fact authority is consistent with the phase it is available from.
 const fn authority_matches_phase(authority: FactAuthority, phase: AvailabilityPhase) -> bool {
@@ -1425,6 +1747,20 @@ enum SynchronizationResolution {
     Realized(RealizedSynchronization),
     /// A fact available now declares the target does not realize it.
     Unrealizable(UnrealizableSynchronization),
+    /// Nothing available now speaks to this exact subject.
+    NoPath,
+}
+
+/// The three ways one subgroup subject resolves against a profile.
+///
+/// Three, not four: there is no `Later`. See
+/// [`CheckedTargetProfile::resolve_subgroup`] for why a fact with no query
+/// contract cannot be deferred.
+enum SubgroupResolution {
+    /// A fact available now declares the target realizes exactly this subject.
+    Realized(RealizedSubgroup),
+    /// A fact available now declares the target does not realize it.
+    Unrealizable(UnrealizableSubgroup),
     /// Nothing available now speaks to this exact subject.
     NoPath,
 }
@@ -1483,6 +1819,57 @@ impl UnknownSynchronization {
     }
 }
 
+/// A subgroup subject a target declares it realizes, with its evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RealizedSubgroup {
+    subject: SubgroupRealizationSubject,
+    fact: SubgroupRealizationFact,
+}
+
+impl RealizedSubgroup {
+    /// The complete subject the target realizes.
+    pub(crate) const fn subject(&self) -> SubgroupRealizationSubject {
+        self.subject
+    }
+
+    /// The whole attributed fact that established it.
+    pub(crate) const fn fact(&self) -> &SubgroupRealizationFact {
+        &self.fact
+    }
+}
+
+/// A subgroup subject a target declares it cannot realize.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UnrealizableSubgroup {
+    subject: SubgroupRealizationSubject,
+    fact: SubgroupRealizationFact,
+}
+
+impl UnrealizableSubgroup {
+    /// The complete subject the candidate required.
+    pub(crate) const fn subject(&self) -> SubgroupRealizationSubject {
+        self.subject
+    }
+
+    /// The whole refusing fact, retained rather than summarized.
+    pub(crate) const fn fact(&self) -> &SubgroupRealizationFact {
+        &self.fact
+    }
+}
+
+/// A subgroup subject no available fact speaks to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct UnknownSubgroup {
+    subject: SubgroupRealizationSubject,
+}
+
+impl UnknownSubgroup {
+    /// The complete subject the candidate required and nothing declared.
+    pub(crate) const fn subject(self) -> SubgroupRealizationSubject {
+        self.subject
+    }
+}
+
 /// The four ways one numerical dimension resolves against a declaration.
 enum DimensionResolution {
     /// A declaration available now honours the required behaviour.
@@ -1534,6 +1921,14 @@ pub(crate) struct FeasibilityProposal {
     /// a candidate requires one realization however many times it performs it,
     /// and a count would be the barrier-count capacity `v7` retired.
     synchronization: Option<SynchronizationSubject>,
+    /// The one complete subgroup realization this candidate requires.
+    ///
+    /// `None` is the canonical absence, and it is what makes a zero-subgroup
+    /// candidate *feasible* against a profile that declares nothing about
+    /// subgroups rather than unknown against it: no requirement is composed, so
+    /// no predicate is resolved, so no explain row is produced and no target
+    /// fact is consulted. It never means a default subgroup.
+    subgroup: Option<SubgroupRealizationSubject>,
 }
 
 impl FeasibilityProposal {
@@ -1548,7 +1943,7 @@ impl FeasibilityProposal {
         requirements: Vec<AxisRequirement>,
         numerical: Vec<NumericalRequirement>,
     ) -> Result<Self, FeasibilityError> {
-        Self::new_with_synchronization(candidate, requirements, numerical, None)
+        Self::new_with_realizations(candidate, requirements, numerical, None, None)
     }
 
     /// Builds a checked proposal that also requires a synchronization
@@ -1558,6 +1953,17 @@ impl FeasibilityProposal {
         requirements: Vec<AxisRequirement>,
         numerical: Vec<NumericalRequirement>,
         synchronization: Option<SynchronizationSubject>,
+    ) -> Result<Self, FeasibilityError> {
+        Self::new_with_realizations(candidate, requirements, numerical, synchronization, None)
+    }
+
+    /// Builds a checked proposal that also requires atomic realizations.
+    pub(crate) fn new_with_realizations(
+        candidate: &'static str,
+        requirements: Vec<AxisRequirement>,
+        numerical: Vec<NumericalRequirement>,
+        synchronization: Option<SynchronizationSubject>,
+        subgroup: Option<SubgroupRealizationSubject>,
     ) -> Result<Self, FeasibilityError> {
         let mut requirements = requirements;
         let mut numerical = numerical;
@@ -1615,6 +2021,7 @@ impl FeasibilityProposal {
             requirements,
             numerical,
             synchronization,
+            subgroup,
         })
     }
 
@@ -1716,6 +2123,9 @@ pub(crate) struct ProvenEvidence {
     /// The one realization fact that authorized this candidate's synchronization,
     /// or `None` when it requires none.
     synchronization: Option<RealizedSynchronization>,
+    /// The one realization fact that authorized this candidate's subgroup, or
+    /// `None` when it requires none.
+    subgroup: Option<RealizedSubgroup>,
 }
 
 impl ProvenEvidence {
@@ -1739,9 +2149,20 @@ impl ProvenEvidence {
         self.synchronization.as_ref()
     }
 
+    /// The subgroup realization that authorized this candidate, if any.
+    ///
+    /// `None` for a candidate that requires none. That is an absence and not a
+    /// vacuous proof: a consumer rendering evidence emits no row for it.
+    pub(crate) const fn subgroup(&self) -> Option<&RealizedSubgroup> {
+        self.subgroup.as_ref()
+    }
+
     /// Whether this evidence records no check at all.
     pub(crate) fn is_empty(&self) -> bool {
-        self.predicates.is_empty() && self.honoured.is_empty() && self.synchronization.is_none()
+        self.predicates.is_empty()
+            && self.honoured.is_empty()
+            && self.synchronization.is_none()
+            && self.subgroup.is_none()
     }
 }
 
@@ -1751,6 +2172,7 @@ pub(crate) struct Rejection {
     disproved: Vec<ResolvedPredicate>,
     unhonourable: Vec<UnhonouredDimension>,
     synchronization: Option<UnrealizableSynchronization>,
+    subgroup: Option<UnrealizableSubgroup>,
 }
 
 /// The canonical representative cause of one rejection.
@@ -1758,6 +2180,8 @@ pub(crate) struct Rejection {
 pub(crate) enum RejectionCause {
     /// A synchronization realization the target declares it cannot provide.
     Synchronization(UnrealizableSynchronization),
+    /// A subgroup realization the target declares it cannot provide.
+    Subgroup(UnrealizableSubgroup),
     /// A numerical dimension the target declares it cannot honour as required.
     Numerical(UnhonouredDimension),
     /// A capability bound the candidate exceeds.
@@ -1787,6 +2211,9 @@ impl Rejection {
         if let Some(cause) = &self.synchronization {
             return RejectionCause::Synchronization(cause.clone());
         }
+        if let Some(cause) = &self.subgroup {
+            return RejectionCause::Subgroup(cause.clone());
+        }
         self.unhonourable.first().map_or_else(
             || RejectionCause::Capability(self.disproved[0]),
             |cause| RejectionCause::Numerical(cause.clone()),
@@ -1796,6 +2223,11 @@ impl Rejection {
     /// The refused synchronization realization, when one caused the rejection.
     pub(crate) const fn synchronization(&self) -> Option<&UnrealizableSynchronization> {
         self.synchronization.as_ref()
+    }
+
+    /// The refused subgroup realization, when one caused the rejection.
+    pub(crate) const fn subgroup(&self) -> Option<&UnrealizableSubgroup> {
+        self.subgroup.as_ref()
     }
 
     /// All disproved capability predicates, in canonical axis order.
@@ -1856,6 +2288,7 @@ pub(crate) struct UnknownSet {
     predicates: Vec<UnknownPredicate>,
     dimensions: Vec<UndeclaredDimension>,
     synchronization: Option<UnknownSynchronization>,
+    subgroup: Option<UnknownSubgroup>,
 }
 
 impl UnknownSet {
@@ -1876,6 +2309,11 @@ impl UnknownSet {
     /// it, and the candidate is unknown rather than composed into feasible.
     pub(crate) const fn synchronization(&self) -> Option<&UnknownSynchronization> {
         self.synchronization.as_ref()
+    }
+
+    /// The subgroup realization no available fact speaks to, if any.
+    pub(crate) const fn subgroup(&self) -> Option<&UnknownSubgroup> {
+        self.subgroup.as_ref()
     }
 }
 
@@ -2218,6 +2656,7 @@ mod tests {
             Vec::new(),
             baseline_honourability(id),
             facts,
+            Vec::new(),
         )
         .unwrap()
     }
@@ -2487,6 +2926,7 @@ mod tests {
                         SynchronizationRealization::Realized
                     ),
                 ],
+                Vec::new(),
             ),
             Err(FeasibilityError::MalformedProfile {
                 rule: "duplicate-synchronization"
@@ -2518,6 +2958,7 @@ mod tests {
                             synchronization_fact(id, REQUIRED_SUBJECT, first),
                             synchronization_fact(id, REQUIRED_SUBJECT, second),
                         ],
+                        Vec::new(),
                     ),
                     Err(FeasibilityError::MalformedProfile {
                         rule: "contradictory-synchronization"
@@ -2612,6 +3053,7 @@ mod tests {
                     vacuous,
                     SynchronizationRealization::Realized
                 )],
+                Vec::new(),
             ),
             Err(FeasibilityError::MalformedProfile {
                 rule: "synchronization-subject"
@@ -2626,6 +3068,298 @@ mod tests {
             ),
             Err(FeasibilityError::MalformedProposal {
                 rule: "requirement-synchronization"
+            })
+        ));
+    }
+
+    fn required_subgroup() -> SubgroupRealizationSubject {
+        SubgroupRealizationSubject::new(
+            tiler_ir::schedule::SubgroupWidth::new(32).unwrap(),
+            ArithmeticType::F32,
+            tiler_ir::schedule::SubgroupTransfer::InRangeXorShuffle,
+        )
+        .unwrap()
+    }
+
+    fn subgroup_fact(
+        profile: &TargetProfileIdentity,
+        subject: SubgroupRealizationSubject,
+        realization: SubgroupRealization,
+    ) -> SubgroupRealizationFact {
+        DeclaredSubgroupRealization::new(
+            subject,
+            realization,
+            crate::target::honourability::governed_profile_source(),
+        )
+        .attributed_to(profile)
+    }
+
+    fn subgroup_profile(facts: Vec<SubgroupRealizationFact>) -> CheckedTargetProfile {
+        let id = identity();
+        CheckedTargetProfile::new_complete(
+            id,
+            vec![
+                compile_fact(id, CapabilityAxis::GridAxisThreads, 65_535),
+                compile_fact(id, CapabilityAxis::WorkgroupThreads, 8),
+                compile_fact(id, CapabilityAxis::BufferBindings, 2),
+                compile_fact(id, CapabilityAxis::DeviceAddressSpace, 1),
+                compile_fact(id, CapabilityAxis::LocalMemoryBytes, 4_096),
+                compile_fact(id, CapabilityAxis::IndexArithmeticU64, 1),
+            ],
+            Vec::new(),
+            baseline_honourability(id),
+            Vec::new(),
+            facts,
+        )
+        .unwrap()
+    }
+
+    fn subgroup_proposal() -> FeasibilityProposal {
+        FeasibilityProposal::new_with_realizations(
+            "tiler.test.subgroup",
+            vec![AxisRequirement::new(CapabilityAxis::WorkgroupThreads, 4)],
+            Vec::new(),
+            None,
+            Some(required_subgroup()),
+        )
+        .unwrap()
+    }
+
+    fn neighbouring_subgroup_subjects() -> [(&'static str, SubgroupRealizationSubject); 2] {
+        [
+            (
+                "width",
+                SubgroupRealizationSubject::new(
+                    tiler_ir::schedule::SubgroupWidth::new(64).unwrap(),
+                    ArithmeticType::F32,
+                    tiler_ir::schedule::SubgroupTransfer::InRangeXorShuffle,
+                )
+                .unwrap(),
+            ),
+            (
+                "arithmetic",
+                SubgroupRealizationSubject::new(
+                    tiler_ir::schedule::SubgroupWidth::new(32).unwrap(),
+                    ArithmeticType::Bf16,
+                    tiler_ir::schedule::SubgroupTransfer::InRangeXorShuffle,
+                )
+                .unwrap(),
+            ),
+        ]
+    }
+
+    #[test]
+    fn a_zero_subgroup_candidate_needs_no_subgroup_fact() {
+        let profile = subgroup_profile(Vec::new());
+        assert!(profile.subgroup().is_empty());
+        let proposal = FeasibilityProposal::new(
+            "tiler.test.no-subgroup",
+            vec![AxisRequirement::new(CapabilityAxis::WorkgroupThreads, 4)],
+            Vec::new(),
+        )
+        .unwrap();
+        assert!(proposal.subgroup.is_none());
+        let FeasibilityOutcome::Proven(evidence) =
+            profile.assess(&proposal, AvailabilityPhase::CompileProfile)
+        else {
+            panic!("a candidate requiring no subgroup is feasible");
+        };
+        assert!(
+            evidence.subgroup().is_none(),
+            "a candidate that required no realization was credited with one"
+        );
+    }
+
+    #[test]
+    fn an_exactly_matching_subgroup_realization_admits_the_candidate() {
+        let profile = subgroup_profile(vec![subgroup_fact(
+            identity(),
+            required_subgroup(),
+            SubgroupRealization::Realized,
+        )]);
+        let FeasibilityOutcome::Proven(evidence) =
+            profile.assess(&subgroup_proposal(), AvailabilityPhase::CompileProfile)
+        else {
+            panic!("the exactly matching realization admits the candidate");
+        };
+        let realized = evidence
+            .subgroup()
+            .expect("the admitted evidence names the realization it consumed");
+        assert_eq!(realized.subject(), required_subgroup());
+        assert_eq!(realized.fact().provenance().profile().key(), BASELINE_KEY);
+    }
+
+    #[test]
+    fn a_missing_subgroup_realization_is_unknown_rather_than_admitted() {
+        let profile = subgroup_profile(Vec::new());
+        let FeasibilityOutcome::Unknown(unknown) =
+            profile.assess(&subgroup_proposal(), AvailabilityPhase::CompileProfile)
+        else {
+            panic!("a candidate whose realization nothing declares is unknown");
+        };
+        assert_eq!(
+            unknown
+                .subgroup()
+                .expect("the unknown set names the unresolved subject")
+                .subject(),
+            required_subgroup()
+        );
+        assert!(unknown.predicates().is_empty());
+        assert!(unknown.dimensions().is_empty());
+    }
+
+    #[test]
+    fn a_declared_unrealizable_subgroup_rejects_by_name() {
+        let profile = subgroup_profile(vec![subgroup_fact(
+            identity(),
+            required_subgroup(),
+            SubgroupRealization::Unrealizable,
+        )]);
+        let FeasibilityOutcome::Rejected(rejection) =
+            profile.assess(&subgroup_proposal(), AvailabilityPhase::CompileProfile)
+        else {
+            panic!("a declared refusal rejects the candidate");
+        };
+        let RejectionCause::Subgroup(cause) = rejection.representative() else {
+            panic!("the representative cause names the subgroup refusal");
+        };
+        assert_eq!(cause.subject(), required_subgroup());
+        assert!(rejection.disproved().is_empty());
+        assert!(rejection.unhonourable().is_empty());
+    }
+
+    #[test]
+    fn a_subgroup_realization_differing_in_any_one_dimension_satisfies_nothing() {
+        for (dimension, neighbour) in neighbouring_subgroup_subjects() {
+            assert_ne!(neighbour, required_subgroup(), "{dimension} did not change");
+            let profile = subgroup_profile(vec![subgroup_fact(
+                identity(),
+                neighbour,
+                SubgroupRealization::Realized,
+            )]);
+            assert!(
+                matches!(
+                    profile.assess(&subgroup_proposal(), AvailabilityPhase::CompileProfile),
+                    FeasibilityOutcome::Unknown(_)
+                ),
+                "a realization differing only in {dimension} satisfied the requirement"
+            );
+        }
+    }
+
+    #[test]
+    fn independently_true_subgroup_component_facts_compose_into_no_permission() {
+        let facts: Vec<_> = neighbouring_subgroup_subjects()
+            .into_iter()
+            .map(|(_, subject)| subgroup_fact(identity(), subject, SubgroupRealization::Realized))
+            .collect();
+        let profile = subgroup_profile(facts);
+        let FeasibilityOutcome::Unknown(unknown) =
+            profile.assess(&subgroup_proposal(), AvailabilityPhase::CompileProfile)
+        else {
+            panic!("independently true component facts must not compose into one permission");
+        };
+        assert_eq!(
+            unknown
+                .subgroup()
+                .expect("the unknown set names the unresolved subject")
+                .subject(),
+            required_subgroup()
+        );
+    }
+
+    #[test]
+    fn a_later_phase_subgroup_realization_is_unknown_rather_than_deferred() {
+        let later = DeclaredSubgroupRealization::new(
+            required_subgroup(),
+            SubgroupRealization::Realized,
+            measured_source(FactAuthority::DeviceRuntime),
+        )
+        .attributed_to(identity());
+        assert_eq!(later.phase(), AvailabilityPhase::LiveDevicePreflight);
+        let profile = subgroup_profile(vec![later]);
+        assert!(matches!(
+            profile.assess(&subgroup_proposal(), AvailabilityPhase::CompileProfile),
+            FeasibilityOutcome::Unknown(_)
+        ));
+        assert!(matches!(
+            profile.assess(&subgroup_proposal(), AvailabilityPhase::LiveDevicePreflight),
+            FeasibilityOutcome::Proven(_)
+        ));
+    }
+
+    #[test]
+    fn a_subgroup_declaration_moves_the_checked_descriptor() {
+        let bare = subgroup_profile(Vec::new());
+        let realized = subgroup_profile(vec![subgroup_fact(
+            identity(),
+            required_subgroup(),
+            SubgroupRealization::Realized,
+        )]);
+        let refused = subgroup_profile(vec![subgroup_fact(
+            identity(),
+            required_subgroup(),
+            SubgroupRealization::Unrealizable,
+        )]);
+        assert_ne!(bare.canonical_descriptor(), realized.canonical_descriptor());
+        assert_ne!(
+            realized.canonical_descriptor(),
+            refused.canonical_descriptor(),
+            "two profiles that answer one subject differently shared a descriptor"
+        );
+        assert!(
+            !bare
+                .canonical_descriptor()
+                .windows(CHECKED_SUBGROUP_DOMAIN.len())
+                .any(|window| window == CHECKED_SUBGROUP_DOMAIN),
+            "a silent checked profile must write none of the family's bytes"
+        );
+        assert!(
+            realized
+                .canonical_descriptor()
+                .windows(CHECKED_SUBGROUP_DOMAIN.len())
+                .any(|window| window == CHECKED_SUBGROUP_DOMAIN)
+        );
+    }
+
+    #[test]
+    fn an_exact_duplicate_subgroup_declaration_is_malformed() {
+        let id = identity();
+        assert!(matches!(
+            CheckedTargetProfile::new_complete(
+                id,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                vec![
+                    subgroup_fact(id, required_subgroup(), SubgroupRealization::Realized),
+                    subgroup_fact(id, required_subgroup(), SubgroupRealization::Realized),
+                ],
+            ),
+            Err(FeasibilityError::MalformedProfile {
+                rule: "duplicate-subgroup"
+            })
+        ));
+    }
+
+    #[test]
+    fn a_contradictory_subgroup_declaration_is_malformed() {
+        let id = identity();
+        assert!(matches!(
+            CheckedTargetProfile::new_complete(
+                id,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                vec![
+                    subgroup_fact(id, required_subgroup(), SubgroupRealization::Realized),
+                    subgroup_fact(id, required_subgroup(), SubgroupRealization::Unrealizable),
+                ],
+            ),
+            Err(FeasibilityError::MalformedProfile {
+                rule: "contradictory-subgroup"
             })
         ));
     }
@@ -3996,7 +4730,7 @@ mod tests {
         assert_ne!(rules.key(), profile.identity().key());
         assert_eq!(
             rules.key(),
-            "tiler.feasibility.phased-capability-and-numerical-honourability.v5"
+            "tiler.feasibility.phased-capability-and-numerical-honourability.v6"
         );
         assert_eq!(rules.revision(), 1);
 

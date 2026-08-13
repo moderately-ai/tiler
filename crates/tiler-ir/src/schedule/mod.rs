@@ -143,6 +143,7 @@ mod numerics;
 mod parametric;
 mod pointwise;
 mod pointwise_bf16;
+mod subgroup;
 mod synchronization;
 mod witness;
 
@@ -198,6 +199,9 @@ pub use pointwise_bf16::{
     PointwiseBf16ExpressionAdmissionError, PointwiseBf16ExpressionBuildError,
     PointwiseBf16ExpressionBuilder, PointwiseBf16ExpressionDiagnostic, PointwiseBf16Node,
     PointwiseBf16NodeId, PointwiseBf16Value,
+};
+pub use subgroup::{
+    SubgroupRealizationError, SubgroupRealizationSubject, SubgroupTransfer, SubgroupWidth,
 };
 pub use synchronization::{
     ConvergenceEvidence, FencedSpaces, MemoryOrdering, SynchronizationKind,

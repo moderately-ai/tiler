@@ -694,6 +694,8 @@ pub(super) fn record_frontier(
             | crate::frontier::FrontierRejection::Unhonourable { .. }
             | crate::frontier::FrontierRejection::Unsynchronizable { .. }
             | crate::frontier::FrontierRejection::SynchronizationUndeclared { .. }
+            | crate::frontier::FrontierRejection::UnrealizableSubgroup { .. }
+            | crate::frontier::FrontierRejection::SubgroupUndeclared { .. }
             | crate::frontier::FrontierRejection::UnsupportedVariant { .. }
             | crate::frontier::FrontierRejection::NotApplicable { .. } => {}
         }
@@ -1420,6 +1422,28 @@ pub(super) fn record_target_rejection(
                 )?)
             })(),
         ),
+        PhysicalError::Subgroup { cause, .. } => (
+            format!("target.subgroup.{}", cause.subject().transfer().key()),
+            (|| -> Result<_, CompileError> {
+                Ok(subgroup_event(
+                    cause.subject(),
+                    crate::explain::SynchronizationOutcome::Unrealizable {
+                        profile: crate::explain::SubjectKey::new(
+                            cause.fact().provenance().profile().key(),
+                        )?,
+                    },
+                )?)
+            })(),
+        ),
+        PhysicalError::UnrealizedSubgroup { subject, .. } => (
+            format!("target.subgroup.{}", subject.transfer().key()),
+            (|| -> Result<_, CompileError> {
+                Ok(subgroup_event(
+                    *subject,
+                    crate::explain::SynchronizationOutcome::Undeclared,
+                )?)
+            })(),
+        ),
         PhysicalError::Intrinsic { .. }
         | PhysicalError::Refinement { .. }
         | PhysicalError::ShapeProductOverflow { .. } => {
@@ -1593,6 +1617,18 @@ pub(super) fn record_target_admissions(
 /// One helper for both the admitted and the refused path, so the rendered
 /// subject cannot differ between them — a reader comparing a refusal against a
 /// later admission is comparing the same six fields spelled the same way.
+fn subgroup_event(
+    subject: tiler_ir::schedule::SubgroupRealizationSubject,
+    outcome: crate::explain::SynchronizationOutcome,
+) -> Result<ExplainEvent, ExplainError> {
+    Ok(ExplainEvent::SubgroupRealization {
+        width: subject.width().get(),
+        arithmetic: subject.arithmetic(),
+        transfer: ReasonCode::new(subject.transfer().key())?,
+        outcome,
+    })
+}
+
 fn synchronization_event(
     subject: tiler_ir::schedule::SynchronizationSubject,
     outcome: crate::explain::SynchronizationOutcome,
@@ -2235,6 +2271,7 @@ mod tests {
                 requires_device_memory: true,
                 index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
                 synchronization: None,
+                subgroup: None,
                 input_subnormals: realization.input_subnormals,
                 result_subnormals: realization.result_subnormals,
                 contraction: realization.contraction,

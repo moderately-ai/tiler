@@ -1904,6 +1904,25 @@ pub(crate) enum FrontierRejection {
         /// The complete subject the proposal required and nothing declared.
         subject: tiler_ir::schedule::SynchronizationSubject,
     },
+    /// The proposal is applicable and valid, but the target declares it cannot
+    /// realize the subgroup the proposal's dataflow requires.
+    UnrealizableSubgroup {
+        /// The provider whose proposal was rejected.
+        provider: PhysicalProviderProvenance,
+        /// The complete refused subject and the fact that refused it.
+        cause: Box<crate::target::feasibility::UnrealizableSubgroup>,
+    },
+    /// The proposal is applicable and valid, and no available target fact speaks
+    /// to the subgroup realization its dataflow requires.
+    ///
+    /// Distinct from [`Self::UnrealizableSubgroup`], which carries a fact that
+    /// refused. This carries none, because there is none.
+    SubgroupUndeclared {
+        /// The provider whose proposal was rejected.
+        provider: PhysicalProviderProvenance,
+        /// The complete subject the proposal required and nothing declared.
+        subject: tiler_ir::schedule::SubgroupRealizationSubject,
+    },
     /// An opaque call proposal was refused, retaining its complete identity,
     /// ordered bindings, and typed cause.
     OpaqueCall {
@@ -2019,6 +2038,22 @@ impl FrontierRejection {
                 output.push(u8::from(subject.fenced_spaces.workgroup));
                 output.push(u8::from(subject.fenced_spaces.device));
                 output.push(subject.ordering.tag());
+            }
+            // Appended tags `9` and `10`: earlier rejections keep their tags
+            // and field layouts. The whole subject is encoded because two
+            // refusals differing only in width, arithmetic, or transfer are
+            // different refusals.
+            Self::UnrealizableSubgroup { provider, cause } => {
+                let subject = cause.subject();
+                output.push(9);
+                encode_provider(output, provider.provider());
+                subject.encode(output);
+                push_slice(output, cause.fact().provenance().profile().key().as_bytes());
+            }
+            Self::SubgroupUndeclared { provider, subject } => {
+                output.push(10);
+                encode_provider(output, provider.provider());
+                subject.encode(output);
             }
             Self::OpaqueCall {
                 provider,
@@ -2561,6 +2596,18 @@ pub(crate) fn enumerate_frontier(
                         subject,
                     });
                 }
+                Err(PhysicalError::Subgroup { cause, .. }) => {
+                    rejections.push(FrontierRejection::UnrealizableSubgroup {
+                        provider: provenance.clone(),
+                        cause,
+                    });
+                }
+                Err(PhysicalError::UnrealizedSubgroup { subject, .. }) => {
+                    rejections.push(FrontierRejection::SubgroupUndeclared {
+                        provider: provenance.clone(),
+                        subject,
+                    });
+                }
                 Err(
                     source @ (PhysicalError::Intrinsic { .. }
                     | PhysicalError::Refinement { .. }
@@ -2610,8 +2657,11 @@ fn classify_opaque_resource_verdict(
         // call's feasibility was not decided, which is the same thing to report,
         // and spelling the pattern keeps a later reachable path visible in this
         // match instead of swallowed by a `_`.
-        ResourceVerdict::Rejected(RejectionCause::Synchronization(_))
+        ResourceVerdict::Rejected(
+            RejectionCause::Synchronization(_) | RejectionCause::Subgroup(_),
+        )
         | ResourceVerdict::UnrealizedSynchronization(_)
+        | ResourceVerdict::UnrealizedSubgroup(_)
         | ResourceVerdict::Unknown => {
             return Err(FrontierError::UnresolvedOpaqueCallAssessment {
                 provider: provider.provider().clone(),
@@ -3048,6 +3098,18 @@ fn admit_subprogram(
                     subject,
                 }));
             }
+            Err(PhysicalError::Subgroup { cause, .. }) => {
+                return Ok(Err(FrontierRejection::UnrealizableSubgroup {
+                    provider: provider.clone(),
+                    cause,
+                }));
+            }
+            Err(PhysicalError::UnrealizedSubgroup { subject, .. }) => {
+                return Ok(Err(FrontierRejection::SubgroupUndeclared {
+                    provider: provider.clone(),
+                    subject,
+                }));
+            }
             Err(
                 source @ (PhysicalError::Intrinsic { .. }
                 | PhysicalError::Refinement { .. }
@@ -3096,6 +3158,18 @@ fn admit_subprogram(
         }
         Err(ResourceVerdict::UnrealizedSynchronization(subject)) => {
             return Ok(Err(FrontierRejection::SynchronizationUndeclared {
+                provider: provider.clone(),
+                subject,
+            }));
+        }
+        Err(ResourceVerdict::Rejected(RejectionCause::Subgroup(cause))) => {
+            return Ok(Err(FrontierRejection::UnrealizableSubgroup {
+                provider: provider.clone(),
+                cause: Box::new(cause),
+            }));
+        }
+        Err(ResourceVerdict::UnrealizedSubgroup(subject)) => {
+            return Ok(Err(FrontierRejection::SubgroupUndeclared {
                 provider: provider.clone(),
                 subject,
             }));
@@ -4707,6 +4781,7 @@ mod tests {
                 requires_device_memory: true,
                 index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
                 synchronization: None,
+                subgroup: None,
                 input_subnormals: SubnormalMode::Preserve,
                 result_subnormals: SubnormalMode::Preserve,
                 contraction: NumericalPermission::Forbidden,
@@ -5209,6 +5284,7 @@ mod tests {
             requires_device_memory: true,
             index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
             synchronization: None,
+            subgroup: None,
             input_subnormals: contract.input_subnormals,
             result_subnormals: contract.result_subnormals,
             contraction: contract.contraction,
@@ -5393,6 +5469,7 @@ mod tests {
                 requires_device_memory: true,
                 index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
                 synchronization: None,
+                subgroup: None,
                 input_subnormals: SubnormalMode::Preserve,
                 result_subnormals: SubnormalMode::Preserve,
                 contraction: NumericalPermission::Forbidden,
@@ -5509,6 +5586,7 @@ mod tests {
                 requires_device_memory: true,
                 index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
                 synchronization: None,
+                subgroup: None,
                 input_subnormals: SubnormalMode::Preserve,
                 result_subnormals: SubnormalMode::Preserve,
                 contraction: NumericalPermission::Forbidden,
@@ -5638,6 +5716,7 @@ mod tests {
                 requires_device_memory: true,
                 index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
                 synchronization: None,
+                subgroup: None,
                 input_subnormals: SubnormalMode::Preserve,
                 result_subnormals: SubnormalMode::Preserve,
                 contraction: NumericalPermission::Forbidden,

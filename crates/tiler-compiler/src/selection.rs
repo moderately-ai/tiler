@@ -1950,6 +1950,7 @@ mod tests {
                 requires_device_memory: true,
                 index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
                 synchronization: None,
+                subgroup: None,
                 input_subnormals: realization.input_subnormals,
                 result_subnormals: realization.result_subnormals,
                 contraction: realization.contraction,

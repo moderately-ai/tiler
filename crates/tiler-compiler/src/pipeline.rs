@@ -588,7 +588,9 @@ impl From<PhysicalError> for CompileError {
             PhysicalError::Target { .. }
             | PhysicalError::Numerical { .. }
             | PhysicalError::Synchronization { .. }
-            | PhysicalError::UnrealizedSynchronization { .. } => {
+            | PhysicalError::UnrealizedSynchronization { .. }
+            | PhysicalError::Subgroup { .. }
+            | PhysicalError::UnrealizedSubgroup { .. } => {
                 Self::NoFeasiblePlan(NoFeasiblePlanError::Physical(value))
             }
         }
@@ -1622,7 +1624,9 @@ const fn physical_error_stage(error: &PhysicalError) -> ExplainStage {
         PhysicalError::Target { .. }
         | PhysicalError::Numerical { .. }
         | PhysicalError::Synchronization { .. }
-        | PhysicalError::UnrealizedSynchronization { .. } => ExplainStage::TargetFeasibility,
+        | PhysicalError::UnrealizedSynchronization { .. }
+        | PhysicalError::Subgroup { .. }
+        | PhysicalError::UnrealizedSubgroup { .. } => ExplainStage::TargetFeasibility,
         PhysicalError::Intrinsic { .. } | PhysicalError::ShapeProductOverflow { .. } => {
             ExplainStage::IntrinsicScheduling
         }
@@ -1765,6 +1769,8 @@ fn target_axis(error: &PhysicalError) -> &'static str {
         // because a fact refused it are different rejections, and sharing a key
         // would let the deduplication above drop one of them.
         PhysicalError::UnrealizedSynchronization { .. } => "synchronization-undeclared",
+        PhysicalError::Subgroup { cause, .. } => cause.subject().transfer().key(),
+        PhysicalError::UnrealizedSubgroup { .. } => "subgroup-undeclared",
         PhysicalError::ShapeProductOverflow { .. } => "shape-product-overflow",
     }
 }
@@ -2129,6 +2135,35 @@ fn failure_source_details(error: &CompileError) -> (String, SubjectKind, String)
                 "synchronization-undeclared-{}-{}",
                 subject.kind.key(),
                 subject.execution_scope.key()
+            ),
+            SubjectKind::Region,
+            format!("failed-region:{}", region.get()),
+        ),
+        CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(PhysicalError::Subgroup {
+            cause,
+            region,
+        }))
+        | CompileError::InvalidCompilerOutput(CompilerOutputError::Physical(
+            PhysicalError::Subgroup { cause, region },
+        )) => (
+            format!(
+                "subgroup-{}-{}",
+                cause.subject().width().get(),
+                cause.subject().transfer().key(),
+            ),
+            SubjectKind::Region,
+            format!("failed-region:{}", region.get()),
+        ),
+        CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(
+            PhysicalError::UnrealizedSubgroup { subject, region },
+        ))
+        | CompileError::InvalidCompilerOutput(CompilerOutputError::Physical(
+            PhysicalError::UnrealizedSubgroup { subject, region },
+        )) => (
+            format!(
+                "subgroup-undeclared-{}-{}",
+                subject.width().get(),
+                subject.transfer().key(),
             ),
             SubjectKind::Region,
             format!("failed-region:{}", region.get()),

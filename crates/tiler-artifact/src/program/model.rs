@@ -2245,6 +2245,7 @@ pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirement
         requires_device_memory,
         index_arithmetic,
         synchronization,
+        subgroup: _,
         input_subnormals,
         result_subnormals,
         contraction,

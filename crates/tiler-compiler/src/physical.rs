@@ -1073,6 +1073,24 @@ pub(crate) enum PhysicalError {
         region: RegionId,
         subject: tiler_ir::schedule::SynchronizationSubject,
     },
+    /// A subgroup realization no available target fact speaks to.
+    ///
+    /// Distinct from [`Self::Subgroup`], which carries a fact that says *no*.
+    /// This one carries no fact because there is none: the profile has never
+    /// been asked about this subject.
+    UnrealizedSubgroup {
+        region: RegionId,
+        subject: tiler_ir::schedule::SubgroupRealizationSubject,
+    },
+    /// A subgroup realization the target declares it cannot provide.
+    ///
+    /// A distinct variant for the reason [`Self::Synchronization`] is one: the
+    /// rejection names a complete subject — width, arithmetic, transfer — and
+    /// the profile that refused it, none of which is a quantity.
+    Subgroup {
+        region: RegionId,
+        cause: Box<crate::target::feasibility::UnrealizableSubgroup>,
+    },
     /// A synchronization realization the target declares it cannot provide.
     ///
     /// A distinct variant for the reason [`Self::Numerical`] is one: the
@@ -1147,6 +1165,28 @@ impl fmt::Display for PhysicalError {
                 },
                 subject.ordering.key(),
             ),
+            Self::UnrealizedSubgroup { region, subject } => write!(
+                formatter,
+                "schedule.subgroup.unrealized: region {} requires {}-lane {} {}; \
+                 no available fact declares it",
+                region.get(),
+                subject.width().get(),
+                subject.arithmetic().canonical_type_key(),
+                subject.transfer().key(),
+            ),
+            Self::Subgroup { region, cause } => {
+                let subject = cause.subject();
+                write!(
+                    formatter,
+                    "schedule.subgroup: region {} requires {}-lane {} {}; \
+                     profile {} declares it unrealizable",
+                    region.get(),
+                    subject.width().get(),
+                    subject.arithmetic().canonical_type_key(),
+                    subject.transfer().key(),
+                    cause.fact().provenance().profile().key(),
+                )
+            }
             Self::Synchronization { region, cause } => {
                 let subject = cause.subject();
                 write!(
@@ -3919,6 +3959,12 @@ pub(crate) enum ResourceVerdict {
     Intrinsic(FeasibilityError),
     /// The target refused the proposal, with the representative cause.
     Rejected(RejectionCause),
+    /// The proposal requires a subgroup realization nothing declares.
+    ///
+    /// Separated from [`Self::Unknown`] for the same reason
+    /// [`Self::UnrealizedSynchronization`] is: a complete, well-formed
+    /// requirement this target has simply never been asked about.
+    UnrealizedSubgroup(tiler_ir::schedule::SubgroupRealizationSubject),
     /// The proposal requires a synchronization realization nothing declares.
     ///
     /// Separated from [`Self::Unknown`] because the two blame different things.
@@ -3968,6 +4014,14 @@ pub(crate) fn assess_resources(
                     .subject(),
             ))
         }
+        FeasibilityOutcome::Unknown(unknown) if unknown.subgroup().is_some() => {
+            Err(ResourceVerdict::UnrealizedSubgroup(
+                unknown
+                    .subgroup()
+                    .expect("the guard proved the unknown names a subgroup subject")
+                    .subject(),
+            ))
+        }
         FeasibilityOutcome::Deferred(_) | FeasibilityOutcome::Unknown(_) => {
             Err(ResourceVerdict::Unknown)
         }
@@ -3997,6 +4051,10 @@ pub(crate) fn assess_region(
                     cause: Box::new(cause),
                 }
             }
+            ResourceVerdict::Rejected(RejectionCause::Subgroup(cause)) => PhysicalError::Subgroup {
+                region,
+                cause: Box::new(cause),
+            },
             ResourceVerdict::Rejected(RejectionCause::Capability(predicate)) => {
                 PhysicalError::Target {
                     rule: predicate.axis().key(),
@@ -4007,6 +4065,9 @@ pub(crate) fn assess_region(
             }
             ResourceVerdict::UnrealizedSynchronization(subject) => {
                 PhysicalError::UnrealizedSynchronization { region, subject }
+            }
+            ResourceVerdict::UnrealizedSubgroup(subject) => {
+                PhysicalError::UnrealizedSubgroup { region, subject }
             }
             ResourceVerdict::Unknown => PhysicalError::Intrinsic {
                 rule: "target-assessment-unresolved",
@@ -4088,7 +4149,7 @@ pub(crate) fn region_proposal(
     work_items: u64,
 ) -> Result<FeasibilityProposal, FeasibilityError> {
     let numerical = region_numerical_requirements(requirements, arithmetic)?;
-    FeasibilityProposal::new_with_synchronization(
+    FeasibilityProposal::new_with_realizations(
         REGION_PROPOSAL_CANDIDATE,
         vec![
             AxisRequirement::new(CapabilityAxis::GridAxisThreads, work_items),
@@ -4112,6 +4173,7 @@ pub(crate) fn region_proposal(
         ],
         numerical,
         requirements.synchronization,
+        requirements.subgroup,
     )
 }
 
@@ -4158,6 +4220,7 @@ fn region_numerical_requirements(
         requires_device_memory: _,
         index_arithmetic: _,
         synchronization: _,
+        subgroup: _,
         input_subnormals,
         result_subnormals,
         contraction,
@@ -4286,6 +4349,7 @@ mod tests {
             requires_device_memory: true,
             index_arithmetic: IndexArithmetic::CompleteU64,
             synchronization: None,
+            subgroup: None,
             input_subnormals: SubnormalMode::FlushToZero {
                 zero_sign: FlushedZeroSign::PreservesSign,
             },
@@ -4310,6 +4374,7 @@ mod tests {
             requires_device_memory: true,
             index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
             synchronization: None,
+            subgroup: None,
             input_subnormals: realization.input_subnormals,
             result_subnormals: realization.result_subnormals,
             contraction: realization.contraction,
@@ -4476,6 +4541,7 @@ mod tests {
             checked.queries().to_vec(),
             honourability,
             checked.synchronization().to_vec(),
+            checked.subgroup().to_vec(),
         )
         .expect("dropping one honourability row keeps the profile well formed");
         let proposal = super::region_proposal(strict_resources(), ArithmeticType::F32, 1)

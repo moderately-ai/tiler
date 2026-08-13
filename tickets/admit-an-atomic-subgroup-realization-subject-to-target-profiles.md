@@ -1,17 +1,17 @@
 ---
 id: admit-an-atomic-subgroup-realization-subject-to-target-profiles
 title: Admit an atomic subgroup realization subject to target profiles
-status: in-progress
+status: review
 priority: p1
 dependencies: [accept-adr-0094-subgroup-execution-tier]
 related: [declare-metal-subgroup-realization-facts-in-the-target-profile, decide-the-prepared-subgroup-width-equality-gate]
-scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/optimizer, contracts/artifacts, contracts/decisions]
+scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/build, implementation/candle, contracts/optimizer, contracts/artifacts, contracts/decisions, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: [target-profiles, subgroup, feasibility, identity, public-boundary, fail-closed]
 claimed_from: todo
 assignee: worker-atomic-subgroup-realization
-lease_expires_at: 1786653865
+lease_expires_at: 1786656521
 ---
 ## User-visible outcome
 
@@ -41,3 +41,28 @@ The hot host path adds one fixed-struct comparison and one tiny declared-row loo
 ## Closes when
 
 The public profile vocabulary can state and resolve one atomic subgroup realization, no partial conjunction can satisfy it, and no standard profile gains an unsupported row.
+
+## Fact audit — 2026-08-13 at `0e1d976bc75dcb0723ce11086750461fd1cfdf06`
+
+- **Verified.** `TargetProfileBuilder::declare_synchronization_realization` takes one whole `SynchronizationSubject`, refuses exact duplicates and same-key contradictions, and has no per-dimension spelling. Anchor: `no per-dimension spelling`.
+- **Verified.** `complete_descriptor` writes evaluation-order, cost-row, elementary, and tree-width-policy families only when nonempty. Anchor: `Why the evaluation-order family did not step`.
+- **Verified.** `COMPLETE_PROFILE_DESCRIPTOR_DOMAIN` is `tiler.target-profile.declaration.v11`. Anchor: `tiler.target-profile.declaration.v11`.
+- **Verified.** `PROFILE_DESCRIPTOR_DOMAIN` is `tiler.target-profile.descriptor.v10` and writes synchronization unconditionally. Anchor: `tiler.target-profile.descriptor.v10`.
+- **Verified.** At this base, `GOVERNED_FEASIBILITY_RULE_SET_KEY` was `tiler.feasibility.phased-capability-and-numerical-honourability.v5`. This delivery mints `v6` because `assess` now decides a subgroup predicate `v5` could not express. Anchor: `Widening that vocabulary mints a new key`.
+- **Verified.** No standard profile declared a subgroup row. Anchor: `no target profile declares a subgroup realization subject` in ADR 0094. This ticket keeps that silence.
+- **Imprecise as written against this dirty tree.** The previous worker already added `ResourceRequirements.subgroup`, `SubgroupRealizationSubject`, and kernel silence-as-absence encoding. This delivery extends that remainder rather than introducing the subject types.
+
+## Identity blast radius
+
+- `COMPLETE_PROFILE_DESCRIPTOR_DOMAIN` stays `v11`. Silent profiles write no `tiler.target-profile.subgroup-realization.v1` section.
+- `PROFILE_DESCRIPTOR_DOMAIN` stays `v10`. Silent checked descriptors write no `tiler.target-profile.descriptor.subgroup-realization.v1` section.
+- `KERNEL_DOMAIN` does not step. Absent subgroup requirements write nothing.
+- Artifact resource encoding still drops `subgroup` and decodes `None`. Honest while every derived region is `None`; a present subject must later be append-only silence-as-absence, not an unconditional field.
+- Feasibility rule-set key steps `v5` → `v6`. Artifact, envelope, and cache identities that fold the key move; descriptor bytes of silent profiles do not.
+
+## Remainder after this delivery
+
+- KIR subgroup emission / deriving `Some` from an admitted topology.
+- Declaring a row on the governed or standard Metal profile.
+- Accepting this crate's exact public spelling under ADR 0075.
+- Encoding a present subgroup subject in the artifact resource record.

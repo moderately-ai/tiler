@@ -1662,9 +1662,13 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "72d779eca944df675b9d26f2f688d8605bbeffe5ef835b780b7e3295793a982b";
+            "ef27d36a6062e8641406a29217946d32e40a74cad12e4002b1f50af790b25cbb";
         const CACHE_SUBJECT: &str =
-            "d35dbd21559351ab5a596fa88ef8ded753460e20ec18a6fced48caf4f9a43a36";
+            "8ac665905a28891135c45659184b3e01eb4913d4a536495b88c47f46da5b2e5c";
+        // **Hex step after the feasibility rule-set key v5 → v6.** Descriptor
+        // length and fixed content stay at the workgroup-tree-width-policy
+        // values: silent profiles write no subgroup section, and the key
+        // string is the same length.
         // **77,061 after the closed workgroup-tree-width policy.** The previous
         // 76,291 pin was the eight-dimension region-feasibility projection.
         // The policy section is 70 bytes; the envelope delta is 770, which is
@@ -1744,9 +1748,9 @@ mod tests {
     #[test]
     fn the_authority_ledger_mirrors_the_live_standard_metal_pins() {
         const ARTIFACT_IDENTITY: &str =
-            "72d779eca944df675b9d26f2f688d8605bbeffe5ef835b780b7e3295793a982b";
+            "ef27d36a6062e8641406a29217946d32e40a74cad12e4002b1f50af790b25cbb";
         const CACHE_SUBJECT: &str =
-            "d35dbd21559351ab5a596fa88ef8ded753460e20ec18a6fced48caf4f9a43a36";
+            "8ac665905a28891135c45659184b3e01eb4913d4a536495b88c47f46da5b2e5c";
         let ledger = include_str!(
             "../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md"
         );

@@ -193,6 +193,8 @@ fn classify_empty_frontier(frontier: &ImplementationFrontier) -> EmptyFrontierFa
             | crate::frontier::FrontierRejection::Unhonourable { .. }
             | crate::frontier::FrontierRejection::Unsynchronizable { .. }
             | crate::frontier::FrontierRejection::SynchronizationUndeclared { .. }
+            | crate::frontier::FrontierRejection::UnrealizableSubgroup { .. }
+            | crate::frontier::FrontierRejection::SubgroupUndeclared { .. }
             | crate::frontier::FrontierRejection::OpaqueCall { .. }
             | crate::frontier::FrontierRejection::UnsupportedVariant { .. }
             | crate::frontier::FrontierRejection::NotApplicable { .. } => {
@@ -541,6 +543,18 @@ pub(super) fn enumerate_complete_plans(
                             subject,
                             ..
                         } => Some(PhysicalError::UnrealizedSynchronization {
+                            region: region_id_of(cover, region),
+                            subject: *subject,
+                        }),
+                        crate::frontier::FrontierRejection::UnrealizableSubgroup {
+                            cause, ..
+                        } => Some(PhysicalError::Subgroup {
+                            region: region_id_of(cover, region),
+                            cause: cause.clone(),
+                        }),
+                        crate::frontier::FrontierRejection::SubgroupUndeclared {
+                            subject, ..
+                        } => Some(PhysicalError::UnrealizedSubgroup {
                             region: region_id_of(cover, region),
                             subject: *subject,
                         }),

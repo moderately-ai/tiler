@@ -17,8 +17,8 @@ use crate::schedule::{BoundsWitnessId, OwnershipWitnessId};
 use crate::schedule::{
     CanonicalScheduledRegionIdentity, ExceptionalValueAssumption, FlushedZeroSign, IndexArithmetic,
     NumericalPermission, NumericalRealization, REGION_INDEX_ARITHMETIC, RegionId,
-    ResourceRequirements, SubnormalFreedom, SubnormalMode, SynchronizationSubject, TensorRole,
-    ValueDomainProvenance,
+    ResourceRequirements, SubgroupRealizationSubject, SubnormalFreedom, SubnormalMode,
+    SynchronizationSubject, TensorRole, ValueDomainProvenance,
 };
 use crate::semantic::EncodedComponentRole;
 
@@ -1766,6 +1766,23 @@ fn push_staging(bytes: &mut Vec<u8>, staging: &[StagingParameter]) {
     }
 }
 
+/// Encodes the subgroup realization a kernel requires, or writes nothing.
+///
+/// **Written last, and written as nothing at all when the requirement is
+/// absent.** A kernel that requires no subgroup combine encodes exactly the
+/// bytes it encoded before this field existed. Injectivity survives because
+/// the staging block preceding it is fully self-framing when present, and
+/// when both are absent the encoding ends where it always did. A `0x00`
+/// presence tag written unconditionally would have added one byte to every
+/// kernel ever encoded and stepped [`KERNEL_DOMAIN`].
+fn push_subgroup_requirement(bytes: &mut Vec<u8>, subject: Option<SubgroupRealizationSubject>) {
+    let Some(subject) = subject else {
+        return;
+    };
+    bytes.push(0x01);
+    subject.encode(bytes);
+}
+
 /// Mirrors [`push_staging`], including its empty case writing nothing.
 fn staging_encoded_len(staging: &[StagingParameter]) -> usize {
     if staging.is_empty() {
@@ -1995,6 +2012,7 @@ pub(super) fn encode_identity(
     }
     push_block(&mut bytes, data, 0);
     push_staging(&mut bytes, &data.staging);
+    push_subgroup_requirement(&mut bytes, data.requirements.subgroup);
     debug_assert_eq!(
         bytes.len(),
         encoded_len,
@@ -2046,6 +2064,16 @@ fn identity_encoded_len(
         .saturating_add(data.values.len())
         .saturating_add(block_encoded_len(data, 0))
         .saturating_add(staging_encoded_len(&data.staging))
+        .saturating_add(subgroup_requirement_encoded_len(data.requirements.subgroup))
+}
+
+/// Mirrors [`push_subgroup_requirement`]: nothing when absent, else a
+/// presence tag plus the subject's encoded width, arithmetic, and transfer.
+const fn subgroup_requirement_encoded_len(subject: Option<SubgroupRealizationSubject>) -> usize {
+    match subject {
+        None => 0,
+        Some(_) => 1 + size_of::<u32>() + 2,
+    }
 }
 
 /// Mirrors [`push_buffer`]: tensor, optional role, three tags, and element count.

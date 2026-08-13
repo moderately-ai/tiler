@@ -812,6 +812,24 @@ pub(crate) enum ExplainEvent {
         /// How the target resolved the whole subject.
         outcome: SynchronizationOutcome,
     },
+    /// One complete subgroup realization assessed against a target.
+    ///
+    /// The whole subject in one record, deliberately not three records: a
+    /// subject is matched by equality and has no magnitude, and splitting it
+    /// across rows would render an explanation from which a reader could
+    /// conclude that two of its three dimensions were "admitted".
+    ///
+    /// **A candidate requiring no subgroup emits no record at all.**
+    SubgroupRealization {
+        /// Literal width in lanes.
+        width: u32,
+        /// Exact arithmetic type carried through the transfer.
+        arithmetic: ArithmeticType,
+        /// Governed key of the required transfer.
+        transfer: ReasonCode,
+        /// How the target resolved the whole subject.
+        outcome: SynchronizationOutcome,
+    },
     DeferredCapability {
         predicate: PredicateKey,
         reason: ReasonCode,
@@ -850,7 +868,8 @@ impl ExplainEvent {
             Self::Feasibility { .. }
             | Self::DeferredTargetRequirement { .. }
             | Self::NumericalHonourability { .. }
-            | Self::SynchronizationRealization { .. } => ExplainStage::TargetFeasibility,
+            | Self::SynchronizationRealization { .. }
+            | Self::SubgroupRealization { .. } => ExplainStage::TargetFeasibility,
             Self::DeferredCapability { .. } => ExplainStage::CapabilityResolution,
             Self::CostAssessment { .. } => ExplainStage::Costing,
             Self::Selection { .. }
@@ -878,6 +897,10 @@ impl ExplainEvent {
                 ..
             }
             | Self::SynchronizationRealization {
+                outcome: SynchronizationOutcome::Realized { .. },
+                ..
+            }
+            | Self::SubgroupRealization {
                 outcome: SynchronizationOutcome::Realized { .. },
                 ..
             } => ExplainDisposition::Admitted,
@@ -930,6 +953,10 @@ impl ExplainEvent {
             | Self::SynchronizationRealization {
                 outcome: SynchronizationOutcome::Undeclared,
                 ..
+            }
+            | Self::SubgroupRealization {
+                outcome: SynchronizationOutcome::Undeclared,
+                ..
             } => ExplainDisposition::DeferredUnsupported,
             Self::BudgetStop { .. } => ExplainDisposition::BudgetStopped,
             Self::CostAssessment {
@@ -945,6 +972,10 @@ impl ExplainEvent {
                 ..
             }
             | Self::SynchronizationRealization {
+                outcome: SynchronizationOutcome::Unrealizable { .. },
+                ..
+            }
+            | Self::SubgroupRealization {
                 outcome: SynchronizationOutcome::Unrealizable { .. },
                 ..
             }
@@ -1108,6 +1139,7 @@ impl ExplainEvent {
             | Self::DeferredCapability { .. }
             | Self::NumericalHonourability { .. }
             | Self::SynchronizationRealization { .. }
+            | Self::SubgroupRealization { .. }
             | Self::Selection { .. }
             | Self::SemanticSelection { .. }
             | Self::PreferencePruned { .. }
@@ -2464,6 +2496,26 @@ fn render_event(output: &mut String, event: &ExplainEvent) {
                 }
             );
         }
+        ExplainEvent::SubgroupRealization {
+            width,
+            arithmetic,
+            transfer,
+            outcome,
+        } => {
+            let _ = write!(
+                output,
+                "subgroup:width={width}:arithmetic={}:transfer={}:{}",
+                arithmetic.canonical_type_key(),
+                transfer.as_str(),
+                match outcome {
+                    SynchronizationOutcome::Realized { profile } =>
+                        format!("realized:profile={}", profile.as_str()),
+                    SynchronizationOutcome::Unrealizable { profile } =>
+                        format!("unrealizable:profile={}", profile.as_str()),
+                    SynchronizationOutcome::Undeclared => "undeclared".to_owned(),
+                }
+            );
+        }
         ExplainEvent::DeferredCapability { predicate, reason } => {
             let _ = write!(
                 output,
@@ -3040,6 +3092,31 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
             bytes.push(u8::from(*fences_workgroup));
             bytes.push(u8::from(*fences_device));
             push_slice(bytes, ordering.as_str().as_bytes());
+            match outcome {
+                SynchronizationOutcome::Realized { profile } => {
+                    bytes.push(1);
+                    push_slice(bytes, profile.as_str().as_bytes());
+                }
+                SynchronizationOutcome::Unrealizable { profile } => {
+                    bytes.push(2);
+                    push_slice(bytes, profile.as_str().as_bytes());
+                }
+                SynchronizationOutcome::Undeclared => bytes.push(3),
+            }
+        }
+        // Appended tag `14`: tags `1` through `13` keep their values and field
+        // layouts. A candidate that requires no subgroup never emits this
+        // record, so previously encodable traces stay byte-identical.
+        ExplainEvent::SubgroupRealization {
+            width,
+            arithmetic,
+            transfer,
+            outcome,
+        } => {
+            bytes.push(14);
+            bytes.extend_from_slice(&width.to_be_bytes());
+            bytes.push(arithmetic.tag());
+            push_slice(bytes, transfer.as_str().as_bytes());
             match outcome {
                 SynchronizationOutcome::Realized { profile } => {
                     bytes.push(1);

@@ -1054,6 +1054,7 @@ fn parse_entry(
         requires_device_memory: cursor.boolean()?,
         index_arithmetic: cursor.index_arithmetic()?,
         synchronization: cursor.synchronization()?,
+        subgroup: None,
         input_subnormals: cursor.subnormal()?,
         result_subnormals: cursor.subnormal()?,
         contraction: cursor.permission()?,
