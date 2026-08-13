@@ -1,7 +1,7 @@
 ---
 id: preserve-source-bearing-slice-offsets-through-index-refinement
 title: Preserve source-bearing Slice offsets through index refinement
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-source-bearing-slice-selection-semantics]
 related: [admit-a-position-selecting-slice-for-the-rotary-table, admit-live-extent-operands-to-payload-indexing]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, slice, symbolic-extents, indexing, compiler]
+claimed_from: todo
+assignee: worker-source-bearing-slice
+lease_expires_at: 1786647017
 ---
 # Preserve source-bearing Slice offsets through index refinement
 

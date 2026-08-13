@@ -1,7 +1,7 @@
 ---
 id: make-prepared-entry-observations-typed-and-key-dispatched
 title: Make prepared-entry observations typed and key-dispatched
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [decide-the-prepared-subgroup-width-equality-gate, carry-subgroup-width-through-exact-prepared-entry-equality]
@@ -9,6 +9,9 @@ scopes: [implementation/runtime, implementation/candle, implementation/conforman
 shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, preflight, public-boundary, correctness, fail-closed]
+claimed_from: todo
+assignee: worker-prepared-entry-observations
+lease_expires_at: 1786647017
 ---
 ## User-visible outcome
 
