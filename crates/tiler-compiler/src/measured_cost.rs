@@ -338,10 +338,10 @@ mod tests {
     use super::*;
     use tiler_ir::schedule::{
         AccessMode, ArithmeticType, BoundsWitnessId, ContributorArrival, ContributorCoverage,
-        ContributorOrder, ContributorPartition, CooperativeTile, ExecutionBinding, LaunchPlan,
-        OwnershipWitnessId, TailPolicy, TensorRole, workgroup_tree_tile,
+        ContributorOrder, ContributorPartition, CooperativeTile, ExecutionBinding, InputOrdinal,
+        LaunchPlan, OwnershipWitnessId, TailPolicy, TensorRole, workgroup_tree_tile,
     };
-    use tiler_ir::shape::Shape;
+    use tiler_ir::shape::{Axis, Shape};
 
     /// A linear schedule carrying one reduction topology and nothing else.
     fn schedule(work_items: u64, reduction: ReductionTopology) -> KernelSchedule {
@@ -456,6 +456,22 @@ mod tests {
             permits_permutation: false,
         };
         assert_eq!(work_span(&schedule(4, reduction), &[]), None);
+    }
+
+    /// A live contraction has no specialized contributor count to cost.
+    ///
+    /// Baking `S` into the span would prefer one neighbour over the other and
+    /// put the live value into a selector identity it does not own.
+    #[test]
+    fn a_live_contraction_work_span_declines_rather_than_baking_s() {
+        let live = ReductionTopology::LiveContraction {
+            live_input: InputOrdinal::FIRST,
+            live_axis: Axis::new(1),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            permits_reassociation: false,
+            permits_permutation: false,
+        };
+        assert_eq!(work_span(&schedule(6, live), &[]), None);
     }
 
     /// The prologue and the two split passes reproduce the retained triples.

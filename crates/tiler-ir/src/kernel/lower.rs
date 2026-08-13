@@ -68,6 +68,9 @@ enum ReadAddressing {
     /// One invocation owns a static outer coordinate and loops a live inner
     /// extent: `offset = row * N + col`.
     LiveRowMajor { inner_axis: crate::shape::Axis },
+    /// One contraction operand addressed by its static free coordinates and a
+    /// live inner contracted index: `offset = free * S + contributor`.
+    LiveContracted { free: Vec<OffsetTerm> },
     /// A reduction contributor position linearized over the input shape.
     Linearized(Vec<OffsetTerm>),
     /// A partitioned contributor position of one pass of a split reduction.
@@ -166,6 +169,7 @@ struct CanonicalPlan<'a> {
     addressing: Vec<ReadAddressing>,
     cooperative: Option<CooperativePlan>,
     live_extents: Vec<(TensorRole, crate::shape::Axis)>,
+    live_contraction: Option<(TensorRole, crate::shape::Axis)>,
 }
 
 /// Lowers one verified scheduled region to its canonical verified kernel.
@@ -284,6 +288,19 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
         addressing,
         cooperative: cooperative_plan(schedule)?,
         live_extents: live_input_extents(schedule),
+        live_contraction: match &schedule.schedule.reduction {
+            ReductionTopology::LiveContraction {
+                live_input,
+                live_axis,
+                ..
+            } => Some((
+                TensorRole::Input {
+                    ordinal: *live_input,
+                },
+                *live_axis,
+            )),
+            _ => None,
+        },
     })
 }
 
@@ -547,12 +564,19 @@ fn addressing(
             contracted_shape,
             sources,
             ..
-        } => Ok(ReadAddressing::Linearized(linearize_contraction_operand(
-            operand_shape,
-            output_shape,
-            contracted_shape,
-            sources,
-        )?)),
+        } => {
+            let terms = linearize_contraction_operand(
+                operand_shape,
+                output_shape,
+                contracted_shape,
+                sources,
+            )?;
+            if matches!(reduction, ReductionTopology::LiveContraction { .. }) {
+                Ok(ReadAddressing::LiveContracted { free: terms })
+            } else {
+                Ok(ReadAddressing::Linearized(terms))
+            }
+        }
         // Both structural relations linearize identically, because both are
         // written in the same per-operand-axis decode and differ only in the
         // admission rule the *schedule verifier* already discharged. Sharing the
@@ -1140,21 +1164,20 @@ fn emit_contraction(
     invocation: KernelValueId,
     live: &[(InputExtentParameter, KernelValueId)],
 ) -> Result<(), KernelBuildError> {
-    let seed = emit_contraction_product(builder, plan, reads, invocation, None)?;
-    let total = if let Some((_, bound)) = live.first().filter(|_| plan.contributors == 0) {
+    let seed = emit_contraction_product(builder, plan, reads, invocation, None, live)?;
+    let total = if let Some(bound) = live_contraction_bound(plan, live) {
         let start = builder.constant(KernelConstant::Index(1))?;
-        let results =
-            builder.serial_loop_range(start, *bound, &[seed], |builder, parameters| {
-                let induction = parameters.induction();
-                let accumulator = parameters
-                    .accumulator(0)
-                    .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
-                let product =
-                    emit_contraction_product(builder, plan, reads, invocation, Some(induction))?;
-                let sum = builder.binary(BinaryOp::F32Add, accumulator, product)?;
-                let sum = builder.convert(ConvertOp::CanonicalizeF32Nan, sum)?;
-                Ok(vec![sum])
-            })?;
+        let results = builder.serial_loop_range(start, bound, &[seed], |builder, parameters| {
+            let induction = parameters.induction();
+            let accumulator = parameters
+                .accumulator(0)
+                .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
+            let product =
+                emit_contraction_product(builder, plan, reads, invocation, Some(induction), live)?;
+            let sum = builder.binary(BinaryOp::F32Add, accumulator, product)?;
+            let sum = builder.convert(ConvertOp::CanonicalizeF32Nan, sum)?;
+            Ok(vec![sum])
+        })?;
         results
             .get(0)
             .ok_or(KernelBuildError::EmptyLoopAccumulators)?
@@ -1172,8 +1195,14 @@ fn emit_contraction(
                 let accumulator = parameters
                     .accumulator(0)
                     .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
-                let product =
-                    emit_contraction_product(builder, plan, reads, invocation, Some(induction))?;
+                let product = emit_contraction_product(
+                    builder,
+                    plan,
+                    reads,
+                    invocation,
+                    Some(induction),
+                    live,
+                )?;
                 let sum = builder.binary(BinaryOp::F32Add, accumulator, product)?;
                 let sum = builder.convert(ConvertOp::CanonicalizeF32Nan, sum)?;
                 Ok(vec![sum])
@@ -1193,12 +1222,23 @@ fn emit_contraction(
 }
 
 /// Emits one contracted point's separately rounded, canonicalized product.
+fn live_contraction_bound(
+    plan: &CanonicalPlan<'_>,
+    live: &[(InputExtentParameter, KernelValueId)],
+) -> Option<KernelValueId> {
+    let (tensor, axis) = plan.live_contraction?;
+    live.iter().find_map(|(parameter, value)| {
+        (parameter.tensor == tensor && parameter.axis == axis).then_some(*value)
+    })
+}
+
 fn emit_contraction_product(
     builder: &mut KernelBuilder,
     plan: &CanonicalPlan<'_>,
     reads: [(KernelBufferId, BoundsWitnessId); 2],
     invocation: KernelValueId,
     contributor: Option<KernelValueId>,
+    live: &[(InputExtentParameter, KernelValueId)],
 ) -> Result<KernelValueId, KernelBuildError> {
     let mut loaded = [None, None];
     for (position, (buffer, bounds)) in reads.into_iter().enumerate() {
@@ -1208,7 +1248,14 @@ fn emit_contraction_product(
             .ok_or(KernelBuildError::InvalidHandle {
                 entity: super::error::KernelEntityKind::Buffer,
             })?;
-        let offset = emit_offset(builder, addressing, invocation, contributor)?;
+        let offset = match addressing {
+            ReadAddressing::LiveContracted { free } => {
+                let bound = live_contraction_bound(plan, live)
+                    .ok_or(KernelBuildError::UndeclaredInputExtent)?;
+                emit_live_contracted_offset(builder, free, invocation, contributor, bound)?
+            }
+            _ => emit_offset(builder, addressing, invocation, contributor)?,
+        };
         loaded[position] = Some(builder.load(buffer, offset, bounds)?);
     }
     let [Some(left), Some(right)] = loaded else {
@@ -2300,6 +2347,37 @@ fn emit_partition_contributor(
     })
 }
 
+/// Emits `free * S + contributor` for one live-contraction operand.
+///
+/// The free terms are the static output coordinates the schedule already
+/// linearized. `S` is the named live input-axis operand, never a literal, so
+/// neighbouring extents share the kernel and a baked neighbour does not.
+fn emit_live_contracted_offset(
+    builder: &mut KernelBuilder,
+    free: &[OffsetTerm],
+    invocation: KernelValueId,
+    contributor: Option<KernelValueId>,
+    live: KernelValueId,
+) -> Result<KernelValueId, KernelBuildError> {
+    if free.is_empty() {
+        return match contributor {
+            None => builder.constant(KernelConstant::Index(0)),
+            Some(index) => Ok(index),
+        };
+    }
+    let free_offset = emit_offset(
+        builder,
+        &ReadAddressing::Linearized(free.to_vec()),
+        invocation,
+        None,
+    )?;
+    let scaled = builder.binary(BinaryOp::IndexMultiply, free_offset, live)?;
+    match contributor {
+        None => Ok(scaled),
+        Some(index) => builder.binary(BinaryOp::IndexAdd, scaled, index),
+    }
+}
+
 /// Emits the element offset of one read access.
 ///
 /// `contributor` is `None` for the seed load, whose contributor coordinate is
@@ -2312,7 +2390,7 @@ fn emit_offset(
 ) -> Result<KernelValueId, KernelBuildError> {
     let (terms, output, contributor) = match addressing {
         ReadAddressing::Identity => return Ok(invocation),
-        ReadAddressing::LiveRowMajor { .. } => {
+        ReadAddressing::LiveRowMajor { .. } | ReadAddressing::LiveContracted { .. } => {
             return Err(KernelBuildError::InvalidHandle {
                 entity: super::error::KernelEntityKind::Value,
             });

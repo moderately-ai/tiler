@@ -50,7 +50,13 @@ pub(super) fn access_elements(
             if matches!(
                 access.map,
                 crate::schedule::LogicalAccess::LiveRowMajor { .. }
-            ) {
+            ) || (matches!(
+                access.map,
+                crate::schedule::LogicalAccess::ContractionOperand { .. }
+            ) && matches!(
+                schedule.schedule.reduction,
+                ReductionTopology::LiveContraction { .. }
+            )) {
                 Ok(0)
             } else {
                 Ok(*element_count)
@@ -102,6 +108,8 @@ enum EffectKind {
 struct LoopSummary {
     start: u64,
     end: u64,
+    start_value: Option<u32>,
+    end_value: Option<u32>,
     accumulators: Vec<KernelType>,
     block_depth: u32,
     /// Synchronization-relevant events emitted inside this loop's body.
@@ -222,7 +230,7 @@ pub(super) fn verify_kernel(
     }
     verify_synchronization(&walk, data, schedule)?;
     verify_effects(&walk, schedule, reads, write)?;
-    verify_reduction(&walk, schedule, reads)?;
+    verify_reduction(&walk, data, schedule, reads)?;
 
     let canonical = super::lower::derive_canonical(schedule, schedule_identity, derived)?;
     if data != &canonical {
@@ -254,7 +262,10 @@ fn verify_input_extents(
         let rank = reads
             .iter()
             .find(|read| read.tensor == parameter.tensor)
-            .map_or_else(|| access_rank_from_iteration(schedule), access_rank);
+            .map_or_else(
+                || access_rank_from_iteration(schedule),
+                |read| access_rank(read, schedule),
+            );
         if u64::from(parameter.axis.get()) >= rank {
             return Err(KernelDiagnostic::InputExtentContract);
         }
@@ -277,7 +288,7 @@ fn verify_input_extents(
     Ok(())
 }
 
-fn access_rank(access: &Access) -> u64 {
+fn access_rank(access: &Access, schedule: &ScheduledRegion) -> u64 {
     match &access.map {
         crate::schedule::LogicalAccess::LinearIdentity
         | crate::schedule::LogicalAccess::ScalarBroadcast
@@ -285,8 +296,18 @@ fn access_rank(access: &Access) -> u64 {
         crate::schedule::LogicalAccess::ReductionContributor { input_shape, .. } => {
             input_shape.rank() as u64
         }
-        crate::schedule::LogicalAccess::ContractionOperand { operand_shape, .. }
-        | crate::schedule::LogicalAccess::ReindexBijection { operand_shape, .. }
+        crate::schedule::LogicalAccess::ContractionOperand { operand_shape, .. } => {
+            let static_rank = operand_shape.rank() as u64;
+            if matches!(
+                schedule.schedule.reduction,
+                ReductionTopology::LiveContraction { .. }
+            ) {
+                static_rank.saturating_add(1)
+            } else {
+                static_rank
+            }
+        }
+        crate::schedule::LogicalAccess::ReindexBijection { operand_shape, .. }
         | crate::schedule::LogicalAccess::BroadcastReplication { operand_shape, .. } => {
             operand_shape.rank() as u64
         }
@@ -1047,7 +1068,9 @@ fn visit_block(
                     walk,
                 );
             }
-            OperationKind::SerialLoopRange { body, .. } => {
+            OperationKind::SerialLoopRange {
+                start, end, body, ..
+            } => {
                 let accumulators = data
                     .blocks
                     .get(*body as usize)
@@ -1066,6 +1089,8 @@ fn visit_block(
                 walk.loops.push(LoopSummary {
                     start: 0,
                     end: 0,
+                    start_value: Some(*start),
+                    end_value: Some(*end),
                     accumulators,
                     block_depth,
                     sync: first_event..first_event,
@@ -1108,6 +1133,8 @@ fn visit_block(
                 walk.loops.push(LoopSummary {
                     start: *start,
                     end: *end,
+                    start_value: None,
+                    end_value: None,
                     accumulators,
                     block_depth,
                     sync: first_event..first_event,
@@ -1200,6 +1227,7 @@ fn verify_effects(
 
 fn verify_reduction(
     walk: &Walk,
+    data: &KernelData,
     schedule: &ScheduledRegion,
     reads: &[Access],
 ) -> Result<(), KernelDiagnostic> {
@@ -1262,7 +1290,7 @@ fn verify_reduction(
             if reads.len() != 2 {
                 return Err(KernelDiagnostic::ReductionContract);
             }
-            verify_live_contributor_loop(walk)
+            verify_live_contributor_loop(walk, data, schedule)
         }
         // A cooperative fold is two folds, and the split is exactly what the
         // partition states: each participant combines its own contiguous
@@ -1368,7 +1396,11 @@ fn verify_cooperative_loops(
 /// Zero contributors commit the reduction identity and exactly one contributor
 /// commits the single loaded value; neither admits a bounded loop, whose range
 /// would have to be empty.
-fn verify_live_contributor_loop(walk: &Walk) -> Result<(), KernelDiagnostic> {
+fn verify_live_contributor_loop(
+    walk: &Walk,
+    data: &KernelData,
+    schedule: &ScheduledRegion,
+) -> Result<(), KernelDiagnostic> {
     let [reduction] = walk.loops.as_slice() else {
         return Err(KernelDiagnostic::ReductionContract);
     };
@@ -1379,7 +1411,43 @@ fn verify_live_contributor_loop(walk: &Walk) -> Result<(), KernelDiagnostic> {
     {
         return Err(KernelDiagnostic::ReductionContract);
     }
+    let (Some(start), Some(end)) = (reduction.start_value, reduction.end_value) else {
+        return Err(KernelDiagnostic::ReductionContract);
+    };
+    match defining_kind(data, start) {
+        Some(OperationKind::Constant {
+            value: KernelConstant::Index(1),
+        }) => {}
+        _ => return Err(KernelDiagnostic::ReductionContract),
+    }
+    let Some(OperationKind::InputExtent { parameter }) = defining_kind(data, end) else {
+        return Err(KernelDiagnostic::ReductionContract);
+    };
+    let Some(declared) = data.input_extents.get(*parameter as usize) else {
+        return Err(KernelDiagnostic::InputExtentContract);
+    };
+    let expected = live_input_extents(schedule);
+    if expected.first().copied() != Some((declared.tensor, declared.axis)) {
+        return Err(KernelDiagnostic::InputExtentContract);
+    }
+    let Some(end_value) = data.values.get(end as usize) else {
+        return Err(KernelDiagnostic::InputExtentContract);
+    };
+    if end_value.block != 0 {
+        return Err(KernelDiagnostic::InputExtentContract);
+    }
     Ok(())
+}
+
+fn defining_kind(data: &KernelData, value: u32) -> Option<&OperationKind> {
+    data.blocks.iter().find_map(|block| {
+        block.operations.iter().find_map(|operation| {
+            operation
+                .results
+                .contains(&value)
+                .then_some(&operation.kind)
+        })
+    })
 }
 
 fn verify_contributor_loop(walk: &Walk, contributors: u64) -> Result<(), KernelDiagnostic> {

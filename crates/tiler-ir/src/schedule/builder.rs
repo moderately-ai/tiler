@@ -526,6 +526,12 @@ fn verify_contraction(
     ) {
         return verify_cooperative_contraction(region, left, right, write);
     }
+    if matches!(
+        region.schedule.reduction,
+        ReductionTopology::LiveContraction { .. }
+    ) {
+        return verify_live_contraction(region, left, right, write);
+    }
     let ReductionTopology::Contraction {
         contracted_shape: scheduled_contracted,
         order: scheduled_order,
@@ -653,6 +659,155 @@ fn verify_contraction(
     // operand reads would make every output position along it hold the same
     // value, which is a broadcast the structure never declared.
     if output_covered.iter().any(|read| !read) || contracted_covered.iter().any(|read| !read) {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    Ok(())
+}
+
+/// Verifies a contraction whose contracted extent is a live input-axis operand.
+///
+/// The accepted `LiveContraction` / `ContractionOperand` spelling: free indices
+/// and the output stay static, the scalar program's contracted shape is empty
+/// rather than a specialized `S`, and the named input axis is the inner trip
+/// count. Baking `S` into the operand shapes, the scalar program, or the
+/// topology is a different region — `ReductionTopology::Contraction` — and a
+/// different identity.
+fn verify_live_contraction(
+    region: &ScheduledRegion,
+    left: &Access,
+    right: &Access,
+    write: &Access,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    let ReductionTopology::LiveContraction {
+        live_input,
+        live_axis,
+        order: scheduled_order,
+        permits_reassociation,
+        permits_permutation,
+    } = &region.schedule.reduction
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    let ScalarProgram::StrictTensorContraction {
+        contracted_shape,
+        order,
+        ..
+    } = &region.index.scalar_program
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    let numerical = &region.index.numerical;
+    if contracted_shape.rank() != 0
+        || order != scheduled_order
+        || *permits_reassociation != numerical.permits_reassociation()
+        || *permits_permutation != numerical.permits_permutation()
+    {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    if left.mode != AccessMode::Read
+        || right.mode != AccessMode::Read
+        || left.ownership.is_some()
+        || right.ownership.is_some()
+        || write.mode != AccessMode::Write
+        || write.map != LogicalAccess::LinearIdentity
+        || write.ownership != Some(region.schedule.output_owner)
+        || !matches!(write.tensor, TensorRole::Intermediate | TensorRole::Output)
+        || write.component_role.is_some()
+    {
+        return Err(ScheduledRegionDiagnostic::AccessContract);
+    }
+    let (
+        TensorRole::Input {
+            ordinal: left_ordinal,
+        },
+        TensorRole::Input {
+            ordinal: right_ordinal,
+        },
+    ) = (left.tensor, right.tensor)
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    if left_ordinal.get() >= right_ordinal.get()
+        || left.component_role.is_some()
+        || right.component_role.is_some()
+    {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    verify_proof_records(region, &[left, right], write)?;
+    element_count(&region.index.iteration_shape)
+        .map_err(|_| ScheduledRegionDiagnostic::ShapeProductOverflow)?;
+
+    let mut output_covered = vec![false; region.index.iteration_shape.rank()];
+    for access in [left, right] {
+        let LogicalAccess::ContractionOperand {
+            operand_shape,
+            output_shape,
+            contracted_shape: access_contracted,
+            sources,
+            order: access_order,
+        } = &access.map
+        else {
+            return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+        };
+        if output_shape != &region.index.iteration_shape
+            || access_contracted.rank() != 0
+            || access_order != order
+            || sources.len() != operand_shape.rank()
+        {
+            return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+        }
+        element_count(operand_shape)
+            .map_err(|_| ScheduledRegionDiagnostic::ShapeProductOverflow)?;
+        if operand_shape
+            .extents()
+            .iter()
+            .any(|extent| extent.get() == 0)
+        {
+            return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+        }
+        let mut seen_output = vec![false; output_shape.rank()];
+        for (axis, source) in sources.iter().enumerate() {
+            let ContractionAxisSource::Output { position } = source else {
+                return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+            };
+            let position = usize::try_from(*position)
+                .map_err(|_| ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
+            let (Some(extent), Some(slot)) = (
+                output_shape.extents().get(position),
+                seen_output.get_mut(position),
+            ) else {
+                return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+            };
+            if std::mem::replace(slot, true) || operand_shape.extents()[axis] != *extent {
+                return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+            }
+            output_covered[position] = true;
+        }
+    }
+    if output_covered.iter().any(|read| !read) {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+
+    let named = if left.tensor
+        == (TensorRole::Input {
+            ordinal: *live_input,
+        }) {
+        left
+    } else if right.tensor
+        == (TensorRole::Input {
+            ordinal: *live_input,
+        })
+    {
+        right
+    } else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    let LogicalAccess::ContractionOperand { operand_shape, .. } = &named.map else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    let expected_axis = u32::try_from(operand_shape.rank())
+        .map_err(|_| ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
+    if live_axis.get() != expected_axis {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
     Ok(())
@@ -2720,6 +2875,22 @@ fn bounds_proof_refines_access(
                 && order == access_order
                 && input_shape.without_axes(axes) == *output_shape
         }
+        // A live contraction's operand buffers are sized by the live inner
+        // extent, which the schedule does not specialize. The proof records
+        // that absence as a zero linear range, the same convention
+        // `LiveRowMajor` uses. The static `ContractionOperand` arm below still
+        // compares a concrete operand product, so a live region cannot inherit
+        // that check and silently bake `S`.
+        (
+            BoundsProofKind::LinearRange { element_count },
+            LogicalAccess::ContractionOperand { .. },
+        ) if matches!(
+            region.schedule.reduction,
+            ReductionTopology::LiveContraction { .. }
+        ) =>
+        {
+            *element_count == 0
+        }
         // A contraction operand's proven domain is the contiguous linear range
         // of its own elements, exactly as an identity-mapped access's is. It
         // pairs with `LinearRange` for that reason rather than needing a fourth
@@ -4215,6 +4386,165 @@ mod tests {
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
             "a contraction encoded one input pair in descending order",
         );
+    }
+
+    fn live_contraction_builder(
+        live_input: u32,
+        live_axis: u32,
+        output: [u64; 2],
+    ) -> ScheduledRegionBuilder {
+        let left_shape = Shape::from_dims([output[0]]);
+        let right_shape = Shape::from_dims([output[1]]);
+        let output_shape = Shape::from_dims(output);
+        let contracted = Shape::from_dims([]);
+        let left = TensorRole::Input {
+            ordinal: InputOrdinal::new(0),
+        };
+        let right = TensorRole::Input {
+            ordinal: InputOrdinal::new(1),
+        };
+        let owner = OwnershipWitnessId::new(0);
+        let output_elements = element_count(&output_shape).unwrap_or(0);
+        let mut builder = ScheduledRegionBuilder::new(RegionId::new(42));
+        builder.iteration_shape(output_shape.clone()).unwrap();
+        for (witness, tensor, operand, free) in
+            [(0, left, left_shape, 0_u32), (1, right, right_shape, 1)]
+        {
+            builder
+                .push_access(Access {
+                    tensor,
+                    component_role: None,
+                    mode: AccessMode::Read,
+                    map: LogicalAccess::ContractionOperand {
+                        operand_shape: operand,
+                        output_shape: output_shape.clone(),
+                        contracted_shape: contracted.clone(),
+                        sources: vec![ContractionAxisSource::Output { position: free }],
+                        order: ContributorOrder::OriginalAxisLexicographic,
+                    },
+                    bounds: BoundsWitnessId::new(witness),
+                    ownership: None,
+                })
+                .unwrap();
+            builder
+                .push_bounds_proof(BoundsProof {
+                    id: BoundsWitnessId::new(witness),
+                    tensor,
+                    component_role: None,
+                    kind: BoundsProofKind::LinearRange { element_count: 0 },
+                })
+                .unwrap();
+        }
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Output,
+                component_role: None,
+                mode: AccessMode::Write,
+                map: LogicalAccess::LinearIdentity,
+                bounds: BoundsWitnessId::new(2),
+                ownership: Some(owner),
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(2),
+                tensor: TensorRole::Output,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: output_elements,
+                },
+            })
+            .unwrap();
+        builder
+            .ownership_proof(OwnershipProof {
+                id: owner,
+                tensor: TensorRole::Output,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                    output_count: output_elements,
+                },
+            })
+            .unwrap();
+        builder
+            .scalar_program(ScalarProgram::StrictTensorContraction {
+                contracted_shape: contracted,
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: 0x7fc0_0000,
+            })
+            .unwrap();
+        builder.numerical(strict_numerical()).unwrap();
+        builder
+            .schedule(KernelSchedule {
+                reduction: ReductionTopology::LiveContraction {
+                    live_input: InputOrdinal::new(live_input),
+                    live_axis: Axis::new(live_axis),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    permits_reassociation: false,
+                    permits_permutation: false,
+                },
+                ..linear_schedule(output_elements, owner)
+            })
+            .unwrap();
+        builder
+    }
+
+    /// A well-formed live contraction is schedule-verified; a swapped live
+    /// axis is not.
+    #[test]
+    fn a_live_contraction_admits_the_named_inner_axis_and_refuses_a_swapped_symbol() {
+        let verified = live_contraction_builder(0, 1, [2, 3])
+            .build()
+            .expect("the named inner axis of input 0 is the live contracted bound");
+        assert!(matches!(
+            verified.region().schedule.reduction,
+            ReductionTopology::LiveContraction {
+                live_axis,
+                ..
+            } if live_axis == Axis::new(1)
+        ));
+
+        let swapped = live_contraction_builder(0, 0, [2, 3])
+            .build()
+            .expect_err("naming the free axis as the live bound must fail");
+        assert_eq!(
+            swapped.diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "swapped-symbol live axis: {swapped}"
+        );
+        assert_eq!(
+            swapped.diagnostics()[0].rule(),
+            "numerical-or-access-refinement"
+        );
+    }
+
+    /// An axis the named input does not have is refused at schedule verification.
+    #[test]
+    fn a_live_contraction_refuses_a_wrong_live_axis() {
+        let error = live_contraction_builder(0, 5, [2, 3])
+            .build()
+            .expect_err("axis 5 is outside the live input's rank");
+        assert_eq!(
+            error.diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "wrong-axis live contraction: {error}"
+        );
+        assert_eq!(
+            error.diagnostics()[0].rule(),
+            "numerical-or-access-refinement"
+        );
+    }
+
+    /// An overflowing static output product is refused by name.
+    #[test]
+    fn a_live_contraction_refuses_an_overflowing_output_product() {
+        let error = live_contraction_builder(0, 1, [u64::MAX, 2])
+            .build()
+            .expect_err("a [u64::MAX, 2] output product must overflow");
+        assert_eq!(
+            error.diagnostics(),
+            [ScheduledRegionDiagnostic::ShapeProductOverflow],
+            "overflowing live contraction: {error}"
+        );
+        assert_eq!(error.diagnostics()[0].rule(), "shape-product-overflow");
     }
 
     /// The scale a root-mean-square normalization's producing stage computes.

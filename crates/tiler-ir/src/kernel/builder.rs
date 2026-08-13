@@ -13,8 +13,9 @@
 
 use crate::schedule::{BoundsWitnessId, OwnershipWitnessId, PhaseId};
 use crate::schedule::{
-    CanonicalScheduledRegionIdentity, NumericalRealization, RegionId, ResourceRequirements,
-    ScheduledRegion, VerifiedScheduledRegion, subnormal_freedom_of,
+    CanonicalScheduledRegionIdentity, LogicalAccess, NumericalRealization, ReductionTopology,
+    RegionId, ResourceRequirements, ScheduledRegion, TensorRole, VerifiedScheduledRegion,
+    subnormal_freedom_of,
 };
 
 use super::error::{
@@ -252,8 +253,9 @@ impl KernelBuilder {
     /// # Errors
     ///
     /// Returns [`KernelBuildError::InputExtentNotInput`] when the tensor is not
-    /// a scheduled input, [`KernelBuildError::DuplicateInputExtent`] when the
-    /// same axis is declared twice, or [`KernelBuildError::StructuralLimit`]
+    /// a scheduled input, [`KernelBuildError::InputExtentWrongAxis`] when the
+    /// axis is outside that input's scheduled rank, [`KernelBuildError::DuplicateInputExtent`]
+    /// when the same axis is declared twice, or [`KernelBuildError::StructuralLimit`]
     /// when the operand limit is exceeded.
     pub fn declare_input_extent(
         &mut self,
@@ -262,6 +264,10 @@ impl KernelBuilder {
         let crate::schedule::TensorRole::Input { .. } = parameter.tensor else {
             return Err(KernelBuildError::InputExtentNotInput);
         };
+        if u64::from(parameter.axis.get()) >= scheduled_input_rank(&self.schedule, parameter.tensor)
+        {
+            return Err(KernelBuildError::InputExtentWrongAxis);
+        }
         if self
             .input_extents
             .iter()
@@ -1175,6 +1181,37 @@ fn expect_type(expected: KernelType, actual: KernelType) -> Result<(), KernelBui
         return Ok(());
     }
     Err(KernelBuildError::TypeMismatch { expected, actual })
+}
+
+fn scheduled_input_rank(schedule: &ScheduledRegion, tensor: TensorRole) -> u64 {
+    let Some(access) = schedule
+        .index
+        .accesses
+        .iter()
+        .find(|access| access.tensor == tensor)
+    else {
+        return 0;
+    };
+    let static_rank = match &access.map {
+        LogicalAccess::LinearIdentity
+        | LogicalAccess::ScalarBroadcast
+        | LogicalAccess::PackedU4LsbZeroTail { .. } => 1,
+        LogicalAccess::ReductionContributor { input_shape, .. } => input_shape.rank() as u64,
+        LogicalAccess::ContractionOperand { operand_shape, .. }
+        | LogicalAccess::ReindexBijection { operand_shape, .. }
+        | LogicalAccess::BroadcastReplication { operand_shape, .. } => operand_shape.rank() as u64,
+        LogicalAccess::ParametricBroadcast { operand_shape, .. } => operand_shape.rank() as u64,
+        LogicalAccess::LiveRowMajor { inner_axis } => u64::from(inner_axis.get()).saturating_add(1),
+    };
+    if matches!(
+        schedule.schedule.reduction,
+        ReductionTopology::LiveContraction { .. }
+    ) && matches!(access.map, LogicalAccess::ContractionOperand { .. })
+    {
+        static_rank.saturating_add(1)
+    } else {
+        static_rank
+    }
 }
 
 fn limit(actual: usize, limit: usize, resource: KernelLimitKind) -> Result<(), KernelBuildError> {
