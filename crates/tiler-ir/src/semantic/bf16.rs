@@ -338,7 +338,7 @@ pub(super) fn register_standard_bf16(
         OperationEffect::Pure,
         Arc::new(ConstantBf16 { payload_bytes }),
     ))?;
-    registrar.register_operation(OperationDefinition::new(
+    registrar.register_operation(OperationDefinition::new_governed_environment_aware(
         multiply_bf16_op(),
         exact_schema(2, 1, []),
         NormativeDefinitionRef::new(
@@ -349,7 +349,7 @@ pub(super) fn register_standard_bf16(
         OperationEffect::Pure,
         Arc::new(BinaryBf16),
     ))?;
-    registrar.register_operation(OperationDefinition::new(
+    registrar.register_operation(OperationDefinition::new_governed_environment_aware(
         add_bf16_op(),
         exact_schema(2, 1, []),
         NormativeDefinitionRef::new(
@@ -529,7 +529,7 @@ impl OperationInferencer for BinaryBf16 {
         // symbolic widening is exactly the kind of change that lands on one copy
         // and not the other.
         let shape = super::registry::elementwise_binary_shape("bf16.binary", request)?;
-        outputs.try_push(ValueFact::new(expected, shape))
+        outputs.try_push(ValueFact::from_sourced(expected, shape))
     }
 }
 

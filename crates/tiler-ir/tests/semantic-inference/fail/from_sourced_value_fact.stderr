@@ -1,0 +1,10 @@
+error[E0624]: associated function `from_sourced` is private
+ --> tests/semantic-inference/fail/from_sourced_value_fact.rs:5:24
+  |
+5 |     let _ = ValueFact::from_sourced(F32::resolved_type(), shape);
+  |                        ^^^^^^^^^^^^ private associated function
+  |
+ ::: src/semantic/operation.rs
+  |
+  |     pub(crate) fn from_sourced(resolved_type: ResolvedValueType, shape: SourcedShape) -> Self {
+  |     ----------------------------------------------------------------------------------------- private associated function defined here

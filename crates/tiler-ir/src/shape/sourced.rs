@@ -188,6 +188,7 @@ pub const EXTENT_PHASE_CEILING: AvailabilityPhase = AvailabilityPhase::LiveDevic
 /// handles constants reads [`Self::as_static`] once and refuses everything else
 /// with its own typed reason.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
 pub enum SourcedExtent {
     /// A literal extent fixed when the consuming program was authored.
     Static(Extent),
@@ -520,6 +521,7 @@ const SOURCED_SHAPE_LENGTH_BYTES: usize = std::mem::size_of::<u64>();
 /// three keeps them separable in its own error type rather than collapsing them
 /// here.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ExtentSourceError {
     /// The extent named a symbol this program's environment does not declare.
     ///
@@ -582,20 +584,6 @@ pub enum ExtentSourceError {
     /// on the success path of every such call. One allocation on a refusal is
     /// the cheaper side of that trade.
     ExtentsNotProvedEqual(Box<ExtentDisagreement>),
-    /// A symbolic extent reached a rule that decides shapes only over literals.
-    ///
-    /// Distinct from every variant above: the environment was not asked and
-    /// nothing about it failed. The rule itself has no answer for a boundary
-    /// whose extent is bound later, and refusing by name is what keeps it from
-    /// answering structurally — two occurrences of one symbol compare equal by
-    /// spelling, which would make an unreviewed rule *look* like it had proved
-    /// something.
-    SymbolicExtentUnsupported {
-        /// Zero-based axis naming the symbol the rule cannot resolve.
-        axis: Axis,
-        /// The symbol that axis named.
-        symbol: ShapeSymbol,
-    },
 }
 
 impl std::fmt::Display for ExtentSourceError {
@@ -623,11 +611,6 @@ impl std::fmt::Display for ExtentSourceError {
                 disagreement.left,
                 disagreement.right,
                 disagreement.axis.get()
-            ),
-            Self::SymbolicExtentUnsupported { axis, symbol } => write!(
-                formatter,
-                "sourced-extent.symbolic-extent-unsupported: this rule decides shapes over literal extents only, and axis {} names {symbol}",
-                axis.get()
             ),
         }
     }
@@ -868,5 +851,28 @@ mod tag_injectivity_tests {
             &values,
             SourcedExtent::tag,
         );
+    }
+
+    #[test]
+    fn extent_source_error_census_is_exactly_the_environment_refusals() {
+        let symbol =
+            ShapeSymbol::new(super::super::SymbolScope::new("census").unwrap(), "n").unwrap();
+        let values: [super::ExtentSourceError; variant_count::<super::ExtentSourceError>()] = [
+            super::ExtentSourceError::UndeclaredSymbol {
+                symbol: symbol.clone(),
+            },
+            super::ExtentSourceError::SourceTooLate {
+                symbol: symbol.clone(),
+                available: crate::program::abi::AvailabilityPhase::LaunchPreflight,
+                ceiling: super::EXTENT_PHASE_CEILING,
+            },
+            super::ExtentSourceError::DivisorNotProvedPositive { symbol },
+            super::ExtentSourceError::ExtentsNotProvedEqual(Box::new(super::ExtentDisagreement {
+                axis: crate::shape::Axis::new(0),
+                left: SourcedExtent::Static(Extent::new(1)),
+                right: SourcedExtent::Static(Extent::new(2)),
+            })),
+        ];
+        assert_eq!(values.len(), 4);
     }
 }

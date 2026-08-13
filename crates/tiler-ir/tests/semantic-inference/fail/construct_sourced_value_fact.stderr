@@ -1,0 +1,13 @@
+error[E0308]: mismatched types
+ --> tests/semantic-inference/fail/construct_sourced_value_fact.rs:5:50
+  |
+5 |     let _ = ValueFact::new(F32::resolved_type(), shape);
+  |             --------------                       ^^^^^ expected `Shape`, found `SourcedShape`
+  |             |
+  |             arguments to this function are incorrect
+  |
+note: associated function defined here
+ --> src/semantic/operation.rs
+  |
+  |     pub fn new(resolved_type: ResolvedValueType, shape: Shape) -> Self {
+  |            ^^^

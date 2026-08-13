@@ -68,6 +68,8 @@ A seam is a propose-then-re-verify boundary, and that is the whole of its trust 
 - its identity is versioned and separated from graph meaning under ADR 0072; and
 - every disposition — admission, rejection, ambiguity, absence, and an exhausted proof budget — is a distinct typed outcome that reaches the explain trace.
 
+**Fact — the first symbolic-inference release is mechanically static-only for external providers.** `SemanticRegistryProvider` remains a third-party seam, but public `OperationDefinition` construction is literal-only and public `FrozenSemanticRegistry::infer_operation` refuses every symbolic operand before the inferencer runs. A sourced result constructor, `infer_operation_with_extent_sources`, `OperationInferenceRequest::extent_sources`, and host extent-error construction are crate-private. Governed elementwise families may consult the program's exact shape environment only through the builder's environment-bound path. There is no default symbolic policy and no fallback to structural equality. A symbol that reaches a literal-only family is a host-owned `SymbolicOperandUnsupported` capability refusal naming the operation, provider, operand, axis, and symbol; it is not an `ExtentSourceError`. A truly undeclared, too-late, or not-proved environment fact remains `ExtentSourceError`, and the builder derives every `BuildError::ExtentSource` from its own admission or comparison rather than from a provider-stamped payload.
+
 These are the surfaces intended as public extension seams, with the participation model each is intended to admit at maturity:
 
 | Surface | Intended participation |

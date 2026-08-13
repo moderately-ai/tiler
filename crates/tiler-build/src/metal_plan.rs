@@ -1662,26 +1662,17 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "39e765637a7e014adac2b8a30788798758ca46584b558732c2bda41b7639ddda";
+            "9b739d215336de436ef334ded614ef4b43db9edfec170ee5032fee809975b3b7";
         const CACHE_SUBJECT: &str =
-            "7e00d9fa0ce90749e6f7d3d42e0f2aaabe5670e0359a0c20d1580a09bb967130";
-        // **65,313 at `tiler.artifact-program.v16`, and the five bytes are
-        // accounted for individually rather than accepted as a delta.** The
-        // derived index-arithmetic requirement is one tag byte, and this
-        // envelope writes it five times: once in the single entry row's own
-        // resource record, and once inside each of the four kernel identities
-        // the envelope embeds — the entry's framed stage key and one further
-        // copy in the manifest, and the kernel-program identity and its stage
-        // key in the program section. Every one of those records folds the
-        // kernel identity, which gained the byte at `tiler.kernel.v7`.
-        //
-        // **Measurement.** Located by byte-aligning this envelope against the
-        // one built at `209013bd`: 65,308 to 65,313, as manifest 41,113 to
-        // 41,116 and non-object sections 24,134 to 24,136, with each of the
-        // three manifest insertions confirmed to be the literal `0x01` tag.
-        // The point of the count is that it is *five* and not six: a sixth
-        // would mean one record encodes the requirement twice.
-        const FIXED_CONTENT_BYTES: usize = 65_313;
+            "1a04d873fe54c3785d1770a7ee4537a607c2acc9a5ae67f328e8f49de53621e4";
+        // **65,327 at `tiler.semantic-registry.v8`.** The fourteen-byte move
+        // from 65,313 is the one-byte shape-inference participation tag on
+        // every encoded operation definition, folded through the nested
+        // semantic subjects this envelope already carried. Domain version
+        // strings stayed the same width (`v7`→`v8`, `v5`→`v6`). The earlier
+        // five-byte 65,308 → 65,313 step remains the derived index-arithmetic
+        // requirement at `tiler.artifact-program.v16` / `tiler.kernel.v7`.
+        const FIXED_CONTENT_BYTES: usize = 65_327;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
@@ -1755,9 +1746,9 @@ mod tests {
     #[test]
     fn the_authority_ledger_mirrors_the_live_standard_metal_pins() {
         const ARTIFACT_IDENTITY: &str =
-            "39e765637a7e014adac2b8a30788798758ca46584b558732c2bda41b7639ddda";
+            "9b739d215336de436ef334ded614ef4b43db9edfec170ee5032fee809975b3b7";
         const CACHE_SUBJECT: &str =
-            "7e00d9fa0ce90749e6f7d3d42e0f2aaabe5670e0359a0c20d1580a09bb967130";
+            "1a04d873fe54c3785d1770a7ee4537a607c2acc9a5ae67f328e8f49de53621e4";
         let ledger = include_str!(
             "../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md"
         );
@@ -1775,7 +1766,7 @@ mod tests {
             "the live pin paragraph does not name CACHE_SUBJECT",
         );
         assert!(
-            today.contains("fixed content is 65,313 bytes"),
+            today.contains("fixed content is 65,327 bytes"),
             "the live pin paragraph does not name FIXED_CONTENT_BYTES",
         );
         assert!(

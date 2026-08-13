@@ -1062,7 +1062,7 @@ impl SemanticProgramBuilder {
             .iter()
             .map(|index| {
                 let value = &self.values[index.as_usize()];
-                ValueFact::new(value.resolved_type.as_ref().clone(), value.shape.clone())
+                ValueFact::from_sourced(value.resolved_type.as_ref().clone(), value.shape.clone())
             })
             .collect();
         let attributes = self
@@ -1655,7 +1655,7 @@ impl SemanticProgramBuilder {
             .iter()
             .map(|operand| {
                 let value = &self.values[operand.as_usize()];
-                ValueFact::new(value.resolved_type.as_ref().clone(), value.shape.clone())
+                ValueFact::from_sourced(value.resolved_type.as_ref().clone(), value.shape.clone())
             })
             .collect();
         let Ok(expected) = self.semantic_registry.infer_operation_with_extent_sources(
@@ -1685,28 +1685,20 @@ impl SemanticProgramBuilder {
     }
 }
 
-/// Reports a registry rejection as the typed extent failure that caused it.
+/// Maps a host-owned registry refusal onto the builder's own error vocabulary.
 ///
-/// The frozen authority's rejection channel is a stable *provider* diagnostic —
-/// a code and a message — because a provider may not mint host types. A refusal
-/// that came from asking this program's shape environment is not a provider's
-/// opinion, though: it is a host answer that the provider merely relayed, and it
-/// carries the two extents and the axis as data. Recovering it here is what lets
-/// a caller tell "these are two different sizes", which arrives as
-/// [`BuildError::SemanticRegistry`], from "this environment does not prove they
-/// are the same", which arrives as [`BuildError::ExtentSource`] and is answered
-/// by constraining the environment rather than by changing a shape.
-///
-/// Nothing is re-derived: the pair reported is the pair the rule actually asked
-/// about. A builder that recomputed a likely-looking pair could name an axis the
-/// rule never compared.
+/// The registry, not a provider, establishes environment and capability
+/// verdicts. A provider-attributed rejection stays a provider diagnostic even
+/// when its message names an extent: the builder never promotes a stamped
+/// payload to [`BuildError::ExtentSource`].
 fn extent_aware_registry_error(error: RegistryError) -> BuildError {
-    if let RegistryError::RejectedOperationApplication(rejection) = &error
-        && let Some(extent_source) = rejection.source_error().extent_source()
-    {
-        return BuildError::ExtentSource(extent_source.clone());
+    match error {
+        RegistryError::ExtentSource(error) => BuildError::ExtentSource(error),
+        RegistryError::SymbolicOperandUnsupported(error) => {
+            BuildError::SymbolicOperandUnsupported(error)
+        }
+        other => BuildError::SemanticRegistry(other),
     }
-    BuildError::SemanticRegistry(error)
 }
 
 fn validate_rank(rank: usize) -> Result<(), BuildError> {
@@ -1747,6 +1739,7 @@ mod tests {
         SemanticGraphIdentity, SemanticRegistryBuilder, SemanticRegistryProvider,
         SemanticRegistryRegistrar, StrictSerialF32Sum, TypeArguments, TypeDefinitionFacts, TypeKey,
         U4, ValueTypeDefinition, ValueTypeDefinitionKey, add_f32_op, multiply_f32_op,
+        strict_serial_sum_f32_op,
     };
     use super::*;
     use crate::program::abi::AvailabilityPhase;
@@ -2291,10 +2284,11 @@ mod tests {
 
     /// A family that decides shapes over literals only declines by name.
     ///
-    /// The refusal is a *typed extent* failure and not a shape mismatch: the
-    /// operand is not the wrong size, it is a size the rule has no way to read.
-    /// Paired with its literal neighbour, so a refusal that started firing for
-    /// an unrelated reason would take the neighbour with it.
+    /// The refusal is a host-owned capability limit, not an environment failure:
+    /// the operand is not the wrong size, and declaring the symbol cannot make
+    /// the family support it. Paired with its literal neighbour, so a refusal
+    /// that started firing for an unrelated reason would take the neighbour with
+    /// it.
     #[test]
     fn a_literal_only_family_declines_a_symbolic_operand_by_name() {
         let mut builder =
@@ -2302,16 +2296,15 @@ mod tests {
         let symbolic = builder
             .input_sourced::<F32>(input_key("rows"), vec![SourcedExtent::Symbol(sym("n"))])
             .unwrap();
-        assert_eq!(
-            sum(&mut builder, symbolic, [Axis::new(0)]),
-            Err(BuildError::ExtentSource(
-                ExtentSourceError::SymbolicExtentUnsupported {
-                    axis: Axis::new(0),
-                    symbol: sym("n"),
-                }
-            )),
-            "the strict serial reduction names the axis and the symbol it cannot read",
-        );
+        let error = sum(&mut builder, symbolic, [Axis::new(0)])
+            .expect_err("the strict serial reduction refuses a symbolic operand");
+        let BuildError::SymbolicOperandUnsupported(refusal) = error else {
+            panic!("a literal-only family reports a capability refusal, not {error}");
+        };
+        assert_eq!(refusal.key(), &strict_serial_sum_f32_op());
+        assert_eq!(refusal.operand(), 0);
+        assert_eq!(refusal.axis(), Axis::new(0));
+        assert_eq!(refusal.symbol(), &sym("n"));
 
         let mut neighbour =
             SemanticProgramBuilder::try_standard_with_shape_environment(env()).unwrap();
@@ -2649,7 +2642,7 @@ mod tests {
             _request: OperationInferenceRequest<'_>,
             outputs: &mut OperationInferenceOutputs<'_>,
         ) -> Result<(), OperationInferenceError> {
-            outputs.try_push(ValueFact::new(
+            outputs.try_push(ValueFact::from_sourced(
                 F32::resolved_type(),
                 SourcedShape::sourced(vec![SourcedExtent::Symbol(self.symbol.clone())])
                     .expect("the one-axis test shape is bounded"),
@@ -2699,7 +2692,7 @@ mod tests {
         let mut registry = SemanticRegistryBuilder::standard().unwrap();
         registry.register_provider(&provider).unwrap();
         let registry = registry.freeze().unwrap();
-        let operand = ValueFact::new(
+        let operand = ValueFact::from_sourced(
             F32::resolved_type(),
             SourcedShape::sourced(vec![SourcedExtent::Symbol(foreign.clone())]).unwrap(),
         );
@@ -2713,14 +2706,12 @@ mod tests {
             .unwrap_err();
 
         assert!(!called.load(Ordering::SeqCst));
-        assert!(matches!(
-            error,
-            RegistryError::RejectedOperationApplication(rejection)
-                if matches!(
-                    rejection.source_error().extent_source(),
-                    Some(ExtentSourceError::UndeclaredSymbol { symbol }) if symbol == &foreign
-                )
-        ));
+        let RegistryError::SymbolicOperandUnsupported(refusal) = error else {
+            panic!("public inference refuses a symbol as a capability limit, not {error}");
+        };
+        assert_eq!(refusal.symbol(), &foreign);
+        assert_eq!(refusal.operand(), 0);
+        assert_eq!(refusal.axis(), Axis::new(0));
     }
 
     #[test]
@@ -2760,6 +2751,170 @@ mod tests {
             .expect("the paired static result is admitted");
         assert_eq!(result.len(), 1);
         assert!(called.load(Ordering::SeqCst));
+    }
+
+    struct ForgedExtentProvider {
+        claimed: ExtentSourceError,
+        called: Arc<AtomicBool>,
+    }
+
+    impl OperationInferencer for ForgedExtentProvider {
+        fn infer(
+            &self,
+            request: OperationInferenceRequest<'_>,
+            outputs: &mut OperationInferenceOutputs<'_>,
+        ) -> Result<(), OperationInferenceError> {
+            self.called.store(true, Ordering::SeqCst);
+            let _ = outputs.try_push(request.operands()[0].clone());
+            Err(OperationInferenceError::from_extent_source(
+                self.claimed.clone(),
+            ))
+        }
+    }
+
+    impl SemanticRegistryProvider for ForgedExtentProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "forged-extent", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            registrar.register_operation(test_operation(
+                "forged-extent",
+                1,
+                Arc::new(Self {
+                    claimed: self.claimed.clone(),
+                    called: Arc::clone(&self.called),
+                }),
+            ))
+        }
+    }
+
+    #[test]
+    fn public_inference_refuses_a_scalar_plus_symbol_before_callback() {
+        let called = Arc::new(AtomicBool::new(false));
+        let symbol = ShapeSymbol::new(SymbolScope::new("public").unwrap(), "n").unwrap();
+        let provider = SourcedBoundaryProvider {
+            operand_called: Arc::clone(&called),
+            foreign_result: symbol.clone(),
+        };
+        let mut registry = SemanticRegistryBuilder::standard().unwrap();
+        registry.register_provider(&provider).unwrap();
+        let registry = registry.freeze().unwrap();
+        let scalar = ValueFact::new(F32::resolved_type(), Shape::new([]));
+        let symbolic = ValueFact::from_sourced(
+            F32::resolved_type(),
+            SourcedShape::sourced(vec![SourcedExtent::Symbol(symbol.clone())]).unwrap(),
+        );
+
+        let error = registry
+            .infer_operation(
+                &multiply_f32_op(),
+                &[scalar, symbolic],
+                &OperationAttributes::empty(),
+            )
+            .unwrap_err();
+        let RegistryError::SymbolicOperandUnsupported(refusal) = error else {
+            panic!("public no-environment inference refuses a symbol as a capability, not {error}");
+        };
+        assert_eq!(refusal.key(), &multiply_f32_op());
+        assert_eq!(refusal.operand(), 1);
+        assert_eq!(refusal.symbol(), &symbol);
+        assert!(!called.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn an_echo_provider_does_not_receive_a_symbolic_operand_on_the_public_path() {
+        let called = Arc::new(AtomicBool::new(false));
+        let symbol = ShapeSymbol::new(SymbolScope::new("echo").unwrap(), "n").unwrap();
+        let provider = SourcedBoundaryProvider {
+            operand_called: Arc::clone(&called),
+            foreign_result: symbol.clone(),
+        };
+        let mut registry = SemanticRegistryBuilder::standard().unwrap();
+        registry.register_provider(&provider).unwrap();
+        let registry = registry.freeze().unwrap();
+        let operand = ValueFact::from_sourced(
+            F32::resolved_type(),
+            SourcedShape::sourced(vec![SourcedExtent::Symbol(symbol.clone())]).unwrap(),
+        );
+        let error = registry
+            .infer_operation(
+                &OpKey::new("test", "observing-identity", 1).unwrap(),
+                &[operand],
+                &OperationAttributes::empty(),
+            )
+            .unwrap_err();
+        assert!(!called.load(Ordering::SeqCst));
+        assert!(matches!(
+            error,
+            RegistryError::SymbolicOperandUnsupported(_)
+        ));
+    }
+
+    #[test]
+    fn a_provider_cannot_forge_an_undeclared_extent_error_into_a_host_verdict() {
+        let called = Arc::new(AtomicBool::new(false));
+        let forged = ShapeSymbol::new(SymbolScope::new("forge").unwrap(), "ghost").unwrap();
+        let provider = ForgedExtentProvider {
+            claimed: ExtentSourceError::UndeclaredSymbol {
+                symbol: forged.clone(),
+            },
+            called: Arc::clone(&called),
+        };
+        let mut registry = SemanticRegistryBuilder::standard().unwrap();
+        registry.register_provider(&provider).unwrap();
+        let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+        let input = builder
+            .input::<F32>(input_key("x"), Shape::from_dims([1]))
+            .unwrap();
+        let error = builder
+            .apply(
+                OpKey::new("test", "forged-extent", 1).unwrap(),
+                OperationAttributes::empty(),
+                &[input.erase()],
+            )
+            .unwrap_err();
+        assert!(called.load(Ordering::SeqCst));
+        assert!(
+            matches!(error, BuildError::SemanticRegistry(_)),
+            "a stamped undeclared symbol is not a host environment verdict: {error}"
+        );
+    }
+
+    #[test]
+    fn a_provider_cannot_forge_a_not_equal_extent_error_into_a_host_verdict() {
+        let called = Arc::new(AtomicBool::new(false));
+        let n = SourcedExtent::Symbol(sym("n"));
+        let m = SourcedExtent::Symbol(sym("m"));
+        let provider = ForgedExtentProvider {
+            claimed: ExtentSourceError::ExtentsNotProvedEqual(Box::new(ExtentDisagreement {
+                axis: Axis::new(0),
+                left: n,
+                right: m,
+            })),
+            called: Arc::clone(&called),
+        };
+        let mut registry = SemanticRegistryBuilder::standard().unwrap();
+        registry.register_provider(&provider).unwrap();
+        let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+        let input = builder
+            .input::<F32>(input_key("x"), Shape::from_dims([4]))
+            .unwrap();
+        let error = builder
+            .apply(
+                OpKey::new("test", "forged-extent", 1).unwrap(),
+                OperationAttributes::empty(),
+                &[input.erase()],
+            )
+            .unwrap_err();
+        assert!(called.load(Ordering::SeqCst));
+        assert!(
+            matches!(error, BuildError::SemanticRegistry(_)),
+            "a stamped not-equal pair that does not appear on the operands is not a host verdict: {error}"
+        );
     }
 
     struct PreconditionPrecedenceProvider;

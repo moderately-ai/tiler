@@ -55,14 +55,13 @@ impl OperationInferencer for ExternalOperation {
         request: tiler_ir::semantic::OperationInferenceRequest<'_>,
         outputs: &mut tiler_ir::semantic::OperationInferenceOutputs<'_>,
     ) -> Result<(), OperationInferenceError> {
-        let operands = request.operands();
         match self {
             Self::Constant => {
                 outputs.try_push(ValueFact::new(F32::resolved_type(), Shape::new([])))
             }
             Self::Binary => {
-                let left = operands[0].shape();
-                let right = operands[1].shape();
+                let left = request.static_operand_shape(0)?;
+                let right = request.static_operand_shape(1)?;
                 let shape = if left.rank() == 0 {
                     right.clone()
                 } else if right.rank() == 0 || left == right {
@@ -110,7 +109,7 @@ impl OperationInferencer for ExternalOperation {
                     .collect::<Result<Vec<_>, _>>()?;
                 outputs.try_push(ValueFact::new(
                     F32::resolved_type(),
-                    operands[0].shape().without_axes(&axes),
+                    request.static_operand_shape(0)?.without_axes(&axes),
                 ))
             }
         }
