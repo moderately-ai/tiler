@@ -8,12 +8,21 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.runtime.execution-contract", "tiler.research.runtime.semantic-validation", "tiler.research.runtime.candle-post-wait"]
-entrypoints: ["spikes/runtime/runtime_execution_contract.rs", "spikes/runtime/semantic_validation_enforcement.rs", "spikes/runtime/measure_semantic_validation.py", "spikes/runtime/candle_metal_post_wait.rs", "spikes/runtime/check_candle_post_wait_source.py", "spikes/runtime/inline-dispatch/README.md", "spikes/runtime/dynamic-kv-layout/README.md"]
+entrypoints: ["spikes/runtime/runtime_execution_contract.rs", "spikes/runtime/semantic_validation_enforcement.rs", "spikes/runtime/measure_semantic_validation.py", "spikes/runtime/candle_metal_post_wait.rs", "spikes/runtime/check_candle_post_wait_source.py", "spikes/runtime/inline-dispatch/README.md", "spikes/runtime/dynamic-kv-layout/README.md", "spikes/runtime/backend-provider-portfolio/README.md"]
 last_verified: "2026-08-04"
 ticket: "runtime-execution-contract"
 ---
 
 # Runtime execution and validation spikes
+
+## Standard Metal, custom Metal, and CPU in one portfolio
+
+[`backend-provider-portfolio/`](backend-provider-portfolio/README.md) compiles one semantic program with `CompileRequest::with_physical_providers`, assembles Metal through `accept_or_publish_metal_plan` and CPU through `assemble_plan_artifact`, packages both under one variant-level `TargetProfileRef`, and routes separate explicit Metal and CPU attempts through `route_with_adapter`. There is no `BackendProvider` bundle and no family fallback. Cross-family preflight presents each family's own artifact under the other environment and refuses as `UnsupportedRepresentation`.
+
+```sh
+cd spikes/runtime/backend-provider-portfolio
+CARGO_TARGET_DIR=./target cargo run -- results/2026-08-12-macos-arm64.json
+```
 
 ## Dynamic KV physical layouts on Metal
 
