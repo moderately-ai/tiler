@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [resolve-semantic-shape-inference-over-symbolic-extents, seal-and-validate-sourced-shapes-at-semantic-inference-boundaries, retain-one-derived-proof-summary-per-shape-environment]
 related: [resolve-semantic-shape-inference-over-symbolic-extents]
-scopes: [implementation/ir, contracts/foundation]
+scopes: [implementation/ir, contracts/foundation, implementation/compiler, implementation/artifact, implementation/build]
 shared_scopes: [project/tickets]
 paths: [docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md]
 tags: [implementation, shapes, semantic-graph, extensions, correctness, public-boundary]
@@ -67,6 +67,8 @@ This deliberately revises the broader public surface proposed by `resolve-semant
 ## Implementation record — 2026-08-12
 
 Exact Rust spellings remain a labelled draft.
+
+**Scopes added after the identity step.** `implementation/compiler`, `implementation/artifact`, and `implementation/build` are reverse-deps of the registry/projection step: the explain request qualifier, out-of-crate static provider fixtures, and the standard Metal artifact/cache/fixed-content pins all moved. `docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md` is on `paths` because the Metal pin test requires the live-pin paragraph to name the same values.
 
 **Identity.** `tiler.semantic-registry.v7` → `v8`. `tiler.semantic-definition-projection.v5` → `v6`. Participation tag is `0x01` literal-only, `0x02` governed. Standard provider revision stays 7. Live pins recomputed on this branch:
 
