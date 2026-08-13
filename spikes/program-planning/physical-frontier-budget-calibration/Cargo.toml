@@ -1,0 +1,46 @@
+[package]
+name = "physical-frontier-budget-calibration"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Census and host-runtime calibration of physical-provider-count and raw proposal/decline budgets"
+
+# Its own workspace root. A nested spike is deliberately not a member of the
+# repository workspace: `make` never reaches here, and the spike's dependency
+# set is its own. The path dependencies below still resolve their `[lints]`
+# through the repository workspace they belong to.
+[workspace]
+
+[dependencies]
+tiler-compiler = { path = "../../../crates/tiler-compiler" }
+tiler-ir = { path = "../../../crates/tiler-ir" }
+
+# Mirrors the repository dev profile rather than inheriting it: this is a
+# separate workspace, so the root profile does not reach it.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+opt-level = 1
+
+# Every host-runtime number this harness reports is taken from a release build,
+# because a debug build measures the optimizer's absence rather than the
+# compile path. The profile is stated here so the recorded invocation is
+# reproducible without a second file to consult.
+[profile.release]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+too_many_lines = "allow"
+too_many_arguments = "allow"
+format_push_string = "allow"
+doc_markdown = "allow"
+module_name_repetitions = "allow"
