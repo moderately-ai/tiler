@@ -84,9 +84,13 @@
 //!
 //! # Limits
 //!
-//! Every bound below is checked before any allocation proportional to it, in
-//! both directions: the encoder refuses to write a container a reader would
-//! not admit, and the reader refuses a declared count before reserving for it.
+//! Every bound below is checked with exact arithmetic before any allocation
+//! proportional to it, in both directions. The producer projects the encoded
+//! identity, manifest, framed-payload stream, and complete sidecar and refuses
+//! before cloning a payload, hashing, reserving, or appending. The reader
+//! refuses a declared count before reserving for it. A size that is not
+//! representable on the host is refused as unrepresentable rather than wrapped
+//! or truncated.
 //!
 //! # A case one crate writes, verified by another
 //!
@@ -501,6 +505,7 @@
 //! # }
 //! ```
 
+mod budget;
 mod builder;
 mod codec;
 mod model;

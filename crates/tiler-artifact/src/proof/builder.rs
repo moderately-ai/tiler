@@ -36,6 +36,7 @@ use crate::program::{
     ArtifactCodecFailure, DIGEST_BYTES, VerifiedArtifactProgram, envelope_digest,
 };
 
+use super::budget::{CaseLens, ProofBudgetError, project_from_data, project_sidecar};
 use super::codec::{ProofLimitExceeded, ProofLimitKind, derive_identity, proof_limit};
 use super::model::{
     ProofCaseData, ProofCaseKey, ProofCaseKeyError, ProofNumericalIdentity, ProofReferenceIdentity,
@@ -312,6 +313,11 @@ pub enum ProofBuildError {
     /// present as validated evidence while proving nothing, and a consumer that
     /// iterated zero cases would report success.
     NoCases,
+    /// A projected encoded size overflowed this host's `usize`.
+    Unrepresentable {
+        /// The bound whose projected size could not be represented.
+        kind: ProofLimitKind,
+    },
 }
 
 impl fmt::Display for ProofBuildError {
@@ -366,6 +372,10 @@ impl fmt::Display for ProofBuildError {
             }
             Self::Interface(cause) => write!(formatter, "interface disagreement: {cause}"),
             Self::NoCases => formatter.write_str("a proof sidecar carries no case"),
+            Self::Unrepresentable { kind } => write!(
+                formatter,
+                "a projected {kind} size is not representable on this host"
+            ),
         }
     }
 }
@@ -386,7 +396,8 @@ impl Error for ProofBuildError {
             | Self::DuplicateInput { .. }
             | Self::DuplicateOutput { .. }
             | Self::SemanticSubjectMismatch { .. }
-            | Self::NoCases => None,
+            | Self::NoCases
+            | Self::Unrepresentable { .. } => None,
         }
     }
 }
@@ -412,6 +423,15 @@ impl From<ProofInterfaceError> for ProofBuildError {
 impl From<ProofLimitExceeded> for ProofBuildError {
     fn from(cause: ProofLimitExceeded) -> Self {
         Self::Limit(cause)
+    }
+}
+
+impl From<ProofBudgetError> for ProofBuildError {
+    fn from(cause: ProofBudgetError) -> Self {
+        match cause {
+            ProofBudgetError::Limit(cause) => Self::Limit(cause),
+            ProofBudgetError::Unrepresentable { kind } => Self::Unrepresentable { kind },
+        }
     }
 }
 
@@ -766,27 +786,47 @@ impl ProofSidecarBuilder {
     /// [`ProofBuildError::DuplicateInput`] or
     /// [`ProofBuildError::DuplicateOutput`] for a key supplied twice,
     /// [`ProofBuildError::MissingInput`] or [`ProofBuildError::MissingOutput`]
-    /// for a declared key left unsupplied, or [`ProofBuildError::Limit`] beyond
-    /// [`MAX_PROOF_CASES`] or [`MAX_PROOF_PAYLOAD_BYTES`].
+    /// for a declared key left unsupplied, [`ProofBuildError::Limit`] beyond
+    /// [`MAX_PROOF_CASES`], [`MAX_PROOF_PAYLOAD_BYTES`], or a projected
+    /// identity, manifest, or complete-sidecar bound, or
+    /// [`ProofBuildError::Unrepresentable`] when the projected size overflows
+    /// this host's `usize`.
     pub fn push_case(&mut self, case: ProofCaseSpec) -> Result<(), ProofBuildError> {
-        proof_limit(self.cases.len() + 1, MAX_PROOF_CASES, ProofLimitKind::Cases)?;
+        let attempted =
+            self.cases
+                .len()
+                .checked_add(1)
+                .ok_or(ProofBuildError::Unrepresentable {
+                    kind: ProofLimitKind::Cases,
+                })?;
+        proof_limit(attempted, MAX_PROOF_CASES, ProofLimitKind::Cases)?;
         if self.cases.iter().any(|held| held.key == case.key) {
             return Err(ProofBuildError::DuplicateCaseKey { key: case.key });
         }
-        let inputs = place(
+        let input_slots = resolve_slots(
             &case.inputs,
             &self.interface.inputs,
             |key| ProofBuildError::UnknownInput { key },
             |key| ProofBuildError::DuplicateInput { key },
             |key| ProofBuildError::MissingInput { key },
         )?;
-        let expected = place(
+        let expected_slots = resolve_slots(
             &case.expected,
             &self.interface.outputs,
             |key| ProofBuildError::UnknownOutput { key },
             |key| ProofBuildError::DuplicateOutput { key },
             |key| ProofBuildError::MissingOutput { key },
         )?;
+        self.project_with(
+            &case.key,
+            &case.inputs,
+            &input_slots,
+            &case.expected,
+            &expected_slots,
+        )?
+        .check()?;
+        let inputs = take_placed(case.inputs, &input_slots);
+        let expected = take_placed(case.expected, &expected_slots);
         self.cases.push(ProofCaseData {
             key: case.key,
             inputs,
@@ -805,8 +845,10 @@ impl ProofSidecarBuilder {
     ///
     /// Returns [`ProofBuildError::NoCases`] for an empty draft,
     /// [`ProofBuildError::Interface`] when a case disagrees with the artifact's
-    /// declared interface, or [`ProofBuildError::Limit`] when the derived
-    /// identity exceeds its governed bound.
+    /// declared interface, [`ProofBuildError::Limit`] when a projected identity,
+    /// manifest, or complete-sidecar size exceeds its governed bound, or
+    /// [`ProofBuildError::Unrepresentable`] when a projected size overflows
+    /// this host's `usize`.
     pub fn build(mut self) -> Result<VerifiedProofSidecar, ProofBuildError> {
         if self.cases.is_empty() {
             return Err(ProofBuildError::NoCases);
@@ -831,26 +873,72 @@ impl ProofSidecarBuilder {
             cases: self.cases,
         };
         verify_cases(&self.interface, &data)?;
+        project_from_data(&data)?.check()?;
         let identity = derive_identity(&data)?;
         Ok(VerifiedProofSidecar { data, identity })
     }
+
+    fn project_with<IK: Eq, OK: Eq>(
+        &self,
+        key: &ProofCaseKey,
+        inputs: &[(IK, Vec<u8>)],
+        input_slots: &[usize],
+        expected: &[(OK, Vec<u8>)],
+        expected_slots: &[usize],
+    ) -> Result<super::budget::ProjectedSizes, ProofBudgetError> {
+        let mut cases: Vec<CaseLens> = self
+            .cases
+            .iter()
+            .map(|held| CaseLens {
+                key_len: held.key.as_str().len(),
+                input_lens: held.inputs.iter().map(Vec::len).collect(),
+                expected_lens: held.expected.iter().map(Vec::len).collect(),
+            })
+            .collect();
+        cases.push(CaseLens {
+            key_len: key.as_str().len(),
+            input_lens: input_slots
+                .iter()
+                .map(|&slot| inputs[slot].1.len())
+                .collect(),
+            expected_lens: expected_slots
+                .iter()
+                .map(|&slot| expected[slot].1.len())
+                .collect(),
+        });
+        project_sidecar(
+            self.artifact_identity.len(),
+            self.subjects.semantic.as_bytes().len(),
+            self.subjects.numerical.as_bytes().len(),
+            self.subjects.reference.as_bytes().len(),
+            self.interface
+                .inputs
+                .iter()
+                .map(|(entry, _)| entry.as_str().len()),
+            self.interface
+                .outputs
+                .iter()
+                .map(|(entry, _)| entry.as_str().len()),
+            cases,
+        )
+    }
 }
 
-/// Places a case's keyed payloads into the artifact's interface order.
+/// Resolves a case's keyed payloads onto the artifact's interface order.
 ///
 /// A miss in either direction is a distinct named failure: a key the artifact
 /// does not declare, a key supplied twice, and a declared key left unsupplied
 /// are three different producer mistakes and a caller reacts differently to
-/// each.
-fn place<K: Clone + Eq>(
+/// each. The returned slots are indexes into `supplied`; nothing is cloned.
+fn resolve_slots<K: Clone + Eq>(
     supplied: &[(K, Vec<u8>)],
     entries: &[(K, usize)],
     unknown: impl Fn(K) -> ProofBuildError,
     duplicate: impl Fn(K) -> ProofBuildError,
     missing: impl Fn(K) -> ProofBuildError,
-) -> Result<Vec<Vec<u8>>, ProofBuildError> {
-    let mut placed: Vec<Option<Vec<u8>>> = vec![None; entries.len()];
-    for (key, bytes) in supplied {
+) -> Result<Vec<usize>, ProofBuildError> {
+    let mut slots: Vec<Option<usize>> = vec![None; entries.len()];
+    for (index, (key, bytes)) in supplied.iter().enumerate() {
         proof_limit(
             bytes.len(),
             MAX_PROOF_PAYLOAD_BYTES,
@@ -860,14 +948,28 @@ fn place<K: Clone + Eq>(
             .iter()
             .position(|(declared, _)| declared == key)
             .ok_or_else(|| unknown(key.clone()))?;
-        if placed[position].is_some() {
+        if slots[position].is_some() {
             return Err(duplicate(key.clone()));
         }
-        placed[position] = Some(bytes.clone());
+        slots[position] = Some(index);
     }
-    placed
+    slots
         .into_iter()
         .enumerate()
-        .map(|(position, bytes)| bytes.ok_or_else(|| missing(entries[position].0.clone())))
+        .map(|(position, slot)| slot.ok_or_else(|| missing(entries[position].0.clone())))
+        .collect()
+}
+
+/// Moves already-validated payloads into interface order.
+fn take_placed<K>(supplied: Vec<(K, Vec<u8>)>, slots: &[usize]) -> Vec<Vec<u8>> {
+    let mut owned: Vec<Option<Vec<u8>>> =
+        supplied.into_iter().map(|(_, bytes)| Some(bytes)).collect();
+    slots
+        .iter()
+        .map(|&index| {
+            owned[index]
+                .take()
+                .expect("each resolved slot names a unique supplied payload")
+        })
         .collect()
 }

@@ -32,14 +32,17 @@ use crate::program::tests::{
 };
 use crate::program::{DIGEST_BYTES, DigestAlgorithm, VerifiedArtifactProgram};
 
+use super::budget::{CaseLens, ProofBudgetError, add, project_from_data, project_sidecar};
 use super::builder::{BoundInterface, ProofDirection, ProofInterfaceError, verify_cases};
 use super::codec::{
     CANONICAL_ENCODING, HEADER_BYTES, IDENTITY_DOMAIN, MAGIC, MANIFEST_DOMAIN,
-    PAYLOAD_DIGEST_DOMAIN, ProofFailureClass, ProofOrderedSubject, SIDECAR_FORMAT, derive_identity,
+    PAYLOAD_DIGEST_DOMAIN, ProofFailureClass, ProofLimitExceeded, ProofLimitKind,
+    ProofOrderedSubject, SIDECAR_FORMAT, derive_identity,
 };
 use super::model::{ProofCaseData, ProofSidecarData, ProofSubjects};
 use super::{
-    MAX_PROOF_CASE_KEY_BYTES, MAX_PROOF_CASES, MAX_PROOF_SUBJECT_BYTES, ProofBuildError,
+    MAX_PROOF_CASE_KEY_BYTES, MAX_PROOF_CASES, MAX_PROOF_IDENTITY_BYTES, MAX_PROOF_MANIFEST_BYTES,
+    MAX_PROOF_PAYLOAD_BYTES, MAX_PROOF_SIDECAR_BYTES, MAX_PROOF_SUBJECT_BYTES, ProofBuildError,
     ProofCaseKey, ProofCaseKeyError, ProofCaseSpec, ProofCodecError, ProofNumericalIdentity,
     ProofProvenance, ProofReferenceIdentity, ProofSemanticSubject, ProofSidecarBuilder,
     ProofSubjectError, VerifiedProofSidecar, decode_proof_sidecar,
@@ -358,6 +361,58 @@ fn rejects_a_case_count_beyond_the_governed_bound() {
     };
     assert_eq!(limit.attempted, MAX_PROOF_CASES + 1);
     assert_eq!(limit.limit, MAX_PROOF_CASES);
+}
+
+#[test]
+fn refuses_one_payload_beyond_the_governed_bound_before_moving_it() {
+    let artifact = default_artifact();
+    let mut draft = draft(&artifact);
+    draft.push_case(case("kept", 0x01)).expect("a case");
+    let mut spec = case("oversize", 0x02);
+    spec.inputs[0].1 = vec![0x02; MAX_PROOF_PAYLOAD_BYTES + 1];
+    let error = draft
+        .push_case(spec)
+        .expect_err("one payload beyond the bound is refused");
+    let ProofBuildError::Limit(limit) = error else {
+        panic!("expected a payload-byte limit, got {error:?}");
+    };
+    assert_eq!(limit.kind, ProofLimitKind::PayloadBytes);
+    assert_eq!(limit.attempted, MAX_PROOF_PAYLOAD_BYTES + 1);
+    assert_eq!(limit.limit, MAX_PROOF_PAYLOAD_BYTES);
+    let built = draft.build().expect("the draft still builds");
+    assert_eq!(built.cases().len(), 1);
+    assert_eq!(
+        built.cases().next().expect("one case").key().as_str(),
+        "kept",
+    );
+}
+
+#[test]
+fn a_moved_payload_keeps_its_allocation() {
+    let artifact = default_artifact();
+    let mut draft = draft(&artifact);
+    let payload = vec![0x5a; INPUT_ELEMENTS * 4];
+    let pointer = payload.as_ptr();
+    draft
+        .push_case(ProofCaseSpec {
+            key: ProofCaseKey::new("moved").expect("a valid case key"),
+            inputs: vec![(input_key(), payload)],
+            expected: vec![(output_key(), vec![0xa5; OUTPUT_ELEMENTS * 4])],
+        })
+        .expect("a case");
+    let sidecar = draft.build().expect("a verified sidecar");
+    assert_eq!(
+        sidecar
+            .cases()
+            .next()
+            .expect("one case")
+            .inputs()
+            .next()
+            .expect("one input")
+            .bytes()
+            .as_ptr(),
+        pointer,
+    );
 }
 
 #[test]
@@ -910,4 +965,227 @@ fn the_retained_shape_is_the_shape_that_was_built() {
     assert_eq!(key.as_str(), "canonical-nan");
     assert_eq!(inputs.len(), 1);
     assert_eq!(expected.len(), 1);
+}
+
+// -------------------------------------------------------------------------
+// Producer byte budgets, checked before proportional allocation
+// -------------------------------------------------------------------------
+
+fn layout_of(data: &ProofSidecarData, cases: Vec<CaseLens>) -> super::budget::ProjectedSizes {
+    project_sidecar(
+        data.artifact_identity.len(),
+        data.subjects.semantic.as_bytes().len(),
+        data.subjects.numerical.as_bytes().len(),
+        data.subjects.reference.as_bytes().len(),
+        data.input_keys.iter().map(|key| key.as_str().len()),
+        data.output_keys.iter().map(|key| key.as_str().len()),
+        cases,
+    )
+    .expect("a representable projection")
+}
+
+/// Largest per-payload sizes this fixture's shapes admit.
+///
+/// They stay at the payload bound's ceiling while remaining a whole number of
+/// the declared elements, so `push_case` can refuse a sidecar total and
+/// `build` can still freeze the cases that fitted.
+const MAX_INPUT_BUDGET: usize = MAX_PROOF_PAYLOAD_BYTES / INPUT_ELEMENTS * INPUT_ELEMENTS;
+const MAX_OUTPUT_BUDGET: usize = MAX_PROOF_PAYLOAD_BYTES / OUTPUT_ELEMENTS * OUTPUT_ELEMENTS;
+
+fn max_dual_case(key: &str) -> CaseLens {
+    CaseLens {
+        key_len: key.len(),
+        input_lens: vec![MAX_INPUT_BUDGET],
+        expected_lens: vec![MAX_OUTPUT_BUDGET],
+    }
+}
+
+fn max_dual_spec(key: &str) -> ProofCaseSpec {
+    ProofCaseSpec {
+        key: ProofCaseKey::new(key).expect("a valid case key"),
+        inputs: vec![(input_key(), vec![0x11; MAX_INPUT_BUDGET])],
+        expected: vec![(output_key(), vec![0x22; MAX_OUTPUT_BUDGET])],
+    }
+}
+
+fn dual_overflow_count(data: &ProofSidecarData) -> usize {
+    for count in 1..=MAX_PROOF_CASES {
+        let cases: Vec<CaseLens> = (0..count)
+            .map(|index| max_dual_case(&format!("case-{index:04}")))
+            .collect();
+        let projected = layout_of(data, cases);
+        if projected.check().is_err() {
+            return count;
+        }
+    }
+    panic!("the sidecar bound admits every dual max-payload case");
+}
+
+#[test]
+fn refuses_an_identity_beyond_the_governed_bound_before_deriving_it() {
+    let mut sidecar = default_sidecar();
+    sidecar.data.artifact_identity = vec![0xab; MAX_PROOF_IDENTITY_BYTES + 1];
+    let projected = project_from_data(&sidecar.data).expect("the size is representable");
+    assert!(projected.identity > MAX_PROOF_IDENTITY_BYTES);
+    let error = derive_identity(&sidecar.data).expect_err("the identity bound is enforced");
+    assert_eq!(
+        error,
+        ProofBudgetError::Limit(ProofLimitExceeded {
+            kind: ProofLimitKind::IdentityBytes,
+            attempted: projected.identity,
+            limit: MAX_PROOF_IDENTITY_BYTES,
+        })
+    );
+}
+
+#[test]
+fn refuses_a_manifest_beyond_the_governed_bound_before_encoding_it() {
+    let mut sidecar = default_sidecar();
+    // Large enough that framed(artifact) + framed(identity) exceeds the
+    // manifest bound, but the identity itself still fits.
+    sidecar.data.artifact_identity = vec![0xcd; 5 * 1024 * 1024];
+    let identity = derive_identity(&sidecar.data).expect("the identity still fits");
+    assert!(identity.as_bytes().len() <= MAX_PROOF_IDENTITY_BYTES);
+    let projected = project_from_data(&sidecar.data).expect("the size is representable");
+    assert!(projected.manifest > MAX_PROOF_MANIFEST_BYTES);
+    assert!(projected.identity <= MAX_PROOF_IDENTITY_BYTES);
+    let error =
+        super::codec::encode(&sidecar.data, &identity).expect_err("the manifest bound is enforced");
+    let ProofCodecError::Limit(limit) = error else {
+        panic!("expected a manifest-byte limit, got {error:?}");
+    };
+    assert_eq!(limit.kind, ProofLimitKind::ManifestBytes);
+    assert_eq!(limit.attempted, projected.manifest);
+    assert_eq!(limit.limit, MAX_PROOF_MANIFEST_BYTES);
+}
+
+#[test]
+fn refuses_a_sidecar_total_beyond_the_governed_bound_before_encoding_it() {
+    let artifact = default_artifact();
+    let mut seed_draft = draft(&artifact);
+    seed_draft
+        .push_case(case("seed", 0x01))
+        .expect("a seed case");
+    let seed = seed_draft.build().expect("a verified sidecar");
+    let overflow_at = dual_overflow_count(&seed.data);
+    assert!(overflow_at >= 2, "one dual max-payload case must fit");
+
+    let mut draft = draft(&artifact);
+    for index in 0..(overflow_at - 1) {
+        draft
+            .push_case(max_dual_spec(&format!("case-{index:04}")))
+            .expect("a case whose framed total still fits");
+    }
+    let overflowing = max_dual_spec(&format!("case-{:04}", overflow_at - 1));
+    let error = draft
+        .push_case(overflowing)
+        .expect_err("the sidecar bound is enforced before the case is admitted");
+    let ProofBuildError::Limit(limit) = error else {
+        panic!("expected a sidecar-byte limit, got {error:?}");
+    };
+    assert_eq!(limit.kind, ProofLimitKind::SidecarBytes);
+    assert_eq!(limit.limit, MAX_PROOF_SIDECAR_BYTES);
+    assert!(limit.attempted > MAX_PROOF_SIDECAR_BYTES);
+
+    let cases: Vec<CaseLens> = (0..overflow_at)
+        .map(|index| max_dual_case(&format!("case-{index:04}")))
+        .collect();
+    let projected = layout_of(&seed.data, cases);
+    let content_only = overflow_at
+        .checked_mul(MAX_INPUT_BUDGET + MAX_OUTPUT_BUDGET)
+        .expect("fits");
+    assert!(
+        projected.framed_payloads > content_only,
+        "framing prefixes are part of the projected sidecar total"
+    );
+    assert_eq!(limit.attempted, projected.sidecar);
+
+    let kept = draft.build().expect("the draft still builds");
+    assert_eq!(kept.cases().len(), overflow_at - 1);
+
+    let mut over = kept;
+    over.data.cases.push(ProofCaseData {
+        key: ProofCaseKey::new(format!("case-{:04}", overflow_at - 1)).expect("a valid case key"),
+        inputs: vec![vec![0x11; MAX_INPUT_BUDGET]],
+        expected: vec![vec![0x22; MAX_OUTPUT_BUDGET]],
+    });
+    over.data
+        .cases
+        .sort_by(|left, right| left.key.cmp(&right.key));
+    let identity = derive_identity(&over.data).expect("identity still fits");
+    let encoded = super::codec::encode(&over.data, &identity)
+        .expect_err("encode refuses the same sidecar total");
+    let ProofCodecError::Limit(encoded_limit) = encoded else {
+        panic!("expected a sidecar-byte limit, got {encoded:?}");
+    };
+    assert_eq!(encoded_limit.kind, ProofLimitKind::SidecarBytes);
+    assert_eq!(encoded_limit.attempted, projected.sidecar);
+}
+
+#[test]
+fn refuses_an_unrepresentable_projected_size() {
+    let error =
+        add(usize::MAX, 1, ProofLimitKind::SidecarBytes).expect_err("overflow is a named refusal");
+    assert_eq!(
+        error,
+        ProofBudgetError::Unrepresentable {
+            kind: ProofLimitKind::SidecarBytes,
+        }
+    );
+    let error = project_sidecar(
+        usize::MAX,
+        1,
+        1,
+        1,
+        std::iter::empty(),
+        std::iter::empty(),
+        Vec::new(),
+    )
+    .expect_err("a huge identity field overflows rather than wrapping");
+    assert_eq!(
+        error,
+        ProofBudgetError::Unrepresentable {
+            kind: ProofLimitKind::IdentityBytes,
+        }
+    );
+}
+
+#[test]
+fn governed_byte_resources_are_pinned_from_the_limit_kind() {
+    const ALL: [ProofLimitKind; core::mem::variant_count::<ProofLimitKind>()] = [
+        ProofLimitKind::SidecarBytes,
+        ProofLimitKind::ManifestBytes,
+        ProofLimitKind::IdentityBytes,
+        ProofLimitKind::Cases,
+        ProofLimitKind::InterfaceEntries,
+        ProofLimitKind::Payloads,
+        ProofLimitKind::PayloadBytes,
+        ProofLimitKind::SubjectBytes,
+        ProofLimitKind::TextBytes,
+    ];
+    for kind in ALL {
+        match kind {
+            ProofLimitKind::SidecarBytes => {
+                assert_eq!(kind.byte_budget(), Some(MAX_PROOF_SIDECAR_BYTES));
+            }
+            ProofLimitKind::ManifestBytes => {
+                assert_eq!(kind.byte_budget(), Some(MAX_PROOF_MANIFEST_BYTES));
+            }
+            ProofLimitKind::IdentityBytes => {
+                assert_eq!(kind.byte_budget(), Some(MAX_PROOF_IDENTITY_BYTES));
+            }
+            ProofLimitKind::PayloadBytes => {
+                assert_eq!(kind.byte_budget(), Some(MAX_PROOF_PAYLOAD_BYTES));
+            }
+            ProofLimitKind::SubjectBytes => {
+                assert_eq!(kind.byte_budget(), Some(MAX_PROOF_SUBJECT_BYTES));
+            }
+            ProofLimitKind::TextBytes => {
+                assert_eq!(kind.byte_budget(), Some(4 * 1024));
+            }
+            ProofLimitKind::Cases | ProofLimitKind::InterfaceEntries | ProofLimitKind::Payloads => {
+                assert_eq!(kind.byte_budget(), None);
+            }
+        }
+    }
 }
