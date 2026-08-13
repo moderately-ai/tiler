@@ -1,7 +1,7 @@
 ---
 id: repair-the-scheduled-vocabulary-census-and-concatenate-law-standing
 title: Repair the scheduled-vocabulary census and concatenate-law standing
-status: review
+status: done
 priority: p1
 dependencies: [admit-the-concatenate-family-into-the-scheduled-region-vocabulary]
 related: [admit-the-structural-families-into-the-scheduled-region-vocabulary, accept-the-partitioned-concatenate-realization-law]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, correction, scheduling, concatenate]
-claimed_from: todo
-assignee: worker-repair-scheduled-census
-lease_expires_at: 1786636350
 ---
 ## Outcome
 
