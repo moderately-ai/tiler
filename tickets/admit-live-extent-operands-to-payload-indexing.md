@@ -59,7 +59,7 @@ The labelled draft at `9a8f53c937dc9b9f777a1d4b361cadc1a0b0316e` is integrated a
 
 Review of `9a8f53c9` stopped short of a complete outcome. The kernel, schedule, Metal, and routed-runtime draft is preserved on `tkt/admit-live-extent-operands-to-payload-indexing`. The remainder is split rather than merged as done.
 
-- [`accept-the-live-extent-operand-public-surface`](accept-the-live-extent-operand-public-surface.md) — Tom packet; `awaiting-decision`; only Tom closes it.
+- [`accept-the-live-extent-operand-public-surface`](accept-the-live-extent-operand-public-surface.md) — Tom accepted the drafted surface on 2026-08-13 with no exclusion. This parent stays `review`; `9a8f53c9` stays unmerged until the remainders land.
 - [`carry-live-extent-operands-through-the-artifact-envelope`](carry-live-extent-operands-through-the-artifact-envelope.md) — envelope construction/codec/decode/validation, blocked on acceptance.
 - [`prove-one-live-extent-artifact-payload-and-pipeline-at-two-n`](prove-one-live-extent-artifact-payload-and-pipeline-at-two-n.md) — `N = 14` / `N = 15` artifact, payload, and pipeline evidence.
 - [`prove-a-schedule-verified-live-contraction-consumes-s`](prove-a-schedule-verified-live-contraction-consumes-s.md) — `LiveContraction` E2E, blocked on acceptance.
