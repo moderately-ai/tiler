@@ -1,7 +1,7 @@
 ---
 id: bind-prepared-pipeline-caches-to-loader-derived-route-identity
 title: Decide whether to retain the non-reusable Candle pipeline cache
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [prototype-candle-metal-adapter, bind-runtime-library-and-pipeline-caches-to-exact-payload-bytes, decide-the-prepared-subgroup-width-equality-gate, carry-subgroup-width-through-exact-prepared-entry-equality, introduce-a-persistent-runtime-pipeline-cache-for-a-real-owner]
@@ -9,9 +9,6 @@ scopes: [implementation/candle, contracts/artifacts, contracts/integrations, con
 shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, cache, identity, correctness, decision, needs-tom]
-claimed_from: todo
-assignee: worker-bind-pipeline-caches
-lease_expires_at: 1786640549
 ---
 ## User-visible outcome
 
