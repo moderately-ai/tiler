@@ -1,7 +1,7 @@
 ---
 id: carry-the-exhausted-resource-through-the-budget-refusal
 title: Implement the three-way exhausted-resource budget report surface
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [measure-executable-coverage-identity-growth-against-the-program-identity-bound]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/frontend]
 shared_scopes: [project/tickets, contracts/optimizer]
 paths: []
 tags: [compiler, diagnostics, public-boundary]
-claimed_from: todo
-assignee: worker-exhausted-budget
-lease_expires_at: 1786666489
 ---
 ## User-visible outcome
 
