@@ -538,40 +538,44 @@ fn rendered_refusal(class: CompileFailureClass, scope: &str) -> String {
              honour, try smaller extents, or state `fallback-only` to expand with the semantic \
              fallback on every target"
         ),
-        // The resource, its bound, and the demand, because a consumer told only
-        // that "a budget" was exhausted has to read compiler source to learn
-        // which one — the reading these fields exist to remove.
+        // The resource, its bound, and the compared value, because a consumer
+        // told only that "a budget" was exhausted has to read compiler source
+        // to learn which one — the reading these fields exist to remove.
         //
-        // The two halves are split on `refusal()` rather than merged, and the
-        // text this replaced was the merged form: it said the compiler "stopped
-        // searching", which is true of a truncating stop and false of every
-        // budget a macro expansion can actually reach. A bounding refusal is a
-        // fact about the region's declared size that no further search escapes,
-        // so "write a smaller region" is the right action; a truncating one
-        // stopped a search a wider bound might finish, where that same advice
-        // sends a consumer to change a region that was not the problem.
+        // The three provenances are split on `refusal()` rather than merged.
+        // The text this replaced treated every non-search value as a region-size
+        // fact, which is true of a completed exact demand and false of a
+        // planning envelope: the envelope is a conservative admission bound and
+        // a particular plan may use less. A search lower bound must not be
+        // presented as the budget required for success.
         CompileFailureClass::BudgetExhausted {
             resource,
             limit,
-            actual,
+            reported,
         } => {
             let refused = format!(
                 "the deterministic budget `{}` refused this region, so it has no plan {scope}: \
-                 the limit is {limit} and the demand was {actual}",
+                 the limit is {limit} and the compiler compared {reported}",
                 resource.key()
             );
             match resource.refusal() {
-                BudgetRefusal::Bounding => format!(
-                    "{refused}. That is a fact about the region's size rather than about its \
-                     correctness, and no amount of further search reaches a plan under this \
+                BudgetRefusal::ExactDemand => format!(
+                    "{refused}. That is this region's completed count rather than a search \
+                     estimate, and no amount of further search reaches a plan under this \
                      bound, so a smaller region compiles and `fallback-only` expands without \
                      compiling at all"
                 ),
-                BudgetRefusal::Truncated => format!(
-                    "{refused}, which is a lower bound on the space the search did not reach \
-                     rather than a size this region requires. The search stopped before it \
-                     finished, so this is a fact about how far the compiler looked rather than \
-                     about the region; `fallback-only` expands without compiling at all"
+                BudgetRefusal::PlanningUpperBound => format!(
+                    "{refused}. That value is a conservative planning envelope computed \
+                     before a plan is chosen; a particular reachable plan may use less. A \
+                     smaller region compiles and `fallback-only` expands without compiling \
+                     at all"
+                ),
+                BudgetRefusal::SearchLowerBound => format!(
+                    "{refused}. That value is a lower bound on the space the search did not \
+                     finish, not the budget this region needs in order to succeed. The \
+                     search stopped before it finished; `fallback-only` expands without \
+                     compiling at all"
                 ),
             }
         }

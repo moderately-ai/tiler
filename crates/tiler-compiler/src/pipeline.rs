@@ -1720,11 +1720,14 @@ impl TargetRejections {
 ///
 /// **Not every stop this reports is a truncation, despite the name, and the
 /// refusal it builds says which.** The three region-*shape* stops carry
-/// [`BudgetRefusal::Bounding`]: they declare the largest region this profile
-/// forms at all, so a program whose only implementable cover needs a bigger one
-/// has no plan under them however long the search runs. The five search stops
-/// carry [`BudgetRefusal::Truncated`], and only for those is widening the bound
-/// a route to a plan that this compilation never saw.
+/// [`crate::request::BudgetRefusal::ExactDemand`]: they declare the largest
+/// region this profile forms at all, so a program whose only implementable
+/// cover needs a bigger one has no plan under them however long the search
+/// runs. The five search stops carry
+/// [`crate::request::BudgetRefusal::SearchLowerBound`], and only for those is
+/// widening the bound a route to a plan that this compilation never saw.
+/// Request-gate planning envelopes never reach this helper; they refuse before
+/// a target is consulted.
 ///
 /// Widths are carried through unchanged. This previously narrowed both to the
 /// `u32`/`usize` pair the request error then held, which would have reported a
@@ -1738,7 +1741,7 @@ fn truncating_budget(
         |resource: BudgetResource, limit: u64, actual: u64| RequestError::BudgetExceeded {
             resource,
             limit,
-            actual,
+            reported: actual,
         };
     if let Some(stop) = formation.budget_stops().first() {
         return Some(exceeded(stop.resource.resource(), stop.limit, stop.actual));
@@ -2322,8 +2325,8 @@ fn request_failure_details(error: &RequestError) -> (String, SubjectKind, String
         RequestError::BudgetExceeded {
             resource,
             limit,
-            actual,
-        } => format!("budget-{}-{limit}-{actual}", resource.key()),
+            reported,
+        } => format!("budget-{}-{limit}-{reported}", resource.key()),
         RequestError::UnsupportedCapability { phase, rule }
         | RequestError::UnsupportedSymbolicExtent { phase, rule, .. } => {
             format!("unsupported-{phase}-{rule}")

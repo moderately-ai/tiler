@@ -18,7 +18,9 @@ use std::time::{Duration, SystemTime};
 
 use tiler_build::{BoundMetalCompileDeclaration, MetalPlanBuildError};
 use tiler_cache::expansion::{ComposedSubject, ExpansionCache, Resolution};
-use tiler_compiler::session::{CompileFailureClass, CompileRequest, NumericalContract, compile};
+use tiler_compiler::session::{
+    BudgetResource, CompileFailureClass, CompileRequest, NumericalContract, compile,
+};
 use tiler_compiler::target::TargetRequest;
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::semantic::{
@@ -2054,4 +2056,80 @@ fn only_the_first_publication_in_a_process_sweeps() {
         "the two entries published inside the stated age must survive: {remaining:?}",
     );
     let _ = std::fs::remove_dir_all(root);
+}
+
+fn rendered_budget(resource: BudgetResource, limit: u64, reported: u64) -> String {
+    super::rendered_refusal(
+        CompileFailureClass::BudgetExhausted {
+            resource,
+            limit,
+            reported,
+        },
+        "at all",
+    )
+}
+
+/// An exact-demand refusal names the completed count and does not offer a
+/// later search or a smaller plan as if the value were an envelope.
+#[test]
+fn rendered_exact_demand_names_a_completed_count() {
+    let message = rendered_budget(BudgetResource::SemanticOperations, 62, 63);
+    assert!(
+        message.contains("`semantic-operations`"),
+        "the diagnostic must name the exhausted budget: {message}",
+    );
+    assert!(
+        message.contains("the limit is 62") && message.contains("the compiler compared 63"),
+        "the diagnostic must carry the compared numbers: {message}",
+    );
+    assert!(
+        message.contains("completed count"),
+        "an exact demand must say the compiler finished counting: {message}",
+    );
+    assert!(
+        !message.contains("may use less") && !message.contains("lower bound"),
+        "an exact demand must not borrow envelope or search wording: {message}",
+    );
+}
+
+/// An envelope refusal must say a particular plan may use less than the
+/// compared value. Collapsing it into the exact-demand sentence is the defect
+/// this surface exists to close.
+#[test]
+fn rendered_planning_envelope_says_a_plan_may_use_less() {
+    let message = rendered_budget(BudgetResource::HostExpressionNodes, 8, 9);
+    assert!(
+        message.contains("`host-expression-nodes`"),
+        "the diagnostic must name the exhausted budget: {message}",
+    );
+    assert!(
+        message.contains("conservative planning envelope")
+            && message.contains("particular reachable plan may use less"),
+        "an envelope must not be presented as a region's exact size: {message}",
+    );
+    assert!(
+        !message.contains("completed count")
+            && !message.contains("not the budget this region needs in order to succeed"),
+        "an envelope must not borrow exact-demand or search wording: {message}",
+    );
+}
+
+/// A search lower bound must not be presented as the budget required for
+/// success.
+#[test]
+fn rendered_search_lower_bound_is_not_the_budget_required_for_success() {
+    let message = rendered_budget(BudgetResource::RegionExpansions, 10_000, 10_001);
+    assert!(
+        message.contains("`region-expansions`"),
+        "the diagnostic must name the exhausted budget: {message}",
+    );
+    assert!(
+        message.contains("lower bound")
+            && message.contains("not the budget this region needs in order to succeed"),
+        "a search stop must not present its floor as a required size: {message}",
+    );
+    assert!(
+        !message.contains("completed count") && !message.contains("may use less"),
+        "a search stop must not borrow exact-demand or envelope wording: {message}",
+    );
 }

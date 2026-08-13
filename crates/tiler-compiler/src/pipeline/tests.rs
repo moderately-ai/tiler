@@ -1549,7 +1549,7 @@ fn the_widest_assembled_plan_is_the_split_reduction_with_its_epilogue() {
         Some(crate::request::RequestError::BudgetExceeded {
             resource: BudgetResource::Regions,
             limit: 3,
-            actual: 4,
+            reported: 4,
         }),
     );
 }
@@ -1610,7 +1610,7 @@ fn the_widest_assembled_plan_binds_four_buffers_per_declared_output() {
             Some(crate::request::RequestError::BudgetExceeded {
                 resource: BudgetResource::Buffers,
                 limit: u64::from(limit),
-                actual: u64::try_from(semantic.input_count() + 4 * semantic.output_count())
+                reported: u64::try_from(semantic.input_count() + 4 * semantic.output_count())
                     .unwrap(),
             }),
             "the boundary must refuse a budget the widest plan exceeds",
@@ -1670,7 +1670,7 @@ fn the_two_chain_program_is_refused_by_regions_until_the_budget_admits_both() {
         Some(crate::request::RequestError::BudgetExceeded {
             resource: BudgetResource::Regions,
             limit: 4,
-            actual: 8,
+            reported: 8,
         }),
         "the pre-widening bound must refuse two widest chains by name",
     );
@@ -1692,7 +1692,7 @@ fn the_two_chain_program_is_refused_by_regions_until_the_budget_admits_both() {
 /// **Which stage refuses is the whole assertion.** Both stages check the same
 /// resource, and only one of them can report a caller's request as a caller's
 /// request: `verify_request` returns [`RequestError::BudgetExceeded`] naming the
-/// resource, its limit, and the actual, while `verify_host_contract` returns
+/// resource, its limit, and the reported value, while `verify_host_contract` returns
 /// `ProgramError::Storage { rule: "buffer-budget" }`, which reaches the caller
 /// as `InvalidCompilerOutput` — the compiler accusing itself of a defect the
 /// caller caused. An actual derived over one output alone under-reports a
@@ -1727,7 +1727,7 @@ fn a_two_output_program_over_its_buffer_budget_is_refused_at_the_request_boundar
         &CompileError::BudgetExhausted(crate::request::RequestError::BudgetExceeded {
             resource: BudgetResource::Buffers,
             limit: 9,
-            actual: 10,
+            reported: 10,
         }),
         "the refusal must be the request boundary's, not assembly's",
     );
@@ -1746,6 +1746,74 @@ fn a_two_output_program_over_its_buffer_budget_is_refused_at_the_request_boundar
             crate::request::StrictF32NumericalContract::governed_flush_and_reassociate(),
         ),
         vec![6, 7],
+    );
+}
+
+/// A one-input, one-output host-expression envelope is not any reachable plan's
+/// exact demand.
+///
+/// `check_program_budgets` derives the compared value as two nodes per input,
+/// four per output, and three program-scoped nodes: one input and one output
+/// therefore reach nine. That is an upper bound over every plan the request
+/// could reach. The widest one-input chain this profile retains declares seven,
+/// which is the source's own reason that the envelope cannot also be each
+/// plan's exact count.
+#[test]
+fn a_one_input_host_expression_envelope_exceeds_a_reachable_plan() {
+    let semantic = one_chain_program();
+    assert_eq!(semantic.input_count(), 1);
+    assert_eq!(semantic.output_count(), 1);
+    let envelope = semantic
+        .input_count()
+        .saturating_mul(2)
+        .saturating_add(semantic.output_count().saturating_mul(4))
+        .saturating_add(3);
+    assert_eq!(envelope, 9, "one input and one output reach nine");
+
+    let product = compile(CompilationRequest::governed_preferring(
+        &semantic,
+        crate::request::NumericalContractPreference::ordered(vec![
+            crate::request::StrictF32NumericalContract::governed_flush_and_reassociate(),
+        ])
+        .unwrap(),
+    ))
+    .expect("the one-input chain compiles");
+    let widest = product.targets[0]
+        .portfolio
+        .alternatives
+        .iter()
+        .map(|alternative| alternative.program.core().abi_expressions().len())
+        .max()
+        .expect("at least one alternative is retained");
+    assert_eq!(
+        widest, 7,
+        "the widest one-input chain declares seven host-expression nodes",
+    );
+    assert_ne!(
+        widest, envelope,
+        "an upper bound over every reachable plan cannot also be each plan's exact count",
+    );
+    assert_eq!(
+        crate::request::BudgetResource::HostExpressionNodes.refusal(),
+        crate::request::BudgetRefusal::PlanningUpperBound,
+    );
+
+    let mut narrow = CompilationRequest::governed_preferring(
+        &semantic,
+        crate::request::NumericalContractPreference::ordered(vec![
+            crate::request::StrictF32NumericalContract::governed_flush_and_reassociate(),
+        ])
+        .unwrap(),
+    );
+    narrow.budgets.host_expression_nodes = 8;
+    assert_eq!(
+        crate::request::verify_request(narrow).err(),
+        Some(crate::request::RequestError::BudgetExceeded {
+            resource: crate::request::BudgetResource::HostExpressionNodes,
+            limit: 8,
+            reported: 9,
+        }),
+        "the request gate compares the envelope of nine, not the reachable plan's seven",
     );
 }
 
@@ -4052,7 +4120,7 @@ fn budget_exhaustion_is_not_reported_as_unsupported() {
         CompileError::BudgetExhausted(RequestError::BudgetExceeded {
             resource: BudgetResource::SemanticOperations,
             limit: 4,
-            actual: 5,
+            reported: 5,
         })
     );
 }
