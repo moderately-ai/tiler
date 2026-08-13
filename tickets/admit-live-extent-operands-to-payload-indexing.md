@@ -1,7 +1,7 @@
 ---
 id: admit-live-extent-operands-to-payload-indexing
 title: Admit live extent operands to payload indexing
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-symbolic-extents-at-the-compiler-request-boundary]
 related: [deliver-an-artifact-family-from-a-symbolic-region, bind-repeated-invocations-over-caller-retained-tensors]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, extents, kernel, artifact, runtime, identity, public-boundary]
+claimed_from: todo
+assignee: worker-admit-live-extent-operands
+lease_expires_at: 1786637762
 ---
 ## User-visible outcome
 
