@@ -1,7 +1,7 @@
 ---
 id: preserve-source-bearing-slice-offsets-through-index-refinement
 title: Preserve source-bearing Slice offsets through index refinement
-status: in-progress
+status: review
 priority: p1
 dependencies: [admit-source-bearing-slice-selection-semantics]
 related: [admit-a-position-selecting-slice-for-the-rotary-table, admit-live-extent-operands-to-payload-indexing]
