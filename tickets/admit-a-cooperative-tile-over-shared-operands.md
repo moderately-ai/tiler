@@ -1,17 +1,14 @@
 ---
 id: admit-a-cooperative-tile-over-shared-operands
 title: Admit a cooperative tile whose participants share operands rather than one output
-status: review
+status: done
 priority: p1
 dependencies: [admit-a-two-dimensional-cooperative-staging-relation]
-related: [realize-the-strict-contraction-on-metal, realize-the-tiled-contraction-schedule-and-its-metal-emission, implement-the-single-workgroup-synchronized-reduction-strategy, admit-guarded-output-tails-for-cooperative-contraction]
+related: [realize-the-strict-contraction-on-metal, realize-the-tiled-contraction-schedule-and-its-metal-emission, implement-the-single-workgroup-synchronized-reduction-strategy, admit-guarded-output-tails-for-cooperative-contraction, accept-the-blocked-workgroup-and-cooperative-contraction-surface]
 scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, physical-planning, public-boundary]
-claimed_from: todo
-assignee: worker-cooperative-tile-operands
-lease_expires_at: 1786645006
 ---
 ## User-visible outcome
 
