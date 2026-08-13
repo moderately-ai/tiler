@@ -878,6 +878,7 @@ fn body_shaping_vocabulary_is_closed(
             LogicalAccess::ContractionOperand { .. } => "contraction-operand",
             LogicalAccess::ReindexBijection { .. } => "reindex-bijection",
             LogicalAccess::BroadcastReplication { .. } => "broadcast-replication",
+            LogicalAccess::ParametricBroadcast { .. } => "parametric-broadcast",
         },
         match topology {
             ReductionTopology::None => "none",
