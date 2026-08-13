@@ -1,17 +1,14 @@
 ---
 id: admit-typed-byte-alignment-and-effective-program-view-guarantees
 title: Admit typed byte alignment and effective program-view guarantees
-status: review
+status: done
 priority: p1
 dependencies: [separate-vector-operand-alignment-from-target-realization]
-related: [derive-boundary-alignment-from-the-element-type, carry-the-byte-offset-of-a-partial-binding-view]
+related: [derive-boundary-alignment-from-the-element-type, carry-the-byte-offset-of-a-partial-binding-view, accept-the-typed-byte-alignment-surface]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/foundation, contracts/optimizer, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [alignment, placement, ir, public-boundary, correctness]
-claimed_from: todo
-assignee: worker-typed-byte-alignment
-lease_expires_at: 1786652180
 ---
 ## Acceptance
 
@@ -55,3 +52,5 @@ Selected-provider access requirements, target realization facts, runtime pointer
 ## Closes when
 
 The shared role-safe vocabulary is the only raw-alignment authority across IR/compiler/artifact APIs, effective view alignment is verified, and old valid identities remain byte-identical.
+
+Coordinator `make full` on `90112675`: 3493 passed. Merged to `main` at `bcbf9f9bd975890157353a88282ec0edd2db418c`. The Rust spelling is a labelled draft; Tom's packet is [`accept-the-typed-byte-alignment-surface`](accept-the-typed-byte-alignment-surface.md).
