@@ -1,7 +1,7 @@
 ---
 id: decide-whether-the-candle-adapter-may-synthesize-zero-extent-storage
 title: Decide whether the Candle adapter may synthesize storage for a zero-extent tensor
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [route-a-zero-extent-program-through-candle-metal-storage, prototype-candle-metal-adapter]
@@ -9,9 +9,6 @@ scopes: [implementation/candle, contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
 tags: [candle, runtime, decision, needs-tom, public-boundary]
-claimed_from: todo
-assignee: worker-candle-zero-extent
-lease_expires_at: 1786665469
 ---
 ## The decision
 
