@@ -3962,7 +3962,7 @@ pub(crate) fn assess_region(
 /// Assesses one numerical contract alone against a target's declaration.
 ///
 /// The request boundary resolves a caller's stated preference through this: the
-/// proposal carries the contract's four dimensions and *no* capability
+/// proposal carries every consumable contract dimension and *no* capability
 /// requirement, because whether a target honours a contract is a fact about the
 /// contract and the target, independent of any region, schedule, or cost. A
 /// region is assessed again later against the same authority, which is
@@ -4000,10 +4000,14 @@ pub(crate) fn target_profile_descriptor(target: &TargetProfile) -> &[u8] {
 /// The candidate requires complete support for the governed unsigned-64 KIR
 /// index operation family and the device address space whenever its resource
 /// requirements demand it. It does not infer a device address width from that
-/// arithmetic type. Its numerical requirements are the region's declared
-/// realization carried forward **per dimension** rather than collapsed into one
-/// summary bit — the collapse the retired `StrictF32Arithmetic` axis forced, and
-/// which could neither name a failing dimension nor express emulation.
+/// arithmetic type. Its numerical requirements are every behaviour field
+/// [`ResourceRequirements`] already states, carried forward **per dimension**
+/// rather than collapsed into one summary bit — the collapse the retired
+/// `StrictF32Arithmetic` axis forced, and which could neither name a failing
+/// dimension nor express emulation. The two elementary dimensions and
+/// materialization rounding stay off this proposal until a scheduled region can
+/// record them: they are not inferred, not recovered from the contract key, and
+/// not omitted because a strategy happens not to transform them.
 ///
 /// The synchronization requirement is carried the *opposite* way: forward as one
 /// atomic subject rather than per dimension, because each of its dimensions is
@@ -4021,39 +4025,12 @@ pub(crate) fn target_profile_descriptor(target: &TargetProfile) -> &[u8] {
 /// coordinate space. `index_arithmetic_requirement` therefore classifies a
 /// value this function received rather than deciding one, which is what keeps a
 /// single producer authority over a fact the verified program states.
-fn region_proposal(
+pub(crate) fn region_proposal(
     requirements: ResourceRequirements,
     arithmetic: ArithmeticType,
     work_items: u64,
 ) -> Result<FeasibilityProposal, FeasibilityError> {
-    // **The subject's value identity is derived from the region's own arithmetic,
-    // not written beside it.** A target declares honourability for a
-    // `ScalarArithmetic`, and a requirement matches a declaration only when
-    // *both* halves of the subject agree — so a `bf16` region proposing
-    // `tiler::f32@1` matched no `bf16` row a profile could ever declare, every
-    // dimension resolved `Unknown`, and the region was refused as
-    // `target-assessment-unresolved` on a profile whose measured `bf16` rows
-    // answered it exactly. `crate::policy::dimension_requirements` already
-    // derived its half this way and this one did not; the two halves of one
-    // subject are now built by one constructor.
-    //
-    // `None` only if the arithmetic vocabulary and the governed scalar catalog
-    // have drifted apart, which is a malformed proposal rather than an
-    // infeasible region: a requirement set that quietly emptied itself would be
-    // *vacuously* feasible, proven by every profile.
-    let Some(subject) = crate::policy::arithmetic_subject(arithmetic) else {
-        return Err(FeasibilityError::MalformedProposal {
-            rule: "region-arithmetic-subject",
-        });
-    };
-    let numerical = |dimension, behaviour| {
-        NumericalRequirement::new(
-            dimension,
-            subject.arithmetic(),
-            subject.resolved_type().clone(),
-            behaviour,
-        )
-    };
+    let numerical = region_numerical_requirements(requirements, arithmetic)?;
     FeasibilityProposal::new_with_synchronization(
         REGION_PROPOSAL_CANDIDATE,
         vec![
@@ -4076,26 +4053,98 @@ fn region_proposal(
                 requirements.local_memory_bytes,
             ),
         ],
-        vec![
-            numerical(
-                NumericalDimension::InputSubnormals,
-                DimensionBehaviour::Subnormals(requirements.input_subnormals),
-            ),
-            numerical(
-                NumericalDimension::ResultSubnormals,
-                DimensionBehaviour::Subnormals(requirements.result_subnormals),
-            ),
-            numerical(
-                NumericalDimension::Contraction,
-                DimensionBehaviour::Transform(requirements.contraction),
-            ),
-            numerical(
-                NumericalDimension::Reassociation,
-                DimensionBehaviour::Transform(requirements.reassociation),
-            ),
-        ],
+        numerical,
         requirements.synchronization,
     )
+}
+
+/// Projects every numerical field [`ResourceRequirements`] states onto a
+/// requirement in [`crate::target::honourability::CANONICAL_DIMENSIONS`] order.
+///
+/// The population is the owning record, not a counted prefix. Exhaustive
+/// destructure makes a ninth field a build error here; exhaustive match on
+/// [`NumericalDimension`] makes a twelfth governed dimension a build error
+/// until this function says whether the region record carries it. Reciprocal
+/// transform, approximate intrinsics, and materialization rounding stay off
+/// the proposal: they are not on [`ResourceRequirements`], and inventing a
+/// strict value, skipping them because a strategy does not transform them, or
+/// recovering them from the contract key would be a second producer of a
+/// meaning the scheduled region cannot record.
+fn region_numerical_requirements(
+    requirements: ResourceRequirements,
+    arithmetic: ArithmeticType,
+) -> Result<Vec<NumericalRequirement>, FeasibilityError> {
+    // **The subject's value identity is derived from the region's own arithmetic,
+    // not written beside it.** A target declares honourability for a
+    // `ScalarArithmetic`, and a requirement matches a declaration only when
+    // *both* halves of the subject agree — so a `bf16` region proposing
+    // `tiler::f32@1` matched no `bf16` row a profile could ever declare, every
+    // dimension resolved `Unknown`, and the region was refused as
+    // `target-assessment-unresolved` on a profile whose measured `bf16` rows
+    // answered it exactly. `crate::policy::dimension_requirements` already
+    // derived its half this way and this one did not; the two halves of one
+    // subject are now built by one constructor.
+    //
+    // `None` only if the arithmetic vocabulary and the governed scalar catalog
+    // have drifted apart, which is a malformed proposal rather than an
+    // infeasible region: a requirement set that quietly emptied itself would be
+    // *vacuously* feasible, proven by every profile.
+    let Some(subject) = crate::policy::arithmetic_subject(arithmetic) else {
+        return Err(FeasibilityError::MalformedProposal {
+            rule: "region-arithmetic-subject",
+        });
+    };
+    let ResourceRequirements {
+        buffer_bindings: _,
+        threads_per_workgroup: _,
+        local_memory_bytes: _,
+        requires_device_memory: _,
+        index_arithmetic: _,
+        synchronization: _,
+        input_subnormals,
+        result_subnormals,
+        contraction,
+        reassociation,
+        permutation,
+        signed_zero,
+        nan_assumptions,
+        infinity_assumptions,
+    } = requirements;
+    let numerical = |dimension, behaviour| {
+        NumericalRequirement::new(
+            dimension,
+            subject.arithmetic(),
+            subject.resolved_type().clone(),
+            behaviour,
+        )
+    };
+    Ok(crate::target::honourability::CANONICAL_DIMENSIONS
+        .into_iter()
+        .filter_map(|dimension| {
+            let behaviour = match dimension {
+                NumericalDimension::InputSubnormals => {
+                    DimensionBehaviour::Subnormals(input_subnormals)
+                }
+                NumericalDimension::ResultSubnormals => {
+                    DimensionBehaviour::Subnormals(result_subnormals)
+                }
+                NumericalDimension::Contraction => DimensionBehaviour::Transform(contraction),
+                NumericalDimension::Reassociation => DimensionBehaviour::Transform(reassociation),
+                NumericalDimension::Permutation => DimensionBehaviour::Transform(permutation),
+                NumericalDimension::SignedZero => DimensionBehaviour::Transform(signed_zero),
+                NumericalDimension::NanAssumptions => {
+                    DimensionBehaviour::ExceptionalValue(nan_assumptions)
+                }
+                NumericalDimension::InfinityAssumptions => {
+                    DimensionBehaviour::ExceptionalValue(infinity_assumptions)
+                }
+                NumericalDimension::ReciprocalTransform
+                | NumericalDimension::ApproximateIntrinsics
+                | NumericalDimension::MaterializationRounding => return None,
+            };
+            Some(numerical(dimension, behaviour))
+        })
+        .collect())
 }
 
 /// Maps one region's derived index arithmetic onto its capability axis.
@@ -4165,6 +4214,249 @@ fn intrinsic<T>(rule: &'static str, region: RegionId) -> Result<T, PhysicalError
 #[cfg(test)]
 mod tests {
     use crate::region::SemanticMemberId;
+
+    /// Distinctive values, one per numerical field, so a dropped projection
+    /// cannot hide behind a neighbour that happens to share a default.
+    fn distinctive_resources() -> ResourceRequirements {
+        use tiler_ir::schedule::{
+            ExceptionalValueAssumption, FlushedZeroSign, IndexArithmetic, NumericalPermission,
+            SubnormalMode, ValueDomainProvenance,
+        };
+        ResourceRequirements {
+            buffer_bindings: 2,
+            threads_per_workgroup: 1,
+            local_memory_bytes: 0,
+            requires_device_memory: true,
+            index_arithmetic: IndexArithmetic::CompleteU64,
+            synchronization: None,
+            input_subnormals: SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::PreservesSign,
+            },
+            result_subnormals: SubnormalMode::Preserve,
+            contraction: NumericalPermission::Permitted,
+            reassociation: NumericalPermission::Forbidden,
+            permutation: NumericalPermission::Permitted,
+            signed_zero: NumericalPermission::Permitted,
+            nan_assumptions: ExceptionalValueAssumption::AssumeAbsent {
+                provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
+            },
+            infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+        }
+    }
+
+    fn strict_resources() -> ResourceRequirements {
+        let realization = crate::request::StrictF32NumericalContract::governed().realization();
+        ResourceRequirements {
+            buffer_bindings: 2,
+            threads_per_workgroup: 1,
+            local_memory_bytes: 0,
+            requires_device_memory: true,
+            index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
+            synchronization: None,
+            input_subnormals: realization.input_subnormals,
+            result_subnormals: realization.result_subnormals,
+            contraction: realization.contraction,
+            reassociation: realization.reassociation,
+            permutation: realization.permutation,
+            signed_zero: realization.signed_zero,
+            nan_assumptions: realization.nan_assumptions,
+            infinity_assumptions: realization.infinity_assumptions,
+        }
+    }
+
+    /// Whether [`ResourceRequirements`] currently states this governed
+    /// dimension. Exhaustive so a twelfth dimension is a build error here
+    /// rather than a projection that stays green after widening.
+    const fn carried_by_resource_requirements(dimension: NumericalDimension) -> bool {
+        match dimension {
+            NumericalDimension::InputSubnormals
+            | NumericalDimension::ResultSubnormals
+            | NumericalDimension::Contraction
+            | NumericalDimension::Reassociation
+            | NumericalDimension::Permutation
+            | NumericalDimension::SignedZero
+            | NumericalDimension::NanAssumptions
+            | NumericalDimension::InfinityAssumptions => true,
+            NumericalDimension::ReciprocalTransform
+            | NumericalDimension::ApproximateIntrinsics
+            | NumericalDimension::MaterializationRounding => false,
+        }
+    }
+
+    /// The region proposal projects every numerical field the resource record
+    /// states, in canonical order, with the field's own typed behaviour.
+    ///
+    /// The expected population is derived from [`NumericalDimension`] via
+    /// `variant_count` and an exhaustive carry match, not a hand-written 8.
+    /// Removing any one production arm fails the corresponding named assertion
+    /// below without this test changing.
+    #[test]
+    fn region_proposal_projects_every_realized_resource_requirement() {
+        use crate::policy::REALIZED_DIMENSIONS;
+        use crate::target::honourability::CANONICAL_DIMENSIONS;
+        use tiler_ir::numerics::NumericalDimension;
+        use tiler_ir::schedule::{
+            ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
+            ValueDomainProvenance,
+        };
+
+        assert_eq!(
+            core::mem::variant_count::<NumericalDimension>(),
+            CANONICAL_DIMENSIONS.len(),
+            "CANONICAL_DIMENSIONS must name every governed dimension",
+        );
+        let expected: Vec<NumericalDimension> = CANONICAL_DIMENSIONS
+            .into_iter()
+            .filter(|dimension| carried_by_resource_requirements(*dimension))
+            .collect();
+        assert_eq!(expected.as_slice(), REALIZED_DIMENSIONS.as_slice());
+
+        let resources = distinctive_resources();
+        let proposal = super::region_proposal(resources, ArithmeticType::F32, 1)
+            .expect("a distinctive region proposal is well formed");
+        let projected: Vec<_> = proposal
+            .numerical()
+            .iter()
+            .map(|requirement| (requirement.dimension(), requirement.behaviour()))
+            .collect();
+        assert_eq!(
+            projected
+                .iter()
+                .map(|(dimension, _)| *dimension)
+                .collect::<Vec<_>>(),
+            expected,
+        );
+        assert_eq!(
+            projected,
+            vec![
+                (
+                    NumericalDimension::InputSubnormals,
+                    DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
+                        zero_sign: FlushedZeroSign::PreservesSign,
+                    }),
+                ),
+                (
+                    NumericalDimension::ResultSubnormals,
+                    DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
+                ),
+                (
+                    NumericalDimension::Contraction,
+                    DimensionBehaviour::Transform(NumericalPermission::Permitted),
+                ),
+                (
+                    NumericalDimension::Reassociation,
+                    DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+                ),
+                (
+                    NumericalDimension::Permutation,
+                    DimensionBehaviour::Transform(NumericalPermission::Permitted),
+                ),
+                (
+                    NumericalDimension::SignedZero,
+                    DimensionBehaviour::Transform(NumericalPermission::Permitted),
+                ),
+                (
+                    NumericalDimension::NanAssumptions,
+                    DimensionBehaviour::ExceptionalValue(
+                        ExceptionalValueAssumption::AssumeAbsent {
+                            provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
+                        },
+                    ),
+                ),
+                (
+                    NumericalDimension::InfinityAssumptions,
+                    DimensionBehaviour::ExceptionalValue(
+                        ExceptionalValueAssumption::MakeNoAssumption,
+                    ),
+                ),
+            ],
+        );
+    }
+
+    /// Every realized dimension reaches target assessment on the governed
+    /// profile and is honoured by name.
+    #[test]
+    fn a_governed_region_assessment_honours_every_realized_dimension() {
+        use crate::policy::REALIZED_DIMENSIONS;
+        use crate::request::TargetProfile;
+        use crate::target::honourability::HonouredDimension;
+
+        let evidence = super::assess_resources(
+            strict_resources(),
+            ArithmeticType::F32,
+            1,
+            &TargetProfile::governed(),
+        )
+        .expect("the governed profile honours the strict region realization");
+        let honoured: Vec<_> = evidence
+            .honoured()
+            .iter()
+            .map(HonouredDimension::dimension)
+            .collect();
+        assert_eq!(honoured, REALIZED_DIMENSIONS);
+    }
+
+    /// A profile silent about one realized dimension is `Unknown` for that
+    /// dimension, not a fallback and not a derived `NotRequired`.
+    fn unknown_when_profile_is_silent_about(dimension: NumericalDimension) {
+        use crate::request::TargetProfile;
+        use crate::target::feasibility::{
+            AvailabilityPhase, CheckedTargetProfile, FeasibilityOutcome,
+        };
+        use crate::target::honourability::UndeclaredDimension;
+
+        let governed = TargetProfile::governed();
+        let checked = governed.checked();
+        let honourability: Vec<_> = checked
+            .honourability()
+            .iter()
+            .filter(|fact| fact.dimension() != dimension)
+            .cloned()
+            .collect();
+        let silent = CheckedTargetProfile::new_complete(
+            checked.identity().clone(),
+            checked.facts().to_vec(),
+            checked.queries().to_vec(),
+            honourability,
+            checked.synchronization().to_vec(),
+        )
+        .expect("dropping one honourability row keeps the profile well formed");
+        let proposal = super::region_proposal(strict_resources(), ArithmeticType::F32, 1)
+            .expect("the strict region proposal is well formed");
+        let FeasibilityOutcome::Unknown(unknown) =
+            silent.assess(&proposal, AvailabilityPhase::CompileProfile)
+        else {
+            panic!("{dimension} silence must stay Unknown, not proven, deferred, or refused");
+        };
+        assert_eq!(
+            unknown
+                .dimensions()
+                .iter()
+                .map(UndeclaredDimension::dimension)
+                .collect::<Vec<_>>(),
+            vec![dimension],
+        );
+    }
+
+    #[test]
+    fn a_profile_silent_about_permutation_is_unknown() {
+        unknown_when_profile_is_silent_about(NumericalDimension::Permutation);
+    }
+
+    #[test]
+    fn a_profile_silent_about_signed_zero_is_unknown() {
+        unknown_when_profile_is_silent_about(NumericalDimension::SignedZero);
+    }
+
+    #[test]
+    fn a_profile_silent_about_nan_assumptions_is_unknown() {
+        unknown_when_profile_is_silent_about(NumericalDimension::NanAssumptions);
+    }
+
+    #[test]
+    fn a_profile_silent_about_infinity_assumptions_is_unknown() {
+        unknown_when_profile_is_silent_about(NumericalDimension::InfinityAssumptions);
+    }
 
     /// A fold's contributor tensor is its recognized ordinal, not the first.
     ///

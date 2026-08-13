@@ -2963,14 +2963,19 @@ fn every_wired_authority_emits_its_typed_explain_records() {
             ("target.grid-axis", 3),
             ("target.index-arithmetic-u64", 3),
             ("target.local-memory-bytes", 3),
-            // The four per-dimension honourability records replace the one
-            // `target.strict-f32` predicate, which is the whole point of
-            // retiring it: three regions each now report which dimension was
-            // assessed and by what means, where one boolean reported neither.
+            // One honourability record per realized dimension per region:
+            // three regions each report which behaviour was assessed and by
+            // what means. Reciprocal transform, approximate intrinsics, and
+            // materialization rounding stay off this census until a region
+            // can record them.
             ("target.numerics.contraction", 3),
+            ("target.numerics.infinity-assumptions", 3),
             ("target.numerics.input-subnormals", 3),
+            ("target.numerics.nan-assumptions", 3),
+            ("target.numerics.permutation", 3),
             ("target.numerics.reassociation", 3),
             ("target.numerics.result-subnormals", 3),
+            ("target.numerics.signed-zero", 3),
             ("target.threads-per-workgroup", 3),
             // Two retained plans, two records each: exact terms share one
             // checked-invariant assessment, while the memory-traffic bound
@@ -3202,9 +3207,13 @@ fn assert_honoured_dimensions_are_exhaustive(trace: &crate::explain::VerifiedExp
         honoured,
         BTreeMap::from([
             (("numerics.contraction", "forbidden"), 3),
+            (("numerics.infinity-assumptions", "make-no-assumption"), 3),
             (("numerics.input-subnormals", "preserve"), 3),
+            (("numerics.nan-assumptions", "make-no-assumption"), 3),
+            (("numerics.permutation", "forbidden"), 3),
             (("numerics.reassociation", "forbidden"), 3),
             (("numerics.result-subnormals", "preserve"), 3),
+            (("numerics.signed-zero", "forbidden"), 3),
         ])
     );
     assert!(trace.render().contains(

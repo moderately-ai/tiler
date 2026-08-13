@@ -1622,6 +1622,11 @@ impl FeasibilityProposal {
     pub(crate) const fn candidate(&self) -> &'static str {
         self.candidate
     }
+
+    /// The numerical requirements, in canonical dimension order.
+    pub(crate) fn numerical(&self) -> &[NumericalRequirement] {
+        &self.numerical
+    }
 }
 
 /// A predicate resolved against an available fact, retaining both quantities.
