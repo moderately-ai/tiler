@@ -38,16 +38,17 @@
 //! - emission, below, turns that into tokens, keeping each operand's own span on
 //!   the identifier that names the Rust value it will be supplied from.
 //!
-//! The remaining eight modules own the facts an expansion states or resolves
+//! The remaining nine modules own the facts an expansion states or resolves
 //! around that pipeline. `binding` owns what `sym n;` means, `delivery` owns the
 //! artifact-family policy an expansion states, `family_cfg` owns the versioned
 //! map from a family to the consumer `#[cfg]` predicate that selects it,
 //! `numerics` owns the numerical contract the expansion states, `cache_root`
 //! owns where an expansion would look for an expansion cache, `preflight` owns
 //! whether that root can do what the cache's publication protocol needs,
-//! `eviction` owns when and under what bound that cache is trimmed, and `aot`
-//! owns the expansion-time compile flow that runs between `region` and
-//! `delivery`.
+//! `eviction` owns when and under what bound that cache is trimmed, `aot` owns
+//! the expansion-time compile flow that runs between `region` and `delivery`,
+//! and `retention` owns the accepted caller-visible read-back of a resolved
+//! entry's retained toolchain output.
 //!
 //! # What an invocation evaluates to
 //!
