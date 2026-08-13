@@ -1,7 +1,7 @@
 ---
 id: admit-source-bearing-slice-selection-semantics
 title: Admit source-bearing Slice selection semantics
-status: todo
+status: in-progress
 priority: p1
 dependencies: [decide-the-source-bearing-slice-offset-boundary]
 related: [admit-a-position-selecting-slice-for-the-rotary-table, evaluate-retained-shape-relations-before-routing-commit]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, slice, symbolic-extents, semantics, reference]
+claimed_from: todo
+assignee: worker-admit-source-bearing-slice
+lease_expires_at: 1786633073
 ---
 # Admit source-bearing Slice selection semantics
 
