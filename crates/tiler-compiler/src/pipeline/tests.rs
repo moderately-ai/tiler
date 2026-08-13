@@ -2230,7 +2230,7 @@ fn product_is_deterministic_and_preserves_the_materialized_boundary() {
     }
     let target = &first.targets[0];
     let rendered = target.explain.render();
-    assert!(rendered.starts_with("tiler-explain-v7 request="));
+    assert!(rendered.starts_with("tiler-explain-v8 request="));
     assert!(rendered.contains("feasibility:threads-per-workgroup:deferred"));
     assert!(rendered.contains("feasibility:buffer-bindings:admitted"));
     assert!(rendered.contains("event=selection:tiler.selection.structural-pareto.v1:selected"));
@@ -3162,7 +3162,7 @@ fn every_wired_authority_emits_its_typed_explain_records() {
         .find(|record| record.rule().key().as_str() == "fusion.legality.v1")
         .expect("a fusion-legality record");
     assert_eq!(legality.event().disposition(), ExplainDisposition::Admitted);
-    assert!(trace.render().starts_with("tiler-explain-v7 request="));
+    assert!(trace.render().starts_with("tiler-explain-v8 request="));
 }
 
 /// Asserts the honourability half of the end-to-end explain conformance.
@@ -3392,7 +3392,7 @@ fn normalization_converges_duplicated_and_shared_constants_on_one_portfolio() {
     let rendered = from_duplicated.targets[0].compilation_explain.render();
     let request_headers = rendered
         .lines()
-        .filter(|line| line.starts_with("tiler-explain-v7 request="))
+        .filter(|line| line.starts_with("tiler-explain-v8 request="))
         .collect::<Vec<_>>();
     assert_eq!(request_headers.len(), 2);
     assert_ne!(
@@ -5692,7 +5692,7 @@ fn mixed_frontier_records_exact_opaque_call_rejection_detail() {
         "a local rejection is never cost evidence"
     );
     let rendered = trace.render();
-    assert!(rendered.starts_with("tiler-explain-v7 "));
+    assert!(rendered.starts_with("tiler-explain-v8 "));
     assert!(rendered.contains("opaque-call:call-owner/mystery@3[input=input#0,output=output]"));
     assert!(rendered.contains("provider:tiler.test.physical::opaque@7"));
     assert!(rendered.contains("admitted-count:count=1"));
