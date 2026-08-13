@@ -10,8 +10,11 @@
 //! fixture that keeps passing.
 
 use tiler_cache::expansion::{DebugRetention, MAX_RETAINED_RUN_BYTES};
+use tiler_metal_aot::family::ArtifactFamilySelection;
 
 use super::{SpokenRetention, reported_to, spoken};
+use crate::aot::AotRefusal;
+use crate::delivery::{DeliveryPlan, FamilyDelivery, NamedProfile, PlanRefusal};
 
 /// The two runs a silent Metal compilation retains, exactly as
 /// `crates/tiler-build/src/metal_cache.rs` states them.
@@ -291,6 +294,50 @@ fn a_full_but_complete_run_is_not_reported_as_truncated() {
             .expect("the message is text")
             .contains("truncated"),
         "everything the producer had was retained, so nothing was cut",
+    );
+}
+
+/// Reporting sits before later frontend checks, so a later refusal can still
+/// follow a written note.
+///
+/// `deliver` calls `report_retained_output` after cache/artifact acceptance and
+/// then `DeliveryPlan::new`. This sequences those same two steps: a speaking
+/// retention writes the AOT-phase note, and the next constructor `deliver` uses
+/// can still refuse. A preamble that claimed the expansion had already succeeded
+/// would be false of that order.
+#[test]
+fn a_later_frontend_refusal_can_follow_a_written_retention_note() {
+    let retention = DebugRetention::none()
+        .retaining(
+            "tiler.metal.0.metal",
+            b"program_source:5:10: warning: unused variable 'x'",
+        )
+        .expect("retainable");
+
+    let mut written = Vec::new();
+    assert!(reported_to(&retention, &mut written).is_some());
+    let message = String::from_utf8(written).expect("the note is text");
+    assert!(
+        message.contains("later frontend emission can still refuse"),
+        "the note must name the phase it completed: {message}",
+    );
+    assert!(
+        !message.contains("The expansion succeeded"),
+        "the note must not claim a later phase already finished: {message}",
+    );
+
+    let selection = ArtifactFamilySelection::new(NamedProfile::MacOs.policy())
+        .expect("the accepted macOS profile is a valid selection");
+    let refusal = DeliveryPlan::new(selection, Vec::new(), vec![FamilyDelivery::Payload])
+        .expect_err(
+            "a payload family with no envelope is the later check deliver runs after the note",
+        );
+    assert_eq!(refusal, PlanRefusal::ArtifactMissing { built: 1 });
+
+    let rendered = AotRefusal::MalformedPlan(refusal).to_string();
+    assert!(
+        rendered.contains("cannot deliver what it compiled"),
+        "the later refusal must remain a frontend defect after the note: {rendered}",
     );
 }
 

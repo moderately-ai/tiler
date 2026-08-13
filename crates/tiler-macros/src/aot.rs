@@ -72,7 +72,9 @@
 //!   on a publication, because the retention is stored precisely so a hit can
 //!   serve it; it is never fatal, because a retention exists only where the
 //!   compilation succeeded. That module owns the predicate, the message, and
-//!   why the note is neither a `compile_error!` nor a spanned diagnostic.
+//!   why the note is neither a `compile_error!` nor a spanned diagnostic. Tom
+//!   accepted that caller-visible note on 2026-08-11 as ungated, nonfatal, and
+//!   byte-faithful; it names only the completed AOT/cache phase.
 //! - **A rooted cache is probed once per process, and the probe refuses
 //!   nothing.** [`open_cache`] hands the root it just opened to
 //!   [`crate::preflight`], which reports an unsuitable filesystem on standard
@@ -727,9 +729,9 @@ pub(crate) fn deliver(
     // A hit serves the retention the publishing build stored — `tiler_build`'s
     // `a_succeeding_stages_output_returns_from_a_validated_cache_hit` pins that
     // it does so without re-entering the compiler — so a developer whose cache
-    // is warm still sees what the tools said about the bytes being embedded,
-    // rather than a diagnostic that existed once on whichever machine published
-    // first.
+    // is warm still sees what the tools said about the artifact this expansion
+    // resolved, rather than a diagnostic that existed once on whichever machine
+    // published first.
     report_retained_output(match accepted.resolution() {
         Resolution::Hit { entry, .. } | Resolution::Published { entry, .. } => {
             entry.retained_debug()

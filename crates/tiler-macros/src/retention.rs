@@ -18,8 +18,11 @@
 //! compilation succeeded — a failing stage takes [`crate::aot::retained`]'s
 //! family-scoped `compile_error!` path instead and never reaches here. So the
 //! only text this module can ever hold is text from a compilation that produced a
-//! validated, embedded artifact, and a fatal diagnostic over it would fail a build
-//! that is correct.
+//! validated artifact the cache accepted. Reporting sits after that acceptance
+//! and before payload-cardinality checks, delivery-plan construction, token
+//! emission, and `guarded_emission`, so a later frontend refusal can still
+//! prevent embedding. A fatal diagnostic over the retained text would fail a
+//! build whose artifact is already correct.
 //!
 //! That is the same disposition [`crate::preflight`] and [`crate::eviction`]
 //! reached for their own non-fatal facts, and the reasons compose rather than
@@ -81,6 +84,15 @@
 //!
 //! [`spoken`] therefore selects on [`RetainedText::is_empty`], run by run, and
 //! keeps only the runs that have something to show.
+//!
+//! # Accepted caller-visible boundary
+//!
+//! Tom accepted this note on 2026-08-11 as an ungated, nonfatal, byte-faithful
+//! read-back. It is `pub(crate)` and adds no public item. The tool's own bytes
+//! are written exactly through [`SpokenRetention::write_to`]; provenance,
+//! invalid-UTF-8 status, and truncation totals sit outside that run.
+//! [`RetainedText::Display`] remains the cache's public lossy view and is not
+//! this path. The note names only the completed AOT/cache phase.
 
 use std::io;
 
