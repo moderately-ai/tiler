@@ -128,8 +128,8 @@ pub use operation::{
     SCALAR_TYPE_FACT_SIGN_BITS, SCALAR_TYPE_FACT_TRAILING_SIGNIFICAND_BITS,
     SCALAR_TYPE_FACT_VALUE_CARDINALITY, SCALAR_TYPE_FACT_WIDTH_BITS,
     SERIAL_SUM_F32_FACT_ACCUMULATION, SERIAL_SUM_F32_FACT_CANONICAL_NAN_BITS,
-    SERIAL_SUM_F32_FACT_FOLD_ORDER, ValueFact, ValueRef, add_f32_op, constant_f32_op,
-    multiply_f32_op, strict_serial_sum_f32_op,
+    SERIAL_SUM_F32_FACT_FOLD_ORDER, SymbolicOperandUnsupported, ValueFact, ValueRef, add_f32_op,
+    constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
 };
 pub use precondition::{
     MAX_OPERATION_SEMANTIC_PRECONDITIONS, MAX_SEMANTIC_PRECONDITION_OBLIGATION_IDENTITY_BYTES,

@@ -1,0 +1,16 @@
+error[E0624]: method `infer_operation_with_extent_sources` is private
+  --> tests/semantic-inference/fail/infer_with_extent_sources.rs:12:22
+   |
+12 |       let _ = registry.infer_operation_with_extent_sources(
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ private method
+   |
+  ::: src/semantic/registry.rs
+   |
+   | /     pub(crate) fn infer_operation_with_extent_sources(
+   | |         &self,
+   | |         key: &OpKey,
+   | |         operands: &[ValueFact],
+   | |         attributes: &OperationAttributes,
+   | |         extent_sources: Option<&ExtentSources>,
+   | |     ) -> Result<Vec<ValueFact>, RegistryError> {
+   | |______________________________________________- private method defined here

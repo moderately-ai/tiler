@@ -7,7 +7,7 @@ dependencies: [resolve-semantic-shape-inference-over-symbolic-extents, seal-and-
 related: [resolve-semantic-shape-inference-over-symbolic-extents]
 scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]
-paths: []
+paths: [docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md]
 tags: [implementation, shapes, semantic-graph, extensions, correctness, public-boundary]
 claimed_from: todo
 assignee: worker-narrow-symbolic
@@ -18,17 +18,19 @@ lease_expires_at: 1786587491
 
 The first symbolic-inference release is intentionally narrow: built-in governed elementwise operations may use the program's shape environment, while public external providers remain static-only and fail closed. No provider can mint a host-authoritative environment refusal, and a literal-only operation reports its own capability limit rather than blaming the environment.
 
-## Source-first Fact audit — 2026-08-11, exact base `2f244dc7ff3a759d9688a482c27b48da70f37227`
+## Source-first Fact audit — 2026-08-12, exact base `611fefee15d8878b9458bd860d09490ec736a17f`
 
-**False — the provider cannot stamp host authority.** `OperationInferenceError::from_extent_source` is public and accepts any publicly constructible `ExtentSourceError`; `extent_aware_registry_error` trusts that payload and upgrades it to `BuildError::ExtentSource` without re-derivation. This contradicts `docs/operation-extensions.md`, anchor `A seam is a propose-then-re-verify boundary`, whose admission test says a provider cannot stamp its own provenance and the host re-derives every asserted fact.
+The 2026-08-11 Facts were written against `2f244dc7`. `seal-and-validate-sourced-shapes-at-semantic-inference-boundaries` and `retain-one-derived-proof-summary` have landed since. Each Fact is re-read at this base.
 
-**False — public no-environment inference refuses every symbolic operand.** `FrozenSemanticRegistry::infer_operation` only forwards `None`. The standard scalar-broadcast path may return the other operand before asking the environment, and an external provider may structurally accept or echo a symbolic value. The public documentation at anchor `Every symbolic operand is refused` overstates behavior.
+**Verified (still false) — a provider can stamp a host environment verdict.** `OperationInferenceError::from_extent_source` is still `pub` and still accepts any publicly constructible `ExtentSourceError`. `extent_aware_registry_error` still reads `rejection.source_error().extent_source()` and returns `BuildError::ExtentSource` without re-deriving the claimed undeclared, too-late, or not-proved fact against the builder's environment. `docs/operation-extensions.md` still states the admission test at anchor `A seam is a propose-then-re-verify boundary`: a provider cannot stamp its own provenance and the host re-derives every asserted fact.
 
-**Imprecise — `SymbolicExtentUnsupported` is not an environment failure.** `ExtentSourceError` says every variant is a refusal by the source environment, while `SymbolicExtentUnsupported` says the environment was not asked and nothing about it failed. `BuildError::ExtentSource` then tells callers to declare or constrain a symbol, which cannot make a literal-only operation family support symbolic shapes. The failure belongs to semantic operation capability.
+**Imprecise — public no-environment inference now refuses symbols, but as the wrong class, and the broader public surface is still open.** `FrozenSemanticRegistry::infer_operation` still only forwards `None`. After seal-and-validate, `admit_value_fact_extents` runs before the callback and `SourcedShape::admit_against(None)` reports every symbol as `UndeclaredSymbol`, so the public no-environment entry no longer reaches `elementwise_binary_shape`'s rank-zero shortcut or an echo callback. That refusal is still an environment verdict, not a capability limit, and the documentation at anchor `Every symbolic operand is refused` still describes environment absence rather than a host-owned family limit. `infer_operation_with_extent_sources`, `OperationInferenceRequest::extent_sources`, and `ValueFact::new(..., impl Into<SourcedShape>)` remain public. `ExtentSources::new` is crate-private, but a caller that already holds a program's `ExtentSources` can still offer sourced facts to a public inferencer.
 
-**Imprecise — two public growth vocabularies omit the accepted compatibility posture.** `SourcedExtent` anticipates a third source kind and `ExtentSourceError` has already grown, yet neither is `#[non_exhaustive]`. The complete workspace census finds no out-of-crate total recognizer that requires exhaustiveness, so ADR 0074 convention 5a applies.
+**Verified (still imprecise) — `SymbolicExtentUnsupported` is not an environment failure.** `ExtentSourceError` still says every variant is a refusal by the source environment. `SymbolicExtentUnsupported` still says the environment was not asked. `BuildError::ExtentSource` still tells callers to declare or constrain a symbol. The softmax registry fixture now observes `UndeclaredSymbol` on the no-environment path; the program-construction neighbour still asserts `BuildError::ExtentSource(ExtentSourceError::SymbolicExtentUnsupported { .. })`.
 
-**Verified — the built-in elementwise rule itself is correct.** F32 and BF16 share `elementwise_binary_shape`; symbol-involving axis equality is admitted only through `ExtentSources::proves_equal`, rank and literal disagreement remain the family diagnostic, scalar broadcast is explicit, and result spelling retains the left operand. This ticket narrows the surrounding participation boundary without replacing that rule.
+**Verified (still imprecise) — `SourcedExtent` and `ExtentSourceError` still omit `#[non_exhaustive]`.** `SourcedExtent` still documents a third source kind. Neither type carries the attribute. In-crate matches, including `SourcedExtent::tag` and the identity injectivity table, stay exhaustive. No out-of-crate total recognizer of either vocabulary was found; construction of known variants in other workspace crates does not require exhaustiveness. ADR 0074 convention 5a still applies.
+
+**Verified — the built-in elementwise rule itself is still correct, and proof queries no longer re-solve.** F32 and BF16 still share `elementwise_binary_shape`. Symbol-involving axis equality is still admitted only through `ExtentSources::proves_equal`. Rank and literal disagreement remain the family diagnostic. Scalar broadcast is still decided on rank. The result still retains the left operand. After `retain-one-derived-proof-summary`, `ShapeEnv::proves_equal` reads the retained summary (`summary.same_class`) and does not re-solve the constraint system; `ExtentSources::proves_equal` still delegates there. This ticket still narrows the participation boundary without replacing that rule.
 
 ## Work
 
@@ -61,6 +63,20 @@ The first symbolic-inference release is intentionally narrow: built-in governed 
 This deliberately revises the broader public surface proposed by `resolve-semantic-shape-inference-over-symbolic-extents`. Tom approved the narrow direction on 2026-08-11: built-in environment-aware elementwise behavior stays; the premature external symbolic-provider surface retreats until an explicit required policy and host proof protocol exist. The exact revised signatures remain a labelled draft until reviewed in the implementation diff.
 
 **Final architecture accepted 2026-08-12.** Tom accepted the required two-mode internal policy, public literal-only construction, governed crate-private construction, fixed identity tag, host-owned semantic refusal, and no-default/no-fallback posture in the ChatGPT coordination thread. Implementation review still verifies the exact Rust spellings and exclusions, but does not reopen these semantics without contradictory source evidence.
+
+## Implementation record — 2026-08-12
+
+Exact Rust spellings remain a labelled draft.
+
+**Identity.** `tiler.semantic-registry.v7` → `v8`. `tiler.semantic-definition-projection.v5` → `v6`. Participation tag is `0x01` literal-only, `0x02` governed. Standard provider revision stays 7. Live pins recomputed on this branch:
+
+- explain request qualifier `4f6429492ac63d04` → `6e91a843fd9e69b8`
+- Metal artifact `39e765637a7e014adac2b8a30788798758ca46584b558732c2bda41b7639ddda` → `9b739d215336de436ef334ded614ef4b43db9edfec170ee5032fee809975b3b7`
+- Metal cache `7e00d9fa0ce90749e6f7d3d42e0f2aaabe5670e0359a0c20d1580a09bb967130` → `1a04d873fe54c3785d1770a7ee4537a607c2acc9a5ae67f328e8f49de53621e4`
+- Metal fixed content `65_313` → `65_327` (+14: one participation byte per encoded operation definition, folded through the nested semantic subjects)
+- slice-law semantic snapshot digest `72a5c44e73a9fb76…` → `15a35d501845fb22…`; law-registry digest `ddfb4dc459d7ca53…` → `7a7d1933feffa058…`
+
+**Perturbations, assertions unchanged.** Dropping operand preflight: `an_echo_provider_does_not_receive_a_symbolic_operand_on_the_public_path` panics `assertion failed: !called.load(Ordering::SeqCst)`; `public_inference_refuses_a_scalar_plus_symbol_before_callback` panics `left: 0` / `right: 1`. Restoring builder promotion of a provider-stamped `extent_source`: `a_provider_cannot_forge_an_undeclared_extent_error_into_a_host_verdict` panics `a stamped undeclared symbol is not a host environment verdict: sourced-extent.undeclared-symbol: forge::ghost is not declared by this program's shape environment`; the not-equal neighbour names `program/0::n` and `program/0::m`. Mapping the capability refusal through `SemanticRegistry`: `a_literal_only_family_declines_a_symbolic_operand_by_name` panics `a literal-only family reports a capability refusal, not semantic.symbolic-operand-unsupported: …`. Shrinking the `ExtentSourceError` census to three variants: `expected an array with a size of 4, found one with a size of 3`. Shrinking the `SourcedExtent` tag table to one inhabitant: `expected an array with a size of 2, found one with a size of 1`.
 
 ## Closes when
 

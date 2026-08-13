@@ -3,6 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use super::interface::{InputKey, InterfaceKind, OutputKey};
+use super::operation::SymbolicOperandUnsupported;
 use super::registry::{RegistryError, RegistryLookupError};
 use super::types::{ResolvedValueType, TypeIdentityError};
 use crate::shape::{ExtentSourceError, Shape, ShapeError, ShapeExpectation};
@@ -206,16 +207,23 @@ pub enum BuildError {
     /// [`EXTENT_PHASE_CEILING`](crate::shape::EXTENT_PHASE_CEILING) arrives too
     /// late for a shape that must be evaluable before any device work begins.
     ///
-    /// It is also how an operation refuses over extents, and that is deliberate
-    /// rather than a reuse of convenience. A rule that requires two operand
-    /// extents to be one extent, or that decides shapes over literals only, is
-    /// asking this environment a question and reporting the environment's
-    /// answer; a caller acts on it by declaring or constraining a symbol. That
-    /// is a different action from the one
-    /// [`Self::SemanticRegistry`] calls for, which is where a *structural*
-    /// shape disagreement — two different sizes, or two different ranks —
-    /// arrives, and the two stay separable for exactly that reason.
+    /// A rule that requires two operand extents to be one extent is asking this
+    /// environment a question and reporting the environment's answer; a caller
+    /// acts on it by declaring or constraining a symbol. That is a different
+    /// action from [`Self::SymbolicOperandUnsupported`], which is a family
+    /// capability limit, and from [`Self::SemanticRegistry`], which is where a
+    /// *structural* shape disagreement — two different sizes, or two different
+    /// ranks — arrives.
+    ///
+    /// The builder derives this variant from its own environment validation or
+    /// comparison. A provider diagnostic never becomes this verdict.
     ExtentSource(ExtentSourceError),
+    /// A symbolic operand reached a family that decides shapes over literals only.
+    ///
+    /// Host-owned: the environment was not asked and nothing about it failed.
+    /// Declaring or constraining the symbol cannot make a literal-only family
+    /// support symbolic shapes.
+    SymbolicOperandUnsupported(Box<SymbolicOperandUnsupported>),
     /// The shape vocabulary cannot represent the normalized sourced boundary.
     ShapeVocabulary(ShapeError),
 }
@@ -272,6 +280,7 @@ impl fmt::Display for BuildError {
             ),
             Self::TooManyEntities { entity } => write!(formatter, "too many {entity} entities"),
             Self::ExtentSource(error) => error.fmt(formatter),
+            Self::SymbolicOperandUnsupported(error) => error.fmt(formatter),
             Self::ShapeVocabulary(error) => error.fmt(formatter),
         }
     }
@@ -287,6 +296,7 @@ impl Error for BuildError {
             Self::Reify(error) => Some(error),
             Self::ShapeRefinement(error) => Some(error),
             Self::ExtentSource(error) => Some(error),
+            Self::SymbolicOperandUnsupported(error) => Some(error),
             Self::ShapeVocabulary(error) => Some(error),
             _ => None,
         }

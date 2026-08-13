@@ -5,9 +5,7 @@ use crate::semantic::{
     SILU_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS, SILU_F32_EXPONENTIAL_ULP_TOLERANCE, add_f32_op,
     constant_f32_op, rms_norm_f32_op, silu_f32_op, strict_serial_sum_f32_op,
 };
-use crate::shape::{
-    Extent, ExtentSourceError, Shape, ShapeSymbol, SourcedExtent, SourcedShape, SymbolScope,
-};
+use crate::shape::{Extent, Shape, ShapeSymbol, SourcedExtent, SourcedShape, SymbolScope};
 
 fn registry() -> FrozenSemanticRegistry {
     FrozenSemanticRegistry::standard().expect("the standard registry builds")
@@ -26,7 +24,7 @@ fn f32_operand(dims: &[u64]) -> ValueFact {
 
 /// A binary32 operand whose boundary may name a declared symbol.
 fn symbolic_f32_operand(extents: &[SourcedExtent]) -> ValueFact {
-    ValueFact::new(
+    ValueFact::from_sourced(
         F32::resolved_type(),
         SourcedShape::sourced(extents.to_vec()).expect("a test boundary is bounded"),
     )
@@ -500,20 +498,11 @@ fn the_structural_rules_refuse_by_name() {
 
 /// A symbolic reduced extent is refused by name, and every literal one infers.
 ///
-/// **This replaces a test whose premise the tree has since falsified.** It used
-/// to assert that no symbolic refusal *could* fire, on the ground that a
-/// [`ValueFact`] carried a fixed `Shape` and so had nothing symbolic to refuse.
-/// A fact now carries a [`SourcedShape`](crate::shape::SourcedShape), so the
-/// case is reachable. This direct registry fixture supplies no shape
-/// environment, so the host refuses the symbol as undeclared before asking the
-/// family. Program construction with an environment separately proves that this
-/// family decides shapes over literal extents only and reports
-/// `SymbolicExtentUnsupported` there.
-///
-/// The refusal is a *typed extent* failure rather than a family shape
-/// diagnostic, which is the discrimination that matters: the operand is not the
-/// wrong size, it names a source this direct registry call has no authority to
-/// interpret.
+/// The public registry path is mechanically static-only. A sourced operand is
+/// refused as a host-owned capability limit before the family runs, so the
+/// refusal names the operation and the symbol rather than blaming the
+/// environment. Program construction with an environment separately proves the
+/// same capability refusal for this literal-only family.
 #[test]
 fn a_symbolic_reduced_extent_is_refused_and_every_literal_one_infers() {
     // The reduced extent this workload grows is exercised at the static values a
@@ -541,12 +530,11 @@ fn a_symbolic_reduced_extent_is_refused_and_every_literal_one_infers() {
         SourcedExtent::Symbol(symbol.clone()),
     ]);
     let error = infer(&[symbolic], &attributes(1)).expect_err("a symbolic extent is refused");
-    let RegistryError::RejectedOperationApplication(rejection) = error else {
-        panic!("a softmax refusal is a provider-attributed rejection");
+    let RegistryError::SymbolicOperandUnsupported(refusal) = error else {
+        panic!("a softmax symbolic refusal is a capability limit, not {error}");
     };
-    assert_eq!(
-        rejection.source_error().extent_source(),
-        Some(&ExtentSourceError::UndeclaredSymbol { symbol }),
-        "the refusal names the symbol this call supplied no environment for",
-    );
+    assert_eq!(refusal.symbol(), &symbol);
+    assert_eq!(refusal.operand(), 0);
+    assert_eq!(refusal.axis(), Axis::new(1));
+    assert_eq!(refusal.key(), &softmax_f32_op());
 }

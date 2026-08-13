@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::identity::push_len;
-use crate::shape::{ExtentSourceError, ExtentSources, Shape, SourcedShape};
+use crate::shape::{Axis, ExtentSourceError, ExtentSources, Shape, ShapeSymbol, SourcedShape};
 
 use super::handles::{GraphId, OperationId, OperationIndex, ValueId, ValueIndex};
 use super::interface::InputIndex;
@@ -12,7 +12,7 @@ use super::precondition::{
     SemanticPreconditionData, SemanticPreconditionDeclarations, SemanticPreconditionRef,
 };
 use super::program::ProgramData;
-use super::registry::NormativeDefinitionRef;
+use super::registry::{NormativeDefinitionRef, ProviderIdentity};
 use super::types::{
     AttributeFieldId, CanonicalField, CanonicalValue, ResolvedValueType, TypeIdentityError, TypeKey,
 };
@@ -990,6 +990,111 @@ pub enum OperationEffect {
     Pure,
 }
 
+/// Required shape-inference participation for one operation definition.
+///
+/// Every definition carries exactly one of these. There is no default, no
+/// optional policy, and no fallback between modes. Public construction is
+/// always [`Self::LiteralOnly`]. Governed environment-aware construction is
+/// crate-private until a separately accepted host-proof protocol exists.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) enum ShapeInferenceParticipation {
+    /// The family decides shapes over literal extents only.
+    LiteralOnly,
+    /// The family may consult the program's exact shape environment.
+    GovernedEnvironmentAware,
+}
+
+impl ShapeInferenceParticipation {
+    /// Identity tag. Written by a match so adding a mode is a build error at
+    /// every encoder rather than a silent re-encoding (ADR 0074 convention 3).
+    pub(crate) const fn tag(self) -> u8 {
+        match self {
+            Self::LiteralOnly => 0x01,
+            Self::GovernedEnvironmentAware => 0x02,
+        }
+    }
+}
+
+/// Host-owned refusal: this operation family does not infer over a symbolic extent.
+///
+/// Distinct from every [`ExtentSourceError`]: the environment was not asked and
+/// nothing about it failed. The family has no answer for a boundary whose
+/// extent is bound later. A caller remediates by supplying a literal shape or
+/// by using a governed family that has been taught the question, not by
+/// declaring or constraining a symbol.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SymbolicOperandUnsupported {
+    key: OpKey,
+    provider: ProviderIdentity,
+    operand: u32,
+    axis: Axis,
+    symbol: ShapeSymbol,
+}
+
+impl SymbolicOperandUnsupported {
+    pub(super) fn new(
+        key: OpKey,
+        provider: ProviderIdentity,
+        operand: u32,
+        axis: Axis,
+        symbol: ShapeSymbol,
+    ) -> Self {
+        Self {
+            key,
+            provider,
+            operand,
+            axis,
+            symbol,
+        }
+    }
+
+    /// Returns the operation family that cannot infer over the symbol.
+    #[must_use]
+    pub const fn key(&self) -> &OpKey {
+        &self.key
+    }
+
+    /// Returns the provider that admitted the family.
+    #[must_use]
+    pub const fn provider(&self) -> &ProviderIdentity {
+        &self.provider
+    }
+
+    /// Returns the zero-based operand that named the symbol.
+    #[must_use]
+    pub const fn operand(&self) -> u32 {
+        self.operand
+    }
+
+    /// Returns the zero-based axis that named the symbol.
+    #[must_use]
+    pub const fn axis(&self) -> Axis {
+        self.axis
+    }
+
+    /// Returns the symbol the family cannot resolve.
+    #[must_use]
+    pub const fn symbol(&self) -> &ShapeSymbol {
+        &self.symbol
+    }
+}
+
+impl fmt::Display for SymbolicOperandUnsupported {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "semantic.symbolic-operand-unsupported: {} admitted by {} decides shapes over literal extents only, and operand {} axis {} names {}",
+            self.key,
+            self.provider,
+            self.operand,
+            self.axis.get(),
+            self.symbol
+        )
+    }
+}
+
+impl Error for SymbolicOperandUnsupported {}
+
 /// Complete type and shape of one operand or inferred result.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ValueFact {
@@ -998,16 +1103,27 @@ pub struct ValueFact {
 }
 
 impl ValueFact {
-    /// Creates one complete semantic value fact.
+    /// Creates one complete semantic value fact from a static shape.
     ///
-    /// Accepts a [`Shape`] as readily as a [`SourcedShape`], so a rule that only
-    /// ever produces literal extents states its result exactly as it did before
-    /// symbolic operands existed and acquires no case it does not have.
+    /// External providers construct only this form. A sourced result is
+    /// crate-private so a public inferencer cannot mint a symbolic boundary.
     #[must_use]
-    pub fn new(resolved_type: ResolvedValueType, shape: impl Into<SourcedShape>) -> Self {
+    pub fn new(resolved_type: ResolvedValueType, shape: Shape) -> Self {
         Self {
             resolved_type,
-            shape: shape.into(),
+            shape: SourcedShape::from(shape),
+        }
+    }
+
+    /// Creates one value fact that may name a declared symbol.
+    ///
+    /// Crate-private: governed semantic inference is the only author of a
+    /// sourced result. The public constructor stays a [`Shape`].
+    #[must_use]
+    pub(crate) fn from_sourced(resolved_type: ResolvedValueType, shape: SourcedShape) -> Self {
+        Self {
+            resolved_type,
+            shape,
         }
     }
 
@@ -1042,19 +1158,13 @@ pub struct OperationInferenceError {
 }
 
 impl OperationInferenceError {
-    /// Creates a refusal that preserves a typed shape-environment failure.
+    /// Creates a host-owned refusal that preserves a typed environment failure.
     ///
-    /// The code and the message are host-owned rather than provider-chosen,
-    /// because the failure class is the host's: a provider that could spell this
-    /// one itself could spell two refusals that mean one thing. What the
-    /// provider supplies is the [`ExtentSourceError`] it obtained by asking the
-    /// environment, and that value survives the crossing — a builder recovers it
-    /// through [`Self::extent_source`] and reports it as a typed extent failure
-    /// rather than as an opaque provider rejection, which is the whole reason a
-    /// caller can tell "these are different sizes" from "this environment does
-    /// not prove they are the same".
+    /// Crate-private: a public provider cannot stamp a host environment verdict.
+    /// The builder and registry re-derive every [`BuildError::ExtentSource`] from
+    /// their own validation or comparison.
     #[must_use]
-    pub fn from_extent_source(error: ExtentSourceError) -> Self {
+    pub(crate) fn from_extent_source(error: ExtentSourceError) -> Self {
         Self {
             code: provider_diagnostic_code("tiler.shape.extent-source"),
             message: error.to_string(),
@@ -1065,8 +1175,10 @@ impl OperationInferenceError {
     }
 
     /// Returns the typed shape-environment failure this refusal preserves.
+    ///
+    /// Crate-private: a public provider cannot inspect a host environment verdict.
     #[must_use]
-    pub fn extent_source(&self) -> Option<&ExtentSourceError> {
+    pub(crate) fn extent_source(&self) -> Option<&ExtentSourceError> {
         self.extent_source.as_deref()
     }
     /// Creates a provider-attributed rejection.
@@ -1316,10 +1428,9 @@ impl<'a> OperationInferenceRequest<'a> {
 
     /// Returns the environment every symbolic operand extent resolves in.
     ///
-    /// `None` where the applying program declares no environment, which is the
-    /// same answer as "nothing about a symbol is provable here": a program with
-    /// no environment has no symbolic operand either, so a rule reading this
-    /// never has to decide whether absence means *unconstrained*.
+    /// Crate-private for the narrow release: external providers receive only
+    /// static facts. Governed built-ins read this only through the builder's
+    /// environment-bound path.
     ///
     /// This is the **only** authority over whether two symbolic extents are one
     /// extent. A rule that compared spellings beside it would disagree the first
@@ -1327,26 +1438,22 @@ impl<'a> OperationInferenceRequest<'a> {
     /// would disagree in the admitting direction, which is the direction that
     /// produces a wrong program rather than a refused one.
     #[must_use]
-    pub const fn extent_sources(self) -> Option<&'a ExtentSources> {
+    pub(crate) const fn extent_sources(self) -> Option<&'a ExtentSources> {
         self.extent_sources
     }
 
-    /// Returns one operand's fixed shape, refusing a symbolic extent by name.
+    /// Returns one operand's fixed shape after the host has preflighted symbols.
     ///
     /// The single entry point for a rule that decides shapes over literal
-    /// extents only. Refusing here rather than letting the rule compare
-    /// [`SourcedShape`]s structurally is the difference between a family that
-    /// has *declined* the symbolic question and one that has silently answered
-    /// it: two occurrences of one symbol compare equal by spelling, so a
-    /// structural comparison would look like a proof without ever consulting
-    /// [`Self::extent_sources`].
+    /// extents only. The host refuses a symbolic operand before invoking a
+    /// literal-only callback, so a symbol here is a leaked host invariant
+    /// rather than a family-owned environment verdict.
     ///
     /// # Errors
     ///
-    /// Returns a host diagnostic preserving
-    /// [`ExtentSourceError::SymbolicExtentUnsupported`] for the outermost
-    /// symbolic axis, and a host diagnostic for an operand position this
-    /// application does not have.
+    /// Returns a host diagnostic for an operand position this application does
+    /// not have, and a host diagnostic if a symbolic extent reached the
+    /// callback despite preflight.
     pub fn static_operand_shape(
         self,
         operand: usize,
@@ -1361,27 +1468,45 @@ impl<'a> OperationInferenceRequest<'a> {
     }
 }
 
-/// Returns the fixed shape, naming the outermost symbolic axis when there is one.
-///
-/// One definition of the refusal, shared by every literal-only rule, so the
-/// diagnostic a caller sees does not depend on which family declined.
+/// Returns the fixed shape after host preflight has refused every symbol.
 fn static_shape_of(shape: &SourcedShape) -> Result<&Shape, OperationInferenceError> {
-    if let Some(shape) = shape.as_static() {
-        return Ok(shape);
+    shape.as_static().ok_or_else(|| {
+        host_inference_error(
+            "tiler.shape.symbolic-operand-leaked",
+            "a symbolic operand reached a literal-only callback after host preflight",
+        )
+    })
+}
+
+/// Returns the first symbolic operand as a host-owned capability refusal.
+pub(super) fn first_symbolic_operand(
+    key: &OpKey,
+    provider: &ProviderIdentity,
+    operands: &[ValueFact],
+) -> Option<SymbolicOperandUnsupported> {
+    for (operand, fact) in operands.iter().enumerate() {
+        if let Some((axis, symbol)) = first_symbol(fact.shape()) {
+            let operand = u32::try_from(operand).expect("a bounded operand count fits u32");
+            return Some(SymbolicOperandUnsupported::new(
+                key.clone(),
+                provider.clone(),
+                operand,
+                axis,
+                symbol,
+            ));
+        }
     }
-    let (axis, symbol) = shape
-        .extents()
-        .enumerate()
-        .find_map(|(axis, extent)| {
-            let axis = u32::try_from(axis).expect("a bounded rank fits the axis space");
-            extent
-                .symbol()
-                .map(|symbol| (crate::shape::Axis::new(axis), symbol.clone()))
-        })
-        .expect("a non-static sourced boundary holds at least one symbol");
-    Err(OperationInferenceError::from_extent_source(
-        ExtentSourceError::SymbolicExtentUnsupported { axis, symbol },
-    ))
+    None
+}
+
+/// Returns the outermost symbolic axis and the symbol it names.
+pub(super) fn first_symbol(shape: &SourcedShape) -> Option<(Axis, ShapeSymbol)> {
+    shape.extents().enumerate().find_map(|(axis, extent)| {
+        let axis = u32::try_from(axis).expect("a bounded rank fits the axis space");
+        extent
+            .symbol()
+            .map(|symbol| (Axis::new(axis), symbol.clone()))
+    })
 }
 
 /// Host-owned bounded writer for ordered operation-inference results.
@@ -1508,6 +1633,7 @@ pub struct OperationDefinition {
     conformance: OperationConformance,
     effect: OperationEffect,
     semantic_preconditions: SemanticPreconditionDeclarations,
+    participation: ShapeInferenceParticipation,
     inferencer: Arc<dyn OperationInferencer>,
 }
 
@@ -1523,13 +1649,18 @@ impl fmt::Debug for OperationDefinition {
             .field("conformance", &self.conformance)
             .field("effect", &self.effect)
             .field("semantic_preconditions", &self.semantic_preconditions)
+            .field("participation", &self.participation)
             .field("inferencer", &"OperationInferencer(..)")
             .finish()
     }
 }
 
 impl OperationDefinition {
-    /// Creates an immutable operation-family definition.
+    /// Creates a literal-only operation-family definition.
+    ///
+    /// Public construction always participates as literal-only.
+    /// A symbolic operand is a host-owned capability refusal before the
+    /// inferencer runs. Governed environment-aware construction is crate-private.
     #[must_use]
     pub fn new(
         key: OpKey,
@@ -1549,8 +1680,36 @@ impl OperationDefinition {
             conformance,
             effect,
             semantic_preconditions: SemanticPreconditionDeclarations::empty(),
+            participation: ShapeInferenceParticipation::LiteralOnly,
             inferencer,
         }
+    }
+
+    /// Creates a governed environment-aware operation-family definition.
+    ///
+    /// Crate-private: only built-in elementwise families may consult the
+    /// program's shape environment. There is no public symbolic-provider surface.
+    #[must_use]
+    pub(crate) fn new_governed_environment_aware(
+        key: OpKey,
+        schema: OperationSchema,
+        normative_definition: NormativeDefinitionRef,
+        canonical_facts: OperationDefinitionFacts,
+        conformance: OperationConformance,
+        effect: OperationEffect,
+        inferencer: Arc<dyn OperationInferencer>,
+    ) -> Self {
+        let mut definition = Self::new(
+            key,
+            schema,
+            normative_definition,
+            canonical_facts,
+            conformance,
+            effect,
+            inferencer,
+        );
+        definition.participation = ShapeInferenceParticipation::GovernedEnvironmentAware;
+        definition
     }
 
     /// Adds the algebraic laws this definition promises for all admitted signatures.
@@ -1636,6 +1795,10 @@ impl OperationDefinition {
     #[must_use]
     pub const fn semantic_preconditions(&self) -> &SemanticPreconditionDeclarations {
         &self.semantic_preconditions
+    }
+
+    pub(crate) const fn participation(&self) -> ShapeInferenceParticipation {
+        self.participation
     }
 
     pub(super) fn preflight(
@@ -2173,7 +2336,7 @@ mod tests {
                 4_096
             ])
             .unwrap();
-        let fact = ValueFact::new(
+        let fact = ValueFact::from_sourced(
             ResolvedValueType::nominal(TypeKey::new("test", "symbolic", 1).unwrap()),
             shape,
         );

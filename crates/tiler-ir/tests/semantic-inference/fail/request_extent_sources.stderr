@@ -1,0 +1,10 @@
+error[E0624]: method `extent_sources` is private
+  --> tests/semantic-inference/fail/request_extent_sources.rs:14:25
+   |
+14 |         let _ = request.extent_sources();
+   |                         ^^^^^^^^^^^^^^ private method
+   |
+  ::: src/semantic/operation.rs
+   |
+   |     pub(crate) const fn extent_sources(self) -> Option<&'a ExtentSources> {
+   |     --------------------------------------------------------------------- private method defined here

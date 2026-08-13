@@ -20,8 +20,9 @@ use super::operation::{
     OperationArity, OperationAttributeSchema, OperationAttributes, OperationConformance,
     OperationDefinition, OperationDefinitionFacts, OperationEffect, OperationInferenceError,
     OperationInferenceOutputs, OperationInferenceRequest, OperationInferencer, OperationSchema,
-    ProviderDiagnosticCode, ProviderDiagnosticError, REDUCTION_AXES_ATTRIBUTE, ValueFact,
-    add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+    ProviderDiagnosticCode, ProviderDiagnosticError, REDUCTION_AXES_ATTRIBUTE,
+    ShapeInferenceParticipation, SymbolicOperandUnsupported, ValueFact, add_f32_op,
+    constant_f32_op, first_symbolic_operand, multiply_f32_op, strict_serial_sum_f32_op,
     validate_provider_diagnostic_message,
 };
 use super::quantization::register_standard_quantization;
@@ -1654,48 +1655,53 @@ impl FrozenSemanticRegistry {
 
     /// Validates one application and derives all ordered result facts.
     ///
-    /// Every symbolic operand is refused, because no environment is supplied to
-    /// resolve one in. That is the right answer rather than a limitation: a
-    /// program that declares no shape environment has no symbolic value to apply
-    /// an operation to, so this is the whole contract for such a program. A
-    /// caller that does hold an environment uses
-    /// [`Self::infer_operation_with_extent_sources`].
+    /// The public path is mechanically static-only. Any symbolic operand is a
+    /// host-owned capability refusal before the inferencer runs. Governed
+    /// families receive sourced facts only through the crate-private
+    /// environment-bound neighbour.
     ///
     /// # Errors
     ///
-    /// Returns [`RegistryError`] for missing authority, invalid operand/result
-    /// types, or semantic inference rejection.
+    /// Returns [`RegistryError`] for missing authority, a symbolic operand, an
+    /// invalid operand/result type, or semantic inference rejection.
     pub fn infer_operation(
         &self,
         key: &OpKey,
         operands: &[ValueFact],
         attributes: &OperationAttributes,
     ) -> Result<Vec<ValueFact>, RegistryError> {
-        self.infer_operation_with_extent_sources(key, operands, attributes, None)
+        self.infer_operation_inner(key, operands, attributes, None, true)
     }
 
     /// Validates one application against the environment its symbols resolve in.
     ///
-    /// Beside [`Self::infer_operation`] rather than replacing it, on the same
-    /// ground `SemanticProgramBuilder::try_standard_with_shape_environment` sits
-    /// beside `try_standard`: a caller with no environment should not have to
-    /// name one, and the two share a single body so no rule can be widened for
-    /// one entry point and forgotten for the other.
-    ///
-    /// The environment is *offered*, never applied. Whether a family consults it
-    /// is that family's own decision, and one that does not consult it refuses a
-    /// symbolic operand by name rather than comparing spellings.
+    /// Crate-private for the narrow release. Literal-only families still refuse
+    /// a symbol as a capability limit before the callback. Governed families
+    /// receive the exact offered environment after the host admits every operand.
+    /// There is no fallback to structural equality.
     ///
     /// # Errors
     ///
-    /// Returns [`RegistryError`] for missing authority, invalid operand/result
-    /// types, or semantic inference rejection.
-    pub fn infer_operation_with_extent_sources(
+    /// Returns [`RegistryError`] for missing authority, a literal-only symbolic
+    /// operand, an invalid operand/result type, a host environment refusal, or
+    /// semantic inference rejection.
+    pub(crate) fn infer_operation_with_extent_sources(
         &self,
         key: &OpKey,
         operands: &[ValueFact],
         attributes: &OperationAttributes,
         extent_sources: Option<&ExtentSources>,
+    ) -> Result<Vec<ValueFact>, RegistryError> {
+        self.infer_operation_inner(key, operands, attributes, extent_sources, false)
+    }
+
+    fn infer_operation_inner(
+        &self,
+        key: &OpKey,
+        operands: &[ValueFact],
+        attributes: &OperationAttributes,
+        extent_sources: Option<&ExtentSources>,
+        public_static_only: bool,
     ) -> Result<Vec<ValueFact>, RegistryError> {
         let registered = self.0.operations.get(key).ok_or_else(|| {
             RegistryError::UnregisteredOperationAuthority {
@@ -1709,15 +1715,33 @@ impl FrozenSemanticRegistry {
         for operand in operands {
             self.validate_type(operand.resolved_type())?;
         }
-        admit_value_fact_extents(operands, extent_sources)
-            .map_err(|source| operation_rejection(key, registered, source))?;
+        let refuse_symbols = public_static_only
+            || registered.definition.participation() == ShapeInferenceParticipation::LiteralOnly;
+        if refuse_symbols
+            && let Some(refusal) = first_symbolic_operand(key, &registered.provider, operands)
+        {
+            return Err(RegistryError::SymbolicOperandUnsupported(Box::new(refusal)));
+        }
+        if !public_static_only {
+            admit_value_fact_extents(operands, extent_sources)
+                .map_err(RegistryError::ExtentSource)?;
+        }
         for field in attributes.fields() {
             self.validate_canonical_value_types(field.value())?;
         }
+        let offered_sources = match registered.definition.participation() {
+            ShapeInferenceParticipation::GovernedEnvironmentAware if !public_static_only => {
+                extent_sources
+            }
+            ShapeInferenceParticipation::GovernedEnvironmentAware
+            | ShapeInferenceParticipation::LiteralOnly => None,
+        };
         let results = registered
             .definition
-            .infer(operands, attributes, extent_sources)
-            .map_err(|source| operation_rejection(key, registered, source))?;
+            .infer(operands, attributes, offered_sources)
+            .map_err(|source| {
+                map_inferencer_error(key, registered, source, operands, offered_sources)
+            })?;
         if results.is_empty() {
             return Err(RegistryError::OperationProducedNoResults {
                 key: Arc::new(key.clone()),
@@ -1726,8 +1750,12 @@ impl FrozenSemanticRegistry {
         for result in &results {
             self.validate_type(result.resolved_type())?;
         }
-        admit_value_fact_extents(&results, extent_sources)
-            .map_err(|source| operation_rejection(key, registered, source))?;
+        if !public_static_only {
+            admit_value_fact_extents(&results, extent_sources)
+                .map_err(RegistryError::ExtentSource)?;
+        } else if let Some(refusal) = first_symbolic_operand(key, &registered.provider, &results) {
+            return Err(RegistryError::SymbolicOperandUnsupported(Box::new(refusal)));
+        }
         Ok(results)
     }
 
@@ -1819,7 +1847,7 @@ impl FrozenSemanticRegistry {
         &self,
         closure: &SemanticAuthorityClosure,
     ) -> SemanticDefinitionProjectionIdentity {
-        let mut bytes = b"tiler.semantic-definition-projection.v5\0".to_vec();
+        let mut bytes = b"tiler.semantic-definition-projection.v6\0".to_vec();
         push_len(&mut bytes, closure.type_keys.len());
         for key in &closure.type_keys {
             let registered = self
@@ -1905,13 +1933,87 @@ fn operation_rejection(
 fn admit_value_fact_extents(
     facts: &[ValueFact],
     extent_sources: Option<&ExtentSources>,
-) -> Result<(), OperationInferenceError> {
+) -> Result<(), ExtentSourceError> {
     for fact in facts {
-        fact.shape()
-            .admit_against(extent_sources)
-            .map_err(OperationInferenceError::from_extent_source)?;
+        fact.shape().admit_against(extent_sources)?;
     }
     Ok(())
+}
+
+/// Re-derives a host environment verdict from the inferencer payload.
+///
+/// A provider-stamped undeclared or too-late claim is dropped: those facts are
+/// established only by host admission of the actual operands and results. A
+/// not-proved or not-positive claim is kept only when the offered environment
+/// independently confirms it against extents that actually appear on the
+/// operands.
+fn map_inferencer_error(
+    key: &OpKey,
+    registered: &RegisteredOperation,
+    source: OperationInferenceError,
+    operands: &[ValueFact],
+    sources: Option<&ExtentSources>,
+) -> RegistryError {
+    if let Some(claimed) = source.extent_source()
+        && let Some(derived) = rederive_extent_source(claimed, operands, sources)
+    {
+        return RegistryError::ExtentSource(derived);
+    }
+    operation_rejection(key, registered, source)
+}
+
+fn rederive_extent_source(
+    claimed: &ExtentSourceError,
+    operands: &[ValueFact],
+    sources: Option<&ExtentSources>,
+) -> Option<ExtentSourceError> {
+    match claimed {
+        ExtentSourceError::ExtentsNotProvedEqual(disagreement) => {
+            if !operand_names_extent(operands, &disagreement.left)
+                || !operand_names_extent(operands, &disagreement.right)
+            {
+                return None;
+            }
+            if sources.is_some_and(|sources| {
+                sources.proves_equal(&disagreement.left, &disagreement.right)
+            }) {
+                return None;
+            }
+            Some(ExtentSourceError::ExtentsNotProvedEqual(
+                disagreement.clone(),
+            ))
+        }
+        ExtentSourceError::DivisorNotProvedPositive { symbol } => {
+            if !operand_names_symbol(operands, symbol) {
+                return None;
+            }
+            if sources.is_some_and(|sources| {
+                sources.proves_positive(&crate::shape::SourcedExtent::Symbol(symbol.clone()))
+            }) {
+                return None;
+            }
+            Some(ExtentSourceError::DivisorNotProvedPositive {
+                symbol: symbol.clone(),
+            })
+        }
+        ExtentSourceError::UndeclaredSymbol { .. } | ExtentSourceError::SourceTooLate { .. } => {
+            None
+        }
+    }
+}
+
+fn operand_names_extent(operands: &[ValueFact], extent: &crate::shape::SourcedExtent) -> bool {
+    operands
+        .iter()
+        .any(|fact| fact.shape().extents().any(|named| &named == extent))
+}
+
+fn operand_names_symbol(operands: &[ValueFact], symbol: &crate::shape::ShapeSymbol) -> bool {
+    operands.iter().any(|fact| {
+        fact.shape()
+            .extents()
+            .any(|extent| extent.symbol() == Some(symbol))
+    })
 }
 
 /// Collision-free canonical provenance for a complete frozen registry snapshot.
@@ -2137,6 +2239,14 @@ pub enum RegistryError {
     },
     /// A registered operation rejected one application.
     RejectedOperationApplication(Arc<OperationApplicationRejection>),
+    /// Host-derived environment refusal for an admitted or compared extent.
+    ///
+    /// Produced only by this registry's own admission or by re-deriving a
+    /// comparison against the offered environment. A provider diagnostic never
+    /// becomes this variant.
+    ExtentSource(ExtentSourceError),
+    /// A symbolic operand reached a family that decides shapes over literals only.
+    SymbolicOperandUnsupported(Box<SymbolicOperandUnsupported>),
     /// An operation authority inferred no results.
     OperationProducedNoResults {
         /// Invalid operation authority.
@@ -2225,6 +2335,8 @@ impl fmt::Display for RegistryError {
                 "provider {} rejected operation {}: {}",
                 rejection.provider, rejection.key, rejection.source
             ),
+            Self::ExtentSource(error) => error.fmt(formatter),
+            Self::SymbolicOperandUnsupported(error) => error.fmt(formatter),
             Self::OperationProducedNoResults { key } => {
                 write!(formatter, "operation authority {key} produced no results")
             }
@@ -2263,6 +2375,8 @@ impl Error for RegistryError {
             }
             Self::RejectedTypeInstance(rejection) => Some(&rejection.source),
             Self::RejectedOperationApplication(rejection) => Some(&rejection.source),
+            Self::ExtentSource(error) => Some(error),
+            Self::SymbolicOperandUnsupported(error) => Some(error),
             _ => None,
         }
     }
@@ -2346,7 +2460,7 @@ impl SemanticRegistryProvider for StandardSemantics {
             Arc::new(ConstantF32),
         ))?;
         registrar.register_operation(
-            OperationDefinition::new(
+            OperationDefinition::new_governed_environment_aware(
                 multiply_f32_op(),
                 exact_schema(2, 1, []),
                 NormativeDefinitionRef::new("tiler::multiply-f32@1; separate binary32 multiply")?,
@@ -2358,7 +2472,7 @@ impl SemanticRegistryProvider for StandardSemantics {
             .with_algebraic_capabilities(arithmetic_f32_algebraic_capabilities()),
         )?;
         registrar.register_operation(
-            OperationDefinition::new(
+            OperationDefinition::new_governed_environment_aware(
                 add_f32_op(),
                 exact_schema(2, 1, []),
                 NormativeDefinitionRef::new("tiler::add-f32@1; separate binary32 addition")?,
@@ -2681,7 +2795,7 @@ impl OperationInferencer for BinaryF32 {
             return Err(op_error("binary.type", "both operands must be f32"));
         }
         let shape = elementwise_binary_shape("binary", request)?;
-        outputs.try_push(ValueFact::new(F32::resolved_type(), shape))
+        outputs.try_push(ValueFact::from_sourced(F32::resolved_type(), shape))
     }
 }
 
@@ -2869,7 +2983,7 @@ fn compute_identity(
     definitions: &BTreeMap<ValueTypeDefinitionKey, RegisteredValueType>,
     operations: &BTreeMap<OpKey, RegisteredOperation>,
 ) -> SemanticRegistrySnapshotIdentity {
-    let mut bytes = b"tiler.semantic-registry.v7\0".to_vec();
+    let mut bytes = b"tiler.semantic-registry.v8\0".to_vec();
     push_len(&mut bytes, definitions.len());
     for (key, registered) in definitions {
         encode_registered_type(&mut bytes, key, registered);
@@ -3042,6 +3156,7 @@ fn encode_operation_definition(
         OperationEffect::Pure => 1,
     });
     definition.semantic_preconditions().encode(output);
+    output.push(definition.participation().tag());
 }
 
 fn encode_type_key(output: &mut Vec<u8>, key: &TypeKey) {
@@ -3089,6 +3204,26 @@ mod tests {
             encodings.push(bytes);
         }
         assert_eq!(encodings.len(), AUTHORITIES.len());
+    }
+
+    #[test]
+    fn the_shape_inference_participation_tag_table_is_injective_over_its_variant_set() {
+        const MODES: [ShapeInferenceParticipation;
+            std::mem::variant_count::<ShapeInferenceParticipation>()] = [
+            ShapeInferenceParticipation::LiteralOnly,
+            ShapeInferenceParticipation::GovernedEnvironmentAware,
+        ];
+        assert_eq!(MODES.len(), 2);
+        let mut encodings: Vec<u8> = Vec::new();
+        for mode in MODES {
+            let tag = mode.tag();
+            assert!(
+                !encodings.contains(&tag),
+                "{mode:?} shares a tag with an earlier participation mode"
+            );
+            encodings.push(tag);
+        }
+        assert_eq!(encodings.len(), MODES.len());
     }
 
     #[test]
@@ -3225,7 +3360,7 @@ mod tests {
             tiler_digest::DigestAlgorithm::GOVERNED
                 .digest(DOMAIN, semantic.snapshot_identity().as_bytes())
                 .label(),
-            "72a5c44e73a9fb76471f1f2105b80da6f51a6ba1ecc24a24e249bf25e16e8dd4",
+            "15a35d501845fb22c48d452b89f5cf4faf14529b7b086ae4287b0d7b66b32107",
             "the law sidecar must not move the semantic snapshot"
         );
         assert!(
@@ -3238,7 +3373,7 @@ mod tests {
             tiler_digest::DigestAlgorithm::GOVERNED
                 .digest(DOMAIN, laws.identity().as_bytes())
                 .label(),
-            "ddfb4dc459d7ca538708e276ccc4897b6fd14be99b3e7a535929ea0daee202e5",
+            "7a7d1933feffa05895e4df55a5478d2f38f7390dd18e2017c9e91b61640352ea",
             "the complete law-registry identity pins the appended row"
         );
         assert_eq!(
@@ -5169,7 +5304,7 @@ mod tests {
     /// order, so these bytes pin both that order and the record encoding.
     /// Change them only together with a deliberate identity-version bump.
     const FAMILY_ORDER_IDENTITY_FIXTURE: &str = concat!(
-        "74696c65722e73656d616e7469632d72656769737472792e76370000000000000000030100000000",
+        "74696c65722e73656d616e7469632d72656769737472792e76380000000000000000030100000000",
         "000000047465737400000000000000037a7a7a00000001000000000000000b74657374207a7a7a20",
         "7631042000000001000000000000000474657374000000000000000b6f72642d6669787475726500",
         "0000010200000000000000047465737400000000000000036d6d6d00000001000000000000000b74",
