@@ -4245,7 +4245,7 @@ mod tests {
             .explain()
             .expect("a post-request failure retains its sealed trace")
             .render();
-        assert!(rendered.starts_with("tiler-explain-v7 "));
+        assert!(rendered.starts_with("tiler-explain-v8 "));
         assert!(
             rendered.contains("compiler-failure"),
             "the trace names the terminal failure: {rendered}",

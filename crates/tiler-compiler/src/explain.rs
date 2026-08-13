@@ -13,7 +13,7 @@ use tiler_ir::program::abi::{
     AvailabilityPhase, PreparedEntryTargetRequirement, TargetPropertyRequirementRelation,
 };
 use tiler_ir::schedule::ArithmeticType;
-use tiler_ir::semantic::ResolvedValueType;
+use tiler_ir::semantic::{ProviderIdentity, ResolvedValueType};
 
 use crate::fusion::FusionNumericalProof;
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
@@ -70,6 +70,20 @@ use crate::target::honourability::NumericalRefusalEvidence;
 // record's bytes or an existing record's spelling; one marked *unforced* did
 // not, and is labelled so this file's history is not read as its rule.
 //
+// - Schema v10, *forced*: every previously encodable rule head and SoundProof
+//   receipt moved from a flattened `namespace.name` provider key plus revision
+//   to an explicit authority-class tag. The compiler arm writes the governed
+//   revision constant; the registered arm length-frames namespace and name and
+//   writes revision. Distinct structured identities that collided under the
+//   dotted join, and the compiler authority versus a registered
+//   `tiler`/`compiler` identity, therefore become distinct bytes. Renderer v8,
+//   *forced*: every existing record's `provider=` spelling now carries the
+//   authority class and the unambiguous `namespace::name@revision` display.
+//   The composite renderer header stays v1: it versions the wrapping spelling
+//   (`top-level-selection`, `semantic-candidate`), and each nested trace
+//   retains its own `tiler-explain-vN` header, so nested provider spelling is
+//   announced there. The composite schema stays v1 because it length-frames
+//   nested trace identities and does not duplicate provider fields.
 // - Event tag 13, the complete synchronization-realization subject, with
 //   renderer v7's `synchronization:` line: appended under the already-published
 //   v9/v7 and correctly moving neither, by the rule above.
@@ -104,8 +118,8 @@ use crate::target::honourability::NumericalRefusalEvidence;
 // against the v4 tree. Event tag 9 is unused: it named the omitted-record
 // summary that the complete-or-refused trace contract removed at v1. The gap is
 // history rather than a reservation.
-pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 9;
-pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 7;
+pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 10;
+pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 8;
 const COMPILATION_EXPLAIN_SCHEMA_VERSION: u32 = 1;
 const COMPILATION_EXPLAIN_RENDERER_VERSION: u32 = 1;
 const MAX_COMPILATION_EXPLAIN_CANDIDATES: usize = 256;
@@ -149,7 +163,6 @@ macro_rules! key_type {
 
 key_type!(RuleKey, KeyKind::Rule);
 key_type!(ReasonCode, KeyKind::Reason);
-key_type!(ProviderKey, KeyKind::Provider);
 key_type!(PredicateKey, KeyKind::Predicate);
 key_type!(ResourceKey, KeyKind::Resource);
 key_type!(CostModelKey, KeyKind::CostModel);
@@ -162,7 +175,6 @@ key_type!(SelectionPolicyKey, KeyKind::SelectionPolicy);
 pub(crate) enum KeyKind {
     Rule,
     Reason,
-    Provider,
     Predicate,
     Resource,
     CostModel,
@@ -232,31 +244,30 @@ pub(crate) enum SubjectKind {
     Provider,
 }
 
+/// Authority named by a retained explain record.
+///
+/// A closed sum so the compiler's own authority cannot collide with a
+/// registered identity, and so a registered identity keeps the namespace/name
+/// boundary `ProviderIdentity` already validated. Presentation text is not an
+/// arm of this type.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct ProviderRef {
-    key: ProviderKey,
-    revision: u32,
+pub(crate) enum ProviderRef {
+    Compiler,
+    Registered(ProviderIdentity),
 }
 
-/// The compiler's own authority, named once so the constructor and the
-/// recognizer below cannot drift apart.
-const BUILTIN_PROVIDER_KEY: &str = "tiler.compiler";
-const BUILTIN_PROVIDER_REVISION: u32 = 1;
+/// Display spelling of the compiler arm. Presentation only; equality and
+/// canonical bytes use the enum discriminant, not this string.
+const COMPILER_PROVIDER_DISPLAY: &str = "tiler.compiler";
+/// Governed revision of the compiler arm. Callers cannot set it; the encoder
+/// and renderer both read this constant.
+const COMPILER_PROVIDER_REVISION: u32 = 1;
+const PROVIDER_REF_COMPILER: u8 = 1;
+const PROVIDER_REF_REGISTERED: u8 = 2;
 
 impl ProviderRef {
     pub(crate) fn builtin() -> Self {
-        Self {
-            key: ProviderKey::new(BUILTIN_PROVIDER_KEY).expect("builtin provider key is valid"),
-            revision: BUILTIN_PROVIDER_REVISION,
-        }
-    }
-
-    /// Whether this reference names the compiler's own authority.
-    ///
-    /// Equivalent to comparing against [`Self::builtin`], which every retained
-    /// record asked for and which allocates a key to answer.
-    fn is_builtin(&self) -> bool {
-        self.revision == BUILTIN_PROVIDER_REVISION && self.key.as_str() == BUILTIN_PROVIDER_KEY
+        Self::Compiler
     }
 
     /// References the provider that lowered one occurrence.
@@ -265,22 +276,16 @@ impl ProviderRef {
     /// the capability revision: a `ProviderRef` names an authority, and ADR 0072
     /// keeps a provider's identity separate from the revisions of the individual
     /// capabilities it registers.
-    pub(crate) fn lowering(provider: &LoweringProviderIdentity) -> Result<Self, ExplainError> {
+    pub(crate) fn lowering(provider: &LoweringProviderIdentity) -> Self {
         Self::registered(provider.provider())
     }
 
-    /// References a registered provider by its governed namespaced identity.
+    /// References a registered provider by its already-validated identity.
     ///
-    /// The namespace and name are joined so two providers sharing a name in
-    /// different namespaces stay distinct in explain output, and the provider's
-    /// output-affecting revision is retained as provenance (ADR 0072).
-    pub(crate) fn registered(
-        provider: &tiler_ir::semantic::ProviderIdentity,
-    ) -> Result<Self, ExplainError> {
-        Ok(Self {
-            key: ProviderKey::new(format!("{}.{}", provider.namespace(), provider.name()))?,
-            revision: provider.revision(),
-        })
+    /// The identity is retained whole so namespace, name, and revision stay
+    /// distinct. Construction cannot refuse a legal `ProviderIdentity`.
+    pub(crate) fn registered(provider: &ProviderIdentity) -> Self {
+        Self::Registered(provider.clone())
     }
 }
 
@@ -1175,7 +1180,7 @@ pub(crate) struct ExplainWriter {
     subject: CompilationSubject,
     authority: u64,
     request_qualifier: u64,
-    allowed_providers: Vec<ProviderRef>,
+    allowed_providers: BTreeSet<ProviderIdentity>,
     records: Vec<ExplainRecord>,
     /// The trace preamble, encoded once and reused as the head of the sealed
     /// identity. It carries the twenty-kilobyte compilation subject, so
@@ -1294,20 +1299,19 @@ impl ExplainWriter {
         // The authorities this compilation may attribute a rule to *besides* its
         // own: every provider the request's installed lowering registry admits,
         // plus the compiler's governed physical-implementation and
-        // fusion-capability providers. The compiler's builtin authority is not
-        // listed here — `push` admits `ProviderRef::builtin` ahead of this
-        // membership test — so the closed set is this list plus that one
-        // authority. A rule attributed to any provider outside that set is a
+        // fusion-capability providers. The compiler arm is not listed here —
+        // `push` admits `ProviderRef::Compiler` ahead of this membership test —
+        // so the closed set is this structured set plus that one authority. A
+        // rule attributed to any registered identity outside that set is a
         // provenance forgery and fails closed (ADR 0072).
-        let mut allowed_providers = vec![
-            ProviderRef::registered(&crate::frontier::GovernedPhysicalProvider::identity())?,
-            ProviderRef::registered(
-                crate::fusion_legality::FusionNumericalCapabilities::governed().provider(),
-            )?,
-        ];
-        for provider in request.capabilities().lowering().providers() {
-            allowed_providers.push(ProviderRef::registered(&provider)?);
-        }
+        let mut allowed_providers = BTreeSet::new();
+        allowed_providers.insert(crate::frontier::GovernedPhysicalProvider::identity());
+        allowed_providers.insert(
+            crate::fusion_legality::FusionNumericalCapabilities::governed()
+                .provider()
+                .clone(),
+        );
+        allowed_providers.extend(request.capabilities().lowering().providers());
         let mut identity_prefix = Vec::new();
         push_trace_preamble(&mut identity_prefix, EXPLAIN_SCHEMA_VERSION, &subject);
         // An empty trace is the preamble plus one record count. Measure that
@@ -1406,8 +1410,10 @@ impl ExplainWriter {
     ) -> Result<ExplainRecordId, ExplainError> {
         canonicalize_record_parts(&mut subjects, &mut event, &mut causes)?;
         event.validate()?;
-        if !rule.provider.is_builtin() && !self.allowed_providers.contains(&rule.provider) {
-            return Err(ExplainError::ProviderAuthorityMismatch);
+        match &rule.provider {
+            ProviderRef::Compiler => {}
+            ProviderRef::Registered(identity) if self.allowed_providers.contains(identity) => {}
+            ProviderRef::Registered(_) => return Err(ExplainError::ProviderAuthorityMismatch),
         }
         if subjects.is_empty() {
             return Err(ExplainError::EmptySubjects);
@@ -1880,15 +1886,15 @@ impl VerifiedExplainTrace {
             use fmt::Write as _;
             let _ = write!(
                 output,
-                "{} {} {} rule={}@{} provider={}@{} subject=",
+                "{} {} {} rule={}@{} provider=",
                 record.id.local,
                 stage_name(record.event.stage()),
                 disposition_name(record.event.disposition()),
                 record.rule.key.as_str(),
                 record.rule.revision,
-                record.rule.provider.key.as_str(),
-                record.rule.provider.revision,
             );
+            render_provider_ref(&mut output, &record.rule.provider);
+            output.push_str(" subject=");
             for (index, subject) in record.subjects.iter().enumerate() {
                 if index != 0 {
                     output.push(',');
@@ -2888,12 +2894,41 @@ fn encode_trace(schema: u32, subject: &CompilationSubject, records: &[ExplainRec
     bytes
 }
 
+fn encode_provider_ref(bytes: &mut Vec<u8>, provider: &ProviderRef) {
+    match provider {
+        ProviderRef::Compiler => {
+            bytes.push(PROVIDER_REF_COMPILER);
+            bytes.extend_from_slice(&COMPILER_PROVIDER_REVISION.to_be_bytes());
+        }
+        ProviderRef::Registered(identity) => {
+            bytes.push(PROVIDER_REF_REGISTERED);
+            push_slice(bytes, identity.namespace().as_bytes());
+            push_slice(bytes, identity.name().as_bytes());
+            bytes.extend_from_slice(&identity.revision().to_be_bytes());
+        }
+    }
+}
+
+fn render_provider_ref(output: &mut String, provider: &ProviderRef) {
+    use fmt::Write as _;
+    match provider {
+        ProviderRef::Compiler => {
+            let _ = write!(
+                output,
+                "compiler:{COMPILER_PROVIDER_DISPLAY}@{COMPILER_PROVIDER_REVISION}"
+            );
+        }
+        ProviderRef::Registered(identity) => {
+            let _ = write!(output, "registered:{identity}");
+        }
+    }
+}
+
 fn push_record(bytes: &mut Vec<u8>, record: &ExplainRecord) {
     bytes.extend_from_slice(&record.id.local.to_be_bytes());
     push_slice(bytes, record.rule.key.as_str().as_bytes());
     bytes.extend_from_slice(&record.rule.revision.to_be_bytes());
-    push_slice(bytes, record.rule.provider.key.as_str().as_bytes());
-    bytes.extend_from_slice(&record.rule.provider.revision.to_be_bytes());
+    encode_provider_ref(bytes, &record.rule.provider);
     push_len(bytes, record.subjects.len());
     for subject in &record.subjects {
         bytes.push(subject_kind_tag(subject.kind));
@@ -3206,8 +3241,7 @@ fn encode_basis(bytes: &mut Vec<u8>, basis: &EvidenceBasis) {
             push_slice(bytes, &receipt.compilation);
             bytes.push(subject_kind_tag(receipt.subject_kind));
             push_slice(bytes, receipt.subject.as_str().as_bytes());
-            push_slice(bytes, receipt.provider.key.as_str().as_bytes());
-            bytes.extend_from_slice(&receipt.provider.revision.to_be_bytes());
+            encode_provider_ref(bytes, &receipt.provider);
             push_slice(bytes, &receipt.proof);
             return;
         }
@@ -3335,7 +3369,7 @@ mod tests {
             .into_iter()
             .next()
             .expect("the governed registry admits at least one lowering provider");
-        ProviderRef::registered(&provider).unwrap()
+        ProviderRef::registered(&provider)
     }
 
     fn admitted(writer: &ExplainWriter, key: &str) -> ExplainRecordParts {
@@ -3394,8 +3428,8 @@ mod tests {
 
     #[test]
     fn explain_vocabulary_is_append_only_and_versioned() {
-        assert_eq!(EXPLAIN_SCHEMA_VERSION, 9);
-        assert_eq!(EXPLAIN_RENDERER_VERSION, 7);
+        assert_eq!(EXPLAIN_SCHEMA_VERSION, 10);
+        assert_eq!(EXPLAIN_RENDERER_VERSION, 8);
         assert_eq!(subject_kind_tag(SubjectKind::Alternative), 12);
         assert_eq!(subject_kind_tag(SubjectKind::OpaqueCall), 13);
         assert_eq!(subject_kind_tag(SubjectKind::Provider), 14);
@@ -3443,6 +3477,87 @@ mod tests {
         let mut realization = Vec::new();
         encode_event(&mut realization, &synchronization);
         assert_eq!(realization[0], 13);
+    }
+
+    fn encoded_provider(provider: &ProviderRef) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        encode_provider_ref(&mut bytes, provider);
+        bytes
+    }
+
+    fn rendered_provider(provider: &ProviderRef) -> String {
+        let mut rendered = String::new();
+        render_provider_ref(&mut rendered, provider);
+        rendered
+    }
+
+    #[test]
+    fn registered_provider_refs_keep_dotted_component_boundaries() {
+        let left = ProviderRef::registered(&ProviderIdentity::new("a.b", "c", 1).unwrap());
+        let right = ProviderRef::registered(&ProviderIdentity::new("a", "b.c", 1).unwrap());
+        assert_ne!(left, right);
+        assert_ne!(encoded_provider(&left), encoded_provider(&right));
+        assert_eq!(rendered_provider(&left), "registered:a.b::c@1");
+        assert_eq!(rendered_provider(&right), "registered:a::b.c@1");
+    }
+
+    #[test]
+    fn registered_provider_refs_accept_maximum_legal_components() {
+        let namespace = "n".repeat(255);
+        let name = "m".repeat(255);
+        let maximum = ProviderIdentity::new(&namespace, &name, 1).unwrap();
+        assert!(
+            ProviderIdentity::new(format!("{namespace}x"), "m", 1).is_err(),
+            "255 bytes is the live component ceiling this fixture occupies",
+        );
+        let maximum = ProviderRef::registered(&maximum);
+        assert_eq!(
+            encoded_provider(&maximum).len(),
+            1 + 8 + 255 + 8 + 255 + 4,
+            "the tagged registered encoding frames both maximum components and the revision",
+        );
+        assert_eq!(
+            rendered_provider(&maximum),
+            format!("registered:{namespace}::{name}@1")
+        );
+        assert!(
+            RuleRef::provided("test.rule", 1, maximum).is_ok(),
+            "a legal maximum identity is a representable explain authority"
+        );
+    }
+
+    #[test]
+    fn registered_provider_refs_keep_revision_in_canonical_bytes() {
+        let revision_one = ProviderRef::registered(&ProviderIdentity::new("a", "b", 1).unwrap());
+        let revision_two = ProviderRef::registered(&ProviderIdentity::new("a", "b", 2).unwrap());
+        assert_ne!(revision_one, revision_two);
+        assert_ne!(
+            encoded_provider(&revision_one),
+            encoded_provider(&revision_two)
+        );
+        assert_eq!(rendered_provider(&revision_one), "registered:a::b@1");
+        assert_eq!(rendered_provider(&revision_two), "registered:a::b@2");
+    }
+
+    #[test]
+    fn compiler_authority_is_not_a_registered_tiler_compiler_identity() {
+        let compiler = ProviderRef::builtin();
+        let registered =
+            ProviderRef::registered(&ProviderIdentity::new("tiler", "compiler", 1).unwrap());
+        assert_ne!(compiler, registered);
+        assert_ne!(encoded_provider(&compiler), encoded_provider(&registered));
+        assert_eq!(
+            encoded_provider(&compiler),
+            [PROVIDER_REF_COMPILER]
+                .into_iter()
+                .chain(COMPILER_PROVIDER_REVISION.to_be_bytes())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(rendered_provider(&compiler), "compiler:tiler.compiler@1");
+        assert_eq!(
+            rendered_provider(&registered),
+            "registered:tiler::compiler@1"
+        );
     }
 
     #[test]
@@ -3881,9 +3996,9 @@ mod tests {
                 //     'test(deterministic_trace_is_sealed_and_rendered_separately)'
                 // and take the `left` value the assertion reports. The cause
                 // belongs in the commit that moves it, not appended here.
-                "tiler-explain-v7 request=17e0dd47e48b7c18\n",
-                "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
-                "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
+                "tiler-explain-v8 request=17e0dd47e48b7c18\n",
+                "0 candidate-enumeration admitted rule=test.rule@1 provider=compiler:tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
+                "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=compiler:tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
         );
         assert!(!trace.identity().0.is_empty());
@@ -3973,10 +4088,9 @@ mod tests {
                 RuleRef::provided(
                     "foreign.rule",
                     1,
-                    ProviderRef {
-                        key: ProviderKey::new("foreign.provider").unwrap(),
-                        revision: 1,
-                    },
+                    ProviderRef::registered(
+                        &ProviderIdentity::new("foreign", "provider", 1).unwrap(),
+                    ),
                 )
                 .unwrap(),
                 parts.subjects,
@@ -4669,7 +4783,8 @@ mod tests {
         assert_eq!(stale_digest.verify(), Err(ExplainError::StaleIdentity));
 
         let mut changed_provider = trace.clone();
-        changed_provider.records[0].rule.provider.revision += 1;
+        changed_provider.records[0].rule.provider =
+            ProviderRef::registered(&ProviderIdentity::new("tiler", "compiler", 1).unwrap());
         assert_eq!(changed_provider.verify(), Err(ExplainError::StaleIdentity));
 
         let mut changed_reason = trace.clone();
@@ -4790,7 +4905,7 @@ mod tests {
         assert_eq!(
             forward
                 .render()
-                .matches("tiler-explain-v7 request=")
+                .matches("tiler-explain-v8 request=")
                 .count(),
             3,
             "the top-level selection and both complete candidate traces render",

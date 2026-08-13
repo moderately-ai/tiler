@@ -1389,8 +1389,7 @@ fn an_externally_registered_lowering_provider_drives_the_compile_path() {
     // record is attributed at, not the governed one.
     assert!(target.explain.records().iter().any(|record| {
         record.rule().key().as_str() == "capability.index-access-resolution.v1"
-            && record.rule().provider()
-                == &ProviderRef::registered(&external_lowering_provider()).unwrap()
+            && record.rule().provider() == &ProviderRef::registered(&external_lowering_provider())
     }));
 }
 

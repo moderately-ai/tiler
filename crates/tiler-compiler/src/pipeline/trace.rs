@@ -231,7 +231,7 @@ pub(super) fn record_fusion_legality(
     let key = candidate.label().to_owned();
     explain_step(
         (|| -> Result<_, CompileError> {
-            let provider = ProviderRef::registered(capabilities.provider())?;
+            let provider = ProviderRef::registered(capabilities.provider());
             let rule = RuleRef::provided("fusion.legality.v1", capabilities.revision(), provider)?;
             let subject = explain.subject(SubjectKind::Candidate, &key)?;
             let event = match outcome {
@@ -285,7 +285,7 @@ pub(super) fn record_lowering(
         let key = occurrence.subject_key();
         cause = explain_step(
             (|| -> Result<_, CompileError> {
-                let provider = ProviderRef::lowering(occurrence.provider())?;
+                let provider = ProviderRef::lowering(occurrence.provider());
                 let rule = RuleRef::provided(
                     "capability.index-access-resolution.v1",
                     occurrence.provider().capability_revision().get(),
@@ -328,7 +328,7 @@ pub(super) fn record_refinement(
             let identity = refinement_label(refinement);
             let refinement_cause = explain_step(
                 (|| -> Result<_, CompileError> {
-                    let provider = ProviderRef::lowering(occurrence.provider())?;
+                    let provider = ProviderRef::lowering(occurrence.provider());
                     let rule = RuleRef::provided(
                         "kernel.index-region-refinement.v1",
                         occurrence.provider().capability_revision().get(),
@@ -599,7 +599,7 @@ pub(super) fn record_numerical_equivalence(
                         rule: "reduction-provider-missing",
                     })
                 })?;
-            let provider_ref = ProviderRef::lowering(provider)?;
+            let provider_ref = ProviderRef::lowering(provider);
             let subject = explain.subject(SubjectKind::Candidate, &key)?;
             Ok(explain.push_detail(
                 RuleRef::provided("fusion.strict-f32-equivalence", 1, provider_ref.clone())?,
@@ -1632,7 +1632,7 @@ pub(super) fn record_alternative_explain(
                     RuleRef::provided(
                         "compile.region.verified",
                         1,
-                        ProviderRef::registered(&GovernedPhysicalProvider::identity())?,
+                        ProviderRef::registered(&GovernedPhysicalProvider::identity()),
                     )?,
                     vec![subject],
                     check(

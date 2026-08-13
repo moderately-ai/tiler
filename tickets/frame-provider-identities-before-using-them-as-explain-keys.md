@@ -1,7 +1,7 @@
 ---
 id: frame-provider-identities-before-using-them-as-explain-keys
 title: Frame provider identities before using them as explain keys
-status: in-progress
+status: review
 priority: p1
 dependencies: []
 related: [reconcile-the-operation-identity-and-governed-key-grammars, replace-flat-selected-lowering-capability-keys-with-structured-subjects, emit-typed-opaque-call-frontier-rejection-records]
@@ -78,4 +78,55 @@ Retaining `ProviderIdentity` directly makes a private explain record depend on a
 
 ## Accepted direction — 2026-08-12
 
-Tom accepted the corrected closed `Compiler | Registered(ProviderIdentity)` authority representation and its explain-only schema/renderer migration in the direct coordination thread by replying `okay agreeed, next decision`. This acceptance confirms the implementation boundary above: structured equality and encoding, separate unambiguous rendering, no reserved provider spelling, no opaque-byte public API, and no artifact or provider-selection change. The ticket remains `todo` for implementation and independent review.
+Tom accepted the corrected closed `Compiler | Registered(ProviderIdentity)` authority representation and its explain-only schema/renderer migration in the direct coordination thread by replying `okay agreeed, next decision`. This acceptance confirms the implementation boundary above: structured equality and encoding, separate unambiguous rendering, no reserved provider spelling, no opaque-byte public API, and no artifact or provider-selection change.
+
+## Source-first Fact audit — 2026-08-13 at `a0141d22753dd228ed5eb2e910b46bb38c3ed841`
+
+Re-read the complete ticket, `ProviderIdentity` in `crates/tiler-ir/src/semantic/registry.rs`, `validate_component` in `crates/tiler-ir/src/semantic/types.rs`, the full `crates/tiler-compiler/src/explain.rs` construction/encode/render/writer/test population, every `ProviderRef` construction site, `crates/tiler-compiler/src/lib.rs` (`mod explain` is private), and the live optimizer Fact. Coordinator claims were re-run at this exact base before any edit.
+
+1. **Verified — coordinator fact 1.** `rg -n 'format!\\("\\{\\}\\.\\{\\}"' crates/tiler-compiler/src/explain.rs` still hits one site: `ProviderKey::new(format!("{}.{}", provider.namespace(), provider.name()))?` inside `ProviderRef::registered`. The joined string then goes through `validate_key` and `MAX_KEY_BYTES = 255`.
+2. **Verified — coordinator fact 2 / public boundary still correctly absent.** `crates/tiler-compiler/src/lib.rs` declares `mod explain;` with no `pub`. `ProviderRef`, `RuleRef`, `ExplainWriter`, `VerifiedExplainTrace`, `KeyKind`, and the key types are `pub(crate)`. `VerifiedCompilationExplain` is `pub` inside that private module and re-exported from `session`; it exposes only count, render, and Debug. The `public-boundary` tag remains absent. ADR 0073's second-reader trigger has not fired: no other crate decodes canonical traces.
+3. **Verified — coordinator fact 3 / dotted-boundary collision.** `ProviderIdentity::encode` length-frames namespace then name then revision (`push_slice` twice, then `revision.to_be_bytes()`). `validate_component` admits `.` after the first byte (`byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'.' | b'_' | b'-'))`). `MAX_IDENTITY_COMPONENT_BYTES = 255` is per component. Legal pair `("a.b","c")` vs `("a","b.c")` therefore still becomes one flattened `ProviderKey` `"a.b.c"` under the pre-change constructor.
+4. **Verified — the 2026-08-12 audit items 1–5 and 7–9 remain live at this base.** `EXPLAIN_SCHEMA_VERSION` is 9 and `EXPLAIN_RENDERER_VERSION` is 7; `explain_vocabulary_is_append_only_and_versioned` pins those numbers. `push_record` and `encode_basis` both write `provider.key` plus `provider.revision`. `VerifiedExplainTrace::render` prints `provider={}@{}`. `ProviderRef::builtin` / `is_builtin` still classify the flat `tiler.compiler` @ 1 as the compiler, so `ProviderIdentity::new("tiler", "compiler", 1)` collides with that class. `allowed_providers` is a `Vec<ProviderRef>`. `ProviderKey` / `KeyKind::Provider` exist only for `ProviderRef` (census: the `key_type!` declaration, the struct field, the two constructors, and one test struct-literal).
+5. **Verified — composite identity and renderer ownership.** `encode_compilation_explain` writes `tiler.explain.compilation.v1\0`, `COMPILATION_EXPLAIN_SCHEMA_VERSION = 1`, a binding tag, and length-framed nested trace identities. It does not duplicate provider fields. `VerifiedCompilationExplain::render` writes `tiler-compilation-explain-v1` then embeds nested `render()` strings, each of which already carries its own `tiler-explain-vN` header. Assessment: the composite renderer header does not step; it versions wrapping spelling only.
+6. **False if restated as a live public-boundary ownership claim.** Reusing `ProviderIdentity` inside a private explain enum still changes no public constructor. Implementation must not add a public opaque received-identity API or reserve `tiler.compiler`.
+
+## Implementation notes — 2026-08-13
+
+Closed `ProviderRef::Compiler | ProviderRef::Registered(ProviderIdentity)` is now the crate-internal authority. `ProviderKey` / `KeyKind::Provider` are gone (census was provider-reference-only). `encode_provider_ref` is the only canonical writer, used by `push_record` and `encode_basis`. `render_provider_ref` is presentation only. Allowed registered authorities are a `BTreeSet<ProviderIdentity>`. Schema 9→10, renderer 7→8, composite schema/renderer stay 1.
+
+This advances no support-matrix or dtype-maturity row.
+
+### Quoted independent perturbations
+
+Subject was `encode_provider_ref`; assertions were unchanged. Each change was reverted before the next.
+
+1. **Dotted boundary.** Registered arm wrote one `namespace.name` slice. `registered_provider_refs_keep_dotted_component_boundaries` failed with:
+
+   ```
+   assertion `left != right` failed
+     left: [2, 0, 0, 0, 0, 0, 0, 0, 5, 97, 46, 98, 46, 99, 0, 0, 0, 1]
+    right: [2, 0, 0, 0, 0, 0, 0, 0, 5, 97, 46, 98, 46, 99, 0, 0, 0, 1]
+   ```
+
+2. **Maximum component sizes.** Registered arm returned after the class tag when `namespace.len() + 1 + name.len() > MAX_KEY_BYTES`. `registered_provider_refs_accept_maximum_legal_components` failed with:
+
+   ```
+   assertion `left == right` failed: the tagged registered encoding frames both maximum components and the revision
+     left: 1
+    right: 531
+   ```
+
+3. **Revision.** Registered arm omitted `revision.to_be_bytes()`. `registered_provider_refs_keep_revision_in_canonical_bytes` failed with:
+
+   ```
+   assertion `left != right` failed
+     left: [2, 0, 0, 0, 0, 0, 0, 0, 1, 97, 0, 0, 0, 0, 0, 0, 0, 1, 98]
+    right: [2, 0, 0, 0, 0, 0, 0, 0, 1, 97, 0, 0, 0, 0, 0, 0, 0, 1, 98]
+   ```
+
+## Outcome
+
+Explain evidence now names registered providers as structured `ProviderIdentity` values under an explicit compiler/registered class tag. Dotted component pairs stay distinct, maximum legal components are representable, and revision participates in canonical bytes. Presentation uses `compiler:tiler.compiler@1` / `registered:namespace::name@revision` and is not an equality or identity subject. Schema 10, renderer 8, composite header remains v1.
+
+This advances no support-matrix or dtype-maturity row. Artifact, cache, request, semantic, lowering, and selected-provider identities were not retargeted.
