@@ -11,7 +11,9 @@
 //! visibility and anti-dependency edges require. No later cost or feasibility
 //! query can repair a schedule this verifier rejects.
 
-use super::blocked::{participant_space_matches_block, prove_blocked_bijection};
+use super::blocked::{
+    participant_space_matches_block, prove_blocked_bijection, prove_blocked_predicated_cover,
+};
 use super::cooperative::{
     AntiDependencyEdge, ContributorArrival, CooperativeTile, ParticipantRange, ParticipantSpace,
     StagedSpan, VisibilityEdge,
@@ -396,14 +398,28 @@ fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagn
     let iteration_count = element_count(&region.index.iteration_shape)
         .map_err(|_| ScheduledRegionDiagnostic::ShapeProductOverflow)?;
     let schedule = &region.schedule;
-    if schedule.tail != TailPolicy::Exact
-        || schedule.work_items != iteration_count
-        || schedule.launch.grid_threads != iteration_count
-        || schedule.launch.threads_per_workgroup != schedule.threads_per_workgroup
+    if schedule.launch.threads_per_workgroup != schedule.threads_per_workgroup
         || schedule.threads_per_workgroup == 0
         || !schedule.launch.zero_work_skips_dispatch
+        || schedule.work_items != iteration_count
     {
         return Err(ScheduledRegionDiagnostic::LaunchCoverage);
+    }
+    match schedule.tail {
+        TailPolicy::Exact => {
+            if schedule.launch.grid_threads != iteration_count {
+                return Err(ScheduledRegionDiagnostic::LaunchCoverage);
+            }
+        }
+        TailPolicy::Predicated => {
+            if !matches!(
+                schedule.reduction,
+                ReductionTopology::CooperativeContraction { .. }
+            ) || !matches!(schedule.binding, ExecutionBinding::BlockedWorkgroup { .. })
+            {
+                return Err(ScheduledRegionDiagnostic::LaunchCoverage);
+            }
+        }
     }
     match &schedule.binding {
         ExecutionBinding::GlobalLinearInvocation => {
@@ -421,14 +437,24 @@ fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagn
             ) {
                 return Err(blocked(BlockedWorkgroupRule::BindingForbidden));
             }
-            prove_blocked_bijection(
-                &region.index.iteration_shape,
-                block,
-                workgroups,
-                schedule.work_items,
-                schedule.threads_per_workgroup,
-                schedule.launch.grid_threads,
-            )?;
+            match schedule.tail {
+                TailPolicy::Exact => prove_blocked_bijection(
+                    &region.index.iteration_shape,
+                    block,
+                    workgroups,
+                    schedule.work_items,
+                    schedule.threads_per_workgroup,
+                    schedule.launch.grid_threads,
+                )?,
+                TailPolicy::Predicated => prove_blocked_predicated_cover(
+                    &region.index.iteration_shape,
+                    block,
+                    workgroups,
+                    schedule.work_items,
+                    schedule.threads_per_workgroup,
+                    schedule.launch.grid_threads,
+                )?,
+            }
         }
     }
     // A cooperative tile's participant space is decided here, beside launch
@@ -9145,6 +9171,250 @@ mod tests {
             ScheduledRegionDiagnostic::CooperativeTile {
                 rule: CooperativeTileRule::OperandTileCommit,
             }
+        );
+    }
+
+    fn predicated_operand_builder(
+        output_m: u64,
+        output_n: u64,
+        contracted: u64,
+    ) -> (
+        crate::schedule::PredicatedCooperativeContraction,
+        ScheduledRegionBuilder,
+    ) {
+        let admitted = crate::schedule::admit_predicated_cooperative_contraction(
+            &Shape::from_dims([output_m, output_n]),
+            &Shape::from_dims([OUTPUT_BLOCK, OUTPUT_BLOCK]),
+            &Shape::from_dims([contracted]),
+            &Shape::from_dims([CONTRACTED_TILE]),
+        )
+        .expect("the predicated launch is representable");
+        let output = Shape::from_dims([output_m, output_n]);
+        let contracted_shape = Shape::from_dims([contracted]);
+        let left = Shape::from_dims([output_m, contracted]);
+        let right = Shape::from_dims([output_n, contracted]);
+        let work_items = output_m.checked_mul(output_n).expect("M×N fits");
+        let operand_map = |free_position, operand: Shape| LogicalAccess::ContractionOperand {
+            operand_shape: operand,
+            output_shape: output.clone(),
+            contracted_shape: contracted_shape.clone(),
+            sources: vec![
+                ContractionAxisSource::Output {
+                    position: free_position,
+                },
+                ContractionAxisSource::Contracted { position: 0 },
+            ],
+            order: ContributorOrder::OriginalAxisLexicographic,
+        };
+        let mut tile = operand_tile_fixture();
+        tile.rounds = admitted.rounds;
+        let mut builder = ScheduledRegionBuilder::new(RegionId::new(7));
+        builder.iteration_shape(output.clone()).unwrap();
+        for (witness, ordinal, map) in [
+            (0, 0, operand_map(0, left.clone())),
+            (1, 1, operand_map(1, right.clone())),
+        ] {
+            builder
+                .push_access(Access {
+                    tensor: TensorRole::Input {
+                        ordinal: InputOrdinal::new(ordinal),
+                    },
+                    component_role: None,
+                    mode: AccessMode::Read,
+                    map,
+                    bounds: BoundsWitnessId::new(witness),
+                    ownership: None,
+                })
+                .unwrap();
+            builder
+                .push_bounds_proof(BoundsProof {
+                    id: BoundsWitnessId::new(witness),
+                    tensor: TensorRole::Input {
+                        ordinal: InputOrdinal::new(ordinal),
+                    },
+                    component_role: None,
+                    kind: BoundsProofKind::LinearRange {
+                        element_count: match ordinal {
+                            0 => output_m.checked_mul(contracted).expect("MK fits"),
+                            _ => output_n.checked_mul(contracted).expect("NK fits"),
+                        },
+                    },
+                })
+                .unwrap();
+        }
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Output,
+                component_role: None,
+                mode: AccessMode::Write,
+                map: LogicalAccess::LinearIdentity,
+                bounds: BoundsWitnessId::new(2),
+                ownership: Some(OwnershipWitnessId::new(0)),
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(2),
+                tensor: TensorRole::Output,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: work_items,
+                },
+            })
+            .unwrap();
+        builder
+            .ownership_proof(OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: TensorRole::Output,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                    output_count: work_items,
+                },
+            })
+            .unwrap();
+        builder
+            .scalar_program(ScalarProgram::StrictTensorContraction {
+                contracted_shape: contracted_shape.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: 0x7fc0_0000,
+            })
+            .unwrap();
+        builder.numerical(reassociating_numerical()).unwrap();
+        let threads = u32::try_from(TILE_PARTICIPANTS).expect("256 fits u32");
+        builder
+            .schedule(KernelSchedule {
+                binding: admitted.binding.clone(),
+                work_items: admitted.work_items,
+                threads_per_workgroup: threads,
+                tail: TailPolicy::Predicated,
+                output_owner: OwnershipWitnessId::new(0),
+                reduction: ReductionTopology::CooperativeContraction {
+                    tile,
+                    contracted_shape,
+                    contracted_tile: admitted.contracted_tile.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    accumulation: ArithmeticType::F32,
+                    permits_reassociation: true,
+                    permits_permutation: false,
+                },
+                launch: LaunchPlan {
+                    grid_threads: admitted.grid_threads,
+                    threads_per_workgroup: threads,
+                    zero_work_skips_dispatch: true,
+                },
+            })
+            .unwrap();
+        (admitted, builder)
+    }
+
+    /// Exact and Predicated [32, 32] blocks under the same binding stay distinct.
+    #[test]
+    fn exact_and_predicated_neighbours_keep_distinct_identities() {
+        let exact = operand_contraction_builder(&admitted_operand_tile(), operand_tile_fixture())
+            .build()
+            .expect("the exact neighbour verifies");
+        let (_, predicated_builder) =
+            predicated_operand_builder(OUTPUT_EXTENT, OUTPUT_EXTENT, CONTRACTED_EXTENT);
+        let predicated = predicated_builder
+            .build()
+            .expect("the predicated neighbour verifies");
+        assert_eq!(
+            exact.region().schedule.work_items,
+            predicated.region().schedule.work_items
+        );
+        assert_eq!(
+            exact.region().schedule.launch.grid_threads,
+            predicated.region().schedule.launch.grid_threads
+        );
+        assert_ne!(
+            exact.canonical_identity().as_bytes(),
+            predicated.canonical_identity().as_bytes()
+        );
+        let mut exact_hex = String::new();
+        let mut predicated_hex = String::new();
+        for byte in exact.canonical_identity().as_bytes() {
+            write!(&mut exact_hex, "{byte:02x}").unwrap();
+        }
+        for byte in predicated.canonical_identity().as_bytes() {
+            write!(&mut predicated_hex, "{byte:02x}").unwrap();
+        }
+        assert!(exact_hex.contains("01"), "Exact keeps tail tag 0x01");
+        assert!(
+            predicated_hex.contains("02"),
+            "Predicated appends tail tag 0x02"
+        );
+    }
+
+    /// Partial free extents, exact neighbours, zero work, overflow, and nondivisible K.
+    #[test]
+    fn predicated_admission_covers_the_required_shapes() {
+        let cases = [
+            (1, OUTPUT_EXTENT, CONTRACTED_EXTENT, true),
+            (10, OUTPUT_EXTENT, CONTRACTED_EXTENT, true),
+            (OUTPUT_EXTENT, 10, CONTRACTED_EXTENT, true),
+            (10, 10, CONTRACTED_EXTENT, true),
+            (OUTPUT_EXTENT, OUTPUT_EXTENT, CONTRACTED_EXTENT, true),
+            (0, OUTPUT_EXTENT, CONTRACTED_EXTENT, true),
+        ];
+        for (m, n, k, ok) in cases {
+            let admitted = crate::schedule::admit_predicated_cooperative_contraction(
+                &Shape::from_dims([m, n]),
+                &Shape::from_dims([OUTPUT_BLOCK, OUTPUT_BLOCK]),
+                &Shape::from_dims([k]),
+                &Shape::from_dims([CONTRACTED_TILE]),
+            );
+            assert_eq!(admitted.is_ok(), ok, "M={m} N={n} K={k}");
+            if let Ok(admitted) = admitted {
+                if m == 0 || n == 0 {
+                    assert_eq!(admitted.work_items, 0);
+                    assert_eq!(admitted.grid_threads, 0);
+                } else {
+                    assert_eq!(admitted.work_items, m * n);
+                    assert!(admitted.grid_threads >= admitted.work_items);
+                    assert_eq!(admitted.grid_threads % TILE_PARTICIPANTS, 0);
+                }
+                let (_, builder) = predicated_operand_builder(m, n, k);
+                builder
+                    .build()
+                    .unwrap_or_else(|error| panic!("M={m} N={n} K={k} refused: {error:?}"));
+            }
+        }
+        let overflow = crate::schedule::admit_predicated_cooperative_contraction(
+            &Shape::from_dims([u64::MAX, u64::MAX]),
+            &Shape::from_dims([OUTPUT_BLOCK, OUTPUT_BLOCK]),
+            &Shape::from_dims([CONTRACTED_EXTENT]),
+            &Shape::from_dims([CONTRACTED_TILE]),
+        );
+        assert_eq!(
+            overflow,
+            Err(crate::schedule::CooperativeContractionAdmission::ShapeProductOverflow)
+        );
+        let nondivisible_k = crate::schedule::admit_predicated_cooperative_contraction(
+            &Shape::from_dims([10, 10]),
+            &Shape::from_dims([OUTPUT_BLOCK, OUTPUT_BLOCK]),
+            &Shape::from_dims([17]),
+            &Shape::from_dims([CONTRACTED_TILE]),
+        );
+        assert_eq!(
+            nondivisible_k
+                .expect_err("17 is not divisible by 16")
+                .rule(),
+            "cooperative-contraction-contracted-tile-not-divisible"
+        );
+    }
+
+    /// Predicated never rewrites itself to Exact when the block happens to divide.
+    #[test]
+    fn a_divisible_predicated_proposal_does_not_normalize_to_exact() {
+        let (admitted, builder) =
+            predicated_operand_builder(OUTPUT_EXTENT, OUTPUT_EXTENT, CONTRACTED_EXTENT);
+        let verified = builder
+            .build()
+            .expect("divisible Predicated still verifies");
+        assert_eq!(verified.region().schedule.tail, TailPolicy::Predicated);
+        assert_eq!(admitted.grid_threads, OUTPUT_POSITIONS);
+        assert_ne!(
+            format!("{:?}", verified.region().schedule.tail),
+            format!("{:?}", TailPolicy::Exact)
         );
     }
 

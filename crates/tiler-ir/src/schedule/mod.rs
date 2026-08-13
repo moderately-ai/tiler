@@ -148,7 +148,9 @@ mod synchronization;
 mod witness;
 
 pub use blocked::{
-    ExactCooperativeContraction, admit_exact_cooperative_contraction, prove_blocked_bijection,
+    ExactCooperativeContraction, PredicatedCooperativeContraction,
+    admit_exact_cooperative_contraction, admit_predicated_cooperative_contraction,
+    prove_blocked_bijection, prove_blocked_predicated_cover,
 };
 pub use builder::ScheduledRegionBuilder;
 pub use cooperative::{

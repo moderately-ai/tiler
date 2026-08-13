@@ -23,15 +23,15 @@ use crate::schedule::{
     ExecutionBinding, FencedSpaces, MemoryOrdering, OwnershipWitnessId, PhaseId, ReductionPass,
     ReductionTopology, ResourceRequirements, ScheduledRegion, StagedElement, StagingId,
     SyncPointId, SynchronizationKind, SynchronizationPlacement, SynchronizationPoint,
-    SynchronizationScope, SynchronizationSubject, VisibilityEdge, contributor_count,
+    SynchronizationScope, SynchronizationSubject, TailPolicy, VisibilityEdge, contributor_count,
     cooperative_tile, element_count, live_input_extents,
 };
 
 use super::error::KernelDiagnostic;
 use super::model::{
-    AddressSpace, BarrierOrdering, BarrierSpec, BufferAccess, Builtin, CompareOp, ExecutionScope,
-    InputExtentParameter, KernelConstant, KernelData, KernelType, MemoryScope, OperationKind,
-    region_element_type,
+    AddressSpace, BarrierOrdering, BarrierSpec, BinaryOp, BufferAccess, Builtin, CompareOp,
+    ExecutionScope, InputExtentParameter, KernelConstant, KernelData, KernelType, MemoryScope,
+    OperationKind, region_element_type,
 };
 
 /// Returns the number of addressable elements one scheduled access spans.
@@ -90,12 +90,15 @@ struct Effect {
     kind: EffectKind,
     loop_depth: u32,
     guarded: bool,
+    row: bool,
+    column: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
 enum EffectKind {
     Load {
         bounds: BoundsWitnessId,
+        ordinary: bool,
     },
     Store {
         bounds: BoundsWitnessId,
@@ -208,6 +211,50 @@ struct Walk {
     sync: Vec<SyncEvent>,
     loops: Vec<LoopSummary>,
     ungoverned_predicate: bool,
+    incomplete_staging: bool,
+    guarded_loads: Vec<GuardedLoadFact>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct GuardedLoadFact {
+    predicate: u32,
+    buffer: u32,
+    inactive: u32,
+}
+
+#[derive(Clone, Debug, Default)]
+struct AxisGuards {
+    row: BTreeSet<u32>,
+    column: BTreeSet<u32>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Nest(u8);
+
+impl Nest {
+    const GUARDED: u8 = 1;
+    const ROW: u8 = 2;
+    const COLUMN: u8 = 4;
+    const PREDICATED: u8 = 8;
+
+    const fn empty() -> Self {
+        Self(0)
+    }
+
+    const fn with(self, flag: u8) -> Self {
+        Self(self.0 | flag)
+    }
+
+    const fn has(self, flag: u8) -> bool {
+        self.0 & flag != 0
+    }
+}
+
+struct Visit<'a> {
+    data: &'a KernelData,
+    guards: &'a BTreeSet<u32>,
+    axis: &'a AxisGuards,
+    walk: &'a mut Walk,
 }
 
 /// Verifies one assembled kernel against the scheduled region it refines.
@@ -222,14 +269,43 @@ pub(super) fn verify_kernel(
     verify_input_extents(data, schedule, reads)?;
     verify_cooperative(data, schedule)?;
 
-    let guards = guard_values(data, schedule);
+    let axis = axis_guards(data, schedule);
+    let mut guards = guard_values(data, schedule);
+    guards.extend(axis.row.iter().copied());
+    guards.extend(axis.column.iter().copied());
     let mut walk = Walk::default();
-    visit_block(data, 0, false, 0, 0, &guards, &mut walk);
+    let mut nest = Nest::empty();
+    if matches!(schedule.schedule.tail, TailPolicy::Predicated) {
+        nest = nest.with(Nest::PREDICATED);
+    }
+    let mut visit = Visit {
+        data,
+        guards: &guards,
+        axis: &axis,
+        walk: &mut walk,
+    };
+    visit_block(&mut visit, 0, nest, 0, 0);
+    if matches!(schedule.schedule.tail, TailPolicy::Predicated)
+        && matches!(
+            schedule.schedule.reduction,
+            ReductionTopology::CooperativeContraction { .. }
+        )
+        && walk
+            .effects
+            .iter()
+            .any(|effect| matches!(effect.kind, EffectKind::Load { ordinary: true, .. }))
+    {
+        return Err(KernelDiagnostic::BoundsEvidence);
+    }
     if walk.ungoverned_predicate {
         return Err(KernelDiagnostic::PredicateDominance);
     }
+    if walk.incomplete_staging {
+        return Err(KernelDiagnostic::IncompleteStaging);
+    }
     verify_synchronization(&walk, data, schedule)?;
     verify_effects(&walk, schedule, reads, write)?;
+    verify_predicated_contraction_roles(&walk, data, schedule, reads)?;
     verify_reduction(&walk, data, schedule, reads)?;
 
     let canonical = super::lower::derive_canonical(schedule, schedule_identity, derived)?;
@@ -1004,74 +1080,376 @@ fn guard_values(data: &KernelData, schedule: &ScheduledRegion) -> BTreeSet<u32> 
     guards
 }
 
-fn visit_block(
+fn axis_guards(data: &KernelData, schedule: &ScheduledRegion) -> AxisGuards {
+    let Some(geom) = blocked_geometry(schedule) else {
+        return AxisGuards::default();
+    };
+    let mut roles = BTreeMap::new();
+    let mut axis = AxisGuards::default();
+    for block in &data.blocks {
+        for operation in &block.operations {
+            match &operation.kind {
+                OperationKind::Builtin {
+                    builtin: Builtin::GlobalInvocationIndex,
+                } => {
+                    for result in &operation.results {
+                        roles.insert(*result, IndexRole::Gid);
+                    }
+                }
+                OperationKind::Builtin {
+                    builtin: Builtin::LocalInvocationIndex,
+                } => {
+                    for result in &operation.results {
+                        roles.insert(*result, IndexRole::Lid);
+                    }
+                }
+                OperationKind::Constant {
+                    value: KernelConstant::Index(value),
+                } => {
+                    for result in &operation.results {
+                        roles.insert(*result, IndexRole::Const(*value));
+                    }
+                }
+                OperationKind::Binary { op, lhs, rhs } => {
+                    let Some(role) = classify_binary(*op, *lhs, *rhs, &roles, &geom) else {
+                        continue;
+                    };
+                    for result in &operation.results {
+                        roles.insert(*result, role);
+                    }
+                }
+                OperationKind::Compare {
+                    op: CompareOp::IndexLessThan,
+                    lhs,
+                    rhs,
+                } => {
+                    let bound = match roles.get(rhs) {
+                        Some(IndexRole::Const(value)) => *value,
+                        _ => continue,
+                    };
+                    let Some(lhs_role) = roles.get(lhs).copied() else {
+                        continue;
+                    };
+                    let lhs_role = normalize_coord(lhs_role, &geom);
+                    for result in &operation.results {
+                        if lhs_role == IndexRole::Row && bound == geom.output_m {
+                            axis.row.insert(*result);
+                        }
+                        if lhs_role == IndexRole::Col && bound == geom.output_n {
+                            axis.column.insert(*result);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    axis
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IndexRole {
+    Gid,
+    Lid,
+    Const(u64),
+    WgLinear,
+    WgM,
+    WgN,
+    LocalM,
+    LocalN,
+    Row,
+    Col,
+}
+
+struct BlockedGeom {
+    block_m: u64,
+    block_n: u64,
+    workgroups_m: u64,
+    workgroups_n: u64,
+    output_m: u64,
+    output_n: u64,
+    threads_per_workgroup: u64,
+}
+
+fn blocked_geometry(schedule: &ScheduledRegion) -> Option<BlockedGeom> {
+    let ExecutionBinding::BlockedWorkgroup { block, workgroups } = &schedule.schedule.binding
+    else {
+        return None;
+    };
+    if block.rank() != 2 || workgroups.rank() != 2 || schedule.index.iteration_shape.rank() != 2 {
+        return None;
+    }
+    let block_m = block.extents()[0].get();
+    let block_n = block.extents()[1].get();
+    let workgroups_m = workgroups.extents()[0].get();
+    let workgroups_n = workgroups.extents()[1].get();
+    let output_m = schedule.index.iteration_shape.extents()[0].get();
+    let output_n = schedule.index.iteration_shape.extents()[1].get();
+    let threads_per_workgroup = block_m.checked_mul(block_n)?;
+    Some(BlockedGeom {
+        block_m,
+        block_n,
+        workgroups_m,
+        workgroups_n,
+        output_m,
+        output_n,
+        threads_per_workgroup,
+    })
+}
+
+fn normalize_coord(role: IndexRole, geom: &BlockedGeom) -> IndexRole {
+    match role {
+        IndexRole::LocalM if geom.workgroups_m == 1 => IndexRole::Row,
+        IndexRole::LocalN if geom.workgroups_n == 1 => IndexRole::Col,
+        other => other,
+    }
+}
+
+fn classify_binary(
+    op: BinaryOp,
+    lhs: u32,
+    rhs: u32,
+    roles: &BTreeMap<u32, IndexRole>,
+    geom: &BlockedGeom,
+) -> Option<IndexRole> {
+    let left = roles.get(&lhs).copied()?;
+    let right = roles.get(&rhs).copied()?;
+    match op {
+        BinaryOp::IndexDivide => match (left, right) {
+            (IndexRole::Gid, IndexRole::Const(divisor))
+                if divisor == geom.threads_per_workgroup =>
+            {
+                Some(IndexRole::WgLinear)
+            }
+            (IndexRole::WgLinear, IndexRole::Const(divisor)) if divisor == geom.workgroups_n => {
+                Some(IndexRole::WgM)
+            }
+            (IndexRole::Lid, IndexRole::Const(divisor)) if divisor == geom.block_n => {
+                Some(IndexRole::LocalM)
+            }
+            _ => None,
+        },
+        BinaryOp::IndexModulo => match (left, right) {
+            (IndexRole::WgLinear, IndexRole::Const(modulus)) if modulus == geom.workgroups_n => {
+                Some(IndexRole::WgN)
+            }
+            (IndexRole::Lid, IndexRole::Const(modulus)) if modulus == geom.block_n => {
+                Some(IndexRole::LocalN)
+            }
+            _ => None,
+        },
+        BinaryOp::IndexMultiply => match (left, right) {
+            (IndexRole::WgM, IndexRole::Const(factor))
+            | (IndexRole::Const(factor), IndexRole::WgM)
+                if factor == geom.block_m =>
+            {
+                Some(IndexRole::WgM)
+            }
+            (IndexRole::WgN, IndexRole::Const(factor))
+            | (IndexRole::Const(factor), IndexRole::WgN)
+                if factor == geom.block_n =>
+            {
+                Some(IndexRole::WgN)
+            }
+            _ => None,
+        },
+        BinaryOp::IndexAdd => {
+            let pair = (left, right);
+            match pair {
+                (IndexRole::WgM, IndexRole::LocalM) | (IndexRole::LocalM, IndexRole::WgM) => {
+                    Some(IndexRole::Row)
+                }
+                (IndexRole::WgN, IndexRole::LocalN) | (IndexRole::LocalN, IndexRole::WgN) => {
+                    Some(IndexRole::Col)
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// After `IndexMultiply` of a workgroup-m term by the block extent the role
+/// stays that term so the following add can form `m`.
+fn verify_predicated_contraction_roles(
+    walk: &Walk,
     data: &KernelData,
-    block: u32,
-    guarded: bool,
-    loop_depth: u32,
-    block_depth: u32,
-    guards: &BTreeSet<u32>,
-    walk: &mut Walk,
-) {
-    let Some(block) = data.blocks.get(block as usize) else {
+    schedule: &ScheduledRegion,
+    reads: &[Access],
+) -> Result<(), KernelDiagnostic> {
+    if schedule.schedule.tail != TailPolicy::Predicated {
+        return Ok(());
+    }
+    if !matches!(
+        schedule.schedule.reduction,
+        ReductionTopology::CooperativeContraction { .. }
+    ) {
+        return Ok(());
+    }
+    let [left, right] = reads else {
+        return Err(KernelDiagnostic::ScheduleAccessCount);
+    };
+    let left_buffer = u32::try_from(
+        data.buffers
+            .iter()
+            .position(|buffer| buffer.tensor == left.tensor)
+            .ok_or(KernelDiagnostic::BufferContract)?,
+    )
+    .map_err(|_| KernelDiagnostic::BufferContract)?;
+    let right_buffer = u32::try_from(
+        data.buffers
+            .iter()
+            .position(|buffer| buffer.tensor == right.tensor)
+            .ok_or(KernelDiagnostic::BufferContract)?,
+    )
+    .map_err(|_| KernelDiagnostic::BufferContract)?;
+    let axis = axis_guards(data, schedule);
+    let plus_zero = data.values.iter().enumerate().find_map(|(index, value)| {
+        matches!(value.constant, Some(KernelConstant::F32Bits(0)))
+            .then(|| u32::try_from(index).ok())
+            .flatten()
+    });
+    for load in &walk.guarded_loads {
+        let inactive_ok = plus_zero == Some(load.inactive)
+            || data
+                .values
+                .get(load.inactive as usize)
+                .and_then(|value| value.constant)
+                == Some(KernelConstant::F32Bits(0.0_f32.to_bits()));
+        if !inactive_ok {
+            return Err(KernelDiagnostic::BodyRefinement);
+        }
+        if load.buffer == left_buffer && !axis.row.contains(&load.predicate) {
+            return Err(KernelDiagnostic::LeftLoadGuard);
+        }
+        if load.buffer == right_buffer && !axis.column.contains(&load.predicate) {
+            return Err(KernelDiagnostic::RightLoadGuard);
+        }
+    }
+    let has_left = walk
+        .guarded_loads
+        .iter()
+        .any(|load| load.buffer == left_buffer);
+    let has_right = walk
+        .guarded_loads
+        .iter()
+        .any(|load| load.buffer == right_buffer);
+    if !has_left {
+        return Err(KernelDiagnostic::LeftLoadGuard);
+    }
+    if !has_right {
+        return Err(KernelDiagnostic::RightLoadGuard);
+    }
+    for effect in &walk.effects {
+        if matches!(effect.kind, EffectKind::Store { .. }) && (!effect.row || !effect.column) {
+            return Err(KernelDiagnostic::OutputStoreGuard);
+        }
+    }
+    Ok(())
+}
+
+fn visit_block(visit: &mut Visit<'_>, block: u32, nest: Nest, loop_depth: u32, block_depth: u32) {
+    let Some(block_data) = visit.data.blocks.get(block as usize) else {
         return;
     };
-    for operation in &block.operations {
+    let operations = block_data.operations.clone();
+    for operation in &operations {
         match &operation.kind {
-            OperationKind::Load { bounds, .. } => walk.effects.push(Effect {
-                kind: EffectKind::Load { bounds: *bounds },
+            OperationKind::Load { bounds, .. } => visit.walk.effects.push(Effect {
+                kind: EffectKind::Load {
+                    bounds: *bounds,
+                    ordinary: true,
+                },
                 loop_depth,
-                guarded,
+                guarded: nest.has(Nest::GUARDED),
+                row: nest.has(Nest::ROW),
+                column: nest.has(Nest::COLUMN),
             }),
+            OperationKind::GuardedLoad {
+                predicate,
+                buffer,
+                bounds,
+                inactive,
+                ..
+            } => {
+                visit.walk.effects.push(Effect {
+                    kind: EffectKind::Load {
+                        bounds: *bounds,
+                        ordinary: false,
+                    },
+                    loop_depth,
+                    guarded: true,
+                    row: visit.axis.row.contains(predicate),
+                    column: visit.axis.column.contains(predicate),
+                });
+                visit.walk.guarded_loads.push(GuardedLoadFact {
+                    predicate: *predicate,
+                    buffer: *buffer,
+                    inactive: *inactive,
+                });
+            }
             OperationKind::Store {
                 bounds, ownership, ..
-            } => walk.effects.push(Effect {
+            } => visit.walk.effects.push(Effect {
                 kind: EffectKind::Store {
                     bounds: *bounds,
                     ownership: *ownership,
                 },
                 loop_depth,
-                guarded,
+                guarded: nest.has(Nest::GUARDED),
+                row: nest.has(Nest::ROW),
+                column: nest.has(Nest::COLUMN),
             }),
             OperationKind::Barrier { spec } => {
-                walk.has_synchronization = true;
-                walk.barriers.push(spec.clone());
-                walk.sync.push(SyncEvent::Barrier {
+                visit.walk.has_synchronization = true;
+                visit.walk.barriers.push(spec.clone());
+                visit.walk.sync.push(SyncEvent::Barrier {
                     point: spec.point,
                     block_depth,
                     loop_depth,
                 });
             }
             OperationKind::StagedStore { staging, phase, .. } => {
-                walk.sync.push(SyncEvent::StagedWrite {
+                if nest.has(Nest::PREDICATED)
+                    && (nest.has(Nest::GUARDED) || nest.has(Nest::ROW) || nest.has(Nest::COLUMN))
+                {
+                    visit.walk.incomplete_staging = true;
+                }
+                visit.walk.sync.push(SyncEvent::StagedWrite {
                     staging: *staging,
                     phase: *phase,
                 });
             }
             OperationKind::StagedLoad { staging, phase, .. } => {
-                walk.sync.push(SyncEvent::StagedRead {
+                visit.walk.sync.push(SyncEvent::StagedRead {
                     staging: *staging,
                     phase: *phase,
                 });
             }
             OperationKind::Predicated { predicate, body } => {
-                if !guards.contains(predicate) {
-                    walk.ungoverned_predicate = true;
+                if !visit.guards.contains(predicate) {
+                    visit.walk.ungoverned_predicate = true;
+                }
+                let mut inner = nest.with(Nest::GUARDED);
+                if visit.axis.row.contains(predicate) {
+                    inner = inner.with(Nest::ROW);
+                }
+                if visit.axis.column.contains(predicate) {
+                    inner = inner.with(Nest::COLUMN);
                 }
                 visit_block(
-                    data,
+                    visit,
                     *body,
-                    true,
+                    inner,
                     loop_depth,
                     block_depth.saturating_add(1),
-                    guards,
-                    walk,
                 );
             }
             OperationKind::SerialLoopRange {
                 start, end, body, ..
             } => {
-                let accumulators = data
+                let accumulators = visit
+                    .data
                     .blocks
                     .get(*body as usize)
                     .map(|inner| {
@@ -1079,14 +1457,14 @@ fn visit_block(
                             .parameters
                             .iter()
                             .skip(1)
-                            .filter_map(|index| data.values.get(*index as usize))
+                            .filter_map(|index| visit.data.values.get(*index as usize))
                             .map(|value| value.value_type)
                             .collect()
                     })
                     .unwrap_or_default();
-                let summary = walk.loops.len();
-                let first_event = walk.sync.len();
-                walk.loops.push(LoopSummary {
+                let summary = visit.walk.loops.len();
+                let first_event = visit.walk.sync.len();
+                visit.walk.loops.push(LoopSummary {
                     start: 0,
                     end: 0,
                     start_value: Some(*start),
@@ -1096,23 +1474,22 @@ fn visit_block(
                     sync: first_event..first_event,
                 });
                 visit_block(
-                    data,
+                    visit,
                     *body,
-                    guarded,
+                    nest,
                     loop_depth.saturating_add(1),
                     block_depth.saturating_add(1),
-                    guards,
-                    walk,
                 );
-                let last_event = walk.sync.len();
-                if let Some(summary) = walk.loops.get_mut(summary) {
+                let last_event = visit.walk.sync.len();
+                if let Some(summary) = visit.walk.loops.get_mut(summary) {
                     summary.sync = first_event..last_event;
                 }
             }
             OperationKind::SerialLoop {
                 start, end, body, ..
             } => {
-                let accumulators = data
+                let accumulators = visit
+                    .data
                     .blocks
                     .get(*body as usize)
                     .map(|inner| {
@@ -1120,17 +1497,14 @@ fn visit_block(
                             .parameters
                             .iter()
                             .skip(1)
-                            .filter_map(|index| data.values.get(*index as usize))
+                            .filter_map(|index| visit.data.values.get(*index as usize))
                             .map(|value| value.value_type)
                             .collect()
                     })
                     .unwrap_or_default();
-                // Reserved before the body is walked and filled after it, so the
-                // recorded range is this loop's own events even when the body
-                // nests further loops that push their summaries first.
-                let summary = walk.loops.len();
-                let first_event = walk.sync.len();
-                walk.loops.push(LoopSummary {
+                let summary = visit.walk.loops.len();
+                let first_event = visit.walk.sync.len();
+                visit.walk.loops.push(LoopSummary {
                     start: *start,
                     end: *end,
                     start_value: None,
@@ -1140,16 +1514,14 @@ fn visit_block(
                     sync: first_event..first_event,
                 });
                 visit_block(
-                    data,
+                    visit,
                     *body,
-                    guarded,
+                    nest,
                     loop_depth.saturating_add(1),
                     block_depth.saturating_add(1),
-                    guards,
-                    walk,
                 );
-                let last_event = walk.sync.len();
-                if let Some(summary) = walk.loops.get_mut(summary) {
+                let last_event = visit.walk.sync.len();
+                if let Some(summary) = visit.walk.loops.get_mut(summary) {
                     summary.sync = first_event..last_event;
                 }
             }
@@ -1179,14 +1551,28 @@ fn verify_effects(
     reads: &[Access],
     write: &Access,
 ) -> Result<(), KernelDiagnostic> {
-    if walk.effects.iter().any(|effect| !effect.guarded) {
+    let exact_contraction = matches!(schedule.schedule.tail, TailPolicy::Exact)
+        && matches!(
+            schedule.schedule.reduction,
+            ReductionTopology::CooperativeContraction { .. }
+        );
+    if walk.effects.iter().any(|effect| !effect.guarded) && !exact_contraction {
         return Err(KernelDiagnostic::PredicateDominance);
     }
     let mut stores = 0_usize;
     for effect in &walk.effects {
         match effect.kind {
-            EffectKind::Load { bounds } => {
+            EffectKind::Load { bounds, ordinary } => {
                 if !reads.iter().any(|read| bounds == read.bounds) {
+                    return Err(KernelDiagnostic::BoundsEvidence);
+                }
+                if ordinary
+                    && matches!(schedule.schedule.tail, TailPolicy::Predicated)
+                    && matches!(
+                        schedule.schedule.reduction,
+                        ReductionTopology::CooperativeContraction { .. }
+                    )
+                {
                     return Err(KernelDiagnostic::BoundsEvidence);
                 }
             }
@@ -1311,8 +1697,34 @@ fn verify_reduction(
                 .ok_or(KernelDiagnostic::ElementCountOverflow)?,
             tile.rounds,
         ),
-        ReductionTopology::CooperativeContraction { .. } => {
-            Err(KernelDiagnostic::CooperativeLoweringShape)
+        ReductionTopology::CooperativeContraction {
+            contracted_tile, ..
+        } => {
+            if reads.len() != 2 {
+                return Err(KernelDiagnostic::ReductionContract);
+            }
+            let tile_k = contracted_tile
+                .extents()
+                .first()
+                .map_or(0, |extent| extent.get());
+            if tile_k <= 1 {
+                return if walk.loops.is_empty() {
+                    Ok(())
+                } else {
+                    Err(KernelDiagnostic::ReductionContract)
+                };
+            }
+            let Some(inner) = walk
+                .loops
+                .iter()
+                .find(|reduction| reduction.start == 1 && reduction.end == tile_k)
+            else {
+                return Err(KernelDiagnostic::ReductionContract);
+            };
+            if inner.accumulators != [KernelType::F32] {
+                return Err(KernelDiagnostic::ReductionContract);
+            }
+            Ok(())
         }
     }
 }

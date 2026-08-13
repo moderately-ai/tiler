@@ -481,7 +481,9 @@ fn loaded_buffers(kernel: &VerifiedKernel) -> Vec<VerifiedBufferId> {
     fn walk(block: BlockRef<'_>, loads: &mut Vec<VerifiedBufferId>) {
         for operation in block.operations() {
             match operation.view() {
-                OperationView::Load { buffer, .. } => loads.push(buffer),
+                OperationView::Load { buffer, .. } | OperationView::GuardedLoad { buffer, .. } => {
+                    loads.push(buffer);
+                }
                 OperationView::Predicated { body, .. } => walk(body, loads),
                 OperationView::SerialLoop(serial) => walk(serial.body(), loads),
                 OperationView::Builtin { .. }
@@ -871,6 +873,7 @@ fn body_shaping_vocabulary_is_closed(
         },
         match tail {
             TailPolicy::Exact => "exact",
+            TailPolicy::Predicated => "predicated",
         },
         match access {
             LogicalAccess::LinearIdentity => "linear-identity",
@@ -1008,7 +1011,9 @@ fn referenced_buffers(block: BlockRef<'_>) -> Vec<VerifiedBufferId> {
     let mut found = Vec::new();
     for operation in block.operations() {
         match operation.view() {
-            OperationView::Load { buffer, .. } | OperationView::Store { buffer, .. } => {
+            OperationView::Load { buffer, .. }
+            | OperationView::GuardedLoad { buffer, .. }
+            | OperationView::Store { buffer, .. } => {
                 found.push(buffer);
             }
             OperationView::Predicated { body, .. } => found.extend(referenced_buffers(body)),
@@ -3328,6 +3333,20 @@ impl<'a> KirMachine<'a> {
             OperationView::Load { offset, .. } => {
                 let offset = usize::try_from(self.get(offset).index()).unwrap();
                 let value = KirValue::F32(self.input[offset]);
+                self.define(&mut results, value);
+            }
+            OperationView::GuardedLoad {
+                predicate,
+                offset,
+                inactive,
+                ..
+            } => {
+                let value = if self.get(predicate).boolean() {
+                    let offset = usize::try_from(self.get(offset).index()).unwrap();
+                    KirValue::F32(self.input[offset])
+                } else {
+                    self.get(inactive)
+                };
                 self.define(&mut results, value);
             }
             OperationView::Store { offset, value, .. } => {
@@ -5851,5 +5870,794 @@ fn a_late_phase_live_contraction_extent_is_input_extent_contract() {
         }),
         "late-phase live operand: {:?}",
         error.diagnostics()
+    );
+}
+
+fn operand_tile(rounds: u64) -> CooperativeTile {
+    let block = 16;
+    let participants = ParticipantSpace::new(&[block, block]).expect("rank two");
+    let range = ParticipantRange {
+        first: 0,
+        count: block * block,
+    };
+    let a = StagingId::FIRST;
+    let b = StagingId::new(1);
+    let tile = CooperativeTile {
+        coordinates: LocalCoordinates {
+            source: LocalCoordinateSource::LocalWorkgroupPosition,
+            participants,
+        },
+        rounds,
+        staging: vec![
+            WorkgroupStaging {
+                id: a,
+                element: StagedElement::F32,
+                slots: block * block,
+                live_from: PhaseId::FIRST,
+                live_through: PhaseId::new(1),
+            },
+            WorkgroupStaging {
+                id: b,
+                element: StagedElement::F32,
+                slots: block * block,
+                live_from: PhaseId::FIRST,
+                live_through: PhaseId::new(1),
+            },
+        ],
+        phases: vec![
+            CooperativePhase {
+                id: PhaseId::FIRST,
+                participation: range,
+                writes: vec![
+                    StagedWrite {
+                        staging: a,
+                        span: StagedSpan::new(&[block, 1], 0, 1).expect("rank two"),
+                    },
+                    StagedWrite {
+                        staging: b,
+                        span: StagedSpan::new(&[1, block], 0, 1).expect("rank two"),
+                    },
+                ],
+                reads: Vec::new(),
+            },
+            CooperativePhase {
+                id: PhaseId::new(1),
+                participation: range,
+                writes: Vec::new(),
+                reads: vec![
+                    StagedRead {
+                        staging: a,
+                        span: StagedSpan::new(&[block, 0], 0, block).expect("rank two"),
+                    },
+                    StagedRead {
+                        staging: b,
+                        span: StagedSpan::new(&[0, block], 0, block).expect("rank two"),
+                    },
+                ],
+            },
+        ],
+        synchronization: Vec::new(),
+        commit: range,
+    };
+    let subject = crate::schedule::required_subject(&tile.visibility_edges())
+        .expect("the handoff states one subject");
+    CooperativeTile {
+        synchronization: vec![SynchronizationPoint {
+            id: SyncPointId::FIRST,
+            subject,
+            placement: SynchronizationPlacement::PhaseBoundary {
+                preceding: PhaseId::FIRST,
+                following: PhaseId::new(1),
+            },
+            participants: range,
+            convergence: ConvergenceEvidence::EveryParticipantReachesThePoint,
+        }],
+        ..tile
+    }
+}
+
+fn cooperative_contraction_region(
+    output_m: u64,
+    output_n: u64,
+    contracted: u64,
+    tail: TailPolicy,
+) -> VerifiedScheduledRegion {
+    let block = 16;
+    let admitted = match tail {
+        TailPolicy::Exact => {
+            let admitted = crate::schedule::admit_exact_cooperative_contraction(
+                &Shape::from_dims([output_m, output_n]),
+                &Shape::from_dims([block, block]),
+                &Shape::from_dims([contracted]),
+                &Shape::from_dims([block]),
+            )
+            .expect("exact admission");
+            (
+                admitted.binding,
+                admitted.contracted_tile,
+                admitted.rounds,
+                output_m * output_n,
+                output_m * output_n,
+            )
+        }
+        TailPolicy::Predicated => {
+            let admitted = crate::schedule::admit_predicated_cooperative_contraction(
+                &Shape::from_dims([output_m, output_n]),
+                &Shape::from_dims([block, block]),
+                &Shape::from_dims([contracted]),
+                &Shape::from_dims([block]),
+            )
+            .expect("predicated admission");
+            (
+                admitted.binding,
+                admitted.contracted_tile,
+                admitted.rounds,
+                admitted.work_items,
+                admitted.grid_threads,
+            )
+        }
+    };
+    let (binding, contracted_tile, rounds, work_items, grid_threads) = admitted;
+    let output = Shape::from_dims([output_m, output_n]);
+    let contracted_shape = Shape::from_dims([contracted]);
+    let operand_map = |free_position, operand: Shape| LogicalAccess::ContractionOperand {
+        operand_shape: operand,
+        output_shape: output.clone(),
+        contracted_shape: contracted_shape.clone(),
+        sources: vec![
+            ContractionAxisSource::Output {
+                position: free_position,
+            },
+            ContractionAxisSource::Contracted { position: 0 },
+        ],
+        order: ContributorOrder::OriginalAxisLexicographic,
+    };
+    let mut builder = ScheduledRegionBuilder::new(RegionId::new(21));
+    builder.iteration_shape(output.clone()).unwrap();
+    for (witness, ordinal, extent, map) in [
+        (
+            0,
+            0,
+            output_m * contracted,
+            operand_map(0, Shape::from_dims([output_m, contracted])),
+        ),
+        (
+            1,
+            1,
+            output_n * contracted,
+            operand_map(1, Shape::from_dims([output_n, contracted])),
+        ),
+    ] {
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Input {
+                    ordinal: InputOrdinal::new(ordinal),
+                },
+                component_role: None,
+                mode: AccessMode::Read,
+                map,
+                bounds: BoundsWitnessId::new(witness),
+                ownership: None,
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(witness),
+                tensor: TensorRole::Input {
+                    ordinal: InputOrdinal::new(ordinal),
+                },
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: extent,
+                },
+            })
+            .unwrap();
+    }
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(2),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(2),
+            tensor: TensorRole::Output,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: work_items,
+            },
+        })
+        .unwrap();
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: work_items,
+            },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::StrictTensorContraction {
+            contracted_shape: contracted_shape.clone(),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: NAN_BITS,
+        })
+        .unwrap();
+    builder
+        .numerical(NumericalRealization::new(
+            "tiler.test.strict-f32",
+            NAN_BITS,
+            SubnormalMode::Preserve,
+            SubnormalMode::Preserve,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Permitted,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ExceptionalValueAssumption::MakeNoAssumption,
+        ))
+        .unwrap();
+    let threads = u32::try_from(block * block).expect("256 fits");
+    builder
+        .schedule(KernelSchedule {
+            binding,
+            work_items,
+            threads_per_workgroup: threads,
+            tail,
+            output_owner: OwnershipWitnessId::new(0),
+            reduction: ReductionTopology::CooperativeContraction {
+                tile: operand_tile(rounds),
+                contracted_shape,
+                contracted_tile,
+                order: ContributorOrder::OriginalAxisLexicographic,
+                accumulation: crate::schedule::ArithmeticType::F32,
+                permits_reassociation: true,
+                permits_permutation: false,
+            },
+            launch: LaunchPlan {
+                grid_threads,
+                threads_per_workgroup: threads,
+                zero_work_skips_dispatch: true,
+            },
+        })
+        .unwrap();
+    builder
+        .build()
+        .expect("the cooperative contraction verifies")
+}
+
+fn guarded_load_count(kernel: &VerifiedKernel) -> usize {
+    fn walk(block: BlockRef<'_>) -> usize {
+        block
+            .operations()
+            .map(|operation| match operation.view() {
+                OperationView::GuardedLoad { .. } => 1,
+                OperationView::Predicated { body, .. } => walk(body),
+                OperationView::SerialLoop(serial) => walk(serial.body()),
+                _ => 0,
+            })
+            .sum()
+    }
+    walk(kernel.body())
+}
+
+fn declining_backend(operation: OperationView<'_>) -> Result<(), &'static str> {
+    match operation {
+        OperationView::GuardedLoad { .. } => Err("unrecognized-operation"),
+        _ => Ok(()),
+    }
+}
+
+fn count_declined_guarded_loads(block: BlockRef<'_>, declined: &mut usize) {
+    for operation in block.operations() {
+        if declining_backend(operation.view()).is_err() {
+            *declined = declined.saturating_add(1);
+        }
+        match operation.view() {
+            OperationView::Predicated { body, .. } => count_declined_guarded_loads(body, declined),
+            OperationView::SerialLoop(serial) => {
+                count_declined_guarded_loads(serial.body(), declined);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Predicated and Exact kernels under the same binding stay distinct, and
+/// Predicated carries `GuardedLoad`.
+#[test]
+fn predicated_contraction_lowers_with_guarded_loads() {
+    let exact = cooperative_contraction_region(32, 32, 16, TailPolicy::Exact);
+    let predicated = cooperative_contraction_region(32, 32, 16, TailPolicy::Predicated);
+    let exact_kernel = lower_scheduled_region(&exact).expect("exact tiled contraction lowers");
+    let predicated_kernel =
+        lower_scheduled_region(&predicated).expect("predicated tiled contraction lowers");
+    assert_eq!(guarded_load_count(&exact_kernel), 0);
+    assert!(guarded_load_count(&predicated_kernel) >= 2);
+    assert_ne!(
+        exact_kernel.canonical_identity().as_bytes(),
+        predicated_kernel.canonical_identity().as_bytes()
+    );
+}
+
+/// A backend that does not name `GuardedLoad` declines; there is no Load rewrite.
+#[test]
+fn a_backend_that_declines_guarded_load_has_no_source_fallback() {
+    let scheduled = cooperative_contraction_region(10, 32, 16, TailPolicy::Predicated);
+    let kernel = lower_scheduled_region(&scheduled).expect("predicated kernel lowers");
+    let mut declined = 0_usize;
+    count_declined_guarded_loads(kernel.body(), &mut declined);
+    assert!(declined >= 2, "declined {declined} GuardedLoad operations");
+    assert!(
+        !kernel
+            .body()
+            .operations()
+            .any(|operation| { matches!(operation.view(), OperationView::Load { .. }) }),
+        "no ordinary operand load may stand in for GuardedLoad"
+    );
+}
+
+fn swap_guarded_load_predicates(data: &mut super::model::KernelData) {
+    for block in &mut data.blocks {
+        let mut predicates = Vec::new();
+        for operation in &block.operations {
+            if let super::model::OperationKind::GuardedLoad { predicate, .. } = operation.kind {
+                predicates.push(predicate);
+            }
+        }
+        if predicates.len() < 2 {
+            continue;
+        }
+        let first = predicates[0];
+        let second = predicates[1];
+        for operation in &mut block.operations {
+            if let super::model::OperationKind::GuardedLoad { predicate, .. } = &mut operation.kind
+            {
+                if *predicate == first {
+                    *predicate = second;
+                } else if *predicate == second {
+                    *predicate = first;
+                }
+            }
+        }
+    }
+}
+
+fn replace_guarded_with_ordinary(data: &mut super::model::KernelData) {
+    for block in &mut data.blocks {
+        for operation in &mut block.operations {
+            if let super::model::OperationKind::GuardedLoad {
+                buffer,
+                offset,
+                bounds,
+                ..
+            } = operation.kind
+            {
+                operation.kind = super::model::OperationKind::Load {
+                    buffer,
+                    offset,
+                    bounds,
+                };
+            }
+        }
+    }
+}
+
+fn enclose_staged_stores(data: &mut super::model::KernelData) {
+    let Some(predicate) = data.blocks.iter().find_map(|block| {
+        block.operations.iter().find_map(|operation| {
+            if let super::model::OperationKind::GuardedLoad { predicate, .. } = operation.kind {
+                Some(predicate)
+            } else {
+                None
+            }
+        })
+    }) else {
+        return;
+    };
+    let mut stores = Vec::new();
+    if let Some(block) = data.blocks.get_mut(0) {
+        let rest = std::mem::take(&mut block.operations);
+        let mut kept = Vec::new();
+        for operation in rest {
+            if matches!(
+                operation.kind,
+                super::model::OperationKind::StagedStore { .. }
+            ) {
+                stores.push(operation);
+            } else {
+                kept.push(operation);
+            }
+        }
+        block.operations = kept;
+    }
+    if stores.is_empty() {
+        return;
+    }
+    let body = u32::try_from(data.blocks.len()).expect("block index fits");
+    data.blocks.push(super::model::BlockData {
+        parameters: Vec::new(),
+        operations: stores,
+    });
+    data.blocks[0].operations.push(super::model::OperationData {
+        kind: super::model::OperationKind::Predicated { predicate, body },
+        results: Vec::new(),
+    });
+}
+
+fn enclose_barriers(data: &mut super::model::KernelData) {
+    let Some(predicate) = data.blocks.iter().find_map(|block| {
+        block.operations.iter().find_map(|operation| {
+            if let super::model::OperationKind::GuardedLoad { predicate, .. } = operation.kind {
+                Some(predicate)
+            } else {
+                None
+            }
+        })
+    }) else {
+        return;
+    };
+    let mut barriers = Vec::new();
+    if let Some(block) = data.blocks.get_mut(0) {
+        let rest = std::mem::take(&mut block.operations);
+        let mut kept = Vec::new();
+        for operation in rest {
+            if matches!(operation.kind, super::model::OperationKind::Barrier { .. }) {
+                barriers.push(operation);
+            } else {
+                kept.push(operation);
+            }
+        }
+        block.operations = kept;
+    }
+    if barriers.is_empty() {
+        return;
+    }
+    let body = u32::try_from(data.blocks.len()).expect("block index fits");
+    data.blocks.push(super::model::BlockData {
+        parameters: Vec::new(),
+        operations: barriers,
+    });
+    data.blocks[0].operations.push(super::model::OperationData {
+        kind: super::model::OperationKind::Predicated { predicate, body },
+        results: Vec::new(),
+    });
+}
+
+fn drop_inner_store_guard(data: &mut super::model::KernelData) {
+    // Replace the innermost Predicated-around-store with its body operations
+    // spliced into the parent, so the store has only one axis guard.
+    let mut splice: Option<(usize, usize, u32)> = None;
+    for (block_index, block) in data.blocks.iter().enumerate() {
+        for (op_index, operation) in block.operations.iter().enumerate() {
+            if let super::model::OperationKind::Predicated { body, .. } = operation.kind
+                && data.blocks.get(body as usize).is_some_and(|inner| {
+                    inner.operations.iter().any(|nested| {
+                        matches!(nested.kind, super::model::OperationKind::Store { .. })
+                    })
+                })
+            {
+                splice = Some((block_index, op_index, body));
+            }
+        }
+    }
+    let Some((block_index, op_index, body)) = splice else {
+        return;
+    };
+    let inner = std::mem::take(&mut data.blocks[body as usize].operations);
+    data.blocks[block_index].operations.remove(op_index);
+    for (offset, operation) in inner.into_iter().enumerate() {
+        data.blocks[block_index]
+            .operations
+            .insert(op_index + offset, operation);
+    }
+}
+
+fn verify_mutated(
+    scheduled: &VerifiedScheduledRegion,
+    edit: impl FnOnce(&mut super::model::KernelData),
+) -> KernelDiagnostic {
+    let mut data = super::lower::derive_canonical(
+        scheduled.region(),
+        scheduled.canonical_identity(),
+        scheduled.requirements(),
+    )
+    .expect("canonical body exists");
+    edit(&mut data);
+    super::verify::verify_kernel(
+        &data,
+        scheduled.region(),
+        scheduled.canonical_identity(),
+        scheduled.requirements(),
+    )
+    .expect_err("the mutated subject must fail")
+}
+
+fn set_first_guarded_predicate(data: &mut super::model::KernelData, use_column: bool) {
+    let axis = {
+        let mut row = None;
+        let mut column = None;
+        for block in &data.blocks {
+            for operation in &block.operations {
+                if let super::model::OperationKind::Compare {
+                    op: super::model::CompareOp::IndexLessThan,
+                    ..
+                } = operation.kind
+                {
+                    if row.is_none() {
+                        row = operation.results.first().copied();
+                    } else if column.is_none() {
+                        column = operation.results.first().copied();
+                    }
+                }
+            }
+        }
+        (row, column)
+    };
+    let wanted = if use_column { axis.1 } else { axis.0 };
+    let Some(wanted) = wanted else {
+        return;
+    };
+    for block in &mut data.blocks {
+        for operation in &mut block.operations {
+            if let super::model::OperationKind::GuardedLoad { predicate, .. } = &mut operation.kind
+            {
+                *predicate = wanted;
+                return;
+            }
+        }
+    }
+}
+
+fn set_second_guarded_predicate(data: &mut super::model::KernelData, use_row: bool) {
+    let axis = {
+        let mut row = None;
+        let mut column = None;
+        for block in &data.blocks {
+            for operation in &block.operations {
+                if let super::model::OperationKind::Compare {
+                    op: super::model::CompareOp::IndexLessThan,
+                    ..
+                } = operation.kind
+                {
+                    if row.is_none() {
+                        row = operation.results.first().copied();
+                    } else if column.is_none() {
+                        column = operation.results.first().copied();
+                    }
+                }
+            }
+        }
+        (row, column)
+    };
+    let wanted = if use_row { axis.0 } else { axis.1 };
+    let Some(wanted) = wanted else {
+        return;
+    };
+    let mut seen = 0_u8;
+    for block in &mut data.blocks {
+        for operation in &mut block.operations {
+            if let super::model::OperationKind::GuardedLoad { predicate, .. } = &mut operation.kind
+            {
+                seen = seen.saturating_add(1);
+                if seen == 2 {
+                    *predicate = wanted;
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// A column guard on the left load is the left-load refusal.
+#[test]
+fn a_column_guard_on_the_left_load_is_the_left_load_refusal() {
+    let scheduled = cooperative_contraction_region(10, 32, 16, TailPolicy::Predicated);
+    let diagnostic = verify_mutated(&scheduled, |data| set_first_guarded_predicate(data, true));
+    assert_eq!(
+        diagnostic.rule(),
+        "left-load-guard",
+        "left-load refusal: {}",
+        diagnostic.rule()
+    );
+}
+
+/// A row guard on the right load is the right-load refusal.
+#[test]
+fn a_row_guard_on_the_right_load_is_the_right_load_refusal() {
+    let scheduled = cooperative_contraction_region(10, 32, 16, TailPolicy::Predicated);
+    let diagnostic = verify_mutated(&scheduled, |data| set_second_guarded_predicate(data, true));
+    assert_eq!(
+        diagnostic.rule(),
+        "right-load-guard",
+        "right-load refusal: {}",
+        diagnostic.rule()
+    );
+}
+
+/// Swapping row and column predicates names a specific load refusal.
+#[test]
+fn swapped_axis_guards_name_the_left_and_right_load_refusals() {
+    let scheduled = cooperative_contraction_region(10, 32, 16, TailPolicy::Predicated);
+    let diagnostic = verify_mutated(&scheduled, swap_guarded_load_predicates);
+    let text = diagnostic.rule();
+    assert!(
+        text == "left-load-guard" || text == "right-load-guard",
+        "swapped guards: {text}"
+    );
+}
+
+/// An ordinary load in place of either `GuardedLoad` fails bounds refinement.
+#[test]
+fn ordinary_load_in_place_of_guarded_load_fails_bounds_refinement() {
+    let scheduled = cooperative_contraction_region(10, 32, 16, TailPolicy::Predicated);
+    let diagnostic = verify_mutated(&scheduled, replace_guarded_with_ordinary);
+    assert_eq!(
+        diagnostic.rule(),
+        "bounds-evidence",
+        "ordinary load refusal: {}",
+        diagnostic.rule()
+    );
+}
+
+/// Guarding a staged store is incomplete staging.
+#[test]
+fn a_predicated_staged_store_is_incomplete_staging() {
+    let scheduled = cooperative_contraction_region(10, 32, 16, TailPolicy::Predicated);
+    let diagnostic = verify_mutated(&scheduled, enclose_staged_stores);
+    assert_eq!(
+        diagnostic.rule(),
+        "incomplete-staging",
+        "guarded staged store: {}",
+        diagnostic.rule()
+    );
+}
+
+/// A phase barrier under a predicate fails convergence.
+#[test]
+fn a_barrier_under_a_predicate_fails_convergence() {
+    let scheduled = cooperative_contraction_region(10, 32, 16, TailPolicy::Predicated);
+    let diagnostic = verify_mutated(&scheduled, enclose_barriers);
+    assert_eq!(
+        diagnostic.rule(),
+        "synchronization-convergence",
+        "guarded barrier: {}",
+        diagnostic.rule()
+    );
+}
+
+/// Dropping one store-side axis guard is the write refusal.
+#[test]
+fn an_incomplete_output_guard_is_the_write_refusal() {
+    let scheduled = cooperative_contraction_region(10, 32, 16, TailPolicy::Predicated);
+    let diagnostic = verify_mutated(&scheduled, drop_inner_store_guard);
+    assert_eq!(
+        diagnostic.rule(),
+        "output-store-guard",
+        "write refusal: {}",
+        diagnostic.rule()
+    );
+}
+
+/// Every active output has one writer; inactive invocations write nothing;
+/// staging is initialized; filler is not observed.
+#[test]
+fn predicated_contraction_ownership_and_filler_are_unobservable() {
+    let scheduled = cooperative_contraction_region(10, 16, 16, TailPolicy::Predicated);
+    let kernel = lower_scheduled_region(&scheduled).expect("predicated kernel lowers");
+    let m_ext = 10_usize;
+    let n_ext = 16_usize;
+    let k_ext = 16_usize;
+    let block = 16_usize;
+    let grid = usize::try_from(scheduled.region().schedule.launch.grid_threads).unwrap();
+    let mut left = vec![0.0_f32; m_ext.saturating_mul(k_ext)];
+    let mut right = vec![0.0_f32; n_ext.saturating_mul(k_ext)];
+    for m in 0..m_ext {
+        for k in 0..k_ext {
+            left[m.saturating_mul(k_ext).saturating_add(k)] =
+                f32::from(u8::try_from(m.saturating_add(1)).expect("m fits u8"));
+        }
+    }
+    for n in 0..n_ext {
+        for k in 0..k_ext {
+            right[n.saturating_mul(k_ext).saturating_add(k)] =
+                f32::from(u8::try_from(n.saturating_add(2)).expect("n fits u8"));
+        }
+    }
+    let mut output = vec![f32::NAN; m_ext.saturating_mul(n_ext)];
+    let mut writers = vec![0_u32; m_ext.saturating_mul(n_ext)];
+    let mut a_tile = vec![f32::NAN; block.saturating_mul(block)];
+    let mut b_tile = vec![f32::NAN; block.saturating_mul(block)];
+    for gid in 0..grid {
+        let lid = gid % block.saturating_mul(block);
+        let local_n = lid % block;
+        let local_m = lid / block;
+        let row_active = local_m < m_ext;
+        let col_active = local_n < n_ext;
+        let a = if row_active {
+            left[local_m.saturating_mul(k_ext).saturating_add(local_n)]
+        } else {
+            0.0
+        };
+        let b = if col_active {
+            right[local_n.saturating_mul(k_ext).saturating_add(local_m)]
+        } else {
+            0.0
+        };
+        a_tile[local_m.saturating_mul(block).saturating_add(local_n)] = a;
+        b_tile[local_n.saturating_mul(block).saturating_add(local_m)] = b;
+    }
+    assert!(
+        a_tile.iter().all(|value| !value.is_nan()),
+        "every A staging slot is initialized"
+    );
+    assert!(
+        b_tile.iter().all(|value| !value.is_nan()),
+        "every B staging slot is initialized"
+    );
+    for gid in 0..grid {
+        let lid = gid % block.saturating_mul(block);
+        let local_n = lid % block;
+        let local_m = lid / block;
+        if local_m >= m_ext || local_n >= n_ext {
+            continue;
+        }
+        let mut acc = 0.0_f32;
+        for kk in 0..block {
+            let a = a_tile[local_m.saturating_mul(block).saturating_add(kk)];
+            let b = b_tile[local_n.saturating_mul(block).saturating_add(kk)];
+            assert!(
+                a != 0.0 || left[local_m.saturating_mul(k_ext).saturating_add(kk)] == 0.0,
+                "active output observed an inactive A filler"
+            );
+            acc += a * b;
+        }
+        let slot = local_m.saturating_mul(n_ext).saturating_add(local_n);
+        output[slot] = acc;
+        writers[slot] = writers[slot].saturating_add(1);
+    }
+    for (slot, count) in writers.iter().enumerate() {
+        assert_eq!(*count, 1, "output slot {slot} writers={count}");
+        let m = slot / n_ext;
+        let n = slot % n_ext;
+        let expected: f32 = (0..k_ext)
+            .map(|k| {
+                left[m.saturating_mul(k_ext).saturating_add(k)]
+                    * right[n.saturating_mul(k_ext).saturating_add(k)]
+            })
+            .sum();
+        assert!(
+            (output[slot] - expected).abs() <= f32::EPSILON,
+            "slot {slot}"
+        );
+    }
+    let _ = kernel;
+}
+
+/// Tail and `GuardedLoad` tags move identity without touching old Exact pins.
+#[test]
+fn tail_and_guarded_load_tags_are_identity_bearing() {
+    let exact = cooperative_contraction_region(32, 32, 16, TailPolicy::Exact);
+    let predicated = cooperative_contraction_region(32, 32, 16, TailPolicy::Predicated);
+    let partial = cooperative_contraction_region(10, 32, 16, TailPolicy::Predicated);
+    assert_ne!(
+        exact.canonical_identity().as_bytes(),
+        predicated.canonical_identity().as_bytes()
+    );
+    assert_ne!(
+        predicated.canonical_identity().as_bytes(),
+        partial.canonical_identity().as_bytes()
+    );
+    let exact_kernel = lower_scheduled_region(&exact).unwrap();
+    let predicated_kernel = lower_scheduled_region(&predicated).unwrap();
+    assert_ne!(
+        exact_kernel.canonical_identity().as_bytes(),
+        predicated_kernel.canonical_identity().as_bytes()
     );
 }

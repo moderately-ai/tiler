@@ -287,6 +287,7 @@ A selected schedule explicitly represents loop/tile hierarchy, coordinate
 mapping to grid/threadgroup/SIMD/lane/vector axes, vectorization, memory
 placement, staging, synchronization, reduction topology, tails, and launch
 formulas. It is canonical physical IR rather than a bag of node annotations.
+`TailPolicy::Predicated` is a distinct physical proposal from `Exact`: the launch may be a strict superset of the logical iteration domain, active coordinates are derived from the blocked-workgroup binding, and the proposal never rewrites itself to Exact or to a direct contraction. A backend that cannot translate the verified `GuardedLoad` declines that implementation; it does not receive a source-emission fallback.
 
 Scheduling transformations and their rejection reasons are recorded in a
 separate trace for explanation and replay. The normalized result is the

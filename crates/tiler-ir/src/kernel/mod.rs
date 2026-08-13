@@ -42,7 +42,11 @@
 //! - **Predicates.** Iteration-domain guarding is an explicit
 //!   [`OperationView::Predicated`](crate::kernel::OperationView::Predicated)
 //!   region, so tail behaviour is visible rather than implied by a launch
-//!   geometry.
+//!   geometry. A scalar
+//!   [`OperationView::GuardedLoad`](crate::kernel::OperationView::GuardedLoad)
+//!   is the value-producing form for a padded launch: true performs the
+//!   bounds-witnessed load, false performs no memory access and returns the
+//!   supplied inactive value.
 //! - **Effects and barriers.** Memory effects are ordered, and a
 //!   [`BarrierSpec`](crate::kernel::BarrierSpec) names execution scope, memory
 //!   scope, fenced address spaces, and ordering separately even where one

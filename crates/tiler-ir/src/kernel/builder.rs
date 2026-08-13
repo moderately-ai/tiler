@@ -558,6 +558,42 @@ impl KernelBuilder {
         )
     }
 
+    /// Loads one element when `predicate` is true; otherwise returns `inactive`
+    /// without a memory access.
+    ///
+    /// # Errors
+    ///
+    /// Returns a handle, scope, type, access-mode, or structural-limit error.
+    /// The predicate must be Boolean and `inactive` must have the buffer
+    /// element type.
+    pub fn guarded_load(
+        &mut self,
+        predicate: KernelValueId,
+        buffer: KernelBufferId,
+        offset: KernelValueId,
+        bounds: BoundsWitnessId,
+        inactive: KernelValueId,
+    ) -> Result<KernelValueId, KernelBuildError> {
+        let parameter = self.resolve_buffer(buffer)?;
+        if parameter.access != BufferAccess::Read {
+            return Err(KernelBuildError::BufferAccessViolation);
+        }
+        expect_type(KernelType::Bool, self.resolve(predicate)?.value_type)?;
+        expect_type(KernelType::Index, self.resolve(offset)?.value_type)?;
+        expect_type(parameter.element_type, self.resolve(inactive)?.value_type)?;
+        self.emit_single(
+            OperationKind::GuardedLoad {
+                predicate: predicate.index,
+                buffer: buffer.index,
+                offset: offset.index,
+                bounds,
+                inactive: inactive.index,
+            },
+            parameter.element_type,
+            None,
+        )
+    }
+
     /// Stores one element to a writable buffer under bounds and ownership evidence.
     ///
     /// # Errors
