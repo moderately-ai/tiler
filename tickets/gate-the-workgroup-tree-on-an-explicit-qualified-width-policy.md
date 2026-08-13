@@ -1,7 +1,7 @@
 ---
 id: gate-the-workgroup-tree-on-an-explicit-qualified-width-policy
 title: Gate the workgroup tree on an explicit qualified width policy
-status: in-progress
+status: review
 priority: p1
 dependencies: []
 related: [carry-the-tree-participant-cap-as-a-target-profile-row, cap-the-tree-reduction-participants-at-the-measured-256, pin-the-local-memory-refusal-band-the-tree-cap-opened]
