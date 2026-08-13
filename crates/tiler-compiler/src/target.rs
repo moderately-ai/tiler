@@ -30,6 +30,16 @@
 //! [`TargetProfile::evaluation_order_preservation`], and
 //! [`TargetProfileBuildError::DuplicateEvaluationOrderPreservation`].
 //!
+//! The **elementary-realization** family is a **labelled draft** under ADR
+//! 0075. Tom accepted the whole-subject *shape* on 2026-08-11 — one validated
+//! record, operation derived from a verified contract, both complete evidence
+//! records, compile-profile-phase source, stored canonical rows, no governed
+//! shortcut — and has not accepted this crate's exact method, type, or
+//! refusal-candidate spelling. [`ElementaryRealization`],
+//! [`TargetProfileBuilder::declare_elementary_realization`],
+//! [`TargetProfile::declared_elementary_realizations`], and
+//! [`TargetProfileBuildError::DuplicateElementaryRealization`] are that draft.
+//!
 //! The **measured-cost-row** family is an **Accepted public surface**. Tom
 //! accepted it on 2026-08-07 under
 //! `accept-the-measured-cost-row-public-surface`:
@@ -173,6 +183,8 @@ pub(crate) mod accuracy;
 pub(crate) mod feasibility;
 pub(crate) mod honourability;
 
+pub use accuracy::{ElementaryRealization, ElementaryRealizationError};
+
 use std::sync::{Arc, OnceLock};
 
 use tiler_ir::identity::{push_len, push_slice};
@@ -241,6 +253,15 @@ const EVALUATION_ORDER_DOMAIN: &[u8] = b"tiler.target-profile.evaluation-order-p
 /// writing a zero count would move every existing profile's bytes to record
 /// nothing new. [`complete_descriptor`] states the derivation.
 const COST_ROW_DOMAIN: &[u8] = b"tiler.target-profile.cost-row.v1\0";
+/// Domain separating the elementary-realization rows of one declaration.
+///
+/// Its own separator, for the reason the families above have one, and written
+/// **only when the family is non-empty** for the reason the evaluation-order
+/// and cost-row families are: an empty family and an absent family both mean
+/// no installed realization, which is what every profile encoded before this
+/// family existed. Writing a zero count would move every existing profile's
+/// bytes to record nothing new. [`complete_descriptor`] states the derivation.
+const ELEMENTARY_REALIZATION_DOMAIN: &[u8] = b"tiler.target-profile.elementary-realization.v1\0";
 
 /// Maximum byte length of one target-profile key.
 ///
@@ -1804,6 +1825,7 @@ struct TargetProfileData {
     dispatchability: Box<[DTypeDispatchabilityFact]>,
     evaluation_order: Box<[EvaluationOrderFact]>,
     cost_rows: Box<[CostRowFact]>,
+    elementary: Box<[ElementaryRealization]>,
     descriptor: Box<[u8]>,
 }
 
@@ -1818,6 +1840,7 @@ pub struct TargetProfileBuilder {
     synchronization: Vec<DeclaredSynchronizationRealization>,
     evaluation_order: Vec<EvaluationOrderFact>,
     cost_rows: Vec<CostRowFact>,
+    elementary: Vec<ElementaryRealization>,
 }
 
 impl TargetProfileBuilder {
@@ -1835,7 +1858,37 @@ impl TargetProfileBuilder {
             synchronization: Vec::new(),
             evaluation_order: Vec::new(),
             cost_rows: Vec::new(),
+            elementary: Vec::new(),
         }
+    }
+
+    /// Declares one whole elementary-realization subject.
+    ///
+    /// **Labelled draft** under ADR 0075. The subject is already validated:
+    /// its operation comes from a verified contract, both evidence records are
+    /// complete, and its source is compile-profile-phase. This method stores
+    /// the canonical row and refuses only an exact duplicate. Distinct
+    /// contracts for one operation remain separate candidates. No row is
+    /// replaced, merged, or preferred, and a half that cannot discharge is
+    /// still stored so assessment can refuse it as `undischarged-evidence`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TargetProfileBuildError::DuplicateElementaryRealization`] when
+    /// the same complete row is already declared.
+    pub fn declare_elementary_realization(
+        &mut self,
+        realization: ElementaryRealization,
+    ) -> Result<(), TargetProfileBuildError> {
+        if self
+            .elementary
+            .iter()
+            .any(|existing| existing == &realization)
+        {
+            return Err(TargetProfileBuildError::DuplicateElementaryRealization);
+        }
+        self.elementary.push(realization);
+        Ok(())
     }
 
     /// Declares whether this target realizes one *complete* synchronization
@@ -3200,6 +3253,17 @@ impl TargetProfileBuilder {
                 });
             }
         }
+        for fact in &self.elementary {
+            if self
+                .elementary
+                .iter()
+                .filter(|candidate| *candidate == fact)
+                .count()
+                > 1
+            {
+                return Err(TargetProfileBuildError::DuplicateElementaryRealization);
+            }
+        }
         Ok(())
     }
 
@@ -3234,6 +3298,11 @@ impl TargetProfileBuilder {
         // phase wins" scan deterministic rather than declaration-order dependent.
         self.cost_rows
             .sort_by_key(|fact| (fact.row, fact.source.phase()));
+        // Whole-row canonical encoding, so two profiles that declare the same
+        // rows in different insertion orders share one identity, and distinct
+        // contracts for one operation stay distinct candidates.
+        self.elementary
+            .sort_by_cached_key(ElementaryRealization::sort_key);
     }
 
     fn freeze(mut self) -> Result<TargetProfile, TargetProfileBuildError> {
@@ -3285,6 +3354,7 @@ impl TargetProfileBuilder {
             &self.synchronization,
             &self.evaluation_order,
             &self.cost_rows,
+            &self.elementary,
         );
         if descriptor.len() > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES {
             return Err(TargetProfileBuildError::DescriptorTooLong {
@@ -3301,6 +3371,7 @@ impl TargetProfileBuilder {
             synchronization: _,
             evaluation_order,
             cost_rows,
+            elementary,
         } = self;
         Ok(TargetProfile {
             data: Arc::new(TargetProfileData {
@@ -3311,6 +3382,7 @@ impl TargetProfileBuilder {
                 dispatchability: dispatchability.into_boxed_slice(),
                 evaluation_order: evaluation_order.into_boxed_slice(),
                 cost_rows: cost_rows.into_boxed_slice(),
+                elementary: elementary.into_boxed_slice(),
                 descriptor: descriptor.into_boxed_slice(),
             }),
         })
@@ -3506,6 +3578,18 @@ impl SynchronizationSupport {
 /// record that it still has no preference. Injectivity survives for the reason it
 /// survives above: every earlier section is self-delimiting, and this family's
 /// separator distinguishes its bytes from any continuation of the last one.
+///
+/// # The elementary-realization family is the same silence rule, rederived
+///
+/// It is written last, behind its own separator, and only when it holds a row.
+/// An empty family and an absent family both mean no installed realization,
+/// which is already what every profile encoded before this family existed —
+/// including the governed profile, which does not regain its three Metal rows
+/// here. Writing a zero count would move every existing descriptor to record
+/// that it still has no elementary row. Injectivity survives for the same
+/// reason as the two families above: every earlier section is self-delimiting,
+/// and this family's separator distinguishes its bytes from any continuation.
+/// The owning declaration domain therefore stays at `v11`.
 #[allow(
     clippy::too_many_arguments,
     reason = "one parameter per declared row family, threaded explicitly so the encoder reads as the grammar it writes; grouping them behind a struct would put the canonical byte order under two authorities"
@@ -3519,6 +3603,7 @@ fn complete_descriptor(
     synchronization: &[DeclaredSynchronizationRealization],
     evaluation_order: &[EvaluationOrderFact],
     cost_rows: &[CostRowFact],
+    elementary: &[ElementaryRealization],
 ) -> Vec<u8> {
     let mut bytes = Vec::new();
     push_slice(&mut bytes, COMPLETE_PROFILE_DESCRIPTOR_DOMAIN);
@@ -3536,6 +3621,7 @@ fn complete_descriptor(
         )
         .chain(evaluation_order.iter().map(|fact| fact.source.as_ref()))
         .chain(cost_rows.iter().map(|fact| fact.source.as_ref()))
+        .chain(elementary.iter().map(ElementaryRealization::source))
         .map(|source| (source.canonical_bytes(), source))
         .collect();
     sources.sort_by(|left, right| left.0.cmp(&right.0));
@@ -3653,6 +3739,29 @@ fn complete_descriptor(
             fact.encode(&mut bytes, source_index);
         }
     }
+    if !elementary.is_empty() {
+        push_slice(&mut bytes, ELEMENTARY_REALIZATION_DOMAIN);
+        push_len(&mut bytes, elementary.len());
+        for realization in elementary {
+            push_slice(
+                &mut bytes,
+                realization.contract().canonical_encoding().as_bytes(),
+            );
+            push_slice(
+                &mut bytes,
+                &realization.bound_evidence().canonical_encoding(),
+            );
+            push_slice(
+                &mut bytes,
+                &realization.exceptional_evidence().canonical_encoding(),
+            );
+            let source_bytes = realization.source().canonical_bytes();
+            let source_index = sources
+                .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
+                .expect("every elementary-realization source was inserted into the source table");
+            encode_compact_index(&mut bytes, source_index);
+        }
+    }
     bytes
 }
 
@@ -3688,6 +3797,19 @@ impl TargetProfile {
     #[must_use]
     pub fn canonical_descriptor(&self) -> &[u8] {
         &self.data.descriptor
+    }
+
+    /// Returns the elementary realizations this profile declared, in canonical
+    /// row order.
+    ///
+    /// **Labelled draft** under ADR 0075. A borrowed view of the stored rows.
+    /// The slice is empty when the profile declared none, including the
+    /// governed profile until a later evidence ticket can discharge both
+    /// halves of a Metal row. Assessment reads this view; it does not
+    /// reconstruct governed rows from descriptor equality.
+    #[must_use]
+    pub fn declared_elementary_realizations(&self) -> &[ElementaryRealization] {
+        &self.data.elementary
     }
 
     pub(crate) fn request_subject_bytes(&self) -> &[u8] {
@@ -4201,6 +4323,12 @@ pub enum TargetProfileBuildError {
         /// Availability phase at which both rows claimed authority.
         phase: AvailabilityPhase,
     },
+    /// The same complete elementary-realization row was declared twice.
+    ///
+    /// Distinct contracts for one operation remain legal. Only an exact
+    /// restatement of the verified contract, both evidence records, and the
+    /// source is rejected. No row is replaced, merged, or preferred.
+    DuplicateElementaryRealization,
     /// The canonical descriptor exceeded the artifact identity bound.
     DescriptorTooLong {
         /// Encoded byte length.
@@ -4968,13 +5096,28 @@ mod tests {
             .declare_measured_dtype_dispatchability(
                 F32::resolved_type(),
                 DTypeDispatchability::Dispatchable,
-                source,
+                source.clone(),
             )
+            .unwrap();
+        builder
+            .declare_elementary_realization(ElementaryRealization::measured(
+                &verified_silu_contract(),
+                discharging_evidence(
+                    "measured-family bound half",
+                    b"fixture:measured-family-bound-v1",
+                ),
+                discharging_evidence(
+                    "measured-family exceptional half",
+                    b"fixture:measured-family-exceptional-v1",
+                ),
+                &source,
+            ))
             .unwrap();
 
         assert_eq!(builder.quantitative.len(), 7);
         assert_eq!(builder.scalar.len(), 15);
         assert_eq!(builder.dispatchability.len(), 1);
+        assert_eq!(builder.elementary.len(), 1);
         for provenance in builder
             .quantitative
             .iter()
@@ -4991,6 +5134,7 @@ mod tests {
                     .iter()
                     .map(|declaration| declaration.source.as_ref()),
             )
+            .chain(builder.elementary.iter().map(ElementaryRealization::source))
         {
             assert_eq!(provenance.phase(), AvailabilityPhase::CompileProfile);
             assert_eq!(provenance.authority(), FactAuthority::MeasuredProfile);
@@ -6763,6 +6907,214 @@ mod tests {
         assert!(
             widened.contains(&(1, 4)) && widened.contains(&(2, 4)),
             "the widened domain must extend the narrow one rather than replace it: {widened:?}"
+        );
+    }
+
+    fn verified_silu_contract() -> tiler_ir::semantic::accuracy::VerifiedAccuracyContract {
+        let contract = tiler_ir::semantic::silu_f32_exponential_accuracy_contract();
+        let facts = builtin_scalar_value_type_facts(contract.result_type())
+            .expect("F32 carries builtin value-type facts");
+        contract
+            .verify(&facts)
+            .expect("the registered SiLU contract verifies")
+    }
+
+    fn discharging_evidence(
+        scope: &str,
+        digest: &[u8],
+    ) -> tiler_ir::semantic::accuracy::ConformanceEvidence {
+        let reference = |text: &str| {
+            tiler_ir::semantic::NormativeDefinitionRef::new(text)
+                .expect("a fixture evidence field is canonical")
+        };
+        tiler_ir::semantic::accuracy::ConformanceEvidence::new(
+            tiler_ir::semantic::accuracy::ConformanceEvidenceClass::NormativeGuarantee,
+            reference(scope),
+            reference("synthetic both-halves fixture, not a Metal specification claim"),
+            reference("fixture.elementary.declaration"),
+            reference("tiler test fixture, not a toolchain row"),
+            None,
+            None,
+            None,
+            digest,
+        )
+        .expect("the discharging fixture is well formed")
+    }
+
+    fn silu_realization(source: &TargetFactSource) -> ElementaryRealization {
+        ElementaryRealization::new(
+            &verified_silu_contract(),
+            discharging_evidence(
+                "fixture bound half for tiler::silu-f32@1",
+                b"fixture:silu-bound-v1",
+            ),
+            discharging_evidence(
+                "fixture exceptional half for tiler::silu-f32@1",
+                b"fixture:silu-exceptional-v1",
+            ),
+            source,
+        )
+        .expect("a compile-profile source is accepted")
+    }
+
+    #[test]
+    fn later_phase_source_is_refused_at_subject_construction() {
+        let later = deferred_measurement_source();
+        let error = ElementaryRealization::new(
+            &verified_silu_contract(),
+            discharging_evidence("later-phase bound", b"fixture:later-bound-v1"),
+            discharging_evidence("later-phase exceptional", b"fixture:later-exceptional-v1"),
+            &later,
+        )
+        .expect_err("a live-device source cannot speak at compile profile");
+        assert_eq!(
+            error,
+            ElementaryRealizationError::LaterPhaseSource {
+                phase: AvailabilityPhase::LiveDevicePreflight,
+            }
+        );
+    }
+
+    fn deferred_measurement_source() -> TargetFactSource {
+        let compiler = TargetCompilerBuild::new(
+            TargetCompilerRole::RuntimeCompiler,
+            "test-runtime-compiler".to_owned(),
+            "1.0".to_owned(),
+            None,
+        )
+        .unwrap();
+        let environment = TargetExecutionEnvironment::builder()
+            .platform("test-platform".to_owned())
+            .platform_version("1.0".to_owned())
+            .platform_build("build-1".to_owned())
+            .architecture("test-architecture".to_owned())
+            .hardware("test-hardware".to_owned())
+            .build()
+            .unwrap();
+        let context = TargetMeasurementContext::new([compiler], environment).unwrap();
+        TargetFactSource::measured(
+            TargetFactProducerIdentity::new("test.runtime-probe.v1".to_owned(), 1).unwrap(),
+            MeasuredFactAuthority::DeviceRuntime,
+            [context],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn exact_duplicate_elementary_realization_is_refused() {
+        let source = public_external_source(1);
+        let realization = silu_realization(&source);
+        let mut builder = public_builder("test.elementary-duplicate.v1");
+        builder
+            .declare_elementary_realization(realization.clone())
+            .unwrap();
+        assert_eq!(
+            builder.declare_elementary_realization(realization),
+            Err(TargetProfileBuildError::DuplicateElementaryRealization)
+        );
+    }
+
+    #[test]
+    fn distinct_same_operation_contracts_remain_separate_candidates() {
+        let source = public_external_source(1);
+        let first = silu_realization(&source);
+        let second = ElementaryRealization::new(
+            &verified_silu_contract(),
+            discharging_evidence("second bound half", b"fixture:silu-bound-v2"),
+            discharging_evidence("second exceptional half", b"fixture:silu-exceptional-v2"),
+            &source,
+        )
+        .unwrap();
+        let mut builder = public_builder("test.elementary-distinct.v1");
+        builder
+            .declare_elementary_realization(first.clone())
+            .unwrap();
+        builder
+            .declare_elementary_realization(second.clone())
+            .unwrap();
+        let profile = builder.build().unwrap();
+        let declared = profile.declared_elementary_realizations();
+        assert_eq!(declared.len(), 2);
+        assert_eq!(declared[0].operation(), first.operation());
+        assert_eq!(declared[1].operation(), second.operation());
+        assert_ne!(declared[0], declared[1]);
+    }
+
+    #[test]
+    fn a_profile_declaring_no_elementary_row_encodes_like_a_build_without_the_family() {
+        let silent = public_builder("test.elementary-silent.v1").build().unwrap();
+        let governed = TargetProfile::governed();
+        assert!(silent.declared_elementary_realizations().is_empty());
+        assert!(governed.declared_elementary_realizations().is_empty());
+        assert!(
+            !silent
+                .canonical_descriptor()
+                .windows(ELEMENTARY_REALIZATION_DOMAIN.len())
+                .any(|window| window == ELEMENTARY_REALIZATION_DOMAIN)
+        );
+        assert!(
+            !governed
+                .canonical_descriptor()
+                .windows(ELEMENTARY_REALIZATION_DOMAIN.len())
+                .any(|window| window == ELEMENTARY_REALIZATION_DOMAIN)
+        );
+    }
+
+    #[test]
+    fn declaring_an_elementary_row_appends_the_terminal_family_without_stepping_the_domain() {
+        let source = public_external_source(1);
+        let mut builder = public_builder("test.elementary-encoded.v1");
+        let silent = builder.clone().build().unwrap();
+        builder
+            .declare_elementary_realization(silu_realization(&source))
+            .unwrap();
+        let declared = builder.build().unwrap();
+        assert_ne!(
+            silent.canonical_descriptor(),
+            declared.canonical_descriptor()
+        );
+        assert!(
+            declared
+                .canonical_descriptor()
+                .windows(COMPLETE_PROFILE_DESCRIPTOR_DOMAIN.len())
+                .any(|window| window == COMPLETE_PROFILE_DESCRIPTOR_DOMAIN)
+        );
+        assert!(
+            declared
+                .canonical_descriptor()
+                .windows(ELEMENTARY_REALIZATION_DOMAIN.len())
+                .any(|window| window == ELEMENTARY_REALIZATION_DOMAIN)
+        );
+        assert_eq!(declared.declared_elementary_realizations().len(), 1);
+        assert_eq!(
+            declared.declared_elementary_realizations()[0].source_producer_key(),
+            "test.external-profile-producer.v1"
+        );
+    }
+
+    #[test]
+    fn elementary_declaration_order_is_not_identity() {
+        let source = public_external_source(1);
+        let first = silu_realization(&source);
+        let second = ElementaryRealization::new(
+            &verified_silu_contract(),
+            discharging_evidence("order bound half", b"fixture:silu-bound-order-v2"),
+            discharging_evidence(
+                "order exceptional half",
+                b"fixture:silu-exceptional-order-v2",
+            ),
+            &source,
+        )
+        .unwrap();
+        let mut left = public_builder("test.elementary-order.v1");
+        left.declare_elementary_realization(first.clone()).unwrap();
+        left.declare_elementary_realization(second.clone()).unwrap();
+        let mut right = public_builder("test.elementary-order.v1");
+        right.declare_elementary_realization(second).unwrap();
+        right.declare_elementary_realization(first).unwrap();
+        assert_eq!(
+            left.build().unwrap().canonical_descriptor(),
+            right.build().unwrap().canonical_descriptor()
         );
     }
 }

@@ -226,10 +226,10 @@ fn a_chain_two_materialization_boundaries_deep_refuses_at_recognition_by_name() 
         assert_eq!(
             compile_under(&program, contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "accuracy.elementary.undischarged-evidence",
+                rule: "accuracy.elementary.no-installed-realization",
             }),
-            "the chain contains rms_norm and fails closed for undischarged \
-             exceptional-value evidence before the depth rule is asked, \
+            "the chain contains rms_norm and fails closed for a missing \
+             elementary realization before the depth rule is asked, \
              and {contract:?} is not what would change that",
         );
     }

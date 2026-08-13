@@ -154,10 +154,10 @@ fn a_staged_family_over_an_edge_is_recognized_and_stops_at_the_region_vocabulary
         assert_eq!(
             compile_under(&program, contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "accuracy.elementary.undischarged-evidence",
+                rule: "accuracy.elementary.no-installed-realization",
             }),
-            "the chain contains rms_norm and fails closed for undischarged \
-             exceptional-value evidence before the region vocabulary is asked, \
+            "the chain contains rms_norm and fails closed for a missing \
+             elementary realization before the region vocabulary is asked, \
              and {contract:?} is not what would change that"
         );
     }
@@ -172,10 +172,10 @@ fn the_same_normalization_over_declared_inputs_compiles_under_the_same_request()
         assert_eq!(
             compile_under(&control, contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "accuracy.elementary.undischarged-evidence",
+                rule: "accuracy.elementary.no-installed-realization",
             }),
             "{contract:?} did not refuse the declared-input normalization for \
-             undischarged exceptional-value evidence",
+             a missing elementary realization",
         );
     }
 }

@@ -86,8 +86,7 @@ fn realization_with(
     bound: ConformanceEvidence,
     exceptional: ConformanceEvidence,
 ) -> ElementaryRealization {
-    ElementaryRealization::new(
-        contract.operation().clone(),
+    ElementaryRealization::recorded(
         contract,
         bound,
         exceptional,
@@ -157,7 +156,7 @@ fn assert_undischarged(
     );
     assert_eq!(refusal.operation(), operation);
     let ElementaryRefusalReason::UndischargedEvidence {
-        declaring_profile,
+        candidates,
         half: refused_half,
         class: refused_class,
     } = refusal.reason()
@@ -166,7 +165,9 @@ fn assert_undischarged(
     };
     assert_eq!(*refused_half, half);
     assert_eq!(*refused_class, class);
-    assert!(declaring_profile.is_valid());
+    assert!(!candidates.is_empty());
+    assert!(!candidates[0].producer_key().is_empty());
+    assert_ne!(candidates[0].producer_revision(), 0);
 }
 
 /// The installed Metal contract still refines, and admission still refuses.
@@ -237,7 +238,7 @@ fn without_the_registered_implication_the_declaration_is_refused() {
     );
     assert_eq!(refusal.operation(), &silu_f32_op());
     let ElementaryRefusalReason::Unrefined {
-        declaring_profile,
+        candidates,
         unknown,
     } = refusal.reason()
     else {
@@ -248,11 +249,12 @@ fn without_the_registered_implication_the_declaration_is_refused() {
     };
     assert_eq!(*from, apple_msl_ulp_metric_key());
     assert_eq!(*to, ulp_reference_gap_metric_key());
-    // The declaring profile's versioned identity travels with the refusal, which
-    // is what ADR 0076 item 5 requires of a rejection and what a generic
-    // unsupported-operation error cannot carry.
-    assert!(declaring_profile.is_valid());
-    assert!(!format!("{:?}", declaring_profile.authority_identity()).is_empty());
+    // Candidate provenance travels with the refusal, which is what ADR 0076
+    // item 5 requires of a rejection and what a generic unsupported-operation
+    // error cannot carry.
+    assert_eq!(candidates.len(), 1);
+    assert!(!candidates[0].producer_key().is_empty());
+    assert_ne!(candidates[0].producer_revision(), 0);
 }
 
 /// A profile that installs no realization for the key fails closed by name.
@@ -715,7 +717,6 @@ fn a_realization_whose_two_halves_discharge_is_admitted() {
     assert!(admission.discharge().exceptional_is_discharged());
 
     let declared = ElementaryRealization::declare(
-        metal_f32_exponential_contract().operation().clone(),
         metal_f32_exponential_contract(),
         discharging_fixture(
             "declaration-bound fixture for tiler::silu-f32@1",
@@ -739,7 +740,6 @@ fn a_realization_whose_two_halves_discharge_is_admitted() {
 #[test]
 fn declaration_refuses_an_empirical_exceptional_half() {
     let refusal = ElementaryRealization::declare(
-        metal_f32_exponential_contract().operation().clone(),
         metal_f32_exponential_contract(),
         metal_f32_exponential_bound_evidence().expect("well formed"),
         metal_f32_exceptional_value_evidence().expect("well formed"),
@@ -845,8 +845,11 @@ fn an_unknown_bound_half_is_refused_as_unknown_not_empirical() {
     assert_undischarged(&refusal, &silu_f32_op(), expected_half, expected_class);
 }
 
-/// The governed profile's installed Metal rows fail closed, and that is not
-/// an absent row.
+/// The retained Metal records still fail closed as undischarged evidence.
+///
+/// They are not stored on the governed profile. Assessment against the
+/// explicit installation still names the empirical exceptional half; the
+/// profile itself has no declared row.
 #[test]
 fn the_governed_profile_refuses_each_metal_row_as_undischarged_exceptional_evidence() {
     for (operation, required_contract) in [
@@ -871,10 +874,10 @@ fn the_governed_profile_refuses_each_metal_row_as_undischarged_exceptional_evide
         );
         let number =
             elementary_relative_accuracy(&operation, &crate::target::TargetProfile::governed())
-                .expect_err("an undischarged row yields no relative accuracy");
+                .expect_err("the governed profile declares no elementary row");
         assert_eq!(
             number.diagnostic_code(),
-            "accuracy.elementary.undischarged-evidence"
+            "accuracy.elementary.no-installed-realization"
         );
     }
 }

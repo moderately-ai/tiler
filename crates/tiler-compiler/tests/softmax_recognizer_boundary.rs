@@ -133,9 +133,9 @@ fn a_softmax_program_is_refused_for_want_of_an_installed_lowering() {
         assert_eq!(
             compile_under(&program, contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "accuracy.elementary.undischarged-evidence"
+                rule: "accuracy.elementary.no-installed-realization"
             }),
-            "the softmax is refused for undischarged exceptional-value evidence \
+            "the softmax is refused for a missing elementary realization \
              before lowering is asked, and {contract:?} is not what would change that"
         );
     }

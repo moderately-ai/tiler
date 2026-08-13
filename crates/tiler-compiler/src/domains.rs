@@ -100,9 +100,9 @@ impl PinnedDomain {
 ///
 /// Sorted by content and free of duplicates, both asserted below. Every row
 /// retains its NUL terminator because the pin is over bytes written by the
-/// encoder rather than a display name. There are 25 distinct strict domains:
-/// 26 occurrences under `src/` because boundary property is restated by a unit
-/// test, and 30 across `src/` plus `tests/` because four legality domains are
+/// encoder rather than a display name. There are 26 distinct strict domains:
+/// 27 occurrences under `src/` because boundary property is restated by a unit
+/// test, and 31 across `src/` plus `tests/` because four legality domains are
 /// each restated once by an integration test.
 const PINNED_IDENTITY_DOMAINS: &[PinnedDomain] = &[
     PinnedDomain::new(b"tiler.compiler.boundary-property-set.v3\0", 2, 0),
@@ -135,6 +135,7 @@ const PINNED_IDENTITY_DOMAINS: &[PinnedDomain] = &[
     PinnedDomain::new(b"tiler.target-profile.declaration.v11\0", 1, 0),
     PinnedDomain::new(b"tiler.target-profile.descriptor.v10\0", 1, 0),
     PinnedDomain::new(b"tiler.target-profile.dtype-dispatchability.v2\0", 1, 0),
+    PinnedDomain::new(b"tiler.target-profile.elementary-realization.v1\0", 1, 0),
     PinnedDomain::new(
         b"tiler.target-profile.evaluation-order-preservation.v1\0",
         1,

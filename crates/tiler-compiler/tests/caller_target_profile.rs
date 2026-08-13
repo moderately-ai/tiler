@@ -1,29 +1,33 @@
 //! Out-of-crate proof of the caller-declared target-profile boundary.
 
 use tiler_compiler::session::{
-    CompileFailureClass, CompileRequest, MAX_NUMERICAL_CONTRACT_PREFERENCES, NumericalContract,
-    TargetCompileRefusal, TargetDTypeRefusalDisposition, TargetDeclaredNumericalRefusal,
+    CompileFailureClass, CompileRequest, ElementaryEvidenceHalf,
+    MAX_NUMERICAL_CONTRACT_PREFERENCES, NumericalContract, TargetCompileRefusal,
+    TargetDTypeRefusalDisposition, TargetDeclaredNumericalRefusal, TargetElementaryAccuracyReason,
     TargetNumericalContractRejection, TargetNumericalDeclaredMeans,
     TargetNumericalHonouredBehaviour, TargetNumericalRefusalDisposition,
     TargetNumericalRequirement, compile,
 };
 use tiler_compiler::target::{
     DTypeDispatchability, DTypeDispatchabilityResolution, DeviceAddressWidth,
-    IndexArithmeticSupport, MAX_TARGET_PROFILES_PER_REQUEST, MeasuredFactAuthority,
-    ScalarArithmetic, ScalarSupport, TargetCompileProfileMeasurementSource, TargetCompilerBuild,
-    TargetCompilerRole, TargetCompilerRoleReference, TargetExecutionEnvironment,
-    TargetFactAuthority, TargetFactProducerIdentity, TargetFactSource, TargetFactValidityScope,
-    TargetMeasurementContext, TargetNormativeReferenceIdentity, TargetNumericalEvidenceBasis,
-    TargetProfile, TargetProfileBuildError, TargetProfileBuilder, TargetProfileKey, TargetRequest,
-    TargetRequestError,
+    ElementaryRealization, IndexArithmeticSupport, MAX_TARGET_PROFILES_PER_REQUEST,
+    MeasuredFactAuthority, ScalarArithmetic, ScalarSupport, TargetCompileProfileMeasurementSource,
+    TargetCompilerBuild, TargetCompilerRole, TargetCompilerRoleReference,
+    TargetExecutionEnvironment, TargetFactAuthority, TargetFactProducerIdentity, TargetFactSource,
+    TargetFactValidityScope, TargetMeasurementContext, TargetNormativeReferenceIdentity,
+    TargetNumericalEvidenceBasis, TargetProfile, TargetProfileBuildError, TargetProfileBuilder,
+    TargetProfileKey, TargetRequest, TargetRequestError,
 };
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::schedule::{
     ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
 };
 use tiler_ir::semantic::{
-    F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
-    SemanticProgramBuilder, StrictSerialF32Sum,
+    F32, F32Add, F32Constant, F32Multiply, F32Silu, InputKey, OutputKey,
+    SILU_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS, SILU_F32_EXPONENTIAL_ULP_TOLERANCE,
+    SemanticProgram, SemanticProgramBuilder, StrictSerialF32Sum, builtin_scalar_value_type_facts,
+    silu_f32_exponential_accuracy_contract, silu_f32_exponential_exceptional_contract,
+    silu_f32_exponential_reference_semantics, silu_f32_op,
 };
 use tiler_ir::shape::{Axis, Shape};
 
@@ -280,8 +284,22 @@ fn measured_compile_profile_source_is_admitted_by_each_fact_family() {
         .declare_measured_dtype_dispatchability(
             F32::resolved_type(),
             DTypeDispatchability::Dispatchable,
-            source,
+            source.clone(),
         )
+        .unwrap();
+    builder
+        .declare_elementary_realization(ElementaryRealization::measured(
+            &verified_silu_contract(),
+            discharging_evidence(
+                "measured public-boundary bound half",
+                b"fixture:measured-public-bound-v1",
+            ),
+            discharging_evidence(
+                "measured public-boundary exceptional half",
+                b"fixture:measured-public-exceptional-v1",
+            ),
+            &source,
+        ))
         .unwrap();
     let profile = builder.build().unwrap();
     assert!(!profile.canonical_descriptor().is_empty());
@@ -800,5 +818,344 @@ fn duplicate_target_request_error_selects_the_first_two_caller_positions() {
             first: 0,
             duplicate: 2,
         })
+    );
+}
+
+fn verified_silu_contract() -> tiler_ir::semantic::accuracy::VerifiedAccuracyContract {
+    let contract = silu_f32_exponential_accuracy_contract();
+    let facts = builtin_scalar_value_type_facts(contract.result_type()).unwrap();
+    contract.verify(&facts).unwrap()
+}
+
+fn discharging_evidence(
+    scope: &str,
+    digest: &[u8],
+) -> tiler_ir::semantic::accuracy::ConformanceEvidence {
+    let reference = |text: &str| tiler_ir::semantic::NormativeDefinitionRef::new(text).unwrap();
+    tiler_ir::semantic::accuracy::ConformanceEvidence::new(
+        tiler_ir::semantic::accuracy::ConformanceEvidenceClass::NormativeGuarantee,
+        reference(scope),
+        reference("synthetic both-halves fixture, not a Metal specification claim"),
+        reference("fixture.elementary.caller-declaration"),
+        reference("tiler test fixture, not a toolchain row"),
+        None,
+        None,
+        None,
+        digest,
+    )
+    .unwrap()
+}
+
+fn empirical_evidence(
+    scope: &str,
+    digest: &[u8],
+) -> tiler_ir::semantic::accuracy::ConformanceEvidence {
+    let reference = |text: &str| tiler_ir::semantic::NormativeDefinitionRef::new(text).unwrap();
+    tiler_ir::semantic::accuracy::ConformanceEvidence::new(
+        tiler_ir::semantic::accuracy::ConformanceEvidenceClass::EmpiricalQualification,
+        reference(scope),
+        reference("synthetic empirical fixture"),
+        reference("fixture.elementary.empirical"),
+        reference("tiler test fixture"),
+        Some(reference("fixture device")),
+        Some(reference("fixture oracle")),
+        Some(reference("fixture corpus")),
+        digest,
+    )
+    .unwrap()
+}
+
+fn looser_silu_contract() -> tiler_ir::semantic::accuracy::AccuracyContract {
+    use tiler_ir::semantic::accuracy::{
+        AccuracyContract, AccuracyContractForm, AccuracyDomain, AccuracyDomainClause,
+        AccuracyPredicate, DomainBound, DomainInterval, ExactRational, ExactTolerance,
+        OperandOrdinal, ReferenceResultClass, ReferenceResultConstraint,
+        ulp_reference_gap_metric_key,
+    };
+    let ceiling =
+        ExactRational::from_f32(f32::from_bits(SILU_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS))
+            .unwrap();
+    let ordinary = DomainInterval::new(
+        OperandOrdinal::new(0),
+        DomainBound::Unbounded,
+        DomainBound::Closed(ceiling),
+    )
+    .unwrap();
+    let clause = AccuracyDomainClause::new(
+        [(OperandOrdinal::new(0), ordinary.clone())],
+        ReferenceResultConstraint::new(
+            [ReferenceResultClass::Positive],
+            None,
+            Some(
+                tiler_ir::semantic::NormativeDefinitionRef::new(
+                    "e^t is strictly positive at every real t, so the reference result is never \
+                     zero and never negative on this clause's whole region",
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap(),
+        AccuracyPredicate::ulp(
+            ulp_reference_gap_metric_key(),
+            ExactTolerance::from_integer(SILU_F32_EXPONENTIAL_ULP_TOLERANCE + 12),
+        ),
+    )
+    .unwrap();
+    AccuracyContract::new(
+        silu_f32_op(),
+        vec![F32::resolved_type()],
+        F32::resolved_type(),
+        silu_f32_exponential_reference_semantics(),
+        AccuracyContractForm::BoundedPiecewise(AccuracyDomain::new([ordinary], [clause]).unwrap()),
+        silu_f32_exponential_exceptional_contract(),
+    )
+}
+
+fn verified_looser_silu_contract() -> tiler_ir::semantic::accuracy::VerifiedAccuracyContract {
+    let contract = looser_silu_contract();
+    let facts = builtin_scalar_value_type_facts(contract.result_type()).unwrap();
+    contract.verify(&facts).unwrap()
+}
+
+fn silu_program() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let input = builder
+        .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([4]))
+        .unwrap();
+    let activated = F32Silu::apply(&mut builder, input).unwrap();
+    builder
+        .output(OutputKey::new("result").unwrap(), activated)
+        .unwrap();
+    builder.build().unwrap()
+}
+
+fn profile_with_realization(key: &str, realization: ElementaryRealization) -> TargetProfile {
+    let source = external_guarantee();
+    let mut builder = TargetProfileBuilder::new(TargetProfileKey::new(key.to_owned()).unwrap());
+    declare_quantitative(&mut builder, &source);
+    let subject = ScalarArithmetic::f32();
+    builder
+        .declare_input_subnormals(
+            subject.clone(),
+            SubnormalMode::Preserve,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_result_subnormals(
+            subject.clone(),
+            SubnormalMode::Preserve,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_contraction(
+            subject.clone(),
+            NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_reassociation(
+            subject.clone(),
+            NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_permutation(
+            subject.clone(),
+            NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_signed_zero(
+            subject.clone(),
+            NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_nan_assumptions(
+            subject.clone(),
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_infinity_assumptions(
+            subject,
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_dtype_dispatchability(
+            F32::resolved_type(),
+            DTypeDispatchability::Dispatchable,
+            source,
+        )
+        .unwrap();
+    builder.declare_elementary_realization(realization).unwrap();
+    builder.build().unwrap()
+}
+
+fn compile_silu_against(
+    profile: TargetProfile,
+) -> Result<(), tiler_compiler::session::TargetCompileFailure> {
+    let program = silu_program();
+    let batch = compile(CompileRequest::new(
+        &program,
+        NumericalContract::STRICT_F32,
+        TargetRequest::new([profile]).unwrap(),
+    ))
+    .expect("target-local elementary refusals preserve the outer request");
+    batch
+        .targets()
+        .next()
+        .expect("one requested target")
+        .outcome()
+        .map(|_| ())
+        .map_err(Clone::clone)
+}
+
+#[test]
+fn a_caller_built_profile_with_both_halves_compiles_silu() {
+    let realization = ElementaryRealization::new(
+        &verified_silu_contract(),
+        discharging_evidence(
+            "caller bound half for tiler::silu-f32@1",
+            b"fixture:caller-silu-bound-v1",
+        ),
+        discharging_evidence(
+            "caller exceptional half for tiler::silu-f32@1",
+            b"fixture:caller-silu-exceptional-v1",
+        ),
+        &external_guarantee(),
+    )
+    .unwrap();
+    let profile = profile_with_realization("test.elementary-discharging.v1", realization);
+    assert_eq!(profile.declared_elementary_realizations().len(), 1);
+    compile_silu_against(profile).expect("a discharging declared row admits tiler::silu-f32@1");
+}
+
+#[test]
+fn a_caller_built_profile_declaring_nothing_refuses_silu_as_no_installed_realization() {
+    let profile = external_profile(
+        "test.elementary-absent.v1",
+        DispatchDeclaration::CompileProfile(DTypeDispatchability::Dispatchable),
+        NumericalDeclarations::Strict,
+    );
+    assert!(profile.declared_elementary_realizations().is_empty());
+    let failure = compile_silu_against(profile).expect_err("silence is no installed realization");
+    assert_eq!(
+        failure.class(),
+        CompileFailureClass::UnsupportedCapability {
+            rule: "accuracy.elementary.no-installed-realization",
+        }
+    );
+    let TargetCompileRefusal::ElementaryAccuracy(refusal) = failure.refusal().unwrap() else {
+        panic!(
+            "expected an elementary-accuracy refusal, got {:?}",
+            failure.refusal()
+        );
+    };
+    assert_eq!(refusal.operation(), &silu_f32_op());
+    assert_eq!(
+        refusal.reason(),
+        TargetElementaryAccuracyReason::NoInstalledRealization
+    );
+    assert!(refusal.candidates().is_empty());
+}
+
+#[test]
+fn a_caller_built_unrefined_declaration_refuses_silu_as_unrefined_realization() {
+    let realization = ElementaryRealization::new(
+        &verified_looser_silu_contract(),
+        discharging_evidence("unrefined bound half", b"fixture:unrefined-bound-v1"),
+        discharging_evidence(
+            "unrefined exceptional half",
+            b"fixture:unrefined-exceptional-v1",
+        ),
+        &external_guarantee(),
+    )
+    .unwrap();
+    let profile = profile_with_realization("test.elementary-unrefined.v1", realization);
+    let failure = compile_silu_against(profile)
+        .expect_err("a looser declared bound cannot refine the registered contract");
+    assert_eq!(
+        failure.class(),
+        CompileFailureClass::UnsupportedCapability {
+            rule: "accuracy.elementary.unrefined-realization",
+        }
+    );
+    let TargetCompileRefusal::ElementaryAccuracy(refusal) = failure.refusal().unwrap() else {
+        panic!(
+            "expected an elementary-accuracy refusal, got {:?}",
+            failure.refusal()
+        );
+    };
+    assert_eq!(refusal.operation(), &silu_f32_op());
+    assert_eq!(refusal.reason(), TargetElementaryAccuracyReason::Unrefined);
+    assert_eq!(refusal.candidates().len(), 1);
+    assert_eq!(
+        refusal.candidates()[0].producer_key(),
+        "test.external-profile-producer.v1"
+    );
+    assert_eq!(refusal.candidates()[0].producer_revision(), 1);
+    assert_eq!(
+        refusal.candidates()[0].contract().operation(),
+        &silu_f32_op()
+    );
+}
+
+#[test]
+fn a_caller_built_undischarged_declaration_refuses_silu_as_undischarged_evidence() {
+    let realization = ElementaryRealization::new(
+        &verified_silu_contract(),
+        discharging_evidence("undischarged bound half", b"fixture:undischarged-bound-v1"),
+        empirical_evidence(
+            "undischarged exceptional half",
+            b"fixture:undischarged-exceptional-v1",
+        ),
+        &external_guarantee(),
+    )
+    .unwrap();
+    let profile = profile_with_realization("test.elementary-undischarged.v1", realization);
+    let failure =
+        compile_silu_against(profile).expect_err("empirical exceptional evidence cannot discharge");
+    assert_eq!(
+        failure.class(),
+        CompileFailureClass::UnsupportedCapability {
+            rule: "accuracy.elementary.undischarged-evidence",
+        }
+    );
+    let TargetCompileRefusal::ElementaryAccuracy(refusal) = failure.refusal().unwrap() else {
+        panic!(
+            "expected an elementary-accuracy refusal, got {:?}",
+            failure.refusal()
+        );
+    };
+    assert_eq!(refusal.operation(), &silu_f32_op());
+    assert_eq!(
+        refusal.reason(),
+        TargetElementaryAccuracyReason::UndischargedEvidence {
+            half: ElementaryEvidenceHalf::ExceptionalValue,
+            class: tiler_ir::semantic::accuracy::ConformanceEvidenceClass::EmpiricalQualification,
+        }
+    );
+    assert_eq!(refusal.candidates().len(), 1);
+    assert_eq!(
+        refusal.candidates()[0].producer_key(),
+        "test.external-profile-producer.v1"
     );
 }

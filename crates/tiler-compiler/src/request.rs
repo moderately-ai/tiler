@@ -4368,6 +4368,13 @@ pub(crate) enum RequestError {
         undischarged_half: Option<crate::target::accuracy::ElementaryEvidenceHalf>,
         /// The failing evidence class, when `reason` is undischarged evidence.
         undischarged_class: Option<tiler_ir::semantic::accuracy::ConformanceEvidenceClass>,
+        /// Declared same-operation candidates in canonical order.
+        ///
+        /// Empty when nothing was installed. Several unrefined or undischarged
+        /// rows appear here in the same order the profile stores them after
+        /// canonicalization, so the public refusal cannot depend on insertion
+        /// order.
+        candidates: Box<[crate::target::accuracy::ElementaryAccuracyCandidate]>,
     },
     ShapeProductOverflow {
         role: &'static str,
@@ -4464,6 +4471,7 @@ impl fmt::Display for RequestError {
                 reason,
                 undischarged_half,
                 undischarged_class,
+                candidates: _,
             } => {
                 write!(
                     formatter,
@@ -4822,6 +4830,7 @@ fn require_elementary_accuracy(
             reason: refusal.diagnostic_code(),
             undischarged_half: refusal.undischarged_half(),
             undischarged_class: refusal.undischarged_class(),
+            candidates: refusal.candidates().to_vec().into_boxed_slice(),
         },
     )
 }

@@ -549,10 +549,10 @@ fn a_structural_occurrence_beside_an_elementary_one_compiles_as_a_mapped_read() 
         assert_eq!(
             compile_under(&accepted, contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "accuracy.elementary.undischarged-evidence"
+                rule: "accuracy.elementary.no-installed-realization"
             }),
-            "{contract:?} did not refuse the elementary neighbour for undischarged \
-             exceptional-value evidence, so the refusal below would not be \
+            "{contract:?} did not refuse the elementary neighbour for a missing \
+             realization, so the refusal below would not be \
              evidence about the missing vocabulary",
         );
         // **The row this ticket flipped.** The reindex no longer refuses: its
@@ -644,10 +644,10 @@ fn a_broadcast_widening_a_declared_weight_compiles_as_a_replication_relation() {
         assert_eq!(
             compile_under(&accepted, contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "accuracy.elementary.undischarged-evidence"
+                rule: "accuracy.elementary.no-installed-realization"
             }),
-            "{contract:?} did not refuse the elementary neighbour for undischarged \
-             exceptional-value evidence, so the refusal below would not be \
+            "{contract:?} did not refuse the elementary neighbour for a missing \
+             realization, so the refusal below would not be \
              evidence about the missing relation",
         );
         // **The row this ticket flipped, and the workload's dominant structural

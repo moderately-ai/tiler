@@ -372,10 +372,10 @@ fn a_family_with_no_node_of_its_own_compiles_by_projection_or_by_addressing() {
         assert_eq!(
             compile_under(&activation, contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "accuracy.elementary.undischarged-evidence"
+                rule: "accuracy.elementary.no-installed-realization"
             }),
-            "{contract:?} did not refuse the activation for undischarged \
-             exceptional-value evidence",
+            "{contract:?} did not refuse the activation for a missing \
+             elementary realization",
         );
         // **The row the structural widening flipped, and it is worth being
         // precise about what admitted it.** No `ScalarProgram` copy variant was
