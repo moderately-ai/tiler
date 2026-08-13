@@ -1779,12 +1779,12 @@ mod tests {
     use super::*;
     use crate::request::{CompilationRequest, verify_planned_request};
     use std::sync::Arc;
+    use tiler_ir::program::abi::AvailabilityPhase;
     use tiler_ir::semantic::{
         Bf16, Bf16Add, Bf16Constant, Bf16Multiply, CanonicalValueView, F32,
         F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant, F32Multiply, InputKey, OutputKey,
         SemanticProgramBuilder, StrictSerialF32Sum, Value,
     };
-    use tiler_ir::program::abi::AvailabilityPhase;
     use tiler_ir::shape::{
         Axis, BindingSource, ExtentSources, FactProvenance, RootBinding, Shape, ShapeEnvBuilder,
         ShapeSymbol, SourcedExtent, SymbolScope,
@@ -1912,8 +1912,8 @@ mod tests {
             !congruence.merges.is_empty(),
             "the fixture must actually trigger a rewrite"
         );
-        let rebuilt =
-            rebuild(&program, &congruence).expect("the rewrite must carry the program's environment");
+        let rebuilt = rebuild(&program, &congruence)
+            .expect("the rewrite must carry the program's environment");
         assert_eq!(
             rebuilt
                 .extent_sources()
@@ -1930,7 +1930,8 @@ mod tests {
             );
         }
 
-        let mut bare = SemanticProgramBuilder::try_new(program.semantic_registry().clone()).unwrap();
+        let mut bare =
+            SemanticProgramBuilder::try_new(program.semantic_registry().clone()).unwrap();
         let input = program.inputs().next().unwrap();
         let sourced = program.shape(input.value()).unwrap();
         let value = program.value(input.value()).unwrap();

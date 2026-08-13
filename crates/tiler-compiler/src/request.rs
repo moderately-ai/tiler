@@ -5536,11 +5536,7 @@ fn recognize_elementwise_output(
             .map(NormalizedOutput::Pointwise),
         Err(ElementwiseRefusal::Folded(staged)) => {
             let Some(static_shape) = shape.as_static() else {
-                return Err(unsupported_symbolic_extent(
-                    program,
-                    output.value(),
-                    &shape,
-                ));
+                return Err(unsupported_symbolic_extent(program, output.value(), &shape));
             };
             recognize_epilogue(
                 program,
@@ -12250,9 +12246,7 @@ mod tests {
             .expect("the symbolic fixture names at least one symbol")
     }
 
-    fn scheduled_symbolic_extent(
-        error: &crate::pipeline::CompileError,
-    ) -> Option<&SourcedExtent> {
+    fn scheduled_symbolic_extent(error: &crate::pipeline::CompileError) -> Option<&SourcedExtent> {
         match error {
             crate::pipeline::CompileError::UnsupportedCapability(
                 RequestError::UnsupportedSymbolicExtent {

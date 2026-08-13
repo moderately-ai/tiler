@@ -2949,6 +2949,8 @@ mod tests {
     use super::*;
     use crate::request::{CompilationRequest, verify_planned_request};
     use std::collections::BTreeMap as OracleMap;
+    use std::sync::Arc;
+    use tiler_ir::program::abi::AvailabilityPhase;
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
         StrictSerialF32Sum,
@@ -2957,8 +2959,6 @@ mod tests {
         Axis, BindingSource, FactProvenance, RootBinding, Shape, ShapeEnvBuilder, ShapeSymbol,
         SourcedExtent, SymbolScope,
     };
-    use tiler_ir::program::abi::AvailabilityPhase;
-    use std::sync::Arc;
 
     /// Every way a chain of claims can fail to realize its subject.
     ///
@@ -5032,7 +5032,10 @@ mod tests {
                 recorded.shape.extents().collect::<Vec<_>>(),
                 vec![SourcedExtent::Symbol(symbol.clone())],
             );
-            assert_eq!(value.shape().extents().collect::<Vec<_>>(), recorded.shape.extents().collect::<Vec<_>>());
+            assert_eq!(
+                value.shape().extents().collect::<Vec<_>>(),
+                recorded.shape.extents().collect::<Vec<_>>()
+            );
         }
     }
 
