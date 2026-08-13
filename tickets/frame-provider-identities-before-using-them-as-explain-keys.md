@@ -1,7 +1,7 @@
 ---
 id: frame-provider-identities-before-using-them-as-explain-keys
 title: Frame provider identities before using them as explain keys
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [reconcile-the-operation-identity-and-governed-key-grammars, replace-flat-selected-lowering-capability-keys-with-structured-subjects, emit-typed-opaque-call-frontier-rejection-records]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, explain, diagnostics, correctness, implementation]
-claimed_from: todo
-assignee: worker-frame-provider-identities
-lease_expires_at: 1786635274
 ---
 ## User-visible outcome
 
