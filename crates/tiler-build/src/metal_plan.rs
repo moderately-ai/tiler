@@ -1662,17 +1662,18 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "9b739d215336de436ef334ded614ef4b43db9edfec170ee5032fee809975b3b7";
+            "e29b2918782424b605f67f0f1ba841a199fe745464cbf3c233071999c334afac";
         const CACHE_SUBJECT: &str =
-            "1a04d873fe54c3785d1770a7ee4537a607c2acc9a5ae67f328e8f49de53621e4";
-        // **65,327 at `tiler.semantic-registry.v8`.** The fourteen-byte move
-        // from 65,313 is the one-byte shape-inference participation tag on
-        // every encoded operation definition, folded through the nested
-        // semantic subjects this envelope already carried. Domain version
-        // strings stayed the same width (`v7`→`v8`, `v5`→`v6`). The earlier
-        // five-byte 65,308 → 65,313 step remains the derived index-arithmetic
-        // requirement at `tiler.artifact-program.v16` / `tiler.kernel.v7`.
-        const FIXED_CONTENT_BYTES: usize = 65_327;
+            "983e8fdd5dc710a1d5f636bc3368296cb95b223b59f49fffe1f142285d63fa45";
+        // **76,291 after the eight-dimension region-feasibility projection and
+        // standard-semantics provider 7→8.** The previous 65,327 pin was the
+        // participation-tag envelope. This step is not a per-extent encoding
+        // change, so it does not factor as `2 * n * 7`. It is the four newly
+        // asked realized dimensions (permutation, signed zero, NaN assumptions,
+        // infinity assumptions) entering selected-plan and delivered-realization
+        // evidence, plus the Slice source-bearing provider revision folded
+        // through the nested semantic subjects. Domain tags are unchanged.
+        const FIXED_CONTENT_BYTES: usize = 76_291;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
@@ -1746,9 +1747,9 @@ mod tests {
     #[test]
     fn the_authority_ledger_mirrors_the_live_standard_metal_pins() {
         const ARTIFACT_IDENTITY: &str =
-            "9b739d215336de436ef334ded614ef4b43db9edfec170ee5032fee809975b3b7";
+            "e29b2918782424b605f67f0f1ba841a199fe745464cbf3c233071999c334afac";
         const CACHE_SUBJECT: &str =
-            "1a04d873fe54c3785d1770a7ee4537a607c2acc9a5ae67f328e8f49de53621e4";
+            "983e8fdd5dc710a1d5f636bc3368296cb95b223b59f49fffe1f142285d63fa45";
         let ledger = include_str!(
             "../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md"
         );
@@ -1766,7 +1767,7 @@ mod tests {
             "the live pin paragraph does not name CACHE_SUBJECT",
         );
         assert!(
-            today.contains("fixed content is 65,327 bytes"),
+            today.contains("fixed content is 76,291 bytes"),
             "the live pin paragraph does not name FIXED_CONTENT_BYTES",
         );
         assert!(

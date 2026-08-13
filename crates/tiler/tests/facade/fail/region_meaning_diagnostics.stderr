@@ -28,7 +28,7 @@ error: `b` is used in the region's result but no `in` statement declares it; a r
 48 |         out a * b
    |                 ^
 
-error: this region is not a valid public logical program: provider tiler::standard-semantics@7 rejected operation tiler::multiply-f32@1: binary.shape: operand shapes must match or one operand must be scalar
+error: this region is not a valid public logical program: provider tiler::standard-semantics@8 rejected operation tiler::multiply-f32@1: binary.shape: operand shapes must match or one operand must be scalar
   --> tests/facade/fail/region_meaning_diagnostics.rs:56:15
    |
 56 |         out a * b

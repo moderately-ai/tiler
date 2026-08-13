@@ -485,12 +485,17 @@ fn an_unconsumed_honoured_dimension_is_packaged_as_not_required() {
     }
     // The direction that must never be reached: the fold reads operands, produces
     // results, and regroups its contributor sequence, so a `NotRequired` on any
-    // of the three would be the artifact asserting that no packaged route needs
-    // the target to honour a freedom this program genuinely exercises.
+    // of the consumed realized dimensions would be the artifact asserting that no
+    // packaged route needs the target to honour a freedom this program genuinely
+    // exercises.
     for dimension in [
         NumericalDimension::InputSubnormals,
         NumericalDimension::ResultSubnormals,
         NumericalDimension::Reassociation,
+        NumericalDimension::Permutation,
+        NumericalDimension::SignedZero,
+        NumericalDimension::NanAssumptions,
+        NumericalDimension::InfinityAssumptions,
     ] {
         assert!(
             !not_required.contains(&dimension),
@@ -504,13 +509,17 @@ fn an_unconsumed_honoured_dimension_is_packaged_as_not_required() {
             (NumericalDimension::InputSubnormals, 1),
             (NumericalDimension::ResultSubnormals, 1),
             (NumericalDimension::Reassociation, 1),
+            (NumericalDimension::Permutation, 1),
+            (NumericalDimension::SignedZero, 1),
+            (NumericalDimension::NanAssumptions, 1),
+            (NumericalDimension::InfinityAssumptions, 1),
         ],
         "one obligation each, at the one occurrence this program packages",
     );
     assert_eq!(
         not_required.len(),
-        8,
-        "eleven dimensions, three of them required by the one covered fold",
+        4,
+        "eleven dimensions, seven of them required by the one covered fold",
     );
     assert!(
         not_required.contains(&NumericalDimension::Contraction),
