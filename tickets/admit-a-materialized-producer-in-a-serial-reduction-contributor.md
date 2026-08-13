@@ -1,14 +1,14 @@
 ---
 id: admit-a-materialized-producer-in-a-serial-reduction-contributor
 title: Admit a materialized producer in a serial-reduction contributor
-status: in-progress
+status: awaiting-decision
 priority: p3
 dependencies: [name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set]
 related: [name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set, admit-a-recognized-chain-more-than-one-materialization-boundary-deep]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
-tags: [research, compiler, planner, identity]
+tags: [research, compiler, planner, identity, decision, needs-tom]
 claimed_from: todo
 assignee: worker-materialized-producer
 lease_expires_at: 1786664925
