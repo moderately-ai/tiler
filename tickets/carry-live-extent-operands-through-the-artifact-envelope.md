@@ -1,7 +1,7 @@
 ---
 id: carry-live-extent-operands-through-the-artifact-envelope
 title: Carry live extent operands through the artifact envelope
-status: review
+status: done
 priority: p1
 dependencies: [accept-the-live-extent-operand-public-surface]
 related: [admit-live-extent-operands-to-payload-indexing, deliver-an-artifact-family-from-a-symbolic-region]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, contracts/artifacts, implementation/runtime, i
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, identity, public-boundary]
-claimed_from: todo
-assignee: worker-carry-live-extent
-lease_expires_at: 1786659498
 ---
 ## User-visible outcome
 

@@ -5,7 +5,7 @@ status: awaiting-decision
 priority: p1
 dependencies: []
 related: [carry-live-extent-operands-through-the-artifact-envelope]
-scopes: [contracts/artifacts]
+scopes: [contracts/artifacts, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, needs-tom, public-boundary]
