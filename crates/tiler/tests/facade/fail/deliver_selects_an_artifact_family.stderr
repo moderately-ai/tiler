@@ -1,4 +1,4 @@
-error: this region declares a symbolic extent, and a `deliver` statement selecting an artifact family compiles the region ahead of time — which needs every extent to be known at expansion time. Declare literal extents, or state `fallback-only`. `carry-symbolic-extents-into-the-semantic-program` is the work that removes this restriction
+error: this region declares a symbolic extent, and a `deliver` statement selecting an artifact family compiles the region ahead of time — which needs every extent to be known at expansion time. Declare literal extents, or state `fallback-only`. `deliver-an-artifact-family-from-a-symbolic-region` is the work that removes this restriction
   --> tests/facade/fail/deliver_selects_an_artifact_family.rs:32:9
    |
 32 |         deliver macos;

@@ -1,11 +1,11 @@
 ---
 id: repair-the-records-the-symbolic-region-construction-landing-falsifies
 title: Repair the records the symbolic-region construction landing falsifies
-status: in-progress
+status: review
 priority: p2
 dependencies: [construct-a-symbolic-region-as-a-semantic-program]
 related: [carry-symbolic-extents-into-the-semantic-program, deliver-an-artifact-family-from-a-symbolic-region, admit-symbolic-extents-at-the-compiler-request-boundary]
-scopes: [research/shapes, implementation/frontend]
+scopes: [research/shapes, implementation/frontend, contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, correction, shapes]
@@ -49,4 +49,14 @@ Do not rewrite dated 2026-08-10 audit snapshots under `docs/research/documentati
 ## Closes when
 
 Each live present-tense claim above is dated or replaced; `rg -n "DeferredSymbolicExtent" crates` stays empty; the AOT diagnostic names the remaining delivery ticket; and `rg -n "still defers a symbolic region|DeferredSymbolicExtent" docs/research/shapes` finds only dated historical sentences plus the correction that retires them.
+
+## Outcome
+
+Dated 2026-08-13 corrections landed on `docs/research/shapes/symbolic-semantic-extents.md` and `docs/research/shapes/transformer-operation-and-shape-surface.md`. `AotRefusal::SymbolicExtent` Display now names `deliver-an-artifact-family-from-a-symbolic-region`; the matching trybuild golden and `docs/integration/frontends.md` were retargeted. The refusal itself is unchanged.
+
+**Support-matrix navigation note.** This advances no operation-family support-matrix row and no dtype-maturity cell. It repairs present-tense records and a consumer-facing remedy id after a landed frontend construction change.
+
+`contracts/integrations` was added because `docs/integration/frontends.md` carried the same stale remedy id.
+
+Commands: `cargo test -p tiler --test facade` (worktree; `deliver_selects_an_artifact_family.rs` compile-fail ok); `tkt lint`; `git diff --check`; `rg -n "DeferredSymbolicExtent" crates` empty; `rg -n "carry-symbolic-extents-into-the-semantic-program" crates` empty.
 
