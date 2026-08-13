@@ -1,7 +1,7 @@
 ---
 id: carry-every-realized-dimension-through-region-feasibility
 title: Carry every realized dimension through region feasibility
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [carry-the-elementary-numerical-dimensions-in-the-region-realization, wire-the-delivered-realization-record-into-the-artifact]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/optimizer, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, feasibility, correctness, fail-closed]
-claimed_from: todo
-assignee: worker-carry-every-dimension
-lease_expires_at: 1786633143
 ---
 
 # Carry every realized dimension through region feasibility
