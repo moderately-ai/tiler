@@ -373,6 +373,25 @@ pub enum LogicalAccess {
         /// Exact identity of the environment that interprets the mapping.
         environment: crate::shape::ShapeEnvIdentity,
     },
+    /// One invocation owns a static outer coordinate and loops the live inner
+    /// extent of this tensor.
+    ///
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
+    /// Dependents may treat this variant as accepted vocabulary.
+    ///
+    /// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+    ///
+    /// The inner axis is an
+    /// [`crate::program::abi::AbiRoot::InputExtent`] consumed in the payload
+    /// rather than specialized into the schedule. The iteration domain is the
+    /// static outer product; the live inner extent is not a schedule identity
+    /// value.
+    LiveRowMajor {
+        /// Axis of this tensor whose live extent is the inner stride and loop
+        /// bound.
+        inner_axis: Axis,
+    },
 }
 
 /// One logical tensor access performed by a scheduled region.
@@ -995,6 +1014,29 @@ pub enum ReductionTopology {
         /// Whether the contract permits contributor permutation.
         permits_permutation: bool,
     },
+    /// A contraction whose contracted extent is a live input-axis operand.
+    ///
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
+    /// Dependents may treat this variant as accepted vocabulary.
+    ///
+    /// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+    ///
+    /// The contracted trip count is the named input axis, not a specialized
+    /// `Shape`. Output shape and free indices stay static; only the contracted
+    /// extent is live.
+    LiveContraction {
+        /// Input whose axis supplies the contracted trip count.
+        live_input: crate::schedule::InputOrdinal,
+        /// Axis of that input whose live extent is the contracted bound.
+        live_axis: Axis,
+        /// Contributor combination order within the contracted space.
+        order: ContributorOrder,
+        /// Whether the contract permits reassociation.
+        permits_reassociation: bool,
+        /// Whether the contract permits contributor permutation.
+        permits_permutation: bool,
+    },
     /// One workgroup's invocations cooperate on each output position.
     ///
     /// The sibling of [`Self::MultiPass`], and the difference between them is
@@ -1349,6 +1391,45 @@ pub struct ScheduledRegion {
     pub schedule: KernelSchedule,
 }
 
+/// Live input-axis extents this region requires a kernel to consume.
+///
+/// Derived from the region's own access maps and reduction topology rather
+/// than stored beside them, so a region that names no live extent stays the
+/// same subject it was. Canonical order is `(input ordinal, axis)`.
+#[must_use]
+pub fn live_input_extents(schedule: &ScheduledRegion) -> Vec<(TensorRole, Axis)> {
+    let mut extents = Vec::new();
+    for access in &schedule.index.accesses {
+        if let LogicalAccess::LiveRowMajor { inner_axis } = &access.map
+            && matches!(access.tensor, TensorRole::Input { .. })
+        {
+            extents.push((access.tensor, *inner_axis));
+        }
+    }
+    if let ReductionTopology::LiveContraction {
+        live_input,
+        live_axis,
+        ..
+    } = &schedule.schedule.reduction
+    {
+        extents.push((
+            TensorRole::Input {
+                ordinal: *live_input,
+            },
+            *live_axis,
+        ));
+    }
+    extents.sort_by_key(|(role, axis)| {
+        let ordinal = match *role {
+            TensorRole::Input { ordinal } => ordinal.get(),
+            TensorRole::Intermediate | TensorRole::Output => u32::MAX,
+        };
+        (ordinal, axis.get())
+    });
+    extents.dedup();
+    extents
+}
+
 /// The index arithmetic one region's coordinate computation requires of a target.
 ///
 /// **Nominal, not a width.** A raw `64` would state that a target can *spell* a
@@ -1675,7 +1756,8 @@ pub fn cooperative_tile(reduction: &ReductionTopology) -> Option<&CooperativeTil
         ReductionTopology::None
         | ReductionTopology::Serial { .. }
         | ReductionTopology::MultiPass { .. }
-        | ReductionTopology::Contraction { .. } => None,
+        | ReductionTopology::Contraction { .. }
+        | ReductionTopology::LiveContraction { .. } => None,
     }
 }
 
@@ -2016,6 +2098,13 @@ const TAG_BROADCAST_REPLICATION: u8 = 0x07;
 /// region's bytes move and the schedule identity domain deliberately does not
 /// step.
 const TAG_PARAMETRIC_BROADCAST: u8 = 0x08;
+/// Logical-access tag of a live-inner-extent row-major map.
+///
+/// Appended exactly as `0x08` was. `0x01` through `0x08` keep their tags and
+/// their field layouts, so no previously encodable region's bytes move and the
+/// schedule identity domain deliberately does not step. A reader that reaches
+/// `0x09` is reading an access the earlier vocabulary could not express.
+const TAG_LIVE_ROW_MAJOR: u8 = 0x09;
 const TAG_LINEAR_RANGE: u8 = 0x11;
 const TAG_REDUCTION_DOMAIN: u8 = 0x12;
 const TAG_SCALAR_SERIAL_SUM: u8 = 0x22;
@@ -2118,6 +2207,15 @@ const TAG_REDUCTION_COOPERATIVE_WORKGROUP: u8 = 0x35;
 /// positions, so no previously encodable region's bytes move and the schedule
 /// identity domain does not step.
 const TAG_REDUCTION_COOPERATIVE_CONTRACTION: u8 = 0x37;
+/// Reduction-topology tag of a contraction whose contracted extent is live.
+///
+/// Appended after `0x37`. `0x36` stays reserved for
+/// `CooperativeContractionSplit`; this tag is the next free slot. `0x01`
+/// through `0x37` keep their tags and field positions, so no previously
+/// encodable region's bytes move and the schedule identity domain does not
+/// step. A reader that reaches `0x38` is reading a region the earlier
+/// vocabulary could not express.
+const TAG_REDUCTION_LIVE_CONTRACTION: u8 = 0x38;
 /// Local coverage tag of an identity-padded contributor split.
 ///
 /// Written only in the padded arm, after every field the earlier topology
@@ -2235,6 +2333,10 @@ fn push_logical_access(bytes: &mut Vec<u8>, access: &LogicalAccess) {
             operand_shape.encode(bytes);
             push_slice(bytes, mapping.canonical_encoding().as_bytes());
             push_slice(bytes, environment.as_bytes());
+        }
+        LogicalAccess::LiveRowMajor { inner_axis } => {
+            bytes.push(TAG_LIVE_ROW_MAJOR);
+            bytes.extend_from_slice(&inner_axis.get().to_be_bytes());
         }
     }
 }
@@ -2912,6 +3014,20 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
         } => {
             bytes.push(TAG_REDUCTION_CONTRACTION);
             push_shape(bytes, contracted_shape);
+            push_order(bytes, *order);
+            bytes.push(u8::from(*permits_reassociation));
+            bytes.push(u8::from(*permits_permutation));
+        }
+        ReductionTopology::LiveContraction {
+            live_input,
+            live_axis,
+            order,
+            permits_reassociation,
+            permits_permutation,
+        } => {
+            bytes.push(TAG_REDUCTION_LIVE_CONTRACTION);
+            bytes.extend_from_slice(&live_input.get().to_be_bytes());
+            bytes.extend_from_slice(&live_axis.get().to_be_bytes());
             push_order(bytes, *order);
             bytes.push(u8::from(*permits_reassociation));
             bytes.push(u8::from(*permits_permutation));

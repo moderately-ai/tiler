@@ -22,16 +22,19 @@ use super::error::{
     KernelVerificationError, invalid_handle,
 };
 use super::handles::{
-    KernelBufferId, KernelBuilderId, KernelStagingId, KernelValueId, next_kernel_builder_id,
+    KernelBufferId, KernelBuilderId, KernelInputExtentId, KernelStagingId, KernelValueId,
+    next_kernel_builder_id,
 };
 use super::model::{
     BarrierSpec, BinaryOp, BlockData, BufferAccess, BufferParameter, Builtin, CompareOp, ConvertOp,
-    KernelConstant, KernelData, KernelType, OperationData, OperationKind, PackedExtractOp,
-    SerialLoopSpec, StagingParameter, UnaryOp, ValueData, VerifiedKernel, encode_identity,
+    InputExtentParameter, KernelConstant, KernelData, KernelType, OperationData, OperationKind,
+    PackedExtractOp, SerialLoopSpec, StagingParameter, UnaryOp, ValueData, VerifiedKernel,
+    encode_identity,
 };
 use super::{
     MAX_KERNEL_ADMITTED_BUILTINS, MAX_KERNEL_BLOCK_DEPTH, MAX_KERNEL_BLOCKS, MAX_KERNEL_BUFFERS,
-    MAX_KERNEL_LOOP_ACCUMULATORS, MAX_KERNEL_OPERATIONS, MAX_KERNEL_STAGING, MAX_KERNEL_VALUES,
+    MAX_KERNEL_INPUT_EXTENTS, MAX_KERNEL_LOOP_ACCUMULATORS, MAX_KERNEL_OPERATIONS,
+    MAX_KERNEL_STAGING, MAX_KERNEL_VALUES,
 };
 
 /// The induction variable and accumulator parameters of one structured loop.
@@ -101,6 +104,7 @@ pub struct KernelBuilder {
     derived_requirements: ResourceRequirements,
     buffers: Vec<BufferParameter>,
     staging: Vec<StagingParameter>,
+    input_extents: Vec<InputExtentParameter>,
     admitted_builtins: Vec<Builtin>,
     numerical: Option<NumericalRealization>,
     requirements: Option<ResourceRequirements>,
@@ -115,6 +119,7 @@ pub struct KernelBuilder {
 struct Checkpoint {
     buffers: usize,
     staging: usize,
+    input_extents: usize,
     admitted_builtins: usize,
     values: usize,
     blocks: usize,
@@ -151,6 +156,7 @@ impl KernelBuilder {
             derived_requirements,
             buffers: Vec::new(),
             staging: Vec::new(),
+            input_extents: Vec::new(),
             admitted_builtins: Vec::new(),
             numerical: None,
             requirements: None,
@@ -230,6 +236,84 @@ impl KernelBuilder {
         )?;
         self.staging.push(parameter);
         Ok(id)
+    }
+
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
+    ///
+    /// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+    ///
+    /// Declares one live input-extent operand of the kernel signature.
+    ///
+    /// Declaration order is canonical `(input ordinal, axis)` order: the
+    /// verifier refuses any other. The live value is not recorded; only the
+    /// root is.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KernelBuildError::InputExtentNotInput`] when the tensor is not
+    /// a scheduled input, [`KernelBuildError::DuplicateInputExtent`] when the
+    /// same axis is declared twice, or [`KernelBuildError::StructuralLimit`]
+    /// when the operand limit is exceeded.
+    pub fn declare_input_extent(
+        &mut self,
+        parameter: InputExtentParameter,
+    ) -> Result<KernelInputExtentId, KernelBuildError> {
+        let crate::schedule::TensorRole::Input { .. } = parameter.tensor else {
+            return Err(KernelBuildError::InputExtentNotInput);
+        };
+        if self
+            .input_extents
+            .iter()
+            .any(|declared| declared.tensor == parameter.tensor && declared.axis == parameter.axis)
+        {
+            return Err(KernelBuildError::DuplicateInputExtent);
+        }
+        limit(
+            self.input_extents.len().saturating_add(1),
+            MAX_KERNEL_INPUT_EXTENTS,
+            KernelLimitKind::InputExtents,
+        )?;
+        let id = KernelInputExtentId::from_len(self.owner, self.input_extents.len()).ok_or(
+            KernelBuildError::StructuralLimit {
+                resource: KernelLimitKind::InputExtents,
+                actual: self.input_extents.len().saturating_add(1),
+                limit: MAX_KERNEL_INPUT_EXTENTS,
+            },
+        )?;
+        self.input_extents.push(parameter);
+        Ok(id)
+    }
+
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
+    ///
+    /// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+    ///
+    /// Reads one declared live input-extent operand as an index-typed value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KernelBuildError::UndeclaredInputExtent`] when the handle does
+    /// not name a declared operand of this builder, or a foreign/invalid handle
+    /// error.
+    pub fn input_extent(
+        &mut self,
+        id: KernelInputExtentId,
+    ) -> Result<KernelValueId, KernelBuildError> {
+        if id.owner != self.owner {
+            return Err(invalid_handle(KernelEntityKind::InputExtent, true));
+        }
+        if self.input_extents.get(id.as_usize()).is_none() {
+            return Err(KernelBuildError::UndeclaredInputExtent);
+        }
+        self.emit_single(
+            OperationKind::InputExtent {
+                parameter: id.index,
+            },
+            KernelType::Index,
+            None,
+        )
     }
 
     /// Admits one governed launch builtin into the kernel signature.
@@ -685,6 +769,86 @@ impl KernelBuilder {
         }
     }
 
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
+    ///
+    /// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+    ///
+    /// Executes a bounded loop whose start and end are index-typed SSA values.
+    ///
+    /// This is the form a live input extent uses as a trip count. The static
+    /// [`Self::serial_loop`] path remains for compile-time ranges; a kernel
+    /// cannot bake a live extent into that path and also read it here.
+    ///
+    /// # Errors
+    ///
+    /// Returns a type mismatch when a bound is not index-typed, or the same
+    /// accumulator and structural errors as [`Self::serial_loop`].
+    pub fn serial_loop_range<F>(
+        &mut self,
+        start: KernelValueId,
+        end: KernelValueId,
+        initial: &[KernelValueId],
+        body: F,
+    ) -> Result<SerialLoopResults, KernelBuildError>
+    where
+        F: FnOnce(&mut Self, &SerialLoopParameters) -> Result<Vec<KernelValueId>, KernelBuildError>,
+    {
+        let start_type = self.resolve(start)?.value_type;
+        if start_type != KernelType::Index {
+            return Err(KernelBuildError::TypeMismatch {
+                expected: KernelType::Index,
+                actual: start_type,
+            });
+        }
+        let end_type = self.resolve(end)?.value_type;
+        if end_type != KernelType::Index {
+            return Err(KernelBuildError::TypeMismatch {
+                expected: KernelType::Index,
+                actual: end_type,
+            });
+        }
+        if initial.is_empty() {
+            return Err(KernelBuildError::EmptyLoopAccumulators);
+        }
+        limit(
+            initial.len(),
+            MAX_KERNEL_LOOP_ACCUMULATORS,
+            KernelLimitKind::LoopAccumulators,
+        )?;
+        let mut carried = Vec::with_capacity(initial.len());
+        for value in initial {
+            carried.push(self.resolve(*value)?.value_type);
+        }
+        let mut parameter_types = Vec::with_capacity(carried.len().saturating_add(1));
+        parameter_types.push(KernelType::Index);
+        parameter_types.extend(carried.iter().copied());
+
+        let checkpoint = self.checkpoint();
+        let outcome = self.run_loop_body(&parameter_types, &carried, body);
+        match outcome {
+            Ok((block, yields)) => {
+                self.open.pop();
+                let results = self.emit(
+                    OperationKind::SerialLoopRange {
+                        start: start.index,
+                        end: end.index,
+                        initial: initial.iter().map(|value| value.index).collect(),
+                        body: block,
+                        yields,
+                    },
+                    &carried,
+                    None,
+                )?;
+                Ok(SerialLoopResults(results))
+            }
+            Err(error) => {
+                self.restore(checkpoint);
+                Err(error)
+            }
+        }
+    }
+
     /// Verifies the whole kernel and freezes it, or returns the intact builder.
     ///
     /// # Errors
@@ -765,6 +929,7 @@ impl KernelBuilder {
         Ok(KernelData {
             buffers: std::mem::take(&mut self.buffers),
             staging: std::mem::take(&mut self.staging),
+            input_extents: std::mem::take(&mut self.input_extents),
             admitted_builtins: std::mem::take(&mut self.admitted_builtins),
             numerical,
             requirements,
@@ -778,6 +943,7 @@ impl KernelBuilder {
     fn restore_data(&mut self, data: KernelData) {
         self.buffers = data.buffers;
         self.staging = data.staging;
+        self.input_extents = data.input_extents;
         self.admitted_builtins = data.admitted_builtins;
         self.values = data.values;
         self.blocks = data.blocks;
@@ -866,6 +1032,7 @@ impl KernelBuilder {
         Checkpoint {
             buffers: self.buffers.len(),
             staging: self.staging.len(),
+            input_extents: self.input_extents.len(),
             admitted_builtins: self.admitted_builtins.len(),
             values: self.values.len(),
             blocks: self.blocks.len(),
@@ -877,6 +1044,7 @@ impl KernelBuilder {
     fn restore(&mut self, checkpoint: Checkpoint) {
         self.buffers.truncate(checkpoint.buffers);
         self.staging.truncate(checkpoint.staging);
+        self.input_extents.truncate(checkpoint.input_extents);
         self.admitted_builtins
             .truncate(checkpoint.admitted_builtins);
         self.values.truncate(checkpoint.values);

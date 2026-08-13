@@ -65,9 +65,9 @@ use std::fmt::Write as _;
 
 use tiler_ir::kernel::{
     AddressSpace, BarrierOrdering, BarrierSpec, BinaryOp, BlockRef, BufferAccess, Builtin,
-    CompareOp, ConvertOp, ExecutionScope, KernelConstant, KernelType, MemoryScope, OperationRef,
-    OperationView, PackedExtractOp, SerialLoopRef, StagingParameter, UnaryOp, VerifiedBufferId,
-    VerifiedKernel, VerifiedStagingId, VerifiedValueId,
+    CompareOp, ConvertOp, ExecutionScope, KernelConstant, KernelType, LoopBound, MemoryScope,
+    OperationRef, OperationView, PackedExtractOp, SerialLoopRef, StagingParameter, UnaryOp,
+    VerifiedBufferId, VerifiedInputExtentId, VerifiedKernel, VerifiedStagingId, VerifiedValueId,
 };
 use tiler_ir::schedule::{
     ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
@@ -646,7 +646,10 @@ fn emit_entry_point(
     gaps: &mut BTreeSet<MetalNumericalGap>,
     unstated: &mut BTreeSet<MetalFloatArithmeticType>,
 ) -> Result<EmittedEntryPoint, MetalEmitError> {
-    let declared = kernel.buffers().len();
+    let declared = kernel
+        .buffers()
+        .len()
+        .saturating_add(kernel.input_extents().len());
     if u64::try_from(declared).unwrap_or(u64::MAX) > u64::from(target.buffer_binding_limit) {
         return Err(MetalEmitError::BufferBindingLimit {
             required: declared,
@@ -684,6 +687,14 @@ fn emit_entry_point(
         buffers.insert(handle, index);
         bindings.push(MetalBufferBinding::new(index, parameter));
     }
+    let mut extents = BTreeMap::new();
+    for (ordinal, (handle, _)) in kernel.declared_input_extents().enumerate() {
+        let index = u32::try_from(ordinal).map_err(|_| MetalEmitError::BufferBindingLimit {
+            required: declared.saturating_add(kernel.input_extents().len()),
+            limit: target.buffer_binding_limit,
+        })?;
+        extents.insert(handle, index);
+    }
 
     let mut emitter = KernelEmitter {
         kernel,
@@ -696,6 +707,7 @@ fn emit_entry_point(
         names: BTreeMap::new(),
         next: 0,
         buffers,
+        extents,
         bindings,
         out: String::new(),
         indent: 1,
@@ -747,10 +759,32 @@ fn emit_entry_point(
             parameter.element_count,
         );
     }
+    for (ordinal, (_, parameter)) in kernel.declared_input_extents().enumerate() {
+        emit!(
+            text,
+            "//   extent({ordinal}): {:?} tensor, axis {}\n",
+            parameter.tensor,
+            parameter.axis.get(),
+        );
+    }
 
-    let mut parameters = Vec::with_capacity(bindings.len().saturating_add(1));
+    let mut parameters = Vec::with_capacity(
+        bindings
+            .len()
+            .saturating_add(kernel.input_extents().len())
+            .saturating_add(1),
+    );
     for binding in &bindings {
         parameters.push(parameter_declaration(binding)?);
+    }
+    let extent_base =
+        u32::try_from(bindings.len()).map_err(|_| MetalEmitError::BufferBindingLimit {
+            required: declared.saturating_add(kernel.input_extents().len()),
+            limit: target.buffer_binding_limit,
+        })?;
+    for (ordinal, _) in kernel.declared_input_extents().enumerate() {
+        let index = extent_base.saturating_add(u32::try_from(ordinal).unwrap_or(u32::MAX));
+        parameters.push(format!("constant ulong& e{ordinal} [[buffer({index})]]"));
     }
     for builtin in kernel.admitted_builtins() {
         parameters.push(builtin_declaration(*builtin, emission)?);
@@ -784,7 +818,12 @@ fn emit_entry_point(
     text.push_str("}\n");
 
     Ok(EmittedEntryPoint {
-        entry: MetalEntryPoint::new(symbol, kernel.canonical_identity().clone(), bindings),
+        entry: MetalEntryPoint::new(
+            symbol,
+            kernel.canonical_identity().clone(),
+            bindings,
+            u32::try_from(kernel.input_extents().len()).unwrap_or(u32::MAX),
+        ),
         text,
     })
 }
@@ -1333,6 +1372,7 @@ struct KernelEmitter<'a> {
     names: BTreeMap<VerifiedValueId, String>,
     next: u32,
     buffers: BTreeMap<VerifiedBufferId, u32>,
+    extents: BTreeMap<VerifiedInputExtentId, u32>,
     bindings: Vec<MetalBufferBinding>,
     out: String,
     indent: usize,
@@ -1480,6 +1520,7 @@ impl KernelEmitter<'_> {
                 Ok(())
             }
             OperationView::SerialLoop(loop_ref) => self.emit_serial_loop(loop_ref, &results),
+            OperationView::InputExtent { parameter } => self.emit_input_extent(parameter, &results),
             // The phase is emitted as a comment and never as a guard. It is the
             // schedule-side *evidence* that authorizes the effect — the verifier
             // resolved it against the tile's declared staged access before this
@@ -1531,6 +1572,36 @@ impl KernelEmitter<'_> {
                 Ok(())
             }
             _ => Err(MetalEmitError::UnrecognizedOperation),
+        }
+    }
+
+    /// Emits one live input-extent operand read.
+    fn emit_input_extent(
+        &mut self,
+        parameter: VerifiedInputExtentId,
+        results: &[VerifiedValueId],
+    ) -> Result<(), MetalEmitError> {
+        let [result] = results else {
+            return Err(arity("input-extent-result"));
+        };
+        self.kernel.input_extent(parameter)?;
+        let ordinal =
+            self.extents
+                .get(&parameter)
+                .copied()
+                .ok_or(MetalEmitError::MalformedKernel {
+                    rule: "unresolvable-input-extent",
+                })?;
+        let value_type = self.value_type(*result)?;
+        let name = self.bind(*result)?;
+        self.line(&format!("{value_type} {name} = e{ordinal};"));
+        Ok(())
+    }
+
+    fn loop_bound(&self, bound: LoopBound) -> Result<String, MetalEmitError> {
+        match bound {
+            LoopBound::Literal(value) => Ok(format!("{value}ul")),
+            LoopBound::Value(id) => Ok(self.name(id)?.to_owned()),
         }
     }
 
@@ -1922,11 +1993,20 @@ impl KernelEmitter<'_> {
             });
         }
 
-        let (start, end) = (loop_ref.start(), loop_ref.end());
-        self.line(&format!("// serial loop over [{start}, {end})"));
+        let start = self.loop_bound(loop_ref.start_bound())?;
+        let end = self.loop_bound(loop_ref.end_bound())?;
+        let comment_bound = |bound: LoopBound, rendered: &str| match bound {
+            LoopBound::Literal(value) => value.to_string(),
+            LoopBound::Value(_) => rendered.to_owned(),
+        };
+        self.line(&format!(
+            "// serial loop over [{}, {})",
+            comment_bound(loop_ref.start_bound(), &start),
+            comment_bound(loop_ref.end_bound(), &end)
+        ));
         let induction_type = self.value_type(induction)?;
         let induction_name = self.bind(induction)?;
-        self.line(&format!("{induction_type} {induction_name} = {start}ul;"));
+        self.line(&format!("{induction_type} {induction_name} = {start};"));
         let mut accumulator_names = Vec::with_capacity(accumulators.len());
         for (accumulator, seed) in accumulators.iter().zip(&initial) {
             let seed = self.name(*seed)?.to_owned();
@@ -1937,7 +2017,7 @@ impl KernelEmitter<'_> {
         }
 
         self.line(&format!(
-            "for (; {induction_name} < {end}ul; {induction_name} = {induction_name} + 1ul) {{"
+            "for (; {induction_name} < {end}; {induction_name} = {induction_name} + 1ul) {{"
         ));
         self.indent = self.indent.saturating_add(1);
         self.emit_block(loop_ref.body())?;

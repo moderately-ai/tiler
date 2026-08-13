@@ -359,11 +359,18 @@ fn payload_metadata(
         entries.push(PayloadEntryMapping {
             entry_key: BackendEntryKey::from_bytes(entry.kernel_identity().as_bytes())?,
             symbol: entry.symbol().to_owned(),
-            transports: entry
-                .buffers()
-                .iter()
-                .map(|binding| binding.index())
-                .collect(),
+            transports: {
+                let buffers: Vec<u32> = entry
+                    .buffers()
+                    .iter()
+                    .map(|binding| binding.index())
+                    .collect();
+                let extent_base = u32::try_from(buffers.len()).unwrap_or(u32::MAX);
+                let extents = entry.input_extent_count();
+                let mut transports = buffers;
+                transports.extend((0..extents).map(|ordinal| extent_base.saturating_add(ordinal)));
+                transports
+            },
         });
     }
     entries.sort_by(|left, right| left.entry_key.as_bytes().cmp(right.entry_key.as_bytes()));

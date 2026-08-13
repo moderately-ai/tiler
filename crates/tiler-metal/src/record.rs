@@ -289,6 +289,7 @@ pub struct MetalEntryPoint {
     symbol: String,
     kernel: CanonicalKernelIdentity,
     buffers: Vec<MetalBufferBinding>,
+    input_extents: u32,
 }
 
 impl MetalEntryPoint {
@@ -296,11 +297,13 @@ impl MetalEntryPoint {
         symbol: String,
         kernel: CanonicalKernelIdentity,
         buffers: Vec<MetalBufferBinding>,
+        input_extents: u32,
     ) -> Self {
         Self {
             symbol,
             kernel,
             buffers,
+            input_extents,
         }
     }
 
@@ -325,6 +328,15 @@ impl MetalEntryPoint {
     #[must_use]
     pub fn buffers(&self) -> &[MetalBufferBinding] {
         &self.buffers
+    }
+
+    /// Returns how many live input-extent operands follow the buffer table.
+    ///
+    /// Each occupies `[[buffer(buffer_count + ordinal)]]` under the accepted
+    /// Metal `eN` ABI.
+    #[must_use]
+    pub const fn input_extent_count(&self) -> u32 {
+        self.input_extents
     }
 }
 

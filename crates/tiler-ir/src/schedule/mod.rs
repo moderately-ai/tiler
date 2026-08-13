@@ -172,7 +172,8 @@ pub use model::{
     ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
     VerifiedScheduledRegion, axes_are_canonical, broadcast_decodes_are_replicating,
     contributor_count, cooperative_local_memory_bytes, cooperative_tile, element_count,
-    partial_reduction_axis, partial_reduction_shape, reindex_decodes_are_bijective,
+    live_input_extents, partial_reduction_axis, partial_reduction_shape,
+    reindex_decodes_are_bijective,
 };
 pub(crate) use model::{REGION_INDEX_ARITHMETIC, subnormal_freedom_of};
 pub use numerics::{

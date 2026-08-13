@@ -121,6 +121,11 @@ pub(super) fn check_budgets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactC
                 CodecLimitKind::EntryBindings,
             )?;
             codec_limit(
+                entry.input_extents.len(),
+                super::super::MAX_ENTRY_EXTENTS,
+                CodecLimitKind::EntryExtents,
+            )?;
+            codec_limit(
                 entry.launch.preconditions.len(),
                 MAX_LAUNCH_PRECONDITIONS,
                 CodecLimitKind::LaunchPreconditions,

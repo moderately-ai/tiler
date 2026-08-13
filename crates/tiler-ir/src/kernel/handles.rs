@@ -67,6 +67,13 @@ draft_handle!(
      all. One handle type for both would let a staged load address a buffer \
      parameter by ordinal coincidence."
 );
+draft_handle!(
+    KernelInputExtentId,
+    "A builder-owned live input-extent operand.\n\n**Accepted public surface.** Tom accepted this exact spelling on 2026-08-13 under accept-the-live-extent-operand-public-surface.\n\nA separate handle space from [`KernelBufferId`] and [`KernelStagingId`]: \
+     the operand is a read-only scalar argument, not a buffer and not a \
+     workgroup allocation. One handle type would let an extent read address a \
+     buffer parameter by ordinal coincidence."
+);
 
 macro_rules! verified_handle {
     ($name:ident, $docs:literal) => {
@@ -100,4 +107,8 @@ verified_handle!(
 verified_handle!(
     VerifiedStagingId,
     "A verified kernel-local workgroup staging allocation."
+);
+verified_handle!(
+    VerifiedInputExtentId,
+    "A verified kernel-local live input-extent operand.\n\n**Accepted public surface.** Tom accepted this exact spelling on 2026-08-13 under accept-the-live-extent-operand-public-surface."
 );

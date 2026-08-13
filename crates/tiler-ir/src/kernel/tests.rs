@@ -494,7 +494,8 @@ fn loaded_buffers(kernel: &VerifiedKernel) -> Vec<VerifiedBufferId> {
                 | OperationView::Store { .. }
                 | OperationView::StagedStore { .. }
                 | OperationView::StagedLoad { .. }
-                | OperationView::Barrier { .. } => {}
+                | OperationView::Barrier { .. }
+                | OperationView::InputExtent { .. } => {}
             }
         }
     }
@@ -880,6 +881,7 @@ fn body_shaping_vocabulary_is_closed(
             LogicalAccess::ReindexBijection { .. } => "reindex-bijection",
             LogicalAccess::BroadcastReplication { .. } => "broadcast-replication",
             LogicalAccess::ParametricBroadcast { .. } => "parametric-broadcast",
+            LogicalAccess::LiveRowMajor { .. } => "live-row-major",
         },
         match topology {
             ReductionTopology::None => "none",
@@ -893,6 +895,7 @@ fn body_shaping_vocabulary_is_closed(
                 ..
             } => "multi-pass-final",
             ReductionTopology::Contraction { .. } => "contraction",
+            ReductionTopology::LiveContraction { .. } => "live-contraction",
             ReductionTopology::CooperativeWorkgroup { .. } => "cooperative-workgroup",
             ReductionTopology::CooperativeContraction { .. } => "cooperative-contraction",
         },
@@ -5200,5 +5203,170 @@ fn a_positive_zero_seeded_contraction_loop_is_reduction_contract() {
         error.diagnostics()[0].rule(),
         "reduction-contract",
         "the quoted seed refusal is the stable rule id"
+    );
+}
+
+fn live_row_major_region(rows: u64) -> VerifiedScheduledRegion {
+    let mut builder = ScheduledRegionBuilder::new(RegionId::new(0));
+    builder.iteration_shape(Shape::from_dims([rows])).unwrap();
+    let inner = Axis::new(1);
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::LiveRowMajor { inner_axis: inner },
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Intermediate,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LiveRowMajor { inner_axis: inner },
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    for (witness, tensor) in [
+        (
+            0,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+        ),
+        (1, TensorRole::Intermediate),
+    ] {
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(witness),
+                tensor,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange { element_count: 0 },
+            })
+            .unwrap();
+    }
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Intermediate,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: rows },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::PointwiseF32(scale_bias_expression(
+            SCALE_BITS, BIAS_BITS,
+        )))
+        .unwrap();
+    builder.numerical(numerical()).unwrap();
+    builder
+        .schedule(linear_schedule(rows, OwnershipWitnessId::new(0)))
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// One compiled payload consumes a live input extent; baking the neighbour
+/// value is a different kernel.
+#[test]
+fn a_live_row_major_kernel_reads_the_declared_extent_and_does_not_bake_it() {
+    let scheduled = live_row_major_region(2);
+    let kernel = lower_scheduled_region(&scheduled).unwrap();
+    let extents: Vec<_> = kernel.input_extents().collect();
+    assert_eq!(extents.len(), 1);
+    assert_eq!(
+        extents[0].tensor,
+        TensorRole::Input {
+            ordinal: InputOrdinal::FIRST,
+        }
+    );
+    assert_eq!(extents[0].axis, Axis::new(1));
+    let baked_14 = lower_scheduled_region(&pointwise_region(
+        RegionId::new(0),
+        &Shape::from_dims([2, 14]),
+    ))
+    .unwrap();
+    let baked_15 = lower_scheduled_region(&pointwise_region(
+        RegionId::new(0),
+        &Shape::from_dims([2, 15]),
+    ))
+    .unwrap();
+    assert_ne!(
+        kernel.canonical_identity().as_bytes(),
+        baked_14.canonical_identity().as_bytes(),
+        "baking N = 14 must change identity"
+    );
+    assert_ne!(
+        baked_14.canonical_identity().as_bytes(),
+        baked_15.canonical_identity().as_bytes(),
+        "baking neighbouring extents must change identity"
+    );
+    let again = lower_scheduled_region(&live_row_major_region(2)).unwrap();
+    assert_eq!(
+        kernel.canonical_identity().as_bytes(),
+        again.canonical_identity().as_bytes()
+    );
+    // Dense F32 [2, N]: semantic (row = 1, column = 0) is element N, so bytes
+    // 4N. The live operand is the stride; baking 14 or 15 is a different
+    // kernel, shown above.
+    assert_eq!(dense_f32_row_major_bytes(1, 0, 14), 56);
+    assert_eq!(dense_f32_row_major_bytes(1, 0, 15), 60);
+}
+
+const fn dense_f32_row_major_bytes(row: u64, column: u64, inner_extent: u64) -> u64 {
+    4 * (row * inner_extent + column)
+}
+
+#[test]
+fn declaring_a_non_input_extent_is_refused() {
+    let scheduled = live_row_major_region(2);
+    let mut builder = KernelBuilder::new(&scheduled).unwrap();
+    let error = builder
+        .declare_input_extent(InputExtentParameter {
+            tensor: TensorRole::Intermediate,
+            axis: Axis::new(1),
+        })
+        .unwrap_err();
+    assert_eq!(error, KernelBuildError::InputExtentNotInput);
+}
+
+#[test]
+fn declaring_the_same_input_extent_twice_is_refused() {
+    let scheduled = live_row_major_region(2);
+    let mut builder = KernelBuilder::new(&scheduled).unwrap();
+    let parameter = InputExtentParameter {
+        tensor: TensorRole::Input {
+            ordinal: InputOrdinal::FIRST,
+        },
+        axis: Axis::new(1),
+    };
+    builder.declare_input_extent(parameter).unwrap();
+    let error = builder.declare_input_extent(parameter).unwrap_err();
+    assert_eq!(error, KernelBuildError::DuplicateInputExtent);
+}
+
+#[test]
+fn an_unused_live_extent_is_refused_at_verification() {
+    let scheduled = live_row_major_region(2);
+    let mut builder = KernelBuilder::new(&scheduled).unwrap();
+    pointwise_signature(&mut builder, &scheduled, 0);
+    builder
+        .declare_input_extent(InputExtentParameter {
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            axis: Axis::new(1),
+        })
+        .unwrap();
+    let error = builder.build().unwrap_err();
+    assert!(
+        error.diagnostics().iter().any(|diagnostic| {
+            diagnostic.rule() == "unused-input-extent" || diagnostic.rule() == "body-refinement"
+        }),
+        "{:?}",
+        error.diagnostics()
     );
 }

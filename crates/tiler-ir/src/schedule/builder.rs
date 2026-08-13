@@ -919,7 +919,10 @@ fn verify_pointwise_region(
         .iter()
         .any(|read| read.mode != AccessMode::Read || read.ownership.is_some())
         || write.mode != AccessMode::Write
-        || write.map != LogicalAccess::LinearIdentity
+        || !matches!(
+            write.map,
+            LogicalAccess::LinearIdentity | LogicalAccess::LiveRowMajor { .. }
+        )
         || write.ownership != Some(region.schedule.output_owner)
     {
         return Err(ScheduledRegionDiagnostic::AccessContract);
@@ -1047,7 +1050,7 @@ fn pointwise_read_map_is_admissible(
     iteration_shape: &crate::shape::Shape,
 ) -> bool {
     match map {
-        LogicalAccess::LinearIdentity => true,
+        LogicalAccess::LinearIdentity | LogicalAccess::LiveRowMajor { .. } => true,
         LogicalAccess::ReindexBijection {
             operand_shape,
             result_shape,
@@ -2592,6 +2595,7 @@ fn owned_output_positions(region: &ScheduledRegion) -> Option<u64> {
         | ReductionTopology::Serial { .. }
         | ReductionTopology::MultiPass { .. }
         | ReductionTopology::Contraction { .. }
+        | ReductionTopology::LiveContraction { .. }
         | ReductionTopology::CooperativeContraction { .. } => Some(work_items),
     }
 }
@@ -2619,6 +2623,7 @@ fn reduction_output_shape(region: &ScheduledRegion) -> Option<crate::shape::Shap
         | ReductionTopology::Serial { .. }
         | ReductionTopology::Contraction { .. }
         | ReductionTopology::CooperativeContraction { .. }
+        | ReductionTopology::LiveContraction { .. }
         | ReductionTopology::MultiPass { .. } => return Some(shape.clone()),
     };
     let kept = shape.rank().checked_sub(1)?;
@@ -2680,6 +2685,9 @@ fn bounds_proof_refines_access(
         // from the mere presence of a tile.
         (BoundsProofKind::LinearRange { element_count }, LogicalAccess::LinearIdentity) => {
             owned_output_positions(region).is_some_and(|owned| *element_count == owned)
+        }
+        (BoundsProofKind::LinearRange { element_count }, LogicalAccess::LiveRowMajor { .. }) => {
+            *element_count == 0
         }
         (BoundsProofKind::LinearRange { element_count }, LogicalAccess::ScalarBroadcast) => {
             *element_count == 1
@@ -5243,7 +5251,8 @@ mod tests {
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
             | ReductionTopology::Contraction { .. }
-            | ReductionTopology::CooperativeContraction { .. } => {
+            | ReductionTopology::CooperativeContraction { .. }
+            | ReductionTopology::LiveContraction { .. } => {
                 panic!("the fixture has a parallel reduction")
             }
         }

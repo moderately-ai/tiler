@@ -91,7 +91,8 @@
 //! never interprets a symbol or a slot; what it proves is that the mapping
 //! *covers* every backend entry key the artifact's executable entries name, and
 //! that each mapping places exactly as many transport slots as its entry has
-//! bindings. Both live in [`super::validate`]'s `check_entry_mappings` and run
+//! bindings plus live-extent operand rows. Both live in [`super::validate`]'s
+//! `check_entry_mappings` and run
 //! on every decode.
 //!
 //! The obligation is coverage rather than exhaustion: a compiled object may
@@ -165,7 +166,8 @@ pub(super) const MAX_PAYLOAD_SOURCE_BYTES: usize = 16 * 1024 * 1024;
 /// Maximum entry mappings admitted by one carried payload.
 pub(super) const MAX_PAYLOAD_ENTRY_MAPPINGS: usize = 4_096;
 /// Maximum transport slots admitted by one entry mapping.
-pub(super) const MAX_ENTRY_TRANSPORTS: usize = super::super::MAX_ENTRY_BINDINGS;
+pub(super) const MAX_ENTRY_TRANSPORTS: usize =
+    super::super::MAX_ENTRY_BINDINGS.saturating_add(super::super::MAX_ENTRY_EXTENTS);
 /// Maximum versioned tool components admitted by one provenance record.
 pub(super) const MAX_PROVENANCE_COMPONENTS: usize = 16;
 /// Maximum compiler or linker flags admitted by one provenance record.

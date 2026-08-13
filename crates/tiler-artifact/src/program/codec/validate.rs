@@ -77,6 +77,7 @@ pub(super) fn validate(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecE
     check_sections(envelope)?;
     check_payload_identity(envelope)?;
     check_binding_targets(envelope)?;
+    check_extent_operands(envelope)?;
     // Before the mapping check, which resolves a payload per delivery position
     // and would otherwise report a scrambled realization run as a missing
     // symbol.
@@ -344,6 +345,66 @@ fn check_binding_targets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCode
     Ok(())
 }
 
+/// Proves every live-extent operand names a declared input axis as an unsigned quantity.
+///
+/// The live *value* is not in the envelope. What is decidable here is the
+/// declaration: the key is one the interface names, the axis is in rank, the
+/// type is the unsigned quantity Metal binds, and the list is in canonical
+/// `(key, axis)` order without duplicates.
+fn check_extent_operands(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecError> {
+    for entry in envelope
+        .variants()
+        .iter()
+        .flat_map(|variant| &variant.entries)
+    {
+        for pair in entry.input_extents.windows(2) {
+            match (
+                pair[0].key.as_str().cmp(pair[1].key.as_str()),
+                pair[0].axis.get().cmp(&pair[1].axis.get()),
+            ) {
+                (std::cmp::Ordering::Less, _)
+                | (std::cmp::Ordering::Equal, std::cmp::Ordering::Less) => {}
+                (std::cmp::Ordering::Equal, std::cmp::Ordering::Equal) => {
+                    return Err(ArtifactCodecError::DuplicateItem {
+                        subject: OrderedSubject::ExtentOperand,
+                    });
+                }
+                _ => {
+                    return Err(ArtifactCodecError::NonCanonicalOrder {
+                        subject: OrderedSubject::ExtentOperand,
+                    });
+                }
+            }
+        }
+        for operand in &entry.input_extents {
+            let Some(input) = envelope
+                .inputs()
+                .iter()
+                .find(|input| input.key == operand.key)
+            else {
+                return Err(ArtifactCodecError::UnknownExtentOperandKey {
+                    key: operand.key.as_str().to_owned(),
+                });
+            };
+            let rank = input.shape.rank();
+            if usize::try_from(operand.axis.get()).unwrap_or(usize::MAX) >= rank {
+                return Err(ArtifactCodecError::ExtentOperandAxis {
+                    key: operand.key.as_str().to_owned(),
+                    axis: operand.axis.get(),
+                    rank,
+                });
+            }
+            if operand.value_type != AbiType::Unsigned {
+                return Err(ArtifactCodecError::ExtentOperandType {
+                    key: operand.key.as_str().to_owned(),
+                    axis: operand.axis.get(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 fn check_target_component(
     components: &[super::super::model::InterfaceComponentData],
     binding: &super::super::model::BindingData,
@@ -441,12 +502,34 @@ fn check_entry_mappings(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodec
                 .iter()
                 .find(|mapping| mapping.entry_key == entry.entry_key)
                 .ok_or(ArtifactCodecError::UnmappedBackendEntry { payload: *payload })?;
-            if mapping.transports.len() != entry.bindings.len() {
+            if mapping.transports.len()
+                != entry
+                    .bindings
+                    .len()
+                    .saturating_add(entry.input_extents.len())
+            {
                 return Err(ArtifactCodecError::EntryTransportCardinality {
                     payload: *payload,
                     bindings: entry.bindings.len(),
+                    extents: entry.input_extents.len(),
                     transports: mapping.transports.len(),
                 });
+            }
+            let binding_count = u32::try_from(entry.bindings.len()).unwrap_or(u32::MAX);
+            for (operand, slot) in mapping.transports[entry.bindings.len()..]
+                .iter()
+                .enumerate()
+            {
+                let expected =
+                    binding_count.saturating_add(u32::try_from(operand).unwrap_or(u32::MAX));
+                if *slot != expected {
+                    return Err(ArtifactCodecError::ExtentOperandTransport {
+                        payload: *payload,
+                        operand,
+                        declared: *slot,
+                        expected,
+                    });
+                }
             }
         }
     }

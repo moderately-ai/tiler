@@ -33,7 +33,7 @@ use tiler_ir::program::{
 };
 use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::{InputKey, OutputKey, SemanticIdentity, SemanticProgram};
-use tiler_ir::shape::Shape;
+use tiler_ir::shape::{Axis, Shape, SourcedExtent};
 
 use tiler_ir::program::abi::{
     AbiBinaryOp, AbiEvaluationError, AbiFacts, AbiRoot, AbiValue, AvailabilityPhase, ExprNode,
@@ -1507,21 +1507,26 @@ fn build_cover_core(
     // is what a region's input ordinals index: a stage's accesses bind to its
     // kernel's buffers positionally, so reordering here would silently bind each
     // buffer to the wrong tensor.
-    let inputs: Vec<(InputKey, Shape, u64)> = semantic
+    let inputs: Vec<(InputKey, Shape, Vec<SourcedExtent>)> = semantic
         .inputs()
         .map(|input| {
-            let shape = semantic
+            let sourced = semantic
                 .shape(input.value())
                 .map_err(|_| ProgramError::Structure {
                     rule: "program-input-unshaped",
-                })?
-                .as_static()
-                .ok_or(ProgramError::Structure {
-                    rule: "program-input-symbolic",
-                })?
-                .clone();
-            let elements = shape_elements(&shape)?;
-            Ok((input.key().clone(), shape, elements))
+                })?;
+            let extents: Vec<SourcedExtent> = sourced.extents().collect();
+            // Symbolic axes occupy a zero static extent so the program value
+            // does not bake a live binding. The ABI byte formula below names
+            // `InputExtent` for those axes instead.
+            let dims: Vec<u64> = extents
+                .iter()
+                .map(|extent| extent.as_static().map_or(0, tiler_ir::shape::Extent::get))
+                .collect();
+            let shape = Shape::try_from_dims(dims).map_err(|_| ProgramError::Structure {
+                rule: "program-input-rank",
+            })?;
+            Ok((input.key().clone(), shape, extents))
         })
         .collect::<Result<_, ProgramError>>()?;
     let internal_elements = assembly
@@ -1545,7 +1550,7 @@ fn build_cover_core(
         carrier,
         &inputs
             .iter()
-            .map(|(_, _, elements)| *elements)
+            .map(|(key, _, extents)| (key.clone(), extents.as_slice()))
             .collect::<Vec<_>>(),
         &internal_elements,
     )?;
@@ -1560,10 +1565,23 @@ fn build_cover_core(
         ))?);
     }
     let mut input_views = Vec::with_capacity(inputs.len());
-    for (key, shape, elements) in &inputs {
+    for (key, shape, extents) in &inputs {
+        let elements =
+            extents
+                .iter()
+                .try_fold(1_u64, |product, extent| match extent.as_static() {
+                    Some(static_extent) => {
+                        product
+                            .checked_mul(static_extent.get())
+                            .ok_or(ProgramError::Storage {
+                                rule: "element-count-overflow",
+                            })
+                    }
+                    None => Ok(0),
+                })?;
         let external = builder.push_allocation(storage(
             carrier,
-            byte_count(carrier, *elements)?,
+            byte_count(carrier, elements)?,
             AllocationOwnership::External,
         ))?;
         let input =
@@ -1740,12 +1758,11 @@ fn bytes_of(binding: AssemblyBinding, abi: &HostAbi) -> Result<AbiExprId, Progra
 
 /// The ABI quantities named by programs in the bounded governed profile.
 ///
-/// Every extent is an `UnsignedLiteral` because the bounded profile's shapes
-/// are static, so each is already known at `CompileProfile`. The domain also
-/// admits an `InputExtent` root that resolves at `LiveDevicePreflight`, which is
-/// what a dynamic-shape subject would name instead; promoting these literals is
-/// a capability question tied to dynamic shapes, not a property of the
-/// vocabulary, and nothing in this contract has to change shape for it.
+/// A static axis is an `UnsignedLiteral`. A symbolic input axis is an
+/// `InputExtent` root that resolves at `LiveDevicePreflight` from the same
+/// bound fact range and launch evaluation already consume. The live value is
+/// never folded into a literal here: that would specialize the program on a
+/// binding.
 /// The `input_bytes` run is per declared input, in declaration order, because a
 /// contraction's two operands have different extents and therefore different
 /// accessible ranges; `internal_bytes` is per value the program materializes for
@@ -1814,7 +1831,7 @@ impl HostAbi {
 fn declare_host_abi(
     builder: &mut KernelProgramBuilder,
     carrier: BoundedCarrier,
-    input_elements: &[u64],
+    inputs: &[(InputKey, &[SourcedExtent])],
     internal_elements: &[u64],
 ) -> Result<HostAbi, ProgramError> {
     // The element byte width every accessible range scales by, taken from the
@@ -1822,16 +1839,11 @@ fn declare_host_abi(
     // an `f32` program's, and scaling by the wrong width is a range the runtime
     // would bind past the end of the caller's buffer.
     let element_bytes = builder.push_abi_root(AbiRoot::UnsignedLiteral(carrier.element_bytes()))?;
-    let declare = |builder: &mut KernelProgramBuilder,
-                   counts: &[u64]|
+    let declare_static = |builder: &mut KernelProgramBuilder,
+                          counts: &[u64]|
      -> Result<Vec<AbiExprId>, ProgramError> {
         let mut declared = Vec::with_capacity(counts.len());
         for elements in counts {
-            // The element count is declared as its own arena node and reached
-            // only as an operand of the byte expression above it. It stopped
-            // being a field of the record when the launch stopped being derived
-            // from it: a stage's grid is a property of the schedule it lowers,
-            // not of an operand whose extent happened to equal it.
             let elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(*elements))?;
             declared.push(builder.push_abi_binary(
                 AbiBinaryOp::CheckedMultiply,
@@ -1841,8 +1853,44 @@ fn declare_host_abi(
         }
         Ok(declared)
     };
-    let input_bytes = declare(builder, input_elements)?;
-    let internal_bytes = declare(builder, internal_elements)?;
+    let mut input_bytes = Vec::with_capacity(inputs.len());
+    for (key, extents) in inputs {
+        let count = if let Some(product) = static_extent_product(extents) {
+            // The historical static spelling: one literal product, not a
+            // chain of per-axis ones. Changing it would move every existing
+            // program identity.
+            builder.push_abi_root(AbiRoot::UnsignedLiteral(product))?
+        } else {
+            let mut count = builder.push_abi_root(AbiRoot::UnsignedLiteral(1))?;
+            for (axis, extent) in extents.iter().enumerate() {
+                let axis = Axis::new(u32::try_from(axis).map_err(|_| ProgramError::Structure {
+                    rule: "program-input-rank",
+                })?);
+                let factor = match extent {
+                    SourcedExtent::Static(static_extent) => {
+                        builder.push_abi_root(AbiRoot::UnsignedLiteral(static_extent.get()))?
+                    }
+                    SourcedExtent::Symbol(_) => builder.push_abi_root(AbiRoot::InputExtent {
+                        key: key.clone(),
+                        axis,
+                    })?,
+                    _ => {
+                        return Err(ProgramError::Structure {
+                            rule: "program-input-extent-kind",
+                        });
+                    }
+                };
+                count = builder.push_abi_binary(AbiBinaryOp::CheckedMultiply, count, factor)?;
+            }
+            count
+        };
+        input_bytes.push(builder.push_abi_binary(
+            AbiBinaryOp::CheckedMultiply,
+            element_bytes,
+            count,
+        )?);
+    }
+    let internal_bytes = declare_static(builder, internal_elements)?;
     // The bounded profile admits every governed target unconditionally, so the
     // guard is a constant. It is still declared rather than assumed, because a
     // program identity blind to its guard is the hazard ADR 0072 names.
@@ -2044,6 +2092,12 @@ fn byte_count(carrier: BoundedCarrier, elements: u64) -> Result<u64, ProgramErro
 /// extent product that leaves the 64-bit domain is the same refusal the schedule
 /// and program layers already report rather than a wrapped count this module
 /// invented.
+fn static_extent_product(extents: &[SourcedExtent]) -> Option<u64> {
+    extents.iter().try_fold(1_u64, |product, extent| {
+        product.checked_mul(extent.as_static()?.get())
+    })
+}
+
 fn shape_elements(shape: &Shape) -> Result<u64, ProgramError> {
     tiler_ir::schedule::element_count(shape).map_err(|_| ProgramError::Storage {
         rule: "element-count-overflow",

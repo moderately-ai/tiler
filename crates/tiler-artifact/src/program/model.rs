@@ -32,14 +32,14 @@ use tiler_ir::semantic::{
     SemanticAdmissionProvenanceIdentity, SemanticDefinitionProjectionIdentity,
     SemanticGraphIdentity, SemanticIdentity,
 };
-use tiler_ir::shape::Shape;
+use tiler_ir::shape::{Axis, Shape};
 
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::program::abi::{AbiArenaTraversal, canonical_arena_traversal, compare_expr_nodes};
 
 use super::MAX_ARTIFACT_IDENTITY_BYTES;
 use super::codec::{
-    ArtifactEnvelope, EntryRow, NumericalFacts, PayloadContent, VariantRow,
+    ArtifactEnvelope, DecodedExtentOperand, EntryRow, NumericalFacts, PayloadContent, VariantRow,
     canonical_entry_positions, position as node_at,
 };
 use super::error::{ArtifactDiagnostic, ArtifactEntityKind, RecordedArtifactIdentityError};
@@ -813,6 +813,18 @@ pub(super) struct BindingData {
     pub(super) accessible_bytes: u32,
 }
 
+/// One live input-extent operand an executable entry declares.
+///
+/// The packaged spelling of a structured-kernel [`tiler_ir::kernel::InputExtentParameter`].
+/// The live *value* is not stored; only the program-interface root is. Runtime
+/// binds the value from the same [`super::AbiFacts`] used for range and launch.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ExtentOperandData {
+    pub(super) key: InputKey,
+    pub(super) axis: Axis,
+    pub(super) value_type: AbiType,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct LaunchData {
     pub(super) grid_threads: u32,
@@ -824,6 +836,7 @@ pub(super) struct LaunchData {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct EntryData {
     pub(super) bindings: Vec<BindingData>,
+    pub(super) input_extents: Vec<ExtentOperandData>,
     pub(super) launch: LaunchData,
     pub(super) implementation: StoredBackendEntry,
 }
@@ -1485,6 +1498,14 @@ impl<'a> EntryRef<'a> {
     #[must_use]
     pub fn numerical(self) -> NumericalRealization {
         self.stage().kernel().numerical()
+    }
+
+    /// **Draft surface, not yet accepted.** See [`DecodedExtentOperand`].
+    ///
+    /// Returns the live input-extent operand rows in canonical declaration order.
+    #[must_use]
+    pub fn extent_operands(self) -> impl ExactSizeIterator<Item = DecodedExtentOperand<'a>> {
+        self.data().input_extents.iter().map(DecodedExtentOperand)
     }
 
     /// Returns the ABI bindings in kernel buffer-parameter order.
@@ -2753,7 +2774,46 @@ fn push_entry(
         push_slice(bytes, &payload_keys[node_at(*payload)]);
     }
     push_slice(bytes, entry.entry_key.as_bytes());
+    push_input_extents(bytes, &entry.input_extents);
     Ok(())
+}
+
+/// Presence tag of a nonempty live input-extent operand list.
+///
+/// Written after the backend entry key, and written as nothing at all when the
+/// list is empty. The key is a framed slice, so a reader that has consumed it
+/// is at the next field. `0xfe` cannot be the high byte of the next `push_len`
+/// (execution order or the next entry's stage key), so a nonempty list cannot
+/// be re-read as that length. Empty writes nothing, so previously encodable
+/// entries keep the bytes they encoded before this list existed.
+pub(super) const INPUT_EXTENT_BLOCK_TAG: u8 = 0xfe;
+
+pub(super) const fn abi_type_tag(ty: AbiType) -> u8 {
+    match ty {
+        AbiType::Unsigned => 0x01,
+        AbiType::Boolean => 0x02,
+    }
+}
+
+pub(super) fn abi_type_from_tag(tag: u8) -> Option<AbiType> {
+    match tag {
+        0x01 => Some(AbiType::Unsigned),
+        0x02 => Some(AbiType::Boolean),
+        _ => None,
+    }
+}
+
+fn push_input_extents(bytes: &mut Vec<u8>, extents: &[ExtentOperandData]) {
+    if extents.is_empty() {
+        return;
+    }
+    bytes.push(INPUT_EXTENT_BLOCK_TAG);
+    push_len(bytes, extents.len());
+    for operand in extents {
+        push_slice(bytes, operand.key.as_str().as_bytes());
+        bytes.extend_from_slice(&operand.axis.get().to_be_bytes());
+        bytes.push(abi_type_tag(operand.value_type));
+    }
 }
 
 /// Reads how many delivery positions one artifact's entries are realized at.

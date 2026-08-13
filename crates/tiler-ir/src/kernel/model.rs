@@ -21,6 +21,7 @@ use crate::schedule::{
     SynchronizationSubject, TensorRole, ValueDomainProvenance,
 };
 use crate::semantic::EncodedComponentRole;
+use crate::shape::Axis;
 
 use super::MAX_KERNEL_IDENTITY_BYTES;
 
@@ -80,7 +81,10 @@ const KERNEL_DOMAIN: &[u8] = b"tiler.kernel.v7\0";
 /// The width [`push_len`] frames a length in, as ADR 0074 fixes it.
 const LENGTH_BYTES: usize = size_of::<u64>();
 use super::error::{KernelDiagnostic, KernelEntityKind, VerifiedKernelHandleError};
-use super::handles::{VerifiedBufferId, VerifiedKernelOwner, VerifiedStagingId, VerifiedValueId};
+use super::handles::{
+    VerifiedBufferId, VerifiedInputExtentId, VerifiedKernelOwner, VerifiedStagingId,
+    VerifiedValueId,
+};
 
 /// The resolved type of one structured-kernel SSA value.
 ///
@@ -324,6 +328,30 @@ pub struct StagingParameter {
     pub address_space: AddressSpace,
     /// Number of addressable slots.
     pub element_count: u64,
+}
+
+/// **Accepted public surface.** Tom accepted this exact spelling on
+/// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
+/// Dependents may treat this type as accepted vocabulary.
+///
+/// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+///
+/// One live input-axis extent a kernel signature admits as a read-only operand.
+///
+/// Names the scheduled input and axis whose runtime-bound extent the body may
+/// read. The live *value* is not part of kernel identity; the declaration is.
+/// The operand is the structured-kernel spelling of the existing
+/// [`crate::program::abi::AbiRoot::InputExtent`] root: the kernel names the
+/// region-local input and axis, and the artifact maps that ordinal onto the
+/// program-interface key. Callers do not supply a second scalar list.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct InputExtentParameter {
+    /// Scheduled input tensor whose axis extent is read.
+    ///
+    /// Must be [`TensorRole::Input`]. Any other role is refused at declaration.
+    pub tensor: TensorRole,
+    /// Axis of that input whose live extent the body may read.
+    pub axis: Axis,
 }
 
 /// A governed launch builtin a kernel signature may admit.
@@ -881,12 +909,35 @@ pub struct BarrierSpec {
 }
 
 /// The bounded iteration range of one structured loop.
+///
+/// Literal start and end remain the form every static loop uses. A live bound
+/// is a separate builder path that takes SSA values, so a kernel cannot choose
+/// between baking an extent and reading it as a parameter for the same range.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SerialLoopSpec {
     /// Inclusive first induction value.
     pub start: u64,
     /// Exclusive last induction value.
     pub end: u64,
+}
+
+/// **Accepted public surface.** Tom accepted this exact spelling on
+/// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
+/// Dependents may treat `LoopBound::Value` as accepted vocabulary.
+///
+/// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+///
+/// One bound of a structured loop: a compile-time literal or an SSA value.
+///
+/// A value bound is how a live input extent becomes a trip count. The value
+/// must be index-typed; the live extent operand is the only non-literal source
+/// this ticket admits.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum LoopBound {
+    /// A compile-time inclusive-start or exclusive-end.
+    Literal(u64),
+    /// An index-typed SSA value in the enclosing block.
+    Value(super::handles::VerifiedValueId),
 }
 
 /// Storage for one structured block.
@@ -961,6 +1012,16 @@ pub(super) enum OperationKind {
         body: u32,
         yields: Vec<u32>,
     },
+    SerialLoopRange {
+        start: u32,
+        end: u32,
+        initial: Vec<u32>,
+        body: u32,
+        yields: Vec<u32>,
+    },
+    InputExtent {
+        parameter: u32,
+    },
     Barrier {
         spec: BarrierSpec,
     },
@@ -990,6 +1051,7 @@ pub(super) struct ValueData {
 pub(super) struct KernelData {
     pub(super) buffers: Vec<BufferParameter>,
     pub(super) staging: Vec<StagingParameter>,
+    pub(super) input_extents: Vec<InputExtentParameter>,
     pub(super) admitted_builtins: Vec<Builtin>,
     pub(super) numerical: NumericalRealization,
     pub(super) requirements: ResourceRequirements,
@@ -1098,6 +1160,38 @@ impl VerifiedKernel {
     #[must_use]
     pub fn admitted_builtins(&self) -> &[Builtin] {
         &self.data.admitted_builtins
+    }
+
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
+    ///
+    /// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+    ///
+    /// Returns the live input-extent operands this kernel signature admits.
+    ///
+    /// Canonical declaration order, which is also the argument-table order
+    /// after the buffer parameters: a parameter's position here is its scalar
+    /// transport ordinal. Empty for every kernel whose body specializes no
+    /// live extent.
+    #[must_use]
+    pub fn input_extents(&self) -> impl ExactSizeIterator<Item = InputExtentParameter> + '_ {
+        self.data.input_extents.iter().copied()
+    }
+
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
+    ///
+    /// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+    ///
+    /// Returns each declared live input-extent operand with the handle naming it.
+    #[must_use]
+    pub fn declared_input_extents(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (VerifiedInputExtentId, InputExtentParameter)> + '_ {
+        let count = u32::try_from(self.data.input_extents.len()).unwrap_or(u32::MAX);
+        (0..count)
+            .zip(self.data.input_extents.iter().copied())
+            .map(|(index, parameter)| (self.input_extent_id(index), parameter))
     }
 
     /// Returns the workgroup staging allocations this kernel declares.
@@ -1223,6 +1317,37 @@ impl VerifiedKernel {
 
     fn staging_id(&self, index: u32) -> VerifiedStagingId {
         VerifiedStagingId::from_verified(self.owner, index)
+    }
+
+    fn input_extent_id(&self, index: u32) -> VerifiedInputExtentId {
+        VerifiedInputExtentId::from_verified(self.owner, index)
+    }
+
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
+    ///
+    /// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+    ///
+    /// Returns one verified live input-extent operand.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifiedKernelHandleError`] when the handle belongs to another
+    /// kernel or does not identify a retained operand.
+    pub fn input_extent(
+        &self,
+        id: VerifiedInputExtentId,
+    ) -> Result<InputExtentParameter, VerifiedKernelHandleError> {
+        if id.owner != self.owner {
+            return Err(VerifiedKernelHandleError::ForeignKernel {
+                entity: KernelEntityKind::InputExtent,
+            });
+        }
+        self.data.input_extents.get(id.as_usize()).copied().ok_or(
+            VerifiedKernelHandleError::InvalidHandle {
+                entity: KernelEntityKind::InputExtent,
+            },
+        )
     }
 
     /// Returns one verified workgroup staging allocation.
@@ -1373,12 +1498,29 @@ impl<'a> OperationRef<'a> {
                 yields,
             } => OperationView::SerialLoop(SerialLoopRef {
                 kernel,
-                start: *start,
-                end: *end,
+                start: LoopBoundData::Literal(*start),
+                end: LoopBoundData::Literal(*end),
                 initial,
                 yields,
                 block: *body,
             }),
+            OperationKind::SerialLoopRange {
+                start,
+                end,
+                initial,
+                body,
+                yields,
+            } => OperationView::SerialLoop(SerialLoopRef {
+                kernel,
+                start: LoopBoundData::Value(*start),
+                end: LoopBoundData::Value(*end),
+                initial,
+                yields,
+                block: *body,
+            }),
+            OperationKind::InputExtent { parameter } => OperationView::InputExtent {
+                parameter: kernel.input_extent_id(*parameter),
+            },
             OperationKind::Barrier { spec } => OperationView::Barrier { spec },
             OperationKind::StagedStore {
                 staging,
@@ -1494,6 +1636,16 @@ pub enum OperationView<'a> {
     },
     /// Executes a bounded loop carrying typed accumulator state.
     SerialLoop(SerialLoopRef<'a>),
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
+    ///
+    /// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+    ///
+    /// Reads one declared live input-extent operand as an index-typed value.
+    InputExtent {
+        /// Declared operand whose live extent is read.
+        parameter: VerifiedInputExtentId,
+    },
     /// Synchronizes an execution scope and fences named address spaces.
     Barrier {
         /// The barrier's schedule point, scopes, fences, and ordering.
@@ -1535,26 +1687,78 @@ pub enum OperationView<'a> {
 /// carried accumulator; the yielded values become the accumulators of the next
 /// iteration and, after the final iteration, the loop's results.
 #[derive(Clone, Copy, Debug)]
+enum LoopBoundData {
+    Literal(u64),
+    Value(u32),
+}
+
+/// A read-only view of one bounded structured loop.
+///
+/// The loop body binds an induction variable followed by one parameter per
+/// carried accumulator; the yielded values become the accumulators of the next
+/// iteration and, after the final iteration, the loop's results.
+#[derive(Clone, Copy, Debug)]
 pub struct SerialLoopRef<'a> {
     kernel: &'a VerifiedKernel,
-    start: u64,
-    end: u64,
+    start: LoopBoundData,
+    end: LoopBoundData,
     initial: &'a [u32],
     yields: &'a [u32],
     block: u32,
 }
 
 impl<'a> SerialLoopRef<'a> {
-    /// Returns the inclusive first induction value.
+    /// Returns the inclusive first induction value of a literal-bound loop.
+    ///
+    /// Live-bound loops use [`Self::start_bound`]. A value bound reports `0`
+    /// here so existing literal-only readers keep compiling; they must consult
+    /// [`Self::start_bound`] before treating the number as the trip start.
     #[must_use]
     pub const fn start(self) -> u64 {
-        self.start
+        match self.start {
+            LoopBoundData::Literal(value) => value,
+            LoopBoundData::Value(_) => 0,
+        }
     }
 
-    /// Returns the exclusive last induction value.
+    /// Returns the exclusive last induction value of a literal-bound loop.
+    ///
+    /// Live-bound loops use [`Self::end_bound`].
     #[must_use]
     pub const fn end(self) -> u64 {
-        self.end
+        match self.end {
+            LoopBoundData::Literal(value) => value,
+            LoopBoundData::Value(_) => 0,
+        }
+    }
+
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
+    ///
+    /// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+    ///
+    /// Returns the inclusive first induction bound.
+    #[must_use]
+    pub fn start_bound(self) -> LoopBound {
+        self.bound(self.start)
+    }
+
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
+    ///
+    /// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+    ///
+    /// Returns the exclusive last induction bound.
+    #[must_use]
+    pub fn end_bound(self) -> LoopBound {
+        self.bound(self.end)
+    }
+
+    fn bound(self, bound: LoopBoundData) -> LoopBound {
+        match bound {
+            LoopBoundData::Literal(value) => LoopBound::Literal(value),
+            LoopBoundData::Value(index) => LoopBound::Value(self.kernel.value_id(index)),
+        }
     }
 
     /// Returns the induction variable bound in the loop body, when present.
@@ -1766,15 +1970,58 @@ fn push_staging(bytes: &mut Vec<u8>, staging: &[StagingParameter]) {
     }
 }
 
+/// Presence tag of a nonempty live input-extent declaration list.
+///
+/// Staging already occupies the "bytes remain after the body" slot, and a
+/// small staging count opens with a zero high byte. `0xfe` cannot be that
+/// prefix, so a kernel that declares extents and no staging cannot be
+/// re-read as a staging list. Empty writes nothing, so kernels that declare
+/// no live extent keep the bytes they encoded before this list existed.
+const INPUT_EXTENT_BLOCK_TAG: u8 = 0xfe;
+
+/// Encodes the live input-extent operands a kernel declares.
+///
+/// **Written after staging and before the subgroup requirement, and written
+/// as nothing at all when the list is empty.** Kernels that declare no live
+/// extent keep the bytes they encoded after the subgroup field landed. A
+/// nonempty list is a subject the earlier vocabulary could not express, so
+/// those bytes are new rather than a reinterpretation.
+fn push_input_extents(bytes: &mut Vec<u8>, extents: &[InputExtentParameter]) {
+    if extents.is_empty() {
+        return;
+    }
+    bytes.push(INPUT_EXTENT_BLOCK_TAG);
+    push_len(bytes, extents.len());
+    for parameter in extents {
+        push_tensor_role(bytes, parameter.tensor);
+        bytes.extend_from_slice(&parameter.axis.get().to_be_bytes());
+    }
+}
+
+/// Mirrors [`push_input_extents`], including its empty case writing nothing.
+fn input_extents_encoded_len(extents: &[InputExtentParameter]) -> usize {
+    if extents.is_empty() {
+        return 0;
+    }
+    1_usize
+        .saturating_add(LENGTH_BYTES)
+        .saturating_add(extents.iter().fold(0_usize, |total, parameter| {
+            total
+                .saturating_add(tensor_role_encoded_len(parameter.tensor))
+                .saturating_add(size_of_val(&parameter.axis.get()))
+        }))
+}
+
 /// Encodes the subgroup realization a kernel requires, or writes nothing.
 ///
 /// **Written last, and written as nothing at all when the requirement is
-/// absent.** A kernel that requires no subgroup combine encodes exactly the
-/// bytes it encoded before this field existed. Injectivity survives because
-/// the staging block preceding it is fully self-framing when present, and
-/// when both are absent the encoding ends where it always did. A `0x00`
-/// presence tag written unconditionally would have added one byte to every
-/// kernel ever encoded and stepped [`KERNEL_DOMAIN`].
+/// absent.** A kernel that requires no subgroup combine and declares no live
+/// extent encodes exactly the bytes it encoded before either field existed.
+/// Injectivity survives because the staging block and the extent list
+/// preceding it are fully self-framing when present, and when all three are
+/// absent the encoding ends where it always did. A `0x00` presence tag
+/// written unconditionally would have added one byte to every kernel ever
+/// encoded and stepped [`KERNEL_DOMAIN`].
 fn push_subgroup_requirement(bytes: &mut Vec<u8>, subject: Option<SubgroupRealizationSubject>) {
     let Some(subject) = subject else {
         return;
@@ -1939,6 +2186,26 @@ fn push_operation(bytes: &mut Vec<u8>, data: &KernelData, operation: &OperationD
             push_indices(bytes, yields);
             push_block(bytes, data, *body);
         }
+        OperationKind::SerialLoopRange {
+            start,
+            end,
+            initial,
+            body,
+            yields,
+        } => {
+            // Appended tag: no earlier kernel could contain a live loop bound,
+            // so previously encodable bytes do not move.
+            bytes.push(0x1f);
+            bytes.extend_from_slice(&start.to_be_bytes());
+            bytes.extend_from_slice(&end.to_be_bytes());
+            push_indices(bytes, initial);
+            push_indices(bytes, yields);
+            push_block(bytes, data, *body);
+        }
+        OperationKind::InputExtent { parameter } => {
+            bytes.push(0x20);
+            bytes.extend_from_slice(&parameter.to_be_bytes());
+        }
         OperationKind::Barrier { spec } => {
             bytes.push(0x1a);
             push_barrier(bytes, spec);
@@ -2012,6 +2279,7 @@ pub(super) fn encode_identity(
     }
     push_block(&mut bytes, data, 0);
     push_staging(&mut bytes, &data.staging);
+    push_input_extents(&mut bytes, &data.input_extents);
     push_subgroup_requirement(&mut bytes, data.requirements.subgroup);
     debug_assert_eq!(
         bytes.len(),
@@ -2064,6 +2332,7 @@ fn identity_encoded_len(
         .saturating_add(data.values.len())
         .saturating_add(block_encoded_len(data, 0))
         .saturating_add(staging_encoded_len(&data.staging))
+        .saturating_add(input_extents_encoded_len(&data.input_extents))
         .saturating_add(subgroup_requirement_encoded_len(data.requirements.subgroup))
 }
 
@@ -2230,6 +2499,18 @@ fn operation_encoded_len(data: &KernelData, operation: &OperationData) -> usize 
             .saturating_add(indices_encoded_len(initial))
             .saturating_add(indices_encoded_len(yields))
             .saturating_add(block_encoded_len(data, *body)),
+        OperationKind::SerialLoopRange {
+            start,
+            end,
+            initial,
+            body,
+            yields,
+        } => size_of_val(start)
+            .saturating_add(size_of_val(end))
+            .saturating_add(indices_encoded_len(initial))
+            .saturating_add(indices_encoded_len(yields))
+            .saturating_add(block_encoded_len(data, *body)),
+        OperationKind::InputExtent { parameter } => size_of_val(parameter),
         OperationKind::Barrier { spec } => barrier_encoded_len(spec),
         OperationKind::StagedStore {
             staging,

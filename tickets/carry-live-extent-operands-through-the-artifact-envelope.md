@@ -11,7 +11,7 @@ paths: []
 tags: [implementation, artifact, identity, public-boundary]
 claimed_from: todo
 assignee: worker-carry-live-extent
-lease_expires_at: 1786659111
+lease_expires_at: 1786659498
 ---
 ## User-visible outcome
 
@@ -41,6 +41,24 @@ A verified artifact program carries the accepted live-extent operand row through
 ## Non-goals
 
 The `N = 14` / `N = 15` payload and pipeline execution evidence is [`prove-one-live-extent-artifact-payload-and-pipeline-at-two-n`](prove-one-live-extent-artifact-payload-and-pipeline-at-two-n.md). Schedule-verified `LiveContraction` is [`prove-a-schedule-verified-live-contraction-consumes-s`](prove-a-schedule-verified-live-contraction-consumes-s.md). `compile()` through strategy selection and region formation is [`admit-symbolic-extents-through-compiler-region-formation`](admit-symbolic-extents-through-compiler-region-formation.md).
+
+## Outcome
+
+The accepted kernel/runtime spelling is integrated on this branch, and the envelope row it implied is constructed, encoded, decoded, and validated. The row is a new public artifact view (`DecodedExtentOperand`, `DecodedEntry::extent_operands`, `EntryRef::extent_operands`) and is labelled a draft. [`accept-the-live-extent-artifact-envelope-row`](accept-the-live-extent-artifact-envelope-row.md) is filed at `awaiting-decision` and was not self-accepted.
+
+**Conflict port of `9a8f53c9`.** Both-add: HEAD's `ParametricBroadcast` / subgroup / `CooperativeContraction` stay; the accepted live-extent types stay. `LiveRowMajor` is schedule tag `0x09` (HEAD already consumed `0x08` for parametric broadcast). `LiveContraction` is topology tag `0x38` because accepted `0x36` stays reserved for `CooperativeContractionSplit` and HEAD already uses `0x37` for `CooperativeContraction`. Empty live-extent lists write nothing after staging and before the subgroup requirement, so previously encodable kernel and artifact bytes do not move.
+
+**Quoted perturbations.**
+
+- Omit the backend placement for a declared row: `EntryTransportCardinality { payload: 0, bindings: 2, extents: 1, transports: 2 }`.
+- Reorder two rows of one input: `NonCanonicalOrder { subject: ExtentOperand }`.
+- Duplicate a row: `DuplicateItem { subject: ExtentOperand }`.
+- Wrong axis: `ExtentOperandAxis { key: "input", axis: 99, rank: 2 }`.
+- Wrong type: `ExtentOperandType { key: "input", axis: 1 }`.
+- Misordered transport: `ExtentOperandTransport { payload: 0, operand: 0, declared: 0, expected: 2 }`.
+- Unbound runtime fact: `runtime.unbound-input-extent: entry 0 requires input input axis 1 from the same AbiFacts used for range and launch`.
+
+**Identity blast radius.** `tiler.artifact-program.v16` and `tiler.kernel.v7` do not step. Empty extent lists write nothing. A nonempty declaration is a new subject. The live value is not in artifact, payload, library, or pipeline identity.
 
 ## Closes when
 

@@ -2233,6 +2233,87 @@ fn the_binding_table_matches_the_emitted_subscripts() {
     }
 }
 
+fn live_row_major_kernel() -> VerifiedKernel {
+    let rows = 2_u64;
+    let inner = Axis::new(1);
+    let mut builder = ScheduledRegionBuilder::new(RegionId::new(40));
+    builder
+        .iteration_shape(Shape::from_dims([rows]))
+        .expect("rows");
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::LiveRowMajor { inner_axis: inner },
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .expect("read");
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Intermediate,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LiveRowMajor { inner_axis: inner },
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .expect("write");
+    for (witness, tensor) in [
+        (
+            0,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+        ),
+        (1, TensorRole::Intermediate),
+    ] {
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(witness),
+                tensor,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange { element_count: 0 },
+            })
+            .expect("bounds");
+    }
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Intermediate,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: rows },
+        })
+        .expect("ownership");
+    builder
+        .scalar_program(ScalarProgram::PointwiseF32(scale_then_bias_expression(
+            SCALE_BITS, BIAS_BITS,
+        )))
+        .expect("scalar");
+    builder.numerical(numerical(NAN_BITS)).expect("numerical");
+    builder.schedule(linear_schedule(rows)).expect("schedule");
+    lower_scheduled_region(&builder.build().expect("region")).expect("lowers")
+}
+
+/// A live input extent is a read-only scalar parameter, not a baked literal.
+#[test]
+fn a_live_extent_is_emitted_as_a_constant_parameter() {
+    let kernel = live_row_major_kernel();
+    let unit = emit_translation_unit(&[&kernel], &target()).unwrap();
+    let source = unit.source();
+    assert!(
+        source.contains("constant ulong& e0 [[buffer(2)]]"),
+        "{source}"
+    );
+    assert!(source.contains("= e0;"), "{source}");
+    assert!(
+        !source.contains("14ul") && !source.contains("15ul"),
+        "live N must not be baked: {source}"
+    );
+}
+
 #[test]
 fn every_f32_immediate_is_emitted_as_an_exact_bit_pattern() {
     let source = emit_one(&pointwise_kernel());

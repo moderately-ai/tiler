@@ -65,7 +65,7 @@ use super::super::requirement::{
 };
 use super::super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
-    MAX_DELIVERY_POSITIONS, MAX_ENTRY_BINDINGS, MAX_LAUNCH_PRECONDITIONS,
+    MAX_DELIVERY_POSITIONS, MAX_ENTRY_BINDINGS, MAX_ENTRY_EXTENTS, MAX_LAUNCH_PRECONDITIONS,
     MAX_ROUTE_FEATURE_PAYLOAD_BYTES, MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_PROVIDERS,
     MAX_STAGE_DEPENDENCIES, MAX_VARIANT_ENTRIES,
 };
@@ -1124,15 +1124,39 @@ fn parse_entry(
             Ok(payload)
         },
     )?;
+    let entry_key = BackendEntryKey::from_bytes(cursor.slice()?)
+        .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?;
+    let input_extents = if cursor.peek_u8() == Some(super::super::model::INPUT_EXTENT_BLOCK_TAG) {
+        let _ = cursor.u8()?;
+        cursor.vec(MAX_ENTRY_EXTENTS, CodecLimitKind::EntryExtents, |cursor| {
+            let key = InputKey::from_owned(cursor.text()?)
+                .map_err(|cause| ArtifactCodecError::InvalidInterfaceKey { cause })?;
+            let axis = tiler_ir::shape::Axis::new(cursor.u32()?);
+            let tag = cursor.u8()?;
+            let value_type = super::super::model::abi_type_from_tag(tag).ok_or(
+                ArtifactCodecError::UnknownTag {
+                    subject: TagSubject::ExtentOperandType,
+                    tag,
+                },
+            )?;
+            Ok(super::super::model::ExtentOperandData {
+                key,
+                axis,
+                value_type,
+            })
+        })?
+    } else {
+        Vec::new()
+    };
     Ok(EntryRow {
         stage,
         resources,
         numerical,
         bindings,
+        input_extents,
         launch,
         payloads: realizations,
-        entry_key: BackendEntryKey::from_bytes(cursor.slice()?)
-            .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?,
+        entry_key,
     })
 }
 
@@ -1172,6 +1196,10 @@ impl<'a> Cursor<'a> {
 
     pub(super) const fn remaining(&self) -> usize {
         self.bytes.len() - self.position
+    }
+
+    fn peek_u8(&self) -> Option<u8> {
+        self.bytes.get(self.position).copied()
     }
 
     pub(super) fn take(&mut self, len: usize) -> Result<&'a [u8], ArtifactCodecError> {

@@ -532,9 +532,9 @@ pub use tiler_ir::program::SemanticOccurrence;
 
 pub use codec::{
     ArtifactCodecFailure, DecodedArtifact, DecodedBinding, DecodedComponent,
-    DecodedDeferredPredicate, DecodedEntry, DecodedExpr, DecodedInput, DecodedNumerical,
-    DecodedOutput, DecodedStageDependency, DecodedVariant, PayloadContent, PayloadEntryMapping,
-    PayloadMetadata, PayloadPlatform, PayloadProvenance, PayloadSdkIdentity,
+    DecodedDeferredPredicate, DecodedEntry, DecodedExpr, DecodedExtentOperand, DecodedInput,
+    DecodedNumerical, DecodedOutput, DecodedStageDependency, DecodedVariant, PayloadContent,
+    PayloadEntryMapping, PayloadMetadata, PayloadPlatform, PayloadProvenance, PayloadSdkIdentity,
     PayloadTargetObligation, SectionPurpose, SectionView, ToolComponent, decode_artifact,
 };
 // The governed digest algorithm, which `docs/artifact-abi.md` requires every
@@ -695,6 +695,11 @@ pub const MAX_VARIANT_ENTRIES: usize = 4_096;
 pub const MAX_STAGE_DEPENDENCIES: usize = 65_536;
 /// Maximum ABI bindings admitted by one executable entry.
 pub const MAX_ENTRY_BINDINGS: usize = 64;
+/// Maximum live input-extent operand rows admitted by one executable entry.
+///
+/// Equal to [`tiler_ir::kernel::MAX_KERNEL_INPUT_EXTENTS`]: the envelope row is
+/// the packaged spelling of that kernel list, so the two bounds stay one value.
+pub const MAX_ENTRY_EXTENTS: usize = tiler_ir::kernel::MAX_KERNEL_INPUT_EXTENTS;
 /// Maximum nodes admitted by one shared ABI expression arena.
 pub const MAX_ABI_EXPRESSIONS: usize = 4_096;
 /// Maximum backend payload descriptors admitted by one artifact program.

@@ -2117,6 +2117,221 @@ pub(crate) fn default_artifact() -> VerifiedArtifactProgram {
     build_artifact(&semantic, &program, provider.clone(), &[provider])
 }
 
+/// A kernel whose body consumes one live input-axis extent.
+///
+/// Iteration is the static outer product; only axis 1 of the declared input is
+/// live. The write is the program output so a single-stage artifact can bind it.
+fn live_extent_kernel() -> VerifiedKernel {
+    let rows = 2;
+    let mut region = ScheduledRegionBuilder::new(RegionId::new(0));
+    region.iteration_shape(Shape::from_dims([rows])).unwrap();
+    let inner = Axis::new(1);
+    region
+        .push_access(Access {
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::LiveRowMajor { inner_axis: inner },
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .unwrap();
+    region
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LiveRowMajor { inner_axis: inner },
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    for (witness, tensor) in [
+        (
+            0,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+        ),
+        (1, TensorRole::Output),
+    ] {
+        region
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(witness),
+                tensor,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange { element_count: 0 },
+            })
+            .unwrap();
+    }
+    region
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: rows },
+        })
+        .unwrap();
+    region
+        .scalar_program(ScalarProgram::PointwiseF32(scale_bias_expression()))
+        .unwrap();
+    region.numerical(strict()).unwrap();
+    region
+        .schedule(KernelSchedule {
+            binding: ExecutionBinding::GlobalLinearInvocation,
+            work_items: rows,
+            threads_per_workgroup: 1,
+            tail: TailPolicy::Exact,
+            output_owner: OwnershipWitnessId::new(0),
+            reduction: ReductionTopology::None,
+            launch: LaunchPlan {
+                grid_threads: rows,
+                threads_per_workgroup: 1,
+                zero_work_skips_dispatch: true,
+            },
+        })
+        .unwrap();
+    lower_scheduled_region(&region.build().unwrap()).unwrap()
+}
+
+fn scale_bias_expression() -> tiler_ir::schedule::PointwiseF32Expression {
+    let mut expression = PointwiseF32ExpressionBuilder::new();
+    let input = expression.input(InputOrdinal::FIRST).unwrap();
+    let scale = expression.constant(SCALE_BITS).unwrap();
+    let product = expression.multiply(input, scale).unwrap();
+    let bias = expression.constant(BIAS_BITS).unwrap();
+    let root = expression.add(product, bias).unwrap();
+    expression.build(root).unwrap()
+}
+
+pub(crate) fn live_extent_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
+    let kernel = live_extent_kernel();
+    let mut plan = KernelProgramBuilder::new(semantic).unwrap();
+    let device = |capacity_bytes, ownership| AllocationSpec {
+        capacity_bytes,
+        alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
+        memory_space: MemorySpace::Device,
+        ownership,
+    };
+    let external = plan
+        .push_allocation(device(24, AllocationOwnership::External))
+        .unwrap();
+    let owned = plan
+        .push_allocation(device(24, AllocationOwnership::Program))
+        .unwrap();
+    let value = |origin, role, shape| MaterializedValueSpec {
+        origin,
+        role,
+        shape,
+        storage_scalar: StorageScalar::F32,
+        element_type: KernelType::F32,
+        encoding: StorageEncoding::Unpacked,
+        alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
+        memory_space: MemorySpace::Device,
+    };
+    let source = plan
+        .push_value(
+            value(
+                MaterializedOrigin::ProgramInput {
+                    key: InputKey::new("input").unwrap(),
+                },
+                ValueRole::Input,
+                input_shape(),
+            ),
+            external,
+        )
+        .unwrap();
+    let result = plan
+        .push_value(
+            value(
+                MaterializedOrigin::Internal,
+                ValueRole::Output,
+                output_shape(),
+            ),
+            owned,
+        )
+        .unwrap();
+    let read = plan
+        .push_view(
+            source,
+            ByteWindow {
+                offset: 0,
+                length: 0,
+            },
+        )
+        .unwrap();
+    let write = plan
+        .push_view(
+            result,
+            ByteWindow {
+                offset: 0,
+                length: 0,
+            },
+        )
+        .unwrap();
+    let zero = plan.push_abi_root(AbiRoot::UnsignedLiteral(0)).unwrap();
+    let two = plan.push_abi_root(AbiRoot::UnsignedLiteral(2)).unwrap();
+    let one = plan.push_abi_root(AbiRoot::UnsignedLiteral(1)).unwrap();
+    let guard = plan.push_abi_root(AbiRoot::BooleanLiteral(true)).unwrap();
+    plan.applicability_guard(guard).unwrap();
+    for (from, to, fallback_permitted) in [
+        (
+            RoutingCommitState::Preflight,
+            RoutingCommitState::Committed,
+            true,
+        ),
+        (
+            RoutingCommitState::Committed,
+            RoutingCommitState::Executing,
+            false,
+        ),
+        (
+            RoutingCommitState::Executing,
+            RoutingCommitState::Published,
+            false,
+        ),
+    ] {
+        plan.push_routing_commit_transition(RoutingCommitTransition {
+            from,
+            to,
+            fallback_permitted,
+        })
+        .unwrap();
+    }
+    plan.push_stage(
+        &kernel,
+        &checked_coverage(semantic),
+        &[
+            StageAccess {
+                view: read,
+                mode: StageAccessMode::Read,
+                accessible_bytes: zero,
+            },
+            StageAccess {
+                view: write,
+                mode: StageAccessMode::Write,
+                accessible_bytes: zero,
+            },
+        ],
+        StageLaunch {
+            grid_threads: two,
+            threads_per_workgroup: one,
+        },
+    )
+    .unwrap();
+    plan.push_output(OutputKey::new("result").unwrap(), result)
+        .unwrap();
+    plan.build().unwrap()
+}
+
+pub(crate) fn live_extent_artifact() -> VerifiedArtifactProgram {
+    let semantic = semantic_program();
+    let program = live_extent_program(&semantic);
+    let provider = lowering_provider(1);
+    build_artifact(&semantic, &program, provider.clone(), &[provider])
+}
+
 // -------------------------------------------------------------------------
 // The pointwise producer path at two widths
 // -------------------------------------------------------------------------
@@ -2386,7 +2601,14 @@ impl PointwiseWidth {
 
     /// The single-stage kernel program the artifact packages.
     fn program(self, semantic: &SemanticProgram) -> VerifiedKernelProgram {
-        let kernel = self.kernel();
+        self.program_with_kernel(semantic, &self.kernel())
+    }
+
+    fn program_with_kernel(
+        self,
+        semantic: &SemanticProgram,
+        kernel: &VerifiedKernel,
+    ) -> VerifiedKernelProgram {
         let coverage = checked_coverage_under(semantic, &self.contract());
         let bytes = self.element_bytes() * elements();
         let mut plan = KernelProgramBuilder::new(semantic).expect("program builder");
@@ -2465,7 +2687,7 @@ impl PointwiseWidth {
             .expect("routing-commit transition");
         }
         plan.push_stage(
-            &kernel,
+            kernel,
             &coverage,
             &[
                 StageAccess {
@@ -4597,6 +4819,89 @@ fn an_artifact_encodes_an_entry_key_longer_than_the_digest_bound() {
             .backend_entry_key()
             .as_bytes(),
         long_key.as_slice(),
+    );
+}
+
+// -------------------------------------------------------------------------
+// Live input-extent operand envelope row
+// -------------------------------------------------------------------------
+
+#[test]
+fn a_live_extent_operand_round_trips_through_the_envelope() {
+    let artifact = live_extent_artifact();
+    let extents: Vec<_> = artifact
+        .variants()
+        .next()
+        .expect("one variant")
+        .entries()
+        .next()
+        .expect("one entry")
+        .extent_operands()
+        .collect();
+    assert_eq!(extents.len(), 1);
+    assert_eq!(extents[0].key().as_str(), "input");
+    assert_eq!(extents[0].axis(), Axis::new(1));
+    assert_eq!(extents[0].value_type(), super::AbiType::Unsigned);
+
+    let bytes = artifact.encode().expect("a live-extent artifact encodes");
+    let decoded = super::decode_artifact(&bytes).expect("the envelope decodes");
+    let decoded_extents: Vec<_> = decoded
+        .variants()
+        .next()
+        .expect("one variant")
+        .entries()
+        .next()
+        .expect("one entry")
+        .extent_operands()
+        .collect();
+    assert_eq!(decoded_extents.len(), 1);
+    assert_eq!(decoded_extents[0].key().as_str(), "input");
+    assert_eq!(decoded_extents[0].axis(), Axis::new(1));
+    assert_eq!(decoded_extents[0].value_type(), super::AbiType::Unsigned);
+
+    let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
+    binder
+        .bind_input_extent(InputKey::new("input").unwrap(), Axis::new(1), 15)
+        .unwrap();
+    let facts = binder.build();
+    assert_eq!(
+        facts.input_extent(&InputKey::new("input").unwrap(), Axis::new(1)),
+        Some(15),
+        "the same AbiFacts used for range and launch answer the live extent",
+    );
+    assert_eq!(
+        decoded
+            .variants()
+            .next()
+            .expect("one variant")
+            .entries()
+            .next()
+            .expect("one entry")
+            .launch_threads()
+            .evaluate(&facts)
+            .expect("launch evaluates from the same facts"),
+        super::AbiValue::Unsigned(2),
+    );
+}
+
+#[test]
+fn empty_extent_lists_do_not_move_previously_encodable_artifact_bytes() {
+    let without = default_artifact();
+    let again = default_artifact();
+    assert_eq!(
+        without.canonical_identity().as_bytes(),
+        again.canonical_identity().as_bytes(),
+        "two no-extent artifacts must keep one identity",
+    );
+    assert!(
+        super::model::ARTIFACT_DOMAIN.ends_with(b"v16\0"),
+        "empty extent lists write nothing, so the artifact identity domain must not step",
+    );
+    let with = live_extent_artifact();
+    assert_ne!(
+        without.canonical_identity().as_bytes(),
+        with.canonical_identity().as_bytes(),
+        "declaring a live extent is a new subject, not a reinterpretation",
     );
 }
 

@@ -170,21 +170,23 @@ pub use error::{
     KernelLoweringError, KernelVerificationError, VerifiedKernelHandleError,
 };
 pub use handles::{
-    KernelBufferId, KernelStagingId, KernelValueId, VerifiedBufferId, VerifiedStagingId,
-    VerifiedValueId,
+    KernelBufferId, KernelInputExtentId, KernelStagingId, KernelValueId, VerifiedBufferId,
+    VerifiedInputExtentId, VerifiedStagingId, VerifiedValueId,
 };
 pub use lower::lower_scheduled_region;
 pub use model::{
     AddressSpace, BarrierOrdering, BarrierSpec, BinaryOp, BlockRef, BufferAccess, BufferParameter,
-    Builtin, CanonicalKernelIdentity, CompareOp, ConvertOp, ExecutionScope, KernelConstant,
-    KernelType, MemoryScope, OperationRef, OperationView, PackedExtractOp, SerialLoopRef,
-    SerialLoopSpec, StagingParameter, UnaryOp, VerifiedKernel,
+    Builtin, CanonicalKernelIdentity, CompareOp, ConvertOp, ExecutionScope, InputExtentParameter,
+    KernelConstant, KernelType, LoopBound, MemoryScope, OperationRef, OperationView,
+    PackedExtractOp, SerialLoopRef, SerialLoopSpec, StagingParameter, UnaryOp, VerifiedKernel,
 };
 
 /// Maximum buffer parameters admitted by one kernel signature.
 pub const MAX_KERNEL_BUFFERS: usize = 64;
 /// Maximum workgroup staging allocations declared by one kernel.
 pub const MAX_KERNEL_STAGING: usize = 64;
+/// Maximum live input-extent operands admitted by one kernel signature.
+pub const MAX_KERNEL_INPUT_EXTENTS: usize = 16;
 /// Maximum launch builtins admitted by one kernel signature.
 pub const MAX_KERNEL_ADMITTED_BUILTINS: usize = 16;
 /// Maximum structured SSA values admitted by one kernel.

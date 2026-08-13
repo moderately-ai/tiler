@@ -95,6 +95,42 @@ impl RoutedLaunch {
     }
 }
 
+/// **Accepted public surface.** Tom accepted this exact spelling on
+/// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
+/// Dependents may treat this type as accepted vocabulary.
+///
+/// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+///
+/// One live input-extent parameter frozen before [`Preflight::commit`].
+///
+/// The committed authority owns these bytes. A backend binds exactly the
+/// declared transport; it does not re-evaluate the fact.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct RoutedExtentParameter {
+    pub(super) transport: u32,
+    pub(super) value: u64,
+}
+
+impl RoutedExtentParameter {
+    /// Returns the backend transport index this scalar occupies.
+    #[must_use]
+    pub const fn transport_slot(self) -> u32 {
+        self.transport
+    }
+
+    /// Returns the frozen unsigned extent value.
+    #[must_use]
+    pub const fn value(self) -> u64 {
+        self.value
+    }
+
+    /// Returns the canonical parameter bytes the backend binds.
+    #[must_use]
+    pub fn parameter_bytes(self) -> [u8; 8] {
+        self.value.to_le_bytes()
+    }
+}
+
 /// One ABI binding of a routed entry: where it goes, and what byte range it reaches.
 ///
 /// The two facts the loader *derived* — the backend transport slot and the
@@ -180,6 +216,7 @@ pub struct RoutedEntry<'a> {
     pub(super) symbol: &'a str,
     pub(super) launch: RoutedLaunch,
     pub(super) bindings: Vec<RoutedBinding<'a>>,
+    pub(super) extent_parameters: Vec<RoutedExtentParameter>,
 }
 
 impl<'a> RoutedEntry<'a> {
@@ -211,6 +248,22 @@ impl<'a> RoutedEntry<'a> {
     #[must_use]
     pub fn bindings(&self) -> &[RoutedBinding<'a>] {
         &self.bindings
+    }
+
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
+    ///
+    /// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+    ///
+    /// Returns the live input-extent parameters frozen from the same
+    /// [`tiler_artifact::program::AbiFacts`] used to evaluate ranges and launch.
+    ///
+    /// Canonical declaration order, which is the scalar transport order after
+    /// the buffer table. The bound *value* is here; it is not part of artifact,
+    /// payload, library, or pipeline identity.
+    #[must_use]
+    pub fn extent_parameters(&self) -> &[RoutedExtentParameter] {
+        &self.extent_parameters
     }
 
     /// Returns the decoded entry this was routed from.

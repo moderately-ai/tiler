@@ -37,10 +37,10 @@ use super::super::expr::ExprNode;
 use super::super::keys::{BackendEntryKey, FeasibilityRuleSetRef, TargetProfileRef};
 use super::super::model::{
     ArtifactProgramData, ArtifactSchema, BackendPayloadDescriptor, BindingData,
-    CanonicalArtifactProgramIdentity, DeferredPredicateData, InterfaceEntryData, LaunchData,
-    RoutingPolicy, SchemaVersion, SelectedProvider, StageDependencyData, StageDependencyReason,
-    VariantData, canonical_deferred_order, canonical_precondition_order, encode_identity,
-    stage_key,
+    CanonicalArtifactProgramIdentity, DeferredPredicateData, ExtentOperandData, InterfaceEntryData,
+    LaunchData, RoutingPolicy, SchemaVersion, SelectedProvider, StageDependencyData,
+    StageDependencyReason, VariantData, canonical_deferred_order, canonical_precondition_order,
+    encode_identity, stage_key,
 };
 use super::super::realization::codec::{
     ArtifactCrossCheck, RealizationCodecError, validate_against_artifact,
@@ -448,6 +448,7 @@ pub(crate) struct EntryRow {
     pub(crate) resources: ResourceRequirements,
     pub(crate) numerical: NumericalFacts,
     pub(crate) bindings: Vec<BindingData>,
+    pub(crate) input_extents: Vec<ExtentOperandData>,
     pub(crate) launch: LaunchData,
     /// Canonical payload positions realizing this entry, one per delivery position.
     ///
@@ -1262,6 +1263,7 @@ fn project_entries(
                     ..binding.clone()
                 })
                 .collect(),
+            input_extents: source.input_extents.clone(),
             launch: LaunchData {
                 grid_threads: expression_of[position(source.launch.grid_threads)],
                 threads_per_workgroup: expression_of[position(source.launch.threads_per_workgroup)],

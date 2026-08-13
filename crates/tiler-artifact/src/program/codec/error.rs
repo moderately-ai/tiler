@@ -59,6 +59,8 @@ pub(crate) enum TagSubject {
     ExecutionPolicy,
     /// The type through which a kernel accesses one component or binding.
     ElementType,
+    /// The ABI type of one live input-extent operand row.
+    ExtentOperandType,
     /// The scalar carrier stored in physical memory.
     StorageScalar,
     /// Presence of a stable encoded-component role or component type.
@@ -155,6 +157,8 @@ pub(crate) enum OrderedSubject {
     Entry,
     /// The named program outputs one ABI binding's target publishes.
     BindingTargetKey,
+    /// The live input-extent operand rows of one executable entry.
+    ExtentOperand,
     /// The framed envelope sections.
     Section,
     /// The entry mappings of one carried backend payload.
@@ -222,6 +226,8 @@ pub(crate) enum CodecLimitKind {
     StageDependencies,
     /// ABI binding count of one executable entry.
     EntryBindings,
+    /// Live input-extent operand count of one executable entry.
+    EntryExtents,
     /// Named-output count of one ABI binding's target.
     BindingTargetKeys,
     /// Node count of the shared ABI expression arena.
@@ -551,19 +557,56 @@ pub(crate) enum ArtifactCodecError {
         /// Ordered payload identifier.
         payload: u32,
     },
-    /// An entry mapping declares a different transport count than the entry's bindings.
+    /// An entry mapping declares a different transport count than the entry's
+    /// bindings plus live-extent operand rows.
     ///
-    /// `transports[i]` is the backend transport slot ABI binding `i` occupies,
-    /// so a shorter list leaves bindings unplaceable and a longer one places
-    /// bindings that do not exist. Either way the correspondence a loader binds
-    /// through is not total, which is not a thing to approximate.
+    /// `transports[i]` is the backend transport slot ABI binding `i` occupies
+    /// and the following slots are the live-extent operands in declaration
+    /// order, so a shorter list leaves operands unplaceable and a longer one
+    /// places operands that do not exist. Either way the correspondence a
+    /// loader binds through is not total, which is not a thing to approximate.
     EntryTransportCardinality {
         /// Ordered payload identifier.
         payload: u32,
         /// ABI binding count the executable entry declares.
         bindings: usize,
+        /// Live input-extent operand count the executable entry declares.
+        extents: usize,
         /// Transport-slot count the payload's entry mapping declares.
         transports: usize,
+    },
+    /// A live-extent operand names an input the artifact interface does not declare.
+    UnknownExtentOperandKey {
+        /// Stable input key the row named.
+        key: String,
+    },
+    /// A live-extent operand names an axis the bound input does not have.
+    ExtentOperandAxis {
+        /// Stable input key the row named.
+        key: String,
+        /// Axis the row named.
+        axis: u32,
+        /// Rank of the named input.
+        rank: usize,
+    },
+    /// A live-extent operand row is not the unsigned quantity the Metal `eN` ABI binds.
+    ExtentOperandType {
+        /// Stable input key the row named.
+        key: String,
+        /// Axis the row named.
+        axis: u32,
+    },
+    /// A payload mapping places a live-extent operand on a slot that is not the
+    /// next buffer index after the tensor table.
+    ExtentOperandTransport {
+        /// Ordered payload identifier.
+        payload: u32,
+        /// Operand position within the entry's extent list.
+        operand: usize,
+        /// Transport slot the mapping declared.
+        declared: u32,
+        /// Slot the accepted Metal `eN` ABI requires (`binding_count + ordinal`).
+        expected: u32,
     },
     /// The declared required-feature set is not the one the content implies.
     ///
@@ -734,6 +777,10 @@ impl Error for ArtifactCodecError {
             | Self::BindingAccessTypeMismatch
             | Self::UnmappedBackendEntry { .. }
             | Self::EntryTransportCardinality { .. }
+            | Self::UnknownExtentOperandKey { .. }
+            | Self::ExtentOperandAxis { .. }
+            | Self::ExtentOperandType { .. }
+            | Self::ExtentOperandTransport { .. }
             | Self::DeclaredFeatureMismatch
             | Self::ArtifactIdentityMismatch
             | Self::UnknownTag { .. }

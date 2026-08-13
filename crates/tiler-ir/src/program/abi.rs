@@ -585,7 +585,9 @@ impl AbiFacts {
         self.reached
     }
 
-    fn input_extent(&self, key: &InputKey, axis: Axis) -> Option<u64> {
+    /// Returns the bound unsigned extent of one named input axis, if present.
+    #[must_use]
+    pub fn input_extent(&self, key: &InputKey, axis: Axis) -> Option<u64> {
         self.input_extents
             .iter()
             .find(|(bound, bound_axis, _)| bound == key && *bound_axis == axis)

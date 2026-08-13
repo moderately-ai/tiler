@@ -24,13 +24,14 @@ use crate::schedule::{
     ReductionTopology, ResourceRequirements, ScheduledRegion, StagedElement, StagingId,
     SyncPointId, SynchronizationKind, SynchronizationPlacement, SynchronizationPoint,
     SynchronizationScope, SynchronizationSubject, VisibilityEdge, contributor_count,
-    cooperative_tile, element_count,
+    cooperative_tile, element_count, live_input_extents,
 };
 
 use super::error::KernelDiagnostic;
 use super::model::{
     AddressSpace, BarrierOrdering, BarrierSpec, BufferAccess, Builtin, CompareOp, ExecutionScope,
-    KernelConstant, KernelData, KernelType, MemoryScope, OperationKind, region_element_type,
+    InputExtentParameter, KernelConstant, KernelData, KernelType, MemoryScope, OperationKind,
+    region_element_type,
 };
 
 /// Returns the number of addressable elements one scheduled access spans.
@@ -45,7 +46,16 @@ pub(super) fn access_elements(
         .find(|proof| proof.id == access.bounds)
         .ok_or(KernelDiagnostic::BoundsEvidence)?;
     match &proof.kind {
-        BoundsProofKind::LinearRange { element_count } => Ok(*element_count),
+        BoundsProofKind::LinearRange { element_count } => {
+            if matches!(
+                access.map,
+                crate::schedule::LogicalAccess::LiveRowMajor { .. }
+            ) {
+                Ok(0)
+            } else {
+                Ok(*element_count)
+            }
+        }
         BoundsProofKind::ReductionDomain { input_shape, .. } => {
             element_count(input_shape).map_err(|_| KernelDiagnostic::ElementCountOverflow)
         }
@@ -201,6 +211,7 @@ pub(super) fn verify_kernel(
 ) -> Result<(), KernelDiagnostic> {
     let (reads, write) = boundary_accesses(schedule)?;
     verify_signature(data, schedule, reads, write, derived)?;
+    verify_input_extents(data, schedule, reads)?;
     verify_cooperative(data, schedule)?;
 
     let guards = guard_values(data, schedule);
@@ -218,6 +229,78 @@ pub(super) fn verify_kernel(
         return Err(KernelDiagnostic::BodyRefinement);
     }
     Ok(())
+}
+
+fn verify_input_extents(
+    data: &KernelData,
+    schedule: &ScheduledRegion,
+    reads: &[Access],
+) -> Result<(), KernelDiagnostic> {
+    let expected: Vec<InputExtentParameter> = live_input_extents(schedule)
+        .into_iter()
+        .map(|(tensor, axis)| InputExtentParameter { tensor, axis })
+        .collect();
+    if data.input_extents != expected {
+        return Err(KernelDiagnostic::InputExtentContract);
+    }
+    let mut seen = BTreeSet::new();
+    for parameter in &data.input_extents {
+        let crate::schedule::TensorRole::Input { ordinal } = parameter.tensor else {
+            return Err(KernelDiagnostic::InputExtentContract);
+        };
+        if !seen.insert((ordinal.get(), parameter.axis.get())) {
+            return Err(KernelDiagnostic::InputExtentContract);
+        }
+        let rank = reads
+            .iter()
+            .find(|read| read.tensor == parameter.tensor)
+            .map_or_else(|| access_rank_from_iteration(schedule), access_rank);
+        if u64::from(parameter.axis.get()) >= rank {
+            return Err(KernelDiagnostic::InputExtentContract);
+        }
+    }
+    if !data.input_extents.is_empty() {
+        let mut used = vec![false; data.input_extents.len()];
+        for block in &data.blocks {
+            for operation in &block.operations {
+                if let OperationKind::InputExtent { parameter } = operation.kind
+                    && let Some(slot) = used.get_mut(parameter as usize)
+                {
+                    *slot = true;
+                }
+            }
+        }
+        if used.iter().any(|used| !used) {
+            return Err(KernelDiagnostic::UnusedInputExtent);
+        }
+    }
+    Ok(())
+}
+
+fn access_rank(access: &Access) -> u64 {
+    match &access.map {
+        crate::schedule::LogicalAccess::LinearIdentity
+        | crate::schedule::LogicalAccess::ScalarBroadcast
+        | crate::schedule::LogicalAccess::PackedU4LsbZeroTail { .. } => 1,
+        crate::schedule::LogicalAccess::ReductionContributor { input_shape, .. } => {
+            input_shape.rank() as u64
+        }
+        crate::schedule::LogicalAccess::ContractionOperand { operand_shape, .. }
+        | crate::schedule::LogicalAccess::ReindexBijection { operand_shape, .. }
+        | crate::schedule::LogicalAccess::BroadcastReplication { operand_shape, .. } => {
+            operand_shape.rank() as u64
+        }
+        crate::schedule::LogicalAccess::ParametricBroadcast { operand_shape, .. } => {
+            operand_shape.rank() as u64
+        }
+        crate::schedule::LogicalAccess::LiveRowMajor { inner_axis } => {
+            u64::from(inner_axis.get()).saturating_add(1)
+        }
+    }
+}
+
+fn access_rank_from_iteration(schedule: &ScheduledRegion) -> u64 {
+    schedule.index.iteration_shape.rank() as u64
 }
 
 fn verify_signature(
@@ -964,6 +1047,43 @@ fn visit_block(
                     walk,
                 );
             }
+            OperationKind::SerialLoopRange { body, .. } => {
+                let accumulators = data
+                    .blocks
+                    .get(*body as usize)
+                    .map(|inner| {
+                        inner
+                            .parameters
+                            .iter()
+                            .skip(1)
+                            .filter_map(|index| data.values.get(*index as usize))
+                            .map(|value| value.value_type)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let summary = walk.loops.len();
+                let first_event = walk.sync.len();
+                walk.loops.push(LoopSummary {
+                    start: 0,
+                    end: 0,
+                    accumulators,
+                    block_depth,
+                    sync: first_event..first_event,
+                });
+                visit_block(
+                    data,
+                    *body,
+                    guarded,
+                    loop_depth.saturating_add(1),
+                    block_depth.saturating_add(1),
+                    guards,
+                    walk,
+                );
+                let last_event = walk.sync.len();
+                if let Some(summary) = walk.loops.get_mut(summary) {
+                    summary.sync = first_event..last_event;
+                }
+            }
             OperationKind::SerialLoop {
                 start, end, body, ..
             } => {
@@ -1012,7 +1132,8 @@ fn visit_block(
             | OperationKind::Compare { .. }
             | OperationKind::Convert { .. }
             | OperationKind::Unary { .. }
-            | OperationKind::PackedExtract { .. } => {}
+            | OperationKind::PackedExtract { .. }
+            | OperationKind::InputExtent { .. } => {}
         }
     }
 }
@@ -1052,7 +1173,13 @@ fn verify_effects(
                 {
                     return Err(KernelDiagnostic::OwnershipEvidence);
                 }
-                if effect.loop_depth != 0 {
+                if effect.loop_depth != 0
+                    && !(effect.loop_depth == 1
+                        && matches!(
+                            write.map,
+                            crate::schedule::LogicalAccess::LiveRowMajor { .. }
+                        ))
+                {
                     return Err(KernelDiagnostic::OutputCoverage);
                 }
             }
@@ -1078,7 +1205,13 @@ fn verify_reduction(
 ) -> Result<(), KernelDiagnostic> {
     match &schedule.schedule.reduction {
         ReductionTopology::None => {
-            if walk.loops.is_empty() {
+            let live_row_major = reads.iter().any(|read| {
+                matches!(
+                    read.map,
+                    crate::schedule::LogicalAccess::LiveRowMajor { .. }
+                )
+            });
+            if walk.loops.is_empty() || (live_row_major && walk.loops.len() == 1) {
                 Ok(())
             } else {
                 Err(KernelDiagnostic::ReductionContract)
@@ -1124,6 +1257,12 @@ fn verify_reduction(
                 return Err(KernelDiagnostic::ContributorDomain);
             }
             verify_contributor_loop(walk, contributors)
+        }
+        ReductionTopology::LiveContraction { .. } => {
+            if reads.len() != 2 {
+                return Err(KernelDiagnostic::ReductionContract);
+            }
+            verify_live_contributor_loop(walk)
         }
         // A cooperative fold is two folds, and the split is exactly what the
         // partition states: each participant combines its own contiguous
@@ -1229,6 +1368,20 @@ fn verify_cooperative_loops(
 /// Zero contributors commit the reduction identity and exactly one contributor
 /// commits the single loaded value; neither admits a bounded loop, whose range
 /// would have to be empty.
+fn verify_live_contributor_loop(walk: &Walk) -> Result<(), KernelDiagnostic> {
+    let [reduction] = walk.loops.as_slice() else {
+        return Err(KernelDiagnostic::ReductionContract);
+    };
+    if reduction.start != 0
+        || reduction.end != 0
+        || reduction.accumulators != [KernelType::F32]
+        || reduction.block_depth != 1
+    {
+        return Err(KernelDiagnostic::ReductionContract);
+    }
+    Ok(())
+}
+
 fn verify_contributor_loop(walk: &Walk, contributors: u64) -> Result<(), KernelDiagnostic> {
     if contributors <= 1 {
         return if walk.loops.is_empty() {

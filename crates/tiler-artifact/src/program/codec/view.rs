@@ -669,6 +669,36 @@ impl<'a> DecodedDeferredPredicate<'a> {
     }
 }
 
+/// **Draft surface, not yet accepted.** Tom has not accepted this exact
+/// included and excluded envelope row. The labelled draft is
+/// [`accept-the-live-extent-artifact-envelope-row`].
+///
+/// [`accept-the-live-extent-artifact-envelope-row`]: ../../../../../tickets/accept-the-live-extent-artifact-envelope-row.md
+///
+/// One live input-extent operand row of a decoded entry.
+#[derive(Clone, Copy, Debug)]
+pub struct DecodedExtentOperand<'a>(pub(crate) &'a super::super::model::ExtentOperandData);
+
+impl<'a> DecodedExtentOperand<'a> {
+    /// Returns the program-interface input whose axis extent is bound.
+    #[must_use]
+    pub fn key(self) -> &'a tiler_ir::semantic::InputKey {
+        &self.0.key
+    }
+
+    /// Returns the axis of that input whose live extent the payload reads.
+    #[must_use]
+    pub fn axis(self) -> tiler_ir::shape::Axis {
+        self.0.axis
+    }
+
+    /// Returns the ABI type of the bound quantity, which must be unsigned.
+    #[must_use]
+    pub fn value_type(self) -> super::super::expr::AbiType {
+        self.0.value_type
+    }
+}
+
 /// One executable entry of a decoded artifact's plan variant.
 #[derive(Clone, Copy, Debug)]
 pub struct DecodedEntry<'a> {
@@ -697,6 +727,22 @@ impl<'a> DecodedEntry<'a> {
     #[must_use]
     pub fn numerical(self) -> DecodedNumerical<'a> {
         DecodedNumerical(&self.data().numerical)
+    }
+
+    /// **Draft surface, not yet accepted.** This accessor, [`DecodedExtentOperand`],
+    /// and the envelope operand row are the labelled draft filed as
+    /// [`accept-the-live-extent-artifact-envelope-row`].
+    ///
+    /// [`accept-the-live-extent-artifact-envelope-row`]: ../../../../../tickets/accept-the-live-extent-artifact-envelope-row.md
+    ///
+    /// Returns the live input-extent operand rows in canonical declaration order.
+    ///
+    /// Empty for every entry whose kernel specializes no live extent. The live
+    /// *value* is not here; runtime binds it from the same
+    /// [`super::super::AbiFacts`] used for range and launch.
+    #[must_use]
+    pub fn extent_operands(self) -> impl ExactSizeIterator<Item = DecodedExtentOperand<'a>> {
+        self.data().input_extents.iter().map(DecodedExtentOperand)
     }
 
     /// Returns the ABI bindings in kernel buffer-parameter order.
@@ -795,10 +841,11 @@ impl<'a> DecodedEntry<'a> {
 
     /// Returns the backend transport slot each ABI binding occupies, in slot order.
     ///
-    /// `transports[i]` is where binding slot `i` goes, so this is the last step
-    /// between an artifact's neutral ABI and a real encoder. `None` under the
+    /// `transports[i]` is where binding slot `i` goes, and the following slots
+    /// are the live-extent operands in declaration order. `None` under the
     /// same conditions as [`Self::backend_symbol`], and never a short list: a
-    /// decode proves the count equals this entry's binding count.
+    /// decode proves the count equals this entry's binding count plus its
+    /// live-extent operand count.
     #[must_use]
     pub fn transport_slots(self, delivery: usize) -> Option<&'a [u32]> {
         self.mapping(delivery)
@@ -1239,6 +1286,10 @@ impl From<ArtifactCodecError> for ArtifactCodecFailure {
             | ArtifactCodecError::UnknownBindingTargetKey { .. }
             | ArtifactCodecError::UnmappedBackendEntry { .. }
             | ArtifactCodecError::EntryTransportCardinality { .. }
+            | ArtifactCodecError::UnknownExtentOperandKey { .. }
+            | ArtifactCodecError::ExtentOperandAxis { .. }
+            | ArtifactCodecError::ExtentOperandType { .. }
+            | ArtifactCodecError::ExtentOperandTransport { .. }
             | ArtifactCodecError::DeclaredFeatureMismatch
             | ArtifactCodecError::MissingReference { .. }
             | ArtifactCodecError::ExpressionOperandOrder { .. }

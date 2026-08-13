@@ -154,7 +154,8 @@ pub use host::{DTypeDispatch, DTypeDispatchResolution, ExecutionEnvironment, Tar
 pub use route::{
     EntrySlot, LiveDeviceObservation, LiveDeviceQualification, LiveDeviceRequest, Preflight,
     PreparedEntryObservation, PreparedEntryPropertySubject, RoutePreparation, RoutedBinding,
-    RoutedDispatch, RoutedEntry, RoutedLaunch, SharedAllocation, TargetPropertyRequest,
+    RoutedDispatch, RoutedEntry, RoutedExtentParameter, RoutedLaunch, SharedAllocation,
+    TargetPropertyRequest,
 };
 
 use route::RouteRequirementRefusal;
@@ -575,6 +576,7 @@ impl DecodedProgram {
             symbol,
             launch: evaluate_launch(position, entry, facts)?,
             bindings: place_bindings(position, entry, transports, facts)?,
+            extent_parameters: bind_extent_parameters(position, entry, transports, facts)?,
         })
     }
 
@@ -1137,6 +1139,32 @@ fn place_bindings<'a>(
     Ok(placed)
 }
 
+/// Freezes each declared live-extent operand from the same [`AbiFacts`] used
+/// for range and launch. Callers do not supply a second list.
+fn bind_extent_parameters(
+    position: usize,
+    entry: DecodedEntry<'_>,
+    transports: &[u32],
+    facts: &AbiFacts,
+) -> Result<Vec<RoutedExtentParameter>, LoadRejection> {
+    let binding_count = entry.bindings().len();
+    let mut bound = Vec::with_capacity(entry.extent_operands().len());
+    for (ordinal, operand) in entry.extent_operands().enumerate() {
+        let Some(value) = facts.input_extent(operand.key(), operand.axis()) else {
+            return Err(LoadRejection::UnboundInputExtent {
+                entry: position,
+                key: operand.key().as_str().to_owned(),
+                axis: operand.axis().get(),
+            });
+        };
+        let transport = *transports
+            .get(binding_count.saturating_add(ordinal))
+            .expect("a decode proved one transport slot per live-extent operand");
+        bound.push(RoutedExtentParameter { transport, value });
+    }
+    Ok(bound)
+}
+
 /// Evaluates one expression a decode proved unsigned.
 fn unsigned(
     expression: DecodedExpr<'_>,
@@ -1650,6 +1678,18 @@ pub enum LoadRejection {
         /// Zero-based position of the precondition that did not hold.
         index: usize,
     },
+    /// A declared live-extent operand has no bound fact in the caller's [`AbiFacts`].
+    ///
+    /// The same environment that sized ranges and launch must answer this
+    /// operand. A second caller-supplied list is not a legal source.
+    UnboundInputExtent {
+        /// Position of the entry in the route's execution order.
+        entry: usize,
+        /// Program-interface input the operand names.
+        key: String,
+        /// Axis of that input.
+        axis: u32,
+    },
     /// A data dependency's shared storage could not be paired to two slots.
     ///
     /// An internal binding carries no name, so a loader that allocated per
@@ -1800,6 +1840,11 @@ impl fmt::Display for LoadRejection {
                 "runtime.launch-precondition: entry {entry}'s precondition {index} does not hold \
                  for the bound facts",
             ),
+            Self::UnboundInputExtent { entry, key, axis } => write!(
+                formatter,
+                "runtime.unbound-input-extent: entry {entry} requires input {key} axis {axis} \
+                 from the same AbiFacts used for range and launch",
+            ),
             Self::UnpairableSharedAllocation { variant, detail } => write!(
                 formatter,
                 "runtime.unpairable-shared-allocation: variant {variant} declares a data \
@@ -1828,6 +1873,7 @@ impl Error for LoadRejection {
             | Self::UnknownDeliveryPosition { .. }
             | Self::ObjectNotCarried
             | Self::LaunchPrecondition { .. }
+            | Self::UnboundInputExtent { .. }
             | Self::UnpairableSharedAllocation { .. } => None,
         }
     }
@@ -1948,6 +1994,20 @@ mod tests {
     #[test]
     fn empty_bytes_are_refused() {
         assert!(DecodedProgram::decode(&[], 0).is_err());
+    }
+
+    #[test]
+    fn an_unbound_live_extent_names_the_missing_fact() {
+        let rejection = LoadRejection::UnboundInputExtent {
+            entry: 0,
+            key: "input".to_owned(),
+            axis: 1,
+        };
+        assert_eq!(
+            rejection.to_string(),
+            "runtime.unbound-input-extent: entry 0 requires input input axis 1 \
+             from the same AbiFacts used for range and launch",
+        );
     }
 
     /// The rejection keeps the codec's own failure reachable as its source.

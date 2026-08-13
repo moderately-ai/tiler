@@ -22,6 +22,8 @@ pub enum KernelLimitKind {
     Buffers,
     /// Workgroup staging-allocation count of one kernel.
     Staging,
+    /// Live input-extent operand count of one kernel signature.
+    InputExtents,
     /// Admitted launch-builtin count of one kernel signature.
     AdmittedBuiltins,
     /// SSA value count of one kernel.
@@ -54,6 +56,8 @@ pub enum KernelEntityKind {
     Buffer,
     /// A workgroup staging allocation.
     Staging,
+    /// A live input-extent operand.
+    InputExtent,
 }
 
 impl fmt::Display for KernelEntityKind {
@@ -136,6 +140,14 @@ pub enum KernelBuildError {
     UndeclaredBuiltin,
     /// A builtin was admitted more than once.
     DuplicateAdmittedBuiltin,
+    /// A live input-extent operand was read without being declared.
+    UndeclaredInputExtent,
+    /// The same input axis was declared as a live extent more than once.
+    DuplicateInputExtent,
+    /// A live extent named a tensor that is not a scheduled input.
+    InputExtentNotInput,
+    /// A live extent named an axis the scheduled input does not have.
+    InputExtentWrongAxis,
     /// A single-assignment component was set more than once.
     ComponentAlreadySet {
         /// Component whose slot was already populated.
@@ -209,6 +221,10 @@ pub enum KernelDiagnostic {
     AddressSpaceContract,
     /// The admitted builtins do not realize the scheduled execution binding.
     BuiltinContract,
+    /// The declared live input extents do not match the scheduled region.
+    InputExtentContract,
+    /// A declared live input extent is never read.
+    UnusedInputExtent,
     /// The declared numerical realization differs from the scheduled region's.
     NumericalRealization,
     /// The declared resource requirements differ from the derived requirements.
@@ -364,6 +380,8 @@ impl KernelDiagnostic {
             Self::BufferContract => "buffer-contract",
             Self::AddressSpaceContract => "address-space-contract",
             Self::BuiltinContract => "builtin-contract",
+            Self::InputExtentContract => "input-extent-contract",
+            Self::UnusedInputExtent => "unused-input-extent",
             Self::NumericalRealization => "numerical-realization",
             Self::ResourceRequirements => "resource-requirements",
             Self::PredicateDominance => "predicate-dominance",

@@ -125,6 +125,7 @@ impl<'a> RealizationWitness<'a> {
             ReductionTopology::Serial { order, .. }
             | ReductionTopology::MultiPass { order, .. }
             | ReductionTopology::Contraction { order, .. }
+            | ReductionTopology::LiveContraction { order, .. }
             | ReductionTopology::CooperativeWorkgroup { order, .. }
             | ReductionTopology::CooperativeContraction { order, .. } => Some(*order),
         }
@@ -146,7 +147,8 @@ impl<'a> RealizationWitness<'a> {
         match self.reduction {
             ReductionTopology::None
             | ReductionTopology::Contraction { .. }
-            | ReductionTopology::CooperativeContraction { .. } => &[],
+            | ReductionTopology::CooperativeContraction { .. }
+            | ReductionTopology::LiveContraction { .. } => &[],
             ReductionTopology::Serial { axes, .. }
             | ReductionTopology::MultiPass { axes, .. }
             | ReductionTopology::CooperativeWorkgroup { axes, .. } => axes,
@@ -174,6 +176,7 @@ impl<'a> RealizationWitness<'a> {
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
             | ReductionTopology::MultiPass { .. }
+            | ReductionTopology::LiveContraction { .. }
             | ReductionTopology::CooperativeWorkgroup { .. } => None,
         }
     }
@@ -187,7 +190,8 @@ impl<'a> RealizationWitness<'a> {
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
             | ReductionTopology::Contraction { .. }
-            | ReductionTopology::CooperativeContraction { .. } => None,
+            | ReductionTopology::CooperativeContraction { .. }
+            | ReductionTopology::LiveContraction { .. } => None,
         }
     }
 
@@ -202,7 +206,8 @@ impl<'a> RealizationWitness<'a> {
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
             | ReductionTopology::Contraction { .. }
-            | ReductionTopology::CooperativeContraction { .. } => None,
+            | ReductionTopology::CooperativeContraction { .. }
+            | ReductionTopology::LiveContraction { .. } => None,
         }
     }
 
@@ -221,6 +226,7 @@ impl<'a> RealizationWitness<'a> {
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
             | ReductionTopology::Contraction { .. }
+            | ReductionTopology::LiveContraction { .. }
             | ReductionTopology::CooperativeWorkgroup { .. }
             | ReductionTopology::CooperativeContraction { .. } => None,
         }
@@ -251,7 +257,8 @@ impl<'a> RealizationWitness<'a> {
             | ReductionTopology::CooperativeContraction { accumulation, .. } => *accumulation,
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
-            | ReductionTopology::Contraction { .. } => region_arithmetic_type(self.program),
+            | ReductionTopology::Contraction { .. }
+            | ReductionTopology::LiveContraction { .. } => region_arithmetic_type(self.program),
         }
     }
 
@@ -264,7 +271,8 @@ impl<'a> RealizationWitness<'a> {
             | ReductionTopology::Serial { .. }
             | ReductionTopology::MultiPass { .. }
             | ReductionTopology::Contraction { .. }
-            | ReductionTopology::CooperativeContraction { .. } => None,
+            | ReductionTopology::CooperativeContraction { .. }
+            | ReductionTopology::LiveContraction { .. } => None,
         }
     }
 

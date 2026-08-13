@@ -18,7 +18,7 @@ use tiler_ir::program::abi::{PreparedEntryTargetRequirement, TargetPropertyRequi
 use tiler_ir::program::{
     MaterializedOrigin, MaterializedValueRef, StageRef, ValueRole, VerifiedKernelProgram,
 };
-use tiler_ir::schedule::NumericalRealization;
+use tiler_ir::schedule::{NumericalRealization, TensorRole};
 use tiler_ir::semantic::{
     InputKey, OutputKey, ProviderIdentity, ResolvedValueType, SemanticIdentity, SemanticProgram,
 };
@@ -42,15 +42,15 @@ use super::keys::{BackendKey, FeasibilityRuleSetRef, RepresentationKey, TargetPr
 use super::model::{
     ArtifactExecutionPolicy, ArtifactProgramData, ArtifactSchema, BackendEntryRef,
     BackendPayloadDescriptor, BindingData, BindingKind, BindingTargetData, DeferredPredicateData,
-    EntryData, InterfaceComponentData, InterfaceEntryData, LaunchData, RoutingPolicy,
-    SchemaVersion, SelectedProvider, StoredBackendEntry, VariantData, VerifiedArtifactProgram,
-    encode_identity, packaged_entry_positions,
+    EntryData, ExtentOperandData, InterfaceComponentData, InterfaceEntryData, LaunchData,
+    RoutingPolicy, SchemaVersion, SelectedProvider, StoredBackendEntry, VariantData,
+    VerifiedArtifactProgram, encode_identity, packaged_entry_positions,
 };
 use super::realization::DeliveredRealizationRecord;
 use super::requirement::RouteRequirement;
 use super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
-    MAX_DELIVERY_POSITIONS, MAX_ENTRY_BINDINGS, MAX_ENVIRONMENT_PROVIDERS,
+    MAX_DELIVERY_POSITIONS, MAX_ENTRY_BINDINGS, MAX_ENTRY_EXTENTS, MAX_ENVIRONMENT_PROVIDERS,
     MAX_LAUNCH_PRECONDITIONS, MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_PROVIDERS, MAX_VARIANT_ENTRIES,
 };
 
@@ -1174,6 +1174,7 @@ impl ArtifactProgramBuilder {
         let mut positions = self.delivery_positions;
         for (index, (spec, stage)) in specs.iter().zip(program.stages()).enumerate() {
             let bindings = self.check_bindings(program, index, spec, stage, facts, derived)?;
+            let input_extents = derive_extent_operands(index, stage)?;
             let launch = self.check_launch(index, &spec.launch, stage, facts, &derived.adopted)?;
             let declared = spec.implementation.payloads.len();
             if declared == 0 {
@@ -1201,6 +1202,7 @@ impl ArtifactProgramBuilder {
             }
             resolved.push(EntryData {
                 bindings,
+                input_extents,
                 launch,
                 implementation: StoredBackendEntry {
                     payloads,
@@ -1702,6 +1704,68 @@ fn binding_target(
         | (MaterializedOrigin::ProgramInput { .. }, role @ ValueRole::Output)
         | (MaterializedOrigin::Internal, role @ ValueRole::Input) => Err(unnameable(role)),
     }
+}
+
+/// Derives the live input-extent operand rows from the kernel the entry binds.
+///
+/// Callers do not supply a second list. Each kernel operand names a region-local
+/// input; this maps that tensor through the stage access that reads it onto the
+/// program-interface key, and refuses a kernel operand the entry does not bind
+/// or an axis the bound input does not have.
+fn derive_extent_operands(
+    entry: usize,
+    stage: StageRef<'_>,
+) -> Result<Vec<ExtentOperandData>, ArtifactBuildError> {
+    let kernel = stage.kernel();
+    let declared = kernel.input_extents().len();
+    limit(declared, MAX_ENTRY_EXTENTS, ArtifactLimitKind::EntryExtents)?;
+    let buffers: Vec<_> = kernel.buffers().collect();
+    let accesses: Vec<_> = stage.accesses().collect();
+    let mut rows = Vec::with_capacity(declared);
+    for parameter in kernel.input_extents() {
+        let TensorRole::Input { ordinal } = parameter.tensor else {
+            return Err(ArtifactBuildError::ExtentOperandUnbound {
+                entry,
+                ordinal: u32::MAX,
+                axis: parameter.axis.get(),
+            });
+        };
+        let Some(view) = buffers
+            .iter()
+            .zip(&accesses)
+            .find(|(buffer, _)| buffer.tensor == parameter.tensor)
+            .map(|(_, access)| access.view())
+        else {
+            return Err(ArtifactBuildError::ExtentOperandUnbound {
+                entry,
+                ordinal: ordinal.get(),
+                axis: parameter.axis.get(),
+            });
+        };
+        let value = view.value();
+        let MaterializedOrigin::ProgramInput { key } = value.origin() else {
+            return Err(ArtifactBuildError::ExtentOperandUnbound {
+                entry,
+                ordinal: ordinal.get(),
+                axis: parameter.axis.get(),
+            });
+        };
+        let rank = value.shape().rank();
+        if usize::try_from(parameter.axis.get()).unwrap_or(usize::MAX) >= rank {
+            return Err(ArtifactBuildError::ExtentOperandAxis {
+                entry,
+                key: key.as_str().to_owned(),
+                axis: parameter.axis.get(),
+                rank,
+            });
+        }
+        rows.push(ExtentOperandData {
+            key: key.clone(),
+            axis: parameter.axis,
+            value_type: super::AbiType::Unsigned,
+        });
+    }
+    Ok(rows)
 }
 
 /// Every arena position the program's own ABI names.

@@ -47,20 +47,22 @@ use super::super::keys::{
 };
 use super::super::model::{
     ArtifactExecutionPolicy, BINDING_TARGET_INTERNAL, BINDING_TARGET_PROGRAM_INPUT,
-    BINDING_TARGET_PROGRAM_OUTPUT, BindingKind, BindingTarget, BindingTargetData, RoutingPolicy,
-    SchemaVersion, StageDependencyData, StageDependencyReason, address_space_from_tag,
-    address_space_tag, buffer_access_from_tag, buffer_access_tag, element_type_from_tag,
-    element_type_tag, exceptional_assumption_from_tag, exceptional_assumption_tag,
-    permission_from_tag, permission_tag, push_component_role, push_storage_encoding,
-    storage_scalar_from_tag, storage_scalar_tag, subnormal_from_tag, subnormal_tag,
+    BINDING_TARGET_PROGRAM_OUTPUT, BindingKind, BindingTarget, BindingTargetData,
+    ExtentOperandData, RoutingPolicy, SchemaVersion, StageDependencyData, StageDependencyReason,
+    address_space_from_tag, address_space_tag, buffer_access_from_tag, buffer_access_tag,
+    element_type_from_tag, element_type_tag, exceptional_assumption_from_tag,
+    exceptional_assumption_tag, permission_from_tag, permission_tag, push_component_role,
+    push_storage_encoding, storage_scalar_from_tag, storage_scalar_tag, subnormal_from_tag,
+    subnormal_tag,
 };
 use super::super::requirement::{RouteRequirement, RouteRequirementError, RouteResourceDimension};
 use super::super::tests::{
     ELEMENT_BYTES, Formulas, OTHER_SCALE_BITS, SCALE_BITS, SCRATCH_OFFSET, bf16_pointwise_artifact,
     build_artifact, declare_realization, declare_realization_over, default_artifact,
-    f32_pointwise_artifact, formulas, fused_program, lowering_provider, partial_window_artifact,
-    payload, prepared_requirement, profile, requiring_artifact, route_feature, route_resource,
-    selection, semantic_program, spare_provider, strict_affine_u4_dequantize_artifact, variant,
+    f32_pointwise_artifact, formulas, fused_program, live_extent_artifact, lowering_provider,
+    partial_window_artifact, payload, prepared_requirement, profile, requiring_artifact,
+    route_feature, route_resource, selection, semantic_program, spare_provider,
+    strict_affine_u4_dequantize_artifact, variant,
 };
 use super::super::{
     ArtifactProgramBuilder, CompilationEnvironment, MAX_ROUTE_REQUIREMENTS, MAX_VARIANT_ENTRIES,
@@ -2889,6 +2891,7 @@ fn an_entry_mapping_that_does_not_place_every_binding_is_rejected() {
         ArtifactCodecError::EntryTransportCardinality {
             payload: 0,
             bindings: 2,
+            extents: 0,
             transports: 1,
         },
     );
@@ -4536,5 +4539,130 @@ fn too_many_route_requirements_are_rejected() {
             }),
         ),
         "the encoder refuses to write a variant no reader would admit",
+    );
+}
+
+fn live_extent_row() -> ExtentOperandData {
+    ExtentOperandData {
+        key: InputKey::new("input").unwrap(),
+        axis: Axis::new(1),
+        value_type: AbiType::Unsigned,
+    }
+}
+
+#[test]
+fn omitting_the_transport_for_a_declared_live_extent_row_is_refused() {
+    let error = reject_artifact_forgery(&carried_artifact(b"k", b"c"), |envelope| {
+        envelope.variants[0].entries[0].input_extents = vec![live_extent_row()];
+    });
+    assert_eq!(
+        error,
+        ArtifactCodecError::EntryTransportCardinality {
+            payload: 0,
+            bindings: 2,
+            extents: 1,
+            transports: 2,
+        },
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_reordered_live_extent_list_is_refused() {
+    let artifact = live_extent_artifact();
+    let error = reject_artifact_forgery(&artifact, |envelope| {
+        envelope.variants[0].entries[0].input_extents = vec![
+            ExtentOperandData {
+                key: InputKey::new("input").unwrap(),
+                axis: Axis::new(1),
+                value_type: AbiType::Unsigned,
+            },
+            ExtentOperandData {
+                key: InputKey::new("input").unwrap(),
+                axis: Axis::new(0),
+                value_type: AbiType::Unsigned,
+            },
+        ];
+    });
+    assert_eq!(
+        error,
+        ArtifactCodecError::NonCanonicalOrder {
+            subject: OrderedSubject::ExtentOperand,
+        },
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_duplicated_live_extent_row_is_refused() {
+    let artifact = live_extent_artifact();
+    let row = live_extent_row();
+    let error = reject_artifact_forgery(&artifact, |envelope| {
+        envelope.variants[0].entries[0].input_extents = vec![row.clone(), row];
+    });
+    assert_eq!(
+        error,
+        ArtifactCodecError::DuplicateItem {
+            subject: OrderedSubject::ExtentOperand,
+        },
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_wrong_axis_live_extent_row_is_refused() {
+    let artifact = live_extent_artifact();
+    let error = reject_artifact_forgery(&artifact, |envelope| {
+        envelope.variants[0].entries[0].input_extents[0].axis = Axis::new(99);
+    });
+    assert_eq!(
+        error,
+        ArtifactCodecError::ExtentOperandAxis {
+            key: "input".to_owned(),
+            axis: 99,
+            rank: 2,
+        },
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_wrong_type_live_extent_row_is_refused() {
+    let artifact = live_extent_artifact();
+    let error = reject_artifact_forgery(&artifact, |envelope| {
+        envelope.variants[0].entries[0].input_extents[0].value_type = AbiType::Boolean;
+    });
+    assert_eq!(
+        error,
+        ArtifactCodecError::ExtentOperandType {
+            key: "input".to_owned(),
+            axis: 1,
+        },
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_misordered_extent_transport_is_refused() {
+    let error = reject_artifact_forgery(&carried_artifact(b"k", b"c"), |envelope| {
+        envelope.variants[0].entries[0].input_extents = vec![live_extent_row()];
+        let sections = envelope.payload_content()[0].expect("the payload is carried");
+        let mut metadata = decode_metadata(&envelope.sections[position(sections.metadata)].bytes)
+            .expect("the subject decodes");
+        metadata.entries[0].transports = vec![0, 1, 0];
+        let bytes = super::payload::encode_metadata(&metadata);
+        envelope.payloads[0].digest =
+            super::payload::payload_identity(&bytes).expect("a bounded subject has an identity");
+        envelope.sections[position(sections.metadata)].bytes = bytes;
+    });
+    assert_eq!(
+        error,
+        ArtifactCodecError::ExtentOperandTransport {
+            payload: 0,
+            operand: 0,
+            declared: 0,
+            expected: 2,
+        },
+        "{error:?}"
     );
 }

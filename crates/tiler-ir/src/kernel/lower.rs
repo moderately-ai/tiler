@@ -20,7 +20,7 @@ use crate::schedule::{
     NumericalRealization, OwnershipWitnessId, PointwiseBf16Expression, PointwiseBf16Node,
     PointwiseF32Expression, PointwiseF32Node, ReductionPass, ReductionTopology,
     ResourceRequirements, ScalarProgram, ScheduledRegion, TensorRole, VerifiedScheduledRegion,
-    contributor_count, element_count,
+    contributor_count, element_count, live_input_extents,
 };
 use crate::shape::Shape;
 
@@ -29,9 +29,9 @@ use super::error::{KernelBuildError, KernelDiagnostic, KernelLoweringError};
 use super::handles::{KernelBufferId, KernelStagingId, KernelValueId};
 use super::model::{
     AddressSpace, BarrierOrdering, BarrierSpec, BinaryOp, BufferAccess, BufferParameter, Builtin,
-    CompareOp, ConvertOp, ExecutionScope, KernelConstant, KernelData, KernelType, MemoryScope,
-    PackedExtractOp, SerialLoopSpec, StagingParameter, UnaryOp, VerifiedKernel,
-    region_element_type,
+    CompareOp, ConvertOp, ExecutionScope, InputExtentParameter, KernelConstant, KernelData,
+    KernelType, MemoryScope, PackedExtractOp, SerialLoopSpec, StagingParameter, UnaryOp,
+    VerifiedKernel, region_element_type,
 };
 use super::verify::{access_elements, boundary_accesses};
 
@@ -65,6 +65,9 @@ struct OffsetTerm {
 enum ReadAddressing {
     /// One iteration coordinate addresses one linear element position.
     Identity,
+    /// One invocation owns a static outer coordinate and loops a live inner
+    /// extent: `offset = row * N + col`.
+    LiveRowMajor { inner_axis: crate::shape::Axis },
     /// A reduction contributor position linearized over the input shape.
     Linearized(Vec<OffsetTerm>),
     /// A partitioned contributor position of one pass of a split reduction.
@@ -162,6 +165,7 @@ struct CanonicalPlan<'a> {
     contributors: u64,
     addressing: Vec<ReadAddressing>,
     cooperative: Option<CooperativePlan>,
+    live_extents: Vec<(TensorRole, crate::shape::Axis)>,
 }
 
 /// Lowers one verified scheduled region to its canonical verified kernel.
@@ -218,7 +222,7 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
     // its own partition's share, not the whole reduction's sequence, which is
     // exactly the difference the split exists to create.
     let contributors = match &schedule.schedule.reduction {
-        ReductionTopology::None => 0,
+        ReductionTopology::None | ReductionTopology::LiveContraction { .. } => 0,
         ReductionTopology::Serial { axes, .. }
         | ReductionTopology::MultiPass {
             pass: ReductionPass::Final,
@@ -279,6 +283,7 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
         contributors,
         addressing,
         cooperative: cooperative_plan(schedule)?,
+        live_extents: live_input_extents(schedule),
     })
 }
 
@@ -486,6 +491,9 @@ fn addressing(
 ) -> Result<ReadAddressing, KernelDiagnostic> {
     match &read.map {
         LogicalAccess::LinearIdentity => Ok(ReadAddressing::Identity),
+        LogicalAccess::LiveRowMajor { inner_axis } => Ok(ReadAddressing::LiveRowMajor {
+            inner_axis: *inner_axis,
+        }),
         LogicalAccess::ScalarBroadcast | LogicalAccess::PackedU4LsbZeroTail { .. } => {
             Err(KernelDiagnostic::BodyRefinement)
         }
@@ -529,6 +537,7 @@ fn addressing(
                 | ReductionTopology::Serial { .. }
                 | ReductionTopology::Contraction { .. }
                 | ReductionTopology::CooperativeContraction { .. }
+                | ReductionTopology::LiveContraction { .. }
                 | ReductionTopology::MultiPass { .. } => Ok(ReadAddressing::Linearized(terms)),
             }
         }
@@ -811,11 +820,108 @@ fn emit(
     builder.numerical(plan.numerical)?;
     builder.requirements(requirements)?;
 
+    let live = declare_plan_live_extents(builder, plan)?;
     let invocation = builder.builtin(Builtin::GlobalInvocationIndex)?;
     let extent = builder.constant(KernelConstant::Index(plan.work_items))?;
     let active = builder.compare(CompareOp::IndexLessThan, invocation, extent)?;
     builder.predicated(active, |builder| {
-        emit_guarded(builder, plan, &read_buffers, write_buffer, invocation)
+        if plan
+            .addressing
+            .iter()
+            .any(|addressing| matches!(addressing, ReadAddressing::LiveRowMajor { .. }))
+        {
+            emit_live_row_major(
+                builder,
+                plan,
+                &read_buffers,
+                write_buffer,
+                invocation,
+                &live,
+            )
+        } else {
+            emit_guarded(
+                builder,
+                plan,
+                &read_buffers,
+                write_buffer,
+                invocation,
+                &live,
+            )
+        }
+    })?;
+    Ok(())
+}
+
+fn declare_plan_live_extents(
+    builder: &mut KernelBuilder,
+    plan: &CanonicalPlan<'_>,
+) -> Result<Vec<(InputExtentParameter, KernelValueId)>, KernelBuildError> {
+    let mut declared = Vec::with_capacity(plan.live_extents.len());
+    for &(tensor, axis) in &plan.live_extents {
+        let id = builder.declare_input_extent(InputExtentParameter { tensor, axis })?;
+        let value = builder.input_extent(id)?;
+        declared.push((InputExtentParameter { tensor, axis }, value));
+    }
+    Ok(declared)
+}
+
+fn emit_live_row_major(
+    builder: &mut KernelBuilder,
+    plan: &CanonicalPlan<'_>,
+    read_buffers: &[KernelBufferId],
+    write_buffer: KernelBufferId,
+    row: KernelValueId,
+    live: &[(InputExtentParameter, KernelValueId)],
+) -> Result<(), KernelBuildError> {
+    let columns = live
+        .iter()
+        .find_map(|(parameter, value)| {
+            plan.addressing
+                .iter()
+                .find_map(|addressing| match addressing {
+                    ReadAddressing::LiveRowMajor { inner_axis }
+                        if parameter.axis == *inner_axis =>
+                    {
+                        Some(*value)
+                    }
+                    _ => None,
+                })
+        })
+        .ok_or(KernelBuildError::UndeclaredInputExtent)?;
+    let start = builder.constant(KernelConstant::Index(0))?;
+    let seed = builder.constant(KernelConstant::Index(0))?;
+    builder.serial_loop_range(start, columns, &[seed], |builder, parameters| {
+        let col = parameters.induction();
+        let stride = builder.binary(BinaryOp::IndexMultiply, row, columns)?;
+        let offset = builder.binary(BinaryOp::IndexAdd, stride, col)?;
+        let mut inputs = Vec::with_capacity(read_buffers.len());
+        for (buffer, read) in read_buffers.iter().zip(plan.reads) {
+            inputs.push(builder.load(*buffer, offset, read.bounds)?);
+        }
+        let mapped = match plan.scalar {
+            ScalarProgram::PointwiseF32(expression) => {
+                emit_pointwise(builder, expression, &inputs)?
+            }
+            ScalarProgram::PointwiseBf16(expression) => {
+                emit_pointwise_bf16(builder, expression, &inputs)?
+            }
+            _ => {
+                return Err(KernelBuildError::InvalidHandle {
+                    entity: super::error::KernelEntityKind::Value,
+                });
+            }
+        };
+        builder.store(
+            write_buffer,
+            offset,
+            mapped,
+            plan.write_bounds,
+            plan.ownership,
+        )?;
+        let carried = parameters
+            .accumulator(0)
+            .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
+        Ok(vec![carried])
     })?;
     Ok(())
 }
@@ -826,6 +932,7 @@ fn emit_guarded(
     read_buffers: &[KernelBufferId],
     write_buffer: KernelBufferId,
     invocation: KernelValueId,
+    live: &[(InputExtentParameter, KernelValueId)],
 ) -> Result<(), KernelBuildError> {
     // The reduction families read exactly one tensor, which the schedule
     // verifier proved before this plan existed. Resolving that here as a typed
@@ -996,6 +1103,7 @@ fn emit_guarded(
                 [(*left, left_read.bounds), (*right, right_read.bounds)],
                 write_buffer,
                 invocation,
+                live,
             )
         }
     }
@@ -1030,9 +1138,27 @@ fn emit_contraction(
     reads: [(KernelBufferId, BoundsWitnessId); 2],
     write_buffer: KernelBufferId,
     invocation: KernelValueId,
+    live: &[(InputExtentParameter, KernelValueId)],
 ) -> Result<(), KernelBuildError> {
     let seed = emit_contraction_product(builder, plan, reads, invocation, None)?;
-    let total = if plan.contributors <= 1 {
+    let total = if let Some((_, bound)) = live.first().filter(|_| plan.contributors == 0) {
+        let start = builder.constant(KernelConstant::Index(1))?;
+        let results =
+            builder.serial_loop_range(start, *bound, &[seed], |builder, parameters| {
+                let induction = parameters.induction();
+                let accumulator = parameters
+                    .accumulator(0)
+                    .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
+                let product =
+                    emit_contraction_product(builder, plan, reads, invocation, Some(induction))?;
+                let sum = builder.binary(BinaryOp::F32Add, accumulator, product)?;
+                let sum = builder.convert(ConvertOp::CanonicalizeF32Nan, sum)?;
+                Ok(vec![sum])
+            })?;
+        results
+            .get(0)
+            .ok_or(KernelBuildError::EmptyLoopAccumulators)?
+    } else if plan.contributors <= 1 {
         seed
     } else {
         let results = builder.serial_loop(
@@ -2186,6 +2312,11 @@ fn emit_offset(
 ) -> Result<KernelValueId, KernelBuildError> {
     let (terms, output, contributor) = match addressing {
         ReadAddressing::Identity => return Ok(invocation),
+        ReadAddressing::LiveRowMajor { .. } => {
+            return Err(KernelBuildError::InvalidHandle {
+                entity: super::error::KernelEntityKind::Value,
+            });
+        }
         ReadAddressing::Linearized(terms) => (terms, invocation, contributor),
         ReadAddressing::Partitioned {
             terms,

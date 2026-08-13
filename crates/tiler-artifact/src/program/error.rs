@@ -66,6 +66,8 @@ pub enum ArtifactLimitKind {
     Entries,
     /// ABI binding count of one executable entry.
     EntryBindings,
+    /// Live input-extent operand count of one executable entry.
+    EntryExtents,
     /// Node count of the shared ABI expression arena.
     Expressions,
     /// Backend payload descriptor count of one artifact program.
@@ -423,6 +425,26 @@ pub enum ArtifactBuildError {
         /// Payload count this entry declared.
         actual: usize,
     },
+    /// A kernel live-extent operand does not name a program input this entry binds.
+    ExtentOperandUnbound {
+        /// Ordered entry position.
+        entry: usize,
+        /// Region-local input ordinal the kernel named.
+        ordinal: u32,
+        /// Axis the kernel named.
+        axis: u32,
+    },
+    /// A kernel live-extent operand names an axis the bound input does not have.
+    ExtentOperandAxis {
+        /// Ordered entry position.
+        entry: usize,
+        /// Stable input key the operand names.
+        key: String,
+        /// Axis the kernel named.
+        axis: u32,
+        /// Rank of the bound input.
+        rank: usize,
+    },
     /// An entry declared a different binding count than its kernel signature.
     BindingCardinality {
         /// Ordered entry position.
@@ -646,6 +668,8 @@ impl Error for ArtifactBuildError {
             | Self::EntryCardinality { .. }
             | Self::EmptyDelivery { .. }
             | Self::DeliveryCardinality { .. }
+            | Self::ExtentOperandUnbound { .. }
+            | Self::ExtentOperandAxis { .. }
             | Self::BindingCardinality { .. }
             | Self::UnnameableBindingTarget { .. }
             | Self::AliasedInternalBinding { .. }

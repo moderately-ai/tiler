@@ -101,6 +101,8 @@ function-constant indices, Apple triples, or MSL versions. Those belong to the
 Metal payload. A future CUDA payload can use cubin/PTX and CUDA parameter
 metadata without changing the neutral program schema.
 
+**Draft — live input-extent artifact envelope row, 2026-08-13, not yet accepted.** A compiled payload may consume a program-interface `AbiRoot::InputExtent` in address and loop arithmetic through the accepted structured-kernel `InputExtentParameter`. The envelope now carries that declaration as a per-entry operand row (`DecodedExtentOperand`: interface key, axis, unsigned type) after the backend entry key. Empty lists write nothing, so `tiler.artifact-program.v16` does not step. Metal emits the operand as a read-only `constant ulong&` in the next `[[buffer(N)]]` slot after the kernel's buffer table; the payload mapping's extra transports are that placement. The live *value* is frozen from the same `AbiFacts` used for range and launch evaluation and is excluded from artifact, payload, library, and pipeline identity; only the declaration is. `RoutedExtentParameter` is the routed spelling. The kernel/runtime spelling is accepted; this envelope row is a labelled draft: Tom accepts the exact included and excluded surface under [`accept-the-live-extent-artifact-envelope-row`](../tickets/accept-the-live-extent-artifact-envelope-row.md).
+
 Every section descriptor contains its required/optional meaning, schema, exact
 byte length, and digest. The header bounds total length, manifest length, and
 section count before allocation. All executable and required metadata bytes are

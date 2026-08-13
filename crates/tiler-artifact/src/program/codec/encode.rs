@@ -11,11 +11,12 @@
 //! cannot silently renumber a value that is already on disk.
 
 use super::super::expr::ExprNode;
-use super::super::model::{address_space_tag, buffer_access_tag};
 use super::super::model::{
-    element_type_tag, push_binding_target, push_component_role, push_numerical, push_resources,
-    push_shape, push_storage_encoding, storage_scalar_tag,
+    INPUT_EXTENT_BLOCK_TAG, abi_type_tag, element_type_tag, push_binding_target,
+    push_component_role, push_numerical, push_resources, push_shape, push_storage_encoding,
+    storage_scalar_tag,
 };
+use super::super::model::{address_space_tag, buffer_access_tag};
 use super::super::requirement::RouteRequirement;
 use super::budget::check_budgets;
 use super::error::{ArtifactCodecError, CodecLimitKind, codec_limit};
@@ -751,6 +752,15 @@ fn encode_entry(bytes: &mut Vec<u8>, entry: &EntryRow) {
         bytes.extend_from_slice(&payload.to_be_bytes());
     }
     push_slice(bytes, entry.entry_key.as_bytes());
+    if !entry.input_extents.is_empty() {
+        bytes.push(INPUT_EXTENT_BLOCK_TAG);
+        push_len(bytes, entry.input_extents.len());
+        for operand in &entry.input_extents {
+            push_slice(bytes, operand.key.as_str().as_bytes());
+            bytes.extend_from_slice(&operand.axis.get().to_be_bytes());
+            bytes.push(abi_type_tag(operand.value_type));
+        }
+    }
 }
 
 /// Encodes one section descriptor per framed section.
