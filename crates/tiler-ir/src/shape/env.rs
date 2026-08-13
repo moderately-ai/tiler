@@ -1114,12 +1114,6 @@ impl ShapeEnv {
     }
 }
 
-/// Encodes one bound environment canonically.
-///
-/// Domain-separated and length-prefixed per ADR 0074, over the entries and
-/// constraints in the canonical order `build` established, so the bytes are a
-/// function of the environment rather than of authoring order. Guards are not
-/// encoded; the retained proof summary is not an identity component.
 /// Returns the identity of the environment that declares and constrains nothing.
 ///
 /// **Crate-internal, and total rather than optional on purpose.** A consumer
@@ -1147,6 +1141,12 @@ pub(crate) fn empty_environment_identity() -> &'static ShapeEnvIdentity {
     &EMPTY
 }
 
+/// Encodes one bound environment canonically.
+///
+/// Domain-separated and length-prefixed per ADR 0074, over the entries and
+/// constraints in the canonical order `build` established, so the bytes are a
+/// function of the environment rather than of authoring order. Guards are not
+/// encoded; the retained proof summary is not an identity component.
 fn encode_environment(
     entries: &[(ShapeSymbol, RootBinding)],
     constraints: &[SemanticInputConstraint],
