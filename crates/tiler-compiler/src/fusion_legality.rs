@@ -3068,10 +3068,7 @@ mod slice_role_tests {
         let scaled = F32Multiply::apply(&mut builder, logits, gain).unwrap();
         let selection = SliceSelection::new([
             SliceAxisSelection::WholeAxis,
-            SliceAxisSelection::Window {
-                offset: 3,
-                extent: Extent::new(1),
-            },
+            SliceAxisSelection::static_window(3, Extent::new(1)),
         ])
         .unwrap();
         let selected = F32Slice::apply(&mut builder, &selection, scaled).unwrap();
@@ -3205,8 +3202,8 @@ mod slice_role_tests {
         assert!(
             reached_slice
                 .normative_definition()
-                .contains("window grammar carries only a literal offset and a literal extent"),
-            "the compiler proof does not carry the corrected Slice selection grammar: {reached_slice:?}",
+                .contains("offset is a SourcedExtent"),
+            "the compiler proof does not carry the source-bearing Slice selection grammar: {reached_slice:?}",
         );
         assert!(
             reached_slice.normative_definition().contains(

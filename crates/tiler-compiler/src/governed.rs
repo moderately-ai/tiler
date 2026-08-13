@@ -2172,10 +2172,15 @@ impl IndexAccessLoweringProvider for GovernedSliceF32 {
         for (selection, coordinate) in selection.axes().iter().zip(&coordinates) {
             operand_coordinates.push(match selection {
                 SliceAxisSelection::WholeAxis => *coordinate,
-                SliceAxisSelection::Window { offset, .. } => context.linear_combination(
-                    IndexInteger::from_u64(*offset),
-                    &[(IndexInteger::from_u64(1), *coordinate)],
-                )?,
+                SliceAxisSelection::Window { offset, .. } => {
+                    let Some(literal) = offset.as_static() else {
+                        return Err(occurrence_error("slice-symbolic-offset"));
+                    };
+                    context.linear_combination(
+                        IndexInteger::from_u64(literal.get()),
+                        &[(IndexInteger::from_u64(1), *coordinate)],
+                    )?
+                }
             });
         }
 
@@ -4310,15 +4315,9 @@ mod tests {
     #[test]
     fn the_governed_slice_region_reads_the_literal_offset_on_every_restricted_axis() {
         let selection = SliceSelection::new([
-            SliceAxisSelection::Window {
-                offset: 1,
-                extent: Extent::new(2),
-            },
+            SliceAxisSelection::static_window(1, Extent::new(2)),
             SliceAxisSelection::WholeAxis,
-            SliceAxisSelection::Window {
-                offset: 2,
-                extent: Extent::new(2),
-            },
+            SliceAxisSelection::static_window(2, Extent::new(2)),
         ])
         .unwrap();
         assert_eq!(

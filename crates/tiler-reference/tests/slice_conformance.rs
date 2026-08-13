@@ -11,12 +11,12 @@
 //! caller reaches through the same facade. Every operand is `tiler::f32@1` and
 //! every extent is static.
 //!
-//! **What it does not cover:** any symbolic offset or symbolic extent — the
-//! family refuses both by name — any strided selection, any rank above four, any
-//! dtype but F32, any compiled or executed realization, and the pinned model's
-//! own extents. The shapes here are small stand-ins chosen so the expectations
-//! can be written out by hand. A pass here is evidence about the semantic
-//! contract and the reference evaluator, not about a plan or a kernel.
+//! **What it does not cover:** source-bearing offsets (those live in the crate
+//! tests that construct a `ShapeEnv`), any strided selection, any rank above
+//! four, any dtype but F32, any compiled or executed realization, and the pinned
+//! model's own extents. The shapes here are small stand-ins chosen so the
+//! expectations can be written out by hand. A pass here is evidence about the
+//! semantic contract and the reference evaluator, not about a plan or a kernel.
 //!
 //! # Why the expectations are written out
 //!
@@ -41,14 +41,11 @@ use tiler_reference::{
 const WHOLE: SliceAxisSelection = SliceAxisSelection::WholeAxis;
 
 fn window(offset: u64, extent: u64) -> SliceAxisSelection {
-    SliceAxisSelection::Window {
-        offset,
-        extent: Extent::new(extent),
-    }
+    SliceAxisSelection::static_window(offset, Extent::new(extent))
 }
 
 fn selection(axes: &[SliceAxisSelection]) -> SliceSelection {
-    SliceSelection::new(axes.iter().copied()).expect("a covered selection is admitted")
+    SliceSelection::new(axes.iter().cloned()).expect("a covered selection is admitted")
 }
 
 fn shape(dims: &[u64]) -> Shape {

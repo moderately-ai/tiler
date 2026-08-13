@@ -26,6 +26,7 @@
 //! | `quantization` | exact reference semantics for the governed strict-affine proof profile |
 //! | `registry` | the semantic capability registry and its dispatch vocabulary |
 //! | `evaluate` | executing a semantic program against that registry |
+//! | `extent_bindings` | authenticated `ShapeEnv` values for one evaluation |
 //! | `silu` | the certified binary32 `SiLU` reference and its exponential |
 //! | `rms_norm` | the certified binary32 RMS normalization and its reciprocal square root |
 //! | `softmax` | the binary32 softmax, its extrema family, and its two folds |
@@ -49,6 +50,7 @@ mod conformance;
 mod contraction;
 mod error;
 mod evaluate;
+mod extent_bindings;
 mod identity;
 mod oracle;
 mod quantization;
@@ -79,6 +81,7 @@ pub use evaluate::{
     ReferenceEvaluator, strict_partial_sums, strict_partial_sums_under, strict_partitioned_sum,
     strict_partitioned_sum_under,
 };
+pub use extent_bindings::{ExtentBindingContext, ExtentBindingError};
 pub use oracle::{
     CanonicalScalarReferenceRegistryIdentity, FrozenScalarReferenceRegistry,
     IndexReferenceResource, IndexRegionAuthority, IndexRegionEvaluation,

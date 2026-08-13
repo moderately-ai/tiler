@@ -161,7 +161,7 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
         registrar.register(
             slice_f32_op(),
             unary_signature.clone(),
-            revision,
+            ReferenceCapabilityRevision::new(8)?,
             Arc::new(SliceF32Reference),
         )?;
         // One capability per admitted arity, because a capability is keyed by an

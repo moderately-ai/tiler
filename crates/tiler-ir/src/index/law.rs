@@ -141,10 +141,11 @@ pub enum IndexRealizationLaw {
     ///
     /// **Included and excluded surface.** The variant reads the complete
     /// [`SliceSelection`] grammar admitted today: [`SliceAxisSelection::WholeAxis`]
-    /// and [`SliceAxisSelection::Window`] with a literal offset and extent. It
-    /// deliberately excludes strided windows, source-bearing or symbolic
-    /// offsets, scheduling, and backend realization; those forms are rejected by
-    /// the semantic grammar before a subject can carry them.
+    /// and [`SliceAxisSelection::Window`] with a literal [`SourcedExtent::Static`]
+    /// offset and extent. It deliberately excludes strided windows, source-bearing
+    /// symbolic offsets, scheduling, and backend realization. A symbolic window
+    /// offset is a typed unsupported subject here; semantic construction may
+    /// admit it, but this law does not refine it.
     ///
     /// **Accepted public surface.** Tom accepted the exact variant, its `const`
     /// constructor, append-only tag-13 encoding, and standard
@@ -2053,10 +2054,15 @@ fn realize_slice(
     for (selection, coordinate) in selection.axes().iter().zip(&coordinates) {
         operand_coordinates.push(match selection {
             SliceAxisSelection::WholeAxis => *coordinate,
-            SliceAxisSelection::Window { offset, .. } => context.linear_combination(
-                IndexInteger::from_u64(*offset),
-                &[(IndexInteger::from_u64(1), *coordinate)],
-            )?,
+            SliceAxisSelection::Window { offset, .. } => {
+                let Some(literal) = offset.as_static() else {
+                    return Err(unsupported("slice-symbolic-offset"));
+                };
+                context.linear_combination(
+                    IndexInteger::from_u64(literal.get()),
+                    &[(IndexInteger::from_u64(1), *coordinate)],
+                )?
+            }
         });
     }
 

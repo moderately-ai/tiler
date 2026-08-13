@@ -1786,6 +1786,7 @@ fn apply_constant(
             // binary32 arithmetic, so this dimension has no site in the callback
             // below; the strict reading is stated rather than left absent.
             conformance: ReferenceNumericalConformance::strict(),
+            extent_bindings: &crate::ExtentBindingContext::empty(),
         },
         &mut outputs,
     );

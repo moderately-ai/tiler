@@ -14,7 +14,7 @@ use tiler_ir::semantic::{
     AttributeFieldId, InputKey, OpKey, ProviderIdentity, RegistryError, ResolvedValueType,
     ValueConformanceRejection,
 };
-use tiler_ir::shape::Shape;
+use tiler_ir::shape::{Shape, ShapeSymbol};
 
 use super::{ReferenceCapabilityRevision, ReferenceComponentRole, ReferenceSignature};
 
@@ -543,6 +543,18 @@ pub enum ReferenceOperationError {
         /// The gathered axis's extent, which it must stay below.
         extent: u64,
     },
+    /// A window offset named a symbol this evaluation cannot authenticate.
+    UndeclaredExtentSymbol {
+        /// The symbol the offset named.
+        symbol: Box<ShapeSymbol>,
+    },
+    /// A window offset named a binding kind with no authenticated value source.
+    UnsupportedExtentBinding {
+        /// The symbol the offset named.
+        symbol: Box<ShapeSymbol>,
+        /// The unsupported binding kind.
+        kind: &'static str,
+    },
 }
 
 impl fmt::Display for ReferenceOperationError {
@@ -595,6 +607,14 @@ impl fmt::Display for ReferenceOperationError {
                 "gather index element {position} holds {value} and the gathered axis has extent \
                  {extent}, so it names no coordinate; an out-of-range index is refused rather than \
                  clamped to the axis or wrapped modulo its extent"
+            ),
+            Self::UndeclaredExtentSymbol { symbol } => write!(
+                formatter,
+                "reference.extent.undeclared-symbol: {symbol} is not bound by this evaluation"
+            ),
+            Self::UnsupportedExtentBinding { symbol, kind } => write!(
+                formatter,
+                "reference.extent.unsupported-binding: {symbol} is a {kind} and this evaluator has no authenticated value source for that kind"
             ),
         }
     }
