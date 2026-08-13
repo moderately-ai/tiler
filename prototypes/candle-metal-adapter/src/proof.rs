@@ -868,12 +868,10 @@ fn probe_empty_input_construction(
 
     let dtype = empty_input_dtype_is_f32(DType::F16).expect_err("f16 must be refused");
     println!("  probe empty-input dtype: {dtype}");
-    if let Ok(wrong_dtype) = constructed.tensor.to_dtype(DType::F16) {
-        expect_refusal(
-            "an f16 empty-domain tensor",
-            plan.preflight(&wrong_dtype, device),
-        )?;
-    }
+    // Candle 0.11.0's `to_dtype` panics on a zero-element Metal tensor
+    // (`attempt to divide by zero` in candle-metal-kernels). The helper's own
+    // dtype check is the subject here; converting the sentinel is not a
+    // supported Candle path.
 
     let cpu = Tensor::from_vec(Vec::<f32>::new(), (1, 0), &Device::Cpu)
         .map_err(|cause| ProofError::Device(cause.to_string()))?;
