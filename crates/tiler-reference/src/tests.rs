@@ -1983,6 +1983,115 @@ fn an_inexact_split_is_refused_by_the_reference() {
     assert!(strict_partial_sums(&input, &axes, 3, 2).is_ok());
 }
 
+/// A one-round declared grouping is the two-level split it collapses to.
+///
+/// The extra round axis is what this oracle exists to name. When it is one,
+/// both layouts reduce to `p * contributors` and the answer must be
+/// `strict_partitioned_sum` at the same participant count. If it were not, every
+/// later multi-round comparison would be measuring a second two-level fold
+/// rather than the round arithmetic.
+#[test]
+fn a_one_round_declared_grouping_reproduces_the_partitioned_sum() {
+    let input = f32_tensor(
+        Shape::from_dims([2, 6]),
+        vec![
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, //
+            10.0, 20.0, 30.0, 40.0, 50.0, 60.0,
+        ],
+    );
+    let axes = [Axis::new(1)];
+    let declared = CooperativeGrouping::declared(3, 2, 1);
+    let neighbour = CooperativeGrouping::participant_major(3, 2, 1);
+    let split = strict_partitioned_sum(&input, &axes, 3, 2).unwrap();
+    assert_eq!(
+        f32_bits(&cooperative_grouped_sum(&input, &axes, declared).unwrap()),
+        f32_bits(&split),
+    );
+    assert_eq!(
+        f32_bits(&cooperative_grouped_sum(&input, &axes, neighbour).unwrap()),
+        f32_bits(&split),
+        "a one-round grouping cannot tell the two layouts apart",
+    );
+}
+
+/// The declared multi-round arithmetic is written out, not re-derived.
+///
+/// Participant `p` of round `r` takes the cell at `r * 3 + p`. Each cell is
+/// one contributor. The staged set of a round is folded in participant order
+/// and the two round totals accumulate in round order.
+#[test]
+fn a_declared_multi_round_grouping_folds_each_cell_exactly_once() {
+    let input = f32_tensor(
+        Shape::from_dims([2, 6]),
+        vec![
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, //
+            10.0, 20.0, 30.0, 40.0, 50.0, 60.0,
+        ],
+    );
+    let axes = [Axis::new(1)];
+    let declared = CooperativeGrouping::declared(3, 1, 2);
+    // Row 0: round 0 stages (1, 2, 3) → 6; round 1 stages (4, 5, 6) → 15; 6 + 15.
+    // Row 1: (10, 20, 30) → 60; (40, 50, 60) → 150; 60 + 150.
+    assert_eq!(
+        f32_values(&cooperative_grouped_sum(&input, &axes, declared).unwrap()),
+        vec![21.0, 210.0],
+    );
+}
+
+/// The neighbouring layout is a different order, and these magnitudes show it.
+///
+/// `5e19` is far enough above the unit ulp that adding one to it is the
+/// identity, so a grouping that puts the cancelling pair in one round absorbs
+/// the small value beside it and a grouping that splits them does not. The two
+/// rows are sensitive in opposite directions, so neither layout can agree with
+/// the other by luck on both.
+#[test]
+fn the_declared_round_major_layout_is_not_the_participant_major_neighbour() {
+    let input = f32_tensor(
+        Shape::from_dims([2, 6]),
+        vec![
+            5.0e19, 1.0, -5.0e19, 3.0, 0.0, 0.0, //
+            0.0, 5.0e19, 0.0, -5.0e19, 2.0, 0.0,
+        ],
+    );
+    let axes = [Axis::new(1)];
+    let declared = CooperativeGrouping::declared(3, 1, 2);
+    let neighbour = CooperativeGrouping::participant_major(3, 1, 2);
+    let declared_bits = f32_bits(&cooperative_grouped_sum(&input, &axes, declared).unwrap());
+    let neighbour_bits = f32_bits(&cooperative_grouped_sum(&input, &axes, neighbour).unwrap());
+    assert_ne!(
+        declared_bits, neighbour_bits,
+        "these operands cannot tell the two layouts apart"
+    );
+    // Round-major row 0: round 0 stages (5e19, 1, -5e19) and loses the 1;
+    // round 1 stages (3, 0, 0). Total 3.
+    // Participant-major row 0: round 0 stages (5e19, -5e19, 0) → 0;
+    // round 1 stages (1, 3, 0) → 4. Total 4.
+    assert_eq!(declared_bits[0], 3.0_f32.to_bits());
+    assert_eq!(neighbour_bits[0], 4.0_f32.to_bits());
+}
+
+/// A grouping that does not cover the contributor sequence exactly is refused.
+#[test]
+fn an_inexact_cooperative_grouping_is_refused_by_the_reference() {
+    let input = f32_tensor(Shape::from_dims([2, 6]), vec![1.0; 12]);
+    let axes = [Axis::new(1)];
+    for grouping in [
+        CooperativeGrouping::declared(4, 1, 2),
+        CooperativeGrouping::declared(3, 2, 2),
+        CooperativeGrouping::declared(0, 1, 2),
+        CooperativeGrouping::declared(3, 0, 2),
+        CooperativeGrouping::declared(3, 1, 0),
+    ] {
+        assert_eq!(
+            cooperative_grouped_sum(&input, &axes, grouping),
+            Err(ReferenceOperationError::InvalidApplication),
+            "{grouping:?} does not cover six contributors"
+        );
+    }
+    assert!(cooperative_grouped_sum(&input, &axes, CooperativeGrouping::declared(3, 1, 2)).is_ok());
+}
+
 /// The declared split and the declared subnormal modes are separate obligations.
 ///
 /// **This is the population that proves the threading can fail.** Two rows, each

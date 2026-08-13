@@ -9,7 +9,8 @@
 //!
 //! It decides nothing numerical. The launch geometry, the argument-table
 //! indices, the buffer capacities, and the readback length all arrive as
-//! arguments — from [`crate::bf16_vertical`] and [`crate::serial_sum`] out of a
+//! arguments — from [`crate::bf16_vertical`], [`crate::serial_sum`], and
+//! [`crate::loop_carried`] out of a
 //! kernel and a physical carrier, and from [`crate::envelope`] out of a decoded
 //! dispatch record. That separation is what lets a run perturb a derivation and
 //! watch the composition fail: a width computed inside this module could not be

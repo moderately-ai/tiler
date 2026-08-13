@@ -78,8 +78,9 @@ pub use error::{
     UnsupportedContractionDeclaration,
 };
 pub use evaluate::{
-    ReferenceEvaluator, strict_partial_sums, strict_partial_sums_under, strict_partitioned_sum,
-    strict_partitioned_sum_under,
+    CooperativeCellLayout, CooperativeGrouping, ReferenceEvaluator, cooperative_grouped_sum,
+    cooperative_grouped_sum_under, strict_partial_sums, strict_partial_sums_under,
+    strict_partitioned_sum, strict_partitioned_sum_under,
 };
 pub use extent_bindings::{ExtentBindingContext, ExtentBindingError};
 pub use oracle::{

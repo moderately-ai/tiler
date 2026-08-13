@@ -154,6 +154,7 @@
 //! | --- | --- |
 //! | `bf16_vertical` | the BF16 corpus, its semantic program, scheduled region, emission, and comparison |
 //! | `serial_sum` | the `f32` reduction vertical: the direct path, the retained portfolio, and the declared-grouping oracle |
+//! | `loop_carried` | the first multi-round cooperative kernel, executed on Metal against the reference-owned grouping |
 //! | `envelope` | the artifact-delivered route: interface, placement, fail-closed probes, and the retained-digest comparison |
 //! | `publication` | the envelopes and proof records that route reads, published in the same run |
 //! | `applicability` | whether this host may *offer* the profile it routes under, and the observation that is asked from |
@@ -238,6 +239,8 @@ mod dispatch;
 mod envelope;
 #[cfg(test)]
 mod lints;
+#[cfg(test)]
+mod loop_carried;
 #[cfg(test)]
 mod measurement;
 #[cfg(test)]

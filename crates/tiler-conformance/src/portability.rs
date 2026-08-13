@@ -118,7 +118,17 @@ use std::path::{Path, PathBuf};
 /// members and pins paths, signatures, and reasons. The conformance population
 /// is therefore 73 and this floor stays one below it; moving the check to its
 /// workspace-policy owner does not make a deterministic conformance run vanish.
-const DEVICE_FREE_TEST_FLOOR: usize = 72;
+///
+/// **2026-08-13 — it rises 72 → 80 under
+/// `execute-the-loop-carried-cooperative-kernel-on-a-real-backend`.** Eight
+/// device-free tests land in `loop_carried`: the operand-pair counts, the
+/// scheduled launch geometry, the four property perturbations, emission of the
+/// single-round neighbour and of the multi-round subject, and the three
+/// measured runs (single-round, multi-round contributor-set, multi-round
+/// grouping-sensitive). The measured runs are device-free *tests* that report
+/// their measured half as unavailable when there is no device. The floor moved
+/// with the population and by the same eight.
+const DEVICE_FREE_TEST_FLOOR: usize = 80;
 
 /// A non-Apple host still runs the device-free test population.
 ///

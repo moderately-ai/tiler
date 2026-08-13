@@ -184,7 +184,7 @@ pub(crate) fn require_or_report<T>(label: &str, outcome: Measured<T>) -> Option<
 pub(crate) mod host {
     //! Resolving the Apple environment every measured half needs, once.
     //!
-    //! Split out because three verticals need the same three things — a
+    //! Split out because the measured verticals need the same three things — a
     //! qualified offline toolchain, a default Metal device, and the environment
     //! row a result is bounded to — and each of them has exactly one correct
     //! answer to "is an absent toolchain a boundary or a defect?". Answering it
@@ -401,7 +401,7 @@ mod apple {
 
 /// States why no device row exists on a host that is not Apple's.
 ///
-/// Written once because three verticals report it, and a reader comparing two
+/// Written once because the measured verticals report it, and a reader comparing two
 /// unavailable outcomes should be reading one sentence rather than deciding
 /// whether two spellings mean the same thing.
 #[cfg_attr(

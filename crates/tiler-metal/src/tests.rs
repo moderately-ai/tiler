@@ -28,13 +28,14 @@ use tiler_ir::kernel::{
 use tiler_ir::schedule::{
     Access, AccessMode, ArithmeticType, AxisDecode, BoundsProof, BoundsProofKind, BoundsWitnessId,
     ContractionAxisSource, ContributorArrival, ContributorOrder, ContributorPartition,
-    ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign, InputOrdinal, KernelSchedule,
-    LaunchPlan, LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
-    OwnershipProofKind, OwnershipWitnessId, PointwiseBf16Expression,
-    PointwiseBf16ExpressionBuilder, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
-    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalFreedom,
-    SubnormalMode, SyncPointId, TailPolicy, TensorRole, ValueDomainProvenance,
-    VerifiedScheduledRegion, element_count, workgroup_tree_tile,
+    ConvergenceEvidence, ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign,
+    InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
+    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
+    PointwiseBf16Expression, PointwiseBf16ExpressionBuilder, PointwiseF32Expression,
+    PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
+    ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode, SyncPointId, SynchronizationPlacement,
+    SynchronizationPoint, TailPolicy, TensorRole, ValueDomainProvenance, VerifiedScheduledRegion,
+    element_count, workgroup_tree_tile,
 };
 use tiler_ir::semantic::{CANONICAL_BF16_ARITHMETIC_NAN_BITS, RMS_NORM_F32_REFERENCE_EPS_BITS};
 use tiler_ir::semantic::{
@@ -1028,6 +1029,41 @@ pub(crate) fn cooperative_kernel() -> VerifiedKernel {
         .expect("bounded cooperative fixture lowers")
 }
 
+/// The same tile with its phases run twice and its slots rewritten.
+///
+/// Built by re-verifying the single-round fixture's own region rather than by a
+/// second literal, so the only differences are the ones the capability requires:
+/// each participant now folds one contributor per round instead of two, both
+/// points name the round-loop convergence derivation, and a round boundary
+/// discharges the rewrite.
+fn loop_carried_cooperative_region(id: RegionId) -> VerifiedScheduledRegion {
+    let mut region = cooperative_region(id).region().clone();
+    let ReductionTopology::CooperativeWorkgroup {
+        partition, tile, ..
+    } = &mut region.schedule.reduction
+    else {
+        panic!("the cooperative fixture builds a cooperative topology")
+    };
+    partition.contributors_per_partition = 1;
+    tile.rounds = 2;
+    let phase = tile.synchronization[0];
+    tile.synchronization[0].convergence = ConvergenceEvidence::required_for_rounds(2);
+    tile.synchronization.push(SynchronizationPoint {
+        id: SyncPointId::new(1),
+        placement: SynchronizationPlacement::RoundBoundary,
+        convergence: ConvergenceEvidence::required_for_rounds(2),
+        ..phase
+    });
+    ScheduledRegionBuilder::from_region(region)
+        .build()
+        .expect("the loop-carried region verifies")
+}
+
+fn loop_carried_cooperative_kernel() -> VerifiedKernel {
+    lower_scheduled_region(&loop_carried_cooperative_region(RegionId::new(11)))
+        .expect("the loop-carried fixture lowers")
+}
+
 // ---------------------------------------------------------------------------
 // Structural fixtures
 // ---------------------------------------------------------------------------
@@ -1650,6 +1686,58 @@ fn the_cooperative_kernel_emits_storage_a_local_index_a_handoff_and_a_fence() {
     assert!(
         store < fence && fence < load,
         "the barrier must separate the staged write from the staged read: {source}"
+    );
+}
+
+/// A loop-carried tile emits the peeled round, the round loop, and both
+/// barriers, in that order.
+///
+/// This is emission structure, not execution: a golden or a compile success
+/// would still say nothing about whether the barriers synchronize on a device.
+/// What it pins is that the MSL is the peeled body the KIR lowering produces —
+/// round zero's phase fence at the top level, then a `1..rounds` loop whose
+/// first statement is the round-boundary fence — so a later edit that hoisted
+/// the round fence out of the loop, or dropped it, cannot hide behind an
+/// unchanged single-round golden.
+#[test]
+fn the_loop_carried_kernel_emits_a_peeled_round_loop_and_both_fences() {
+    let source = emit_one(&loop_carried_cooperative_kernel());
+    assert!(
+        source.contains("threadgroup float tg0[3];"),
+        "the tile's workgroup storage must be declared: {source}"
+    );
+    assert!(
+        source.contains("uint tiler_local_invocation_index [[thread_index_in_threadgroup]]"),
+        "a cooperative kernel must name its participants' local coordinate: {source}"
+    );
+    let peel_store = source
+        .find("  // tile phase 0")
+        .expect("the peeled staged store");
+    let peel_fence = source
+        .find("threadgroup_barrier")
+        .expect("the peeled phase fence");
+    let round_loop = source
+        .find("// serial loop over [1, 2)")
+        .expect("the 1..rounds loop");
+    assert!(
+        peel_store < peel_fence && peel_fence < round_loop,
+        "the peeled phase fence must sit between the peeled store and the round loop: {source}"
+    );
+    let loop_body = &source[round_loop..];
+    let loop_fences = loop_body.matches("threadgroup_barrier").count();
+    assert!(
+        loop_fences >= 2,
+        "the round body must realize the round boundary and the phase boundary: {source}"
+    );
+    let first_in_loop = loop_body
+        .find("threadgroup_barrier")
+        .expect("a fence inside the round loop");
+    let first_loop_store = loop_body
+        .find("  // tile phase 0")
+        .expect("the loop-body staged store");
+    assert!(
+        first_in_loop < first_loop_store,
+        "the round-boundary fence must be the first effect of the round body: {source}"
     );
 }
 

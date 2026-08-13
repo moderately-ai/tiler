@@ -21,7 +21,11 @@
 //! The declared-order reduction oracle below carries it the same way:
 //! [`strict_partial_sums_under`] and [`strict_partitioned_sum_under`] take the
 //! contract, and [`strict_partial_sums`] and [`strict_partitioned_sum`] are those
-//! two at the strict reading rather than a second fold that ignores one.
+//! two at the strict reading rather than a second fold that ignores one. The
+//! cooperative counterpart is the same obligation one layer richer:
+//! [`cooperative_grouped_sum_under`] takes a [`CooperativeGrouping`] so a
+//! multi-round tile can be asked about the participant/round/contributor cells
+//! it declared rather than about a two-level split that cannot name a round.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -825,6 +829,326 @@ pub fn strict_partitioned_sum_under(
         .and_then(|rank| rank.checked_sub(1))
         .ok_or(ReferenceOperationError::InvalidApplication)?;
     strict_sum(&partials, &[Axis::new(partition_axis)], conformance)
+}
+
+/// How one cooperative tile lays `(round, participant)` cells onto its
+/// contributor sequence.
+///
+/// **Labelled draft** under ADR 0075 until Tom accepts the exact included and
+/// excluded surface. Included: the two layouts below. Excluded: a general
+/// tiling algebra, a log-depth tree, and any layout whose cell index is not
+/// one of these two readings of a blocked `(round, participant)` pair.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum CooperativeCellLayout {
+    /// Participant `p` of round `r` owns the contiguous range at index
+    /// `r * participants + p`.
+    ///
+    /// This is the layout `emit_partition_contributor` writes:
+    /// `round * contributors_per_round + partition * contributors_per_partition`,
+    /// with `contributors_per_round = participants * contributors_per_partition`.
+    RoundMajor,
+    /// Participant `p` of round `r` owns the contiguous range at index
+    /// `p * rounds + r`.
+    ///
+    /// The other natural reading of a two-dimensional split, and the one the
+    /// contributor arithmetic must not compute. A single-round grouping cannot
+    /// tell the two layouts apart: both reduce to `p * contributors`.
+    ParticipantMajor,
+}
+
+/// The participant / round / contributor grouping one cooperative tile
+/// declares.
+///
+/// **Labelled draft** under ADR 0075 until Tom accepts the exact included and
+/// excluded surface. A reassociating contract admits a *set* of results; what a
+/// plan can be checked against is the one order it selected. A two-level
+/// blocked split (`tiler_ir::schedule::ContributorPartition`) cannot state a
+/// round dimension, so a loop-carried tile needs this three-axis form rather
+/// than another local restatement of the same arithmetic.
+///
+/// The layout is part of the grouping rather than a second function, because
+/// the neighbouring participant-major reading is a different *order of the
+/// same cells*, not a different fold, and holding a device result against it
+/// is how a vacuous comparison is refused.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct CooperativeGrouping {
+    /// Participants that share one workgroup and one staged set.
+    pub participants: u64,
+    /// Contributors each participant folds on one round.
+    pub contributors_per_partition: u64,
+    /// Times the phase sequence executes.
+    pub rounds: u64,
+    /// How `(round, participant)` cells are laid onto the contributor sequence.
+    pub layout: CooperativeCellLayout,
+}
+
+impl CooperativeGrouping {
+    /// The declared layout the loop-carried body emits.
+    #[must_use]
+    pub const fn declared(participants: u64, contributors_per_partition: u64, rounds: u64) -> Self {
+        Self {
+            participants,
+            contributors_per_partition,
+            rounds,
+            layout: CooperativeCellLayout::RoundMajor,
+        }
+    }
+
+    /// The neighbouring layout the contributor arithmetic must not compute.
+    #[must_use]
+    pub const fn participant_major(
+        participants: u64,
+        contributors_per_partition: u64,
+        rounds: u64,
+    ) -> Self {
+        Self {
+            participants,
+            contributors_per_partition,
+            rounds,
+            layout: CooperativeCellLayout::ParticipantMajor,
+        }
+    }
+
+    /// Contributors this grouping covers exactly once, or `None` on overflow.
+    #[must_use]
+    pub const fn covered_contributors(self) -> Option<u64> {
+        let Some(per_round) = self
+            .participants
+            .checked_mul(self.contributors_per_partition)
+        else {
+            return None;
+        };
+        per_round.checked_mul(self.rounds)
+    }
+
+    /// Linear cell index of participant `participant` on round `round`.
+    ///
+    /// `None` when the cell is outside the grouping or the product overflows.
+    #[must_use]
+    pub const fn cell_index(self, round: u64, participant: u64) -> Option<u64> {
+        if round >= self.rounds || participant >= self.participants {
+            return None;
+        }
+        match self.layout {
+            CooperativeCellLayout::RoundMajor => {
+                let Some(base) = self.participants.checked_mul(round) else {
+                    return None;
+                };
+                base.checked_add(participant)
+            }
+            CooperativeCellLayout::ParticipantMajor => {
+                let Some(base) = self.rounds.checked_mul(participant) else {
+                    return None;
+                };
+                base.checked_add(round)
+            }
+        }
+    }
+}
+
+/// Evaluates the reduction one cooperative grouping computes.
+///
+/// Written from the declared arithmetic rather than from any emitted body:
+/// participant `p` of round `r` folds the contiguous range at the grouping's
+/// cell index, seeded at its own first contributor; the staged set is folded
+/// in ascending participant order; the round totals accumulate in ascending
+/// round order. Every fold seeds at its first contributor, which is what makes
+/// this a reassociation of the declared sequence rather than a sum against an
+/// identity element.
+///
+/// A one-round [`CooperativeCellLayout::RoundMajor`] grouping is bit-identical
+/// to [`strict_partitioned_sum`] at the same participant count, because that is
+/// the two-level split the extra round axis collapses to.
+///
+/// # Errors
+///
+/// Returns [`ReferenceOperationError::InvalidApplication`] when the axes are
+/// not a canonical in-range set, when any grouping axis is zero, or when the
+/// grouping does not cover the contributor sequence exactly once each, and a
+/// resource error when the result exceeds the reference bounds.
+pub fn cooperative_grouped_sum(
+    input: &Tensor,
+    axes: &[Axis],
+    grouping: CooperativeGrouping,
+) -> Result<Tensor, ReferenceOperationError> {
+    cooperative_grouped_sum_under(
+        input,
+        axes,
+        grouping,
+        ReferenceNumericalConformance::strict(),
+    )
+}
+
+/// Evaluates [`cooperative_grouped_sum`] under one stated numerical contract.
+///
+/// The grouping discharges the reassociation obligation; this argument
+/// discharges the subnormal modes. They are independent: a flushing device
+/// that grouped as it declared is a different question from a preserving
+/// device that grouped as a neighbour, and an oracle given only one of them
+/// cannot name the other.
+///
+/// # Errors
+///
+/// As [`cooperative_grouped_sum`].
+pub fn cooperative_grouped_sum_under(
+    input: &Tensor,
+    axes: &[Axis],
+    grouping: CooperativeGrouping,
+    conformance: ReferenceNumericalConformance,
+) -> Result<Tensor, ReferenceOperationError> {
+    let mut reduced_mask = vec![false; input.shape().rank()];
+    let mut reduced = Vec::with_capacity(axes.len());
+    for requested_axis in axes {
+        let dimension = usize::try_from(requested_axis.get())
+            .map_err(|_| ReferenceOperationError::InvalidApplication)?;
+        let Some(is_reduced) = reduced_mask.get_mut(dimension) else {
+            return Err(ReferenceOperationError::InvalidApplication);
+        };
+        if std::mem::replace(is_reduced, true) {
+            return Err(ReferenceOperationError::InvalidApplication);
+        }
+        reduced.push(dimension);
+    }
+    let survivor: Vec<usize> = (0..input.shape().rank())
+        .filter(|axis| !reduced_mask[*axis])
+        .collect();
+    let reduction_shape =
+        Shape::try_new(survivor.iter().map(|axis| input.shape().extents()[*axis]))
+            .map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
+    let reduced_shape = Shape::try_new(reduced.iter().map(|axis| input.shape().extents()[*axis]))
+        .map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
+    let reduced_count = reduced_shape
+        .element_count()
+        .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+    let participants = usize::try_from(grouping.participants)
+        .map_err(|_| ReferenceOperationError::InvalidApplication)?;
+    let per_partition = usize::try_from(grouping.contributors_per_partition)
+        .map_err(|_| ReferenceOperationError::InvalidApplication)?;
+    let rounds = usize::try_from(grouping.rounds)
+        .map_err(|_| ReferenceOperationError::InvalidApplication)?;
+    let covered = grouping
+        .covered_contributors()
+        .and_then(|total| usize::try_from(total).ok())
+        .ok_or(ReferenceOperationError::InvalidApplication)?;
+    if participants == 0 || per_partition == 0 || rounds == 0 || covered != reduced_count {
+        return Err(ReferenceOperationError::InvalidApplication);
+    }
+
+    let reduction_count = reduction_shape
+        .element_count()
+        .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+    preflight_f32_output(reduction_count)?;
+    if reduction_count == 0 {
+        return Tensor::dense(F32::resolved_type(), reduction_shape, Vec::new())
+            .map_err(|source| dense_result_error(&source));
+    }
+
+    let input_elements = f32_elements(input)?;
+    let input_strides = row_major_strides(input.shape())?;
+    let reduction_strides = row_major_strides(&reduction_shape)?;
+    let reduced_strides = row_major_strides(&reduced_shape)?;
+    let mut elements = Vec::with_capacity(reduction_count);
+    let mut output_coordinate = vec![0_usize; reduction_shape.rank()];
+    let mut reduced_coordinate = vec![0_usize; reduced_shape.rank()];
+    let mut input_coordinate = vec![0_usize; input.shape().rank()];
+    let mut sequence = vec![0.0_f32; reduced_count];
+
+    for output_linear in 0..reduction_count {
+        decode_coordinate(
+            output_linear,
+            &reduction_shape,
+            &reduction_strides,
+            &mut output_coordinate,
+        )?;
+        for (reduced_linear, slot) in sequence.iter_mut().enumerate() {
+            decode_coordinate(
+                reduced_linear,
+                &reduced_shape,
+                &reduced_strides,
+                &mut reduced_coordinate,
+            )?;
+            input_coordinate.fill(0);
+            for (coordinate, axis) in output_coordinate.iter().zip(&survivor) {
+                input_coordinate[*axis] = *coordinate;
+            }
+            for (coordinate, axis) in reduced_coordinate.iter().zip(&reduced) {
+                input_coordinate[*axis] = *coordinate;
+            }
+            let linear = input_coordinate
+                .iter()
+                .zip(&input_strides)
+                .map(|(coordinate, stride)| coordinate * stride)
+                .sum::<usize>();
+            *slot = decode_f32(&input_elements[linear])?;
+        }
+        elements.push(f32_element(fold_cooperative_sequence(
+            &sequence,
+            grouping,
+            conformance,
+        )?)?);
+    }
+    Tensor::dense(F32::resolved_type(), reduction_shape, elements)
+        .map_err(|source| dense_result_error(&source))
+}
+
+/// Folds one contributor sequence under one cooperative grouping.
+///
+/// Seeds every fold at its first contributor so `+0.0 + x` cannot eat a
+/// negative zero. The caller has already required a nonempty grouping that
+/// covers `sequence` exactly.
+fn fold_cooperative_sequence(
+    sequence: &[f32],
+    grouping: CooperativeGrouping,
+    conformance: ReferenceNumericalConformance,
+) -> Result<f32, ReferenceOperationError> {
+    let participants = usize::try_from(grouping.participants)
+        .map_err(|_| ReferenceOperationError::InvalidApplication)?;
+    let per_partition = usize::try_from(grouping.contributors_per_partition)
+        .map_err(|_| ReferenceOperationError::InvalidApplication)?;
+    let rounds = usize::try_from(grouping.rounds)
+        .map_err(|_| ReferenceOperationError::InvalidApplication)?;
+    let mut total: Option<f32> = None;
+    for round in 0..rounds {
+        let mut staged: Option<f32> = None;
+        for participant in 0..participants {
+            let cell = grouping
+                .cell_index(round as u64, participant as u64)
+                .and_then(|index| usize::try_from(index).ok())
+                .ok_or(ReferenceOperationError::InvalidApplication)?;
+            let base = cell
+                .checked_mul(per_partition)
+                .ok_or(ReferenceOperationError::InvalidApplication)?;
+            let end = base
+                .checked_add(per_partition)
+                .ok_or(ReferenceOperationError::InvalidApplication)?;
+            let range = sequence
+                .get(base..end)
+                .ok_or(ReferenceOperationError::InvalidApplication)?;
+            let mut partial = range[0];
+            for &contributor in &range[1..] {
+                partial = conformance.apply_to_result(canonicalize_arithmetic_f32(
+                    conformance.apply_to_operand(partial)
+                        + conformance.apply_to_operand(contributor),
+                ));
+            }
+            staged = Some(match staged {
+                None => partial,
+                Some(value) => conformance.apply_to_result(canonicalize_arithmetic_f32(
+                    conformance.apply_to_operand(value) + conformance.apply_to_operand(partial),
+                )),
+            });
+        }
+        let round_total = staged.ok_or(ReferenceOperationError::InvalidApplication)?;
+        total = Some(match total {
+            None => round_total,
+            Some(value) => conformance.apply_to_result(canonicalize_arithmetic_f32(
+                conformance.apply_to_operand(value) + conformance.apply_to_operand(round_total),
+            )),
+        });
+    }
+    Ok(canonicalize_arithmetic_f32(
+        total.ok_or(ReferenceOperationError::InvalidApplication)?,
+    ))
 }
 
 pub(crate) fn preflight_f32_output(output_count: usize) -> Result<(), ReferenceOperationError> {
