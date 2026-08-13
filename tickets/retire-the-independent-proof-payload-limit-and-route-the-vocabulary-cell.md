@@ -1,7 +1,7 @@
 ---
 id: retire-the-independent-proof-payload-limit-and-route-the-vocabulary-cell
 title: Retire the independent proof-payload limit and route the vocabulary cell
-status: todo
+status: in-progress
 priority: p1
 dependencies: [decide-whether-the-proof-payload-limit-admits-the-vocabulary-projection-weights, enforce-proof-sidecar-byte-budgets-before-producer-allocation]
 related: [route-the-realization-conformance-half-into-the-conformance-crate]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, contracts/artifacts, implementation/conformanc
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, proof, conformance, public-boundary]
+claimed_from: todo
+assignee: worker-retire-payload-limit
+lease_expires_at: 1786587491
 ---
 ## User-visible outcome
 

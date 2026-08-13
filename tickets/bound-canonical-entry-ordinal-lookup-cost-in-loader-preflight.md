@@ -1,7 +1,7 @@
 ---
 id: bound-canonical-entry-ordinal-lookup-cost-in-loader-preflight
 title: Bound canonical entry ordinal lookup cost in loader preflight
-status: todo
+status: in-progress
 priority: p2
 dependencies: [select-executable-variants-across-registered-backend-families]
 related: [accept-the-loader-variant-eligibility-vocabulary]
@@ -9,6 +9,9 @@ scopes: [implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, performance, research]
+claimed_from: todo
+assignee: worker-bound-ordinal
+lease_expires_at: 1786587491
 ---
 ## User-visible outcome
 
