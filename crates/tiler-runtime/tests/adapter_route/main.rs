@@ -43,8 +43,8 @@ use tiler_reference::{
 };
 use tiler_runtime::adapter::{AdapterRouteFailure, route_with_adapter};
 use tiler_runtime::load::{
-    DTypeDispatch, DTypeDispatchResolution, DecodedProgram, LoadRejection, TargetCompatibility,
-    VariantIneligibility,
+    DTypeDispatch, DTypeDispatchResolution, DecodedProgram, ExecutionEnvironment, LoadRejection,
+    TargetCompatibility, VariantIneligibility,
 };
 
 /// The one delivery position every artifact here is built for.
@@ -2065,5 +2065,117 @@ fn a_dtype_refusal_arrives_while_a_fallback_is_still_permitted() {
     assert!(
         failure.fallback_permitted(),
         "a dtype is decided inside selection, long before the commit: {failure}",
+    );
+}
+
+/// Dense F32 `[2, N]`: semantic `(row = 1, column = 0)` is element `N`, so bytes `4N`.
+const fn dense_f32_row_major_bytes(row: u64, column: u64, inner_extent: u64) -> u64 {
+    4 * (row * inner_extent + column)
+}
+
+fn live_extent_facts(n: u64) -> AbiFacts {
+    let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
+    binder
+        .bind_input_extent(fixture::input_key(), tiler_ir::shape::Axis::new(1), n)
+        .expect("the live axis binds");
+    binder.build()
+}
+
+fn live_extent_environment() -> ExecutionEnvironment {
+    let mut dtype_dispatch = std::collections::BTreeMap::new();
+    dtype_dispatch.insert(ArithmeticType::F32, DTypeDispatch::Dispatchable);
+    ExecutionEnvironment {
+        target_profile: fixture::profile(),
+        backend: fixture::backend(),
+        representation: fixture::representation(),
+        dtype_dispatch,
+    }
+}
+
+#[test]
+fn one_live_extent_payload_and_pipeline_indexes_dense_f32_at_two_n() {
+    let spec = FixtureSpec::live_extent();
+    let built = assemble(&spec);
+    assert_eq!(
+        built.expected.as_bytes(),
+        assemble(&FixtureSpec::live_extent()).expected.as_bytes(),
+        "artifact identity excludes the bound N",
+    );
+    assert_ne!(
+        built.expected.as_bytes(),
+        assemble(&FixtureSpec::default()).expected.as_bytes(),
+        "a baked static neighbour is a different artifact subject",
+    );
+
+    let mut addresses = Vec::new();
+    let mut pipeline_subjects = Vec::new();
+    for n in [14_u64, 15] {
+        let mut program = DecodedProgram::decode(&built.bytes, SOLE_DELIVERY)
+            .expect("the live-extent artifact decodes");
+        let preflight = program
+            .preflight(
+                &live_extent_environment(),
+                &built.expected,
+                &live_extent_facts(n),
+            )
+            .expect("both neighbouring extents preflight the same artifact");
+        let entry = &preflight.entries()[0];
+        assert_eq!(entry.entry_symbol(), "live_row_major");
+        assert_eq!(entry.extent_parameters().len(), 1);
+        assert_eq!(entry.extent_parameters()[0].value(), n);
+        assert_eq!(entry.extent_parameters()[0].transport_slot(), 2);
+        assert_eq!(entry.launch().grid_threads(), fixture::ROWS);
+        let address = dense_f32_row_major_bytes(1, 0, entry.extent_parameters()[0].value());
+        addresses.push(address);
+        pipeline_subjects.push(entry.entry_symbol().to_owned());
+
+        let elements = usize::try_from(fixture::ROWS * n).expect("the two-N fixture stays small");
+        let input: Vec<u32> = (0..elements)
+            .map(|index| u32::try_from(index).expect("the two-N fixture stays small") + 1)
+            .collect();
+        let element = usize::try_from(address / 4).expect("the two-N fixture stays small");
+        let mapped = f32::from_bits(input[element]) * f32::from_bits(fixture::SCALE_BITS)
+            + f32::from_bits(fixture::BIAS_BITS);
+        assert_ne!(
+            mapped.to_bits(),
+            0,
+            "the oracle at N={n} must read a distinctive input element",
+        );
+    }
+    assert_eq!(
+        addresses,
+        [56, 60],
+        "semantic (row = 1, column = 0) at N=14 and N=15",
+    );
+    assert_eq!(pipeline_subjects[0], pipeline_subjects[1]);
+}
+
+#[test]
+fn a_live_extent_host_side_payload_disagreement_refuses_before_program_work() {
+    let built = assemble(&FixtureSpec::live_extent());
+    let mut program = DecodedProgram::decode(&built.bytes, SOLE_DELIVERY)
+        .expect("the live-extent artifact decodes");
+    let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
+    binder
+        .bind_input_extent(
+            fixture::input_key(),
+            tiler_ir::shape::Axis::new(0),
+            fixture::ROWS,
+        )
+        .expect("the static row axis binds");
+    let rejection = program
+        .preflight(&live_extent_environment(), &built.expected, &binder.build())
+        .expect_err("binding the static row axis is not an answer for the live inner extent");
+    assert!(
+        matches!(
+            rejection,
+            LoadRejection::AbiEvaluation { .. } | LoadRejection::UnboundInputExtent { .. }
+        ),
+        "a disagreement must refuse before program work, got {rejection}",
+    );
+    let text = rejection.to_string();
+    assert!(
+        text.contains("Axis(1)") || text.contains("axis 1") || text.contains("UnboundInputExtent"),
+        "the refusal must name the missing live axis: {text}",
     );
 }

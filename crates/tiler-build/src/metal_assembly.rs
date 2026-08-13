@@ -888,6 +888,312 @@ mod tests {
         ));
     }
 
+    fn live_row_major_unit() -> tiler_metal::record::MetalTranslationUnit {
+        let rows = 2_u64;
+        let inner = tiler_ir::shape::Axis::new(1);
+        let mut builder = ScheduledRegionBuilder::new(RegionId::new(40));
+        builder
+            .iteration_shape(Shape::from_dims([rows]))
+            .expect("rows");
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Input {
+                    ordinal: InputOrdinal::FIRST,
+                },
+                component_role: None,
+                mode: AccessMode::Read,
+                map: LogicalAccess::LiveRowMajor { inner_axis: inner },
+                bounds: BoundsWitnessId::new(0),
+                ownership: None,
+            })
+            .expect("read");
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Intermediate,
+                component_role: None,
+                mode: AccessMode::Write,
+                map: LogicalAccess::LiveRowMajor { inner_axis: inner },
+                bounds: BoundsWitnessId::new(1),
+                ownership: Some(OwnershipWitnessId::new(0)),
+            })
+            .expect("write");
+        for (witness, tensor) in [
+            (
+                0,
+                TensorRole::Input {
+                    ordinal: InputOrdinal::FIRST,
+                },
+            ),
+            (1, TensorRole::Intermediate),
+        ] {
+            builder
+                .push_bounds_proof(BoundsProof {
+                    id: BoundsWitnessId::new(witness),
+                    tensor,
+                    component_role: None,
+                    kind: BoundsProofKind::LinearRange { element_count: 0 },
+                })
+                .expect("bounds");
+        }
+        builder
+            .ownership_proof(OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: TensorRole::Intermediate,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: rows },
+            })
+            .expect("ownership");
+        builder
+            .scalar_program(ScalarProgram::PointwiseF32(scale_then_bias_expression(
+                1.0_f32.to_bits(),
+                0.0_f32.to_bits(),
+            )))
+            .expect("scalar");
+        builder
+            .numerical(DeclaredNumericalRealization::new(
+                "tiler.test.metal-assembly",
+                0x7fc0_0000,
+                SubnormalMode::Preserve,
+                SubnormalMode::Preserve,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                ExceptionalValueAssumption::MakeNoAssumption,
+                ExceptionalValueAssumption::MakeNoAssumption,
+            ))
+            .expect("numerical");
+        builder
+            .schedule(KernelSchedule {
+                binding: ExecutionBinding::GlobalLinearInvocation,
+                work_items: rows,
+                threads_per_workgroup: 1,
+                tail: TailPolicy::Exact,
+                output_owner: OwnershipWitnessId::new(0),
+                reduction: ReductionTopology::None,
+                launch: LaunchPlan {
+                    grid_threads: rows,
+                    threads_per_workgroup: 1,
+                    zero_work_skips_dispatch: true,
+                },
+            })
+            .expect("schedule");
+        let region = builder.build().expect("region");
+        let kernel = lower_scheduled_region(&region).expect("lowers");
+        let mut facts = facts(14);
+        facts.subnormal_arithmetic = MetalSubnormalArithmeticFacts::unmeasured().stating(
+            MetalFloatArithmeticType::F32,
+            MetalSubnormalArithmetic::PreservesSubnormals,
+        );
+        emit_translation_unit(&[&kernel], &facts, emission_realization())
+            .expect("the live-extent unit emits")
+    }
+
+    fn baked_dense_unit(columns: u64) -> tiler_metal::record::MetalTranslationUnit {
+        let shape = Shape::from_dims([2, columns]);
+        let elements = columns
+            .checked_mul(2)
+            .expect("the two-N fixture stays inside u64");
+        let mut builder = ScheduledRegionBuilder::new(RegionId::new(0));
+        builder.iteration_shape(shape).expect("shape");
+        for (tensor, mode, bounds, ownership) in [
+            (
+                TensorRole::Input {
+                    ordinal: InputOrdinal::FIRST,
+                },
+                AccessMode::Read,
+                0,
+                None,
+            ),
+            (
+                TensorRole::Intermediate,
+                AccessMode::Write,
+                1,
+                Some(OwnershipWitnessId::new(0)),
+            ),
+        ] {
+            builder
+                .push_access(Access {
+                    tensor,
+                    component_role: None,
+                    mode,
+                    map: LogicalAccess::LinearIdentity,
+                    bounds: BoundsWitnessId::new(bounds),
+                    ownership,
+                })
+                .expect("access");
+            builder
+                .push_bounds_proof(BoundsProof {
+                    id: BoundsWitnessId::new(bounds),
+                    tensor,
+                    component_role: None,
+                    kind: BoundsProofKind::LinearRange {
+                        element_count: elements,
+                    },
+                })
+                .expect("bounds");
+        }
+        builder
+            .ownership_proof(OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: TensorRole::Intermediate,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                    output_count: elements,
+                },
+            })
+            .expect("ownership");
+        builder
+            .scalar_program(ScalarProgram::PointwiseF32(scale_then_bias_expression(
+                1.0_f32.to_bits(),
+                0.0_f32.to_bits(),
+            )))
+            .expect("scalar");
+        builder
+            .numerical(DeclaredNumericalRealization::new(
+                "tiler.test.metal-assembly",
+                0x7fc0_0000,
+                SubnormalMode::Preserve,
+                SubnormalMode::Preserve,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                ExceptionalValueAssumption::MakeNoAssumption,
+                ExceptionalValueAssumption::MakeNoAssumption,
+            ))
+            .expect("numerical");
+        builder
+            .schedule(KernelSchedule {
+                binding: ExecutionBinding::GlobalLinearInvocation,
+                work_items: elements,
+                threads_per_workgroup: 1,
+                tail: TailPolicy::Exact,
+                output_owner: OwnershipWitnessId::new(0),
+                reduction: ReductionTopology::None,
+                launch: LaunchPlan {
+                    grid_threads: elements,
+                    threads_per_workgroup: 1,
+                    zero_work_skips_dispatch: true,
+                },
+            })
+            .expect("schedule");
+        let region = builder.build().expect("region");
+        let kernel = lower_scheduled_region(&region).expect("lowers");
+        let mut facts = facts(14);
+        facts.subnormal_arithmetic = MetalSubnormalArithmeticFacts::unmeasured().stating(
+            MetalFloatArithmeticType::F32,
+            MetalSubnormalArithmetic::PreservesSubnormals,
+        );
+        emit_translation_unit(&[&kernel], &facts, emission_realization())
+            .expect("the baked unit emits")
+    }
+
+    #[test]
+    fn one_live_extent_payload_identity_is_stable_and_unequal_to_a_baked_neighbour() {
+        let directory = scratch("live-extent-identity");
+        let tools = toolchain(&directory);
+        let live = live_row_major_unit();
+        assert!(
+            !live.source().contains("14ul") && !live.source().contains("15ul"),
+            "live N must not be baked: {}",
+            live.source()
+        );
+        assert_eq!(live.entry_points()[0].input_extent_count(), 1);
+        let transports = &live.entry_points()[0];
+        assert_eq!(transports.buffers().len(), 2);
+
+        let request = metal_compile_request(
+            &live,
+            OptimizationLevel::Default,
+            NumericalRealization::strict_baseline(),
+        )
+        .expect("the live-extent unit has one governed compile request");
+        let prepared = tools
+            .prepare(&request)
+            .expect("the fake toolchain prepares");
+        let payload =
+            prepare_metal_payload(&live, prepared).expect("the emitted and prepared facts agree");
+        let live_digest = payload.digest().as_bytes().to_vec();
+        let live_compilation = payload.compilation_identity_bytes().to_vec();
+        let symbol = live.entry_points()[0].symbol();
+        let pipeline = [live_compilation.as_slice(), symbol.as_bytes()].concat();
+
+        let request_again = metal_compile_request(
+            &live,
+            OptimizationLevel::Default,
+            NumericalRealization::strict_baseline(),
+        )
+        .expect("the live-extent unit prepares twice");
+        let prepared_again = tools
+            .prepare(&request_again)
+            .expect("the fake toolchain prepares twice");
+        let payload_again = prepare_metal_payload(&live, prepared_again)
+            .expect("the second prepared live-extent payload agrees");
+        assert_eq!(
+            live_digest.as_slice(),
+            payload_again.digest().as_bytes(),
+            "payload identity excludes the bound N",
+        );
+        assert_eq!(
+            live_compilation.as_slice(),
+            payload_again.compilation_identity_bytes(),
+            "library identity excludes the bound N",
+        );
+        assert_eq!(
+            pipeline,
+            [
+                payload_again.compilation_identity_bytes(),
+                symbol.as_bytes()
+            ]
+            .concat(),
+            "pipeline identity is library identity plus the entry symbol",
+        );
+
+        let baked_14 = baked_dense_unit(14);
+        let baked_15 = baked_dense_unit(15);
+        let baked_14_request = metal_compile_request(
+            &baked_14,
+            OptimizationLevel::Default,
+            NumericalRealization::strict_baseline(),
+        )
+        .expect("baked N = 14 requests");
+        let baked_14_payload = prepare_metal_payload(
+            &baked_14,
+            tools
+                .prepare(&baked_14_request)
+                .expect("baked N = 14 prepares"),
+        )
+        .expect("baked N = 14 agrees");
+        let baked_15_request = metal_compile_request(
+            &baked_15,
+            OptimizationLevel::Default,
+            NumericalRealization::strict_baseline(),
+        )
+        .expect("baked N = 15 requests");
+        let baked_15_payload = prepare_metal_payload(
+            &baked_15,
+            tools
+                .prepare(&baked_15_request)
+                .expect("baked N = 15 prepares"),
+        )
+        .expect("baked N = 15 agrees");
+        assert_ne!(
+            live_digest.as_slice(),
+            baked_14_payload.digest().as_bytes(),
+            "baking N = 14 must change payload identity",
+        );
+        assert_ne!(
+            baked_14_payload.digest().as_bytes(),
+            baked_15_payload.digest().as_bytes(),
+            "baking neighbouring extents must change payload identity",
+        );
+        assert_ne!(
+            live_compilation.as_slice(),
+            baked_14_payload.compilation_identity_bytes(),
+            "baking N = 14 must change library identity",
+        );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
     #[test]
     fn target_conversion_preserves_every_artifact_family() {
         for platform in MetalPlatform::ALL {

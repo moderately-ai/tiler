@@ -1,7 +1,7 @@
 ---
 id: prove-one-live-extent-artifact-payload-and-pipeline-at-two-n
 title: Prove one live-extent artifact payload and pipeline at two N
-status: in-progress
+status: review
 priority: p1
 dependencies: [carry-live-extent-operands-through-the-artifact-envelope]
 related: [admit-live-extent-operands-to-payload-indexing, deliver-an-artifact-family-from-a-symbolic-region]
@@ -11,7 +11,7 @@ paths: []
 tags: [implementation, artifact, identity, runtime, metal]
 claimed_from: todo
 assignee: worker-prove-live-extent-two-n
-lease_expires_at: 1786662228
+lease_expires_at: 1786662272
 ---
 ## User-visible outcome
 
@@ -19,7 +19,14 @@ One compiled artifact, payload subject, and pipeline indexes dense F32 `[2,N]` f
 
 ## Exact gap
 
-This is the parent ticket's first required evidence, which `9a8f53c9` did not produce because the artifact envelope row does not exist yet.
+**Correction at `6ea5de7cd866edd296e39310cdb94163ca5c1a4c`.** The envelope row now exists: `8b52aa13` carries it, and `DecodedExtentOperand` / `EntryRef::extent_operands` are labelled drafts under `accept-the-live-extent-artifact-envelope-row`. Reproduce: `rg -n "Draft surface, not yet accepted" crates/tiler-artifact/src/program/codec/view.rs crates/tiler-artifact/src/program/model.rs`. What this ticket still owed is the `N = 14` / `N = 15` payload and pipeline execution evidence the parent named, which neither `9a8f53c9` nor the envelope row produced.
+
+## Fact audit at `6ea5de7c`
+
+- **Verified.** Semantic `(row = 1, column = 0)` on dense F32 `[2,N]` is element `N`, so bytes `4N`. The IR already states it as `dense_f32_row_major_bytes` and asserts `56` and `60`. Reproduce: `rg -n "dense_f32_row_major_bytes" crates/tiler-ir/src/kernel/tests.rs`.
+- **Verified.** `DecodedExtentOperand` and `EntryRef::extent_operands` are labelled drafts. Reproduce: `rg -n "Draft surface, not yet accepted" crates/tiler-artifact/src/program/codec/view.rs crates/tiler-artifact/src/program/model.rs`.
+- **False as written.** "the artifact envelope row does not exist yet" is stale after `8b52aa13`. The row exists; the two-N execution evidence did not.
+- **Verified.** Baking neighbouring extents changes kernel identity. Reproduce: `rg -n "baking N = 14 must change identity" crates/tiler-ir/src/kernel/tests.rs`.
 
 ## Required work
 
@@ -37,6 +44,25 @@ This is the parent ticket's first required evidence, which `9a8f53c9` did not pr
 ## Non-goals
 
 Envelope construction is the dependency. `LiveContraction` contributor-loop evidence is [`prove-a-schedule-verified-live-contraction-consumes-s`](prove-a-schedule-verified-live-contraction-consumes-s.md). Inline AOT `deliver` lifting is [`deliver-an-artifact-family-from-a-symbolic-region`](deliver-an-artifact-family-from-a-symbolic-region.md).
+
+## Outcome
+
+One live-extent artifact, one payload subject, and one pipeline subject index dense F32 `[2,N]` at `N = 14` and `N = 15`. The live value stays out of artifact, payload, library, and pipeline identity. Baking either neighbour is a failing identity assertion.
+
+**Address oracles.** Semantic `(row = 1, column = 0)` from the bound input extent:
+
+- `N = 14` → byte **56**
+- `N = 15` → byte **60**
+
+Quoted from `one_live_extent_payload_and_pipeline_indexes_dense_f32_at_two_n`: `assert_eq!(addresses, [56, 60], "semantic (row = 1, column = 0) at N=14 and N=15")`.
+
+**Identity.** Across the two bindings the artifact, payload, library, and pipeline subjects are equal. Each is unequal to a baked `[2, 14]` / `[2, 15]` neighbour. The live MSL contains `constant ulong& e0 [[buffer(2)]]` and neither `14ul` nor `15ul`.
+
+**Disagreement.** Binding only the static row axis refuses before program work as `runtime.abi-evaluation: entry 0's launch precondition 0 could not be evaluated: UnboundInputExtent { key: InputKey("input"), axis: Axis(1) }`.
+
+**Identity blast radius.** `tiler.artifact-program.v16` and `tiler.kernel.v7` do not step. Empty extent lists still write nothing. A nonempty live declaration is a new subject. The bound *value* is not folded.
+
+`DecodedExtentOperand` / `EntryRef::extent_operands` remain labelled drafts and were not self-accepted.
 
 ## Closes when
 

@@ -70,19 +70,19 @@ use std::collections::BTreeMap;
 use tiler_runtime::load::DTypeDispatch;
 
 use tiler_artifact::program::{
-    ApproximationEnvelope, ArithmeticType, ArtifactExecutionPolicy, ArtifactProgramBuilder,
-    AvailabilityPhase, BackendEntryKey, BackendEntryRef, BackendFeatureRequirement, BackendKey,
-    BindingKind, BindingSpec, CANONICAL_DIMENSIONS, CapabilityKey, CompilationEnvironment,
-    DIMENSION_COUNT, DeferredPredicateSpec, DeliveredRealizationBuilder, DimensionBehaviour,
-    EntryRealization, EntrySpec, ExceptionalValueAssumption, FactSourceProvenance,
-    FeasibilityRuleSetKey, FeasibilityRuleSetRef, HonouringMeans, LaunchSpec,
-    MaterializationRounding, NumericalDimension, NumericalObligationKey, NumericalPermission,
-    PayloadContent, PayloadMetadata, PayloadPlatform, PayloadProvenance, PolicyLocus,
-    ProvenanceIdentity, RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey,
-    RouteRequirement, ScalarArithmeticSubject, ScalarArithmeticSubjectIdentity, SchemaVersion,
-    SelectedProvider, SemanticOccurrence, SubnormalMode, TargetEvidenceDeclaration,
-    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, TargetPropertyKey,
-    ToolComponent, VariantSpec, overlapping_behaviour,
+    AbiExprId, ApproximationEnvelope, ArithmeticType, ArtifactExecutionPolicy,
+    ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey, BackendEntryRef,
+    BackendFeatureRequirement, BackendKey, BindingKind, BindingSpec, CANONICAL_DIMENSIONS,
+    CapabilityKey, CompilationEnvironment, DIMENSION_COUNT, DeferredPredicateSpec,
+    DeliveredRealizationBuilder, DimensionBehaviour, EntryRealization, EntrySpec,
+    ExceptionalValueAssumption, FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
+    HonouringMeans, LaunchSpec, MaterializationRounding, NumericalDimension,
+    NumericalObligationKey, NumericalPermission, PayloadContent, PayloadMetadata, PayloadPlatform,
+    PayloadProvenance, PolicyLocus, ProvenanceIdentity, RecordedArtifactProgramIdentity,
+    RepresentationKey, RouteFeatureKey, RouteRequirement, ScalarArithmeticSubject,
+    ScalarArithmeticSubjectIdentity, SchemaVersion, SelectedProvider, SemanticOccurrence,
+    SubnormalMode, TargetEvidenceDeclaration, TargetProfileDescriptorDigest, TargetProfileKey,
+    TargetProfileRef, TargetPropertyKey, ToolComponent, VariantSpec, overlapping_behaviour,
 };
 use tiler_ir::index::{
     DomainRole, FrozenIndexRealizationLawRegistry, FrozenScalarRegistry, IndexInteger,
@@ -97,7 +97,7 @@ use tiler_ir::program::abi::{
     TargetPropertyQuery, TargetPropertyRequirementRelation,
 };
 use tiler_ir::program::{
-    AlignmentGuarantee, AlignmentRequirement, AllocationOwnership, AllocationSpec,
+    AlignmentGuarantee, AlignmentRequirement, AllocationOwnership, AllocationSpec, ByteWindow,
     CoveredOccurrence, KernelProgramBuilder, MaterializedOrigin, MaterializedValueSpec,
     MemorySpace, RoutingCommitState, RoutingCommitTransition, StageAccess, StageAccessMode,
     StageLaunch, StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram,
@@ -412,6 +412,8 @@ pub enum PackagedPlan {
     FusedExtentGuarded,
     /// A pointwise stage and a reduction stage over an explicit intermediate.
     Materialized,
+    /// One `LiveRowMajor` stage whose inner extent is a payload operand.
+    LiveExtent,
 }
 
 impl PackagedPlan {
@@ -431,6 +433,7 @@ impl PackagedPlan {
                 b"fused-multiply-add-strict-serial-sum rows=2 columns=3 extent-guarded".to_vec()
             }
             Self::Materialized => b"multiply-add then strict-serial-sum rows=2 columns=3".to_vec(),
+            Self::LiveExtent => b"live-row-major e0; N is not in this subject".to_vec(),
         }
     }
 }
@@ -609,6 +612,24 @@ impl FixtureSpec {
                 ..Self::default()
             },
             PackagedPlan::Materialized => Self::materialized(),
+            PackagedPlan::LiveExtent => Self::live_extent(),
+        }
+    }
+
+    /// Returns the live-extent member: one payload operand, no baked N.
+    #[must_use]
+    pub fn live_extent() -> Self {
+        Self {
+            plan: PackagedPlan::LiveExtent,
+            route_requirements: Vec::new(),
+            deferred_predicates: Vec::new(),
+            entries: vec![FixtureEntry {
+                key: entry_key(b"live-row-major"),
+                symbol: "live_row_major".to_owned(),
+                transports: vec![0, 1, 2],
+                arithmetic: ArithmeticType::F32,
+            }],
+            ..Self::default()
         }
     }
 
@@ -873,12 +894,36 @@ fn subject_identity(arithmetic: ArithmeticType) -> ScalarArithmeticSubjectIdenti
     }
 }
 
+fn live_extent_preconditions(
+    draft: &mut ArtifactProgramBuilder,
+    plan: PackagedPlan,
+) -> Vec<AbiExprId> {
+    if plan != PackagedPlan::LiveExtent {
+        return Vec::new();
+    }
+    let one = draft
+        .push_root(AbiRoot::UnsignedLiteral(1))
+        .expect("the live-extent precondition one");
+    let n = draft
+        .push_root(AbiRoot::InputExtent {
+            key: input_key(),
+            axis: Axis::new(1),
+        })
+        .expect("the live-extent precondition N");
+    vec![
+        draft
+            .push_binary(AbiBinaryOp::LessOrEqual, one, n)
+            .expect("the live-extent launch precondition"),
+    ]
+}
+
 fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, spec: &FixtureSpec) {
     let program = match spec.plan {
         PackagedPlan::Fused => fused_program(semantic, FusedGuard::AlwaysHolds),
         PackagedPlan::FusedInapplicable => fused_program(semantic, FusedGuard::NeverHolds),
         PackagedPlan::FusedExtentGuarded => fused_program(semantic, FusedGuard::NeedsBoundInput),
         PackagedPlan::Materialized => materialized_program(semantic),
+        PackagedPlan::LiveExtent => live_extent_program(semantic),
     };
     let payload = draft
         .push_carried_payload(
@@ -934,6 +979,7 @@ fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, s
         )
         .expect("the fixture payload was accepted");
 
+    let preconditions = live_extent_preconditions(draft, spec.plan);
     let variant = draft
         .push_variant(
             &program,
@@ -961,7 +1007,7 @@ fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, s
                         ],
                         launch: LaunchSpec {
                             zero_work_skips_dispatch: true,
-                            preconditions: Vec::new(),
+                            preconditions: preconditions.clone(),
                         },
                         implementation: BackendEntryRef {
                             payloads: vec![payload],
@@ -1460,6 +1506,204 @@ fn fused_kernel() -> VerifiedKernel {
 /// what a producer packages for a plan it wants ranked but not chosen under the
 /// bound facts, and it is the only way this fixture can put an *eligible*
 /// variant in a portfolio that selection must nevertheless pass over.
+fn live_row_major_kernel() -> VerifiedKernel {
+    let inner = Axis::new(1);
+    let mut region = ScheduledRegionBuilder::new(RegionId::new(40));
+    region
+        .iteration_shape(Shape::from_dims([ROWS]))
+        .expect("rows");
+    region
+        .push_access(Access {
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::LiveRowMajor { inner_axis: inner },
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .expect("read");
+    region
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LiveRowMajor { inner_axis: inner },
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .expect("write");
+    for (witness, tensor) in [
+        (
+            0,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+        ),
+        (1, TensorRole::Output),
+    ] {
+        region
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(witness),
+                tensor,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange { element_count: 0 },
+            })
+            .expect("bounds");
+    }
+    region
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: ROWS },
+        })
+        .expect("ownership");
+    let mut expression = PointwiseF32ExpressionBuilder::new();
+    let input = expression.input(InputOrdinal::FIRST).expect("input");
+    let scale = expression.constant(SCALE_BITS).expect("scale");
+    let product = expression.multiply(input, scale).expect("product");
+    let bias = expression.constant(BIAS_BITS).expect("bias");
+    let root = expression.add(product, bias).expect("root");
+    region
+        .scalar_program(ScalarProgram::PointwiseF32(
+            expression.build(root).expect("expression"),
+        ))
+        .expect("scalar");
+    region.numerical(strict()).expect("numerical");
+    region
+        .schedule(KernelSchedule {
+            binding: ExecutionBinding::GlobalLinearInvocation,
+            work_items: ROWS,
+            threads_per_workgroup: 1,
+            tail: TailPolicy::Exact,
+            output_owner: OwnershipWitnessId::new(0),
+            reduction: ReductionTopology::None,
+            launch: LaunchPlan {
+                grid_threads: ROWS,
+                threads_per_workgroup: 1,
+                zero_work_skips_dispatch: true,
+            },
+        })
+        .expect("schedule");
+    lower_scheduled_region(&region.build().expect("region")).expect("lowers")
+}
+
+fn live_extent_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
+    let kernel = live_row_major_kernel();
+    let mut plan = KernelProgramBuilder::new(semantic).expect("a plan draft");
+    let device = |capacity_bytes, ownership| AllocationSpec {
+        capacity_bytes,
+        alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
+        memory_space: MemorySpace::Device,
+        ownership,
+    };
+    let external = plan
+        .push_allocation(device(ROWS * COLUMNS * 4, AllocationOwnership::External))
+        .expect("external");
+    let owned = plan
+        .push_allocation(device(ROWS * COLUMNS * 4, AllocationOwnership::Program))
+        .expect("owned");
+    let value = |origin, role, shape| MaterializedValueSpec {
+        origin,
+        role,
+        shape,
+        storage_scalar: StorageScalar::F32,
+        element_type: KernelType::F32,
+        encoding: StorageEncoding::Unpacked,
+        alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
+        memory_space: MemorySpace::Device,
+    };
+    let source = plan
+        .push_value(
+            value(
+                MaterializedOrigin::ProgramInput { key: input_key() },
+                ValueRole::Input,
+                input_shape(),
+            ),
+            external,
+        )
+        .expect("source");
+    let result = plan
+        .push_value(
+            value(
+                MaterializedOrigin::Internal,
+                ValueRole::Output,
+                output_shape(),
+            ),
+            owned,
+        )
+        .expect("result");
+    let read = plan
+        .push_view(
+            source,
+            ByteWindow {
+                offset: 0,
+                length: 0,
+            },
+        )
+        .expect("read");
+    let write = plan
+        .push_view(
+            result,
+            ByteWindow {
+                offset: 0,
+                length: 0,
+            },
+        )
+        .expect("write");
+    let zero = plan
+        .push_abi_root(AbiRoot::UnsignedLiteral(0))
+        .expect("zero");
+    let two = plan
+        .push_abi_root(AbiRoot::UnsignedLiteral(2))
+        .expect("two");
+    let one = plan
+        .push_abi_root(AbiRoot::UnsignedLiteral(1))
+        .expect("one");
+    let live_n = plan
+        .push_abi_root(AbiRoot::InputExtent {
+            key: input_key(),
+            axis: Axis::new(1),
+        })
+        .expect("live N");
+    let accessible = plan
+        .push_abi_binary(AbiBinaryOp::CheckedMultiply, zero, live_n)
+        .expect("accessible");
+    let guard = plan
+        .push_abi_root(AbiRoot::BooleanLiteral(true))
+        .expect("guard");
+    plan.applicability_guard(guard).expect("applicability");
+    declare_routing_commit(&mut plan);
+    plan.push_stage(
+        &kernel,
+        &checked_coverage(semantic, 0..5),
+        &[
+            StageAccess {
+                view: read,
+                mode: StageAccessMode::Read,
+                accessible_bytes: accessible,
+            },
+            StageAccess {
+                view: write,
+                mode: StageAccessMode::Write,
+                accessible_bytes: accessible,
+            },
+        ],
+        StageLaunch {
+            grid_threads: two,
+            threads_per_workgroup: one,
+        },
+    )
+    .expect("the live-extent stage binds");
+    plan.push_output(
+        OutputKey::new("result").expect("a valid output key"),
+        result,
+    )
+    .expect("the program output");
+    plan.build().expect("the live-extent plan verifies")
+}
+
 #[must_use]
 pub fn fused_program(semantic: &SemanticProgram, guard: FusedGuard) -> VerifiedKernelProgram {
     let kernel = fused_kernel();

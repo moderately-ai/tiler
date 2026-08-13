@@ -2273,6 +2273,19 @@ pub(crate) fn live_extent_program(semantic: &SemanticProgram) -> VerifiedKernelP
     let zero = plan.push_abi_root(AbiRoot::UnsignedLiteral(0)).unwrap();
     let two = plan.push_abi_root(AbiRoot::UnsignedLiteral(2)).unwrap();
     let one = plan.push_abi_root(AbiRoot::UnsignedLiteral(1)).unwrap();
+    let live_n = plan
+        .push_abi_root(AbiRoot::InputExtent {
+            key: InputKey::new("input").unwrap(),
+            axis: Axis::new(1),
+        })
+        .unwrap();
+    // LiveRowMajor windows are zero-length at construction; the product still
+    // names the same InputExtent the payload reads, so range evaluation and
+    // payload binding share one fact. The static shape supplies axis 1, so the
+    // product is zero at construction and stays a function of the bound N.
+    let accessible = plan
+        .push_abi_binary(AbiBinaryOp::CheckedMultiply, zero, live_n)
+        .unwrap();
     let guard = plan.push_abi_root(AbiRoot::BooleanLiteral(true)).unwrap();
     plan.applicability_guard(guard).unwrap();
     for (from, to, fallback_permitted) in [
@@ -2306,12 +2319,12 @@ pub(crate) fn live_extent_program(semantic: &SemanticProgram) -> VerifiedKernelP
             StageAccess {
                 view: read,
                 mode: StageAccessMode::Read,
-                accessible_bytes: zero,
+                accessible_bytes: accessible,
             },
             StageAccess {
                 view: write,
                 mode: StageAccessMode::Write,
-                accessible_bytes: zero,
+                accessible_bytes: accessible,
             },
         ],
         StageLaunch {
@@ -4903,6 +4916,389 @@ fn empty_extent_lists_do_not_move_previously_encodable_artifact_bytes() {
         with.canonical_identity().as_bytes(),
         "declaring a live extent is a new subject, not a reinterpretation",
     );
+}
+
+/// Dense F32 `[2, N]`: semantic `(row = 1, column = 0)` is element `N`, so bytes `4N`.
+const fn dense_f32_row_major_bytes(row: u64, column: u64, inner_extent: u64) -> u64 {
+    4 * (row * inner_extent + column)
+}
+
+/// One live-extent artifact, two bound N values, and a baked neighbour.
+///
+/// The bound value is not an artifact subject. Baking either neighbour is.
+#[test]
+fn one_live_extent_artifact_indexes_dense_f32_at_two_n_without_baking() {
+    let artifact = live_extent_artifact();
+    let again = live_extent_artifact();
+    assert_eq!(
+        artifact.canonical_identity().as_bytes(),
+        again.canonical_identity().as_bytes(),
+        "two constructions of the live subject must keep one identity",
+    );
+
+    let entry = artifact
+        .variants()
+        .next()
+        .expect("one variant")
+        .entries()
+        .next()
+        .expect("one entry");
+    let extents: Vec<_> = entry.extent_operands().collect();
+    assert_eq!(extents.len(), 1);
+    assert_eq!(extents[0].key().as_str(), "input");
+    assert_eq!(extents[0].axis(), Axis::new(1));
+
+    let mut addresses = Vec::new();
+    for n in [14_u64, 15] {
+        let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
+        binder
+            .bind_input_extent(InputKey::new("input").unwrap(), Axis::new(1), n)
+            .unwrap();
+        let facts = binder.build();
+        assert_eq!(
+            facts.input_extent(&InputKey::new("input").unwrap(), Axis::new(1)),
+            Some(n),
+            "range, launch, and the payload operand share this bound fact",
+        );
+        let bindings: Vec<_> = entry.bindings().collect();
+        assert_eq!(
+            bindings[0]
+                .accessible_bytes()
+                .evaluate(&facts)
+                .expect("range evaluates from the bound live extent"),
+            super::AbiValue::Unsigned(0),
+            "the LiveRowMajor window is zero-length; the expression still names N={n}",
+        );
+        assert_eq!(
+            entry
+                .launch_threads()
+                .evaluate(&facts)
+                .expect("launch evaluates from the same facts"),
+            super::AbiValue::Unsigned(2),
+        );
+        let address = dense_f32_row_major_bytes(1, 0, n);
+        addresses.push(address);
+    }
+    assert_eq!(
+        addresses,
+        [56, 60],
+        "semantic (row = 1, column = 0) at N=14 and N=15"
+    );
+
+    let baked_14 = baked_dense_artifact(14);
+    let baked_15 = baked_dense_artifact(15);
+    assert_ne!(
+        artifact.canonical_identity().as_bytes(),
+        baked_14.canonical_identity().as_bytes(),
+        "baking N = 14 must change artifact identity",
+    );
+    assert_ne!(
+        baked_14.canonical_identity().as_bytes(),
+        baked_15.canonical_identity().as_bytes(),
+        "baking neighbouring extents must change artifact identity",
+    );
+}
+
+/// A launch that names a different axis than the payload operand refuses before
+/// the bound N can be used as two meanings.
+#[test]
+fn a_host_side_payload_disagreement_refuses_before_program_work() {
+    let artifact = live_extent_two_n_artifact();
+    let entry = artifact
+        .variants()
+        .next()
+        .expect("one variant")
+        .entries()
+        .next()
+        .expect("one entry");
+    let precondition = entry
+        .launch_preconditions()
+        .next()
+        .expect("the two-N artifact names the live axis in a launch precondition");
+
+    let mut only_rows = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
+    only_rows
+        .bind_input_extent(InputKey::new("input").unwrap(), Axis::new(0), 2)
+        .unwrap();
+    let rows_only = only_rows.build();
+    assert_eq!(
+        precondition.evaluate(&rows_only),
+        Err(AbiEvaluationError::UnboundInputExtent {
+            key: InputKey::new("input").unwrap(),
+            axis: Axis::new(1),
+        }),
+        "binding the static row axis is not an answer for the live inner extent",
+    );
+
+    let mut both = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
+    both.bind_input_extent(InputKey::new("input").unwrap(), Axis::new(0), 2)
+        .unwrap();
+    both.bind_input_extent(InputKey::new("input").unwrap(), Axis::new(1), 14)
+        .unwrap();
+    assert_eq!(
+        precondition
+            .evaluate(&both.build())
+            .expect("the live axis answers the launch precondition"),
+        super::AbiValue::Boolean(true),
+    );
+}
+
+/// `LinearIdentity` over a baked `[2, N]`, packaged the same way as the live subject.
+fn baked_dense_kernel(columns: u64) -> VerifiedKernel {
+    let rows = 2_u64;
+    let elements = rows
+        .checked_mul(columns)
+        .expect("the two-N fixture stays inside u64");
+    let mut region = ScheduledRegionBuilder::new(RegionId::new(0));
+    region
+        .iteration_shape(Shape::from_dims([rows, columns]))
+        .unwrap();
+    region
+        .push_access(Access {
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .unwrap();
+    region
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    for (witness, tensor) in [
+        (
+            0,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+        ),
+        (1, TensorRole::Output),
+    ] {
+        region
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(witness),
+                tensor,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: elements,
+                },
+            })
+            .unwrap();
+    }
+    region
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: elements,
+            },
+        })
+        .unwrap();
+    region
+        .scalar_program(ScalarProgram::PointwiseF32(scale_bias_expression()))
+        .unwrap();
+    region.numerical(strict()).unwrap();
+    region
+        .schedule(KernelSchedule {
+            binding: ExecutionBinding::GlobalLinearInvocation,
+            work_items: elements,
+            threads_per_workgroup: 1,
+            tail: TailPolicy::Exact,
+            output_owner: OwnershipWitnessId::new(0),
+            reduction: ReductionTopology::None,
+            launch: LaunchPlan {
+                grid_threads: elements,
+                threads_per_workgroup: 1,
+                zero_work_skips_dispatch: true,
+            },
+        })
+        .unwrap();
+    lower_scheduled_region(&region.build().unwrap()).unwrap()
+}
+
+fn baked_dense_program(semantic: &SemanticProgram, columns: u64) -> VerifiedKernelProgram {
+    let kernel = baked_dense_kernel(columns);
+    let rows = 2_u64;
+    let bytes = 4 * rows * columns;
+    let mut plan = KernelProgramBuilder::new(semantic).unwrap();
+    let device = |capacity_bytes, ownership| AllocationSpec {
+        capacity_bytes,
+        alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
+        memory_space: MemorySpace::Device,
+        ownership,
+    };
+    let external = plan
+        .push_allocation(device(bytes, AllocationOwnership::External))
+        .unwrap();
+    let owned = plan
+        .push_allocation(device(bytes, AllocationOwnership::Program))
+        .unwrap();
+    let value = |origin, role, shape| MaterializedValueSpec {
+        origin,
+        role,
+        shape,
+        storage_scalar: StorageScalar::F32,
+        element_type: KernelType::F32,
+        encoding: StorageEncoding::Unpacked,
+        alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
+        memory_space: MemorySpace::Device,
+    };
+    let source = plan
+        .push_value(
+            value(
+                MaterializedOrigin::ProgramInput {
+                    key: InputKey::new("input").unwrap(),
+                },
+                ValueRole::Input,
+                Shape::from_dims([rows, columns]),
+            ),
+            external,
+        )
+        .unwrap();
+    let result = plan
+        .push_value(
+            value(
+                MaterializedOrigin::Internal,
+                ValueRole::Output,
+                Shape::from_dims([rows, columns]),
+            ),
+            owned,
+        )
+        .unwrap();
+    let read = plan
+        .push_view(
+            source,
+            ByteWindow {
+                offset: 0,
+                length: bytes,
+            },
+        )
+        .unwrap();
+    let write = plan
+        .push_view(
+            result,
+            ByteWindow {
+                offset: 0,
+                length: bytes,
+            },
+        )
+        .unwrap();
+    let accessible = plan.push_abi_root(AbiRoot::UnsignedLiteral(bytes)).unwrap();
+    let grid = plan
+        .push_abi_root(AbiRoot::UnsignedLiteral(rows * columns))
+        .unwrap();
+    let one = plan.push_abi_root(AbiRoot::UnsignedLiteral(1)).unwrap();
+    let guard = plan.push_abi_root(AbiRoot::BooleanLiteral(true)).unwrap();
+    plan.applicability_guard(guard).unwrap();
+    for (from, to, fallback_permitted) in [
+        (
+            RoutingCommitState::Preflight,
+            RoutingCommitState::Committed,
+            true,
+        ),
+        (
+            RoutingCommitState::Committed,
+            RoutingCommitState::Executing,
+            false,
+        ),
+        (
+            RoutingCommitState::Executing,
+            RoutingCommitState::Published,
+            false,
+        ),
+    ] {
+        plan.push_routing_commit_transition(RoutingCommitTransition {
+            from,
+            to,
+            fallback_permitted,
+        })
+        .unwrap();
+    }
+    plan.push_stage(
+        &kernel,
+        &checked_coverage(semantic),
+        &[
+            StageAccess {
+                view: read,
+                mode: StageAccessMode::Read,
+                accessible_bytes: accessible,
+            },
+            StageAccess {
+                view: write,
+                mode: StageAccessMode::Write,
+                accessible_bytes: accessible,
+            },
+        ],
+        StageLaunch {
+            grid_threads: grid,
+            threads_per_workgroup: one,
+        },
+    )
+    .unwrap();
+    plan.push_output(OutputKey::new("result").unwrap(), result)
+        .unwrap();
+    plan.build().unwrap()
+}
+
+fn baked_semantic_program(columns: u64) -> SemanticProgram {
+    let mut draft = SemanticProgramBuilder::try_standard().unwrap();
+    let input = draft
+        .input::<F32>(
+            InputKey::new("input").unwrap(),
+            Shape::from_dims([2, columns]),
+        )
+        .unwrap();
+    let scale = F32Constant::apply(&mut draft, 2.0_f32.to_bits()).unwrap();
+    let bias = F32Constant::apply(&mut draft, 1.0_f32.to_bits()).unwrap();
+    let product = F32Multiply::apply(&mut draft, input, scale).unwrap();
+    let mapped = F32Add::apply(&mut draft, product, bias).unwrap();
+    draft
+        .output(OutputKey::new("result").unwrap(), mapped)
+        .unwrap();
+    draft.build().unwrap()
+}
+
+fn baked_dense_artifact(columns: u64) -> VerifiedArtifactProgram {
+    let semantic = baked_semantic_program(columns);
+    let program = baked_dense_program(&semantic, columns);
+    let provider = lowering_provider(1);
+    build_artifact(&semantic, &program, provider.clone(), &[provider])
+}
+
+/// The live artifact plus a launch precondition that names the same live axis.
+fn live_extent_two_n_artifact() -> VerifiedArtifactProgram {
+    let semantic = semantic_program();
+    let program = live_extent_program(&semantic);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+    let descriptor = draft.push_payload(payload(0xa1)).unwrap();
+    let formulas = formulas(&mut draft);
+    let n = draft
+        .push_root(AbiRoot::InputExtent {
+            key: InputKey::new("input").unwrap(),
+            axis: Axis::new(1),
+        })
+        .unwrap();
+    let predicate = draft
+        .push_binary(AbiBinaryOp::LessOrEqual, formulas.one, n)
+        .unwrap();
+    let mut spec = variant(&formulas, descriptor, b"fused");
+    spec.entries[0].launch.preconditions = vec![predicate];
+    draft.push_variant(&program, spec).unwrap();
+    declare_realization(&mut draft, &program);
+    draft.build().unwrap()
 }
 
 // -------------------------------------------------------------------------

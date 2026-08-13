@@ -1059,3 +1059,85 @@ fn one_golden_compiles_to_identical_bytes_twice_when_a_toolchain_resolves() {
     );
     assert_eq!(first.provenance.fingerprint, second.provenance.fingerprint);
 }
+
+/// One live-extent translation unit compiles to one library; baking N is another subject.
+#[test]
+fn one_live_extent_library_and_pipeline_subject_at_two_n_when_a_toolchain_resolves() {
+    let Some(toolchain) = resolved_toolchain() else {
+        return;
+    };
+    let live = crate::tests::live_row_major_kernel();
+    let unit = emit_translation_unit(&[&live], &emitter_facts(), emission_realization())
+        .expect("the live-extent kernel emits");
+    let live_request = golden_request(unit.source());
+    let prepared = toolchain
+        .prepare(&live_request)
+        .unwrap_or_else(|error| panic!("the live-extent unit must prepare: {error}"));
+    let live_request_again = golden_request(unit.source());
+    let again = toolchain
+        .prepare(&live_request_again)
+        .unwrap_or_else(|error| panic!("the live-extent unit must prepare twice: {error}"));
+    let live_library = prepared.identity().as_bytes().to_vec();
+    let again_library = again.identity().as_bytes().to_vec();
+    assert_eq!(
+        live_library, again_library,
+        "library identity is the compilation subject; N is not in it",
+    );
+    let symbol = unit.entry_points()[0].symbol();
+    let pipeline = [live_library.as_slice(), symbol.as_bytes()].concat();
+    let pipeline_again = [again_library.as_slice(), symbol.as_bytes()].concat();
+    assert_eq!(
+        pipeline, pipeline_again,
+        "pipeline identity is library identity plus the entry symbol",
+    );
+
+    let compiled = prepared
+        .compile()
+        .unwrap_or_else(|error| panic!("the live-extent unit must compile: {error}"));
+    assert_eq!(&compiled.metallib[..4], b"MTLB");
+    assert!(
+        library_names(&compiled.metallib, symbol),
+        "the linked library must name {symbol}"
+    );
+    assert!(
+        !unit.source().contains("14ul") && !unit.source().contains("15ul"),
+        "the compiled source must not bake either N: {}",
+        unit.source()
+    );
+
+    let baked_14 = crate::tests::baked_dense_kernel(14);
+    let baked_15 = crate::tests::baked_dense_kernel(15);
+    let baked_14_unit =
+        emit_translation_unit(&[&baked_14], &emitter_facts(), emission_realization())
+            .expect("baked N = 14 emits");
+    let baked_15_unit =
+        emit_translation_unit(&[&baked_15], &emitter_facts(), emission_realization())
+            .expect("baked N = 15 emits");
+    let baked_14_request = golden_request(baked_14_unit.source());
+    let baked_14_id = toolchain
+        .prepare(&baked_14_request)
+        .expect("baked N = 14 prepares")
+        .identity()
+        .as_bytes()
+        .to_vec();
+    let baked_15_request = golden_request(baked_15_unit.source());
+    let baked_15_id = toolchain
+        .prepare(&baked_15_request)
+        .expect("baked N = 15 prepares")
+        .identity()
+        .as_bytes()
+        .to_vec();
+    assert_ne!(
+        live_library.as_slice(),
+        baked_14_id.as_slice(),
+        "baking N = 14 must change library identity",
+    );
+    assert_ne!(
+        baked_14_id, baked_15_id,
+        "baking neighbouring extents must change library identity",
+    );
+    eprintln!(
+        "golden_compilation: live-extent library linked {} bytes as {symbol}",
+        compiled.metallib.len()
+    );
+}

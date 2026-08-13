@@ -1324,6 +1324,16 @@ pub(crate) fn pointwise_kernel() -> VerifiedKernel {
     .expect("bounded pointwise fixture lowers")
 }
 
+/// A `LinearIdentity` kernel that bakes a dense `[2, N]` extent into identity.
+pub(crate) fn baked_dense_kernel(columns: u64) -> VerifiedKernel {
+    lower_scheduled_region(&pointwise_region(
+        RegionId::new(0),
+        &Shape::from_dims([2, columns]),
+        NAN_BITS,
+    ))
+    .expect("a baked dense fixture lowers")
+}
+
 pub(crate) fn single_axis_reduction_kernel() -> VerifiedKernel {
     lower_scheduled_region(&reduction_region(
         RegionId::new(1),
@@ -2233,7 +2243,7 @@ fn the_binding_table_matches_the_emitted_subscripts() {
     }
 }
 
-fn live_row_major_kernel() -> VerifiedKernel {
+pub(crate) fn live_row_major_kernel() -> VerifiedKernel {
     let rows = 2_u64;
     let inner = Axis::new(1);
     let mut builder = ScheduledRegionBuilder::new(RegionId::new(40));
@@ -2312,6 +2322,72 @@ fn a_live_extent_is_emitted_as_a_constant_parameter() {
         !source.contains("14ul") && !source.contains("15ul"),
         "live N must not be baked: {source}"
     );
+}
+
+/// Dense F32 `[2, N]`: semantic `(row = 1, column = 0)` is element `N`, so bytes `4N`.
+const fn dense_f32_row_major_bytes(row: u64, column: u64, inner_extent: u64) -> u64 {
+    4 * (row * inner_extent + column)
+}
+
+/// One emitted payload subject addresses both neighbouring N values; baking either is a different unit.
+#[test]
+fn one_live_extent_unit_addresses_two_n_and_refuses_to_bake_them() {
+    let live = live_row_major_kernel();
+    let unit = emit_translation_unit(&[&live], &target()).unwrap();
+    let again = emit_translation_unit(&[&live_row_major_kernel()], &target()).unwrap();
+    assert_eq!(
+        unit.source(),
+        again.source(),
+        "one live subject must emit one translation unit",
+    );
+    assert_eq!(
+        live.canonical_identity().as_bytes(),
+        live_row_major_kernel().canonical_identity().as_bytes(),
+    );
+    assert_eq!(unit.entry_points()[0].input_extent_count(), 1);
+    let source = unit.source();
+    assert!(
+        source.contains('v') && source.contains(" = e0;"),
+        "the address stride must be the live operand: {source}"
+    );
+    assert!(
+        !source.contains("14ul") && !source.contains("15ul"),
+        "live N must not be baked: {source}"
+    );
+
+    let baked_14 = lower_scheduled_region(&pointwise_region(
+        RegionId::new(0),
+        &Shape::from_dims([2, 14]),
+        NAN_BITS,
+    ))
+    .expect("baked N = 14 lowers");
+    let baked_15 = lower_scheduled_region(&pointwise_region(
+        RegionId::new(0),
+        &Shape::from_dims([2, 15]),
+        NAN_BITS,
+    ))
+    .expect("baked N = 15 lowers");
+    let baked_14_unit = emit_translation_unit(&[&baked_14], &target()).unwrap();
+    let baked_15_unit = emit_translation_unit(&[&baked_15], &target()).unwrap();
+    assert_ne!(
+        live.canonical_identity().as_bytes(),
+        baked_14.canonical_identity().as_bytes(),
+        "baking N = 14 must change kernel identity",
+    );
+    assert_ne!(
+        baked_14.canonical_identity().as_bytes(),
+        baked_15.canonical_identity().as_bytes(),
+        "baking neighbouring extents must change kernel identity",
+    );
+    assert_ne!(unit.source(), baked_14_unit.source());
+    assert_ne!(baked_14_unit.source(), baked_15_unit.source());
+    assert!(
+        baked_14_unit.source().contains("14ul") || baked_14_unit.source().contains("28ul"),
+        "a baked [2, 14] unit must name the specialized extent: {}",
+        baked_14_unit.source()
+    );
+    assert_eq!(dense_f32_row_major_bytes(1, 0, 14), 56);
+    assert_eq!(dense_f32_row_major_bytes(1, 0, 15), 60);
 }
 
 #[test]
