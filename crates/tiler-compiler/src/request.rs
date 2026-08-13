@@ -23,7 +23,7 @@ use tiler_ir::semantic::{
     constant_f32_op, multiply_bf16_op, multiply_f32_op, reindex_f32_op, silu_f32_op,
     strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
-use tiler_ir::shape::{Axis, Extent, ExtentSources, Shape, SourcedExtent};
+use tiler_ir::shape::{Axis, Extent, ExtentSources, Shape, SourcedExtent, SourcedShape};
 
 // The numerical-realization vocabulary is target-neutral and owned by the shared
 // IR (ADR 0070); the compiler contract references it rather than duplicating it.
@@ -1678,8 +1678,11 @@ impl RecognizedPointwise {
 ///
 /// `input_keys` and `inputs` are parallel and in the program's declaration
 /// order, which is the order the expression's input ordinals index and the order
-/// the assembled program binds its buffers in. One `shape` governs every input
-/// and the output, so a single element count sizes the whole region.
+/// the assembled program binds its buffers in. One sourced `shape` governs every
+/// input and the output. A wholly literal boundary still answers
+/// [`SourcedShape::as_static`] and then a single element count sizes the region;
+/// a symbolic boundary keeps the symbols as written and leaves `elements` at
+/// zero, because a launch geometry is not a number anyone authored.
 ///
 /// **`expression` is the recognized program, not a projection of it.** It is the
 /// general per-point expression vocabulary rather than a fixed leaf count and
@@ -1691,7 +1694,7 @@ impl RecognizedPointwise {
 pub(crate) struct NormalizedPointwise {
     pub(crate) input_keys: Vec<InputKey>,
     pub(crate) output_key: OutputKey,
-    pub(crate) shape: Shape,
+    pub(crate) shape: SourcedShape,
     pub(crate) expression: RecognizedPointwise,
     pub(crate) members: Vec<SemanticStage>,
     pub(crate) inputs: Vec<ValueId>,
@@ -2683,6 +2686,22 @@ impl NormalizedProgram {
         members
     }
 
+    /// Returns the first authored symbol any recognized pointwise output still names.
+    ///
+    /// Same-shape elementwise is the population this boundary admits with
+    /// extents left symbolic. Later schedule construction that needs a fixed
+    /// launch geometry reads this rather than folding
+    /// [`ExtentSources::determined`].
+    pub(crate) fn first_symbolic_extent(&self) -> Option<SourcedExtent> {
+        self.outputs.iter().find_map(|output| match output {
+            NormalizedOutput::Pointwise(pointwise) => pointwise
+                .shape
+                .extents()
+                .find(|extent| extent.as_static().is_none()),
+            _ => None,
+        })
+    }
+
     /// Returns every *occurrence* any output's walk claimed, ascending.
     ///
     /// The projection of [`Self::all_members`] onto operations, for the
@@ -3377,7 +3396,7 @@ fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubje
                 push_slice(bytes, key.as_str().as_bytes());
             }
             push_slice(bytes, normalized.output_key.as_str().as_bytes());
-            encode_explain_shape(bytes, &normalized.shape);
+            encode_explain_sourced_shape(bytes, &normalized.shape);
             match &normalized.expression {
                 RecognizedPointwise::F32(expression) => {
                     encode_pointwise_expression(bytes, expression);
@@ -3857,6 +3876,38 @@ fn encode_explain_shape(output: &mut Vec<u8>, shape: &Shape) {
     push_len(output, shape.rank());
     for extent in shape.extents() {
         output.extend_from_slice(&extent.get().to_be_bytes());
+    }
+}
+
+/// Encodes one recognized pointwise domain without moving a wholly literal subject's bytes.
+///
+/// A static boundary takes the existing [`encode_explain_shape`] path, so every
+/// previously encodable pointwise subject keeps its qualifier. A symbolic
+/// boundary writes tagged extents; that population had no subject before this
+/// admission.
+fn encode_explain_sourced_shape(output: &mut Vec<u8>, shape: &SourcedShape) {
+    if let Some(shape) = shape.as_static() {
+        encode_explain_shape(output, shape);
+        return;
+    }
+    push_len(output, shape.rank());
+    for extent in shape.extents() {
+        match extent {
+            SourcedExtent::Static(extent) => {
+                output.push(0x01);
+                output.extend_from_slice(&extent.get().to_be_bytes());
+            }
+            SourcedExtent::Symbol(symbol) => {
+                output.push(0x02);
+                push_slice(output, symbol.scope().as_bytes());
+                push_slice(output, symbol.name().as_bytes());
+            }
+            _ => {
+                // A new source kind must extend this encoder. The reserved tag
+                // keeps an unknown spelling from colliding with Static or Symbol.
+                output.push(0x00);
+            }
+        }
     }
 }
 
@@ -5472,7 +5523,7 @@ fn recognize_elementwise_output(
     arithmetic: ArithmeticType,
 ) -> Result<NormalizedOutput, RequestError> {
     let declared: Vec<ValueId> = program.inputs().map(|input| input.value()).collect();
-    let shape = static_shape(program, output.value(), "output-handle")?;
+    let shape = sourced_shape(program, output.value(), "output-handle")?;
     if shape.rank() == 0 {
         return mismatch("elementwise-rank");
     }
@@ -5484,8 +5535,23 @@ fn recognize_elementwise_output(
         Ok(plan) => recognize_pointwise(program, output, &declared, shape, plan, arithmetic)
             .map(NormalizedOutput::Pointwise),
         Err(ElementwiseRefusal::Folded(staged)) => {
-            recognize_epilogue(program, output, &declared, shape, staged, laws, arithmetic)
-                .map(|chain| NormalizedOutput::Epilogue(Box::new(chain)))
+            let Some(static_shape) = shape.as_static() else {
+                return Err(unsupported_symbolic_extent(
+                    program,
+                    output.value(),
+                    &shape,
+                ));
+            };
+            recognize_epilogue(
+                program,
+                output,
+                &declared,
+                static_shape.clone(),
+                staged,
+                laws,
+                arithmetic,
+            )
+            .map(|chain| NormalizedOutput::Epilogue(Box::new(chain)))
         }
         Err(ElementwiseRefusal::Refused(error)) => Err(error),
     }
@@ -5950,6 +6016,7 @@ fn recognize_elementwise(
     laws: &FrozenIndexRealizationLawRegistry,
     arithmetic: ArithmeticType,
 ) -> Result<RecognizedElementwise, RequestError> {
+    let sourced = SourcedShape::from(shape.clone());
     let plan = plan_elementwise(
         program,
         root,
@@ -5957,7 +6024,7 @@ fn recognize_elementwise(
             declared,
             staged: None,
         },
-        shape,
+        &sourced,
         laws,
         arithmetic,
     )
@@ -6132,7 +6199,7 @@ fn plan_elementwise(
     program: &SemanticProgram,
     root: ValueId,
     leaves: &ElementwiseLeaves<'_>,
-    shape: &Shape,
+    shape: &SourcedShape,
     laws: &FrozenIndexRealizationLawRegistry,
     arithmetic: ArithmeticType,
 ) -> Result<ElementwisePlan, ElementwiseRefusal> {
@@ -6146,7 +6213,7 @@ fn plan_elementwise(
             continue;
         }
         if leaves.is_leaf(value) {
-            if static_shape_ref(program, value) != Some(shape) {
+            if sourced_shape_ref(program, value) != Some(shape) {
                 return refused("elementwise-shape");
             }
             let leaf = LeafRead {
@@ -6177,18 +6244,26 @@ fn plan_elementwise(
         // map the family denotes. That is what makes a fused region the
         // deliverable rather than a materializing copy kernel: the arithmetic
         // still comes from the neighbour, and only the addressing changes.
-        if let Some((operand, map)) = recognize_structural_read(program, &operation, leaves, shape)
-            .map_err(ElementwiseRefusal::Refused)?
-        {
-            let leaf = LeafRead {
-                value: operand,
-                map,
+        if is_structural_family(operation.key()) {
+            let Some(static_domain) = shape.as_static() else {
+                return Err(ElementwiseRefusal::Refused(unsupported_symbolic_extent(
+                    program, value, shape,
+                )));
             };
-            record_leaf(&mut leaf_reads, leaves.staged, leaf.clone())?;
-            members.push(SemanticStage::first(SemanticMemberId(member)));
-            steps.push((value, ElementwiseMint::Read { leaf }));
-            minted.push(value);
-            continue;
+            if let Some((operand, map)) =
+                recognize_structural_read(program, &operation, leaves, static_domain)
+                    .map_err(ElementwiseRefusal::Refused)?
+            {
+                let leaf = LeafRead {
+                    value: operand,
+                    map,
+                };
+                record_leaf(&mut leaf_reads, leaves.staged, leaf.clone())?;
+                members.push(SemanticStage::first(SemanticMemberId(member)));
+                steps.push((value, ElementwiseMint::Read { leaf }));
+                minted.push(value);
+                continue;
+            }
         }
         let Some(family) = elementwise_family(&operation, arithmetic) else {
             // A folding family is the *boundary* between two regions rather than
@@ -6229,8 +6304,8 @@ fn plan_elementwise(
         // proposes under a contract that permits it, and its inner product is
         // rank zero. Refusing every rank would have lost that alternative to a
         // check with no correctness content behind it.
-        let value_shape = static_shape_ref(program, value);
-        if value_shape != Some(shape) && value_shape.map(Shape::rank) != Some(0) {
+        let value_shape = sourced_shape_ref(program, value);
+        if value_shape != Some(shape) && value_shape.map(SourcedShape::rank) != Some(0) {
             return refused("elementwise-shape");
         }
         let operands: Vec<ValueId> = operation.operands().collect();
@@ -6555,6 +6630,13 @@ fn recognize_structural_read(
         return mismatch("structural-operand");
     }
     let Some(operand_shape) = static_shape_ref(program, *operand) else {
+        if let Some(extent) = first_nonstatic_extent(program, *operand) {
+            return Err(RequestError::UnsupportedSymbolicExtent {
+                phase: "strategy",
+                rule: "symbolic-extent",
+                extent,
+            });
+        }
         return mismatch("structural-operand");
     };
     // The occurrence's result is what the region iterates, so a result at any
@@ -6564,6 +6646,13 @@ fn recognize_structural_read(
         return mismatch("structural-arity");
     };
     if static_shape_ref(program, *result) != Some(shape) {
+        if let Some(extent) = first_nonstatic_extent(program, *result) {
+            return Err(RequestError::UnsupportedSymbolicExtent {
+                phase: "strategy",
+                rule: "symbolic-extent",
+                extent,
+            });
+        }
         return mismatch("structural-shape");
     }
     let operand_shape = operand_shape.clone();
@@ -6887,12 +6976,15 @@ fn recognize_pointwise(
     program: &SemanticProgram,
     output: &tiler_ir::semantic::ProgramOutputRef<'_>,
     declared: &[ValueId],
-    shape: Shape,
+    shape: SourcedShape,
     plan: ElementwisePlan,
     arithmetic: ArithmeticType,
 ) -> Result<NormalizedPointwise, RequestError> {
     let recognized = resolve_elementwise(plan, declared, arithmetic)?;
-    let elements = element_count_u64(&shape, "input")?;
+    let elements = match shape.as_static() {
+        Some(static_shape) => element_count_u64(static_shape, "input")?,
+        None => 0,
+    };
     Ok(NormalizedPointwise {
         input_keys: program.inputs().map(|input| input.key().clone()).collect(),
         output_key: output.key().clone(),
@@ -6941,7 +7033,8 @@ fn recognize_epilogue(
         declared,
         staged: Some(staged),
     };
-    let plan = plan_elementwise(program, output.value(), &leaves, &shape, laws, arithmetic)
+    let sourced = SourcedShape::from(shape.clone());
+    let plan = plan_elementwise(program, output.value(), &leaves, &sourced, laws, arithmetic)
         .map_err(RequestError::from)?;
     // The staged read, then whichever declared inputs the expression names. The
     // *declared* half is now the same rule `canonical_input_reads` states —
@@ -7740,8 +7833,9 @@ fn reduction_axes(
 
 /// Returns one semantic value's fixed shape, refusing a symbolic one by name.
 ///
-/// Recognition matches a program against a physical strategy, and every
-/// strategy below is stated over fixed extents: a domain a launch geometry is
+/// Recognition matches a program against a physical strategy. Same-shape
+/// elementwise is admitted with extents left symbolic; every other strategy
+/// below is still stated over fixed extents: a domain a launch geometry is
 /// derived from, an element count, a reindex or broadcast axis decode. A
 /// symbolic extent is refused here rather than resolved through the
 /// environment, which would make the recognized region name extents nobody
@@ -7788,6 +7882,58 @@ fn static_shape(
 /// which is the answer those sites want: the strategy is not recognized.
 fn static_shape_ref(program: &SemanticProgram, value: ValueId) -> Option<&Shape> {
     program.shape(value).ok()?.as_static()
+}
+
+/// Returns one semantic value's sourced shape, refusing only a foreign handle.
+fn sourced_shape(
+    program: &SemanticProgram,
+    value: ValueId,
+    rule: &'static str,
+) -> Result<SourcedShape, RequestError> {
+    program
+        .shape(value)
+        .map_err(|_| RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule,
+        })
+        .cloned()
+}
+
+/// Returns one value's sourced shape, or `None` for a foreign handle.
+fn sourced_shape_ref(program: &SemanticProgram, value: ValueId) -> Option<&SourcedShape> {
+    program.shape(value).ok()
+}
+
+fn is_structural_family(key: &OpKey) -> bool {
+    *key == reindex_f32_op() || *key == broadcast_f32_op()
+}
+
+fn first_nonstatic_extent(program: &SemanticProgram, value: ValueId) -> Option<SourcedExtent> {
+    program
+        .shape(value)
+        .ok()?
+        .extents()
+        .find(|extent| extent.as_static().is_none())
+}
+
+fn unsupported_symbolic_extent(
+    program: &SemanticProgram,
+    value: ValueId,
+    domain: &SourcedShape,
+) -> RequestError {
+    first_nonstatic_extent(program, value)
+        .or_else(|| domain.extents().find(|extent| extent.as_static().is_none()))
+        .map_or(
+            RequestError::UnsupportedCapability {
+                phase: "strategy",
+                rule: "operation-set",
+            },
+            |extent| RequestError::UnsupportedSymbolicExtent {
+                phase: "strategy",
+                rule: "symbolic-extent",
+                extent,
+            },
+        )
 }
 
 fn element_count_u64(shape: &Shape, role: &'static str) -> Result<u64, RequestError> {
@@ -12104,16 +12250,32 @@ mod tests {
             .expect("the symbolic fixture names at least one symbol")
     }
 
-    /// A symbolic program is admitted as far as strategy selection.
+    fn scheduled_symbolic_extent(
+        error: &crate::pipeline::CompileError,
+    ) -> Option<&SourcedExtent> {
+        match error {
+            crate::pipeline::CompileError::UnsupportedCapability(
+                RequestError::UnsupportedSymbolicExtent {
+                    phase: "schedule",
+                    rule: "symbolic-extent",
+                    extent,
+                },
+            ) => Some(extent),
+            crate::pipeline::CompileError::Explained { source, .. } => {
+                scheduled_symbolic_extent(source)
+            }
+            _ => None,
+        }
+    }
+
+    /// Same-shape elementwise is admitted through strategy with extents left symbolic.
     ///
-    /// The leftover version gate is gone: the request carries the program's own
-    /// environment and the refusal is the strategy's, not
-    /// `UnsupportedRequestVersion`. Watched failing under a deliberate
-    /// perturbation: dropping `shape_environment` from `governed_preferring`
-    /// makes the same program refuse as `MismatchedShapeEnvironment` before
-    /// recognition runs.
+    /// Watched failing under a deliberate perturbation: restoring
+    /// `static_shape` in `recognize_elementwise_output` makes this program
+    /// refuse as `UnsupportedSymbolicExtent { phase: "strategy" }` before a
+    /// `NormalizedProgram` exists.
     #[test]
-    fn a_symbolic_program_reaches_strategy_selection() {
+    fn a_symbolic_elementwise_program_is_recognized_with_its_symbols() {
         let program = symbolic_three_input_elementwise(None);
         let request = CompilationRequest::governed(&program);
         assert!(
@@ -12129,44 +12291,47 @@ mod tests {
             ),
             "the request must carry the program's own environment, not a second one",
         );
-        match verify_request(request) {
-            Err(RequestError::UnsupportedSymbolicExtent {
-                phase: "strategy",
-                rule: "symbolic-extent",
-                extent,
-            }) => {
-                assert_eq!(extent, SourcedExtent::Symbol(request_symbol("n")));
-            }
-            other => match other {
-                Ok(_) => panic!(
-                    "a well-formed symbolic request must reach strategy selection, got Planned/Refused"
-                ),
-                Err(error) => panic!(
-                    "a well-formed symbolic request must reach strategy selection, got {error}"
-                ),
-            },
-        }
+        let verified = verify_planned_request(request)
+            .expect("same-shape symbolic elementwise must pass strategy selection");
+        assert_eq!(
+            verified.normalized.first_symbolic_extent(),
+            Some(SourcedExtent::Symbol(request_symbol("n"))),
+        );
+        let pointwise = verified
+            .normalized
+            .outputs()
+            .first()
+            .and_then(NormalizedOutput::pointwise)
+            .expect("the fixture is whole-program elementwise");
+        assert_eq!(pointwise.shape.as_static(), None);
+        assert_eq!(
+            pointwise.shape.extents().collect::<Vec<_>>(),
+            vec![SourcedExtent::Symbol(request_symbol("n"))],
+        );
     }
 
     /// An unsupported symbolic case names the extent; the literal neighbour compiles.
     ///
-    /// Watched failing under a deliberate perturbation: restoring
-    /// `static_shape`'s handle-rule attribution makes the symbolic program
-    /// refuse as `UnsupportedCapability { rule: "output-handle" }` and the
-    /// extent is no longer in the diagnostic.
+    /// Same-shape elementwise now reaches region formation; scheduled-region
+    /// construction still cannot plan a launch over the symbol. Watched failing
+    /// under a deliberate perturbation: reporting that refuse as
+    /// `UnsupportedCapability { rule: "region-vocabulary" }` drops the extent
+    /// from the diagnostic.
     #[test]
     fn an_unsupported_symbolic_case_names_the_extent_and_the_literal_neighbour_compiles() {
         let symbolic = symbolic_three_input_elementwise(None);
         let extent = first_symbolic_extent(&symbolic);
         assert_eq!(extent, SourcedExtent::Symbol(request_symbol("n")));
-        assert_eq!(
-            verify_planned_request(CompilationRequest::governed(&symbolic)),
-            Err(RequestError::UnsupportedSymbolicExtent {
-                phase: "strategy",
-                rule: "symbolic-extent",
-                extent,
-            }),
-        );
+        match crate::pipeline::compile(CompilationRequest::governed(&symbolic)) {
+            Err(error) => {
+                assert_eq!(
+                    scheduled_symbolic_extent(&error),
+                    Some(&extent),
+                    "an unsupported symbolic case must name the extent, got {error}"
+                );
+            }
+            Ok(_) => panic!("an unsupported symbolic case must name the extent, got a product"),
+        }
 
         let literal = literal_three_input_elementwise(4);
         crate::pipeline::compile(CompilationRequest::governed(&literal))
@@ -12177,10 +12342,7 @@ mod tests {
     ///
     /// The environment pins `n` to 4. The program still names the symbol, the
     /// request still carries that environment, and compilation still refuses
-    /// the symbol rather than emitting a `[4]` plan. Watched failing under a
-    /// deliberate perturbation: resolving the symbol through the environment
-    /// inside `static_shape` replaces the named-extent refusal with a
-    /// mis-attributed `elementwise-shape` capability refusal.
+    /// the symbol rather than emitting a `[4]` plan.
     #[test]
     fn a_compiled_plan_does_not_fold_a_bound_extent_value() {
         let bound = symbolic_three_input_elementwise(Some(4));
@@ -12197,19 +12359,65 @@ mod tests {
                 "no authored boundary may collapse to the bound value",
             );
         }
+        let verified = verify_planned_request(CompilationRequest::governed(&bound))
+            .expect("a bound symbol is still a recognized symbolic program");
         assert_eq!(
-            verify_planned_request(CompilationRequest::governed(&bound)),
-            Err(RequestError::UnsupportedSymbolicExtent {
-                phase: "strategy",
-                rule: "symbolic-extent",
-                extent,
-            }),
-            "a bound symbol must still be refused as the symbol, not compiled as 4",
+            verified.normalized.first_symbolic_extent(),
+            Some(extent.clone()),
+            "recognition must keep the authored symbol, not the bound value 4",
         );
+        match crate::pipeline::compile(CompilationRequest::governed(&bound)) {
+            Err(error) => {
+                assert_eq!(
+                    scheduled_symbolic_extent(&error),
+                    Some(&extent),
+                    "a bound symbol must still be refused as the symbol, not compiled as 4, got {error}"
+                );
+            }
+            Ok(_) => panic!(
+                "a bound symbol must still be refused as the symbol, not compiled as 4, got a product"
+            ),
+        }
 
         let literal = literal_three_input_elementwise(4);
         crate::pipeline::compile(CompilationRequest::governed(&literal))
             .expect("the literal [4] neighbour still compiles");
+    }
+
+    /// The admitted symbolic elementwise neighbour reaches region formation.
+    ///
+    /// `compile()` records the formed graph, then declines at scheduled-region
+    /// construction because `IndexRegion` still requires a fixed launch
+    /// geometry. The graph itself still names `n`.
+    #[test]
+    fn a_symbolic_elementwise_neighbour_reaches_region_formation() {
+        let symbolic = symbolic_three_input_elementwise(None);
+        let extent = first_symbolic_extent(&symbolic);
+        crate::region::RegionGraph::from_program(&symbolic)
+            .expect("region-graph construction must record a sourced boundary");
+        crate::region::form_region_candidates(
+            &symbolic,
+            crate::request::DeterministicBudgets::governed(),
+            crate::request::StrictF32NumericalContract::governed(),
+        )
+        .expect("region formation must accept the admitted symbolic population");
+
+        match crate::pipeline::compile(CompilationRequest::governed(&symbolic)) {
+            Err(error) => {
+                assert_eq!(
+                    scheduled_symbolic_extent(&error),
+                    Some(&extent),
+                    "compile of the admitted symbolic population must decline past strategy naming the extent, got {error}"
+                );
+            }
+            Ok(_) => panic!(
+                "compile of the admitted symbolic population must decline past strategy naming the extent, got a product"
+            ),
+        }
+
+        let literal = literal_three_input_elementwise(4);
+        crate::pipeline::compile(CompilationRequest::governed(&literal))
+            .expect("the literal neighbour still compiles");
     }
 
     /// Dropping the program's environment is a pairing refusal, not a schema one.

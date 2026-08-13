@@ -1865,6 +1865,23 @@ fn compile_target_with_explain(
         record_cause(semantic_record),
     )?;
     let region_root = region_records.summary;
+    if let Some(extent) = verified.normalized().first_symbolic_extent() {
+        // Region formation recorded the authored symbols. IndexRegion still
+        // requires a fixed launch geometry, so this is a typed decline past
+        // strategy rather than a scheduled region that invents a work-item count.
+        return Err(target_failure(
+            CompileError::from(RequestError::UnsupportedSymbolicExtent {
+                phase: "schedule",
+                rule: "symbolic-extent",
+                extent,
+            }),
+            ExplainStage::RegionFormation,
+            "symbolic-schedule",
+            SubjectKind::Region,
+            REGION_FORMATION_SUBJECT,
+            record_cause(region_root),
+        ));
+    }
     let plans = enumerate_complete_plans(
         semantic,
         verified,

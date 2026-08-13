@@ -1243,7 +1243,11 @@ pub(crate) fn pointwise_region(
     let (shape, elements, expression, members, recognized_reads) =
         if let Some(pointwise) = output.pointwise() {
             (
-                pointwise.shape.clone(),
+                pointwise
+                    .shape
+                    .as_static()
+                    .expect("a scheduled pointwise region has a static iteration domain")
+                    .clone(),
                 pointwise.elements,
                 pointwise.expression.clone(),
                 pointwise.members.clone(),
@@ -3215,7 +3219,10 @@ fn verify_publishing_copy_binding(
 /// Returns the domain one recognized output publishes.
 fn published_shape(normalized: &NormalizedOutputSubject) -> &Shape {
     match normalized {
-        NormalizedOutputSubject::Pointwise(normalized) => &normalized.shape,
+        NormalizedOutputSubject::Pointwise(normalized) => normalized
+            .shape
+            .as_static()
+            .expect("a scheduled pointwise region has a static iteration domain"),
         NormalizedOutputSubject::SerialSum(normalized) => normalized.output_shape(),
         NormalizedOutputSubject::Contraction(normalized) => &normalized.output_shape,
         NormalizedOutputSubject::Epilogue(normalized) => normalized.shape(),
@@ -3251,10 +3258,12 @@ fn verify_region_output_binding(
                 _ => false,
             };
             carries
-                && element_count(&normalized.shape, region.index.id)? == normalized.elements
+                && normalized.shape.as_static().is_some_and(|shape| {
+                    element_count(shape, region.index.id).ok() == Some(normalized.elements)
+                        && region.index.iteration_shape == *shape
+                })
                 && semantic_members == normalized.members
                 && region.index.id == RegionId::new(0)
-                && region.index.iteration_shape == normalized.shape
                 && elementwise_reads_match(&region.index.accesses, &normalized.reads)
         }
         (

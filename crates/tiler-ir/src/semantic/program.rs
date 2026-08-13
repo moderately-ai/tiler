@@ -516,6 +516,31 @@ impl SemanticProgramBuilder {
         Self::open(semantic_registry, None)
     }
 
+    /// Tries to create a builder with a distinct graph owner whose symbolic
+    /// input extents resolve in one verified environment.
+    ///
+    /// The registry-taking counterpart of
+    /// [`Self::try_standard_with_shape_environment`]. A rewrite must keep the
+    /// program's own frozen registry *and* the environment its identity folds;
+    /// opening with [`Self::try_new`] alone would mint symbolic inputs against
+    /// no environment.
+    ///
+    /// **A constructor rather than a setter, and there is no setter.** The same
+    /// reason [`Self::try_standard_with_shape_environment`] takes one: a second
+    /// environment would silently reinterpret every extent already authored
+    /// against the first.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuilderCreateError::GraphIdentityExhausted`] without creating
+    /// a builder when the process-local owner space is exhausted.
+    pub fn try_new_with_shape_environment(
+        semantic_registry: FrozenSemanticRegistry,
+        environment: Arc<ShapeEnv>,
+    ) -> Result<Self, BuilderCreateError> {
+        Self::open(semantic_registry, Some(ExtentSources::new(environment)))
+    }
+
     fn open(
         semantic_registry: FrozenSemanticRegistry,
         extent_sources: Option<ExtentSources>,

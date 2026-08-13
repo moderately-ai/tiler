@@ -59,7 +59,7 @@ use tiler_ir::semantic::{
     CanonicalField, CanonicalIntegerWidth, CanonicalValue, CanonicalValueView, OpKey,
     OperationAttributes, OperationEffect, SemanticProgram, ValueId,
 };
-use tiler_ir::shape::Shape;
+use tiler_ir::shape::{SourcedExtent, SourcedShape};
 
 use crate::explain::{
     EvidenceBasis, ExplainError, ExplainEvent, ExplainFact, ExplainRecordId, ExplainStage,
@@ -761,7 +761,7 @@ struct ValueProducer {
 #[derive(Clone, Debug)]
 struct GraphValue {
     type_encoding: Box<[u8]>,
-    shape: Shape,
+    shape: SourcedShape,
     producer: Option<ValueProducer>,
     input_position: Option<u32>,
     consumers: Vec<u32>,
@@ -906,16 +906,11 @@ impl RegionGraph {
                         .as_bytes()
                         .to_vec()
                         .into_boxed_slice(),
-                    // Every access, tile, and boundary derived below is stated
-                    // over fixed extents, so a symbolic value has no graph
-                    // record to build rather than a record with a hole in it.
-                    shape: value
-                        .shape()
-                        .as_static()
-                        .ok_or(RegionError::Structure {
-                            rule: "symbolic-extent",
-                        })?
-                        .clone(),
+                    // Record the authored boundary, symbols included. A hole
+                    // would be refusing to name what the program wrote; later
+                    // schedule construction that needs a fixed launch geometry
+                    // declines with its own typed reason.
+                    shape: value.shape().clone(),
                     producer: None,
                     input_position: None,
                     consumers: Vec::new(),
@@ -1142,7 +1137,7 @@ impl RegionGraph {
                 // the first record is what the appended value carries, so a
                 // disagreeing later record would otherwise be dropped.
                 if value.type_encoding.as_ref() != type_encoding
-                    || value.shape != *handed.shape()
+                    || value.shape.as_static() != Some(handed.shape())
                     || intermediates[position].retained_through != retained_through
                 {
                     return Err(RegionError::Structure {
@@ -1159,7 +1154,7 @@ impl RegionGraph {
             let value = index(self.values.len())?;
             self.values.push(GraphValue {
                 type_encoding: type_encoding.to_vec().into_boxed_slice(),
-                shape: handed.shape().clone(),
+                shape: SourcedShape::from(handed.shape().clone()),
                 producer: None,
                 input_position: None,
                 consumers: Vec::new(),
@@ -1629,6 +1624,12 @@ impl RegionGraph {
     /// would be compared against other sizes as though it were measured.
     pub(crate) fn value_element_count(&self, value: SemanticValueId) -> Result<u64, RegionError> {
         let shape = &self.value(value.0)?.shape;
+        let Some(shape) = shape.as_static() else {
+            // Cover costing is an estimate, not a launch geometry. A symbolic
+            // value has no representable product; zero is the same stand-in
+            // `max_input_elements` already uses when it cannot size a read.
+            return Ok(0);
+        };
         tiler_ir::schedule::element_count(shape).map_err(|_| RegionError::Structure {
             rule: "value-element-count",
         })
@@ -2745,9 +2746,34 @@ fn canonical_positions(
 
 fn encode_value_facts(bytes: &mut Vec<u8>, value: &GraphValue) {
     push_slice(bytes, &value.type_encoding);
+    if let Some(shape) = value.shape.as_static() {
+        push_len(bytes, shape.rank());
+        for extent in shape.extents() {
+            bytes.extend_from_slice(&extent.get().to_be_bytes());
+        }
+        return;
+    }
+    // Symbolic programs had no region identity before this admission. The tag
+    // table matches [`SourcedExtent`]'s so a later switch to that encoder
+    // cannot move these bytes. Static subjects never take this arm.
     push_len(bytes, value.shape.rank());
     for extent in value.shape.extents() {
-        bytes.extend_from_slice(&extent.get().to_be_bytes());
+        match extent {
+            SourcedExtent::Static(extent) => {
+                bytes.push(0x01);
+                bytes.extend_from_slice(&extent.get().to_be_bytes());
+            }
+            SourcedExtent::Symbol(symbol) => {
+                bytes.push(0x02);
+                push_slice(bytes, symbol.scope().as_bytes());
+                push_slice(bytes, symbol.name().as_bytes());
+            }
+            _ => {
+                // A new source kind must extend this encoder. The reserved tag
+                // keeps an unknown spelling from colliding with Static or Symbol.
+                bytes.push(0x00);
+            }
+        }
     }
 }
 
@@ -2927,7 +2953,12 @@ mod tests {
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
         StrictSerialF32Sum,
     };
-    use tiler_ir::shape::{Axis, Shape};
+    use tiler_ir::shape::{
+        Axis, BindingSource, FactProvenance, RootBinding, Shape, ShapeEnvBuilder, ShapeSymbol,
+        SourcedExtent, SymbolScope,
+    };
+    use tiler_ir::program::abi::AvailabilityPhase;
+    use std::sync::Arc;
 
     /// Every way a chain of claims can fail to realize its subject.
     ///
@@ -3191,7 +3222,7 @@ mod tests {
         assert_eq!(handed.readers, vec![1]);
         assert_eq!(handed.retained_through, 1);
         let synthetic = graph.value(handed.value).unwrap();
-        assert_eq!(synthetic.shape, Shape::from_dims([2]));
+        assert_eq!(synthetic.shape.as_static(), Some(&Shape::from_dims([2])));
         assert_eq!(synthetic.synthetic_site, Some((member, 0)));
         // The value operand is read by both stages; the weight by the pass alone.
         let reads = |position: u32| -> Vec<u32> {
@@ -3719,8 +3750,12 @@ mod tests {
         );
         // Both readers read the per-point shape their producer published.
         assert_eq!(
-            graph.value(topology.intermediates[1].value).unwrap().shape,
-            Shape::from_dims([3, 4])
+            graph
+                .value(topology.intermediates[1].value)
+                .unwrap()
+                .shape
+                .as_static(),
+            Some(&Shape::from_dims([3, 4]))
         );
 
         // Two edges leave the producing atom, one per reading stage, and each
@@ -4941,6 +4976,64 @@ mod tests {
                 .render()
                 .contains("budget-stop:region-candidates-per-seed:0:1")
         );
+    }
+
+    #[test]
+    fn a_symbolic_elementwise_program_records_its_sourced_shape() {
+        let symbol = ShapeSymbol::new(SymbolScope::new("program/0").unwrap(), "n").unwrap();
+        let mut draft = ShapeEnvBuilder::new();
+        draft.declare(symbol.clone()).unwrap();
+        draft
+            .bind(
+                &symbol,
+                RootBinding::new(
+                    BindingSource::InputDimension {
+                        input: InputKey::new("a").unwrap(),
+                        axis: Axis::new(0),
+                    },
+                    AvailabilityPhase::LiveDevicePreflight,
+                    FactProvenance::RuntimeValidated,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let environment = Arc::new(draft.build().unwrap());
+        let mut builder =
+            SemanticProgramBuilder::try_standard_with_shape_environment(environment).unwrap();
+        let inputs: Vec<_> = ["a", "b", "c"]
+            .into_iter()
+            .map(|key| {
+                builder
+                    .input_sourced::<F32>(
+                        InputKey::new(key).unwrap(),
+                        vec![SourcedExtent::Symbol(symbol.clone())],
+                    )
+                    .unwrap()
+            })
+            .collect();
+        let product = F32Multiply::apply(&mut builder, inputs[0], inputs[1]).unwrap();
+        let root = F32Add::apply(&mut builder, product, inputs[2]).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let graph = RegionGraph::from_program(&program)
+            .expect("a sourced elementwise program has a graph record");
+        for (ordinal, value) in program.values().enumerate() {
+            let recorded = graph
+                .value(u32::try_from(ordinal).expect("fixture ordinals fit u32"))
+                .expect("every program value has a graph slot");
+            assert_eq!(
+                recorded.shape.as_static(),
+                None,
+                "the graph must keep the authored symbol rather than dying at as_static()",
+            );
+            assert_eq!(
+                recorded.shape.extents().collect::<Vec<_>>(),
+                vec![SourcedExtent::Symbol(symbol.clone())],
+            );
+            assert_eq!(value.shape().extents().collect::<Vec<_>>(), recorded.shape.extents().collect::<Vec<_>>());
+        }
     }
 
     #[test]

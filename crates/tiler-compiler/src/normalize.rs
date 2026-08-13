@@ -50,7 +50,7 @@ use tiler_ir::semantic::{
     Definition, OpKey, OperationAttributes, OperationEffect, OperationId, ResolvedValueType,
     SemanticProgram, SemanticProgramBuilder, ValueFact, ValueId, add_f32_op, multiply_f32_op,
 };
-use tiler_ir::shape::Shape;
+use tiler_ir::shape::{Shape, SourcedShape};
 
 use crate::explain::{
     EvidenceBasis, ExplainError, ExplainEvent, ExplainFact, ExplainRecordId, ExplainStage,
@@ -401,7 +401,7 @@ struct OperationSignature {
     key: OpKey,
     attributes: OperationAttributes,
     operands: Vec<usize>,
-    results: Vec<(ResolvedValueType, Shape)>,
+    results: Vec<(ResolvedValueType, SourcedShape)>,
 }
 
 /// Congruence classes discovered by one deterministic detection pass.
@@ -946,15 +946,12 @@ fn find_ordered_reassociation(
 
 /// Returns one semantic value's fixed shape, refusing a symbolic one.
 ///
-/// Strategy selection already declines a symbolic extent under
-/// `RequestError::UnsupportedSymbolicExtent`, so this helper is not the
-/// compile path's first refusal. It stays fail-closed because a rewrite that
-/// rebuilt a symbolic input through `SemanticProgramBuilder` would mint the
-/// draft with no shape environment: the rebuilt input would either lose the
-/// environment its symbols resolve in or silently acquire a different one, and
-/// the program's identity folds that environment as its fifth subject. Refusing
-/// the rewrite is the only answer that keeps identity a function of what the
-/// frontend wrote.
+/// Same-shape elementwise is admitted through strategy with extents left
+/// symbolic. Algebraic reassociation still asks for a [`ValueFact`] the public
+/// constructor can only mint from a [`Shape`], so this helper stays fail-closed
+/// for that rule. A rewrite that would rebuild a symbolic input must go through
+/// [`rewrite_builder`] and [`rewrite_input`] so the program's own environment
+/// is the one the rebuilt identity folds.
 fn static_shape(
     program: &SemanticProgram,
     value: ValueId,
@@ -968,6 +965,57 @@ fn static_shape(
         .ok_or(NormalizeError::Structure {
             rule: "symbolic-extent",
         })
+}
+
+fn rewrite_builder(
+    program: &SemanticProgram,
+    rule: &'static str,
+) -> Result<SemanticProgramBuilder, NormalizeError> {
+    let registry = program.semantic_registry().clone();
+    match program.extent_sources() {
+        None => SemanticProgramBuilder::try_new(registry),
+        Some(sources) => SemanticProgramBuilder::try_new_with_shape_environment(
+            registry,
+            Arc::new(sources.environment().clone()),
+        ),
+    }
+    .map_err(|_| NormalizeError::Rebuild { rule })
+}
+
+fn rewrite_input(
+    builder: &mut SemanticProgramBuilder,
+    program: &SemanticProgram,
+    input: tiler_ir::semantic::ProgramInputRef<'_>,
+    structure_rule: &'static str,
+    rebuild_rule: &'static str,
+) -> Result<ValueId, NormalizeError> {
+    let value = program
+        .value(input.value())
+        .map_err(|_| NormalizeError::Structure {
+            rule: structure_rule,
+        })?;
+    let sourced = program
+        .shape(input.value())
+        .map_err(|_| NormalizeError::Structure {
+            rule: structure_rule,
+        })?;
+    if let Some(shape) = sourced.as_static() {
+        builder
+            .input_resolved(
+                input.key().clone(),
+                shape.clone(),
+                value.resolved_type().clone(),
+            )
+            .map_err(|_| NormalizeError::Rebuild { rule: rebuild_rule })
+    } else {
+        builder
+            .input_resolved_sourced(
+                input.key().clone(),
+                sourced.extents().collect(),
+                value.resolved_type().clone(),
+            )
+            .map_err(|_| NormalizeError::Rebuild { rule: rebuild_rule })
+    }
 }
 
 fn value_fact(program: &SemanticProgram, value: ValueId) -> Result<ValueFact, NormalizeError> {
@@ -1023,23 +1071,16 @@ fn rebuild_ordered_reassociation(
         .enumerate()
         .map(|(ordinal, value)| (value.id(), ordinal))
         .collect();
-    let mut builder = SemanticProgramBuilder::try_new(program.semantic_registry().clone())
-        .map_err(|_| NormalizeError::Rebuild {
-            rule: "algebraic-builder-create",
-        })?;
+    let mut builder = rewrite_builder(program, "algebraic-builder-create")?;
     let mut mapped = vec![None; program.value_count()];
     for input in program.inputs() {
-        let shape = static_shape(program, input.value(), "algebraic-input-value")?;
-        let value = program
-            .value(input.value())
-            .map_err(|_| NormalizeError::Structure {
-                rule: "algebraic-input-value",
-            })?;
-        let rebuilt = builder
-            .input_resolved(input.key().clone(), shape, value.resolved_type().clone())
-            .map_err(|_| NormalizeError::Rebuild {
-                rule: "algebraic-input",
-            })?;
+        let rebuilt = rewrite_input(
+            &mut builder,
+            program,
+            input,
+            "algebraic-input-value",
+            "algebraic-input",
+        )?;
         mapped[ordinal(&ordinals, input.value())?] = Some(rebuilt);
     }
     let lookup = |value: ValueId, mapped: &[Option<ValueId>]| {
@@ -1201,12 +1242,17 @@ fn detect_shared_values(program: &SemanticProgram) -> Result<Congruence, Normali
         merges: Vec::new(),
     };
     let mut canonical: HashMap<OperationSignature, usize> = HashMap::new();
-    let facts: Vec<(ResolvedValueType, Shape)> = program
+    let facts: Vec<(ResolvedValueType, SourcedShape)> = program
         .values()
         .map(|value| {
             Ok((
                 value.resolved_type().clone(),
-                static_shape(program, value.id(), "shared-value")?,
+                program
+                    .shape(value.id())
+                    .map_err(|_| NormalizeError::Structure {
+                        rule: "shared-value",
+                    })?
+                    .clone(),
             ))
         })
         .collect::<Result<_, NormalizeError>>()?;
@@ -1294,23 +1340,17 @@ fn rebuild(
         .enumerate()
         .map(|(ordinal, value)| (value.id(), ordinal))
         .collect();
-    let mut builder = SemanticProgramBuilder::try_new(program.semantic_registry().clone())
-        .map_err(|_| NormalizeError::Rebuild {
-            rule: "builder-create",
-        })?;
+    let mut builder = rewrite_builder(program, "builder-create")?;
     let mut mapped: Vec<Option<ValueId>> = vec![None; program.value_count()];
     for input in program.inputs() {
         let position = ordinal(&ordinals, input.value())?;
-        let shape = static_shape(program, input.value(), "input-value")?;
-        let value = program
-            .value(input.value())
-            .map_err(|_| NormalizeError::Structure {
-                rule: "input-value",
-            })?;
-        let rebuilt = builder
-            .input_resolved(input.key().clone(), shape, value.resolved_type().clone())
-            .map_err(|_| NormalizeError::Rebuild { rule: "input" })?;
-        mapped[position] = Some(rebuilt);
+        mapped[position] = Some(rewrite_input(
+            &mut builder,
+            program,
+            input,
+            "input-value",
+            "input",
+        )?);
     }
     for (index, operation) in program.operations().enumerate() {
         if !congruence.retained[index] {
@@ -1565,10 +1605,7 @@ pub(crate) fn revalidate_structurally(
         .enumerate()
         .map(|(ordinal, value)| (value.id(), ordinal))
         .collect();
-    let mut builder = SemanticProgramBuilder::try_new(program.semantic_registry().clone())
-        .map_err(|_| NormalizeError::Rebuild {
-            rule: "builder-create",
-        })?;
+    let mut builder = rewrite_builder(program, "builder-create")?;
     let mut mapped: Vec<Option<ValueId>> = vec![None; program.value_count()];
 
     let lookup = |mapped: &[Option<ValueId>], position: usize| -> Result<ValueId, NormalizeError> {
@@ -1583,16 +1620,13 @@ pub(crate) fn revalidate_structurally(
 
     for input in program.inputs() {
         let position = ordinal(&ordinals, input.value())?;
-        let shape = static_shape(program, input.value(), "input-value")?;
-        let value = program
-            .value(input.value())
-            .map_err(|_| NormalizeError::Structure {
-                rule: "input-value",
-            })?;
-        let rebuilt = builder
-            .input_resolved(input.key().clone(), shape, value.resolved_type().clone())
-            .map_err(|_| NormalizeError::Rebuild { rule: "input" })?;
-        mapped[position] = Some(rebuilt);
+        mapped[position] = Some(rewrite_input(
+            &mut builder,
+            program,
+            input,
+            "input-value",
+            "input",
+        )?);
     }
 
     for operation in program.operations() {
@@ -1744,12 +1778,17 @@ fn digest(program: &SemanticProgram) -> u64 {
 mod tests {
     use super::*;
     use crate::request::{CompilationRequest, verify_planned_request};
+    use std::sync::Arc;
     use tiler_ir::semantic::{
         Bf16, Bf16Add, Bf16Constant, Bf16Multiply, CanonicalValueView, F32,
         F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant, F32Multiply, InputKey, OutputKey,
         SemanticProgramBuilder, StrictSerialF32Sum, Value,
     };
-    use tiler_ir::shape::{Axis, Shape};
+    use tiler_ir::program::abi::AvailabilityPhase;
+    use tiler_ir::shape::{
+        Axis, BindingSource, ExtentSources, FactProvenance, RootBinding, Shape, ShapeEnvBuilder,
+        ShapeSymbol, SourcedExtent, SymbolScope,
+    };
     use tiler_reference::{
         FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor,
         TensorPayloadView,
@@ -1814,6 +1853,96 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), sum)
             .unwrap();
         builder.build().unwrap()
+    }
+
+    fn symbolic_shared_multiply() -> SemanticProgram {
+        let symbol = ShapeSymbol::new(SymbolScope::new("program/0").unwrap(), "n").unwrap();
+        let mut draft = ShapeEnvBuilder::new();
+        draft.declare(symbol.clone()).unwrap();
+        draft
+            .bind(
+                &symbol,
+                RootBinding::new(
+                    BindingSource::InputDimension {
+                        input: InputKey::new("a").unwrap(),
+                        axis: Axis::new(0),
+                    },
+                    AvailabilityPhase::LiveDevicePreflight,
+                    FactProvenance::RuntimeValidated,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let environment = Arc::new(draft.build().unwrap());
+        let mut builder =
+            SemanticProgramBuilder::try_standard_with_shape_environment(environment).unwrap();
+        let a = builder
+            .input_sourced::<F32>(
+                InputKey::new("a").unwrap(),
+                vec![SourcedExtent::Symbol(symbol.clone())],
+            )
+            .unwrap();
+        let b = builder
+            .input_sourced::<F32>(
+                InputKey::new("b").unwrap(),
+                vec![SourcedExtent::Symbol(symbol)],
+            )
+            .unwrap();
+        let left = F32Multiply::apply(&mut builder, a, b).unwrap();
+        let right = F32Multiply::apply(&mut builder, a, b).unwrap();
+        let root = F32Add::apply(&mut builder, left, right).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    /// CSE of a symbolic program keeps the program's environment.
+    ///
+    /// Watched failing under a deliberate perturbation: rebuilding through
+    /// `SemanticProgramBuilder::try_new` (no environment) plus
+    /// `input_resolved_sourced` fails as `Rebuild { rule: "input" }`, which is
+    /// invalid compiler output.
+    #[test]
+    fn a_symbolic_common_subexpression_rewrite_keeps_the_program_environment() {
+        let program = symbolic_shared_multiply();
+        let congruence =
+            detect_shared_values(&program).expect("the shared multiply is a congruence");
+        assert!(
+            !congruence.merges.is_empty(),
+            "the fixture must actually trigger a rewrite"
+        );
+        let rebuilt =
+            rebuild(&program, &congruence).expect("the rewrite must carry the program's environment");
+        assert_eq!(
+            rebuilt
+                .extent_sources()
+                .map(ExtentSources::environment_identity),
+            program
+                .extent_sources()
+                .map(ExtentSources::environment_identity),
+        );
+        for value in rebuilt.values() {
+            assert_eq!(
+                value.shape().as_static(),
+                None,
+                "the rewrite must not fold the symbol into a literal",
+            );
+        }
+
+        let mut bare = SemanticProgramBuilder::try_new(program.semantic_registry().clone()).unwrap();
+        let input = program.inputs().next().unwrap();
+        let sourced = program.shape(input.value()).unwrap();
+        let value = program.value(input.value()).unwrap();
+        assert!(
+            bare.input_resolved_sourced(
+                input.key().clone(),
+                sourced.extents().collect(),
+                value.resolved_type().clone(),
+            )
+            .is_err(),
+            "minting a symbolic input without the program's environment must fail",
+        );
     }
 
     fn normalize(program: &SemanticProgram) -> NormalizationOutcome {
