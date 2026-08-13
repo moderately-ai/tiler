@@ -1,7 +1,7 @@
 ---
 id: project-parametric-broadcast-into-the-compiler-request-subject
 title: Project parametric broadcast into the compiler request subject
-status: todo
+status: done
 priority: p1
 dependencies: [accept-the-parametric-broadcast-access-surface]
 related: [carry-the-parametric-broadcast-relation-through-index-and-schedule-ir]
@@ -36,3 +36,7 @@ After Tom accepts the surface, `0x00` is no longer an honest encoding of an admi
 ## Closes when
 
 The accepted carrier has a named request-subject encoding, existing maps do not move, and the `0x00` arm remains a refusal for maps that are still unprojected.
+
+## Outcome — 2026-08-13
+
+Discharged by [`admit-parametric-symbolic-broadcast-at-the-compiler-request-boundary`](admit-parametric-symbolic-broadcast-at-the-compiler-request-boundary.md) at `c056affbe1d43f39f6af57c8722cf479ee9ac015`. Crate-internal request-subject tag `0x05` under `tiler.compiler.request-subject.v6`. Existing `0x01`/`0x02`/`0x03` maps keep their bytes. `0x04` remains the unread-input marker. `0x00` remains the refusal for unprojected maps. The public IR carrier is still a labelled draft on [`accept-the-parametric-broadcast-access-surface`](accept-the-parametric-broadcast-access-surface.md).

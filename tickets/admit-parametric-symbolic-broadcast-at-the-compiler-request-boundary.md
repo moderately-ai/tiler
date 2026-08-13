@@ -1,7 +1,7 @@
 ---
 id: admit-parametric-symbolic-broadcast-at-the-compiler-request-boundary
 title: Admit parametric symbolic broadcast at the compiler request boundary
-status: review
+status: done
 priority: p1
 dependencies: [carry-the-parametric-broadcast-relation-through-index-and-schedule-ir, admit-symbolic-extents-at-the-compiler-request-boundary]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/optimizer, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, shapes, broadcast]
-claimed_from: todo
-assignee: worker-parametric-broadcast-request
-lease_expires_at: 1786645006
 ---
 # Admit parametric symbolic broadcast at the compiler request boundary
 
