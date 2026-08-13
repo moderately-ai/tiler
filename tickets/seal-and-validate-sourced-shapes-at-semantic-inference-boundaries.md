@@ -5,7 +5,7 @@ status: review
 priority: p0
 dependencies: []
 related: [resolve-semantic-shape-inference-over-symbolic-extents, promote-the-symbolic-index-profile-to-a-public-boundary]
-scopes: [implementation/ir]
+scopes: [implementation/ir, implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, semantic-graph, correctness, public-boundary]
@@ -74,6 +74,7 @@ The malformed-shape panic and duplicate spelling are unrepresentable, every oper
 - `FrozenSemanticRegistry::infer_operation_with_extent_sources` admits every operand before provider inference and every result before returning it. The no-environment entry treats any symbol as undeclared. `SemanticProgramBuilder::validate` independently rechecks every retained value against its one environment.
 - `OperationInferenceOutputs::try_push` charges the exact `SourcedShape::encoded_len`; the 16 MiB boundary test uses long symbol scope/name components and reaches the byte limit before the result-count limit.
 - No identity/domain value was changed. The complete `tiler-ir` test population, including existing identity pins, remains green.
+- The workspace gate's shape-evidence compile-fail census moved from seven to eight for the new opacity case; the count remains an exact population check rather than being loosened.
 
 Load-bearing perturbations were run separately with assertions unchanged:
 

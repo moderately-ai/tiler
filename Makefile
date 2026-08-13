@@ -102,7 +102,7 @@ lint:
 test:
 	test $$(ls crates/tiler/tests/facade/fail/*.rs | wc -l) -eq 9
 	test $$(ls crates/tiler-ir/tests/index-region/fail/*.rs | wc -l) -eq 4
-	test $$(ls crates/tiler-ir/tests/shape-evidence/fail/*.rs | wc -l) -eq 7
+	test $$(ls crates/tiler-ir/tests/shape-evidence/fail/*.rs | wc -l) -eq 8
 	test $$(ls crates/tiler-ir/tests/typed-handles/fail/*.rs | wc -l) -eq 6
 	cargo nextest run --workspace --locked
 	cargo test --workspace --doc --locked --quiet
