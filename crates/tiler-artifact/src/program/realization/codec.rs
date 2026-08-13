@@ -13,17 +13,20 @@
 //! where. Unknown family, subject-kind, dimension, disposition, means,
 //! provenance, locus, phase, authority, validity, or behaviour tags reject
 //! **fail-closed** — an older reader never skips an unknown numerical family
-//! while still calling the executable artifact validated.
+//! while still calling the executable artifact validated. An incoming
+//! fact-source provenance schema is dispatched before the body is read: only a
+//! schema with an explicit decoder is admitted, and a foreign schema is never
+//! reconstructed through [`FactSourceProvenance::new`].
 
 use std::error::Error;
 use std::fmt;
 
 use tiler_ir::numerics::{
     CANONICAL_DIMENSIONS, CompilerBuildIdentity, CompilerBuildRole, DIMENSION_COUNT,
-    DimensionBehaviour, ExecutionEnvironmentIdentity, FactAuthority, FactEvidenceBasis,
-    FactSourceProvenance, FactValidityScope, HonouringMeans, MeasurementContext,
-    NumericalDimension, NumericalObligationKey, PolicyLocus, ProvenanceIdentity,
-    RelaxationRequirement, ScalarArithmeticSubjectIdentity,
+    DimensionBehaviour, ExecutionEnvironmentIdentity, FACT_SOURCE_PROVENANCE_SCHEMA_VERSION,
+    FactAuthority, FactEvidenceBasis, FactSourceProvenance, FactValidityScope, HonouringMeans,
+    MeasurementContext, NumericalDimension, NumericalObligationKey, PolicyLocus,
+    ProvenanceIdentity, RelaxationRequirement, ScalarArithmeticSubjectIdentity,
 };
 use tiler_ir::program::SemanticOccurrence;
 use tiler_ir::program::abi::AvailabilityPhase;
@@ -219,6 +222,39 @@ pub enum RealizationCodecError {
     },
     /// The record declared no policy subject.
     NoSubjects,
+    /// A fact-source provenance schema this build has never implemented.
+    ///
+    /// Distinct from [`Self::NewerProvenanceSchema`] and
+    /// [`Self::RetiredProvenanceSchema`]: the number is not a predecessor this
+    /// decoder once read, and it is not newer than the admitted schema. Labelled
+    /// draft under ADR 0075 until Tom accepts the exact decode-error surface.
+    UnknownProvenanceSchema {
+        /// The schema number read from the wire.
+        version: u32,
+    },
+    /// A fact-source provenance schema newer than this build implements.
+    ///
+    /// The body is not read. Reinterpreting it as the current grammar would
+    /// invent meaning this decoder does not own. Labelled draft under ADR 0075
+    /// until Tom accepts the exact decode-error surface.
+    NewerProvenanceSchema {
+        /// The schema number read from the wire.
+        version: u32,
+    },
+    /// A fact-source provenance schema this build once decoded and no longer
+    /// reads.
+    ///
+    /// Distinct from [`Self::UnknownProvenanceSchema`]: retirement is a listed
+    /// withdrawal, not "any number below the current constant". This generation
+    /// lists none — [`FACT_SOURCE_PROVENANCE_SCHEMA_VERSION`] was introduced at
+    /// 3 and no predecessor wire grammar was implemented. The variant exists so
+    /// a later withdrawal is a typed case rather than a collapse into unknown.
+    /// Labelled draft under ADR 0075 until Tom accepts the exact decode-error
+    /// surface.
+    RetiredProvenanceSchema {
+        /// The schema number read from the wire.
+        version: u32,
+    },
 }
 
 impl RealizationCodecError {
@@ -228,7 +264,7 @@ impl RealizationCodecError {
     /// *named population* rather than against however many perturbations happen
     /// to exist. A rule added without a perturbation fails the harness here
     /// instead of quietly shrinking what has been watched refusing.
-    pub const ALL_RULES: [&'static str; 19] = [
+    pub const ALL_RULES: [&'static str; 20] = [
         "bad-realization-domain",
         "truncated-realization-record",
         "trailing-realization-bytes",
@@ -248,6 +284,7 @@ impl RealizationCodecError {
         "unbound-entry",
         "overlapping-realization-mismatch",
         "no-policy-subjects",
+        "unsupported-provenance-schema",
     ];
 
     /// The stable rule identifier a consumer can surface.
@@ -273,6 +310,9 @@ impl RealizationCodecError {
             Self::UnboundEntry { .. } => "unbound-entry",
             Self::OverlappingRealizationMismatch { .. } => "overlapping-realization-mismatch",
             Self::NoSubjects => "no-policy-subjects",
+            Self::UnknownProvenanceSchema { .. }
+            | Self::NewerProvenanceSchema { .. }
+            | Self::RetiredProvenanceSchema { .. } => "unsupported-provenance-schema",
         }
     }
 }
@@ -381,8 +421,8 @@ fn strictly_increasing<T>(
 /// # Errors
 ///
 /// Returns a [`RealizationCodecError`] for a malformed, truncated,
-/// non-canonical, duplicated, dangling, unknown-tagged, behaviour-mismatched, or
-/// incomplete-provenance record.
+/// non-canonical, duplicated, dangling, unknown-tagged, behaviour-mismatched,
+/// incomplete-provenance, or unsupported-provenance-schema record.
 pub fn decode(bytes: &[u8]) -> Decoded<DeliveredRealizationRecord> {
     let mut cursor = Cursor::new(bytes);
     let domain = cursor.take(DELIVERED_REALIZATION_DOMAIN.len())?;
@@ -621,13 +661,37 @@ fn decode_environment(cursor: &mut Cursor<'_>) -> Decoded<ExecutionEnvironmentId
     ))
 }
 
+/// Schema numbers this decoder once implemented and no longer reads.
+///
+/// Empty at schema 3: the constant was introduced at 3 and no predecessor wire
+/// grammar was implemented in this tree. Retirement is a listed withdrawal, not
+/// "any number below the current constant".
+const RETIRED_FACT_SOURCE_PROVENANCE_SCHEMAS: &[u32] = &[];
+
+fn unsupported_provenance_schema(version: u32) -> RealizationCodecError {
+    if RETIRED_FACT_SOURCE_PROVENANCE_SCHEMAS.contains(&version) {
+        RealizationCodecError::RetiredProvenanceSchema { version }
+    } else if version > FACT_SOURCE_PROVENANCE_SCHEMA_VERSION {
+        RealizationCodecError::NewerProvenanceSchema { version }
+    } else {
+        RealizationCodecError::UnknownProvenanceSchema { version }
+    }
+}
+
 fn decode_provenance(cursor: &mut Cursor<'_>) -> Decoded<FactSourceProvenance> {
-    // The schema version is read and discarded rather than checked here: a
-    // provenance statement whose schema this build does not implement fails the
-    // `is_valid` completeness check in `check_references`, which is the one place
-    // provenance validity is decided, and deciding it twice would let the two
-    // answers drift.
-    let _schema = cursor.u32()?;
+    // Dispatch on the incoming schema before any body field is read. Reconstructing
+    // through `FactSourceProvenance::new` stamps the current schema, so a foreign
+    // schema whose remaining bytes happened to parse as the current grammar used
+    // to be silently normalized. `is_valid` cannot catch that: it only sees the
+    // reconstructed value.
+    let schema = cursor.u32()?;
+    match schema {
+        FACT_SOURCE_PROVENANCE_SCHEMA_VERSION => decode_provenance_v3(cursor),
+        version => Err(unsupported_provenance_schema(version)),
+    }
+}
+
+fn decode_provenance_v3(cursor: &mut Cursor<'_>) -> Decoded<FactSourceProvenance> {
     let raw_phase = cursor.byte()?;
     let phase = tag(
         AvailabilityPhase::from_tag(raw_phase),
@@ -676,6 +740,9 @@ fn decode_provenance(cursor: &mut Cursor<'_>) -> Decoded<FactSourceProvenance> {
             });
         }
     };
+    // `new` stamps `FACT_SOURCE_PROVENANCE_SCHEMA_VERSION`. This arm is reached
+    // only after that exact incoming schema was matched, so re-encoding cannot
+    // silently change the number.
     Ok(FactSourceProvenance::new(
         phase,
         authority,

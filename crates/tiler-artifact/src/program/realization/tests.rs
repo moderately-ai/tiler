@@ -18,12 +18,12 @@
 //!   own field widths, because an unknown tag is by construction a value no Rust
 //!   value can hold.
 //!
-//! Six shapes are **wire-only** — a behaviour from another space, an evidence
+//! Seven shapes are **wire-only** — a behaviour from another space, an evidence
 //! behaviour mismatch, incomplete provenance, a phase escape, an empty
-//! `Required` range, and a non-component locus carrying an ordinal. The typed
-//! producer path cannot express any of them, which is precisely why decode has
-//! to check them independently rather than trusting that a record came from the
-//! builder.
+//! `Required` range, a non-component locus carrying an ordinal, and an
+//! unsupported fact-source provenance schema. The typed producer path cannot
+//! express any of them, which is precisely why decode has to check them
+//! independently rather than trusting that a record came from the builder.
 //!
 //! # Measurement boundary
 //!
@@ -36,10 +36,10 @@
 
 use tiler_ir::numerics::{
     CANONICAL_DIMENSIONS, CompilerBuildIdentity, CompilerBuildRole, DIMENSION_COUNT,
-    DimensionBehaviour, ExecutionEnvironmentIdentity, FactAuthority, FactEvidenceBasis,
-    FactSourceProvenance, FactValidityScope, HonouringMeans, MeasurementContext,
-    NumericalDimension, NumericalObligationKey, PolicyLocus, ProvenanceIdentity,
-    RelaxationRequirement, ScalarArithmeticSubject,
+    DimensionBehaviour, ExecutionEnvironmentIdentity, FACT_SOURCE_PROVENANCE_SCHEMA_VERSION,
+    FactAuthority, FactEvidenceBasis, FactSourceProvenance, FactValidityScope, HonouringMeans,
+    MeasurementContext, NumericalDimension, NumericalObligationKey, PolicyLocus,
+    ProvenanceIdentity, RelaxationRequirement, ScalarArithmeticSubject,
 };
 use tiler_ir::program::SemanticOccurrence;
 use tiler_ir::program::abi::AvailabilityPhase;
@@ -724,6 +724,12 @@ fn the_record_round_trips_exactly_and_agrees_with_the_entry_it_binds() {
         "and re-encoding reproduces the exact bytes"
     );
 
+    assert_eq!(
+        decoded.evidence()[0].source().schema_version(),
+        FACT_SOURCE_PROVENANCE_SCHEMA_VERSION,
+        "the admitted schema survives decode"
+    );
+
     let profile = profile();
     let entries = [EntryRealization::of(strict_realization())];
     validate_against_artifact(
@@ -734,6 +740,67 @@ fn the_record_round_trips_exactly_and_agrees_with_the_entry_it_binds() {
         },
     )
     .expect("the record agrees with the artifact that would carry it");
+}
+
+#[test]
+fn an_unsupported_provenance_schema_is_refused_before_the_body_is_read() {
+    let record = reference_record();
+    let bytes = record.canonical_bytes();
+    let decoded = decode(&bytes).expect("the current-schema record decodes");
+    assert_eq!(decoded, record);
+    assert_eq!(decoded.canonical_bytes(), bytes);
+    assert_eq!(
+        decoded.evidence()[0].source().schema_version(),
+        FACT_SOURCE_PROVENANCE_SCHEMA_VERSION
+    );
+
+    let at = first_provenance_schema_offset(&record);
+    assert_eq!(
+        &bytes[at..at + 4],
+        FACT_SOURCE_PROVENANCE_SCHEMA_VERSION.to_be_bytes(),
+        "the computed offset must land on the schema word"
+    );
+
+    let unknown = poke_provenance_schema(&bytes, &record, 1);
+    let error = decode(&unknown).expect_err("schema 1 is unknown");
+    assert_eq!(
+        error,
+        RealizationCodecError::UnknownProvenanceSchema { version: 1 }
+    );
+    assert_eq!(
+        error.to_string(),
+        "unsupported-provenance-schema: UnknownProvenanceSchema { version: 1 }"
+    );
+
+    let newer = poke_provenance_schema(&bytes, &record, 4);
+    let error = decode(&newer).expect_err("schema 4 is newer");
+    assert_eq!(
+        error,
+        RealizationCodecError::NewerProvenanceSchema { version: 4 }
+    );
+    assert_eq!(
+        error.to_string(),
+        "unsupported-provenance-schema: NewerProvenanceSchema { version: 4 }"
+    );
+
+    // Trash the first body byte after the schema word. If dispatch still
+    // interpreted the body, this would be an unknown phase tag; the schema
+    // refusal must win.
+    let mut newer_and_broken = poke_provenance_schema(&bytes, &record, 4);
+    newer_and_broken[at + 4] ^= 0xff;
+    let error = decode(&newer_and_broken).expect_err("schema is refused before the body");
+    assert_eq!(
+        error,
+        RealizationCodecError::NewerProvenanceSchema { version: 4 },
+        "a damaged body must not be interpreted after an unsupported schema, got {error}"
+    );
+
+    let retired = RealizationCodecError::RetiredProvenanceSchema { version: 2 };
+    assert_eq!(retired.rule(), "unsupported-provenance-schema");
+    assert_eq!(
+        retired.to_string(),
+        "unsupported-provenance-schema: RetiredProvenanceSchema { version: 2 }"
+    );
 }
 
 /// Asserts that every dimension of every subject is reachable and total.
@@ -832,6 +899,40 @@ fn first_means_offset(record: &DeliveredRealizationRecord) -> usize {
     let mut behaviour = Vec::new();
     row.declared().encode(&mut behaviour);
     head + 4 /* subject index */ + 1 /* dimension tag */ + behaviour.len()
+}
+
+/// The byte offset of the first evidence row's fact-source provenance schema.
+///
+/// Derived from the row's own encoding minus its source tail, so a field
+/// inserted ahead of the source moves this offset with it rather than leaving
+/// the perturbation poking a neighbouring byte.
+fn first_provenance_schema_offset(record: &DeliveredRealizationRecord) -> usize {
+    let head = DELIVERED_REALIZATION_DOMAIN.len()
+        + 8
+        + record.profile().key.as_str().len()
+        + 8
+        + record.profile().descriptor.as_bytes().len()
+        + 8; // evidence count
+    let row = record.evidence().first().expect("a row to perturb");
+    let row_bytes = row.canonical_key();
+    let mut source = Vec::new();
+    row.source().encode(&mut source);
+    assert!(
+        row_bytes.ends_with(source.as_slice()),
+        "source.encode is the tail of the evidence row"
+    );
+    head + row_bytes.len() - source.len()
+}
+
+fn poke_provenance_schema(
+    bytes: &[u8],
+    record: &DeliveredRealizationRecord,
+    version: u32,
+) -> Vec<u8> {
+    let at = first_provenance_schema_offset(record);
+    let mut corrupt = bytes.to_vec();
+    corrupt[at..at + 4].copy_from_slice(&version.to_be_bytes());
+    corrupt
 }
 
 fn rule_of(error: &RealizationCodecError) -> String {
@@ -1301,6 +1402,33 @@ fn every_check_is_watched_refusing_on_its_own_rule() {
         "incomplete-provenance",
     ));
 
+    // Only the schema word of an otherwise valid record. The body is the
+    // current grammar; the old decoder would have discarded the number,
+    // reconstructed through `new`, and accepted the row as schema 3.
+    let unknown = poke_provenance_schema(&bytes, &record, 1);
+    let error = decode(&unknown).expect_err("an unknown provenance schema");
+    assert_eq!(
+        error,
+        RealizationCodecError::UnknownProvenanceSchema { version: 1 },
+        "schema 1 has never had a decoder, got {error}"
+    );
+    observed.push(Perturbation {
+        name: "unknown provenance schema",
+        observed: rule_of(&error),
+    });
+
+    let newer = poke_provenance_schema(&bytes, &record, 4);
+    let error = decode(&newer).expect_err("a newer provenance schema");
+    assert_eq!(
+        error,
+        RealizationCodecError::NewerProvenanceSchema { version: 4 },
+        "schema 4 is newer than this decoder, got {error}"
+    );
+    observed.push(Perturbation {
+        name: "newer provenance schema",
+        observed: rule_of(&error),
+    });
+
     // Evidence readable only from a phase after packaging.
     let image = DeliveredRealizationRecord::from_canonical_parts(
         record.profile().clone(),
@@ -1451,14 +1579,14 @@ fn every_check_is_watched_refusing_on_its_own_rule() {
     distinct.dedup();
     assert_eq!(
         observed.len(),
-        38,
+        40,
         "the perturbation population is stated, so a dropped case is a failure rather than a smaller pass: {:?}",
         observed.iter().map(|entry| entry.name).collect::<Vec<_>>()
     );
     assert_eq!(
         distinct.len(),
-        25,
-        "38 perturbations cover all 25 distinct rule identifiers the two vocabularies define"
+        26,
+        "40 perturbations cover all 26 distinct rule identifiers the two vocabularies define"
     );
 }
 

@@ -1820,6 +1820,12 @@ impl FactEvidenceBasis {
 }
 
 /// Version of the structured numerical-fact provenance vocabulary.
+///
+/// Artifact decode admits this version only. Every other incoming schema is
+/// refused before the body is read: a newer schema, a never-implemented
+/// schema, and (when any exist) a retired schema are distinct typed refusals.
+/// This constant was introduced at 3; no predecessor wire grammar was
+/// implemented, so no schema number is retired.
 pub const FACT_SOURCE_PROVENANCE_SCHEMA_VERSION: u32 = 3;
 
 /// Structured, versioned provenance shared by numerical evidence rows.
@@ -1840,6 +1846,10 @@ pub struct FactSourceProvenance {
 
 impl FactSourceProvenance {
     /// Assembles one provenance statement, canonicalizing measurement order.
+    ///
+    /// Always stamps [`FACT_SOURCE_PROVENANCE_SCHEMA_VERSION`]. A decoder that
+    /// must preserve an incoming schema therefore has to match that schema
+    /// first; feeding a foreign body to this constructor would normalize it.
     #[must_use]
     pub fn new(
         phase: AvailabilityPhase,
