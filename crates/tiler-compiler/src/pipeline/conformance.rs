@@ -1538,13 +1538,13 @@ fn registry_without(omitted: &OpKey) -> CompilerCapabilitySnapshot {
     CompilerCapabilitySnapshot::new(builder.freeze(), scalars)
 }
 
-/// The governed Metal activation fails closed before a kernel is produced.
+/// The governed profile declares no elementary realization, so the activation
+/// fails closed before a kernel is produced.
 ///
-/// The projection still states `tiler::silu-f32@1`'s per-point body once. What
-/// this test can no longer do is compile that body against the governed profile:
-/// the exceptional-value record is empirical and cannot discharge. The bit-for-
-/// bit corpus lives with
-/// [`establish-hard-exceptional-value-evidence-for-metal-elementary-realizations`].
+/// The projection still states `tiler::silu-f32@1`'s per-point body once. The
+/// three Metal rows are not grandfathered: they remain absent until
+/// [`establish-hard-exceptional-value-evidence-for-metal-elementary-realizations`]
+/// can discharge both evidence halves.
 #[test]
 fn the_activation_compiles_and_matches_the_reference_bit_for_bit() {
     let program = activation_program(Shape::from_dims([4]));
@@ -1557,23 +1557,20 @@ fn the_activation_compiles_and_matches_the_reference_bit_for_bit() {
                 target_profile: crate::target::TargetProfile::governed()
                     .profile_key()
                     .clone(),
-                reason: "accuracy.elementary.undischarged-evidence",
-                undischarged_half: Some(
-                    crate::target::accuracy::ElementaryEvidenceHalf::ExceptionalValue
-                ),
-                undischarged_class: Some(
-                    tiler_ir::semantic::accuracy::ConformanceEvidenceClass::EmpiricalQualification
-                ),
+                reason: "accuracy.elementary.no-installed-realization",
+                undischarged_half: None,
+                undischarged_class: None,
+                candidates: Box::new([]),
             }
         )),
     );
 }
 
-/// Omitting the activation capability cannot mask the earlier evidence refusal.
+/// Omitting the activation capability cannot mask the earlier accuracy refusal.
 ///
 /// Accuracy is asked at request verification, before recognition or lowering.
 /// A missing capability is a later repair; it must not become the reported
-/// cause while the exceptional-value half is still empirical.
+/// cause while the profile still declares no realization.
 #[test]
 fn omitting_the_activation_capability_refuses_the_recognized_occurrence() {
     let program = activation_program(Shape::from_dims([4]));
@@ -1588,13 +1585,10 @@ fn omitting_the_activation_capability_refuses_the_recognized_occurrence() {
                 target_profile: crate::target::TargetProfile::governed()
                     .profile_key()
                     .clone(),
-                reason: "accuracy.elementary.undischarged-evidence",
-                undischarged_half: Some(
-                    crate::target::accuracy::ElementaryEvidenceHalf::ExceptionalValue
-                ),
-                undischarged_class: Some(
-                    tiler_ir::semantic::accuracy::ConformanceEvidenceClass::EmpiricalQualification
-                ),
+                reason: "accuracy.elementary.no-installed-realization",
+                undischarged_half: None,
+                undischarged_class: None,
+                candidates: Box::new([]),
             }
         )),
     );
@@ -1628,6 +1622,7 @@ fn a_profile_declaring_no_elementary_realization_refuses_the_activation() {
                 reason: "accuracy.elementary.no-installed-realization",
                 undischarged_half: None,
                 undischarged_class: None,
+                candidates: Box::new([]),
             }
         )),
     );
@@ -1643,10 +1638,10 @@ fn a_profile_declaring_no_elementary_realization_refuses_the_activation() {
         "the perturbed profile refuses only the elementary obligation",
     );
 
-    // The governed profile still *declares* the three Metal rows, but their
-    // exceptional-value evidence is empirical and cannot discharge. That is a
-    // different refusal from the unattested profile's missing row: the rows
-    // are present and they refine, and admission still fails closed.
+    // The governed profile declares no elementary row either. Both profiles
+    // therefore refuse the same way: no installed realization. The arithmetic
+    // control above is what keeps that refusal attributable to the obligation
+    // rather than to a generally weaker profile.
     let product = compile(CompilationRequest::governed(&activation)).unwrap();
     assert_eq!(
         product.targets[0].failure(),
@@ -1656,13 +1651,10 @@ fn a_profile_declaring_no_elementary_realization_refuses_the_activation() {
                 target_profile: crate::target::TargetProfile::governed()
                     .profile_key()
                     .clone(),
-                reason: "accuracy.elementary.undischarged-evidence",
-                undischarged_half: Some(
-                    crate::target::accuracy::ElementaryEvidenceHalf::ExceptionalValue
-                ),
-                undischarged_class: Some(
-                    tiler_ir::semantic::accuracy::ConformanceEvidenceClass::EmpiricalQualification
-                ),
+                reason: "accuracy.elementary.no-installed-realization",
+                undischarged_half: None,
+                undischarged_class: None,
+                candidates: Box::new([]),
             }
         )),
     );

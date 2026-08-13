@@ -2551,13 +2551,10 @@ fn a_staged_family_program_compiles_and_computes_the_normalization_bit_for_bit()
             RequestError::UnrealizedElementaryAccuracy {
                 operation: tiler_ir::semantic::rms_norm_f32_op(),
                 target_profile: TargetProfile::governed().profile_key().clone(),
-                reason: "accuracy.elementary.undischarged-evidence",
-                undischarged_half: Some(
-                    crate::target::accuracy::ElementaryEvidenceHalf::ExceptionalValue
-                ),
-                undischarged_class: Some(
-                    tiler_ir::semantic::accuracy::ConformanceEvidenceClass::EmpiricalQualification
-                ),
+                reason: "accuracy.elementary.no-installed-realization",
+                undischarged_half: None,
+                undischarged_class: None,
+                candidates: Box::new([]),
             }
         )),
     );
@@ -2608,13 +2605,10 @@ fn the_staged_regions_compute_the_normalization_bit_for_bit() {
             RequestError::UnrealizedElementaryAccuracy {
                 operation: tiler_ir::semantic::rms_norm_f32_op(),
                 target_profile: TargetProfile::governed().profile_key().clone(),
-                reason: "accuracy.elementary.undischarged-evidence",
-                undischarged_half: Some(
-                    crate::target::accuracy::ElementaryEvidenceHalf::ExceptionalValue
-                ),
-                undischarged_class: Some(
-                    tiler_ir::semantic::accuracy::ConformanceEvidenceClass::EmpiricalQualification
-                ),
+                reason: "accuracy.elementary.no-installed-realization",
+                undischarged_half: None,
+                undischarged_class: None,
+                candidates: Box::new([]),
             }
         )),
     );

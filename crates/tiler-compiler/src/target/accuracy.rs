@@ -1,6 +1,6 @@
 #![allow(
     dead_code,
-    reason = "the authority is now on the compile path — `request::require_elementary_accuracy` calls `assess_program_elementary_accuracy` per target, and the admitted `tiler::silu-f32@1` recognizer reaches it. What remains unconstructed is the *structured* reporting either outcome carries: an admission's refinement basis and per-half evidence discharge, and a refusal's typed reason and declaring-profile provenance. The compile path consumes only the refusal's stable diagnostic code, because no public surface yet carries the richer record — and adding one belongs with the `TargetProfileBuilder` declaration that would let a caller-built profile state an elementary realization at all. [`elementary_relative_accuracy`] is unconstructed for a different reason: its consumer is a parametric rewrite bound, and no rewrite rule carrying one is registered, because the two numerical dimensions such a rule would consume are declined and reserved rather than admitted"
+    reason = "the authority is on the compile path — `request::require_elementary_accuracy` calls `assess_program_elementary_accuracy` per target, and the admitted `tiler::silu-f32@1` recognizer reaches it. [`elementary_relative_accuracy`] remains unconstructed: its consumer is a parametric rewrite bound, and no rewrite rule carrying one is registered, because the two numerical dimensions such a rule would consume are declined and reserved rather than admitted"
 )]
 
 //! Which elementary-function accuracy contracts a target realization refines.
@@ -123,6 +123,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::semantic::accuracy::{
     AccuracyContract, AccuracyContractForm, AccuracyDomain, AccuracyDomainClause,
     AccuracyMetricKey, AccuracyPredicate, AccuracyPredicateView, BooleanPredicateKind,
@@ -130,7 +131,8 @@ use tiler_ir::semantic::accuracy::{
     DomainInterval, ExactRational, ExactTolerance, OperandOrdinal, ReferenceResultClass,
     ReferenceResultConstraint, ReferenceRoundingRule, RefinementBasis, RefinementOutcome,
     RefinementUnknown, RegisteredImplication, RegisteredImplicationKey,
-    RegisteredImplicationRegistry, UlpFormat, ulp_reference_gap_metric_key,
+    RegisteredImplicationRegistry, UlpFormat, VerifiedAccuracyContract,
+    ulp_reference_gap_metric_key,
 };
 use tiler_ir::semantic::{
     F32, NormativeDefinitionRef, OpKey, SILU_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS,
@@ -560,10 +562,41 @@ pub(crate) fn metal_f32_exceptional_value_evidence()
     )
 }
 
-/// One installed target realization of one registered elementary operation.
-#[derive(Clone, Debug)]
-pub(crate) struct ElementaryRealization {
-    operation: OpKey,
+/// Why one whole elementary-realization subject cannot be constructed.
+///
+/// **Labelled draft** under ADR 0075. The error is public because the
+/// constructor is; this type is not an accepted refusal vocabulary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ElementaryRealizationError {
+    /// The source is available only after compile profile.
+    ///
+    /// Elementary accuracy is asked while verifying the request, so a later
+    /// phase cannot speak for a fact the compiler has to decide now. A generic
+    /// `TargetFactSource` that happens to carry a later phase is the same
+    /// refusal: the phase is the rejected property, not the constructor the
+    /// caller happened to use.
+    LaterPhaseSource {
+        /// Phase the rejected source declared.
+        phase: AvailabilityPhase,
+    },
+}
+
+/// One whole elementary-realization subject a target profile may declare.
+///
+/// **Labelled draft** under ADR 0075. Tom accepted the *shape* — one validated
+/// whole record, operation derived from a verified contract, both complete
+/// evidence records, compile-profile-phase source, no per-field setters — on
+/// 2026-08-11. He has not accepted this type, its constructor, or its
+/// accessors. A tested implementation is a concrete draft, not implicit
+/// approval of the interface.
+///
+/// The operation is not a second key the caller can disagree with the
+/// contract about. Evidence records are stored as stated, including a half
+/// that cannot discharge: declaration records the claim, and assessment
+/// refuses `undischarged-evidence` rather than silently dropping the row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ElementaryRealization {
     contract: AccuracyContract,
     bound_evidence: ConformanceEvidence,
     exceptional_evidence: ConformanceEvidence,
@@ -571,16 +604,87 @@ pub(crate) struct ElementaryRealization {
 }
 
 impl ElementaryRealization {
-    /// States one realization, its contract, and the evidence behind each half.
-    pub(crate) const fn new(
-        operation: OpKey,
+    /// Builds one whole verified elementary-realization subject.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ElementaryRealizationError::LaterPhaseSource`] when `source`
+    /// is not available at compile profile. The evidence records and verified
+    /// contract are already well-formed by their own constructors.
+    pub fn new(
+        contract: &VerifiedAccuracyContract,
+        bound_evidence: ConformanceEvidence,
+        exceptional_evidence: ConformanceEvidence,
+        source: &super::TargetFactSource,
+    ) -> Result<Self, ElementaryRealizationError> {
+        Self::from_verified(
+            contract,
+            bound_evidence,
+            exceptional_evidence,
+            source.provenance(),
+        )
+    }
+
+    /// Builds one subject from compiler-profile measurement provenance.
+    ///
+    /// [`super::TargetCompileProfileMeasurementSource`] cannot be erased into
+    /// [`super::TargetFactSource`], so this is the measured compile-profile
+    /// constructor rather than a second way to spell [`Self::new`].
+    #[must_use]
+    pub fn measured(
+        contract: &VerifiedAccuracyContract,
+        bound_evidence: ConformanceEvidence,
+        exceptional_evidence: ConformanceEvidence,
+        source: &super::TargetCompileProfileMeasurementSource,
+    ) -> Self {
+        Self::from_parts(
+            contract.contract().clone(),
+            bound_evidence,
+            exceptional_evidence,
+            Arc::clone(&source.0),
+        )
+    }
+
+    fn from_verified(
+        contract: &VerifiedAccuracyContract,
+        bound_evidence: ConformanceEvidence,
+        exceptional_evidence: ConformanceEvidence,
+        source: Arc<FactSourceProvenance>,
+    ) -> Result<Self, ElementaryRealizationError> {
+        if source.phase() != AvailabilityPhase::CompileProfile {
+            return Err(ElementaryRealizationError::LaterPhaseSource {
+                phase: source.phase(),
+            });
+        }
+        Ok(Self::from_parts(
+            contract.contract().clone(),
+            bound_evidence,
+            exceptional_evidence,
+            source,
+        ))
+    }
+
+    /// Records a row, including one whose evidence cannot discharge.
+    ///
+    /// Distinct from [`Self::new`]: this is the retained-record constructor
+    /// the Metal table and assessment fixtures use. It does not validate
+    /// phase or discharge.
+    pub(crate) const fn recorded(
+        contract: AccuracyContract,
+        bound_evidence: ConformanceEvidence,
+        exceptional_evidence: ConformanceEvidence,
+        source: Arc<FactSourceProvenance>,
+    ) -> Self {
+        Self::from_parts(contract, bound_evidence, exceptional_evidence, source)
+    }
+
+    const fn from_parts(
         contract: AccuracyContract,
         bound_evidence: ConformanceEvidence,
         exceptional_evidence: ConformanceEvidence,
         source: Arc<FactSourceProvenance>,
     ) -> Self {
         Self {
-            operation,
             contract,
             bound_evidence,
             exceptional_evidence,
@@ -588,14 +692,40 @@ impl ElementaryRealization {
         }
     }
 
-    /// The operation this realization speaks about.
-    pub(crate) const fn operation(&self) -> &OpKey {
-        &self.operation
+    /// The operation this realization speaks about, derived from the contract.
+    #[must_use]
+    pub const fn operation(&self) -> &OpKey {
+        self.contract.operation()
     }
 
     /// The contract this realization states.
-    pub(crate) const fn contract(&self) -> &AccuracyContract {
+    #[must_use]
+    pub const fn contract(&self) -> &AccuracyContract {
         &self.contract
+    }
+
+    /// The record behind the accuracy bound.
+    #[must_use]
+    pub const fn bound_evidence(&self) -> &ConformanceEvidence {
+        &self.bound_evidence
+    }
+
+    /// The record behind the exceptional-value behaviour.
+    #[must_use]
+    pub const fn exceptional_evidence(&self) -> &ConformanceEvidence {
+        &self.exceptional_evidence
+    }
+
+    /// The producer key of the compile-profile source that declared this row.
+    #[must_use]
+    pub fn source_producer_key(&self) -> &str {
+        self.source.authority_identity().key()
+    }
+
+    /// The producer revision of the compile-profile source that declared this row.
+    #[must_use]
+    pub fn source_producer_revision(&self) -> u32 {
+        self.source.authority_identity().revision()
     }
 
     /// The provenance of the declaring profile.
@@ -603,14 +733,23 @@ impl ElementaryRealization {
         &self.source
     }
 
-    /// The record behind the accuracy bound.
-    pub(crate) const fn bound_evidence(&self) -> &ConformanceEvidence {
-        &self.bound_evidence
+    /// Canonical uniqueness key of the whole row, including both evidence halves
+    /// and the source. Distinct contracts for one operation compare unequal.
+    pub(crate) fn sort_key(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(self.contract.canonical_encoding().as_bytes());
+        bytes.extend_from_slice(&self.bound_evidence.canonical_encoding());
+        bytes.extend_from_slice(&self.exceptional_evidence.canonical_encoding());
+        bytes.extend_from_slice(&self.source.canonical_bytes());
+        bytes
     }
 
-    /// The record behind the exceptional-value behaviour.
-    pub(crate) const fn exceptional_evidence(&self) -> &ConformanceEvidence {
-        &self.exceptional_evidence
+    pub(crate) fn candidate(&self) -> ElementaryAccuracyCandidate {
+        ElementaryAccuracyCandidate {
+            contract: self.contract.clone(),
+            producer_key: self.source_producer_key().to_owned(),
+            producer_revision: self.source_producer_revision(),
+        }
     }
 
     /// Reports which half of this realization discharges a hard requirement.
@@ -652,7 +791,7 @@ impl ElementaryRealization {
 
     /// Declares a realization that may participate in hard target admission.
     ///
-    /// Distinct from [`Self::new`], which records a row including one whose
+    /// Distinct from [`Self::recorded`], which stores a row including one whose
     /// evidence cannot discharge. A future internal caller that wants an
     /// admission-eligible row has to come through here, and a malformed
     /// retained row still cannot bypass [`assess_elementary_accuracy`] because
@@ -663,26 +802,18 @@ impl ElementaryRealization {
     /// Returns [`ElementaryAccuracyRefusal`] naming the failing half and the
     /// evidence class that failed to discharge.
     pub(crate) fn declare(
-        operation: OpKey,
         contract: AccuracyContract,
         bound_evidence: ConformanceEvidence,
         exceptional_evidence: ConformanceEvidence,
         source: Arc<FactSourceProvenance>,
     ) -> Result<Self, Box<ElementaryAccuracyRefusal>> {
-        let realization = Self::new(
-            operation,
-            contract,
-            bound_evidence,
-            exceptional_evidence,
-            source,
-        );
+        let realization = Self::recorded(contract, bound_evidence, exceptional_evidence, source);
         realization
             .require_discharged_halves()
             .map_err(|undischarged| {
-                Box::new(undischarged.into_refusal(
-                    realization.operation().clone(),
-                    Arc::clone(&realization.source),
-                ))
+                Box::new(
+                    undischarged.into_refusal(realization.operation().clone(), &[&realization]),
+                )
             })?;
         Ok(realization)
     }
@@ -733,17 +864,47 @@ impl UndischargedEvidenceHalf {
     fn into_refusal(
         self,
         operation: OpKey,
-        declaring_profile: Arc<FactSourceProvenance>,
+        realizations: &[&ElementaryRealization],
     ) -> ElementaryAccuracyRefusal {
         ElementaryAccuracyRefusal {
             operation,
             reason: ElementaryRefusalReason::UndischargedEvidence {
-                declaring_profile,
+                candidates: candidates_from(realizations),
                 half: self.half,
                 class: self.class,
             },
         }
     }
+}
+
+/// One declared row that participated in an unrefined or undischarged refusal.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ElementaryAccuracyCandidate {
+    contract: AccuracyContract,
+    producer_key: String,
+    producer_revision: u32,
+}
+
+impl ElementaryAccuracyCandidate {
+    pub(crate) const fn contract(&self) -> &AccuracyContract {
+        &self.contract
+    }
+
+    pub(crate) fn producer_key(&self) -> &str {
+        &self.producer_key
+    }
+
+    pub(crate) const fn producer_revision(&self) -> u32 {
+        self.producer_revision
+    }
+}
+
+fn candidates_from(realizations: &[&ElementaryRealization]) -> Box<[ElementaryAccuracyCandidate]> {
+    let mut rows: Vec<&ElementaryRealization> = realizations.to_vec();
+    rows.sort_by_key(|realization| realization.sort_key());
+    rows.into_iter()
+        .map(ElementaryRealization::candidate)
+        .collect()
 }
 
 fn undischarged_class(
@@ -822,6 +983,15 @@ impl ElementaryAccuracyRefusal {
         }
     }
 
+    /// Declared candidates in canonical order, empty when nothing was installed.
+    pub(crate) fn candidates(&self) -> &[ElementaryAccuracyCandidate] {
+        match &self.reason {
+            ElementaryRefusalReason::NoInstalledRealization => &[],
+            ElementaryRefusalReason::Unrefined { candidates, .. }
+            | ElementaryRefusalReason::UndischargedEvidence { candidates, .. } => candidates,
+        }
+    }
+
     /// The stable provider diagnostic code naming this refusal.
     pub(crate) const fn diagnostic_code(&self) -> &'static str {
         match self.reason {
@@ -849,8 +1019,8 @@ pub(crate) enum ElementaryRefusalReason {
     NoInstalledRealization,
     /// A realization was installed and could not be proved to refine the contract.
     Unrefined {
-        /// The declaring profile's versioned identity.
-        declaring_profile: Arc<FactSourceProvenance>,
+        /// Declared same-operation rows, in canonical row order.
+        candidates: Box<[ElementaryAccuracyCandidate]>,
         /// The unproved-refinement reason, from the conservative proof relation.
         unknown: RefinementUnknown,
     },
@@ -862,8 +1032,8 @@ pub(crate) enum ElementaryRefusalReason {
     /// qualification and `Unknown` both reach this variant, kept apart by the
     /// class this reason carries.
     UndischargedEvidence {
-        /// The declaring profile's versioned identity.
-        declaring_profile: Arc<FactSourceProvenance>,
+        /// Declared same-operation rows, in canonical row order.
+        candidates: Box<[ElementaryAccuracyCandidate]>,
         /// Which half failed to discharge.
         half: ElementaryEvidenceHalf,
         /// The evidence class that failed to discharge.
@@ -915,8 +1085,8 @@ pub(crate) fn assess_elementary_accuracy(
     installed: &[ElementaryRealization],
     registry: &RegisteredImplicationRegistry,
 ) -> Result<ElementaryAccuracyAdmission, Box<ElementaryAccuracyRefusal>> {
-    let mut undischarged = None;
-    let mut unrefined = None;
+    let mut undischarged_rows: Vec<(&ElementaryRealization, UndischargedEvidenceHalf)> = Vec::new();
+    let mut unrefined_rows: Vec<(&ElementaryRealization, RefinementUnknown)> = Vec::new();
     for realization in installed {
         if realization.operation() != required.operation() {
             continue;
@@ -932,35 +1102,46 @@ pub(crate) fn assess_elementary_accuracy(
                     }
                     Err(half) => {
                         // A refining row whose evidence cannot discharge is a
-                        // more specific repair than an unrefined sibling. The
-                        // first such row is reported, so the cause is a
-                        // function of the installed order.
-                        undischarged.get_or_insert_with(|| {
-                            half.into_refusal(
-                                required.operation().clone(),
-                                Arc::clone(&realization.source),
-                            )
-                        });
+                        // more specific repair than an unrefined sibling.
+                        undischarged_rows.push((realization, half));
                     }
                 }
             }
             RefinementOutcome::Unknown { reason } => {
-                unrefined.get_or_insert_with(|| ElementaryAccuracyRefusal {
-                    operation: required.operation().clone(),
-                    reason: ElementaryRefusalReason::Unrefined {
-                        declaring_profile: Arc::clone(&realization.source),
-                        unknown: reason.clone(),
-                    },
-                });
+                unrefined_rows.push((realization, reason));
             }
         }
     }
-    Err(Box::new(undischarged.or(unrefined).unwrap_or_else(|| {
-        ElementaryAccuracyRefusal {
+    if !undischarged_rows.is_empty() {
+        undischarged_rows.sort_by_key(|(realization, _)| realization.sort_key());
+        let half = undischarged_rows[0].1;
+        let rows: Vec<&ElementaryRealization> = undischarged_rows
+            .iter()
+            .map(|(realization, _)| *realization)
+            .collect();
+        return Err(Box::new(
+            half.into_refusal(required.operation().clone(), &rows),
+        ));
+    }
+    if !unrefined_rows.is_empty() {
+        unrefined_rows.sort_by_key(|(realization, _)| realization.sort_key());
+        let unknown = unrefined_rows[0].1.clone();
+        let rows: Vec<&ElementaryRealization> = unrefined_rows
+            .iter()
+            .map(|(realization, _)| *realization)
+            .collect();
+        return Err(Box::new(ElementaryAccuracyRefusal {
             operation: required.operation().clone(),
-            reason: ElementaryRefusalReason::NoInstalledRealization,
-        }
-    })))
+            reason: ElementaryRefusalReason::Unrefined {
+                candidates: candidates_from(&rows),
+                unknown,
+            },
+        }));
+    }
+    Err(Box::new(ElementaryAccuracyRefusal {
+        operation: required.operation().clone(),
+        reason: ElementaryRefusalReason::NoInstalledRealization,
+    }))
 }
 
 /// Returns the accuracy contract one semantic family requires of a realization.
@@ -1180,7 +1361,7 @@ pub(crate) fn elementary_relative_accuracy(
 ) -> Result<ElementaryRelativeAccuracy, Box<ElementaryRelativeAccuracyRefusal>> {
     elementary_relative_accuracy_from(
         operation,
-        &declared_elementary_realizations(target),
+        declared_elementary_realizations(target),
         &installed_implication_registry(),
     )
 }
@@ -1365,28 +1546,12 @@ fn clause_proves_a_normal_reference(
 
 /// Returns the elementary realizations one target profile declares.
 ///
-/// **This build declares them for exactly one profile, and the test is that
-/// profile's own canonical declaration bytes rather than its key.** Every row of
-/// [`installed_elementary_realizations`] is attributed to
-/// [`super::honourability::governed_profile_source`], which is the governed
-/// profile's own fact source. A profile that is not byte-identically that
-/// profile has declared nothing about an elementary function, and reading this
-/// build's Metal rows onto it would attribute a quoted specification guarantee
-/// and a measured corpus to a declaration that never made either. Comparing
-/// canonical descriptors rather than profile keys is what makes that unforgeable:
-/// a key is a caller-chosen string, and the descriptor is the complete set of
-/// facts the profile declares.
-///
-/// The consequence is deliberate and fails closed: a caller-built profile cannot
-/// compile a program containing an elementary family, because it has no way to
-/// say that it realizes one. Giving it one is an addition to the public
-/// `TargetProfileBuilder` boundary rather than a widening of this function.
-fn declared_elementary_realizations(target: &super::TargetProfile) -> Vec<ElementaryRealization> {
-    if target.canonical_descriptor() == super::TargetProfile::governed().canonical_descriptor() {
-        installed_elementary_realizations()
-    } else {
-        Vec::new()
-    }
+/// Reads the profile's stored declared rows. There is no governed shortcut: a
+/// profile that declared nothing, including the governed profile until its
+/// evidence ticket can discharge both halves, has an empty slice. Assessment
+/// does not reconstruct Metal rows from descriptor equality.
+fn declared_elementary_realizations(target: &super::TargetProfile) -> &[ElementaryRealization] {
+    target.declared_elementary_realizations()
 }
 
 /// Requires every elementary accuracy contract `operations` carries to be
@@ -1429,7 +1594,7 @@ pub(crate) fn assess_program_elementary_accuracy<'a>(
     let installed = declared_elementary_realizations(target);
     let registry = installed_implication_registry();
     for contract in &required {
-        assess_elementary_accuracy(contract, &installed, &registry)?;
+        assess_elementary_accuracy(contract, installed, &registry)?;
     }
     Ok(())
 }
@@ -1457,15 +1622,13 @@ pub(crate) fn assess_program_elementary_accuracy<'a>(
 #[must_use]
 pub(crate) fn installed_elementary_realizations() -> Vec<ElementaryRealization> {
     vec![
-        ElementaryRealization::new(
-            silu_f32_op(),
+        ElementaryRealization::recorded(
             metal_f32_exponential_contract(),
             metal_f32_exponential_bound_evidence().expect("the normative record is well formed"),
             metal_f32_exceptional_value_evidence().expect("the empirical record is well formed"),
             super::honourability::governed_profile_source(),
         ),
-        ElementaryRealization::new(
-            rms_norm_f32_op(),
+        ElementaryRealization::recorded(
             metal_f32_reciprocal_square_root_contract(),
             metal_f32_reciprocal_square_root_bound_evidence()
                 .expect("the normative record is well formed"),
@@ -1478,8 +1641,7 @@ pub(crate) fn installed_elementary_realizations() -> Vec<ElementaryRealization> 
         // its own empirical record, because the two operations reach different
         // arguments and a shared corpus record would qualify a population neither
         // measured.
-        ElementaryRealization::new(
-            softmax_f32_op(),
+        ElementaryRealization::recorded(
             metal_f32_softmax_exponential_contract(),
             metal_f32_exponential_bound_evidence().expect("the normative record is well formed"),
             metal_f32_softmax_exceptional_value_evidence()

@@ -756,12 +756,50 @@ impl TargetElementaryAccuracyReason {
     }
 }
 
+/// One declared elementary-realization candidate named by a structured refusal.
+///
+/// **Labelled draft** under ADR 0075. Present when the profile installed at
+/// least one same-operation row; empty on `no-installed-realization`. Several
+/// rows appear in canonical row order so the details cannot depend on
+/// insertion order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetElementaryAccuracyCandidate {
+    contract: tiler_ir::semantic::accuracy::AccuracyContract,
+    producer_key: String,
+    producer_revision: u32,
+}
+
+impl TargetElementaryAccuracyCandidate {
+    /// Returns the verified contract this candidate declared.
+    #[must_use]
+    pub const fn contract(&self) -> &tiler_ir::semantic::accuracy::AccuracyContract {
+        &self.contract
+    }
+
+    /// Returns the producer key of the compile-profile source that declared it.
+    #[must_use]
+    pub fn producer_key(&self) -> &str {
+        &self.producer_key
+    }
+
+    /// Returns the producer revision of that source.
+    #[must_use]
+    pub const fn producer_revision(&self) -> u32 {
+        self.producer_revision
+    }
+}
+
 /// Target-local elementary-accuracy refusal for one registered family.
+///
+/// **Labelled draft** under ADR 0075 for the candidate-provenance field. Tom
+/// accepted the three-way reason split on 2026-08-11 and has not accepted this
+/// type's exact included surface.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TargetElementaryAccuracyRefusal {
     operation: tiler_ir::semantic::OpKey,
     target_profile: TargetProfileKey,
     reason: TargetElementaryAccuracyReason,
+    candidates: Box<[TargetElementaryAccuracyCandidate]>,
 }
 
 impl TargetElementaryAccuracyRefusal {
@@ -781,6 +819,14 @@ impl TargetElementaryAccuracyRefusal {
     #[must_use]
     pub const fn reason(&self) -> TargetElementaryAccuracyReason {
         self.reason
+    }
+
+    /// Returns declared same-operation candidates in canonical order.
+    ///
+    /// Empty when the profile installed no row for the operation.
+    #[must_use]
+    pub fn candidates(&self) -> &[TargetElementaryAccuracyCandidate] {
+        &self.candidates
     }
 }
 
@@ -2643,6 +2689,7 @@ fn target_compile_failure(error: CompileError) -> Result<TargetCompileFailure, C
             reason,
             undischarged_half,
             undischarged_class,
+            candidates,
         }) => Some(TargetCompileRefusal::ElementaryAccuracy(
             TargetElementaryAccuracyRefusal {
                 operation: operation.clone(),
@@ -2652,6 +2699,14 @@ fn target_compile_failure(error: CompileError) -> Result<TargetCompileFailure, C
                     *undischarged_half,
                     *undischarged_class,
                 )?,
+                candidates: candidates
+                    .iter()
+                    .map(|candidate| TargetElementaryAccuracyCandidate {
+                        contract: candidate.contract().clone(),
+                        producer_key: candidate.producer_key().to_owned(),
+                        producer_revision: candidate.producer_revision(),
+                    })
+                    .collect(),
             },
         )),
         Some(
@@ -2964,8 +3019,8 @@ mod tests {
 
     use super::{
         BudgetResource, CompilationRequest, CompileFailure, CompileFailureClass, CompileRequest,
-        ElementaryEvidenceHalf, NumericalContract, StrictF32NumericalContract,
-        TargetCompileRefusal, TargetElementaryAccuracyReason, TargetNumericalRefusalDisposition,
+        NumericalContract, StrictF32NumericalContract, TargetCompileRefusal,
+        TargetElementaryAccuracyReason, TargetNumericalRefusalDisposition,
         TargetNumericalRequirement, compile, compile_governed,
     };
     use crate::pipeline::compile as compile_internal;
@@ -4164,13 +4219,13 @@ mod tests {
         assert!(failure.explain().is_none());
     }
 
-    /// The public structured refusal names the failing exceptional half.
+    /// The public structured refusal names a missing declared row.
     ///
-    /// The governed Metal `SiLU` row still refines the registered contract. What
-    /// it cannot do is discharge exceptional-value evidence, and that is a
-    /// different repair from a missing or unrefined row.
+    /// The governed profile does not grandfather its three Metal records.
+    /// Until those rows can discharge both evidence halves, a `SiLU` program
+    /// against the governed profile is `no-installed-realization`.
     #[test]
-    fn compile_governed_refuses_silu_as_undischarged_exceptional_evidence() {
+    fn compile_governed_refuses_silu_as_no_installed_realization() {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([4]))
@@ -4182,17 +4237,17 @@ mod tests {
         let program = builder.build().unwrap();
 
         let failure = compile_governed(&program, NumericalContract::STRICT_F32)
-            .expect_err("the governed Metal SiLU row cannot discharge both halves");
+            .expect_err("the governed profile declares no elementary realization");
         assert_eq!(
             failure.class(),
             CompileFailureClass::UnsupportedCapability {
-                rule: "accuracy.elementary.undischarged-evidence",
+                rule: "accuracy.elementary.no-installed-realization",
             }
         );
         assert!(failure.explain().is_none());
         let TargetCompileRefusal::ElementaryAccuracy(refusal) = failure
             .refusal()
-            .expect("an undischarged elementary row retains structured detail")
+            .expect("a missing elementary row retains structured detail")
         else {
             panic!(
                 "expected an elementary-accuracy refusal, got {:?}",
@@ -4202,15 +4257,12 @@ mod tests {
         assert_eq!(refusal.operation(), &tiler_ir::semantic::silu_f32_op());
         assert_eq!(
             refusal.reason(),
-            TargetElementaryAccuracyReason::UndischargedEvidence {
-                half: ElementaryEvidenceHalf::ExceptionalValue,
-                class:
-                    tiler_ir::semantic::accuracy::ConformanceEvidenceClass::EmpiricalQualification,
-            }
+            TargetElementaryAccuracyReason::NoInstalledRealization
         );
+        assert!(refusal.candidates().is_empty());
         assert_eq!(
             refusal.reason().diagnostic_code(),
-            "accuracy.elementary.undischarged-evidence"
+            "accuracy.elementary.no-installed-realization"
         );
     }
 
