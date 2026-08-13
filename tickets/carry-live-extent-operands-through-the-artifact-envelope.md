@@ -1,7 +1,7 @@
 ---
 id: carry-live-extent-operands-through-the-artifact-envelope
 title: Carry live extent operands through the artifact envelope
-status: in-progress
+status: review
 priority: p1
 dependencies: [accept-the-live-extent-operand-public-surface]
 related: [admit-live-extent-operands-to-payload-indexing, deliver-an-artifact-family-from-a-symbolic-region]
