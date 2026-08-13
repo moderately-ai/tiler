@@ -406,6 +406,34 @@ impl SourcedShape {
         extents_encoded_len(self.extents())
     }
 
+    /// Revalidates every symbol against the exact environment offered at one
+    /// host boundary.
+    ///
+    /// The single admission authority shared by semantic registry insertion
+    /// and whole-program replay. `None` means the consuming program declared no
+    /// environment, so every symbol is undeclared rather than implicitly
+    /// accepted under some provider-local interpretation.
+    pub(crate) fn admit_against(
+        &self,
+        sources: Option<&ExtentSources>,
+    ) -> Result<(), ExtentSourceError> {
+        for extent in self.extents() {
+            match sources {
+                Some(sources) => {
+                    sources.admit(&extent)?;
+                }
+                None => {
+                    if let Some(symbol) = extent.symbol() {
+                        return Err(ExtentSourceError::UndeclaredSymbol {
+                            symbol: symbol.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Returns this boundary with the named logical axes removed.
     ///
     /// The total-view counterpart of [`Shape::without_axes`], and it needs no

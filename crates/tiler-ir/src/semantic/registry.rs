@@ -1906,23 +1906,10 @@ fn admit_value_fact_extents(
     facts: &[ValueFact],
     extent_sources: Option<&ExtentSources>,
 ) -> Result<(), OperationInferenceError> {
-    for extent in facts.iter().flat_map(|fact| fact.shape().extents()) {
-        match extent_sources {
-            Some(sources) => {
-                sources
-                    .admit(&extent)
-                    .map_err(OperationInferenceError::from_extent_source)?;
-            }
-            None => {
-                if let Some(symbol) = extent.symbol() {
-                    return Err(OperationInferenceError::from_extent_source(
-                        ExtentSourceError::UndeclaredSymbol {
-                            symbol: symbol.clone(),
-                        },
-                    ));
-                }
-            }
-        }
+    for fact in facts {
+        fact.shape()
+            .admit_against(extent_sources)
+            .map_err(OperationInferenceError::from_extent_source)?;
     }
     Ok(())
 }

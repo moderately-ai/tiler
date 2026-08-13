@@ -72,7 +72,7 @@ The malformed-shape panic and duplicate spelling are unrepresentable, every oper
 
 - `SourcedShape` is now an opaque public struct over a private normalized representation. The existing total read surface and `From<Shape>` remain; the symbolic constructor stays crate-private and rejects rank `MAX_SHAPE_RANK + 1`.
 - `FrozenSemanticRegistry::infer_operation_with_extent_sources` admits every operand before provider inference and every result before returning it. The no-environment entry treats any symbol as undeclared. `SemanticProgramBuilder::validate` independently rechecks every retained value against its one environment.
-- `OperationInferenceOutputs::try_push` charges the exact `SourcedShape::encoded_len`; the 16 MiB boundary test uses maximum-length symbol components and reaches the byte limit before the result-count limit.
+- `OperationInferenceOutputs::try_push` charges the exact `SourcedShape::encoded_len`; the 16 MiB boundary test uses long symbol scope/name components and reaches the byte limit before the result-count limit.
 - No identity/domain value was changed. The complete `tiler-ir` test population, including existing identity pins, remains green.
 
 Load-bearing perturbations were run separately with assertions unchanged:

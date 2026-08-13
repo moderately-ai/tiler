@@ -1567,11 +1567,12 @@ impl SemanticProgramBuilder {
         {
             return Some("a value has an unsupported shape");
         }
-        if self
-            .values
-            .iter()
-            .any(|value| !self.shape_sources_are_admitted(&value.shape))
-        {
+        if self.values.iter().any(|value| {
+            value
+                .shape
+                .admit_against(self.extent_sources.as_ref())
+                .is_err()
+        }) {
             return Some("a value names a shape source outside this program's environment");
         }
         if self
@@ -1641,19 +1642,6 @@ impl SemanticProgramBuilder {
             return Some("an output references an invalid value");
         }
         None
-    }
-
-    /// Returns whether every symbol in `shape` is admitted by this program's
-    /// exact environment.
-    ///
-    /// This repeats the registry-boundary admission during internal replay so a
-    /// future constructor cannot bypass insertion validation and leave a
-    /// foreign result symbol in a verified program.
-    fn shape_sources_are_admitted(&self, shape: &SourcedShape) -> bool {
-        shape.extents().all(|extent| match &self.extent_sources {
-            Some(sources) => sources.admit(&extent).is_ok(),
-            None => extent.symbol().is_none(),
-        })
     }
 
     fn operation_contract_holds(&self, operation: &OperationData) -> bool {
