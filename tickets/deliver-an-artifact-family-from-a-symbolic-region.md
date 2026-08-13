@@ -1,7 +1,7 @@
 ---
 id: deliver-an-artifact-family-from-a-symbolic-region
 title: Deliver an artifact family from a region with symbolic extents
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-live-extent-operands-to-payload-indexing]
 related: [carry-symbolic-extents-into-the-semantic-program, prototype-inline-aot-integration-proof, carry-live-extent-operands-through-the-artifact-envelope, prove-one-live-extent-artifact-payload-and-pipeline-at-two-n, admit-symbolic-extents-through-compiler-region-formation]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend, contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, frontend, inline-dx, shapes, milestone-0b]
+claimed_from: todo
+assignee: worker-deliver-symbolic
+lease_expires_at: 1786664491
 ---
 ## User-visible outcome
 

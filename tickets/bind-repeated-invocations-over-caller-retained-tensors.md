@@ -1,7 +1,7 @@
 ---
 id: bind-repeated-invocations-over-caller-retained-tensors
 title: Bind repeated invocations over caller-retained tensors from one artifact identity
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-live-extent-operands-to-payload-indexing, establish-a-dynamic-kv-physical-layout-authority, reclassify-language-model-work-as-a-conformance-track, supersede-the-runtime-owned-kv-state-design]
 related: [admit-the-sequence-extension-concatenate-family, design-autoregressive-state-and-kv-cache, assemble-the-causal-self-attention-block-program, expose-the-dispatch-record-on-a-decoded-artifact, evaluate-retained-shape-relations-before-routing-commit]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, implementation/runtime, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, runtime, abi, consumer-neutral, language-model, class-generic-capability]
+claimed_from: todo
+assignee: worker-bind-repeated
+lease_expires_at: 1786664491
 ---
 ## User-visible outcome
 
