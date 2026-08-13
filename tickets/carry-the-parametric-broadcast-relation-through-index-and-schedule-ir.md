@@ -4,7 +4,7 @@ title: Carry the parametric broadcast relation through index and schedule IR
 status: in-progress
 priority: p1
 dependencies: [replace-broadcast-f32-v1-with-sourced-broadcast-f32-v2-semantics]
-related: []
+related: [accept-the-parametric-broadcast-access-surface, project-parametric-broadcast-into-the-compiler-request-subject]
 scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
