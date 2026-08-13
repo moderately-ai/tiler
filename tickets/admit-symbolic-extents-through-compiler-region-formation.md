@@ -1,7 +1,7 @@
 ---
 id: admit-symbolic-extents-through-compiler-region-formation
 title: Admit symbolic extents through compiler region formation
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-symbolic-extents-at-the-compiler-request-boundary]
 related: [admit-live-extent-operands-to-payload-indexing, deliver-an-artifact-family-from-a-symbolic-region]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, shapes, extents]
+claimed_from: todo
+assignee: worker-admit-symbolic-region-formation
+lease_expires_at: 1786640549
 ---
 ## User-visible outcome
 
