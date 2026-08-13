@@ -11,7 +11,7 @@ paths: []
 tags: [measurement, metal, subgroup, target-profiles, evidence]
 claimed_from: todo
 assignee: worker-measure-metal-width
-lease_expires_at: 1786659450
+lease_expires_at: 1786659504
 ---
 ## User-visible outcome
 
