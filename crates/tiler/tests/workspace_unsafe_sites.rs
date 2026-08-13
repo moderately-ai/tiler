@@ -331,7 +331,7 @@ const WORKSPACE_LOCAL_MACRO_RULES: [(&str, &str); 17] = [
 ];
 
 /// Exact guarded `tensor!` invocation identities in ordinary and rustdoc source.
-const TENSOR_FIXTURE_INVOCATION_COUNT: usize = 73;
+const TENSOR_FIXTURE_INVOCATION_COUNT: usize = 72;
 const TENSOR_RUSTDOC_INVOCATION_COUNT: usize = 1;
 const TENSOR_FIXTURE_INVOCATION_PINS: [(&str, usize); 13] = [
     (
@@ -352,7 +352,7 @@ const TENSOR_FIXTURE_INVOCATION_PINS: [(&str, usize); 13] = [
     ),
     (
         "crates/tiler/tests/facade/fail/reduction_diagnostics.rs",
-        13,
+        14,
     ),
     (
         "crates/tiler/tests/facade/fail/region_meaning_diagnostics.rs",
@@ -376,7 +376,7 @@ const TENSOR_FIXTURE_INVOCATION_PINS: [(&str, usize); 13] = [
     ),
     (
         "crates/tiler/tests/facade/pass/inline_region_executes.rs",
-        11,
+        9,
     ),
     (
         "crates/tiler/tests/facade/pass/inline_region_refuses_an_undispatchable_dtype.rs",
