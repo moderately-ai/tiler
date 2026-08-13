@@ -1,17 +1,14 @@
 ---
 id: execute-the-loop-carried-cooperative-kernel-on-a-real-backend
 title: Execute the loop-carried cooperative kernel on a real backend
-status: review
+status: done
 priority: p1
 dependencies: [lower-a-loop-carried-cooperative-body]
-related: [implement-the-single-workgroup-synchronized-reduction-strategy, share-one-structured-kernel-interpreter, promote-the-bounded-scalar-cpu-vertical-into-a-production-backend]
+related: [implement-the-single-workgroup-synchronized-reduction-strategy, share-one-structured-kernel-interpreter, promote-the-bounded-scalar-cpu-vertical-into-a-production-backend, accept-the-cooperative-grouping-public-surface]
 scopes: [implementation/ir, implementation/reference, implementation/metal, implementation/conformance, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [kernel-ir, synchronization, conformance, metal, cpu]
-claimed_from: todo
-assignee: worker-execute-loop-carried
-lease_expires_at: 1786643165
 ---
 ## User-visible outcome
 
