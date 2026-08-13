@@ -61,11 +61,15 @@ use tiler_metal_aot::input::{CompileRequest, OptimizationLevel};
 use tiler_runtime::load::{DTypeDispatch, ExecutionEnvironment};
 
 use crate::adapter::{
-    PreparedPipeline, SubmissionOutcome, argument_slots_agree, load_library,
-    prepare_pipeline_with_reflection, submission_outcome,
+    PreparedPipeline, SubmissionOutcome, argument_slots_agree, bound_accessible_extent,
+    load_library, prepare_pipeline_with_reflection, submission_outcome,
 };
 use crate::refusal::{Realization, RouteRefusal, TensorRefusal};
-use crate::wrapper::{TilerPlan, WrapperError, candle_expression};
+use crate::wrapper::{
+    TilerPlan, WrapperError, candle_expression, empty_input_count_is_zero, empty_input_declaration,
+    empty_input_dtype_is_f32, empty_input_is_untracked, empty_input_shape_matches,
+    empty_input_window_is_unread,
+};
 
 /// Governed backend family key this host executes.
 const BACKEND_KEY: &str = "tiler.metal";
@@ -91,9 +95,9 @@ const MEMBERS: [(&str, &str); 6] = [
     // The empty domain leads, because it is the boundary the other two cannot
     // speak for: a reduction over zero contributors reads its input buffer
     // never, and its result is a reduction's identity element rather than a sum.
-    // It is refused by name at this Candle pin rather than routed, and it stays
-    // in this population for that reason: a member dropped from the matrix would
-    // report the boundary as untested rather than as refused.
+    // Both members now route through the explicit empty-input helper; they stay
+    // first so a helper that silently skipped them would lose the first two
+    // agreements rather than hide behind the nonempty cases.
     ("empty-domain", "selected"),
     ("empty-domain", "materialized"),
     ("nontrivial", "selected"),
@@ -243,16 +247,9 @@ fn run() -> Result<(), ProofError> {
 
     let mut proved = 0_usize;
     let mut routed = 0_usize;
-    let mut refused: Vec<String> = Vec::new();
     for (class, role) in MEMBERS {
-        let member = format!("{class}.{role}");
-        match prove_member(&device, &environment, &base, class, role)? {
-            MemberOutcome::Proved(cases) => {
-                proved += cases;
-                routed += 1;
-            }
-            MemberOutcome::Refused => refused.push(member),
-        }
+        proved += prove_member(&device, &environment, &base, class, role)?;
+        routed += 1;
     }
 
     // The Tensor-level boundary, against the member whose ordering is
@@ -261,41 +258,16 @@ fn run() -> Result<(), ProofError> {
     // routed moments earlier.
     probe_tensor_refusals(&device, metal, &environment, &base)?;
 
-    // One population, resolved member by member. The refused members are counted
-    // and named here rather than subtracted out: an excluded count reads as a
-    // matrix that is smaller than the one the producer published, and the whole
-    // point of the empty domain is that it is a member with an outcome.
+    // Empty-input construction subjects, against the member the helper exists
+    // to route. Each perturbation is independent of the others.
+    probe_empty_input_construction(&device, &environment, &base)?;
+
     println!(
-        "candle adapter proof: {} of {} published member(s) resolved — {routed} routed and agreed \
-         with the producer's recorded reference evaluation across {proved} case(s), {} refused by \
-         a typed preflight refusal naming a zero extent ({})",
-        routed + refused.len(),
+        "candle adapter proof: {routed} of {} published member(s) routed and agreed with the \
+         producer's recorded reference evaluation across {proved} case(s)",
         MEMBERS.len(),
-        refused.len(),
-        if refused.is_empty() {
-            "none".to_owned()
-        } else {
-            refused.join(", ")
-        },
     );
     Ok(())
-}
-
-/// What one published member's route established.
-enum MemberOutcome {
-    /// Every case the sidecar carries agreed with the producer's reference.
-    Proved(usize),
-    /// This member's declared interface was refused by name, before any storage.
-    ///
-    /// A typed refusal rather than a skipped member: a run that quietly omitted
-    /// a published member would report success for part of a proof, and one that
-    /// let Candle's allocator report the limitation would put another project's
-    /// error on a boundary this adapter owns.
-    ///
-    /// Carries nothing, because the refusal is reported by [`prove_member`] where
-    /// it arrives — beside that member's own report lines, exactly as a routed
-    /// member's are. What the caller does with this is count it.
-    Refused,
 }
 
 /// Routes one published member through Candle and compares against the sidecar.
@@ -305,46 +277,24 @@ fn prove_member(
     base: &Path,
     class: &str,
     role: &str,
-) -> Result<MemberOutcome, ProofError> {
+) -> Result<usize, ProofError> {
     let path = proof_member(base, class, role);
     let (bytes, sidecar) = read_artifact(&path)?;
     let recorded = RecordedArtifactProgramIdentity::from_bytes(sidecar.artifact_identity_bytes())
         .map_err(ProofError::RecordedIdentity)?;
-    let loaded = TilerPlan::load(
+    let plan = TilerPlan::load(
         bytes,
         recorded,
         environment.clone(),
         Realization::TilerFlushSubnormalsToZeroF32StrictOrder,
-    );
-    // **The empty-domain close path.** A declared empty axis is refused from the
-    // artifact's own interface, before any Candle tensor is asked for, so the
-    // caller reads this adapter's typed refusal instead of an allocator error
-    // from under it. It is the one load refusal this proof reports as a member
-    // outcome; every other one is a defect in the run.
-    let plan = match loaded {
-        Ok(plan) => plan,
-        Err(WrapperError::Tensor(TensorRefusal::ZeroExtentInterface {
-            value,
-            axis,
-            extents,
-        })) => {
-            // Rendered through the refusal's own `Display` rather than restated
-            // here, so a refusal whose wording or fields changed shows up in this
-            // line rather than only in a type.
-            println!(
-                "  {class}.{role}: REFUSED before any Candle storage is asked for — {}",
-                TensorRefusal::ZeroExtentInterface {
-                    value,
-                    axis,
-                    extents: extents.clone(),
-                },
-            );
-            zero_extent_stays_unbuildable(device, &extents)?;
-            return Ok(MemberOutcome::Refused);
-        }
-        Err(other) => return Err(ProofError::Wrapper(other)),
-    };
+    )
+    .map_err(ProofError::Wrapper)?;
     let (rows, columns) = plan.declared_shape();
+    if plan.declares_empty_input() {
+        // The comparison that explains why the helper exists: `Tensor::from_vec`
+        // still asks Metal for a literal zero-length buffer and fails.
+        zero_extent_from_vec_still_fails(device, &[rows, columns])?;
+    }
     if class == PROBE_MEMBER.0 && role == PROBE_MEMBER.1 {
         println!(
             "  requested realization: {} (order-fixing: {})",
@@ -366,7 +316,37 @@ fn prove_member(
             .ok_or(ProofError::SidecarWithoutCases)
             .and_then(|payload| decode_f32_bits("expected", rows, payload.bytes()))?;
 
-        let input = tensor_from_bits(&input_bits, rows, columns, device)?;
+        let input = if plan.declares_empty_input() {
+            let constructed = plan
+                .empty_input_tensor(device)
+                .map_err(ProofError::Wrapper)?;
+            if proved == 0 {
+                println!(
+                    "    empty input: logical elements {}, allocation {} byte(s), artifact \
+                     accessible extent {} (bound {})",
+                    constructed.tensor.elem_count(),
+                    constructed.allocation_bytes,
+                    constructed.accessible_bytes,
+                    bound_accessible_extent(
+                        constructed.accessible_bytes,
+                        constructed.allocation_bytes,
+                    ),
+                );
+            }
+            if constructed.accessible_bytes != 0
+                || bound_accessible_extent(
+                    constructed.accessible_bytes,
+                    constructed.allocation_bytes,
+                ) != 0
+            {
+                return Err(ProofError::ProbeAccepted(
+                    "an empty-domain accessible extent that widened to the sentinel allocation",
+                ));
+            }
+            constructed.tensor
+        } else {
+            tensor_from_bits(&input_bits, rows, columns, device)?
+        };
         let applied = plan.apply(&input, device).map_err(ProofError::Wrapper)?;
         let observed = read_bits(&applied.tensor)?;
         if observed != expected {
@@ -408,26 +388,17 @@ fn prove_member(
         return Err(ProofError::SidecarWithoutCases);
     }
     println!("    {proved} case(s) agreed with the producer's recorded reference evaluation");
-    Ok(MemberOutcome::Proved(proved))
+    Ok(proved)
 }
 
-/// Records that no Candle tensor of a refused shape exists at this pin.
+/// Records that `Tensor::from_vec` still cannot upload a zero-element Metal tensor.
 ///
-/// The refusal itself is decided from the artifact alone and would stand whatever
-/// Candle did, so this is what keeps it from being merely conservative: the
-/// measurement that says the refused shape is genuinely unbuildable here, taken
-/// after the refusal rather than instead of it.
-///
-/// **Fact — Candle's Metal allocator refuses a zero-length buffer.** It sizes a
-/// request as `element_count * dtype.size_in_bytes()` and
-/// `newBufferWithLength:options:` returns nil at length zero, which Candle
-/// reports as a failed resource creation.
-///
-/// It is also the ticket's first activation trigger, watched rather than
-/// re-derived by a reader: a Candle whose allocator admits a zero-length
-/// allocation builds this tensor, and this run then fails instead of going on
-/// reporting a member as refused that has become routable.
-fn zero_extent_stays_unbuildable(device: &Device, extents: &[u64]) -> Result<(), ProofError> {
+/// This is why [`TilerPlan::empty_input_tensor`] exists: the upload path calls
+/// `new_buffer_with_data` with a literal zero byte length and Metal returns
+/// nil. The helper uses `MetalDevice::new_buffer` instead, which rounds through
+/// `buf_size`. A Candle whose upload path starts accepting this shape makes the
+/// comparison false, so the run fails rather than keep citing a stale reason.
+fn zero_extent_from_vec_still_fails(device: &Device, extents: &[u64]) -> Result<(), ProofError> {
     let dims: Vec<usize> = extents
         .iter()
         .map(|extent| usize::try_from(*extent).unwrap_or(usize::MAX))
@@ -435,11 +406,15 @@ fn zero_extent_stays_unbuildable(device: &Device, extents: &[u64]) -> Result<(),
     let shape = candle_core::Shape::from_dims(&dims);
     match Tensor::from_vec(Vec::<f32>::new(), shape, device) {
         Err(cause) => {
-            println!("    and Candle still builds no {dims:?} tensor of its own: {cause}");
+            println!(
+                "    Tensor::from_vec still cannot upload {dims:?}: {cause} — that is why the \
+                 helper constructs through MetalDevice::new_buffer"
+            );
             Ok(())
         }
         Ok(_) => Err(ProofError::ProbeAccepted(
-            "a zero-element Metal tensor, which the refusal above records as unbuildable",
+            "a Tensor::from_vec zero-element Metal tensor, which is the comparison that explains \
+             why the helper exists",
         )),
     }
 }
@@ -854,6 +829,90 @@ fn probe_tensor_refusals(
             "different on these operands"
         },
     );
+    Ok(())
+}
+
+/// Perturbs empty-input construction subjects independently and quotes each refusal.
+fn probe_empty_input_construction(
+    device: &Device,
+    environment: &ExecutionEnvironment,
+    base: &Path,
+) -> Result<(), ProofError> {
+    let path = proof_member(base, "empty-domain", "selected");
+    let (bytes, sidecar) = read_artifact(&path)?;
+    let recorded = RecordedArtifactProgramIdentity::from_bytes(sidecar.artifact_identity_bytes())
+        .map_err(ProofError::RecordedIdentity)?;
+    let plan = TilerPlan::load(
+        bytes,
+        recorded,
+        environment.clone(),
+        Realization::TilerFlushSubnormalsToZeroF32StrictOrder,
+    )
+    .map_err(ProofError::Wrapper)?;
+    let constructed = plan
+        .empty_input_tensor(device)
+        .map_err(ProofError::Wrapper)?;
+    plan.preflight(&constructed.tensor, device)
+        .map_err(|refusal| ProofError::BaselineRefused(refusal.to_string()))?;
+    println!(
+        "  probe empty-input baseline: helper tensor preflights (allocation {} byte(s), \
+         accessible {})",
+        constructed.allocation_bytes, constructed.accessible_bytes,
+    );
+
+    let count = empty_input_count_is_zero(1).expect_err("count 1 must be refused");
+    println!("  probe empty-input count: {count}");
+
+    let shape = empty_input_shape_matches(&[2, 0], 1, 0).expect_err("2x0 must be refused");
+    println!("  probe empty-input shape: {shape}");
+
+    let dtype = empty_input_dtype_is_f32(DType::F16).expect_err("f16 must be refused");
+    println!("  probe empty-input dtype: {dtype}");
+    if let Ok(wrong_dtype) = constructed.tensor.to_dtype(DType::F16) {
+        expect_refusal(
+            "an f16 empty-domain tensor",
+            plan.preflight(&wrong_dtype, device),
+        )?;
+    }
+
+    let cpu = Tensor::from_vec(Vec::<f32>::new(), (1, 0), &Device::Cpu)
+        .map_err(|cause| ProofError::Device(cause.to_string()))?;
+    expect_refusal(
+        "an empty-domain tensor on the host device",
+        plan.preflight(&cpu, device),
+    )?;
+    let second = Device::new_metal(0).map_err(|cause| ProofError::Device(cause.to_string()))?;
+    let elsewhere = plan
+        .empty_input_tensor(&second)
+        .map_err(ProofError::Wrapper)?;
+    expect_refusal(
+        "an empty-domain tensor on another Candle Metal device",
+        plan.preflight(&elsewhere.tensor, device),
+    )?;
+
+    let window = empty_input_window_is_unread(4).expect_err("a 4-byte window must be refused");
+    println!("  probe empty-input accessible extent: {window}");
+    if bound_accessible_extent(constructed.accessible_bytes, constructed.allocation_bytes) != 0 {
+        return Err(ProofError::ProbeAccepted(
+            "an empty-domain accessible extent widened because the sentinel allocation is nonzero",
+        ));
+    }
+    println!(
+        "  probe empty-input accessible extent: bound_accessible_extent({}, {}) = 0",
+        constructed.accessible_bytes, constructed.allocation_bytes,
+    );
+
+    let tracked = empty_input_is_untracked(true).expect_err("tracked must be refused");
+    println!("  probe empty-input lifetime: {tracked}");
+    let variable = Var::from_tensor(&constructed.tensor)
+        .map_err(|cause| ProofError::Device(cause.to_string()))?;
+    expect_refusal(
+        "an autograd-tracked empty-domain tensor",
+        plan.preflight(variable.as_tensor(), device),
+    )?;
+
+    let nonempty = empty_input_declaration(1, 3).expect_err("1x3 must not use the helper");
+    println!("  probe empty-input nonempty declaration: {nonempty}");
     Ok(())
 }
 

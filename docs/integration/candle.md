@@ -121,6 +121,38 @@ through metadata.
 The adapter never uses full allocation length as logical tensor length and
 never binds offset zero merely because it has the underlying buffer.
 
+### Zero-element inputs
+
+A declared zero-element *input* is a real Candle `Tensor`, not a fourth routed
+backing class and not a public semantic input enum. The adapter exposes one
+explicit, fallible helper that derives the empty shape and `F32` dtype from the
+loaded artifact, allocates the minimum Candle-managed sentinel through
+`MetalDevice::new_buffer` on the already selected Metal device, records
+`MetalStorage` logical count zero, and constructs an untracked contiguous
+tensor via `From<(Storage, Shape)>`. That tensor then takes the ordinary
+`TilerPlan::preflight` / `apply_op1_no_bwd` / `bind_candle_storage` /
+`Backing::CallerInput` path.
+
+`Tensor::from_vec` is not that path. At Candle 0.11.0 its upload calls
+`new_buffer_with_data` with a literal zero byte length and Metal returns nil;
+`new_buffer` instead passes the zero logical byte count through `buf_size`, and
+`0_usize.next_power_of_two()` supplies a one-byte allocation. The helper
+exists because of that difference. Construction is never a default for an
+omitted nonempty input.
+
+The artifact-derived accessible extent bound to the kernel stays **zero**. The
+sentinel's physical length is invocation/device evidence only; a placeholder
+must never widen `RoutedBinding::accessible_bytes` merely because the
+allocation is nonzero. The helper refuses a nonempty declaration, a wrong
+device, a wrong dtype, an allocation shorter than the one-byte sentinel, a
+storage/shape disagreement, tracked autograd, and any kernel whose verified
+input window is nonzero.
+
+The accepted first pass is input-only. Empty outputs, raw placeholder binding
+without a Tensor, unrelated anchor tensors, mutable or aliased views, other
+dtypes, foreign devices, and kernels with a nonzero verified input window
+remain refused.
+
 ## Variant selection and fallback
 
 The manifest's deterministic routing policy may select among:

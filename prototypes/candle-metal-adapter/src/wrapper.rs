@@ -70,10 +70,12 @@ use std::cell::RefCell;
 use std::fmt;
 
 use candle_core::backend::BackendStorage;
-use candle_core::{CpuStorage, CustomOp1, DType, Device, Layout, MetalStorage, Shape, Tensor};
+use candle_core::{
+    CpuStorage, CustomOp1, DType, Device, Layout, MetalStorage, Shape, Storage, Tensor,
+};
 
 use tiler_artifact::program::{
-    AbiFactBinder, AbiFacts, AvailabilityPhase, RecordedArtifactProgramIdentity,
+    AbiFactBinder, AbiFacts, AvailabilityPhase, BindingTarget, RecordedArtifactProgramIdentity,
 };
 use tiler_ir::semantic::F32;
 use tiler_runtime::adapter::{AdapterRouteFailure, route_with_adapter};
@@ -81,12 +83,20 @@ use tiler_runtime::load::{DecodedProgram, ExecutionEnvironment, LoadRejection};
 
 use crate::adapter::{
     CandleMetalAdapter, DeviceFacts, INPUT_KEY, OUTPUT_KEY, bind_candle_storage,
-    declared_transport_slots, load_library, prepare_pipeline_with_reflection,
+    bound_accessible_extent, declared_transport_slots, load_library,
+    prepare_pipeline_with_reflection,
 };
 use crate::refusal::{
     Delivered, DeliveredPath, DispatchFailure, FallbackAvailability, Realization, RouteRefusal,
     TensorRefusal, fallback_availability,
 };
+
+/// Minimum Metal allocation Candle's `buf_size` supplies for a zero-byte request.
+///
+/// `0_usize.next_power_of_two()` in candle-core 0.11.0. The helper asks
+/// `MetalDevice::new_buffer` for a zero logical element count so that rounding
+/// stays inside Candle's allocator rather than a Tiler-private length.
+pub(crate) const EMPTY_INPUT_SENTINEL_BYTES: u64 = 1;
 
 /// The one delivery position every artifact here is built for.
 ///
@@ -162,6 +172,21 @@ pub struct RouteReport {
     pub shared_allocations: usize,
 }
 
+/// One constructed zero-element input, with the allocation evidence that is not
+/// the accessible range.
+///
+/// This is construction evidence, not a semantic input enum: the caller still
+/// applies [`EmptyInputTensor::tensor`] as an ordinary Candle `Tensor`.
+#[derive(Debug)]
+pub struct EmptyInputTensor {
+    /// The untracked contiguous Metal tensor of logical element count zero.
+    pub tensor: Tensor,
+    /// Bytes Candle allocated for the sentinel. At least [`EMPTY_INPUT_SENTINEL_BYTES`].
+    pub allocation_bytes: u64,
+    /// Artifact-derived accessible extent. Always zero for an admitted construction.
+    pub accessible_bytes: u64,
+}
+
 /// One delivered result, with the realization it was produced under.
 #[derive(Debug)]
 pub struct Applied {
@@ -223,8 +248,8 @@ impl TilerPlan {
     /// [`WrapperError::Tensor`] carrying
     /// [`TensorRefusal::IncompatibleTargetProfile`],
     /// [`TensorRefusal::ForeignInterface`], or
-    /// [`TensorRefusal::ZeroExtentInterface`] for an artifact this wrapper
-    /// cannot speak for.
+    /// [`TensorRefusal::ZeroExtentInterface`] for an empty *output* this first
+    /// pass does not construct.
     pub fn load(
         bytes: Vec<u8>,
         recorded: RecordedArtifactProgramIdentity,
@@ -253,11 +278,78 @@ impl TilerPlan {
 
     /// Returns the input shape the artifact declares, as rows by columns.
     ///
-    /// Both extents are nonzero. [`Self::load`] refuses an artifact declaring an
-    /// empty axis with [`TensorRefusal::ZeroExtentInterface`], so a plan that
-    /// exists is one whose declared shape a Candle tensor can carry.
+    /// The column extent may be zero: that is the empty-domain input
+    /// [`Self::empty_input_tensor`] constructs. [`Self::load`] still refuses an
+    /// empty output with [`TensorRefusal::ZeroExtentInterface`].
     pub const fn declared_shape(&self) -> (u64, u64) {
         (self.rows, self.columns)
+    }
+
+    /// Returns whether the artifact's declared input has no elements.
+    pub const fn declares_empty_input(&self) -> bool {
+        self.rows == 0 || self.columns == 0
+    }
+
+    /// Constructs the artifact's declared zero-element input as a real Candle tensor.
+    ///
+    /// Allocates the minimum Candle-managed sentinel on `device` *before* any
+    /// routing attempt, records logical element count zero, and returns an
+    /// untracked contiguous `Tensor` the caller then passes through
+    /// [`Self::preflight`] and [`Self::apply`]. Never a default for an omitted
+    /// nonempty input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WrapperError::Tensor`] when the declaration is nonempty, the
+    /// output is empty, the device or dtype is wrong, the sentinel is shorter
+    /// than [`EMPTY_INPUT_SENTINEL_BYTES`], storage and shape disagree, the
+    /// tensor is tracked, or any `ProgramInput` binding's artifact-derived
+    /// accessible extent is nonzero. Returns [`WrapperError::Load`] when the
+    /// artifact cannot be prepared far enough to read that extent.
+    pub fn empty_input_tensor(&self, device: &Device) -> Result<EmptyInputTensor, WrapperError> {
+        empty_input_declaration(self.rows, self.columns).map_err(WrapperError::Tensor)?;
+        let accessible_bytes = self.empty_input_accessible_bytes()?;
+        empty_input_window_is_unread(accessible_bytes).map_err(WrapperError::Tensor)?;
+        let tensor = allocate_empty_input_tensor(device, self.rows, self.columns)
+            .map_err(WrapperError::Tensor)?;
+        admit_constructed_empty_input(&tensor, device, self.rows, self.columns)
+            .map_err(WrapperError::Tensor)?;
+        let allocation_bytes = metal_allocation_bytes(&tensor).map_err(WrapperError::Tensor)?;
+        if bound_accessible_extent(accessible_bytes, allocation_bytes) != accessible_bytes {
+            return Err(WrapperError::Tensor(
+                TensorRefusal::NonzeroVerifiedInputWindow { accessible_bytes },
+            ));
+        }
+        Ok(EmptyInputTensor {
+            tensor,
+            allocation_bytes,
+            accessible_bytes,
+        })
+    }
+
+    /// Evaluates every `ProgramInput` binding's artifact-derived accessible extent.
+    ///
+    /// The routing authority this prepare mints is dropped: the helper only
+    /// needs the evaluated window so it can refuse a kernel that would read the
+    /// sentinel.
+    fn empty_input_accessible_bytes(&self) -> Result<u64, WrapperError> {
+        let mut program =
+            DecodedProgram::decode(&self.bytes, SOLE_DELIVERY).map_err(WrapperError::Load)?;
+        let qualification = program
+            .prepare(&self.environment, &self.recorded, &self.facts)
+            .map_err(WrapperError::Load)?;
+        let mut window = 0_u64;
+        for entry in qualification.entries() {
+            for binding in entry.bindings() {
+                if matches!(binding.binding().target(), BindingTarget::ProgramInput(_)) {
+                    empty_input_window_is_unread(binding.accessible_bytes())
+                        .map_err(WrapperError::Tensor)?;
+                    window = binding.accessible_bytes();
+                }
+            }
+        }
+        drop(qualification);
+        Ok(window)
     }
 
     /// Returns the realization a delivered result is claimed under.
@@ -722,15 +814,19 @@ fn bind_interface(
         )));
     }
 
-    // The declared extents, before any device question, because an empty axis is
-    // refusable from the artifact alone and no Candle tensor of that shape can be
-    // built to preflight instead.
-    //
-    // The input's extents are the whole check: the output's element count was
-    // proved equal to `rows` immediately above, so a declared output with no
-    // elements implies an empty axis 0 here and is named by this call first.
-    declared_extents_are_nonzero(input.key().as_str(), &[rows.get(), columns.get()])
-        .map_err(WrapperError::Tensor)?;
+    // First pass is input-only. An empty published result is named from the
+    // output's own extents; an empty *input* is constructed later by
+    // `empty_input_tensor` rather than refused here.
+    if published == 0 {
+        let extents: Vec<u64> = output
+            .shape()
+            .extents()
+            .iter()
+            .map(|extent| extent.get())
+            .collect();
+        declared_extents_are_nonzero(output.key().as_str(), &extents)
+            .map_err(WrapperError::Tensor)?;
+    }
 
     // Target availability, decided here so a host that cannot offer the declared
     // profile never reaches Candle's custom-op path. This is the wrapper's own,
@@ -773,9 +869,8 @@ fn bind_interface(
 /// can watch say no, which a comparison written inline against a decoded
 /// artifact is not.
 ///
-/// The first empty axis is named rather than all of them. A shape with two empty
-/// axes is refused for the same reason as one with a single empty axis — there
-/// is no tensor either way — and the remedy does not vary with the count.
+/// The first empty axis is named rather than all of them. Used for empty
+/// *outputs*; empty inputs go through [`empty_input_declaration`] instead.
 ///
 /// # Errors
 ///
@@ -791,18 +886,233 @@ fn declared_extents_are_nonzero(value: &str, extents: &[u64]) -> Result<(), Tens
     })
 }
 
+/// Admits a zero-element input declaration whose output would still be nonempty.
+///
+/// # Errors
+///
+/// Returns [`TensorRefusal::ZeroExtentInterface`] when the row extent is empty
+/// (the first pass does not construct empty outputs) and
+/// [`TensorRefusal::EmptyConstructionOnNonemptyDeclaration`] when both extents
+/// are nonzero.
+pub(crate) fn empty_input_declaration(rows: u64, columns: u64) -> Result<(), TensorRefusal> {
+    if rows == 0 {
+        return Err(TensorRefusal::ZeroExtentInterface {
+            value: OUTPUT_KEY.to_owned(),
+            axis: 0,
+            extents: vec![rows, columns],
+        });
+    }
+    if columns == 0 {
+        return Ok(());
+    }
+    Err(TensorRefusal::EmptyConstructionOnNonemptyDeclaration { rows, columns })
+}
+
+/// Refuses a constructed storage whose logical element count is not zero.
+///
+/// # Errors
+///
+/// Returns [`TensorRefusal::EmptyInputCount`].
+pub(crate) fn empty_input_count_is_zero(count: usize) -> Result<(), TensorRefusal> {
+    if count == 0 {
+        return Ok(());
+    }
+    Err(TensorRefusal::EmptyInputCount { observed: count })
+}
+
+/// Refuses a constructed shape that is not the artifact's declared empty input.
+///
+/// # Errors
+///
+/// Returns [`TensorRefusal::UnsupportedRank`] or [`TensorRefusal::ExtentMismatch`].
+pub(crate) fn empty_input_shape_matches(
+    observed: &[usize],
+    rows: u64,
+    columns: u64,
+) -> Result<(), TensorRefusal> {
+    if observed.len() != 2 {
+        return Err(TensorRefusal::UnsupportedRank {
+            observed: observed.len(),
+            required: 2,
+        });
+    }
+    for (axis, declared) in [rows, columns].into_iter().enumerate() {
+        let seen = observed[axis];
+        if u64::try_from(seen).unwrap_or(u64::MAX) != declared {
+            return Err(TensorRefusal::ExtentMismatch {
+                axis,
+                declared,
+                observed: seen,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Refuses any dtype other than the F32 this profile constructs.
+///
+/// # Errors
+///
+/// Returns [`TensorRefusal::UnsupportedDtype`].
+pub(crate) fn empty_input_dtype_is_f32(dtype: DType) -> Result<(), TensorRefusal> {
+    if dtype == DType::F32 {
+        return Ok(());
+    }
+    Err(TensorRefusal::UnsupportedDtype {
+        observed: dtype,
+        supported: DType::F32,
+    })
+}
+
+/// Refuses a tracked or variable tensor. Construction is untracked.
+///
+/// # Errors
+///
+/// Returns [`TensorRefusal::AutogradTracked`].
+pub(crate) fn empty_input_is_untracked(tracked: bool) -> Result<(), TensorRefusal> {
+    if tracked {
+        return Err(TensorRefusal::AutogradTracked);
+    }
+    Ok(())
+}
+
+/// Refuses a nonzero artifact-derived accessible extent.
+///
+/// The physical allocation is not an argument: a placeholder must never widen
+/// the bound range merely because Candle rounded the sentinel up.
+///
+/// # Errors
+///
+/// Returns [`TensorRefusal::NonzeroVerifiedInputWindow`].
+pub(crate) fn empty_input_window_is_unread(accessible_bytes: u64) -> Result<(), TensorRefusal> {
+    if accessible_bytes == 0 {
+        return Ok(());
+    }
+    Err(TensorRefusal::NonzeroVerifiedInputWindow { accessible_bytes })
+}
+
+/// Refuses a sentinel shorter than [`EMPTY_INPUT_SENTINEL_BYTES`].
+///
+/// # Errors
+///
+/// Returns [`TensorRefusal::EmptyInputSentinel`].
+pub(crate) fn sentinel_allocation_holds(held: u64) -> Result<(), TensorRefusal> {
+    if held >= EMPTY_INPUT_SENTINEL_BYTES {
+        return Ok(());
+    }
+    Err(TensorRefusal::EmptyInputSentinel {
+        held,
+        required: EMPTY_INPUT_SENTINEL_BYTES,
+        detail: None,
+    })
+}
+
+/// Allocates a zero-element F32 tensor through Candle's public storage APIs.
+fn allocate_empty_input_tensor(
+    device: &Device,
+    rows: u64,
+    columns: u64,
+) -> Result<Tensor, TensorRefusal> {
+    let Device::Metal(metal) = device else {
+        return Err(TensorRefusal::NotAMetalDevice {
+            observed: format!("{:?}", device.location()),
+        });
+    };
+    let buffer = metal
+        .new_buffer(0, DType::F32, "tiler.empty-input")
+        .map_err(|cause| TensorRefusal::EmptyInputSentinel {
+            held: 0,
+            required: EMPTY_INPUT_SENTINEL_BYTES,
+            detail: Some(cause.to_string()),
+        })?;
+    let held = u64::try_from(buffer.length()).unwrap_or(0);
+    sentinel_allocation_holds(held)?;
+    empty_input_count_is_zero(0)?;
+    empty_input_dtype_is_f32(DType::F32)?;
+    let rows_usize = usize::try_from(rows).unwrap_or(usize::MAX);
+    let columns_usize = usize::try_from(columns).unwrap_or(usize::MAX);
+    empty_input_shape_matches(&[rows_usize, columns_usize], rows, columns)?;
+    let shape = Shape::from_dims(&[rows_usize, columns_usize]);
+    empty_input_count_is_zero(shape.elem_count())?;
+    Ok(Tensor::from((
+        Storage::Metal(MetalStorage::new(buffer, metal.clone(), 0, DType::F32)),
+        shape,
+    )))
+}
+
+/// Checks the constructed tensor against the accepted empty-input boundary.
+fn admit_constructed_empty_input(
+    tensor: &Tensor,
+    device: &Device,
+    rows: u64,
+    columns: u64,
+) -> Result<(), TensorRefusal> {
+    empty_input_is_untracked(tensor.track_op())?;
+    empty_input_count_is_zero(tensor.elem_count())?;
+    empty_input_shape_matches(tensor.dims(), rows, columns)?;
+    empty_input_dtype_is_f32(tensor.dtype())?;
+    match (tensor.device(), device) {
+        (Device::Metal(theirs), Device::Metal(bound)) if theirs.id() == bound.id() => {}
+        (Device::Metal(theirs), Device::Metal(bound)) => {
+            return Err(TensorRefusal::ForeignMetalDevice {
+                tensor: format!("{:?}", theirs.id()),
+                adapter: format!("{:?}", bound.id()),
+            });
+        }
+        (other, _) => {
+            return Err(TensorRefusal::NotAMetalDevice {
+                observed: format!("{:?}", other.location()),
+            });
+        }
+    }
+    let (storage, layout) = tensor.storage_and_layout();
+    if !layout.is_contiguous() || layout.start_offset() != 0 {
+        return Err(TensorRefusal::AffineStridedLayout {
+            dims: layout.dims().to_vec(),
+            stride: layout.stride().to_vec(),
+        });
+    }
+    let Storage::Metal(metal) = &*storage else {
+        return Err(TensorRefusal::NotAMetalDevice {
+            observed: format!("{:?}", tensor.device().location()),
+        });
+    };
+    empty_input_dtype_is_f32(metal.dtype())?;
+    let held = u64::try_from(metal.buffer().length()).unwrap_or(0);
+    sentinel_allocation_holds(held)?;
+    Ok(())
+}
+
+/// Reads the Candle allocation length of a constructed Metal tensor.
+fn metal_allocation_bytes(tensor: &Tensor) -> Result<u64, TensorRefusal> {
+    let (storage, _) = tensor.storage_and_layout();
+    let Storage::Metal(metal) = &*storage else {
+        return Err(TensorRefusal::NotAMetalDevice {
+            observed: format!("{:?}", tensor.device().location()),
+        });
+    };
+    Ok(u64::try_from(metal.buffer().length()).unwrap_or(0))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::declared_extents_are_nonzero;
+    use super::{
+        EMPTY_INPUT_SENTINEL_BYTES, declared_extents_are_nonzero, empty_input_count_is_zero,
+        empty_input_declaration, empty_input_dtype_is_f32, empty_input_is_untracked,
+        empty_input_shape_matches, empty_input_window_is_unread, sentinel_allocation_holds,
+    };
+    use crate::adapter::bound_accessible_extent;
     use crate::refusal::TensorRefusal;
+    use candle_core::DType;
 
     /// A declared shape is admitted, or the first empty axis is named.
     ///
     /// The admitted cases lead, because a check that refused every shape would
-    /// take every route with it — including the four members `crate::proof`
-    /// carries onto hardware — and would still pass a test built only from empty
-    /// axes. The refusing population puts the zero at each axis in turn, so a
-    /// check written against one position is visible here.
+    /// take every route with it — including the members `crate::proof` carries
+    /// onto hardware — and would still pass a test built only from empty axes.
+    /// The refusing population puts the zero at each axis in turn, so a check
+    /// written against one position is visible here. This function now names
+    /// empty *outputs*; empty inputs are constructed rather than refused.
     #[test]
     fn a_declared_shape_is_admitted_or_names_its_first_empty_axis() {
         assert!(declared_extents_are_nonzero("input", &[1, 3]).is_ok());
@@ -828,5 +1138,89 @@ mod tests {
                 "{refusal} does not name axis {empty} of {extents:?}",
             );
         }
+    }
+
+    /// Each empty-input subject is refused independently, with its own wording.
+    ///
+    /// The admitted neighbour leads so a function that refused everything would
+    /// still fail. Count, shape, dtype, device-independent lifetime, accessible
+    /// extent, and sentinel length are each perturbed alone.
+    #[test]
+    fn empty_input_construction_refuses_each_subject_independently() {
+        assert!(empty_input_declaration(1, 0).is_ok());
+        let nonempty = empty_input_declaration(1, 3).expect_err("1x3 is nonempty");
+        assert_eq!(
+            nonempty.to_string(),
+            "candle.preflight.empty-input.nonempty-declaration: the empty-input helper \
+             constructs a zero-element tensor and the artifact declares 1x3",
+        );
+        let empty_output = empty_input_declaration(0, 3).expect_err("0 rows is an empty output");
+        assert_eq!(
+            empty_output.to_string(),
+            "candle.preflight.zero-extent: the artifact declares \"result\" with extents [0, 3], \
+             whose axis 0 is empty, and this first pass constructs empty inputs only",
+        );
+
+        assert!(empty_input_count_is_zero(0).is_ok());
+        let count = empty_input_count_is_zero(1).expect_err("count 1 is not empty");
+        assert_eq!(
+            count.to_string(),
+            "candle.preflight.empty-input.count: constructed MetalStorage count is 1 and must be 0",
+        );
+
+        assert!(empty_input_shape_matches(&[1, 0], 1, 0).is_ok());
+        let rank = empty_input_shape_matches(&[0], 1, 0).expect_err("rank 1 is not rank 2");
+        assert_eq!(
+            rank.to_string(),
+            "candle.preflight.rank: the artifact's declared input is rank 2 and the tensor is \
+             rank 1",
+        );
+        let shape = empty_input_shape_matches(&[2, 0], 1, 0).expect_err("2x0 is not 1x0");
+        assert_eq!(
+            shape.to_string(),
+            "candle.preflight.extent: the artifact declares 1 along axis 0 and the tensor \
+             carries 2",
+        );
+
+        assert!(empty_input_dtype_is_f32(DType::F32).is_ok());
+        let dtype = empty_input_dtype_is_f32(DType::F16).expect_err("f16 is not f32");
+        assert_eq!(
+            dtype.to_string(),
+            "candle.preflight.dtype: this profile's artifacts declare f32 and the tensor \
+             carries f16",
+        );
+
+        assert!(empty_input_is_untracked(false).is_ok());
+        let lifetime = empty_input_is_untracked(true).expect_err("tracked is refused");
+        assert_eq!(
+            lifetime.to_string(),
+            "candle.preflight.autograd: the tensor participates in tracked autograd and this \
+             fused forward op carries no backward formula",
+        );
+
+        assert!(empty_input_window_is_unread(0).is_ok());
+        let window = empty_input_window_is_unread(4).expect_err("4 bytes is a read window");
+        assert_eq!(
+            window.to_string(),
+            "candle.preflight.empty-input.window: the artifact-derived accessible extent is 4 \
+             byte(s) and an empty input may bind only a zero window",
+        );
+
+        assert!(sentinel_allocation_holds(EMPTY_INPUT_SENTINEL_BYTES).is_ok());
+        let sentinel =
+            sentinel_allocation_holds(0).expect_err("zero bytes is shorter than the sentinel");
+        assert_eq!(
+            sentinel.to_string(),
+            "candle.preflight.empty-input.sentinel: Candle allocated 0 byte(s) and the \
+             sentinel requires 1",
+        );
+
+        assert_eq!(bound_accessible_extent(0, 1), 0);
+        assert_eq!(bound_accessible_extent(0, 16), 0);
+        assert_ne!(
+            bound_accessible_extent(0, 1),
+            1,
+            "a one-byte sentinel must not become a one-byte accessible range",
+        );
     }
 }

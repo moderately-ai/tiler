@@ -1633,6 +1633,18 @@ fn reach(entries: &[RoutedEntry<'_>], entry: usize, slot: usize) -> Result<u64, 
         })
 }
 
+/// Returns the accessible extent bound to the kernel.
+///
+/// Always the artifact's evaluated window. The physical allocation is accepted
+/// only as evidence that a sentinel exists; it never becomes the range. A
+/// one-byte Candle rounding of a zero-element tensor therefore still binds
+/// zero accessible bytes.
+#[must_use]
+pub const fn bound_accessible_extent(artifact_accessible_bytes: u64, allocation_bytes: u64) -> u64 {
+    let _ = allocation_bytes;
+    artifact_accessible_bytes
+}
+
 /// Reads the buffer and byte offset one Candle Metal storage and layout name.
 ///
 /// The layout's `start_offset` is in *elements*, so it is converted through the
@@ -1673,8 +1685,9 @@ pub fn bind_candle_storage(
 mod tests {
     use super::{
         ReflectedBinding, ReflectedBindingClass, RouteRefusal, SubmissionOutcome, allocation_holds,
-        argument_slots_agree, binding_fits, bindings_are_declarable, derived_requirements_hold,
-        gpu_family_from_payload, reflected_binding_class, submission_outcome, workgroup_fits,
+        argument_slots_agree, binding_fits, bindings_are_declarable, bound_accessible_extent,
+        derived_requirements_hold, gpu_family_from_payload, reflected_binding_class,
+        submission_outcome, workgroup_fits,
     };
     use objc2_metal::{MTLBindingType, MTLCommandBufferStatus};
     use tiler_ir::schedule::{
@@ -1918,6 +1931,12 @@ mod tests {
                 held: 15,
             }),
         ));
+        // A one-byte sentinel still holds a zero accessible range. The held
+        // length is not the extent: `bound_accessible_extent` keeps the
+        // artifact's zero.
+        assert!(allocation_holds(0, 0, 0, 1).is_ok());
+        assert_eq!(bound_accessible_extent(0, 1), 0);
+        assert_eq!(bound_accessible_extent(0, 16), 0);
 
         assert!(workgroup_fits(0, "tiler_kernel", 32, 32).is_ok());
         assert!(matches!(
