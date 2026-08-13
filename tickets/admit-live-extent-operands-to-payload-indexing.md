@@ -1,7 +1,7 @@
 ---
 id: admit-live-extent-operands-to-payload-indexing
 title: Admit live extent operands to payload indexing
-status: review
+status: done
 priority: p1
 dependencies: [admit-symbolic-extents-at-the-compiler-request-boundary]
 related: [deliver-an-artifact-family-from-a-symbolic-region, bind-repeated-invocations-over-caller-retained-tensors, accept-the-live-extent-operand-public-surface, carry-live-extent-operands-through-the-artifact-envelope, prove-one-live-extent-artifact-payload-and-pipeline-at-two-n, prove-a-schedule-verified-live-contraction-consumes-s, admit-symbolic-extents-through-compiler-region-formation]
@@ -66,3 +66,7 @@ Review of `9a8f53c9` stopped short of a complete outcome. The kernel, schedule, 
 - [`admit-symbolic-extents-through-compiler-region-formation`](admit-symbolic-extents-through-compiler-region-formation.md) — `compile()` path. **Correction of the review comment:** the first refuse is strategy selection (`RequestError::UnsupportedSymbolicExtent`, `rule: "symbolic-extent"` in `crates/tiler-compiler/src/request.rs`), not region formation. Region formation is the later fail-closed gate.
 
 Do not merge `9a8f53c9` as done. Do not release the deliver or bind-repeated dependents until the accepted capability exists.
+
+## Outcome — 2026-08-13
+
+The accepted spelling is on `main` through the remainder tickets, not by merging `9a8f53c9` unchanged. Tom accepted the kernel/schedule/Metal/`RoutedExtentParameter` surface. Carry integrated that spelling plus the envelope row (`0a4edff9`). Two-N execution and schedule-verified `LiveContraction` both landed. Region-formation remainders were already `done`. [`deliver-an-artifact-family-from-a-symbolic-region`](deliver-an-artifact-family-from-a-symbolic-region.md) and [`bind-repeated-invocations-over-caller-retained-tensors`](bind-repeated-invocations-over-caller-retained-tensors.md) can consume `AbiRoot::InputExtent` / `RoutedExtentParameter` without a second scalar list. The envelope view `DecodedExtentOperand` remains a labelled draft on [`accept-the-live-extent-artifact-envelope-row`](accept-the-live-extent-artifact-envelope-row.md).
