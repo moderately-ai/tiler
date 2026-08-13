@@ -175,13 +175,13 @@ fn the_population_the_member_bound_refused_compiles_as_one_whole_program_region(
 /// resource, because a refusal naming a budget without the numbers still leaves
 /// a caller unable to tell how far past the bound it is.
 ///
-/// The bound is [`BudgetRefusal::Bounding`], and that is a claim about this
+/// The bound is [`BudgetRefusal::ExactDemand`], and that is a claim about this
 /// route rather than about the class: `check_program_budgets` finished counting
-/// the program's occurrences before comparing them, so `actual` is that exact
+/// the program's occurrences before comparing them, so `reported` is that exact
 /// count and no wider search reaches a plan. A search stop reports the same
-/// class with [`BudgetRefusal::Truncated`] and a demand that is only a lower
-/// bound; `crate::pipeline::tests` drives that half, because the public surface
-/// admits no caller-stated budget set to reach it through.
+/// class with [`BudgetRefusal::SearchLowerBound`] and a value that is only a
+/// lower bound; `crate::pipeline::tests` drives that half, because the public
+/// surface admits no caller-stated budget set to reach it through.
 #[test]
 fn a_chain_past_the_program_size_bound_names_the_budget_it_exhausted() {
     let program = chain_program(63);
@@ -192,7 +192,7 @@ fn a_chain_past_the_program_size_bound_names_the_budget_it_exhausted() {
         CompileFailureClass::BudgetExhausted {
             resource: BudgetResource::SemanticOperations,
             limit: 62,
-            actual: 63,
+            reported: 63,
         },
         "the refusal names the exhausted budget, its limit, and the demand",
     );
@@ -212,7 +212,7 @@ fn a_chain_past_the_program_size_bound_names_the_budget_it_exhausted() {
     let CompileFailureClass::BudgetExhausted { resource, .. } = failure.class() else {
         panic!("the class was asserted above");
     };
-    assert_eq!(resource.refusal(), BudgetRefusal::Bounding);
+    assert_eq!(resource.refusal(), BudgetRefusal::ExactDemand);
     assert_eq!(resource.key(), "semantic-operations");
 
     // A refusal raised before a target-qualified trace exists has no explain

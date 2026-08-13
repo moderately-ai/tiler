@@ -174,8 +174,9 @@ pub enum CompileFailureClass {
     /// demand, and nothing was proved about the program. Which of the two a
     /// budget refusal is within itself — a bound no further search escapes, or
     /// a search stopped before it finished — is [`BudgetResource::refusal`],
-    /// and the same answer decides whether `actual` is an exact quantity or a
-    /// lower bound.
+    /// and that answer is what gives `reported` its meaning: an exact completed
+    /// count, a conservative planning envelope, or a truncated-search lower
+    /// bound.
     ///
     /// The three fields are the refusal's own, carried rather than re-derived,
     /// so a caller names the exhausted resource without reading compiler source.
@@ -188,12 +189,13 @@ pub enum CompileFailureClass {
         resource: BudgetResource,
         /// The declared limit that budget carries in this build.
         limit: u64,
-        /// The demand the limit refused.
+        /// The value the compiler compared against `limit`.
         ///
-        /// Exact or a lower bound according to [`BudgetResource::refusal`];
-        /// reading it as a required size regardless is wrong in the silent
-        /// direction for the five search bounds.
-        actual: u64,
+        /// Read [`BudgetResource::refusal`] on `resource` before treating this
+        /// as a required size. It is an exact completed count, a conservative
+        /// planning envelope that a particular plan may undershoot, or a lower
+        /// bound recorded where search stopped — never a uniform "actual".
+        reported: u64,
     },
     /// The compiler produced output its own verifier refused.
     ///
@@ -1582,7 +1584,7 @@ fn class_of(error: CompileError) -> CompileFailureClass {
             let RequestError::BudgetExceeded {
                 resource,
                 limit,
-                actual,
+                reported,
             } = cause
             else {
                 return CompileFailureClass::InvalidCompilerOutput;
@@ -1590,7 +1592,7 @@ fn class_of(error: CompileError) -> CompileFailureClass {
             CompileFailureClass::BudgetExhausted {
                 resource,
                 limit,
-                actual,
+                reported,
             }
         }
         CompileError::NoFeasiblePlan(_) => CompileFailureClass::NoFeasiblePlan,
@@ -3024,8 +3026,8 @@ mod tests {
     use std::sync::Arc;
 
     use super::{
-        BudgetResource, CompilationRequest, CompileFailure, CompileFailureClass, CompileRequest,
-        NumericalContract, StrictF32NumericalContract, TargetCompileRefusal,
+        BudgetRefusal, BudgetResource, CompilationRequest, CompileFailure, CompileFailureClass,
+        CompileRequest, NumericalContract, StrictF32NumericalContract, TargetCompileRefusal,
         TargetElementaryAccuracyReason, TargetNumericalRefusalDisposition,
         TargetNumericalRequirement, compile, compile_governed,
     };
@@ -4159,7 +4161,7 @@ mod tests {
             CompileFailureClass::BudgetExhausted {
                 resource: BudgetResource::SemanticOperations,
                 limit: 1,
-                actual: 2,
+                reported: 2,
             },
             CompileFailureClass::InvalidCompilerOutput,
         ];
@@ -4176,10 +4178,10 @@ mod tests {
         // this, carrying the fields would still let a consumer treat every
         // budget refusal as one value, which is the collapse the class exists to
         // avoid one level down.
-        let exhausted = |resource, limit, actual| CompileFailureClass::BudgetExhausted {
+        let exhausted = |resource, limit, reported| CompileFailureClass::BudgetExhausted {
             resource,
             limit,
-            actual,
+            reported,
         };
         assert_ne!(
             exhausted(BudgetResource::SemanticOperations, 62, 63),
@@ -4200,6 +4202,20 @@ mod tests {
         assert_ne!(
             CompileFailureClass::InvalidRequest { rule: "same" },
             CompileFailureClass::UnsupportedCapability { rule: "same" },
+        );
+
+        // Public regressions for the two provenances the request-gate chain
+        // test cannot reach: a search stop's reported value is a lower bound,
+        // and a planning envelope is not an exact demand. Constructed here
+        // because only program-scoped exact-demand rows are reachable through
+        // `compile_governed` today.
+        assert_eq!(
+            BudgetResource::RegionExpansions.refusal(),
+            BudgetRefusal::SearchLowerBound,
+        );
+        assert_eq!(
+            BudgetResource::HostExpressionNodes.refusal(),
+            BudgetRefusal::PlanningUpperBound,
         );
     }
 

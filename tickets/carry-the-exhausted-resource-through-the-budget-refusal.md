@@ -90,6 +90,25 @@ Retain the typed thirteen-row `BudgetResource` and payload-bearing `CompileFailu
 
 The categories are MECE over the current vocabulary because they are defined by how the value was produced, not by whether the number can be described abstractly as a bound. Future-proofing is fail-loud rather than a claim that a fourth provenance can never exist: a genuinely new meaning adds a deliberate report-kind variant and breaks every total owner until it is classified and rendered.
 
+## Fact audit — 2026-08-13, at base `076ffd05`
+
+Re-read at the worker base before any edit. The 2026-08-12 acceptance verdicts still hold; the landed tree was still the two-way draft.
+
+| Claim | Verdict | Evidence at this base |
+| --- | --- | --- |
+| `CompileFailureClass::BudgetExhausted` carries `{ resource, limit, actual }` | **Verified (pre-change)** | `session.rs` variant fields; `class_of` destructures `RequestError::BudgetExceeded` into those three |
+| Public `BudgetResource` is thirteen rows and `#[non_exhaustive]` | **Verified** | `request.rs` `pub enum BudgetResource` with thirteen variants and `#[non_exhaustive]`; `ALL` is sized by `variant_count` |
+| `BudgetRefusal` is two-way `Bounding` / `Truncated` and claims there is no third answer | **Verified (pre-change, false as a design claim)** | `request.rs` `there is no third answer for a later budget to occupy`; `refusal()` mapped eight resources to `Bounding` and five to `Truncated` |
+| `actual` is exact for eight resources and a lower bound for five | **False, still** | `check_program_budgets` calls regions `The largest shape this profile may assemble`, host-expression nodes `an upper bound over every plan`, and buffers `The widest buffer count any plan for this request could reach`; one input and one output produce envelope nine while the widest one-input chain declares seven |
+| Only five program-scoped rows are publicly reachable; `DeterministicBudgets` is `pub(crate)` | **Verified** | `pub(crate) struct DeterministicBudgets`; `session.rs` reachability note still says the empty-portfolio route needs a caller-stated budget set |
+| A pre-trace program-scoped refusal has no explain report | **Verified** | `a_chain_past_the_program_size_bound_names_the_budget_it_exhausted` asserts `failure.explain().is_none()`; Debug still prints `absent (refused before a target-qualified trace)` |
+| Macro `rendered_refusal` treats every `Bounding` value as a region-size fact | **Verified (pre-change, false for envelopes)** | `aot.rs` `That is a fact about the region's size rather than about its correctness` |
+| Thirteen-to-four-authority mapping is complete; `CoverBudgetResource::Refusals` holds no row | **Verified** | `the_stop_vocabularies_map_onto_distinct_shared_resources`; `truncating_resource()` returns `None` for `Refusals` |
+
+**This implementation does not change what the ticket is for.** It revises the landed two-way surface to the accepted three-way report: `BudgetRefusal::{ExactDemand, PlanningUpperBound, SearchLowerBound}`, public field `reported`, one total `BudgetResource::refusal()` mapping, and distinct frontend wording.
+
+**Out of scope remainder.** `spikes/program-planning/identity-growth/README.md` still says `CompileFailureClass::BudgetExhausted` carries no resource, limit, or actual value. `docs/compiler/optimizer.md` still discusses budget shape vs search without the three-way report vocabulary. Neither path is in `implementation/compiler`, `implementation/frontend`, or `project/tickets`.
+
 ## Required work
 
 - Preserve the already-landed typed resource and central stable-key authority.

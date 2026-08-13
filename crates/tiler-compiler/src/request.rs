@@ -806,43 +806,48 @@ impl NumericalContractPreference {
     }
 }
 
-/// What a budget refusal says about the space on the far side of the bound.
+/// How the compared number on a budget refusal was produced.
 ///
-/// A caller acting on an exhausted budget needs to know whether the compiler
-/// finished measuring the quantity it refused or stopped counting partway, and
-/// the two imply different actions. The distinction is not a nicety: the demand
-/// a truncating stop reports is a *lower bound* on what it did not explore, so
-/// reading it as a required size would be wrong in the silent direction.
+/// A caller acting on an exhausted budget needs the number's provenance, not
+/// only its magnitude. An exact completed count, a conservative planning
+/// envelope, and a truncated-search lower bound imply different actions, and
+/// reading any of them as a uniform "actual" is wrong in the silent direction
+/// for the other two.
 ///
 /// # Not `#[non_exhaustive]`
 ///
 /// ADR 0074 convention 5a marks a public enum whose variant set is a
-/// bounded-profile placeholder. This is not one: a bound either finished
-/// measuring its subject or it did not, and there is no third answer for a
-/// later budget to occupy. Marking it would oblige every out-of-crate consumer
-/// to carry a wildcard arm over a closed two-way split, which is the cost 5a
-/// exists to avoid paying for nothing.
+/// bounded-profile placeholder. This is not one: the three provenances are a
+/// closed report vocabulary, and `tiler-macros` maps every case totally to
+/// caller advice. A genuinely new meaning adds a variant and breaks every
+/// total owner until that consumer classifies and renders it. Marking the enum
+/// `#[non_exhaustive]` would oblige those owners to carry a wildcard arm over
+/// a closed split, which is the cost 5a exists to avoid paying for nothing.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum BudgetRefusal {
-    /// The budget bounds a quantity the compiler measured, and the limit
-    /// refused that exact quantity.
+    /// The compiler finished counting the subject and compared that count.
     ///
-    /// The reported demand is a number computed in full and then compared
-    /// against the limit — a submitted program's own counts, or a refused
-    /// region candidate's members, retained outputs, or live values. Where one
-    /// resource refused several candidates, it is the largest of those exact
-    /// counts.
+    /// The reported value is a submitted program's own values or occurrences,
+    /// or a refused region candidate's members, retained outputs, or live
+    /// values. Where one resource refused several candidates, it is the
+    /// largest of those exact counts. No additional search reaches a plan
+    /// under this limit.
+    ExactDemand,
+    /// The compiler compared a conservative envelope computed before a plan
+    /// was chosen.
     ///
-    /// No additional search reaches a plan under this limit, so the caller's
-    /// action is to widen the bound or to submit a smaller program.
-    Bounding,
-    /// The budget stopped a search before that search finished.
+    /// The reported value is an upper bound over every plan the request could
+    /// reach, not one plan's demand. A particular reachable plan may use less.
+    /// No later search runs after the request gate refuses one, but that does
+    /// not make the envelope an exact requirement.
+    PlanningUpperBound,
+    /// The compiler stopped a search before that search finished.
     ///
-    /// The reported demand is the first demand the limit refused, which is a
-    /// lower bound on the space left unexplored rather than that space's size.
-    /// A wider limit may reach a plan this compilation never saw, and may
-    /// equally find nothing.
-    Truncated,
+    /// The reported value is the first demand the limit refused, which is a
+    /// lower bound on the space left unexplored rather than the budget a
+    /// successful plan requires. A wider limit may reach a plan this
+    /// compilation never saw, and may equally find nothing.
+    SearchLowerBound,
 }
 
 /// Which deterministic budget refused a compilation.
@@ -968,37 +973,44 @@ impl BudgetResource {
         }
     }
 
-    /// Returns what a refusal on this budget says about the space beyond it.
+    /// Returns how a refusal on this budget produced the compared number.
     ///
-    /// The split is the one `DeterministicBudgets` already draws in prose and is
-    /// derived from where each stop is recorded. The five program-scoped bounds
-    /// and the three region-*shape* bounds compare a demand the compiler has
-    /// finished computing — a program's counts, a candidate's members, retained
-    /// outputs, or live values — so their demand is exact. The five search
-    /// bounds stop an enumeration at the first demand they refuse, and all three
-    /// stop records say so in their own documentation: the value is "a lower
-    /// bound on the unexplored space rather than its size".
+    /// This is the sole authority for report kind. Categories are defined by
+    /// provenance, not by whether the number can be described abstractly as a
+    /// bound: an exact completed count is mathematically both an upper and a
+    /// lower bound, so the durable split is completed exact demand, a
+    /// conservative planning envelope computed before selection, and a lower
+    /// bound recorded where enumeration stopped.
+    ///
+    /// The five search bounds stop an enumeration at the first demand they
+    /// refuse, and all three stop records say so in their own documentation:
+    /// the value is a lower bound on the unexplored space rather than its size.
+    /// The three request-gate planning envelopes (`Regions`,
+    /// `HostExpressionNodes`, `Buffers`) are computed before a plan is chosen
+    /// and may exceed what a particular reachable plan uses. The remaining
+    /// five are completed counts of a submitted program or of one refused
+    /// region candidate.
     ///
     /// This is the answer a `&'static str` resource could not give. A caller
-    /// holding a key has no way to learn whether the number beside it is a size
-    /// or a floor without reading compiler source, which is the reading this
-    /// whole surface exists to remove.
+    /// holding a key has no way to learn the number's provenance without
+    /// reading compiler source, which is the reading this whole surface exists
+    /// to remove.
     #[must_use]
     pub const fn refusal(self) -> BudgetRefusal {
         match self {
             Self::SemanticValues
             | Self::SemanticOperations
-            | Self::Regions
-            | Self::HostExpressionNodes
-            | Self::Buffers
             | Self::RegionMembers
             | Self::RegionBoundaryOutputs
-            | Self::RegionLiveValues => BudgetRefusal::Bounding,
+            | Self::RegionLiveValues => BudgetRefusal::ExactDemand,
+            Self::Regions | Self::HostExpressionNodes | Self::Buffers => {
+                BudgetRefusal::PlanningUpperBound
+            }
             Self::RegionCandidatesPerSeed
             | Self::RegionExpansions
             | Self::RegionCovers
             | Self::RegionCoverExpansions
-            | Self::PhysicalPlanCombinations => BudgetRefusal::Truncated,
+            | Self::PhysicalPlanCombinations => BudgetRefusal::SearchLowerBound,
         }
     }
 }
@@ -1154,7 +1166,11 @@ impl DeterministicBudgets {
     /// bounded nothing and the program it refuses is the one it was written to
     /// refuse.
     ///
-    /// The four in the per-output derivation is the measured stage count of the
+    /// `limit` and `reported` are `u64` because the internal
+    /// stop records are: the two search budgets `DeterministicBudgets` declares
+    /// as `u64` cannot be narrowed to `u32` without reporting a saturated
+    /// number as though it were the declared bound, and a `usize` demand would
+    /// make the width of a public refusal a property of the host.
     /// widest chain, taken from
     /// `crate::pipeline::tests::the_widest_assembled_plan_is_the_split_reduction_with_its_epilogue`,
     /// whose reassociation-forbidding neighbour is what attributes the fourth
@@ -4468,18 +4484,19 @@ pub(crate) enum RequestError {
     /// A deterministic budget refused a demand.
     ///
     /// The sole carrier of every budget refusal the compiler raises, from all
-    /// four authorities. `limit` and `actual` are `u64` because the internal
+    /// four authorities. `limit` and `reported` are `u64` because the internal
     /// stop records are: the two search budgets `DeterministicBudgets` declares
     /// as `u64` cannot be narrowed to `u32` without reporting a saturated
     /// number as though it were the declared bound, and a `usize` demand would
     /// make the width of a public refusal a property of the host.
     ///
-    /// Whether `actual` is the exact demand or a lower bound is not uniform
-    /// across the vocabulary and is read from [`BudgetResource::refusal`].
+    /// Whether `reported` is an exact demand, a planning envelope, or a search
+    /// lower bound is not uniform across the vocabulary and is read from
+    /// [`BudgetResource::refusal`].
     BudgetExceeded {
         resource: BudgetResource,
         limit: u64,
-        actual: u64,
+        reported: u64,
     },
     UnsupportedCapability {
         phase: &'static str,
@@ -4614,10 +4631,10 @@ impl fmt::Display for RequestError {
             Self::BudgetExceeded {
                 resource,
                 limit,
-                actual,
+                reported,
             } => write!(
                 formatter,
-                "compile.budget.{}: {actual} exceeds deterministic limit {limit}",
+                "compile.budget.{}: {reported} exceeds deterministic limit {limit}",
                 resource.key()
             ),
             Self::UnsupportedCapability { phase, rule } => {
@@ -7757,12 +7774,12 @@ fn check_budget(resource: BudgetResource, limit: u32, actual: usize) -> Result<(
     // Saturating, on the same ground as the four `count` helpers this crate
     // already carries: no supported target has a `usize` wider than `u64`, and a
     // count that did not fit would exceed every budget this profile declares.
-    let actual = u64::try_from(actual).unwrap_or(u64::MAX);
-    if actual > limit {
+    let reported = u64::try_from(actual).unwrap_or(u64::MAX);
+    if reported > limit {
         return Err(RequestError::BudgetExceeded {
             resource,
             limit,
-            actual,
+            reported,
         });
     }
     Ok(())
@@ -11500,7 +11517,7 @@ mod tests {
             Err(RequestError::BudgetExceeded {
                 resource: BudgetResource::SemanticOperations,
                 limit: 4,
-                actual: 5,
+                reported: 5,
             })
         );
 
@@ -11522,8 +11539,8 @@ mod tests {
     }
 
     /// Builds a program declaring exactly `inputs` inputs and `outputs` ordered
-    /// named outputs over `operations` occurrences, so a budget's `actual` can be
-    /// placed on either side of its bound.
+    /// named outputs over `operations` occurrences, so a budget's `reported` value
+    /// can be placed on either side of its bound.
     ///
     /// Every occurrence is one `f32` add producing one value, so
     /// `value_count() == inputs + operations`. That is the same identity the
@@ -11690,35 +11707,60 @@ mod tests {
         }
     }
 
-    /// A refusal's demand is exact exactly when the bound is not a search bound.
+    /// Every resource reports exactly one of the three provenances, and the
+    /// population is sized from the type.
     ///
-    /// The split is not decorative: `actual` is a size for one half and a lower
-    /// bound for the other, and a caller reading a floor as a requirement would
-    /// shrink a program that was never too large. Pinning both directions is
-    /// what stops a budget added later from defaulting into whichever answer
-    /// happens to be listed first.
+    /// Categories are defined by how the compared number was produced, not by
+    /// whether it can be described abstractly as a bound. An exact completed
+    /// count is mathematically both an upper and a lower bound; a conservative
+    /// envelope computed before selection is not a reachable plan's demand; a
+    /// search stop is a floor on unexplored work, not the budget success needs.
+    ///
+    /// The match is wildcard-free over [`BudgetResource::ALL`], which is itself
+    /// sized by `variant_count`, so a fourteenth resource is a build error here
+    /// rather than a census that still reports three classes over a smaller set.
     #[test]
-    fn only_the_search_bounds_report_a_truncated_demand() {
+    fn every_budget_resource_reports_exactly_one_provenance() {
+        let mut exact = 0usize;
+        let mut envelope = 0usize;
+        let mut search = 0usize;
         for resource in BudgetResource::ALL {
-            let searching = matches!(
-                resource,
+            let expected = match resource {
+                BudgetResource::SemanticValues
+                | BudgetResource::SemanticOperations
+                | BudgetResource::RegionMembers
+                | BudgetResource::RegionBoundaryOutputs
+                | BudgetResource::RegionLiveValues => BudgetRefusal::ExactDemand,
+                BudgetResource::Regions
+                | BudgetResource::HostExpressionNodes
+                | BudgetResource::Buffers => BudgetRefusal::PlanningUpperBound,
                 BudgetResource::RegionCandidatesPerSeed
-                    | BudgetResource::RegionExpansions
-                    | BudgetResource::RegionCovers
-                    | BudgetResource::RegionCoverExpansions
-                    | BudgetResource::PhysicalPlanCombinations
-            );
-            let expected = if searching {
-                BudgetRefusal::Truncated
-            } else {
-                BudgetRefusal::Bounding
+                | BudgetResource::RegionExpansions
+                | BudgetResource::RegionCovers
+                | BudgetResource::RegionCoverExpansions
+                | BudgetResource::PhysicalPlanCombinations => BudgetRefusal::SearchLowerBound,
             };
             assert_eq!(
                 resource.refusal(),
                 expected,
-                "{resource:?} reports the wrong kind of demand",
+                "{resource:?} reports the wrong provenance",
             );
+            match expected {
+                BudgetRefusal::ExactDemand => exact += 1,
+                BudgetRefusal::PlanningUpperBound => envelope += 1,
+                BudgetRefusal::SearchLowerBound => search += 1,
+            }
         }
+        assert_eq!(
+            (exact, envelope, search, exact + envelope + search),
+            (5, 3, 5, BudgetResource::ALL.len()),
+            "provenance census changed; re-read every dependent claim. exact={exact} envelope={envelope} search={search} total={}",
+            BudgetResource::ALL.len(),
+        );
+        eprintln!(
+            "budget-resource provenance census: exact={exact} envelope={envelope} search={search} total={}",
+            BudgetResource::ALL.len(),
+        );
     }
 
     #[test]
@@ -11748,7 +11790,7 @@ mod tests {
             Some(RequestError::BudgetExceeded {
                 resource: BudgetResource::SemanticValues,
                 limit: 80,
-                actual: 81,
+                reported: 81,
             }),
         );
 
@@ -11762,7 +11804,7 @@ mod tests {
             Some(RequestError::BudgetExceeded {
                 resource: BudgetResource::SemanticOperations,
                 limit: 62,
-                actual: 63,
+                reported: 63,
             }),
         );
 
@@ -11781,7 +11823,7 @@ mod tests {
             Some(RequestError::BudgetExceeded {
                 resource: BudgetResource::Regions,
                 limit: 12,
-                actual: 16,
+                reported: 16,
             }),
         );
 
@@ -11795,7 +11837,7 @@ mod tests {
             Some(RequestError::BudgetExceeded {
                 resource: BudgetResource::HostExpressionNodes,
                 limit: 51,
-                actual: 53,
+                reported: 53,
             }),
         );
 
@@ -11821,7 +11863,7 @@ mod tests {
             Some(RequestError::BudgetExceeded {
                 resource: BudgetResource::Buffers,
                 limit: 30,
-                actual: 31,
+                reported: 31,
             }),
         );
     }
