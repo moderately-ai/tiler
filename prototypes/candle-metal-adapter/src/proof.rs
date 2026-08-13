@@ -388,10 +388,7 @@ fn prove_member(
             println!(
                 "  {class}.{role}: {rows}x{columns} under profile {}, {}/{} entr(y/ies) encoded, \
                  {} shared allocation(s)",
-                report.profile_key,
-                report.encoded,
-                report.entries,
-                report.shared_allocations,
+                report.profile_key, report.encoded, report.entries, report.shared_allocations,
             );
             println!("    delivered: {}", applied.delivered);
             println!(
