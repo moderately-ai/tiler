@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, compiler, planner, identity, decision, needs-tom]
-claimed_from: todo
-assignee: worker-materialized-producer
-lease_expires_at: 1786664925
 ---
 ## User-visible outcome
 
