@@ -11,7 +11,7 @@ paths: []
 tags: [implementation, frontend, inline-dx, shapes, milestone-0b]
 claimed_from: todo
 assignee: worker-deliver-symbolic
-lease_expires_at: 1786664491
+lease_expires_at: 1786664532
 ---
 ## User-visible outcome
 
@@ -44,8 +44,32 @@ A region declaring `sym n` states `deliver macos;` and reaches the same expansio
 
 The observable change is that a previously refused invocation now compiles and embeds. The `deliver` grammar is unchanged; the removed diagnostic and the corrected contract sentences are the packet.
 
-## Fact audit — 2026-08-10 at base `c99ac54950f2`
+## Fact audit — 2026-08-13 at base `0b3ca334793e3975a2057f18424def2c251b1202`
 
-- Line citation `crates/tiler-macros/src/aot.rs:223` had drifted (that line is an import); durable anchors are `AotRefusal::SymbolicExtent` Display and the `program.ok_or(AotRefusal::SymbolicExtent)` gate.
-- Consumer-facing remedy still names done research `carry-symbolic-extents-into-the-semantic-program`; retarget on landing.
-- The AOT proof's "two other now-false sentences" inventory is obsolete; remaining contract falsehood under this ticket's scope is the disabled-cache refusal claim, plus the symbolic bullet that becomes false only when this ticket lands.
+Re-read this session: `crates/tiler-macros/src/aot.rs` (`AotRefusal`, `deliver`, `program_interface_is_symbolic`, `rendered_refusal`), `crates/tiler-macros/src/lib.rs` (`expand` always passes `expansion.program.verified()`), `crates/tiler-macros/src/region.rs` (`ProgramEvidence` is the single `Verified` arm), `crates/tiler/tests/facade/fail/deliver_selects_an_artifact_family.{rs,stderr}`, `docs/integration/frontends.md`, `crates/tiler-compiler/src/pipeline.rs` (`target_failure` after `first_symbolic_extent` when the program does not carry a parametric broadcast), `crates/tiler-compiler/src/request.rs` (`a_symbolic_elementwise_neighbour_reaches_region_formation`). Purpose unchanged: lift the frontend gate only when the program is constructible **and** compilable; otherwise keep a typed spanned refuse.
+
+- **False.** Display no longer names done research `carry-symbolic-extents-into-the-semantic-program`. At this base it already named this ticket (`deliver-an-artifact-family-from-a-symbolic-region` is the work that removes this restriction), retargeted by [`repair-the-records-the-symbolic-region-construction-landing-falsifies`](repair-the-records-the-symbolic-region-construction-landing-falsifies.md). Durable former anchor: `` `deliver-an-artifact-family-from-a-symbolic-region` is the work that removes this ``.
+- **Imprecise.** The `program.ok_or(AotRefusal::SymbolicExtent)` arm was only reachable if `deliver` was handed `None`. `expand` always passed a verified program. The live frontend gate was `program_interface_is_symbolic` after construction. Durable former anchors: `AOT delivery still needs every extent known at expansion time` and `program.ok_or(AotRefusal::SymbolicExtent)`.
+- **Verified, then lifted.** Same-shape symbolic elementwise constructs. `compile()` still declines at schedule: `UnsupportedSymbolicExtent { phase: "schedule", rule: "symbolic-extent" }` because `IndexRegion.iteration_shape` is a fixed `Shape`. Live-extent operands exist on the hand-built `ScheduledRegion` / `LiveRowMajor` path, not on this frontend's `session::compile` path. Durable anchors: `A sourced broadcast must reach physical selection` and `IndexRegion requires a fixed geometry`.
+- **Verified.** `docs/integration/frontends.md` status paragraph still claimed a disabled cache refuses with a spanned error. `TILER_EXPANSION_CACHE_DIR=off` delivers and publishes no file (`a_disabled_cache_delivers_the_region_and_publishes_no_file`, ADR 0089).
+
+## Implementation record — 2026-08-13
+
+The frontend-local `AotRefusal::SymbolicExtent` gate is gone. `deliver` takes the verified `&SemanticProgram` an expansion always has. A constructible symbolic region reaches `tiler_compiler::session`. Same-shape elementwise is recognized and formed; `session::compile` then returns `CompileFailure` as `AotRefusal::Compile` with `CompileFailureClass::UnsupportedCapability { rule: "symbolic-extent" }`. `rendered_refusal` names that declined case rather than an unrecognized program shape. The trybuild golden still spans the `deliver` keyword.
+
+Delivery of one artifact family from `sym n` + `deliver macos;` is **not** claimed. `IndexRegion` still requires a fixed launch geometry; teaching `compile()` to emit `LiveRowMajor` over a rank-1 `[n]` region is a public IR / compiler change this ticket's scopes do not own. Lifting the frontend gate into a silent fallback would have been the defect the brief names.
+
+### Evidence
+
+- `a_symbolic_region_reaches_the_compilers_typed_decline` — constructed `sym n` elementwise is `Compile` / `symbolic-extent`; the retired "needs every extent known at expansion time" sentence is absent.
+- `crates/tiler/tests/facade/fail/deliver_selects_an_artifact_family.stderr` — spanned `compile_error!` on `deliver macos;` naming the compiler's schedule refuse.
+- Literal-region cold/warm cache, wrong-entry typed refuse, and damaged-entry quarantine tests are unchanged; they still run over `approved_region()`.
+- Identity-across-extents hash: **none**. No artifact is produced for a symbolic region, so there is no identity to hash. A compiled plan specialized on a bound value would have been a different (wrong) program.
+
+### Perturbation
+
+Subject, not assertion: restoring `program_interface_is_symbolic` before `compile()` makes `a_symbolic_region_reaches_the_compilers_typed_decline` panic `unexpected refusal: SymbolicExtent` — except that variant is gone, so the restored gate cannot even name itself. Removing the `symbolic-extent` arm of `rendered_refusal` makes the same test fail:
+
+```
+the diagnostic must name the declined case, not an unrecognized program: this region denotes a whole program the compiler does not recognize
+```

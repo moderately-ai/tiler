@@ -7,7 +7,8 @@
 //! different gate, and keeping them in one file is what makes the gates legible
 //! as a set:
 //!
-//! - a symbolic extent has no semantic program to compile ahead of time;
+//! - a symbolic extent constructs as a verified program and then meets the
+//!   compiler's typed `symbolic-extent` schedule refuse;
 //! - a family the one bound Metal compile-time declaration does not measure has
 //!   no target to compile for;
 //! - a deployment minimum below the governed floor for the standard Tiler
@@ -23,9 +24,9 @@
 //! which one it was.
 
 fn main() {
-    // A symbolic extent: the region is well formed and its policy is
-    // buildable, and there is still nothing to compile, because the shape is
-    // not known until the values arrive.
+    // A symbolic extent: the region is well formed, its policy is buildable,
+    // and the program constructs. The compiler then declines a launch over the
+    // symbol rather than specializing the plan on a representative extent.
     let _symbolic = tiler::tensor! {
         sym n;
         in a: f32[n], b: f32[n];

@@ -363,11 +363,6 @@ const fn dtype_dispatch_path(verdict: DTypeDispatchability) -> &'static str {
 /// the toolchain.
 #[derive(Debug)]
 pub(crate) enum AotRefusal {
-    /// The region carries a symbolic extent. Expansion now constructs the
-    /// public logical program, but AOT delivery still needs every extent known
-    /// at expansion time; that gate belongs to
-    /// `deliver-an-artifact-family-from-a-symbolic-region`.
-    SymbolicExtent,
     /// The one authoritative Metal compile declaration would not assemble.
     Declaration(BoundMetalDeclarationError),
     /// The stated selection names families no bound declaration measures.
@@ -417,13 +412,6 @@ pub(crate) enum AotRefusal {
 impl fmt::Display for AotRefusal {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::SymbolicExtent => formatter.write_str(
-                "this region declares a symbolic extent, and a `deliver` statement selecting an \
-                 artifact family compiles the region ahead of time — which needs every extent to \
-                 be known at expansion time. Declare literal extents, or state `fallback-only`. \
-                 `deliver-an-artifact-family-from-a-symbolic-region` is the work that removes this \
-                 restriction",
-            ),
             Self::Declaration(source) => write!(
                 formatter,
                 "the authoritative Metal compile-time declaration did not assemble, so nothing \
@@ -509,6 +497,20 @@ impl fmt::Display for AotRefusal {
 /// think a different target would help.
 fn rendered_refusal(class: CompileFailureClass, scope: &str) -> String {
     match class {
+        // Same-shape symbolic elementwise is recognized and formed; `compile()`
+        // then declines at schedule because `IndexRegion` still requires a
+        // fixed launch geometry. That is not an unrecognized program shape, and
+        // naming the general recognizer here would send a consumer to rewrite a
+        // region the compiler already accepted.
+        CompileFailureClass::UnsupportedCapability {
+            rule: "symbolic-extent",
+        } => format!(
+            "the compiler recognizes this region and cannot schedule a launch over a symbolic \
+             extent, so it has no plan {scope} (the check that refused is `symbolic-extent`). A \
+             `deliver` statement compiles the region during this expansion, and the compiler can \
+             launch only when every iteration extent is a literal. Declare literal extents, or \
+             state `fallback-only` to expand with the semantic fallback on every target"
+        ),
         CompileFailureClass::UnsupportedCapability { rule } => format!(
             "this region denotes a whole program the compiler does not recognize, so it has no \
              plan {scope} (the check that refused is `{rule}`). A `deliver` statement compiles the \
@@ -620,22 +622,6 @@ fn rendered_target(target: MetalTarget) -> String {
     )
 }
 
-/// Reports whether any input or output boundary names a declared symbol.
-///
-/// The expansion now constructs a verified program for an admitted symbolic
-/// region. AOT delivery still needs every extent known at expansion time, so
-/// this is the remaining gate — not "there is no program", but "this program
-/// is not yet a deliverable family".
-fn program_interface_is_symbolic(program: &SemanticProgram) -> bool {
-    let symbolic = |value| {
-        program
-            .shape(value)
-            .is_ok_and(|shape| shape.as_static().is_none())
-    };
-    program.inputs().any(|input| symbolic(input.value()))
-        || program.outputs().any(|output| symbolic(output.value()))
-}
-
 /// Runs the offline Metal driver for one stated selection and returns what the
 /// expansion must emit.
 ///
@@ -671,7 +657,7 @@ fn program_interface_is_symbolic(program: &SemanticProgram) -> bool {
 /// `DriverError::ToolFailure` at `CompileStage::Metal` — the two refusals
 /// [`retained`] carries, both exercised below.
 pub(crate) fn deliver(
-    program: Option<&SemanticProgram>,
+    program: &SemanticProgram,
     contract: StatedContract,
     selection: ArtifactFamilySelection,
     environment: &RootEnvironment,
@@ -679,10 +665,6 @@ pub(crate) fn deliver(
     eviction: &EvictionSchedule<'_>,
     toolchain: &Toolchain,
 ) -> Result<Delivered, AotRefusal> {
-    let program = program.ok_or(AotRefusal::SymbolicExtent)?;
-    if program_interface_is_symbolic(program) {
-        return Err(AotRefusal::SymbolicExtent);
-    }
     let declaration =
         BoundMetalCompileDeclaration::first_macos_apple9().map_err(AotRefusal::Declaration)?;
     require_buildable(&selection, &declaration)?;

@@ -1156,7 +1156,7 @@ fn an_unrecognized_region_names_what_a_consumer_would_change() {
             "the region must be a valid public logical program, or this tests the wrong refusal",
         );
         crate::aot::deliver(
-            Some(expansion.program.verified()),
+            expansion.program.verified(),
             crate::numerics::resolve("flush_subnormals_to_zero_f32")
                 .expect("the flush-to-zero contract is statable"),
             ArtifactFamilySelection::new(crate::delivery::NamedProfile::MacOs.policy())

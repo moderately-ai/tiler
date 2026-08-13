@@ -492,7 +492,7 @@ fn expand(trees: &[tokens::Tree<Span>], region: Span) -> Result<TokenStream, Ref
     // resolves no root, and spawns no process.
     let (delivery, route) = if selection.invokes_backend_compiler() {
         let delivered = aot::deliver(
-            Some(expansion.program.verified()),
+            expansion.program.verified(),
             contract,
             selection,
             &cache_root::RootEnvironment::from_process(),

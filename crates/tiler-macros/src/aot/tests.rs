@@ -13,17 +13,22 @@
 //! repository's only supported development platform.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use tiler_build::{BoundMetalCompileDeclaration, MetalPlanBuildError};
 use tiler_cache::expansion::{ComposedSubject, ExpansionCache, Resolution};
-use tiler_compiler::session::{CompileRequest, NumericalContract, compile};
+use tiler_compiler::session::{CompileFailureClass, CompileRequest, NumericalContract, compile};
 use tiler_compiler::target::TargetRequest;
+use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::semantic::{
     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
     SemanticProgramBuilder, StrictSerialF32Sum,
 };
-use tiler_ir::shape::{Axis, Shape};
+use tiler_ir::shape::{
+    Axis, BindingSource, FactProvenance, RootBinding, Shape, ShapeEnvBuilder, ShapeSymbol,
+    SourcedExtent, SymbolScope,
+};
 use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::family::{
     ArtifactDeliveryPolicy, ArtifactFamilySelection, FamilyRequirement, SelectedFamily,
@@ -63,6 +68,57 @@ fn approved_region() -> SemanticProgram {
         .output(OutputKey::new("out").expect("a valid interface key"), sum)
         .expect("the output binds");
     builder.build().expect("the region verifies")
+}
+
+/// The approved region over one declared symbol: `sym n; in a: f32[n], …`.
+///
+/// Built here for [`approved_region`]'s reason. The environment uses the
+/// frontend's region scope so this is the program an expansion constructs,
+/// not a compiler-test neighbour with a different identity.
+fn symbolic_approved_region() -> SemanticProgram {
+    let mut draft = ShapeEnvBuilder::new();
+    let symbol = ShapeSymbol::new(
+        SymbolScope::new(b"tiler.inline-region.v1")
+            .expect("the frontend region scope is non-empty"),
+        "n",
+    )
+    .expect("n is a valid symbol name");
+    draft.declare(symbol.clone()).expect("n is undeclared");
+    draft
+        .bind(
+            &symbol,
+            RootBinding::new(
+                BindingSource::InputDimension {
+                    input: InputKey::new("a").expect("a valid interface key"),
+                    axis: Axis::new(0),
+                },
+                AvailabilityPhase::LiveDevicePreflight,
+                FactProvenance::RuntimeValidated,
+            )
+            .expect("an input-axis binding is available at live-device preflight"),
+        )
+        .expect("n is unbound");
+    let environment = Arc::new(draft.build().expect("the environment verifies"));
+    let extents = vec![SourcedExtent::Symbol(symbol)];
+    let mut builder = SemanticProgramBuilder::try_standard_with_shape_environment(environment)
+        .expect("the governed profile composes with a shape environment");
+    let mut values = Vec::new();
+    for key in ["a", "b", "c"] {
+        values.push(
+            builder
+                .input_sourced::<F32>(
+                    InputKey::new(key).expect("a valid interface key"),
+                    extents.clone(),
+                )
+                .expect("the sourced input binds"),
+        );
+    }
+    let product = F32Multiply::apply(&mut builder, values[0], values[1]).expect("the product");
+    let sum = F32Add::apply(&mut builder, product, values[2]).expect("the sum");
+    builder
+        .output(OutputKey::new("out").expect("a valid interface key"), sum)
+        .expect("the output binds");
+    builder.build().expect("the symbolic region verifies")
 }
 
 /// The contract `contract flush_subnormals_to_zero_f32;` states.
@@ -174,7 +230,7 @@ fn a_delivering_expansion_publishes_and_then_hits() {
     let program = approved_region();
     let environment = stating(&root);
     let first = deliver(
-        Some(&program),
+        &program,
         flushing(),
         macos_selection(),
         &environment,
@@ -184,7 +240,7 @@ fn a_delivering_expansion_publishes_and_then_hits() {
     )
     .expect("the first expansion builds");
     let second = deliver(
-        Some(&program),
+        &program,
         flushing(),
         macos_selection(),
         &environment,
@@ -244,7 +300,7 @@ fn a_disabled_cache_delivers_the_region_and_publishes_no_file() {
     let toolchain = Toolchain::system();
 
     let disabled = deliver(
-        Some(&program),
+        &program,
         flushing(),
         macos_selection(),
         &RootEnvironment::new(Some(std::ffi::OsString::from(DISABLE_VALUE)), None),
@@ -274,7 +330,7 @@ fn a_disabled_cache_delivers_the_region_and_publishes_no_file() {
     // environment differs, and now exactly one bundle exists. Without it the
     // assertion above would pass on a host where publication never works.
     let stated = deliver(
-        Some(&program),
+        &program,
         flushing(),
         macos_selection(),
         &stating(&root),
@@ -468,7 +524,7 @@ fn the_bound_declaration_admits_the_two_flushing_contracts() {
 fn a_contract_this_declaration_cannot_honour_is_refused_at_the_target() {
     let strict = resolve("strict_f32").expect("the strict contract is statable");
     let refusal = deliver(
-        Some(&approved_region()),
+        &approved_region(),
         strict,
         macos_selection(),
         &stating(std::path::Path::new("/tiler-no-such-cache-root")),
@@ -499,7 +555,7 @@ fn a_contract_this_declaration_cannot_honour_is_refused_at_the_target() {
     // `deliver` broken in any other way would produce the refusal above too.
     let root = scratch("contract-honoured");
     let delivered = deliver(
-        Some(&approved_region()),
+        &approved_region(),
         flushing(),
         macos_selection(),
         &stating(&root),
@@ -515,25 +571,71 @@ fn a_contract_this_declaration_cannot_honour_is_refused_at_the_target() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-/// A region carrying a symbolic extent refuses rather than compiling something
-/// else.
+/// A constructible symbolic region reaches the compiler rather than a
+/// frontend-local refuse, and the compiler's typed decline is what the
+/// consumer sees.
+///
+/// Same-shape elementwise constructs and is recognized; `compile()` then
+/// declines at schedule because `IndexRegion` still requires a fixed launch
+/// geometry. Lifting the frontend gate must not convert that into a silent
+/// fallback or a compiled plan specialized on a representative extent. The
+/// stated cache root does not exist and could not be created, so a case that
+/// reached backend work would fail differently.
+///
+/// Watched failing under the retired `AotRefusal::SymbolicExtent` gate: handing
+/// this program to `deliver` used to return that variant before `compile()`
+/// ran. After the lift, the same program is `AotRefusal::Compile` with
+/// rule `symbolic-extent`.
 #[test]
-fn a_symbolic_region_cannot_deliver_a_selected_family() {
+fn a_symbolic_region_reaches_the_compilers_typed_decline() {
+    let program = symbolic_approved_region();
+    assert!(
+        program.inputs().any(|input| program
+            .shape(input.value())
+            .is_ok_and(|shape| shape.as_static().is_none())),
+        "the fixture must carry a symbolic interface, or this tests the wrong refuse",
+    );
+
     let refusal = deliver(
-        None,
+        &program,
         flushing(),
         macos_selection(),
-        &stating(std::path::Path::new("/unreachable")),
+        &stating(std::path::Path::new("/tiler-no-such-cache-root")),
         &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
     )
-    .expect_err("a symbolic region has no program to compile");
+    .expect_err("a symbolic launch is a typed decline, not a delivered family");
+    let AotRefusal::Compile(source) = &refusal else {
+        panic!("unexpected refusal: {refusal:?}");
+    };
     assert!(
-        matches!(refusal, AotRefusal::SymbolicExtent),
-        "unexpected refusal: {refusal:?}",
+        matches!(
+            source.class(),
+            CompileFailureClass::UnsupportedCapability {
+                rule: "symbolic-extent",
+            }
+        ),
+        "the compiler must name the symbolic-extent schedule refuse, got {:?}",
+        source.class(),
     );
-    assert!(refusal.to_string().contains("symbolic extent"));
+    let diagnostic = refusal.to_string();
+    assert!(
+        diagnostic.contains("cannot schedule a launch over a symbolic extent"),
+        "the diagnostic must name the declined case, not an unrecognized program: {diagnostic}",
+    );
+    assert!(
+        diagnostic.contains("`symbolic-extent`"),
+        "the diagnostic must carry the compiler's rule key: {diagnostic}",
+    );
+    assert!(
+        !diagnostic.contains("needs every extent to be known at expansion time"),
+        "the retired frontend gate must not remain reachable: {diagnostic}",
+    );
+    assert!(
+        !diagnostic.contains("carry-symbolic-extents-into-the-semantic-program"),
+        "the consumer-facing remedy must not name the done research parent: {diagnostic}",
+    );
 }
 
 /// Every selection the bound declaration does not compile is refused, and the
@@ -606,7 +708,7 @@ fn every_unbuildable_selection_is_refused_before_any_toolchain_work() {
     let unreachable = stating(std::path::Path::new("/tiler-no-such-cache-root"));
     for (selection, difference) in cases {
         let refusal = deliver(
-            Some(&approved_region()),
+            &approved_region(),
             flushing(),
             selection,
             &unreachable,
@@ -662,7 +764,7 @@ fn a_mixed_selection_refuses_by_naming_only_its_unmeasured_families() {
     .expect("the `macos-and-ios` profile's three families");
 
     let refusal = deliver(
-        Some(&approved_region()),
+        &approved_region(),
         flushing(),
         selection,
         &stating(std::path::Path::new("/tiler-no-such-cache-root")),
@@ -708,7 +810,7 @@ fn the_emitted_route_facts_name_the_embedded_artifact_rather_than_copying_it() {
     let root = scratch("route-facts");
     let program = approved_region();
     let delivered = deliver(
-        Some(&program),
+        &program,
         flushing(),
         macos_selection(),
         &stating(&root),
@@ -778,7 +880,7 @@ fn the_emitted_dtype_rows_are_the_declarations_own() {
     let root = scratch("route-facts-dtype");
     let program = approved_region();
     let delivered = deliver(
-        Some(&program),
+        &program,
         flushing(),
         macos_selection(),
         &stating(&root),
@@ -841,7 +943,7 @@ fn a_toolchain_failure_is_retained_under_the_family_it_belongs_to() {
     let root = scratch("no-toolchain");
     let program = approved_region();
     let delivered = deliver(
-        Some(&program),
+        &program,
         flushing(),
         macos_selection(),
         &stating(&root),
@@ -1038,7 +1140,7 @@ fn a_real_metal_front_end_rejection_is_retained_under_its_family() {
     for rejection in cases {
         let root = scratch(&format!("metal-rejection-{rejection:?}"));
         let delivered = deliver(
-            Some(&program),
+            &program,
             flushing(),
             macos_selection(),
             &stating(&root),
@@ -1084,7 +1186,7 @@ fn a_real_metal_front_end_rejection_is_retained_under_its_family() {
     // retained diagnostic here too and the shim would be proving nothing.
     let root = scratch("metal-rejection-control");
     let delivered = deliver(
-        Some(&program),
+        &program,
         flushing(),
         macos_selection(),
         &stating(&root),
@@ -1123,7 +1225,7 @@ fn a_retained_msl_diagnostic_carries_the_emitted_source_position() {
     };
     let root = scratch("msl-position");
     let delivered = deliver(
-        Some(&approved_region()),
+        &approved_region(),
         flushing(),
         macos_selection(),
         &stating(&root),
@@ -1298,7 +1400,7 @@ fn a_semantically_wrong_entry_is_a_typed_refusal_rather_than_a_silent_rebuild() 
     );
 
     let refusal = deliver(
-        Some(&approved_region()),
+        &approved_region(),
         flushing(),
         macos_selection(),
         &stating(&poisoned),
@@ -1333,7 +1435,7 @@ fn a_damaged_entry_is_quarantined_and_rebuilt() {
     let program = approved_region();
     let environment = stating(&root);
     let first = deliver(
-        Some(&program),
+        &program,
         flushing(),
         macos_selection(),
         &environment,
@@ -1357,7 +1459,7 @@ fn a_damaged_entry_is_quarantined_and_rebuilt() {
     std::fs::write(entry, &bytes).expect("the bundle is writable");
 
     let second = deliver(
-        Some(&program),
+        &program,
         flushing(),
         macos_selection(),
         &environment,
@@ -1399,7 +1501,7 @@ fn a_fallback_only_selection_is_refused_before_any_backend_work() {
     );
 
     let refusal = deliver(
-        Some(&approved_region()),
+        &approved_region(),
         flushing(),
         selection,
         &stating(std::path::Path::new("/tiler-no-such-cache-root")),
@@ -1659,7 +1761,7 @@ fn a_split_selection_packages_every_entry_in_the_one_embedded_artifact() {
     // reproduced from a second independent build instead of read back from the
     // first.
     let delivered = deliver(
-        Some(&program),
+        &program,
         reassociating(),
         macos_selection(),
         &stating(&directory),
@@ -1703,7 +1805,7 @@ fn a_split_selection_packages_every_entry_in_the_one_embedded_artifact() {
 fn a_publishing_expansion_evicts_an_entry_that_reached_the_stated_age() {
     let root = scratch("evict-aged");
     deliver(
-        Some(&approved_region()),
+        &approved_region(),
         flushing(),
         macos_selection(),
         &stating(&root),
@@ -1720,7 +1822,7 @@ fn a_publishing_expansion_evicts_an_entry_that_reached_the_stated_age() {
     // A different region, so this expansion publishes rather than hits — and a
     // publication is the only thing that may sweep.
     deliver(
-        Some(&narrower_region()),
+        &narrower_region(),
         flushing(),
         macos_selection(),
         &stating(&root),
@@ -1756,7 +1858,7 @@ fn a_cache_hit_evicts_nothing() {
     let root = scratch("hit-evicts-nothing");
     let program = approved_region();
     deliver(
-        Some(&program),
+        &program,
         flushing(),
         macos_selection(),
         &stating(&root),
@@ -1769,7 +1871,7 @@ fn a_cache_hit_evicts_nothing() {
 
     // The same region, so this expansion hits the entry it just aged.
     let delivered = deliver(
-        Some(&program),
+        &program,
         flushing(),
         macos_selection(),
         &stating(&root),
@@ -1799,7 +1901,7 @@ fn a_cache_hit_evicts_nothing() {
 fn the_opt_out_publishes_and_removes_nothing() {
     let root = scratch("evict-opt-out");
     deliver(
-        Some(&approved_region()),
+        &approved_region(),
         flushing(),
         macos_selection(),
         &stating(&root),
@@ -1811,7 +1913,7 @@ fn the_opt_out_publishes_and_removes_nothing() {
     let aged = backdate(&root, two_hours_ago());
 
     deliver(
-        Some(&narrower_region()),
+        &narrower_region(),
         flushing(),
         macos_selection(),
         &stating(&root),
@@ -1848,7 +1950,7 @@ fn the_opt_out_publishes_and_removes_nothing() {
 fn an_unusable_eviction_policy_delivers_the_region_and_removes_nothing() {
     let root = scratch("evict-refused");
     deliver(
-        Some(&approved_region()),
+        &approved_region(),
         flushing(),
         macos_selection(),
         &stating(&root),
@@ -1860,7 +1962,7 @@ fn an_unusable_eviction_policy_delivers_the_region_and_removes_nothing() {
     let aged = backdate(&root, two_hours_ago());
 
     let delivered = deliver(
-        Some(&narrower_region()),
+        &narrower_region(),
         flushing(),
         macos_selection(),
         &stating(&root),
@@ -1904,7 +2006,7 @@ fn only_the_first_publication_in_a_process_sweeps() {
     let root = scratch("evict-amortized");
     let process = EvictionGate::new();
     deliver(
-        Some(&approved_region()),
+        &approved_region(),
         flushing(),
         macos_selection(),
         &stating(&root),
@@ -1916,7 +2018,7 @@ fn only_the_first_publication_in_a_process_sweeps() {
     let aged = backdate(&root, two_hours_ago());
 
     deliver(
-        Some(&narrower_region()),
+        &narrower_region(),
         flushing(),
         macos_selection(),
         &stating(&root),
@@ -1932,7 +2034,7 @@ fn only_the_first_publication_in_a_process_sweeps() {
 
     // The control: another process, same root, same policy, same aged entry.
     deliver(
-        Some(&split_region()),
+        &split_region(),
         flushing(),
         macos_selection(),
         &stating(&root),
