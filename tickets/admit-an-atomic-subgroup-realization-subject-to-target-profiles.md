@@ -1,17 +1,14 @@
 ---
 id: admit-an-atomic-subgroup-realization-subject-to-target-profiles
 title: Admit an atomic subgroup realization subject to target profiles
-status: review
+status: done
 priority: p1
 dependencies: [accept-adr-0094-subgroup-execution-tier]
-related: [declare-metal-subgroup-realization-facts-in-the-target-profile, decide-the-prepared-subgroup-width-equality-gate]
+related: [declare-metal-subgroup-realization-facts-in-the-target-profile, decide-the-prepared-subgroup-width-equality-gate, accept-the-atomic-subgroup-realization-surface]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/build, implementation/candle, contracts/optimizer, contracts/artifacts, contracts/decisions, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: [target-profiles, subgroup, feasibility, identity, public-boundary, fail-closed]
-claimed_from: todo
-assignee: worker-atomic-subgroup-realization
-lease_expires_at: 1786656521
 ---
 ## User-visible outcome
 
