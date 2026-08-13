@@ -1,7 +1,7 @@
 ---
 id: accept-the-live-extent-operand-public-surface
 title: Accept the live-extent operand public surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [admit-live-extent-operands-to-payload-indexing]
@@ -48,6 +48,22 @@ Re-read this session at that commit: `InputExtentParameter`, `LoopBound`, `Opera
 ## Recommendation
 
 Accept questions 1, 2, and 4 as drafted. Accept question 3 as drafted as well: the variants are the only scheduled-region spelling that keeps the live value out of identity, and the E2E remainder cannot proceed against a moving unaccepted shape. **Strongest counterpoint:** accepting `LiveRowMajor` / `LiveContraction` before E2E freezes a schedule vocabulary that the missing contraction evidence might still force to change. Tom should answer the four questions independently.
+
+## Partial answers — 2026-08-13 live review
+
+**Question 3 — accepted as drafted.** Tom accepted `LogicalAccess::LiveRowMajor` and `ReductionTopology::LiveContraction` now, rather than holding them labelled until E2E.
+
+**Question 1 — accepted as drafted.** Tom accepted `InputExtentParameter { tensor, axis }` as the structured-kernel spelling of the existing `AbiRoot::InputExtent` root. No buffer-shaped scalar and no caller-supplied second list.
+
+**Question 2 — accepted as drafted.** Tom accepted `LoopBound::{Literal(u64), Value(VerifiedValueId)}` on the public loop spec.
+
+**Question 4 — accepted as drafted.** Tom accepted the Metal `eN` buffer-table ABI (`constant ulong& e{ordinal} [[buffer(index)]]` with `index = buffer_count + ordinal`) and the `RoutedExtentParameter` freeze before `Preflight::commit`.
+
+## Accepted — 2026-08-13
+
+**Tom accepted the exact surface as drafted**, with no named exclusion, in the live coordination session. All four questions were answered independently: `InputExtentParameter`, `LoopBound::Value`, `LiveRowMajor` / `LiveContraction` now, and the Metal `eN` plus `RoutedExtentParameter` freeze.
+
+Acceptance does not invent the artifact-envelope row and does not merge `9a8f53c9`. Remainders consume this spelling: [`carry-live-extent-operands-through-the-artifact-envelope`](carry-live-extent-operands-through-the-artifact-envelope.md), [`prove-one-live-extent-artifact-payload-and-pipeline-at-two-n`](prove-one-live-extent-artifact-payload-and-pipeline-at-two-n.md), and [`prove-a-schedule-verified-live-contraction-consumes-s`](prove-a-schedule-verified-live-contraction-consumes-s.md). The parent stays `review` until those land with the draft.
 
 Do not treat acceptance as authority to invent the artifact-envelope row. That row is a later public/schema surface.
 
