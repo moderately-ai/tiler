@@ -1,7 +1,7 @@
 ---
 id: establish-hard-exceptional-value-evidence-for-metal-elementary-realizations
 title: Establish hard exceptional-value evidence for Metal elementary realizations
-status: in-progress
+status: done
 priority: p1
 dependencies: [declare-elementary-realizations-on-a-target-profile]
 related: [admit-the-registered-unary-families-at-the-compiler-request-boundary, require-both-elementary-evidence-halves-before-target-admission]
@@ -9,9 +9,6 @@ scopes: [research/apple-targets, research/numerics, implementation/compiler, imp
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, metal, evidence]
-claimed_from: todo
-assignee: worker-exceptional-value
-lease_expires_at: 1786664925
 ---
 ## User-visible outcome
 
