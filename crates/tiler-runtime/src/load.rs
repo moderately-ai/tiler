@@ -617,9 +617,13 @@ impl DecodedProgram {
         // Stays empty — and therefore unallocated — for a portfolio this host
         // can execute whole, which is the ordinary case.
         let mut filtered = Vec::new();
+        // One prefix for the walk. Re-summing preceding entry counts inside
+        // each assessed variant is the V² half of the host-side ordinal cost;
+        // the lengths are already decode-bounded and do not change mid-walk.
+        let bases = packaged_entry_bases(&self.decoded);
         for variant in self.decoded.variants() {
             let rank = variant.routing_rank();
-            if let Err(reason) = self.variant_eligibility(variant, environment) {
+            if let Err(reason) = self.variant_eligibility(variant, environment, &bases) {
                 filtered.push(FilteredVariant {
                     variant: rank,
                     reason,
@@ -675,12 +679,13 @@ impl DecodedProgram {
         &self,
         variant: DecodedVariant<'_>,
         environment: &ExecutionEnvironment,
+        bases: &[u32],
     ) -> Result<(), VariantIneligibility> {
         let classification = environment.classify(variant.target_profile());
         if !classification.is_compatible() {
             return Err(VariantIneligibility::AssessedProfile { classification });
         }
-        let canonical = CanonicalEntryOrdinals::of(&self.decoded, variant);
+        let canonical = CanonicalEntryOrdinals::of(variant, bases);
         for (entry, decoded) in variant.execution_order().enumerate() {
             // This program's delivery position, so eligibility is decided about
             // the objects this consumer would actually load rather than about a
@@ -790,26 +795,30 @@ impl DecodedProgram {
 /// that coincidence, which is what makes a widened fixture a refusal instead of a
 /// silent misattribution.
 ///
-/// Built once per variant rather than searched per entry, and keyed by stage key
-/// because that is the entry identity the artifact publishes.
+/// The prefix is derived once per selection walk from the same per-variant entry
+/// counts the decoded table already publishes, and the within-variant position is
+/// the decode-proved index of the entry's stage key in
+/// [`DecodedVariant::entries`]. That table is strictly sorted and unique — a
+/// decode refuses a colliding or out-of-order pair — so the lookup is a binary
+/// search over an already-verified order rather than a second authority or a
+/// linear scan. Stage key is the entry identity the artifact publishes; a
+/// colliding pair cannot decode.
 struct CanonicalEntryOrdinals<'a> {
     base: u32,
     stage_keys: Vec<&'a [u8]>,
 }
 
 impl<'a> CanonicalEntryOrdinals<'a> {
-    /// Derives the ordinals of one variant's entries from the whole portfolio.
+    /// Binds one variant to the walk's already-derived prefix.
     ///
     /// The base is every preceding variant's entry count, because the ordinal
-    /// space is flat across the portfolio in routing-priority order.
-    fn of(decoded: &'a DecodedArtifact, variant: DecodedVariant<'a>) -> Self {
-        let base = decoded
-            .variants()
-            .take(variant.routing_rank())
-            .map(|earlier| earlier.entries().len())
-            .sum::<usize>();
+    /// space is flat across the portfolio in routing-priority order. The prefix
+    /// is computed once for the walk; this only indexes it.
+    fn of(variant: DecodedVariant<'a>, bases: &[u32]) -> Self {
         Self {
-            base: u32::try_from(base).expect("a decode bounded the packaged entry table"),
+            base: *bases.get(variant.routing_rank()).expect(
+                "a decode proved every packaged variant has a routing rank in the portfolio",
+            ),
             stage_keys: variant.entries().map(DecodedEntry::stage_key).collect(),
         }
     }
@@ -822,15 +831,46 @@ impl<'a> CanonicalEntryOrdinals<'a> {
     /// execution order is a permutation of the entry table, so an entry of this
     /// variant always has a canonical position.
     fn of_entry(&self, entry: DecodedEntry<'_>) -> u32 {
-        let position = self
-            .stage_keys
-            .iter()
-            .position(|key| *key == entry.stage_key())
-            .expect("a decode proved the execution order permutes the variant's entry table");
+        let position = canonical_stage_index(&self.stage_keys, &entry.stage_key());
         self.base
             .checked_add(u32::try_from(position).expect("a decode bounded the variant entry table"))
             .expect("a decode bounded the packaged entry table below u32::MAX")
     }
+}
+
+/// Prefix of the flat canonical packaged-entry space.
+///
+/// `bases[r]` is the ordinal of variant `r`'s first entry in canonical
+/// stage-key order: the sum of `entries().len()` over every preceding variant
+/// in routing-priority order. That is the same accumulation
+/// `packaged_entry_positions` uses for the builder remap, read here from the
+/// decoded table rather than stored beside it.
+fn packaged_entry_bases(decoded: &DecodedArtifact) -> Vec<u32> {
+    packaged_entry_bases_from_counts(decoded.variants().map(|variant| variant.entries().len()))
+}
+
+fn packaged_entry_bases_from_counts(counts: impl IntoIterator<Item = usize>) -> Vec<u32> {
+    let mut bases = Vec::new();
+    let mut acc = 0_u32;
+    for count in counts {
+        bases.push(acc);
+        let count = u32::try_from(count).expect("a decode bounded the variant entry table");
+        acc = acc
+            .checked_add(count)
+            .expect("a decode bounded the packaged entry table below u32::MAX");
+    }
+    bases
+}
+
+/// Returns the canonical-within-variant index of one stage key.
+///
+/// `stage_keys` is [`DecodedVariant::entries`] order: strictly increasing unique
+/// stage subjects, re-proved at decode. The execution-order entry is a
+/// permutation of that table, so the key is present.
+fn canonical_stage_index<K: Ord>(stage_keys: &[K], key: &K) -> usize {
+    stage_keys
+        .binary_search(key)
+        .expect("a decode proved the execution order permutes the variant's entry table")
 }
 
 /// Returns a selected variant's entries in the order it says they run.
@@ -1781,10 +1821,14 @@ impl From<ArtifactCodecFailure> for LoadRejection {
 mod tests {
     use super::{
         AbiSubject, DecodedProgram, FilteredVariant, LoadRejection, TargetCompatibility,
-        VariantIneligibility,
+        VariantIneligibility, canonical_stage_index, packaged_entry_bases_from_counts,
     };
+    use std::cell::Cell;
+    use std::cmp::Ordering;
     use std::error::Error;
-    use tiler_artifact::program::ArtifactCodecFailure;
+    use tiler_artifact::program::{
+        ArtifactCodecFailure, MAX_ARTIFACT_VARIANTS, MAX_VARIANT_ENTRIES,
+    };
 
     /// Bytes that are not an artifact at all are refused as malformed.
     ///
@@ -2045,5 +2089,150 @@ mod tests {
             coherent_text.contains("none of the 1 eligible variant(s) of 2 packaged"),
             "{coherent_text:?} is the loader-produced rendering this ticket must not change",
         );
+    }
+
+    /// The flat prefix is the running sum of per-variant entry counts.
+    ///
+    /// This is the accumulation a walk that re-summed preceding variants on
+    /// every rank would recompute; stating it once is what keeps the V² term
+    /// off the host path. The two-member shape is the one
+    /// `a_portfolio_ranking_bf16_first_falls_through_to_a_dispatchable_width`
+    /// pins live: if rank 1 reused rank 0's base, the second member would read
+    /// the first member's bindings.
+    #[test]
+    fn packaged_entry_bases_are_the_flat_prefix_of_entry_counts() {
+        assert!(packaged_entry_bases_from_counts(std::iter::empty()).is_empty());
+        assert_eq!(packaged_entry_bases_from_counts([1]), [0]);
+        assert_eq!(packaged_entry_bases_from_counts([1, 2]), [0, 1]);
+        assert_eq!(packaged_entry_bases_from_counts([1, 2, 1]), [0, 1, 3]);
+        let bounded = packaged_entry_bases_from_counts(std::iter::repeat_n(
+            MAX_VARIANT_ENTRIES,
+            MAX_ARTIFACT_VARIANTS,
+        ));
+        assert_eq!(bounded.len(), MAX_ARTIFACT_VARIANTS);
+        assert_eq!(bounded[0], 0);
+        assert_eq!(
+            bounded[MAX_ARTIFACT_VARIANTS - 1],
+            u32::try_from(MAX_VARIANT_ENTRIES * (MAX_ARTIFACT_VARIANTS - 1))
+                .expect("the decode bounds fit the flat u32 ordinal space"),
+        );
+    }
+
+    /// Within-variant lookup agrees with the sorted unique table, including when
+    /// the probe order is the reverse of canonical order.
+    ///
+    /// The live adapter-route suite cannot package a variant whose execution
+    /// order differs from its canonical stage-key order, so this is the
+    /// permutation that suite does not observe.
+    #[test]
+    fn canonical_stage_index_follows_sorted_stage_keys_in_either_probe_order() {
+        let keys: [&[u8]; 4] = [b"a", b"c", b"m", b"z"];
+        for (position, key) in keys.into_iter().enumerate() {
+            assert_eq!(canonical_stage_index(&keys, &key), position);
+        }
+        for (position, key) in keys.into_iter().enumerate().rev() {
+            assert_eq!(canonical_stage_index(&keys, &key), position);
+        }
+    }
+
+    /// Stage-key comparisons stay logarithmic in the variant's entry count.
+    ///
+    /// The subject is the lookup, not the assertion: a linear `position` scan
+    /// over the same table exceeds the bound at every cell with more than a
+    /// handful of entries. Counts are host-side bookkeeping only — no device,
+    /// no decode, no allocation beyond the key table the walk already builds.
+    #[test]
+    fn ordinal_lookup_comparisons_stay_logarithmic_on_the_portfolio_matrix() {
+        let matrix = [
+            (1_usize, 1_usize),
+            (1, 2),
+            (2, 2),
+            (3, 8),
+            (8, 64),
+            (MAX_ARTIFACT_VARIANTS, MAX_VARIANT_ENTRIES),
+        ];
+        for (variants, entries) in matrix {
+            let keys: Vec<Vec<u8>> = (0..entries)
+                .map(|index| index.to_be_bytes().to_vec())
+                .collect();
+            let keys: Vec<&[u8]> = keys.iter().map(Vec::as_slice).collect();
+            let bases = packaged_entry_bases_from_counts(std::iter::repeat_n(entries, variants));
+            assert_eq!(
+                bases.len(),
+                variants,
+                "one prefix visit per packaged variant"
+            );
+            // Every variant assessed through the dtype check: the worst case
+            // the quadratic scan could reach, and the case the bound is for.
+            let mut comparisons = 0_usize;
+            for _ in 0..variants {
+                for key in &keys {
+                    comparisons += counted_canonical_stage_index(&keys, key);
+                }
+            }
+            let per_lookup = entries.ilog2() as usize + 1;
+            let bound = variants.saturating_mul(entries).saturating_mul(per_lookup);
+            assert!(
+                comparisons <= bound,
+                "V={variants} E={entries}: {comparisons} stage-key comparisons exceed the logarithmic bound {bound}",
+            );
+            // The retired linear scan's exact comparison count when probes
+            // follow canonical order: V × (1 + 2 + … + E). Kept as a floor so a
+            // bound that had silently widened to "anything" cannot still pass.
+            if entries > 4 {
+                let linear = variants * entries * (entries + 1) / 2;
+                assert!(
+                    comparisons < linear,
+                    "V={variants} E={entries}: logarithmic lookup ({comparisons}) must beat the linear scan ({linear})",
+                );
+            }
+        }
+    }
+
+    fn counted_canonical_stage_index(keys: &[&[u8]], key: &[u8]) -> usize {
+        let comparisons = Cell::new(0);
+        let counted: Vec<CountedKey<'_>> = keys
+            .iter()
+            .map(|candidate| CountedKey {
+                bytes: candidate,
+                comparisons: &comparisons,
+            })
+            .collect();
+        let needle = CountedKey {
+            bytes: key,
+            comparisons: &comparisons,
+        };
+        let _ = canonical_stage_index(&counted, &needle);
+        comparisons.get()
+    }
+
+    /// A stage-key wrapper that counts `Ord` comparisons.
+    ///
+    /// Equality is defined through `cmp` so a search that used either cannot
+    /// double-count or disagree.
+    struct CountedKey<'a> {
+        bytes: &'a [u8],
+        comparisons: &'a Cell<usize>,
+    }
+
+    impl PartialEq for CountedKey<'_> {
+        fn eq(&self, other: &Self) -> bool {
+            self.cmp(other) == Ordering::Equal
+        }
+    }
+
+    impl Eq for CountedKey<'_> {}
+
+    impl PartialOrd for CountedKey<'_> {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    impl Ord for CountedKey<'_> {
+        fn cmp(&self, other: &Self) -> Ordering {
+            self.comparisons.set(self.comparisons.get() + 1);
+            self.bytes.cmp(other.bytes)
+        }
     }
 }
