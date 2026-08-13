@@ -1,7 +1,7 @@
 ---
 id: seal-and-validate-sourced-shapes-at-semantic-inference-boundaries
 title: Seal and validate sourced shapes at semantic inference boundaries
-status: review
+status: done
 priority: p0
 dependencies: []
 related: [resolve-semantic-shape-inference-over-symbolic-extents, promote-the-symbolic-index-profile-to-a-public-boundary]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, semantic-graph, correctness, public-boundary]
-claimed_from: todo
-assignee: root
-lease_expires_at: 1786582691
 ---
 
 ## User-visible outcome
@@ -87,3 +84,7 @@ Load-bearing perturbations were run separately with assertions unchanged:
 - bypassing the symbolic-rank guard made the rank test accept the `MAX_SHAPE_RANK + 1` subject instead of returning `RankTooLarge`.
 
 Final checks: `cargo nextest run -p tiler-ir`; `cargo test -p tiler-ir --doc`; `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler-ir --no-deps`; `cargo clippy -p tiler-ir --all-targets -- -D warnings`; `cargo fmt --all -- --check`; `git diff --check`.
+
+## Integration — 2026-08-12
+
+Reviewed implementation commits `2f6f91412f7393f9dbcdf79d8719a4acab31b09b` and `aacbb6d3894341ec99cc274c268bdb5c598c40c1` were fast-forwarded to `main`; integration commit `d63df72d1d8185dc6f3a866739dac51a3e211fa1` pins the widened compile-fail population. `make full` passed citations, formatting, exact compile-pass/fail censuses, workspace check, workspace Clippy, and 3,309 of 3,310 executed nextest cases. Its sole failure is the pre-existing host-evidence mismatch already recorded by other tickets: `serial_sum::tests::this_host_is_refused_the_right_to_offer_the_declared_profile` observed macOS build `26A5406e`, so the policy correctly refused at `OsBuild` before the test's expected later `NativeTranslationAuthority` predicate for retained build `26A5388g`. No measurement row, host state, or unrelated conformance assertion was changed here.
