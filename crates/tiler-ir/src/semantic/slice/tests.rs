@@ -1,21 +1,27 @@
 use super::*;
+use crate::program::abi::AvailabilityPhase;
 use crate::semantic::{
     Bf16, F32Slice, FrozenSemanticRegistry, InputKey, OperationAttributes, OutputKey,
     RegistryError, ReindexForm, SemanticProgramBuilder,
 };
-use crate::shape::{Axis, Shape};
+use crate::shape::{
+    Axis, BindingSource, ExtentRelation, ExtentTerm, FactProvenance, RootBinding, Shape, ShapeEnv,
+    ShapeEnvBuilder, ShapeSymbol, SourcedExtent, SymbolScope,
+};
+use std::sync::Arc;
 
 const WHOLE: SliceAxisSelection = SliceAxisSelection::WholeAxis;
 
 fn window(offset: u64, extent: u64) -> SliceAxisSelection {
-    SliceAxisSelection::Window {
-        offset,
-        extent: Extent::new(extent),
-    }
+    SliceAxisSelection::static_window(offset, Extent::new(extent))
+}
+
+fn static_extent(value: u64) -> SourcedExtent {
+    SourcedExtent::Static(Extent::new(value))
 }
 
 fn selection(axes: &[SliceAxisSelection]) -> SliceSelection {
-    SliceSelection::new(axes.iter().copied()).expect("a test selection is admitted")
+    SliceSelection::new(axes.iter().cloned()).expect("a test selection is admitted")
 }
 
 fn f32_operand(dims: &[u64]) -> ValueFact {
@@ -205,7 +211,10 @@ fn an_operand_empty_on_an_unrestricted_axis_is_admitted_and_has_no_elements() {
     // rules stay distinct rather than one swallowing the other.
     assert_eq!(
         SliceSelection::new([WHOLE, window(0, 0)]),
-        Err(SliceSelectionError::EmptyWindow { axis: 1, offset: 0 })
+        Err(SliceSelectionError::EmptyWindow {
+            axis: 1,
+            offset: static_extent(0),
+        })
     );
 }
 
@@ -245,7 +254,10 @@ fn a_selection_that_restricts_no_axis_is_refused() {
 fn an_empty_window_is_refused() {
     assert_eq!(
         SliceSelection::new([window(3, 0), WHOLE]),
-        Err(SliceSelectionError::EmptyWindow { axis: 0, offset: 3 })
+        Err(SliceSelectionError::EmptyWindow {
+            axis: 0,
+            offset: static_extent(3),
+        })
     );
     assert_eq!(
         refusal(
@@ -275,9 +287,9 @@ fn a_window_that_leaves_its_axis_is_refused_rather_than_clamped() {
         selection(&[window(4, 13), WHOLE]).result_shape(&Shape::from_dims([16, 128])),
         Err(SliceSelectionError::WindowOutOfBounds {
             axis: 0,
-            offset: 4,
+            offset: static_extent(4),
             extent: 13,
-            axis_extent: 16,
+            axis_extent: static_extent(16),
         })
     );
     assert_eq!(
@@ -430,8 +442,8 @@ fn the_two_reserved_relations_are_refused_under_their_own_rules() {
     let message = refusal_message(&[16, 128], symbolic);
     assert_eq!(
         message,
-        "symbolic-window is reserved and not admitted: this family selects at literal offsets, and its current selection grammar has no source-bearing offset field",
-        "the refusal states the literal form and the selection-schema boundary exactly"
+        "symbolic-window is reserved and not admitted: a source-bearing offset uses the admitted window relation with a sourced extent field, and this reserved name is not a second variant of that relation",
+        "the refusal states that the reserved name is not a second window variant"
     );
 
     // Both are decided before the record's field shape, so a reserved relation
@@ -746,7 +758,12 @@ fn bounds_only_encoding(selection: &SliceSelection) -> Vec<u8> {
         .map(|entry| match entry {
             SliceAxisSelection::WholeAxis => unreachable!("filtered above"),
             SliceAxisSelection::Window { offset, extent } => CanonicalValue::sequence([
-                CanonicalValue::unsigned_u64(*offset),
+                match offset {
+                    SourcedExtent::Static(value) => CanonicalValue::unsigned_u64(value.get()),
+                    SourcedExtent::Symbol(_) => {
+                        panic!("the bounds-only twin is only defined for literal offsets")
+                    }
+                },
                 CanonicalValue::unsigned_u64(extent.get()),
             ])
             .expect("a test bound pair"),
@@ -862,21 +879,24 @@ fn the_normative_reference_states_both_relations_both_reservations_and_the_bound
         "and it names the family that removes the axis a selection leaves behind: {reference}"
     );
     for clause in [
-        "semantic value facts generally can carry sourced extents",
-        "window grammar carries only a literal offset and a literal extent",
-        "no source-bearing selection field",
+        "offset is a SourcedExtent",
+        "ShapeEnv is the only binding authority",
+        "offset + extent <= available_axis",
         "after its name is decoded and before parsing any relation-specific fields",
-        "inference later requires a static operand shape to check bounds and derive the result",
-        "no source-bearing selection reaches that inference",
+        "Literal window bytes stay an unsigned 64-bit offset",
+        "this reserved name is not a second variant of that relation",
     ] {
         assert!(
             reference.contains(clause),
-            "the normative reference omits the current literal-versus-sourced boundary clause {clause:?}: {reference}"
+            "the normative reference omits the source-bearing window clause {clause:?}: {reference}"
         );
     }
     for retired_clause in [
         "no index-expression variant carries",
         "a semantic value fact carries static extents",
+        "window grammar carries only a literal offset and a literal extent",
+        "no source-bearing selection field",
+        "no source-bearing selection reaches that inference",
     ] {
         assert!(
             !reference.contains(retired_clause),
@@ -914,4 +934,346 @@ fn the_reindex_still_refuses_a_non_surjective_split_as_a_slice() {
         .result_shape(&Shape::from_dims([10, 128]))
         .expect_err("2 x 60 is short of 128");
     assert_eq!(error.diagnostic_code(), "reindex.split.not-surjective");
+}
+
+// --- Source-bearing window offsets -------------------------------------------
+
+fn scope() -> SymbolScope {
+    SymbolScope::new("slice/0").unwrap()
+}
+
+fn sym(name: &str) -> ShapeSymbol {
+    ShapeSymbol::new(scope(), name).unwrap()
+}
+
+fn input_binding(input: &str, axis: u32) -> RootBinding {
+    RootBinding::new(
+        BindingSource::InputDimension {
+            input: InputKey::new(input).expect("a valid key"),
+            axis: Axis::new(axis),
+        },
+        crate::shape::EXTENT_PHASE_CEILING,
+        FactProvenance::RuntimeValidated,
+    )
+    .unwrap()
+}
+
+fn static_binding(value: u64) -> RootBinding {
+    RootBinding::new(
+        BindingSource::Static(Extent::new(value)),
+        AvailabilityPhase::CompileProfile,
+        FactProvenance::StaticallyProven,
+    )
+    .unwrap()
+}
+
+fn late_binding() -> RootBinding {
+    RootBinding::new(
+        BindingSource::TargetProperty {
+            key: crate::program::abi::TargetPropertyKey::new("tiler.target.test@1").unwrap(),
+        },
+        AvailabilityPhase::PreparedKernelPreflight,
+        FactProvenance::RuntimeValidated,
+    )
+    .unwrap()
+}
+
+fn env_with(bindings: &[(&str, RootBinding)], relations: &[ExtentRelation]) -> Arc<ShapeEnv> {
+    let mut draft = ShapeEnvBuilder::new();
+    for (name, binding) in bindings {
+        let declared = sym(name);
+        draft.declare(declared.clone()).unwrap();
+        draft.bind(&declared, binding.clone()).unwrap();
+    }
+    for relation in relations {
+        draft
+            .require(crate::shape::SemanticInputConstraint::new(
+                relation.clone(),
+                FactProvenance::FrontendRequired,
+            ))
+            .unwrap();
+    }
+    Arc::new(draft.build().unwrap())
+}
+
+fn interval(name: &str, lower: u64, upper: u64) -> ExtentRelation {
+    ExtentRelation::interval(ExtentTerm::Symbol(sym(name)), lower, upper).unwrap()
+}
+
+fn symbolic_window(name: &str, extent: u64) -> SliceAxisSelection {
+    SliceAxisSelection::Window {
+        offset: SourcedExtent::Symbol(sym(name)),
+        extent: Extent::new(extent),
+    }
+}
+
+fn apply_sourced(
+    environment: Arc<ShapeEnv>,
+    operand: Vec<SourcedExtent>,
+    axes: &[SliceAxisSelection],
+) -> Result<Vec<SourcedExtent>, String> {
+    let mut builder = SemanticProgramBuilder::try_standard_with_shape_environment(environment)
+        .expect("the standard builder opens");
+    let input = builder
+        .input_sourced::<crate::semantic::F32>(
+            InputKey::new("table").expect("a valid key"),
+            operand,
+        )
+        .map_err(|error| format!("input refused: {error}"))?;
+    let selection =
+        SliceSelection::new(axes.iter().cloned()).map_err(|error| format!("selection: {error}"))?;
+    let selected =
+        F32Slice::apply(&mut builder, &selection, input).map_err(|error| match error {
+            crate::semantic::BuildError::SemanticRegistry(
+                RegistryError::RejectedOperationApplication(rejection),
+            ) => format!(
+                "{}: {}",
+                rejection.source_error().code().as_str(),
+                rejection.source_error().message()
+            ),
+            other => format!("{other}"),
+        })?;
+    builder
+        .output(OutputKey::new("rows").expect("a valid key"), selected)
+        .expect("an output");
+    let program = builder.build().expect("the program is complete");
+    let value = program.outputs().next().unwrap().value();
+    Ok(program.shape(value).unwrap().extents().collect())
+}
+
+fn apply_error(environment: Arc<ShapeEnv>, axes: &[SliceAxisSelection]) -> String {
+    apply_sourced(
+        environment,
+        vec![static_extent(64), static_extent(128)],
+        axes,
+    )
+    .expect_err("the sourced selection is refused")
+}
+
+#[test]
+fn a_literal_window_encoding_is_byte_identical_to_the_unsigned_field() {
+    let encoded = selection(&[window(4, 6), WHOLE]).canonical_value().clone();
+    let expected = raw_selection(vec![
+        raw_axis(SLICE_RELATION_WINDOW, Some((4, 6))),
+        raw_axis(SLICE_RELATION_WHOLE_AXIS, None),
+    ]);
+    assert_eq!(
+        encoded, expected,
+        "a literal window must keep the unsigned 64-bit offset spelling"
+    );
+}
+
+#[test]
+fn a_symbolic_offset_is_injective_and_distinct_from_its_literal_neighbour() {
+    let literal = selection(&[window(4, 6), WHOLE]);
+    let symbolic = SliceSelection::new([symbolic_window("c", 6), WHOLE])
+        .expect("a symbolic window is context-free");
+    assert_ne!(
+        literal.canonical_encoding(),
+        symbolic.canonical_encoding(),
+        "a symbol and the number it may resolve to are different selections"
+    );
+
+    let other = SliceSelection::new([symbolic_window("d", 6), WHOLE])
+        .expect("a second symbol is context-free");
+    assert_ne!(
+        symbolic.canonical_encoding(),
+        other.canonical_encoding(),
+        "two symbols that may resolve to the same number stay identity-distinct"
+    );
+
+    let decoded = SliceSelection::from_canonical_value(symbolic.canonical_value())
+        .expect("a selection this module encoded decodes");
+    assert_eq!(decoded, symbolic);
+}
+
+#[test]
+fn a_static_source_offset_is_admitted_when_the_environment_proves_its_bounds() {
+    let environment = env_with(&[("c", static_binding(4))], &[interval("c", 4, 4)]);
+    let result = apply_sourced(
+        environment,
+        vec![static_extent(64), static_extent(128)],
+        &[symbolic_window("c", 6), WHOLE],
+    )
+    .expect("a proved static cursor is admitted");
+    assert_eq!(result, vec![static_extent(6), static_extent(128)]);
+}
+
+#[test]
+fn an_input_dimension_offset_is_admitted_when_the_environment_proves_its_bounds() {
+    let environment = env_with(
+        &[("c", input_binding("tokens", 0))],
+        &[interval("c", 0, 58)],
+    );
+    let result = apply_sourced(
+        environment,
+        vec![static_extent(64), static_extent(128)],
+        &[symbolic_window("c", 6), WHOLE],
+    )
+    .expect("a proved input-dimension cursor is admitted");
+    assert_eq!(result, vec![static_extent(6), static_extent(128)]);
+}
+
+#[test]
+fn a_sourced_operand_axis_keeps_its_extent_when_left_whole() {
+    let environment = env_with(
+        &[
+            ("c", input_binding("tokens", 0)),
+            ("n", input_binding("table", 1)),
+        ],
+        &[interval("c", 0, 58), interval("n", 128, 128)],
+    );
+    let result = apply_sourced(
+        environment,
+        vec![static_extent(64), SourcedExtent::Symbol(sym("n"))],
+        &[symbolic_window("c", 6), WHOLE],
+    )
+    .expect("an untouched sourced axis is retained");
+    assert_eq!(
+        result,
+        vec![static_extent(6), SourcedExtent::Symbol(sym("n"))]
+    );
+}
+
+#[test]
+fn a_foreign_symbol_is_refused_as_undeclared() {
+    let environment = env_with(
+        &[("c", input_binding("tokens", 0))],
+        &[interval("c", 0, 58)],
+    );
+    let error = apply_error(environment, &[symbolic_window("ghost", 6), WHOLE]);
+    assert!(
+        error.starts_with("slice.selection.undeclared-symbol"),
+        "a foreign symbol is undeclared in this environment: {error}"
+    );
+}
+
+#[test]
+fn an_undeclared_symbol_is_refused_without_an_environment() {
+    let selection = SliceSelection::new([symbolic_window("c", 6)]).expect("construction is free");
+    assert_eq!(
+        selection.result_shape(&Shape::from_dims([64])),
+        Err(SliceSelectionError::UndeclaredSymbol { symbol: sym("c") })
+    );
+}
+
+#[test]
+fn a_late_source_is_refused_by_phase() {
+    let environment = env_with(&[("c", late_binding())], &[interval("c", 0, 58)]);
+    let error = apply_error(environment, &[symbolic_window("c", 6), WHOLE]);
+    assert!(
+        error.starts_with("slice.selection.source-too-late"),
+        "a prepared-kernel source is after the extent ceiling: {error}"
+    );
+}
+
+#[test]
+fn an_interval_that_cannot_prove_the_bound_is_refused() {
+    let environment = env_with(
+        &[("c", input_binding("tokens", 0))],
+        &[interval("c", 0, 64)],
+    );
+    let error = apply_error(environment, &[symbolic_window("c", 6), WHOLE]);
+    assert!(
+        error.starts_with("slice.selection.bound-unproved"),
+        "C in [0, 64] does not prove C + 6 <= 64: {error}"
+    );
+}
+
+#[test]
+fn a_proved_overflow_is_out_of_bounds_not_unproved() {
+    let environment = env_with(
+        &[("c", input_binding("tokens", 0))],
+        &[interval("c", 60, 64)],
+    );
+    let error = apply_error(environment, &[symbolic_window("c", 6), WHOLE]);
+    assert!(
+        error.starts_with("slice.selection.out-of-bounds"),
+        "C in [60, 64] always overflows a 64-extent axis: {error}"
+    );
+}
+
+#[test]
+fn changing_a_symbol_binding_source_moves_the_fifth_semantic_subject() {
+    let axes = [symbolic_window("c", 6), WHOLE];
+    let as_input = env_with(&[("c", input_binding("tokens", 0))], &[interval("c", 4, 4)]);
+    let as_static = env_with(&[("c", static_binding(4))], &[interval("c", 4, 4)]);
+
+    let mut first = SemanticProgramBuilder::try_standard_with_shape_environment(as_input)
+        .expect("the standard builder opens");
+    let table = first
+        .input::<crate::semantic::F32>(
+            InputKey::new("table").expect("a valid key"),
+            Shape::from_dims([64, 128]),
+        )
+        .unwrap();
+    let selected = F32Slice::apply(
+        &mut first,
+        &SliceSelection::new(axes.iter().cloned()).unwrap(),
+        table,
+    )
+    .unwrap();
+    first
+        .output(OutputKey::new("rows").expect("a valid key"), selected)
+        .unwrap();
+    let input_program = first.build().unwrap();
+
+    let mut second = SemanticProgramBuilder::try_standard_with_shape_environment(as_static)
+        .expect("the standard builder opens");
+    let table = second
+        .input::<crate::semantic::F32>(
+            InputKey::new("table").expect("a valid key"),
+            Shape::from_dims([64, 128]),
+        )
+        .unwrap();
+    let selected = F32Slice::apply(
+        &mut second,
+        &SliceSelection::new(axes.iter().cloned()).unwrap(),
+        table,
+    )
+    .unwrap();
+    second
+        .output(OutputKey::new("rows").expect("a valid key"), selected)
+        .unwrap();
+    let static_program = second.build().unwrap();
+
+    assert_eq!(
+        input_program.semantic_identity().graph(),
+        static_program.semantic_identity().graph(),
+        "the graph names the same symbol spelling"
+    );
+    assert_ne!(
+        input_program.semantic_identity().shape_environment(),
+        static_program.semantic_identity().shape_environment(),
+        "changing the root binding moves the fifth semantic subject"
+    );
+}
+
+#[test]
+fn a_static_bytes_offset_is_not_a_second_literal_spelling() {
+    let mut bytes = Vec::new();
+    static_extent(4).encode(&mut bytes);
+    let disguised = CanonicalValue::record([CanonicalField::new(
+        SLICE_SELECTION_AXES,
+        CanonicalValue::sequence([CanonicalValue::record([
+            CanonicalField::new(
+                SLICE_AXIS_RELATION,
+                CanonicalValue::utf8(SLICE_RELATION_WINDOW).expect("a test name"),
+            ),
+            CanonicalField::new(
+                SLICE_AXIS_OFFSET,
+                CanonicalValue::bytes_owned(bytes).expect("a test payload"),
+            ),
+            CanonicalField::new(SLICE_AXIS_EXTENT, CanonicalValue::unsigned_u64(6)),
+        ])
+        .expect("a test axis")])
+        .expect("a test sequence"),
+    )])
+    .expect("a test record");
+    assert_eq!(
+        SliceSelection::from_canonical_value(&disguised),
+        Err(SliceSelectionError::MalformedAttribute {
+            subject: SliceAttributeSubject::Offset,
+        })
+    );
 }

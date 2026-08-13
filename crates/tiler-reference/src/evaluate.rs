@@ -30,13 +30,14 @@ use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValueView, Definition, F32, OperationId,
     REDUCTION_AXES_ATTRIBUTE, ResolvedValueType, SemanticProgram, ValueId,
 };
-use tiler_ir::shape::{Axis, Shape};
+use tiler_ir::shape::{Axis, Extent, Shape, SourcedShape};
 
 use super::conformance::ReferenceNumericalConformance;
 use super::error::{
     EvaluationError, ReferenceOperationError, ReferenceRegistryError, ReferenceResource,
     dense_result_error,
 };
+use super::extent_bindings::{ExtentBindingContext, ExtentBindingError};
 use super::registry::{
     FrozenReferenceRegistry, ReferenceEvaluationRequest, ReferenceOutputs, ReferenceSignature,
 };
@@ -184,7 +185,8 @@ impl ReferenceEvaluator {
         program: &SemanticProgram,
         inputs: &[InputBinding<'_>],
     ) -> Result<Vec<Tensor>, EvaluationError> {
-        let (mut values, mut retained_work, mut conformance) = self.bind_inputs(program, inputs)?;
+        let (mut values, mut retained_work, mut conformance, extent_bindings) =
+            self.bind_inputs(program, inputs)?;
 
         let reachable_operations = reachable_operations(program)?;
         for operation in program
@@ -221,6 +223,7 @@ impl ReferenceEvaluator {
                     attributes: operation.attributes(),
                     iteration_step_allowance: self.iteration_step_allowance,
                     conformance: self.conformance,
+                    extent_bindings: &extent_bindings,
                 },
                 &mut output_writer,
             );
@@ -236,8 +239,8 @@ impl ReferenceEvaluator {
             for (result_index, (result, evaluated)) in
                 results.into_iter().zip(evaluated).enumerate()
             {
-                let expected_shape = static_shape(program, result)?;
-                if expected_shape != evaluated.shape() {
+                let expected_shape = resolved_shape(program, result, &extent_bindings)?;
+                if &expected_shape != evaluated.shape() {
                     return Err(EvaluationError::ResultShape {
                         operation: operation.key().clone(),
                         provider: Arc::new(capability.provider.clone()),
@@ -268,7 +271,7 @@ impl ReferenceEvaluator {
                     operation,
                     result,
                     &expected_type,
-                    expected_shape,
+                    &expected_shape,
                 )?;
                 if !composed {
                     self.registry
@@ -294,6 +297,7 @@ impl ReferenceEvaluator {
             HashMap<ValueId, Tensor>,
             EvaluationRetention,
             ValueConformanceLedger,
+            ExtentBindingContext,
         ),
         EvaluationError,
     > {
@@ -315,11 +319,14 @@ impl ReferenceEvaluator {
                     actual: binding.key.clone(),
                 });
             }
-            let expected = static_shape(program, declaration.value())?;
-            if binding.tensor.shape() != expected {
+        }
+        let extent_bindings = ExtentBindingContext::derive(program, inputs)?;
+        for (declaration, binding) in program.inputs().zip(inputs) {
+            let expected = resolved_shape(program, declaration.value(), &extent_bindings)?;
+            if binding.tensor.shape() != &expected {
                 return Err(EvaluationError::InputShape {
                     key: declaration.key().clone(),
-                    expected: expected.clone(),
+                    expected,
                     actual: binding.tensor.shape().clone(),
                 });
             }
@@ -350,20 +357,44 @@ impl ReferenceEvaluator {
             reserve_evaluation_work(&mut retained_work, binding.tensor)?;
             values.insert(declaration.value(), binding.tensor.clone());
         }
-        Ok((values, retained_work, conformance))
+        Ok((values, retained_work, conformance, extent_bindings))
     }
 }
 
-/// Returns the fixed shape a program declares for one value.
-///
-/// The evaluator's single narrowing of the semantic layer's total shape view,
-/// so a symbolic program is refused once rather than at each comparison.
-fn static_shape(program: &SemanticProgram, value: ValueId) -> Result<&Shape, EvaluationError> {
-    program
+/// Returns the shape a program declares for one value, resolving sourced extents
+/// through the authenticated binding context.
+fn resolved_shape(
+    program: &SemanticProgram,
+    value: ValueId,
+    bindings: &ExtentBindingContext,
+) -> Result<Shape, EvaluationError> {
+    let sourced = program
         .shape(value)
-        .map_err(|_| EvaluationError::MalformedProgram)?
-        .as_static()
-        .ok_or(EvaluationError::SymbolicShape)
+        .map_err(|_| EvaluationError::MalformedProgram)?;
+    resolve_sourced_shape(sourced, bindings)
+}
+
+fn resolve_sourced_shape(
+    sourced: &SourcedShape,
+    bindings: &ExtentBindingContext,
+) -> Result<Shape, EvaluationError> {
+    if let Some(shape) = sourced.as_static() {
+        return Ok(shape.clone());
+    }
+    let extents = sourced
+        .extents()
+        .map(|extent| {
+            bindings
+                .resolve(&extent)
+                .map(Extent::new)
+                .map_err(|error| match error {
+                    ExtentBindingError::Undeclared { .. }
+                    | ExtentBindingError::Unsupported { .. }
+                    | ExtentBindingError::UnrecognizedSource => EvaluationError::SymbolicShape,
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Shape::try_new(extents).map_err(|_| EvaluationError::ShapeTooLarge)
 }
 
 fn resolved_type(

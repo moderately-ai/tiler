@@ -2425,7 +2425,7 @@ impl SemanticRegistryProvider for StandardSemantics {
     /// the projection already carried would invalidate every pinned provenance
     /// for an authority change that did not happen.
     fn identity(&self) -> ProviderIdentity {
-        ProviderIdentity::new("tiler", "standard-semantics", 7)
+        ProviderIdentity::new("tiler", "standard-semantics", 8)
             .expect("the governed standard provider identity is valid")
     }
 
@@ -3360,8 +3360,8 @@ mod tests {
             tiler_digest::DigestAlgorithm::GOVERNED
                 .digest(DOMAIN, semantic.snapshot_identity().as_bytes())
                 .label(),
-            "d43dc8465a4aa96bc10978b7451f52d1b9e917bcb3c8ce303b6c9985ed9e7448",
-            "the snapshot moves with the broadcast key, definition, and participation tag"
+            "e2e2b84254505cfe46c5204d3a52490180d5460862257ff94f7bd5bc750913db",
+            "the snapshot moves with the slice source-bearing definition, participation tag, and provider revision"
         );
         assert!(
             laws.identity()
@@ -3373,8 +3373,8 @@ mod tests {
             tiler_digest::DigestAlgorithm::GOVERNED
                 .digest(DOMAIN, laws.identity().as_bytes())
                 .label(),
-            "bd9a853952791c4384422bc03f57af92ad85af233051f26b0c52c027e0fb5b2d",
-            "the complete law-registry identity pins the broadcast-f32@2 row"
+            "0b8eba7dfbbdb33c376b642dc978afd81b1afa8b4a752e7fad5fec067458254d",
+            "the complete law-registry identity pins the source-bearing slice definition"
         );
         assert_eq!(
             semantic.encode_index_realization_law_sidecar().len(),
@@ -3387,77 +3387,77 @@ mod tests {
             (
                 "tiler::add-bf16@1",
                 121,
-                "874aa164e1d79f53a66ec717745217b326d6426f9ceb482c8275e51ac6266428",
+                "fb784dfb9d913b4ef84f4b6041d1e806f0f115d022a8504a85e325dc4a8b4b4f",
             ),
             (
                 "tiler::add-f32@1",
                 119,
-                "3c90faa8a3a9597e97fee6c1627c6363f6726a345996b9e993bce31e146382f0",
+                "36b0fff470f9ebfbeea4e62aaefa4485dbe418b7a76a70f26de9ccbec5f89726",
             ),
             (
                 "tiler::broadcast-f32@2",
                 90,
-                "d713b2f4c57bc5c6a585bb2c82d3b3732d7677fb579d9e1fbff731a04ba5e3e1",
+                "a4e5a2099e771da7235d59c47eefea42133d9486a57089d1eb51787bb5c81883",
             ),
             (
                 "tiler::concatenate-f32@1",
                 92,
-                "7bcb8314d30d05177bdbadaa1a88df243fe97a61b9465162973212f08a7e10ec",
+                "705ef6da6207325b6d8c2c2ac5843d0dd7cb457ac8395ac55abc7237b6dd22d2",
             ),
             (
                 "tiler::constant-bf16@1",
                 135,
-                "048b1ab3102b8a8ca8b02de0fd08a510ae8477f6cb6aa905d6dc1faff26f4343",
+                "93772f6450ba52b111353ee55a435487325e41276e2c020925b671f95433d0cb",
             ),
             (
                 "tiler::constant-f32@1",
                 133,
-                "72c5e4e06235d0e5e88ebc688c88387266f76e7da592ade566a6ace9666cd67d",
+                "eee44c400f3eefc0600d825203d3cd3c8a65729b0b45b5d338d63af596f28009",
             ),
             (
                 "tiler::dequantize-strict-affine@1",
                 168,
-                "52fd3bdf53d0b4044e8c6fcf66defdb8b5ce041aefe8ab6e14c08cfc9f3fef12",
+                "2a2e60100fb26d0ccbc68478d2693b28ecbed8aecfcc16bbe0e19ef808c11912",
             ),
             (
                 "tiler::multiply-bf16@1",
                 131,
-                "82527d3441dc01110009c64500f36c85fdbb3d336343aac6fb4793c8385ca8a7",
+                "19fe0c8cafa89cb525e493b24d64a5acb9a69364c2e1753a23139cbc5781183c",
             ),
             (
                 "tiler::multiply-f32@1",
                 129,
-                "dc686967cfca420aa6b7caa66f74eff4ad3d9d77716be484ace37475864fc670",
+                "41377c9665a0cd8caf2ebd6fbd08d2632d2db6f140d358d31d8a5a88cd42f92b",
             ),
             (
                 "tiler::reindex-f32@1",
                 88,
-                "d739ba855abf03f77bceea4820569af8fed5ac808084f724b3b86a5c315046aa",
+                "fd61aaf77f79bdfcffaec728573868996dcfc6d45e3fc8d3271724bc5be79926",
             ),
             (
                 "tiler::rms-norm-f32@1",
                 93,
-                "533ea96240673b400797f5dbfa2390ed47b718dd5df476dc90a75509624d41ee",
+                "e5d1b4b365265688871f50a69bf4295fe7248bf541fe1e58c8cea14dd15d2309",
             ),
             (
                 "tiler::silu-f32@1",
                 81,
-                "1653431aac7a37a1e72e6c38e5020f4aea98e2adf8d716808159a0e568848473",
+                "2210e229e32e622abd3361038511d2fa031988424841e63b5d1be899b789845b",
             ),
             (
                 "tiler::softmax-f32@1",
                 88,
-                "f62f50874cadd808c50ae2a09419323dbcf34b0783588dfdf70268644f97d621",
+                "f56c4fe8bcad9505ea5a908ea9193175e05ddab79e19c4b24d252a3b27407feb",
             ),
             (
                 "tiler::strict-serial-sum-f32@1",
                 98,
-                "993157c3878b339435e016125f957fdc7261c7a7d230f8426bf7d9b5e1d056c0",
+                "26ed77bb26a39c300a8781e8092aac7d3148052a3abc69685ca703e913f8cef4",
             ),
             (
                 "tiler::strict-tensor-contraction-f32@1",
                 106,
-                "a13d88ea0635ea660822cec452acbf089d9621e480f15ee45425ab680e5d6e53",
+                "d6b5dd49d65375dd703f27f8bb78678be938a79fb2abc39517d189dd3a6270ff",
             ),
         ];
         let old_rows = semantic
@@ -3497,7 +3497,7 @@ mod tests {
             tiler_digest::DigestAlgorithm::GOVERNED
                 .digest(DOMAIN, &slice_row)
                 .label(),
-            "f06152d8c886ec305aeb758f8537aa399df51e7316639069189b9535dae22703"
+            "2a352358c72d1d4c7e230145abea2e4a7d443218d35ecaf0410a25386e074b46"
         );
     }
 

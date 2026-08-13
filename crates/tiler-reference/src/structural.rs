@@ -37,13 +37,14 @@ use tiler_ir::semantic::{
     BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
     CONCATENATE_AXIS_ATTRIBUTE, F32, GATHER_AXIS_ATTRIBUTE, GatherError, OperationAttributes,
     REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind, SLICE_SELECTION_ATTRIBUTE,
-    SliceSelection, concatenate_axis, concatenate_result_shape, decide_gather_index, gather_axis,
-    gather_index_resolved_type, gather_result_shape,
+    SliceAxisSelection, SliceSelection, concatenate_axis, concatenate_result_shape,
+    decide_gather_index, gather_axis, gather_index_resolved_type, gather_result_shape,
 };
 use tiler_ir::shape::{Extent, Shape};
 
 use super::error::{ReferenceOperationError, dense_result_error};
 use super::evaluate::{decode_coordinate, f32_elements, preflight_f32_output, row_major_strides};
+use super::extent_bindings::ExtentBindingError;
 use super::registry::{ReferenceEvaluationRequest, ReferenceOperation, ReferenceOutputs};
 use super::tensor::{Tensor, TensorPayloadView};
 
@@ -118,6 +119,7 @@ impl ReferenceOperation for SliceF32Reference {
             return Err(ReferenceOperationError::InvalidApplication);
         };
         let selection = slice_selection(request.attributes())?;
+        let selection = resolve_slice_selection(&selection, request.extent_bindings())?;
         let result_shape = selection
             .result_shape(input.shape())
             .map_err(|_| ReferenceOperationError::InvalidApplication)?;
@@ -129,7 +131,11 @@ impl ReferenceOperation for SliceF32Reference {
                 let coordinate = *result
                     .get(axis)
                     .ok_or(ReferenceOperationError::InvalidApplication)?;
-                let offset = usize::try_from(entry.offset())
+                let offset = entry
+                    .offset()
+                    .as_static()
+                    .ok_or(ReferenceOperationError::InvalidApplication)?;
+                let offset = usize::try_from(offset.get())
                     .map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
                 *operand
                     .get_mut(axis)
@@ -422,6 +428,39 @@ fn reindex_form(attributes: &OperationAttributes) -> Result<ReindexForm, Referen
         .map_err(|_| ReferenceOperationError::InvalidApplication)
 }
 
+fn resolve_slice_selection(
+    selection: &SliceSelection,
+    bindings: &crate::ExtentBindingContext,
+) -> Result<SliceSelection, ReferenceOperationError> {
+    let axes = selection
+        .axes()
+        .iter()
+        .map(|entry| match entry {
+            SliceAxisSelection::WholeAxis => Ok(SliceAxisSelection::WholeAxis),
+            SliceAxisSelection::Window { offset, extent } => {
+                let resolved = bindings.resolve(offset).map_err(|error| match error {
+                    ExtentBindingError::Undeclared { symbol } => {
+                        ReferenceOperationError::UndeclaredExtentSymbol {
+                            symbol: Box::new(symbol),
+                        }
+                    }
+                    ExtentBindingError::Unsupported { symbol, kind } => {
+                        ReferenceOperationError::UnsupportedExtentBinding {
+                            symbol: Box::new(symbol),
+                            kind,
+                        }
+                    }
+                    ExtentBindingError::UnrecognizedSource => {
+                        ReferenceOperationError::InvalidApplication
+                    }
+                })?;
+                Ok(SliceAxisSelection::static_window(resolved, *extent))
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    SliceSelection::new(axes).map_err(|_| ReferenceOperationError::InvalidApplication)
+}
+
 fn slice_selection(
     attributes: &OperationAttributes,
 ) -> Result<SliceSelection, ReferenceOperationError> {
@@ -586,4 +625,217 @@ fn u32_elements(tensor: &Tensor) -> Result<Vec<u32>, ReferenceOperationError> {
                 .map_err(|_| ReferenceOperationError::InvalidApplication)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod source_bearing_tests {
+    use super::*;
+    use crate::{
+        EvaluationError, ExtentBindingContext, FloatBitOrder, InputBinding, ReferenceElement,
+        ReferenceEvaluator, Tensor,
+    };
+    use std::sync::Arc;
+    use tiler_ir::semantic::{
+        F32Slice, InputKey, OutputKey, SemanticProgramBuilder, SliceAxisSelection, SliceSelection,
+    };
+    use tiler_ir::shape::{
+        BindingSource, Extent, ExtentRelation, ExtentTerm, FactProvenance, InterfaceParameterKey,
+        RootBinding, Shape, ShapeEnv, ShapeEnvBuilder, ShapeSymbol, SourcedExtent, SymbolScope,
+    };
+
+    fn element(index: u32) -> ReferenceElement {
+        ReferenceElement::from_float_bits(
+            index.to_be_bytes(),
+            FloatBitOrder::MostSignificantByteFirst,
+        )
+        .expect("a test payload is four bytes")
+    }
+
+    fn table_tensor(rows: u64, cols: u64) -> Tensor {
+        let count = u32::try_from(rows.checked_mul(cols).unwrap()).unwrap();
+        let elements: Vec<_> = (0..count).map(element).collect();
+        Tensor::dense(
+            F32::resolved_type(),
+            Shape::from_dims([rows, cols]),
+            elements,
+        )
+        .expect("a test table is bounded")
+    }
+
+    fn cursor_tensor(extent: u64) -> Tensor {
+        Tensor::dense(
+            F32::resolved_type(),
+            Shape::from_dims([extent]),
+            vec![element(0); usize::try_from(extent).unwrap()],
+        )
+        .expect("a test cursor tensor is bounded")
+    }
+
+    fn bits(tensor: &Tensor) -> Vec<u32> {
+        let TensorPayloadView::Dense(elements) = tensor.payload() else {
+            panic!("the result is dense");
+        };
+        elements
+            .iter()
+            .map(|element| u32::from_be_bytes(element.as_bytes().try_into().expect("four bytes")))
+            .collect()
+    }
+
+    fn sym(name: &str) -> ShapeSymbol {
+        ShapeSymbol::new(SymbolScope::new("slice-ref/0").unwrap(), name).unwrap()
+    }
+
+    fn env(source: BindingSource) -> Arc<ShapeEnv> {
+        let mut draft = ShapeEnvBuilder::new();
+        let symbol = sym("c");
+        draft.declare(symbol.clone()).unwrap();
+        draft
+            .bind(
+                &symbol,
+                RootBinding::new(
+                    source,
+                    tiler_ir::shape::EXTENT_PHASE_CEILING,
+                    FactProvenance::RuntimeValidated,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        draft
+            .require(tiler_ir::shape::SemanticInputConstraint::new(
+                ExtentRelation::interval(ExtentTerm::Symbol(symbol), 0, 58).unwrap(),
+                FactProvenance::FrontendRequired,
+            ))
+            .unwrap();
+        Arc::new(draft.build().unwrap())
+    }
+
+    fn literal_neighbour(offset: u64) -> Vec<u32> {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let table = builder
+            .input::<tiler_ir::semantic::F32>(
+                InputKey::new("table").unwrap(),
+                Shape::from_dims([64, 4]),
+            )
+            .unwrap();
+        let selection = SliceSelection::new([
+            SliceAxisSelection::static_window(offset, Extent::new(6)),
+            SliceAxisSelection::WholeAxis,
+        ])
+        .unwrap();
+        let rows = F32Slice::apply(&mut builder, &selection, table).unwrap();
+        builder
+            .output(OutputKey::new("rows").unwrap(), rows)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let table = table_tensor(64, 4);
+        let key = InputKey::new("table").unwrap();
+        bits(
+            &ReferenceEvaluator::standard()
+                .unwrap()
+                .evaluate(&program, &[InputBinding::new(&key, &table)])
+                .unwrap()[0],
+        )
+    }
+
+    #[test]
+    fn an_input_dimension_offset_matches_the_literal_neighbour() {
+        let environment = env(BindingSource::InputDimension {
+            input: InputKey::new("tokens").unwrap(),
+            axis: tiler_ir::shape::Axis::new(0),
+        });
+        let mut builder = SemanticProgramBuilder::try_standard_with_shape_environment(environment)
+            .expect("the standard builder opens");
+        let table = builder
+            .input::<tiler_ir::semantic::F32>(
+                InputKey::new("table").unwrap(),
+                Shape::from_dims([64, 4]),
+            )
+            .unwrap();
+        let tokens = builder
+            .input_sourced::<tiler_ir::semantic::F32>(
+                InputKey::new("tokens").unwrap(),
+                vec![SourcedExtent::Symbol(sym("c"))],
+            )
+            .unwrap();
+        let selection = SliceSelection::new([
+            SliceAxisSelection::Window {
+                offset: SourcedExtent::Symbol(sym("c")),
+                extent: Extent::new(6),
+            },
+            SliceAxisSelection::WholeAxis,
+        ])
+        .unwrap();
+        let rows = F32Slice::apply(&mut builder, &selection, table).unwrap();
+        builder
+            .output(OutputKey::new("rows").unwrap(), rows)
+            .unwrap();
+        builder
+            .output(OutputKey::new("tokens").unwrap(), tokens)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let table = table_tensor(64, 4);
+        let tokens = cursor_tensor(4);
+        let table_key = InputKey::new("table").unwrap();
+        let tokens_key = InputKey::new("tokens").unwrap();
+        let outputs = ReferenceEvaluator::standard()
+            .unwrap()
+            .evaluate(
+                &program,
+                &[
+                    InputBinding::new(&table_key, &table),
+                    InputBinding::new(&tokens_key, &tokens),
+                ],
+            )
+            .expect("the input-dimension cursor evaluates");
+        assert_eq!(bits(&outputs[0]), literal_neighbour(4));
+    }
+
+    #[test]
+    fn an_interface_parameter_offset_is_refused_by_kind() {
+        let environment = env(BindingSource::InterfaceParameter {
+            key: InterfaceParameterKey::new("cursor").unwrap(),
+        });
+        let mut builder = SemanticProgramBuilder::try_standard_with_shape_environment(environment)
+            .expect("the standard builder opens");
+        let table = builder
+            .input::<tiler_ir::semantic::F32>(
+                InputKey::new("table").unwrap(),
+                Shape::from_dims([64, 4]),
+            )
+            .unwrap();
+        let selection = SliceSelection::new([
+            SliceAxisSelection::Window {
+                offset: SourcedExtent::Symbol(sym("c")),
+                extent: Extent::new(6),
+            },
+            SliceAxisSelection::WholeAxis,
+        ])
+        .unwrap();
+        let rows = F32Slice::apply(&mut builder, &selection, table).unwrap();
+        builder
+            .output(OutputKey::new("rows").unwrap(), rows)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let table = table_tensor(64, 4);
+        let key = InputKey::new("table").unwrap();
+        let error = ReferenceEvaluator::standard()
+            .unwrap()
+            .evaluate(&program, &[InputBinding::new(&key, &table)])
+            .expect_err("an interface parameter has no authenticated value");
+        let message = error.to_string();
+        assert!(
+            message.contains("unsupported-binding") && message.contains("interface-parameter"),
+            "the refusal names the missing authority path: {message}"
+        );
+        assert!(
+            !matches!(error, EvaluationError::SymbolicShape),
+            "the missing authority is not reported as a generic symbolic shape"
+        );
+    }
+
+    #[test]
+    fn the_request_carries_bindings_and_not_a_second_cursor() {
+        let empty = ExtentBindingContext::empty();
+        assert_eq!(empty.resolve(&SourcedExtent::Static(Extent::new(4))), Ok(4));
+    }
 }

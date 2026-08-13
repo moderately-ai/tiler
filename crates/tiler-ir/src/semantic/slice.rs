@@ -70,29 +70,17 @@
 //! [`SLICE_RELATION_STRIDED_WINDOW`] is therefore reserved and refused under its
 //! own rule rather than left to read as an unrecognized name.
 //!
-//! **A symbolic offset.** This is the boundary the family's ticket requires
-//! stated rather than assumed. It rested on two independent gaps, and **the
-//! index-vocabulary one has since closed**: `IndexNode` at
-//! `crates/tiler-ir/src/index/model.rs` now has a `LinearCombination` whose
-//! per-term coefficients are `SourcedIndexInteger`, so the read `t + C` for a
-//! bound symbol `C` is expressible, as the term `C * 1`. That is exactly the
-//! reconsideration trigger this module recorded — a symbol reaching a
-//! coordinate position — and it has fired.
-//!
-//! **The refusal stands at this layer's selection boundary.** A semantic
-//! [`ValueFact`] can already carry a sourced shape, but [`SliceAxisSelection`]
-//! has only a literal `u64` window offset and [`F32Slice`] accepts only a
-//! [`SliceSelection`]. [`decode_axis`] refuses `symbolic-window` before it
-//! parses any relation fields, so a bound symbol has no constructible selection
-//! path into inference. The literal-offset form is therefore still what this
-//! family delivers and [`SLICE_RELATION_SYMBOLIC_WINDOW`] remains reserved and
-//! refused by name.
-//!
-//! The refusal reserves a name, not a design — whether a symbolic offset arrives
-//! as an attribute source or as an index operand is left open, because F-24
-//! contemplates the operand spelling for its own dynamic form. Either spelling
-//! also needs an inference and bounds rule; the current rule later asks for a
-//! static operand shape, but no source-bearing selection reaches that question.
+//! **A source-bearing offset.** The window offset is a [`SourcedExtent`]: a
+//! literal or a `ShapeEnv` symbol. Map construction is shape-independent. Applying
+//! the selection to a program is fallible against that program's exact
+//! [`ExtentSources`] and sourced operand shape. A static or sourced window is
+//! admitted only when the environment proves, with checked unsigned arithmetic,
+//! `offset + extent <= available_axis` for every admitted model and proves the
+//! family's existing proper-window rule. There is no optional offset, zero
+//! sentinel, inferred axis, caller-provided duplicate scalar, or second
+//! `symbolic-window` relation: [`SLICE_RELATION_SYMBOLIC_WINDOW`] remains a
+//! reserved name and is refused by name. A foreign, undeclared,
+//! unavailable-at-phase, overflowing, or unproved source refuses by typed cause.
 //!
 //! # Where the family's claim is made, and the one degenerate case
 //!
@@ -123,18 +111,19 @@
 //! produce a *different tensor* for one program rather than a different
 //! diagnostic. Inheriting either silently would make a frontend's meaning depend
 //! on which specification its author had read, so the bound is a validated
-//! obligation here. The current inferencer deliberately asks for a static operand
-//! shape before evaluating the literal offset and extent, so a sourced operand is
-//! refused with a typed source error. A future source-bearing selection must
-//! specify how its bounds and result shape are derived against the environment;
-//! that is separate from the current grammar refusal, which happens first.
+//! obligation here. A sourced offset or a sourced operand axis is proved against
+//! the program's exact environment; an unproved interval is
+//! [`SliceSelectionError::WindowBoundUnproved`], not a clamp.
 
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
 use crate::identity::push_slice;
-use crate::shape::{Extent, Shape};
+use crate::program::abi::AvailabilityPhase;
+use crate::shape::{
+    Extent, ExtentSourceError, ExtentSources, Shape, ShapeSymbol, SourcedExtent, SourcedShape,
+};
 
 use super::registry::standard_conformance;
 use super::{
@@ -207,8 +196,9 @@ pub const SLICE_RELATION_WHOLE_AXIS: &str = "whole-axis";
 pub const SLICE_RELATION_WINDOW: &str = "window";
 /// Reserved name of the strided sub-range relation, refused until `RQ-OP-05` closes.
 pub const SLICE_RELATION_STRIDED_WINDOW: &str = "strided-window";
-/// Reserved name of the symbolic-offset relation, refused by the current
-/// literal-only selection grammar.
+/// Reserved name of a second symbolic-offset *relation*. Source-bearing offsets
+/// use the admitted `window` relation with a [`SourcedExtent`] field, so this
+/// name stays reserved and is refused by name.
 pub const SLICE_RELATION_SYMBOLIC_WINDOW: &str = "symbolic-window";
 
 /// Domain separator of a canonical slice selection encoding.
@@ -232,23 +222,36 @@ pub fn slice_f32_op() -> OpKey {
 /// this vocabulary *totally* onto a coordinate expression, and no coordinate is
 /// derivable from a relation it has not seen. A third admitted relation must be a
 /// build error at every such site rather than a silent fall through.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum SliceAxisSelection {
     /// Every coordinate of the axis is read, in order.
     WholeAxis,
     /// A contiguous run of coordinates is read, in order, starting at `offset`.
     Window {
         /// First operand coordinate this axis reads.
-        offset: u64,
+        ///
+        /// A literal or a `ShapeEnv` symbol. Construction does not bind the
+        /// symbol; [`SliceSelection::apply`] proves it against the program's
+        /// exact environment.
+        offset: SourcedExtent,
         /// Number of coordinates read, which becomes the result's extent here.
         extent: Extent,
     },
 }
 
 impl SliceAxisSelection {
+    /// A contiguous window whose first coordinate is a literal offset.
+    #[must_use]
+    pub const fn static_window(offset: u64, extent: Extent) -> Self {
+        Self::Window {
+            offset: SourcedExtent::Static(Extent::new(offset)),
+            extent,
+        }
+    }
+
     /// Returns the canonical name this relation carries in its axis record.
     #[must_use]
-    pub const fn canonical_name(self) -> &'static str {
+    pub const fn canonical_name(&self) -> &'static str {
         match self {
             Self::WholeAxis => SLICE_RELATION_WHOLE_AXIS,
             Self::Window { .. } => SLICE_RELATION_WINDOW,
@@ -257,16 +260,20 @@ impl SliceAxisSelection {
 
     /// Returns whether this entry restricts its axis.
     #[must_use]
-    pub const fn is_restricting(self) -> bool {
+    pub const fn is_restricting(&self) -> bool {
         matches!(self, Self::Window { .. })
     }
 
-    /// Returns the first operand coordinate this entry reads.
+    /// Returns the first operand coordinate this entry names.
+    ///
+    /// A whole axis names the literal zero so a coordinate walk can add one
+    /// sourced offset per axis. Identity still distinguishes the two relations:
+    /// this convenience is not an encoding.
     #[must_use]
-    pub const fn offset(self) -> u64 {
+    pub fn offset(&self) -> SourcedExtent {
         match self {
-            Self::WholeAxis => 0,
-            Self::Window { offset, .. } => offset,
+            Self::WholeAxis => SourcedExtent::Static(Extent::new(0)),
+            Self::Window { offset, .. } => offset.clone(),
         }
     }
 }
@@ -296,7 +303,8 @@ pub enum SliceAttributeSubject {
     AxisRecord,
     /// One relation name was not canonical UTF-8.
     Relation,
-    /// One window offset was not a canonical unsigned 64-bit value.
+    /// One window offset was not a literal unsigned 64-bit value or a
+    /// source-bearing symbol encoding.
     Offset,
     /// One window extent was not a canonical unsigned 64-bit value.
     WindowExtent,
@@ -338,14 +346,37 @@ pub enum SliceSelectionError {
     /// the ABI question `Q-SHAPE-008` owns. Admitting an unsigned stride now
     /// would fix half of a schema whose other half is reserved.
     StridedSelectionUnsupported,
-    /// The selection states a symbolic offset, which the current selection grammar
-    /// does not carry.
+    /// The selection states the reserved `symbolic-window` relation.
     ///
-    /// The literal-offset form is what this family delivers. The index vocabulary
-    /// can express a bound symbolic addend in a coordinate, but
-    /// [`SliceAxisSelection::Window`] stores its offset as `u64` and this reserved
-    /// relation is refused before any source-bearing field could be decoded.
+    /// A source-bearing offset uses the admitted `window` relation with a
+    /// [`SourcedExtent`] field. This reserved name is not a second variant of
+    /// that relation and is refused before any relation-specific field is read.
     SymbolicOffsetUnsupported,
+    /// The window offset named a symbol this program's environment does not declare.
+    UndeclaredSymbol {
+        /// The symbol the rejected offset named.
+        symbol: ShapeSymbol,
+    },
+    /// The window offset named a symbol whose value arrives after it is needed.
+    SourceTooLate {
+        /// The symbol the rejected offset named.
+        symbol: ShapeSymbol,
+        /// The phase its root binding declares.
+        available: AvailabilityPhase,
+        /// The last phase an extent may be sourced from.
+        ceiling: AvailabilityPhase,
+    },
+    /// The environment does not prove the window stays inside its axis.
+    WindowBoundUnproved {
+        /// Zero-based position of the offending entry.
+        axis: usize,
+        /// The offset the window names.
+        offset: SourcedExtent,
+        /// The number of coordinates it reads.
+        extent: Extent,
+        /// The axis extent it must stay inside.
+        available: SourcedExtent,
+    },
     /// A window selects no coordinate.
     ///
     /// An empty selection produces a result with no elements, which no consumer
@@ -364,7 +395,7 @@ pub enum SliceSelectionError {
         /// Zero-based position of the offending entry.
         axis: usize,
         /// The offset it states.
-        offset: u64,
+        offset: SourcedExtent,
     },
     /// The selection restricts no axis, so it denotes no slice.
     ///
@@ -396,11 +427,11 @@ pub enum SliceSelectionError {
         /// Zero-based position of the offending entry.
         axis: usize,
         /// The first coordinate it reads.
-        offset: u64,
+        offset: SourcedExtent,
         /// The number of coordinates it reads.
         extent: u64,
         /// The axis extent it must stay inside.
-        axis_extent: u64,
+        axis_extent: SourcedExtent,
     },
     /// A window covers its axis entirely, which is the whole-axis relation.
     ///
@@ -444,6 +475,9 @@ impl SliceSelectionError {
             Self::UnadmittedRelation { .. } => "slice.selection.unadmitted-relation",
             Self::StridedSelectionUnsupported => "slice.selection.strided-window-unsupported",
             Self::SymbolicOffsetUnsupported => "slice.selection.symbolic-offset-unsupported",
+            Self::UndeclaredSymbol { .. } => "slice.selection.undeclared-symbol",
+            Self::SourceTooLate { .. } => "slice.selection.source-too-late",
+            Self::WindowBoundUnproved { .. } => "slice.selection.bound-unproved",
             Self::EmptyWindow { .. } => "slice.selection.empty-window",
             Self::NoRestrictedAxis => "slice.selection.no-restricted-axis",
             Self::SelectionCountMismatch { .. } => "slice.selection.entry-count",
@@ -470,7 +504,29 @@ impl fmt::Display for SliceSelectionError {
             ),
             Self::SymbolicOffsetUnsupported => write!(
                 formatter,
-                "{SLICE_RELATION_SYMBOLIC_WINDOW} is reserved and not admitted: this family selects at literal offsets, and its current selection grammar has no source-bearing offset field"
+                "{SLICE_RELATION_SYMBOLIC_WINDOW} is reserved and not admitted: a source-bearing offset uses the admitted {SLICE_RELATION_WINDOW} relation with a sourced extent field, and this reserved name is not a second variant of that relation"
+            ),
+            Self::UndeclaredSymbol { symbol } => write!(
+                formatter,
+                "slice.selection.undeclared-symbol: {symbol} is not declared by this program's shape environment"
+            ),
+            Self::SourceTooLate {
+                symbol,
+                available,
+                ceiling,
+            } => write!(
+                formatter,
+                "slice.selection.source-too-late: {symbol} is available at {available}, after {ceiling}"
+            ),
+            Self::WindowBoundUnproved {
+                axis,
+                offset,
+                extent,
+                available,
+            } => write!(
+                formatter,
+                "the window on axis {axis} names offset {offset} and extent {} against available {available}, and this program's shape environment does not prove the window stays inside that axis for every admitted model",
+                extent.get()
             ),
             Self::EmptyWindow { axis, offset } => write!(
                 formatter,
@@ -567,11 +623,11 @@ impl SliceSelection {
             {
                 return Err(SliceSelectionError::EmptyWindow {
                     axis,
-                    offset: *offset,
+                    offset: offset.clone(),
                 });
             }
         }
-        if !axes.iter().any(|selection| selection.is_restricting()) {
+        if !axes.iter().any(SliceAxisSelection::is_restricting) {
             return Err(SliceSelectionError::NoRestrictedAxis);
         }
         let canonical_value =
@@ -628,18 +684,50 @@ impl SliceSelection {
         CanonicalSliceSelection(bytes)
     }
 
-    /// Decides this selection against one operand shape and derives the result.
+    /// Decides this selection against one static operand shape and derives the result.
     ///
-    /// The result extent of a restricted axis is the window's own extent and the
-    /// result extent of a whole axis is the operand's; nothing is declared by a
-    /// caller. Rank is preserved, so an occurrence that wants an extent-one axis
-    /// gone writes a `remove-unit-axis` reindex after it.
+    /// The static/reference path: every window offset must be a literal, and
+    /// bounds are decided by comparing those literals. A selection that names a
+    /// symbol is refused rather than applied against a second environment this
+    /// method does not hold.
     ///
     /// # Errors
     ///
     /// Returns [`SliceSelectionError`] naming the violated rule.
     pub fn result_shape(&self, operand: &Shape) -> Result<Shape, SliceSelectionError> {
-        let extents = operand.extents();
+        let sourced = self.apply(&SourcedShape::from(operand.clone()), None)?;
+        sourced.as_static().cloned().ok_or_else(|| {
+            self.axes
+                .iter()
+                .find_map(|selection| match selection {
+                    SliceAxisSelection::Window {
+                        offset: SourcedExtent::Symbol(symbol),
+                        ..
+                    } => Some(SliceSelectionError::UndeclaredSymbol {
+                        symbol: symbol.clone(),
+                    }),
+                    _ => None,
+                })
+                .unwrap_or(SliceSelectionError::NoRestrictedAxis)
+        })
+    }
+
+    /// Decides this selection against one operand and the program's environment.
+    ///
+    /// A static or sourced window is admitted only when the environment proves
+    /// `offset + extent <= available_axis` for every admitted model and proves
+    /// the family's proper-window rule. The explicit window extent remains the
+    /// result extent on a restricted axis; untouched axes keep their sourced
+    /// extents.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SliceSelectionError`] naming the violated rule.
+    pub fn apply(
+        &self,
+        operand: &SourcedShape,
+        sources: Option<&ExtentSources>,
+    ) -> Result<SourcedShape, SliceSelectionError> {
         if self.axes.len() != operand.rank() {
             return Err(SliceSelectionError::SelectionCountMismatch {
                 entries: self.axes.len(),
@@ -647,35 +735,140 @@ impl SliceSelection {
             });
         }
         let mut result = Vec::with_capacity(self.axes.len());
-        for (axis, (selection, available)) in self.axes.iter().zip(extents).enumerate() {
+        for (axis, (selection, available)) in self.axes.iter().zip(operand.extents()).enumerate() {
             let extent = match selection {
-                SliceAxisSelection::WholeAxis => *available,
+                SliceAxisSelection::WholeAxis => available,
                 SliceAxisSelection::Window { offset, extent } => {
-                    // The sum is the first coordinate past the window. An
-                    // overflowing sum cannot be inside a `u64` extent, so it is
-                    // the out-of-bounds case and is reported saturated rather
-                    // than wrapped.
-                    let past = offset.saturating_add(extent.get());
-                    if past > available.get() {
-                        return Err(SliceSelectionError::WindowOutOfBounds {
-                            axis,
-                            offset: *offset,
-                            extent: extent.get(),
-                            axis_extent: available.get(),
-                        });
-                    }
-                    if extent == available {
-                        return Err(SliceSelectionError::WindowIsWholeAxis {
-                            axis,
-                            extent: available.get(),
-                        });
-                    }
-                    *extent
+                    prove_window(axis, offset, *extent, &available, sources)?;
+                    SourcedExtent::Static(*extent)
                 }
             };
             result.push(extent);
         }
-        Shape::try_new(result).map_err(SliceSelectionError::ResultShape)
+        SourcedShape::sourced(result).map_err(SliceSelectionError::ResultShape)
+    }
+}
+
+fn prove_window(
+    axis: usize,
+    offset: &SourcedExtent,
+    extent: Extent,
+    available: &SourcedExtent,
+    sources: Option<&ExtentSources>,
+) -> Result<(), SliceSelectionError> {
+    admit_extent(offset, sources)?;
+    admit_extent(available, sources)?;
+    let offset_interval = required_interval(offset, sources).ok_or_else(|| {
+        SliceSelectionError::WindowBoundUnproved {
+            axis,
+            offset: offset.clone(),
+            extent,
+            available: available.clone(),
+        }
+    })?;
+    let available_interval = required_interval(available, sources).ok_or_else(|| {
+        SliceSelectionError::WindowBoundUnproved {
+            axis,
+            offset: offset.clone(),
+            extent,
+            available: available.clone(),
+        }
+    })?;
+    let past_hi = offset_interval.upper.checked_add(extent.get());
+    let past_lo = offset_interval.lower.checked_add(extent.get());
+    let in_bounds = past_hi.is_some_and(|past| past <= available_interval.lower);
+    if !in_bounds {
+        let always_overflows = match past_lo {
+            None => true,
+            Some(past) => past > available_interval.upper,
+        };
+        if always_overflows {
+            return Err(SliceSelectionError::WindowOutOfBounds {
+                axis,
+                offset: offset.clone(),
+                extent: extent.get(),
+                axis_extent: available.clone(),
+            });
+        }
+        return Err(SliceSelectionError::WindowBoundUnproved {
+            axis,
+            offset: offset.clone(),
+            extent,
+            available: available.clone(),
+        });
+    }
+
+    let offset_is_zero = offset_interval.lower == 0 && offset_interval.upper == 0;
+    let extent_as_source = SourcedExtent::Static(extent);
+    let extent_equals_available = sources
+        .is_some_and(|sources| sources.proves_equal(&extent_as_source, available))
+        || (available_interval.lower == available_interval.upper
+            && available_interval.lower == extent.get());
+    let extent_lt_available = extent.get() < available_interval.lower;
+    let offset_positive = offset_interval.lower >= 1;
+    if extent_equals_available && offset_is_zero {
+        return Err(SliceSelectionError::WindowIsWholeAxis {
+            axis,
+            extent: extent.get(),
+        });
+    }
+    if extent_lt_available || offset_positive {
+        return Ok(());
+    }
+    Err(SliceSelectionError::WindowBoundUnproved {
+        axis,
+        offset: offset.clone(),
+        extent,
+        available: available.clone(),
+    })
+}
+
+fn required_interval(
+    extent: &SourcedExtent,
+    sources: Option<&ExtentSources>,
+) -> Option<crate::shape::ExtentInterval> {
+    match extent {
+        SourcedExtent::Static(value) => Some(crate::shape::ExtentInterval {
+            lower: value.get(),
+            upper: value.get(),
+        }),
+        SourcedExtent::Symbol(_) => sources.and_then(|sources| sources.interval(extent)),
+    }
+}
+
+fn admit_extent(
+    extent: &SourcedExtent,
+    sources: Option<&ExtentSources>,
+) -> Result<(), SliceSelectionError> {
+    match sources {
+        Some(sources) => sources.admit(extent).map(|_| ()).map_err(map_source_error),
+        None => match extent.symbol() {
+            Some(symbol) => Err(SliceSelectionError::UndeclaredSymbol {
+                symbol: symbol.clone(),
+            }),
+            None => Ok(()),
+        },
+    }
+}
+
+fn map_source_error(error: ExtentSourceError) -> SliceSelectionError {
+    match error {
+        ExtentSourceError::UndeclaredSymbol { symbol } => {
+            SliceSelectionError::UndeclaredSymbol { symbol }
+        }
+        ExtentSourceError::SourceTooLate {
+            symbol,
+            available,
+            ceiling,
+        } => SliceSelectionError::SourceTooLate {
+            symbol,
+            available,
+            ceiling,
+        },
+        ExtentSourceError::DivisorNotProvedPositive { .. }
+        | ExtentSourceError::ExtentsNotProvedEqual(_) => {
+            unreachable!("admit reports only undeclared and too-late")
+        }
     }
 }
 
@@ -755,7 +948,7 @@ fn decode_axis(value: &CanonicalValue) -> Result<SliceAxisSelection, SliceSelect
             if offset_field.id() == SLICE_AXIS_OFFSET && extent_field.id() == SLICE_AXIS_EXTENT =>
         {
             Ok(SliceAxisSelection::Window {
-                offset: decode_unsigned(offset_field.value(), SliceAttributeSubject::Offset)?,
+                offset: decode_offset(offset_field.value())?,
                 extent: Extent::new(decode_unsigned(
                     extent_field.value(),
                     SliceAttributeSubject::WindowExtent,
@@ -785,6 +978,26 @@ fn decode_unsigned(
     Ok(bits)
 }
 
+/// Decodes one window offset under the existing length framing.
+///
+/// A literal stays an unsigned 64-bit field so every previously admitted
+/// selection keeps its bytes. A symbol is a distinct `bytes` payload of
+/// [`SourcedExtent::Symbol`]'s encoder; a static extent encoded as those
+/// bytes is refused so a literal has one spelling.
+fn decode_offset(value: &CanonicalValue) -> Result<SourcedExtent, SliceSelectionError> {
+    match value.view() {
+        CanonicalValueView::Unsigned {
+            width: CanonicalIntegerWidth::Bits64,
+            bits,
+        } => Ok(SourcedExtent::Static(Extent::new(bits))),
+        CanonicalValueView::Bytes(bytes) => match SourcedExtent::decode(bytes) {
+            Some(SourcedExtent::Symbol(symbol)) => Ok(SourcedExtent::Symbol(symbol)),
+            Some(SourcedExtent::Static(_)) | None => Err(malformed(SliceAttributeSubject::Offset)),
+        },
+        _ => Err(malformed(SliceAttributeSubject::Offset)),
+    }
+}
+
 /// Builds the canonical attribute value of one validated selection.
 ///
 /// The entries are a sequence *of records* rather than parallel sequences of
@@ -803,7 +1016,7 @@ fn encode_selection(axes: &[SliceAxisSelection]) -> Result<CanonicalValue, TypeI
             SliceAxisSelection::WholeAxis => CanonicalValue::record([relation])?,
             SliceAxisSelection::Window { offset, extent } => CanonicalValue::record([
                 relation,
-                CanonicalField::new(SLICE_AXIS_OFFSET, CanonicalValue::unsigned_u64(*offset)),
+                CanonicalField::new(SLICE_AXIS_OFFSET, encode_offset(offset)?),
                 CanonicalField::new(
                     SLICE_AXIS_EXTENT,
                     CanonicalValue::unsigned_u64(extent.get()),
@@ -817,11 +1030,23 @@ fn encode_selection(axes: &[SliceAxisSelection]) -> Result<CanonicalValue, TypeI
     )])
 }
 
+fn encode_offset(offset: &SourcedExtent) -> Result<CanonicalValue, TypeIdentityError> {
+    match offset {
+        SourcedExtent::Static(extent) => Ok(CanonicalValue::unsigned_u64(extent.get())),
+        SourcedExtent::Symbol(symbol) => {
+            let encoded = SourcedExtent::Symbol(symbol.clone());
+            let mut bytes = Vec::with_capacity(encoded.encoded_len());
+            encoded.encode(&mut bytes);
+            CanonicalValue::bytes_owned(bytes)
+        }
+    }
+}
+
 /// Registers the governed slice family.
 pub(super) fn register_standard_slice(
     registrar: &mut SemanticRegistryRegistrar<'_>,
 ) -> Result<(), RegistryError> {
-    registrar.register_operation(OperationDefinition::new(
+    registrar.register_operation(OperationDefinition::new_governed_environment_aware(
         slice_f32_op(),
         OperationSchema::new(
             OperationArity::exact(1),
@@ -861,30 +1086,35 @@ const SLICE_F32_NORMATIVE_DEFINITION: &str = concat!(
     "The selection is stated as exactly one entry per operand axis, in axis order, so a selection has ",
     "one spelling and nothing about a restricted axis is inferred from a shape. ",
     "Admitted relations, and no others: whole-axis, which reads every coordinate of its axis in order; ",
-    "and window, which reads a contiguous run of coordinates in order from a literal offset. A ",
-    "selection stating only whole axes returns its operand, denotes no slice, and is refused, and a ",
-    "window covering its axis entirely is the whole-axis relation and is refused as such — so an ",
-    "admitted occurrence restricts at least one axis and leaves at least one coordinate of it unread. ",
+    "and window, which reads a contiguous run of coordinates in order from a sourced offset. The ",
+    "offset is a SourcedExtent: a literal unsigned value or a ShapeSymbol declared by the program's ",
+    "exact shape environment. ShapeEnv is the only binding authority. A selection stating only whole ",
+    "axes returns its operand, denotes no slice, and is refused, and a window covering its axis ",
+    "entirely is the whole-axis relation and is refused as such — so an admitted occurrence restricts ",
+    "at least one axis and leaves at least one coordinate of it unread. ",
     "An empty window is refused rather than producing a result with no elements. That refuses a ",
     "selection stating emptiness and never an operand that is already empty: an operand with a zero ",
     "extent on an axis the selection leaves whole is admitted, and its result has no elements. ",
     "Rank is preserved: a selection restricts coordinates and drops no axis. Removing an extent-one ",
     "axis a selection leaves behind is a tiler::reindex-f32@1 remove-unit-axis occurrence written ",
-    "after this one. The result extent of a restricted axis is the window's extent and the result ",
-    "extent of a whole axis is the operand's; neither is declared by a caller. ",
-    "A window that reads past the end of its axis is refused at construction, naming the axis, the ",
-    "offset, the window extent, and the axis extent. It is never clamped to the axis and never ",
-    "wrapped: the primary authorities diverge on that convention and the two conventions produce ",
-    "different tensors for one program rather than different diagnostics. ",
+    "after this one. The result extent of a restricted axis is the window's explicit extent and the ",
+    "result extent of a whole axis is the operand's sourced extent; neither is declared by a caller. ",
+    "Applying a selection is fallible against the program's exact ShapeEnv and sourced operand shape. ",
+    "A static or sourced window is admitted only when the environment proves, with checked unsigned ",
+    "arithmetic, offset + extent <= available_axis for every admitted model and proves the proper-",
+    "window rule. A foreign, undeclared, unavailable-at-phase, overflowing, or unproved source ",
+    "refuses by typed cause. It is never clamped to the axis and never wrapped: the primary ",
+    "authorities diverge on that convention and the two conventions produce different tensors for ",
+    "one program rather than different diagnostics. ",
     "Two relation names are reserved and always refused, each under its own rule rather than as an ",
     "unrecognized name: strided-window, because a stride attribute is one family with the contiguous ",
     "window and whether it admits a negative stride closes on the addressing question that owns it; ",
-    "and symbolic-window, because although semantic value facts generally can carry sourced extents, ",
-    "Slice's admitted window grammar carries only a literal offset and a literal extent; it has no ",
-    "source-bearing selection field. The decoder refuses the reserved symbolic-window relation after ",
-    "its name is decoded and before parsing any relation-specific fields. For an admitted literal ",
-    "window, inference later requires a static operand shape to check bounds and derive the result; ",
-    "no source-bearing selection reaches that inference. ",
+    "and symbolic-window, because a source-bearing offset uses the admitted window relation with a ",
+    "sourced extent field and this reserved name is not a second variant of that relation. The ",
+    "decoder refuses the reserved symbolic-window relation after its name is decoded and before ",
+    "parsing any relation-specific fields. Literal window bytes stay an unsigned 64-bit offset ",
+    "under the existing length framing; a symbolic offset is an injective bytes payload of the ",
+    "symbol, not a resolved value. ",
     "This operation makes no claim that storage was copied, viewed, or left alone: it states a ",
     "logical coordinate relation, and every physical realization of it remains a planning outcome.",
 );
@@ -961,15 +1191,10 @@ impl OperationInferencer for SliceF32 {
                 "a slice operand must be f32".to_owned(),
             ));
         }
-        // A selection is bounded against the extent it slices and its result
-        // extent is arithmetic over the literal offset and length, so this rule
-        // needs the extent's value rather than a proof about it. A symbolic
-        // selection is refused by its grammar above; independently, a sourced
-        // operand is declined here until the family has a bounds rule for it.
         let shape = selection
-            .result_shape(request.static_operand_shape(0)?)
+            .apply(operand.shape(), request.extent_sources())
             .map_err(|error| rejection(&error))?;
-        outputs.try_push(ValueFact::new(F32::resolved_type(), shape))
+        outputs.try_push(ValueFact::from_sourced(F32::resolved_type(), shape))
     }
 }
 

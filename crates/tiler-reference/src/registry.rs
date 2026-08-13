@@ -130,6 +130,7 @@ pub struct ReferenceEvaluationRequest<'a> {
     pub(crate) attributes: &'a OperationAttributes,
     pub(crate) iteration_step_allowance: usize,
     pub(crate) conformance: ReferenceNumericalConformance,
+    pub(crate) extent_bindings: &'a crate::ExtentBindingContext,
 }
 
 impl fmt::Debug for ReferenceEvaluationRequest<'_> {
@@ -140,6 +141,7 @@ impl fmt::Debug for ReferenceEvaluationRequest<'_> {
             .field("attributes", &self.attributes)
             .field("iteration_step_allowance", &self.iteration_step_allowance)
             .field("conformance", &self.conformance)
+            .field("extent_bindings", &self.extent_bindings)
             .finish()
     }
 }
@@ -175,6 +177,16 @@ impl<'a> ReferenceEvaluationRequest<'a> {
     #[must_use]
     pub const fn iteration_step_allowance(self) -> usize {
         self.iteration_step_allowance
+    }
+
+    /// Returns the authenticated extent bindings for this evaluation.
+    ///
+    /// Derived from the program environment and declared inputs. A callback
+    /// resolves a window offset through this context and cannot accept a
+    /// second cursor scalar.
+    #[must_use]
+    pub const fn extent_bindings(self) -> &'a crate::ExtentBindingContext {
+        self.extent_bindings
     }
 
     /// Returns the numerical contract this evaluation is performed under, when it
