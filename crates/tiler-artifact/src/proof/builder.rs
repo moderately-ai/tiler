@@ -42,7 +42,7 @@ use super::model::{
     ProofCaseData, ProofCaseKey, ProofCaseKeyError, ProofNumericalIdentity, ProofReferenceIdentity,
     ProofSemanticSubject, ProofSidecarData, ProofSubjectError, ProofSubjects, VerifiedProofSidecar,
 };
-use super::{MAX_PROOF_CASES, MAX_PROOF_INTERFACE_ENTRIES, MAX_PROOF_PAYLOAD_BYTES};
+use super::{MAX_PROOF_CASES, MAX_PROOF_INTERFACE_ENTRIES};
 
 /// Which half of the named interface an obligation is about.
 ///
@@ -787,10 +787,9 @@ impl ProofSidecarBuilder {
     /// [`ProofBuildError::DuplicateOutput`] for a key supplied twice,
     /// [`ProofBuildError::MissingInput`] or [`ProofBuildError::MissingOutput`]
     /// for a declared key left unsupplied, [`ProofBuildError::Limit`] beyond
-    /// [`MAX_PROOF_CASES`], [`MAX_PROOF_PAYLOAD_BYTES`], or a projected
-    /// identity, manifest, or complete-sidecar bound, or
-    /// [`ProofBuildError::Unrepresentable`] when the projected size overflows
-    /// this host's `usize`.
+    /// [`MAX_PROOF_CASES`] or a projected identity, manifest, or
+    /// complete-sidecar bound, or [`ProofBuildError::Unrepresentable`] when the
+    /// projected size overflows this host's `usize`.
     pub fn push_case(&mut self, case: ProofCaseSpec) -> Result<(), ProofBuildError> {
         let attempted =
             self.cases
@@ -938,12 +937,7 @@ fn resolve_slots<K: Clone + Eq>(
     missing: impl Fn(K) -> ProofBuildError,
 ) -> Result<Vec<usize>, ProofBuildError> {
     let mut slots: Vec<Option<usize>> = vec![None; entries.len()];
-    for (index, (key, bytes)) in supplied.iter().enumerate() {
-        proof_limit(
-            bytes.len(),
-            MAX_PROOF_PAYLOAD_BYTES,
-            ProofLimitKind::PayloadBytes,
-        )?;
+    for (index, (key, _bytes)) in supplied.iter().enumerate() {
         let position = entries
             .iter()
             .position(|(declared, _)| declared == key)

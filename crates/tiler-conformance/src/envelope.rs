@@ -88,21 +88,19 @@
 //! the derivation that decides which of them a sidecar can carry, and the split
 //! between the ordinary gate's cells and the `#[ignore]`d run's.
 //!
-//! # Which cells this routes, and the two bounds that decide it
+//! # Which cells this routes, and the bound that decides the gate split
 //!
-//! The retained record states six correctness cells and this module routes five.
-//! Two independent bounds decide the shape of what runs:
+//! The retained record states six correctness cells and this module routes all
+//! six. A sidecar admits a cell whenever the complete case stays inside
+//! `tiler_artifact::proof::MAX_PROOF_SIDECAR_BYTES`. `w_vocab_slice`'s complete
+//! payload content is 33,591,296 bytes against that 256 MiB container;
+//! `tests::the_routed_cells_fit_the_sidecar_container` holds the arithmetic.
 //!
-//! - **`tiler_artifact::proof::MAX_PROOF_PAYLOAD_BYTES`** admits one case payload
-//!   of 16 MiB, and `w_vocab_slice`'s `[8192, 1024]` weights operand is exactly
-//!   twice that. No arrangement here reaches it — the constant is another crate's
-//!   public surface — so the cell is pinned, excluded, and held to that
-//!   arithmetic by a test rather than to a sentence.
-//! - **The reference evaluator's per-occurrence fold bound** decides which of the
-//!   remaining five the *ordinary gate* publishes. `w_decode_kv` folds under it
-//!   and is published by the evaluator every other consumer gets; the four
-//!   prefill cells need a stated allowance and 1,094,713,344 steps, so they are
-//!   routed by an `#[ignore]`d run measured at 30.8 s.
+//! **The reference evaluator's per-occurrence fold bound** decides which of the
+//! six the *ordinary gate* publishes. `w_decode_kv` and `w_vocab_slice` fold
+//! under it and are published by the evaluator every other consumer gets; the
+//! four prefill cells need a stated allowance and 1,094,713,344 steps, so they
+//! are routed by an `#[ignore]`d run measured at 30.8 s.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -341,13 +339,12 @@ impl L3CorrectnessCell {
         self.fold_steps <= REFERENCE_DEFAULT_STEP_ALLOWANCE
     }
 
-    /// Bytes of this cell's largest proof-sidecar payload.
+    /// Bytes of this cell's largest single proof-sidecar payload.
     ///
-    /// A sidecar binds one payload per declared interface entry, so the largest
-    /// of the three — `[m, k]` activations, `[n, k]` weights, `[m, n]` expected —
-    /// is what the artifact layer's per-payload bound is applied to. Computed
-    /// rather than tabulated, because a cell whose extents moved must move this
-    /// with them.
+    /// A sidecar binds one payload per declared interface entry. The largest of
+    /// the three — `[m, k]` activations, `[n, k]` weights, `[m, n]` expected —
+    /// is the operand that dominates the cell's content. Computed rather than
+    /// tabulated, because a cell whose extents moved must move this with them.
     pub(crate) const fn largest_payload_bytes(&self) -> u64 {
         let activations = self.m * self.k;
         let weights = self.n * self.k;
@@ -365,21 +362,25 @@ impl L3CorrectnessCell {
         largest * crate::serial_sum::F32_BYTES
     }
 
-    /// Whether the artifact layer's proof sidecar can carry this cell at all.
+    /// Bytes of this cell's complete proof-sidecar payload content.
     ///
-    /// **A hard boundary rather than a cost, and it is owned elsewhere.**
-    /// `tiler_artifact::proof::MAX_PROOF_PAYLOAD_BYTES` bounds one case payload
-    /// at 16 MiB, and `w_vocab_slice`'s `[8192, 1024]` weights operand is exactly
-    /// 33,554,432 bytes — twice it. No arrangement inside this crate reaches that
-    /// cell: splitting the operand across cases would publish a different program,
-    /// and the constant is `tiler-artifact`'s public surface, which
-    /// `implementation/conformance` does not own.
-    /// `tests::the_unpublishable_cell_is_named_against_the_bound_that_stops_it`
-    /// holds the exclusion to that arithmetic, so a raised bound admits the cell
-    /// by making a test say so rather than by anyone remembering.
-    pub(crate) fn fits_one_proof_payload(&self) -> bool {
-        u64::try_from(tiler_artifact::proof::MAX_PROOF_PAYLOAD_BYTES)
-            .is_ok_and(|limit| self.largest_payload_bytes() <= limit)
+    /// Activations, weights, and expected, each as little-endian `f32`. This is
+    /// the content the sidecar actually holds, and the quantity compared to
+    /// [`tiler_artifact::proof::MAX_PROOF_SIDECAR_BYTES`].
+    pub(crate) const fn complete_payload_bytes(&self) -> u64 {
+        (self.m * self.k + self.n * self.k + self.m * self.n) * crate::serial_sum::F32_BYTES
+    }
+
+    /// Whether the artifact layer's proof sidecar can carry this cell.
+    ///
+    /// One payload has no separate size policy. Admission is the unchanged
+    /// 256 MiB container bound applied to the complete payload content.
+    /// `tests::the_routed_cells_fit_the_sidecar_container` holds every cell to
+    /// that arithmetic, so a cell whose extents grew past the container fails
+    /// there rather than on the host that publishes.
+    pub(crate) fn fits_in_proof_sidecar(&self) -> bool {
+        u64::try_from(tiler_artifact::proof::MAX_PROOF_SIDECAR_BYTES)
+            .is_ok_and(|limit| self.complete_payload_bytes() <= limit)
     }
 
     /// The extents this cell is published and routed at.
@@ -2013,21 +2014,20 @@ const fn l3_member(index: usize) -> ContractionMember {
 
 /// Every contraction member this module routes, in the order it routes them.
 ///
-/// The adversarial `2x2x3` member leads, then the correctness cells in the
-/// retained record's own order — **five of the six.** `w_vocab_slice` is absent
-/// because no sidecar can carry its operand, which is
-/// [`L3CorrectnessCell::fits_one_proof_payload`]; the exclusion is a hand-written
-/// index here only because a `const` cannot filter, and
+/// The adversarial `2x2x3` member leads, then the six correctness cells in the
+/// retained record's own order. Every cell fits the sidecar container, which is
+/// [`L3CorrectnessCell::fits_in_proof_sidecar`]; the list is hand-written
+/// because a `const` cannot map, and
 /// `tests::the_routed_members_are_exactly_the_publishable_cells` derives the same
-/// set from that predicate and compares, so this list cannot quietly drop or
-/// re-admit a cell.
+/// set from that predicate and compares, so this list cannot quietly drop a
+/// cell.
 ///
 /// The extents are checked against the operand tables and the retained
 /// measurement written for them by
 /// `crate::publication::proof::tests::the_published_contraction_extents_are_the_ones_this_module_is_written_for`,
 /// so moving one fails in the ordinary gate rather than on the first host that
 /// publishes.
-pub(crate) const CONTRACTION_MEMBERS: [ContractionMember; 6] = [
+pub(crate) const CONTRACTION_MEMBERS: [ContractionMember; 7] = [
     ContractionMember {
         class: CONTRACTION_CLASS,
         family: crate::publication::ProofFamily::Contraction { m: 2, n: 2, k: 3 },
@@ -2038,6 +2038,7 @@ pub(crate) const CONTRACTION_MEMBERS: [ContractionMember; 6] = [
     l3_member(2),
     l3_member(3),
     l3_member(4),
+    l3_member(5),
 ];
 
 /// The probe's digest domain: little-endian `f32` bytes in row-major order.

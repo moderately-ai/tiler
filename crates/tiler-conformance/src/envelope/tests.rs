@@ -209,7 +209,6 @@ fn the_published_contraction_members_are_the_ones_this_module_routes() {
     expected.extend(
         FIXTURE_L3_CELLS
             .iter()
-            .filter(|(class, _, _)| *class != UNPUBLISHABLE_CELL_CLASS)
             .map(|(_, extents, _)| Some(*extents)),
     );
     assert_eq!(
@@ -292,12 +291,11 @@ fn every_member_but_the_adversarial_one_is_compared_against_a_retained_measureme
         FIXTURE_L3_CELLS
             .iter()
             .map(|(class, _, _)| *class)
-            .filter(|class| *class != UNPUBLISHABLE_CELL_CLASS)
             .collect::<Vec<_>>(),
     );
     assert_eq!(
         CONTRACTION_MEMBERS.len(),
-        6,
+        7,
         "every publishable contraction member must be routed; a member the producer writes and \
          this half never opens is a file nobody reads",
     );
@@ -313,9 +311,6 @@ fn every_member_but_the_adversarial_one_is_compared_against_a_retained_measureme
     // would keep every assertion above green and route the members against
     // wrong measurements.
     for (class, _, digest) in FIXTURE_L3_CELLS {
-        if class == UNPUBLISHABLE_CELL_CLASS {
-            continue;
-        }
         let member = CONTRACTION_MEMBERS
             .iter()
             .find(|member| member.class == class)
@@ -324,16 +319,10 @@ fn every_member_but_the_adversarial_one_is_compared_against_a_retained_measureme
     }
 }
 
-/// The one correctness cell no proof sidecar can carry.
-///
-/// Named once here, so the three tests that have to exclude it and the one that
-/// explains why it is excluded all say the same word.
-const UNPUBLISHABLE_CELL_CLASS: &str = "contraction-w-vocab-slice";
-
 /// The routed members are exactly the cells a sidecar can carry.
 ///
-/// **`CONTRACTION_MEMBERS` is a `const` and cannot filter, so its exclusion of
-/// `w_vocab_slice` is a hand-written index — and this is what stops that index
+/// **`CONTRACTION_MEMBERS` is a `const` and cannot map, so its inclusion of
+/// every L3 cell is a hand-written index — and this is what stops that index
 /// from being a place a cell can be dropped quietly.** The expected set is
 /// derived from the predicate rather than listed, so a cell that stopped fitting
 /// must be removed from the array and one that started fitting must be added,
@@ -347,73 +336,59 @@ fn the_routed_members_are_exactly_the_publishable_cells() {
         .collect();
     let publishable: Vec<&str> = L3_CORRECTNESS_CELLS
         .iter()
-        .filter(|cell| cell.fits_one_proof_payload())
+        .filter(|cell| cell.fits_in_proof_sidecar())
         .map(|cell| cell.class)
         .collect();
     assert_eq!(
         routed, publishable,
         "the routed members and the cells a sidecar can carry have drifted apart",
     );
-    assert_eq!(routed.len(), 5);
-    assert_eq!(
+    assert_eq!(routed.len(), 6);
+    assert!(
         L3_CORRECTNESS_CELLS
             .iter()
-            .filter(|cell| !cell.fits_one_proof_payload())
-            .map(|cell| cell.class)
-            .collect::<Vec<_>>(),
-        [UNPUBLISHABLE_CELL_CLASS],
+            .all(L3CorrectnessCell::fits_in_proof_sidecar),
+        "every retained L3 cell fits the sidecar container; a new exclusion needs naming",
     );
 }
 
-/// The excluded cell is named against the exact bound that stops it.
+/// Every routed cell's complete payload content fits the sidecar container.
 ///
-/// **This is the ticket's remaining cell, held to arithmetic instead of to
-/// prose.** `w_vocab_slice`'s `[8192, 1024]` weights operand is 33,554,432 bytes
-/// and `tiler_artifact::proof::MAX_PROOF_PAYLOAD_BYTES` admits 16,777,216 — a
-/// factor of exactly two, so no rounding or framing overhead is involved and the
-/// exclusion cannot be argued away. Nothing inside
-/// `implementation/conformance` reaches it: the constant is another crate's
-/// public surface, and splitting the operand across cases would publish a
-/// different program rather than the cell the digest describes.
-///
-/// The five routable cells are asserted with margin in the same test, so a bound
-/// that *fell* takes the whole set down rather than silently dropping members.
+/// **This is the vocabulary cell, held to arithmetic instead of to prose.**
+/// `w_vocab_slice`'s complete content is 4,096 activation bytes, 33,554,432
+/// weight bytes, and 32,768 expected bytes: 33,591,296 against
+/// `tiler_artifact::proof::MAX_PROOF_SIDECAR_BYTES` of 268,435,456. A cell
+/// whose extents grew past the container fails this pin rather than on the
+/// host that publishes.
 #[test]
-fn the_unpublishable_cell_is_named_against_the_bound_that_stops_it() {
-    let limit = u64::try_from(tiler_artifact::proof::MAX_PROOF_PAYLOAD_BYTES)
-        .expect("the artifact layer's payload bound fits a u64");
-    assert_eq!(limit, 16_777_216);
+fn the_routed_cells_fit_the_sidecar_container() {
+    let limit = u64::try_from(tiler_artifact::proof::MAX_PROOF_SIDECAR_BYTES)
+        .expect("the artifact layer's sidecar bound fits a u64");
+    assert_eq!(limit, 268_435_456);
 
-    let excluded = L3_CORRECTNESS_CELLS
+    let vocab = L3_CORRECTNESS_CELLS
         .iter()
-        .find(|cell| cell.class == UNPUBLISHABLE_CELL_CLASS)
+        .find(|cell| cell.id == "w_vocab_slice")
         .expect("the record's vocabulary cell is still pinned");
-    assert_eq!(excluded.largest_payload_bytes(), 33_554_432);
-    assert_eq!(
-        excluded.largest_payload_bytes(),
-        limit * 2,
-        "the excluded cell's operand is exactly twice the bound; if that is no longer the \
-         arithmetic, the exclusion needs restating rather than keeping",
-    );
-    assert!(!excluded.fits_one_proof_payload());
+    assert_eq!(vocab.largest_payload_bytes(), 33_554_432);
+    assert_eq!(vocab.complete_payload_bytes(), 33_591_296);
+    assert!(vocab.complete_payload_bytes() < limit);
+    assert!(vocab.fits_in_proof_sidecar());
 
     for cell in &L3_CORRECTNESS_CELLS {
-        if cell.class == UNPUBLISHABLE_CELL_CLASS {
-            continue;
-        }
         assert!(
-            cell.fits_one_proof_payload(),
-            "{}: its largest payload is {} byte(s) against a bound of {limit}",
+            cell.fits_in_proof_sidecar(),
+            "{}: its complete payload is {} byte(s) against a bound of {limit}",
             cell.id,
-            cell.largest_payload_bytes(),
+            cell.complete_payload_bytes(),
         );
     }
     assert_eq!(
         L3_CORRECTNESS_CELLS
             .iter()
-            .map(L3CorrectnessCell::largest_payload_bytes)
+            .map(L3CorrectnessCell::complete_payload_bytes)
             .max(),
-        Some(33_554_432),
+        Some(33_591_296),
     );
 }
 
@@ -484,12 +459,10 @@ fn the_pinned_cells_are_the_retained_records_own_direct_rows() {
 /// that bound, through exactly the evaluator every other consumer gets, and
 /// authorizes nothing.
 ///
-/// **Two cells are under the bound and only one of them is routable at all.**
-/// `w_vocab_slice` folds 8,388,608 steps, comfortably under it, and is stopped
-/// one layer lower by the sidecar payload bound — see
-/// [`the_unpublishable_cell_is_named_against_the_bound_that_stops_it`]. The two
-/// bounds are independent and a cell must clear both, which is why the gate set
-/// is derived from the conjunction rather than from either one.
+/// **Two cells are under the bound and both now route.** `w_vocab_slice` folds
+/// 8,388,608 steps, comfortably under it, and its complete payload content fits
+/// the sidecar container — see [`the_routed_cells_fit_the_sidecar_container`].
+/// The gate set is derived from the fold bound over the routed members.
 #[test]
 fn the_gate_routes_the_cells_the_default_reference_evaluator_admits() {
     let (under, over): (Vec<&L3CorrectnessCell>, Vec<&L3CorrectnessCell>) = L3_CORRECTNESS_CELLS
@@ -519,9 +492,12 @@ fn the_gate_routes_the_cells_the_default_reference_evaluator_admits() {
             .iter()
             .map(|member| member.class)
             .collect::<Vec<_>>(),
-        [CONTRACTION_CLASS, "contraction-w-decode-kv"],
-        "the ordinary gate routes the adversarial member and the one cell that is both under the \
-         reference's bound and carryable by a sidecar",
+        [
+            CONTRACTION_CLASS,
+            "contraction-w-decode-kv",
+            "contraction-w-vocab-slice",
+        ],
+        "the ordinary gate routes the adversarial member and the cells under the reference's bound",
     );
     assert_eq!(
         ignored_members()
@@ -981,7 +957,7 @@ fn route_and_compare(members: &[&ContractionMember]) -> Option<(usize, usize)> {
 /// digest is compared; a difference in the *machine* declines the comparison by
 /// name rather than making it anyway.
 ///
-/// **Two of the six routed members, and the line is a property rather than a
+/// **Three of the seven routed members, and the line is a property rather than a
 /// budget** — see [`the_gate_routes_the_cells_the_default_reference_evaluator_admits`].
 /// The other four are in the `#[ignore]`d run below.
 #[test]
@@ -992,9 +968,9 @@ fn the_contraction_members_route_and_the_gates_cells_carry_their_retained_digest
     };
     assert_eq!(
         compared + declined,
-        1,
-        "the gate routes one cell carrying a retained measurement, and it must either be compared \
-         or have said why it was not",
+        2,
+        "the gate routes two cells carrying a retained measurement, and each must either be \
+         compared or have said why it was not",
     );
 }
 
@@ -1018,9 +994,9 @@ fn the_contraction_members_route_and_the_gates_cells_carry_their_retained_digest
 ///
 /// The gate keeps more than the `#[ignore]` costs it: the route, the placement,
 /// the fail-closed probes, the interface recognizers, the digest domain, the row
-/// comparison, and `w_decode_kv` all run on every gate run, and every cell shares
+/// comparison, `w_decode_kv`, and `w_vocab_slice` all run on every gate run, and every cell shares
 /// one emitted kernel — so an arithmetic change that moved these four would move
-/// the one the gate routes.
+/// the cells the gate routes.
 #[test]
 #[ignore = "1.09e9 reference fold steps under a stated allowance, across four published members; run deliberately, see this test's documentation"]
 fn the_prefill_cells_carry_their_retained_digests() {

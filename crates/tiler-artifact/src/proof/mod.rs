@@ -543,8 +543,6 @@ pub const MAX_PROOF_CASE_KEY_BYTES: usize = 256;
 /// binds one payload per declared entry, so a looser bound here would admit a
 /// container no artifact could ever associate with.
 pub const MAX_PROOF_INTERFACE_ENTRIES: usize = 4_096;
-/// Maximum bytes of one case payload — one input or one expected output.
-pub const MAX_PROOF_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
 /// Maximum bytes of one received opaque provenance subject.
 pub const MAX_PROOF_SUBJECT_BYTES: usize = 1_024;
 /// Maximum bytes of the sidecar's canonical manifest.
