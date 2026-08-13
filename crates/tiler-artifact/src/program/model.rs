@@ -19,8 +19,8 @@ use std::sync::Arc;
 use tiler_ir::kernel::{AddressSpace, BufferAccess, CanonicalKernelIdentity, KernelType};
 use tiler_ir::program::abi::{PreparedEntryTargetRequirement, TargetPropertyRequirementRelation};
 use tiler_ir::program::{
-    ByteWindow, MaterializedValueRef, StageRef, StorageEncoding, StorageScalar, ValueRole,
-    VerifiedKernelProgram,
+    AlignmentRequirement, ByteWindow, MaterializedValueRef, StageRef, StorageEncoding,
+    StorageScalar, ValueRole, VerifiedKernelProgram,
 };
 use tiler_ir::schedule::{
     ExceptionalValueAssumption, FlushedZeroSign, IndexArithmetic, MemoryOrdering,
@@ -807,7 +807,7 @@ pub(super) struct BindingData {
     pub(super) encoding: StorageEncoding,
     pub(super) address_space: AddressSpace,
     pub(super) access: BufferAccess,
-    pub(super) alignment: u32,
+    pub(super) alignment: AlignmentRequirement,
     pub(super) target: BindingTargetData,
     pub(super) accessible_offset: u32,
     pub(super) accessible_bytes: u32,
@@ -1635,7 +1635,7 @@ impl<'a> BindingRef<'a> {
 
     /// Returns the byte alignment the bound storage must satisfy.
     #[must_use]
-    pub fn alignment(self) -> u32 {
+    pub fn alignment(self) -> AlignmentRequirement {
         self.data().alignment
     }
 
@@ -2719,7 +2719,7 @@ fn push_entry(
         push_storage_encoding(bytes, binding.encoding);
         bytes.push(address_space_tag(binding.address_space));
         bytes.push(buffer_access_tag(binding.access));
-        bytes.extend_from_slice(&binding.alignment.to_be_bytes());
+        bytes.extend_from_slice(&binding.alignment.bytes().to_be_bytes());
         push_binding_target(bytes, &binding.target);
         push_abi_reference(bytes, arena, binding.accessible_offset);
         push_abi_reference(bytes, arena, binding.accessible_bytes);

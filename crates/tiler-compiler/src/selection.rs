@@ -1813,10 +1813,11 @@ mod tests {
     };
     use crate::boundary::StorageScalar;
     use crate::boundary::{
-        AdmittedMemoryDomains, AvailabilityGuarantee, AvailabilityRequirement, BoundaryProperty,
-        ByteAlignment, ExecutionAffinity, GuaranteedProperty, LayoutGuarantee, LayoutRequirement,
-        MaterializationForm, MemoryDomainClass, RequiredProperty, StorageEncoding,
-        UnsatisfiedReason, VisibilityGuarantee, VisibilityRequirement,
+        AdmittedMemoryDomains, AlignmentGuarantee, AlignmentRequirement, AvailabilityGuarantee,
+        AvailabilityRequirement, BoundaryProperty, ByteAlignment, ExecutionAffinity,
+        GuaranteedProperty, LayoutGuarantee, LayoutRequirement, MaterializationForm,
+        MemoryDomainClass, RequiredProperty, StorageEncoding, UnsatisfiedReason,
+        VisibilityGuarantee, VisibilityRequirement,
     };
     use crate::cover::{RegionCover, enumerate_covers};
     use crate::frontier::{
@@ -2663,7 +2664,7 @@ mod tests {
         GuaranteedProperties::new([
             GuaranteedProperty::StorageLayout(LayoutGuarantee::DenseRowMajor),
             GuaranteedProperty::StorageEncoding(StorageEncoding::Unpacked),
-            GuaranteedProperty::Alignment(ByteAlignment::natural_for(StorageScalar::F32)),
+            GuaranteedProperty::Alignment(AlignmentGuarantee::natural_for(StorageScalar::F32)),
             GuaranteedProperty::Materialization(MaterializationForm::MaterializedBuffer),
             GuaranteedProperty::ExecutionAffinity(ExecutionAffinity::PRIMARY),
             GuaranteedProperty::MemoryDomain(MemoryDomainClass::Device),
@@ -2678,7 +2679,7 @@ mod tests {
         RequiredProperties::new([
             RequiredProperty::StorageLayout(LayoutRequirement::DenseRowMajor),
             RequiredProperty::StorageEncoding(StorageEncoding::Unpacked),
-            RequiredProperty::Alignment(ByteAlignment::natural_for(StorageScalar::F32)),
+            RequiredProperty::Alignment(AlignmentRequirement::natural_for(StorageScalar::F32)),
             RequiredProperty::Materialization(MaterializationForm::MaterializedBuffer),
             RequiredProperty::ExecutionAffinity(ExecutionAffinity::PRIMARY),
             RequiredProperty::MemoryDomain(
@@ -3202,11 +3203,11 @@ mod tests {
 
         let unsatisfied = crate::boundary::unsatisfied_properties(
             &RequiredProperties::new([RequiredProperty::Alignment(
-                ByteAlignment::new(16).unwrap(),
+                AlignmentRequirement::new(16).unwrap(),
             )])
             .unwrap(),
             &GuaranteedProperties::new([GuaranteedProperty::Alignment(
-                ByteAlignment::natural_for(StorageScalar::F32),
+                AlignmentGuarantee::natural_for(StorageScalar::F32),
             )])
             .unwrap(),
         )

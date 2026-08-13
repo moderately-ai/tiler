@@ -28,7 +28,8 @@ use tiler_ir::program::abi::{
     TargetPropertyProviderIdentity, TargetPropertyQuery, TargetPropertyRequirementRelation,
 };
 use tiler_ir::program::{
-    BitPackedEncoding, PackedBitOrder, PackedTailRule, StorageEncoding, StorageScalar,
+    AlignmentRequirement, BitPackedEncoding, PackedBitOrder, PackedTailRule, StorageEncoding,
+    StorageScalar,
 };
 use tiler_ir::schedule::{
     ExceptionalValueAssumption, FencedSpaces, ResourceRequirements, SynchronizationSubject,
@@ -1086,7 +1087,8 @@ fn parse_entry(
                 encoding: cursor.storage_encoding()?,
                 address_space: cursor.address_space()?,
                 access: cursor.buffer_access()?,
-                alignment: cursor.u32()?,
+                alignment: AlignmentRequirement::new(cursor.u32()?)
+                    .map_err(|cause| ArtifactCodecError::InvalidAlignment { cause })?,
                 target: cursor.binding_target()?,
                 accessible_offset: cursor.expression_ref(expressions)?,
                 accessible_bytes: cursor.expression_ref(expressions)?,

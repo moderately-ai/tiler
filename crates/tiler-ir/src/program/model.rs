@@ -30,6 +30,7 @@ use crate::shape::Shape;
 
 use super::MAX_PROGRAM_IDENTITY_BYTES;
 use super::abi::{AbiArenaTraversal, ExprNode, canonical_arena_traversal};
+use super::alignment::{AlignmentGuarantee, AlignmentRequirement};
 use super::error::KernelProgramDiagnostic;
 use super::handles::{AbiExprId, MaterializedValueId, StageId, ViewId};
 
@@ -681,7 +682,7 @@ pub struct MaterializedValueSpec {
     /// Element type used by kernel accesses and SSA values.
     pub element_type: KernelType,
     /// Byte alignment the value requires.
-    pub alignment: u32,
+    pub alignment: AlignmentRequirement,
     /// Memory domain the value lives in.
     pub memory_space: MemorySpace,
 }
@@ -704,7 +705,7 @@ pub struct MaterializedComponentSpec {
     /// Complete physical storage encoding.
     pub encoding: StorageEncoding,
     /// Byte alignment the component requires.
-    pub alignment: u32,
+    pub alignment: AlignmentRequirement,
     /// Memory domain the component lives in.
     pub memory_space: MemorySpace,
 }
@@ -715,7 +716,7 @@ pub struct AllocationSpec {
     /// Bytes the allocation provides.
     pub capacity_bytes: u64,
     /// Byte alignment the allocation guarantees.
-    pub alignment: u32,
+    pub alignment: AlignmentGuarantee,
     /// Memory domain the allocation lives in.
     pub memory_space: MemorySpace,
     /// Who owns the bytes.
@@ -769,7 +770,7 @@ pub(super) struct MaterializedValueData {
     pub(super) component_type: Option<ResolvedValueType>,
     pub(super) encoding: StorageEncoding,
     pub(super) required_bytes: u64,
-    pub(super) alignment: u32,
+    pub(super) alignment: AlignmentRequirement,
     pub(super) memory_space: MemorySpace,
     pub(super) allocation: u32,
 }
@@ -785,7 +786,7 @@ pub(super) struct ViewData {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct AllocationData {
     pub(super) capacity_bytes: u64,
-    pub(super) alignment: u32,
+    pub(super) alignment: AlignmentGuarantee,
     pub(super) memory_space: MemorySpace,
     pub(super) ownership: AllocationOwnership,
 }
@@ -1237,6 +1238,20 @@ impl<'a> ViewRef<'a> {
         self.data().window
     }
 
+    /// Returns the alignment this view is statically guaranteed to provide.
+    ///
+    /// Derived from the backing allocation's guarantee after the window's
+    /// actual byte offset. Offset zero preserves that guarantee; a nonzero
+    /// offset advertises only the greatest power of two common to the base
+    /// and the offset.
+    #[must_use]
+    pub fn alignment(self) -> AlignmentGuarantee {
+        self.value()
+            .allocation()
+            .alignment()
+            .after_offset(self.window().offset)
+    }
+
     fn data(self) -> ViewData {
         self.program.data.views[self.view]
     }
@@ -1306,7 +1321,7 @@ impl<'a> MaterializedValueRef<'a> {
 
     /// Returns the byte alignment the value requires.
     #[must_use]
-    pub fn alignment(self) -> u32 {
+    pub fn alignment(self) -> AlignmentRequirement {
         self.data().alignment
     }
 
@@ -1365,7 +1380,7 @@ impl<'a> AllocationRef<'a> {
 
     /// Returns the byte alignment the allocation guarantees.
     #[must_use]
-    pub fn alignment(self) -> u32 {
+    pub fn alignment(self) -> AlignmentGuarantee {
         self.data().alignment
     }
 
@@ -1988,7 +2003,7 @@ fn value_key(
     push_component_type(&mut bytes, value.component_type.as_ref());
     push_storage_encoding(&mut bytes, value.encoding);
     bytes.extend_from_slice(&value.required_bytes.to_be_bytes());
-    bytes.extend_from_slice(&value.alignment.to_be_bytes());
+    bytes.extend_from_slice(&value.alignment.bytes().to_be_bytes());
     bytes.push(value.memory_space.tag());
     match definition {
         None => bytes.push(0x00),
@@ -2028,7 +2043,7 @@ fn allocation_key(
     let mut bytes = Vec::new();
     bytes.extend_from_slice(ALLOCATION_KEY_DOMAIN);
     bytes.extend_from_slice(&allocation.capacity_bytes.to_be_bytes());
-    bytes.extend_from_slice(&allocation.alignment.to_be_bytes());
+    bytes.extend_from_slice(&allocation.alignment.bytes().to_be_bytes());
     bytes.push(allocation.memory_space.tag());
     bytes.push(allocation.ownership.tag());
     push_len(&mut bytes, bound.len());
@@ -2329,7 +2344,7 @@ fn push_value(
     push_component_type(bytes, value.component_type.as_ref());
     push_storage_encoding(bytes, value.encoding);
     bytes.extend_from_slice(&value.required_bytes.to_be_bytes());
-    bytes.extend_from_slice(&value.alignment.to_be_bytes());
+    bytes.extend_from_slice(&value.alignment.bytes().to_be_bytes());
     bytes.push(value.memory_space.tag());
     match definition {
         None => bytes.push(0x00),
@@ -2363,7 +2378,7 @@ fn push_allocation(
         .collect();
     bound.sort_unstable();
     bytes.extend_from_slice(&allocation.capacity_bytes.to_be_bytes());
-    bytes.extend_from_slice(&allocation.alignment.to_be_bytes());
+    bytes.extend_from_slice(&allocation.alignment.bytes().to_be_bytes());
     bytes.push(allocation.memory_space.tag());
     bytes.push(allocation.ownership.tag());
     push_len(bytes, bound.len());

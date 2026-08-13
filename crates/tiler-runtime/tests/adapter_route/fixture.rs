@@ -97,10 +97,10 @@ use tiler_ir::program::abi::{
     TargetPropertyQuery, TargetPropertyRequirementRelation,
 };
 use tiler_ir::program::{
-    AllocationOwnership, AllocationSpec, CoveredOccurrence, KernelProgramBuilder,
-    MaterializedOrigin, MaterializedValueSpec, MemorySpace, RoutingCommitState,
-    RoutingCommitTransition, StageAccess, StageAccessMode, StageLaunch, StorageEncoding,
-    StorageScalar, ValueRole, VerifiedKernelProgram,
+    AlignmentGuarantee, AlignmentRequirement, AllocationOwnership, AllocationSpec,
+    CoveredOccurrence, KernelProgramBuilder, MaterializedOrigin, MaterializedValueSpec,
+    MemorySpace, RoutingCommitState, RoutingCommitTransition, StageAccess, StageAccessMode,
+    StageLaunch, StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram,
 };
 // The five behaviour vocabularies `DimensionBehaviour` ranges over are named
 // through `tiler_artifact::program` above rather than here, even where this half
@@ -1467,7 +1467,7 @@ pub fn fused_program(semantic: &SemanticProgram, guard: FusedGuard) -> VerifiedK
     let external = plan
         .push_allocation(AllocationSpec {
             capacity_bytes: ROWS * COLUMNS * 4,
-            alignment: 4,
+            alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
             memory_space: MemorySpace::Device,
             ownership: AllocationOwnership::External,
         })
@@ -1475,7 +1475,7 @@ pub fn fused_program(semantic: &SemanticProgram, guard: FusedGuard) -> VerifiedK
     let owned = plan
         .push_allocation(AllocationSpec {
             capacity_bytes: ROWS * 4,
-            alignment: 4,
+            alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
             memory_space: MemorySpace::Device,
             ownership: AllocationOwnership::Program,
         })
@@ -1489,7 +1489,7 @@ pub fn fused_program(semantic: &SemanticProgram, guard: FusedGuard) -> VerifiedK
                 storage_scalar: StorageScalar::F32,
                 element_type: KernelType::F32,
                 encoding: StorageEncoding::Unpacked,
-                alignment: 4,
+                alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
                 memory_space: MemorySpace::Device,
             },
             external,
@@ -1504,7 +1504,7 @@ pub fn fused_program(semantic: &SemanticProgram, guard: FusedGuard) -> VerifiedK
                 storage_scalar: StorageScalar::F32,
                 element_type: KernelType::F32,
                 encoding: StorageEncoding::Unpacked,
-                alignment: 4,
+                alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
                 memory_space: MemorySpace::Device,
             },
             owned,
@@ -1825,7 +1825,7 @@ pub fn materialized_program(semantic: &SemanticProgram) -> VerifiedKernelProgram
     let external = plan
         .push_allocation(AllocationSpec {
             capacity_bytes: ROWS * COLUMNS * 4,
-            alignment: 4,
+            alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
             memory_space: MemorySpace::Device,
             ownership: AllocationOwnership::External,
         })
@@ -1833,7 +1833,7 @@ pub fn materialized_program(semantic: &SemanticProgram) -> VerifiedKernelProgram
     let scratch = plan
         .push_allocation(AllocationSpec {
             capacity_bytes: ROWS * COLUMNS * 4,
-            alignment: 4,
+            alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
             memory_space: MemorySpace::Device,
             ownership: AllocationOwnership::Program,
         })
@@ -1841,7 +1841,7 @@ pub fn materialized_program(semantic: &SemanticProgram) -> VerifiedKernelProgram
     let owned = plan
         .push_allocation(AllocationSpec {
             capacity_bytes: ROWS * 4,
-            alignment: 4,
+            alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
             memory_space: MemorySpace::Device,
             ownership: AllocationOwnership::Program,
         })
@@ -1856,7 +1856,7 @@ pub fn materialized_program(semantic: &SemanticProgram) -> VerifiedKernelProgram
                 storage_scalar: StorageScalar::F32,
                 element_type: KernelType::F32,
                 encoding: StorageEncoding::Unpacked,
-                alignment: 4,
+                alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
                 memory_space: MemorySpace::Device,
             },
             external,
@@ -1871,7 +1871,7 @@ pub fn materialized_program(semantic: &SemanticProgram) -> VerifiedKernelProgram
                 storage_scalar: StorageScalar::F32,
                 element_type: KernelType::F32,
                 encoding: StorageEncoding::Unpacked,
-                alignment: 4,
+                alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
                 memory_space: MemorySpace::Device,
             },
             scratch,
@@ -1886,7 +1886,7 @@ pub fn materialized_program(semantic: &SemanticProgram) -> VerifiedKernelProgram
                 storage_scalar: StorageScalar::F32,
                 element_type: KernelType::F32,
                 encoding: StorageEncoding::Unpacked,
-                alignment: 4,
+                alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
                 memory_space: MemorySpace::Device,
             },
             owned,

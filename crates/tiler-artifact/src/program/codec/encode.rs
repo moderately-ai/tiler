@@ -729,7 +729,7 @@ fn encode_entry(bytes: &mut Vec<u8>, entry: &EntryRow) {
         push_storage_encoding(bytes, binding.encoding);
         bytes.push(address_space_tag(binding.address_space));
         bytes.push(buffer_access_tag(binding.access));
-        bytes.extend_from_slice(&binding.alignment.to_be_bytes());
+        bytes.extend_from_slice(&binding.alignment.bytes().to_be_bytes());
         push_binding_target(bytes, &binding.target);
         bytes.extend_from_slice(&binding.accessible_offset.to_be_bytes());
         bytes.extend_from_slice(&binding.accessible_bytes.to_be_bytes());

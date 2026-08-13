@@ -131,10 +131,10 @@
 //! # use tiler_ir::kernel::{KernelType, lower_scheduled_region};
 //! # use tiler_ir::program::abi::AbiRoot;
 //! # use tiler_ir::program::{
-//! #     AllocationOwnership, AllocationSpec, CoveredOccurrence, KernelProgramBuilder,
-//! #     MaterializedOrigin, MaterializedValueSpec, MemorySpace, RoutingCommitState,
-//! #     RoutingCommitTransition, StageAccess, StageAccessMode, StageLaunch, StorageEncoding,
-//! #     StorageScalar, ValueRole,
+//! #     AlignmentGuarantee, AlignmentRequirement, AllocationOwnership, AllocationSpec,
+//! #     CoveredOccurrence, KernelProgramBuilder, MaterializedOrigin, MaterializedValueSpec,
+//! #     MemorySpace, RoutingCommitState, RoutingCommitTransition, StageAccess, StageAccessMode,
+//! #     StageLaunch, StorageEncoding, StorageScalar, ValueRole,
 //! # };
 //! # use tiler_ir::schedule::{
 //! #     Access, AccessMode, ApproximationEnvelope, BoundsProof, BoundsProofKind, BoundsWitnessId,
@@ -291,7 +291,7 @@
 //! # for key in ["left", "right"] {
 //! #     let allocation = plan.push_allocation(AllocationSpec {
 //! #         capacity_bytes: 24,
-//! #         alignment: 4,
+//! #         alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
 //! #         memory_space: MemorySpace::Device,
 //! #         ownership: AllocationOwnership::External,
 //! #     })?;
@@ -303,7 +303,7 @@
 //! #             storage_scalar: StorageScalar::F32,
 //! #             element_type: KernelType::F32,
 //! #             encoding: StorageEncoding::Unpacked,
-//! #             alignment: 4,
+//! #             alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
 //! #             memory_space: MemorySpace::Device,
 //! #         },
 //! #         allocation,
@@ -312,7 +312,7 @@
 //! # }
 //! # let owned = plan.push_allocation(AllocationSpec {
 //! #     capacity_bytes: 24,
-//! #     alignment: 4,
+//! #     alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
 //! #     memory_space: MemorySpace::Device,
 //! #     ownership: AllocationOwnership::Program,
 //! # })?;
@@ -324,7 +324,7 @@
 //! #         storage_scalar: StorageScalar::F32,
 //! #         element_type: KernelType::F32,
 //! #         encoding: StorageEncoding::Unpacked,
-//! #         alignment: 4,
+//! #         alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
 //! #         memory_space: MemorySpace::Device,
 //! #     },
 //! #     owned,

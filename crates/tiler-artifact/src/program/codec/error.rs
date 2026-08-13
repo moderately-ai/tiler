@@ -18,6 +18,7 @@
 use std::error::Error;
 use std::fmt;
 
+use tiler_ir::program::ByteAlignmentError;
 use tiler_ir::semantic::{BuildError, RegistryError};
 use tiler_ir::shape::ShapeError;
 
@@ -643,6 +644,11 @@ pub(crate) enum ArtifactCodecError {
         /// Typed rejection from the shared shape vocabulary.
         cause: ShapeError,
     },
+    /// A binding alignment was rejected by the shared checked constructor.
+    InvalidAlignment {
+        /// Typed rejection from the shared alignment vocabulary.
+        cause: ByteAlignmentError,
+    },
     /// A decoded row violates an artifact-model insertion-time rule.
     ModelRule {
         /// The model's own typed rejection.
@@ -684,6 +690,7 @@ impl Error for ArtifactCodecError {
             Self::InvalidInterfaceKey { cause } => Some(cause),
             Self::InvalidProviderIdentity { cause } => Some(cause),
             Self::InvalidShape { cause } => Some(cause),
+            Self::InvalidAlignment { cause } => Some(cause),
             Self::ModelRule { cause } => Some(cause.as_ref()),
             Self::ModelObligation { cause } | Self::IdentityDerivation { cause } => Some(cause),
             Self::DeliveredRealization { cause } => Some(cause.as_ref()),

@@ -976,7 +976,7 @@ impl<'a> DecodedBinding<'a> {
 
     /// Returns the byte alignment the bound storage must satisfy.
     #[must_use]
-    pub fn alignment(self) -> u32 {
+    pub fn alignment(self) -> crate::program::AlignmentRequirement {
         self.data().alignment
     }
 
@@ -1206,6 +1206,7 @@ impl From<ArtifactCodecError> for ArtifactCodecFailure {
             | ArtifactCodecError::InvalidInterfaceKey { .. }
             | ArtifactCodecError::InvalidProviderIdentity { .. }
             | ArtifactCodecError::InvalidShape { .. }
+            | ArtifactCodecError::InvalidAlignment { .. }
             | ArtifactCodecError::UnknownTag { .. } => Self::Malformed { detail },
 
             ArtifactCodecError::ManifestDigestMismatch

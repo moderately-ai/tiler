@@ -93,8 +93,10 @@
 use std::fmt;
 
 use tiler_ir::identity::{push_len, push_slice};
+pub(crate) use tiler_ir::program::{
+    AlignmentGuarantee, AlignmentRequirement, ByteAlignment, StorageEncoding, StorageScalar,
+};
 use tiler_ir::program::{BitPackedEncoding, PackedBitOrder, PackedTailRule};
-pub(crate) use tiler_ir::program::{StorageEncoding, StorageScalar};
 use tiler_ir::shape::Axis;
 
 /// Canonical domain-separation tag for one boundary property set.
@@ -635,86 +637,6 @@ const fn packed_u4() -> BitPackedEncoding {
     }
 }
 
-/// A byte alignment of a boundary value's first element.
-///
-/// Both sides name a power-of-two byte count and subsumption is divisibility,
-/// which is the accepted contract's own worked example: "16-byte alignment
-/// satisfies a 4-byte requirement".
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ByteAlignment(u32);
-
-impl ByteAlignment {
-    /// The natural alignment of one element of `scalar`, unpacked.
-    ///
-    /// Alignment is a property of the boundary value's own element type, not of
-    /// the profile the region compiles under: a two-byte carrier requires two
-    /// bytes whatever else the program contains, and telling it four is a
-    /// requirement that is not its own — permissive today only because one dtype
-    /// makes the wrong answer coincide with the right one.
-    ///
-    /// [`StorageScalar::byte_width`] is the derivation, and deliberately the only
-    /// one. A width table here would be a second place for a carrier's width to
-    /// be stated, and the two would agree exactly until the day a carrier was
-    /// added to one of them.
-    ///
-    /// The argument is the *carrier*, which is why the storage encoding is not a
-    /// second argument: a sub-byte logical element reaches memory inside a
-    /// carrier under a [`StorageEncoding::BitPacked`] rule, and what the first
-    /// element requires is that carrier's alignment. Deriving an alignment from
-    /// the logical width instead would ask a four-bit element for a whole-byte
-    /// power of two and get zero, which [`Self::new`] refuses.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a storage carrier's byte width is not a positive power of two
-    /// within `u32`, which would make it unrepresentable as an alignment at all.
-    /// No carrier in the vocabulary is such a width, and
-    /// `every_storage_carrier_has_a_representable_alignment` checks the whole
-    /// vocabulary rather than leaving that a claim about the two that exist now.
-    pub(crate) fn natural_for(scalar: StorageScalar) -> Self {
-        u32::try_from(scalar.byte_width())
-            .ok()
-            .and_then(Self::new)
-            .expect("a storage carrier's byte width is a positive power of two within `u32`")
-    }
-
-    /// Builds an alignment, rejecting anything that is not a positive power of
-    /// two.
-    ///
-    /// Alignment subsumption is divisibility, and divisibility is a partial
-    /// order over powers of two but not over arbitrary integers: with a
-    /// guarantee of 12 and a requirement of 8, neither divides the other and a
-    /// value 12-byte aligned is not 8-byte aligned, so admitting non-powers of
-    /// two would make the relation quietly wrong rather than merely unusual.
-    pub(crate) const fn new(bytes: u32) -> Option<Self> {
-        if bytes != 0 && bytes.is_power_of_two() {
-            Some(Self(bytes))
-        } else {
-            None
-        }
-    }
-
-    /// The alignment in bytes.
-    pub(crate) const fn bytes(self) -> u32 {
-        self.0
-    }
-
-    /// Whether this guaranteed alignment discharges a requirement for `required`.
-    const fn satisfies(self, required: Self) -> bool {
-        self.0.is_multiple_of(required.0)
-    }
-
-    fn encode(self, bytes: &mut Vec<u8>) {
-        bytes.extend_from_slice(&self.0.to_be_bytes());
-    }
-}
-
-impl fmt::Display for ByteAlignment {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}-byte", self.0)
-    }
-}
-
 /// The form a boundary value takes.
 ///
 /// These are the three the accepted optimizer contract names: "materialized
@@ -1136,7 +1058,7 @@ pub(crate) enum RequiredProperty {
     /// The storage encoding the incoming value must have.
     StorageEncoding(StorageEncoding),
     /// The minimum byte alignment the incoming value must have.
-    Alignment(ByteAlignment),
+    Alignment(AlignmentRequirement),
     /// The form the incoming value must take.
     Materialization(MaterializationForm),
     /// The symbolic affinity the incoming value must be placed for.
@@ -1230,7 +1152,9 @@ impl RequiredProperty {
             // A smaller alignment is weaker exactly when it divides the larger:
             // everything 16-byte aligned is 4-byte aligned, so requiring 4 is no
             // stronger than requiring 16.
-            (Self::Alignment(mine), Self::Alignment(theirs)) => theirs.satisfies(*mine),
+            (Self::Alignment(mine), Self::Alignment(theirs)) => {
+                AlignmentGuarantee::from_alignment(theirs.alignment()).satisfies(*mine)
+            }
             (Self::Materialization(mine), Self::Materialization(theirs)) => mine == theirs,
             (Self::ExecutionAffinity(mine), Self::ExecutionAffinity(theirs)) => mine == theirs,
             // A superset admits more producers, so it is the weaker requirement.
@@ -1248,7 +1172,7 @@ impl RequiredProperty {
         match self {
             Self::StorageLayout(value) => value.encode(bytes),
             Self::StorageEncoding(value) => encode_storage(*value, bytes),
-            Self::Alignment(value) => value.encode(bytes),
+            Self::Alignment(value) => bytes.extend_from_slice(&value.bytes().to_be_bytes()),
             Self::Materialization(value) => value.encode(bytes),
             Self::ExecutionAffinity(value) => value.encode(bytes),
             Self::MemoryDomain(value) => value.encode(bytes),
@@ -1336,7 +1260,7 @@ pub(crate) enum GuaranteedProperty {
     /// The storage encoding the outgoing value has.
     StorageEncoding(StorageEncoding),
     /// The byte alignment the outgoing value has.
-    Alignment(ByteAlignment),
+    Alignment(AlignmentGuarantee),
     /// The form the outgoing value takes.
     Materialization(MaterializationForm),
     /// The symbolic affinity the outgoing value is placed for.
@@ -1441,7 +1365,9 @@ impl GuaranteedProperty {
             (Self::StorageEncoding(mine), Self::StorageEncoding(theirs)) => mine == theirs,
             // A 16-byte guarantee discharges every requirement a 4-byte guarantee
             // does, and some it does not.
-            (Self::Alignment(mine), Self::Alignment(theirs)) => mine.satisfies(*theirs),
+            (Self::Alignment(mine), Self::Alignment(theirs)) => {
+                mine.satisfies(AlignmentRequirement::from_alignment(theirs.alignment()))
+            }
             (Self::Materialization(mine), Self::Materialization(theirs)) => mine == theirs,
             (Self::ExecutionAffinity(mine), Self::ExecutionAffinity(theirs)) => mine == theirs,
             (Self::MemoryDomain(mine), Self::MemoryDomain(theirs)) => mine == theirs,
@@ -1458,7 +1384,7 @@ impl GuaranteedProperty {
         match self {
             Self::StorageLayout(value) => value.encode(bytes),
             Self::StorageEncoding(value) => encode_storage(*value, bytes),
-            Self::Alignment(value) => value.encode(bytes),
+            Self::Alignment(value) => bytes.extend_from_slice(&value.bytes().to_be_bytes()),
             Self::Materialization(value) => value.encode(bytes),
             Self::ExecutionAffinity(value) => value.encode(bytes),
             Self::MemoryDomain(value) => bytes.push(value.tag()),
@@ -1997,15 +1923,15 @@ fn first_duplicate(
 #[cfg(test)]
 mod tests {
     use super::{
-        AdmittedMemoryDomains, AvailabilityGuarantee, AvailabilityRequirement, BitPackedEncoding,
-        BoundaryProperty, BoundaryPropertyError, ByteAlignment, CANONICAL_PROPERTIES,
-        ChildRequirementConflict, ExecutionAffinity, GuaranteedProperties, GuaranteedProperty,
-        LayoutGuarantee, LayoutRequirement, MaterializationForm, MemoryDomainClass, PackedBitOrder,
-        PackedTailRule, RequiredProperties, RequiredProperty, StorageAccessError,
-        StorageAccessKind, StorageCodecError, StorageEncoding, StorageScalar, UnsatisfiedProperty,
-        UnsatisfiedReason, VisibilityGuarantee, VisibilityRequirement, code_access,
-        derive_child_requirements, encode_property_identity, pack_codes, unpack_codes,
-        unsatisfied_properties,
+        AdmittedMemoryDomains, AlignmentGuarantee, AlignmentRequirement, AvailabilityGuarantee,
+        AvailabilityRequirement, BitPackedEncoding, BoundaryProperty, BoundaryPropertyError,
+        ByteAlignment, CANONICAL_PROPERTIES, ChildRequirementConflict, ExecutionAffinity,
+        GuaranteedProperties, GuaranteedProperty, LayoutGuarantee, LayoutRequirement,
+        MaterializationForm, MemoryDomainClass, PackedBitOrder, PackedTailRule, RequiredProperties,
+        RequiredProperty, StorageAccessError, StorageAccessKind, StorageCodecError,
+        StorageEncoding, StorageScalar, UnsatisfiedProperty, UnsatisfiedReason,
+        VisibilityGuarantee, VisibilityRequirement, code_access, derive_child_requirements,
+        encode_property_identity, pack_codes, unpack_codes, unsatisfied_properties,
     };
     use tiler_ir::shape::Axis;
 
@@ -2014,7 +1940,7 @@ mod tests {
         GuaranteedProperties::new([
             GuaranteedProperty::StorageLayout(LayoutGuarantee::DenseRowMajor),
             GuaranteedProperty::StorageEncoding(StorageEncoding::Unpacked),
-            GuaranteedProperty::Alignment(ByteAlignment::natural_for(StorageScalar::F32)),
+            GuaranteedProperty::Alignment(AlignmentGuarantee::natural_for(StorageScalar::F32)),
             GuaranteedProperty::Materialization(MaterializationForm::MaterializedBuffer),
             GuaranteedProperty::ExecutionAffinity(ExecutionAffinity::PRIMARY),
             GuaranteedProperty::MemoryDomain(MemoryDomainClass::Device),
@@ -2029,7 +1955,7 @@ mod tests {
         RequiredProperties::new([
             RequiredProperty::StorageLayout(LayoutRequirement::DenseRowMajor),
             RequiredProperty::StorageEncoding(StorageEncoding::Unpacked),
-            RequiredProperty::Alignment(ByteAlignment::natural_for(StorageScalar::F32)),
+            RequiredProperty::Alignment(AlignmentRequirement::natural_for(StorageScalar::F32)),
             RequiredProperty::Materialization(MaterializationForm::MaterializedBuffer),
             RequiredProperty::ExecutionAffinity(ExecutionAffinity::PRIMARY),
             RequiredProperty::MemoryDomain(
@@ -2078,13 +2004,18 @@ mod tests {
     fn alignment_subsumption_is_divisibility_in_one_direction_only() {
         // The accepted contract's own example: 16-byte alignment satisfies a
         // 4-byte requirement, and the converse does not hold.
-        let sixteen = ByteAlignment::new(16).unwrap();
-        let four = ByteAlignment::natural_for(StorageScalar::F32);
+        let sixteen = AlignmentGuarantee::new(16).unwrap();
+        let four = AlignmentRequirement::natural_for(StorageScalar::F32);
         let coarse = GuaranteedProperties::new([GuaranteedProperty::Alignment(sixteen)]).unwrap();
-        let fine = GuaranteedProperties::new([GuaranteedProperty::Alignment(four)]).unwrap();
+        let fine = GuaranteedProperties::new([GuaranteedProperty::Alignment(
+            AlignmentGuarantee::natural_for(StorageScalar::F32),
+        )])
+        .unwrap();
         let needs_four = RequiredProperties::new([RequiredProperty::Alignment(four)]).unwrap();
-        let needs_sixteen =
-            RequiredProperties::new([RequiredProperty::Alignment(sixteen)]).unwrap();
+        let needs_sixteen = RequiredProperties::new([RequiredProperty::Alignment(
+            AlignmentRequirement::new(16).unwrap(),
+        )])
+        .unwrap();
 
         assert!(unsatisfied_properties(&needs_four, &coarse).is_empty());
         let refused = unsatisfied_properties(&needs_sixteen, &fine);
@@ -2151,8 +2082,8 @@ mod tests {
         // Divisibility is a partial order over powers of two and not over
         // arbitrary integers: 12 and 8 divide neither way, yet a 12-byte-aligned
         // value is not 8-byte aligned.
-        assert!(ByteAlignment::new(12).is_none());
-        assert!(ByteAlignment::new(0).is_none());
+        assert!(ByteAlignment::new(12).is_err());
+        assert!(ByteAlignment::new(0).is_err());
         assert_eq!(ByteAlignment::new(16).unwrap().bytes(), 16);
     }
 
@@ -2509,8 +2440,8 @@ mod tests {
     #[test]
     fn duplicate_dimensions_are_malformed_output() {
         let error = RequiredProperties::new([
-            RequiredProperty::Alignment(ByteAlignment::natural_for(StorageScalar::F32)),
-            RequiredProperty::Alignment(ByteAlignment::new(16).unwrap()),
+            RequiredProperty::Alignment(AlignmentRequirement::natural_for(StorageScalar::F32)),
+            RequiredProperty::Alignment(AlignmentRequirement::new(16).unwrap()),
         ])
         .unwrap_err();
         assert_eq!(
@@ -2546,19 +2477,20 @@ mod tests {
     #[test]
     fn requirement_dominance_is_a_partial_order_over_the_dimensions() {
         let four = RequiredProperties::new([RequiredProperty::Alignment(
-            ByteAlignment::natural_for(StorageScalar::F32),
+            AlignmentRequirement::natural_for(StorageScalar::F32),
         )])
         .unwrap();
-        let sixteen =
-            RequiredProperties::new([RequiredProperty::Alignment(ByteAlignment::new(16).unwrap())])
-                .unwrap();
+        let sixteen = RequiredProperties::new([RequiredProperty::Alignment(
+            AlignmentRequirement::new(16).unwrap(),
+        )])
+        .unwrap();
         assert!(four.is_no_stronger_than(&sixteen));
         assert!(!sixteen.is_no_stronger_than(&four));
 
         // A requirement on a dimension the other set does not name is stronger,
         // because the other admits every producer on it.
         let plus_layout = RequiredProperties::new([
-            RequiredProperty::Alignment(ByteAlignment::natural_for(StorageScalar::F32)),
+            RequiredProperty::Alignment(AlignmentRequirement::natural_for(StorageScalar::F32)),
             RequiredProperty::StorageLayout(LayoutRequirement::DenseRowMajor),
         ])
         .unwrap();
@@ -2580,11 +2512,11 @@ mod tests {
     #[test]
     fn guarantee_dominance_ranks_strength_and_not_cost() {
         let coarse = GuaranteedProperties::new([GuaranteedProperty::Alignment(
-            ByteAlignment::new(16).unwrap(),
+            AlignmentGuarantee::new(16).unwrap(),
         )])
         .unwrap();
         let fine = GuaranteedProperties::new([GuaranteedProperty::Alignment(
-            ByteAlignment::natural_for(StorageScalar::F32),
+            AlignmentGuarantee::natural_for(StorageScalar::F32),
         )])
         .unwrap();
         assert!(coarse.is_at_least_as_strong_as(&fine));
@@ -2592,7 +2524,7 @@ mod tests {
 
         // A guarantee the other set does not make is extra strength, not a gap.
         let plus_visibility = GuaranteedProperties::new([
-            GuaranteedProperty::Alignment(ByteAlignment::new(16).unwrap()),
+            GuaranteedProperty::Alignment(AlignmentGuarantee::new(16).unwrap()),
             GuaranteedProperty::Visibility(VisibilityGuarantee::CoherentOnProducingAffinity),
         ])
         .unwrap();
@@ -2712,7 +2644,7 @@ mod tests {
             GuaranteedProperties::new(bounded_guarantees().properties().iter().map(|property| {
                 match property {
                     GuaranteedProperty::Alignment(_) => {
-                        GuaranteedProperty::Alignment(ByteAlignment::new(16).unwrap())
+                        GuaranteedProperty::Alignment(AlignmentGuarantee::new(16).unwrap())
                     }
                     other => other.clone(),
                 }

@@ -33,9 +33,9 @@
 //! second predicate over the same question.
 
 use crate::boundary::{
-    AvailabilityGuarantee, AvailabilityRequirement, GuaranteedProperties, GuaranteedProperty,
-    MaterializationForm, RequiredProperties, RequiredProperty, VisibilityGuarantee,
-    VisibilityRequirement,
+    AlignmentGuarantee, AlignmentRequirement, AvailabilityGuarantee, AvailabilityRequirement,
+    GuaranteedProperties, GuaranteedProperty, MaterializationForm, RequiredProperties,
+    RequiredProperty, VisibilityGuarantee, VisibilityRequirement,
 };
 use crate::call_abi::{CallAbi, CallParameter, ParameterLayout, ParameterRole};
 use crate::call_placement::CallPlacement;
@@ -297,7 +297,9 @@ pub(crate) fn required_properties_for(
     RequiredProperties::new([
         RequiredProperty::StorageLayout(layout),
         RequiredProperty::StorageEncoding(parameter.spec().encoding),
-        RequiredProperty::Alignment(parameter.spec().alignment),
+        RequiredProperty::Alignment(AlignmentRequirement::from_alignment(
+            parameter.spec().alignment,
+        )),
         RequiredProperty::Materialization(MaterializationForm::MaterializedBuffer),
         RequiredProperty::ExecutionAffinity(placement.affinity()),
         RequiredProperty::MemoryDomain(placement.domains().clone()),
@@ -359,7 +361,9 @@ pub(crate) fn guaranteed_properties_for(
     GuaranteedProperties::new([
         GuaranteedProperty::StorageLayout(layout),
         GuaranteedProperty::StorageEncoding(parameter.spec().encoding),
-        GuaranteedProperty::Alignment(parameter.spec().alignment),
+        GuaranteedProperty::Alignment(AlignmentGuarantee::from_alignment(
+            parameter.spec().alignment,
+        )),
         GuaranteedProperty::Materialization(materialization),
         GuaranteedProperty::ExecutionAffinity(placement.affinity()),
         GuaranteedProperty::MemoryDomain(*domain),
