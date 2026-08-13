@@ -37,3 +37,11 @@ No routing, selection, fallback, artifact, identity, or public-field decision ch
 ## Required checks
 
 Run focused formatting tests, the runtime package census and doctests, Clippy/rustdoc with warnings denied, citations, lint, exact-base guard, and the exact-tip publication gate required by the runtime crate change.
+
+## Worker report — 2026-08-12, base `61246804`
+
+**Fact audit.** `select_variant` still returns `NoEligibleVariant` only when `filtered.len() == packaged` (anchor `if filtered.len() == packaged`). `LoadRejection::NoApplicableVariant` fields remain public. `Display` previously did `packaged - filtered.len()` (now `checked_sub`).
+
+**Change.** Display is total: a loader-legal count keeps the previous rendering; `filtered.len() > packaged` names the inconsistency and does not claim an eligible population.
+
+**Evidence.** `a_malformed_public_applicable_count_does_not_invent_an_eligible_population` and `an_unfiltered_portfolio_reports_every_variant_as_eligible` pass. Subject perturbation is the packaged count 1 vs 2 in that test.

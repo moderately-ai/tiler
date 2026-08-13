@@ -1427,9 +1427,12 @@ pub enum LoadRejection {
         /// The variants that never reached their guard, with the subject that
         /// excluded each.
         ///
-        /// Shorter than `packaged`, and empty when the host could execute every
-        /// packaged variant. `packaged - filtered.len()` is how many guards were
-        /// evaluated and answered false.
+        /// Shorter than `packaged` when the loader constructs this class, and
+        /// empty when the host could execute every packaged variant. A
+        /// loader-produced value's `packaged - filtered.len()` is how many
+        /// guards were evaluated and answered false. Display stays total if a
+        /// public constructor violates that inequality: it names the
+        /// inconsistency rather than subtracting.
         filtered: Vec<FilteredVariant>,
     },
     /// The selected variant defers feasibility predicates this loader cannot
@@ -1602,17 +1605,34 @@ impl fmt::Display for LoadRejection {
                  packaged variant(s), and no guard was evaluated: {}",
                 render_filtered(filtered),
             ),
-            Self::NoApplicableVariant { packaged, filtered } => write!(
-                formatter,
-                "runtime.no-applicable-variant: none of the {} eligible variant(s) of {packaged} \
-                 packaged has an applicability guard that holds for the bound facts{}",
-                packaged - filtered.len(),
-                if filtered.is_empty() {
-                    String::new()
-                } else {
-                    format!("; this host filtered {}", render_filtered(filtered))
-                },
-            ),
+            Self::NoApplicableVariant { packaged, filtered } => {
+                // The loader only constructs this class with `filtered.len() <
+                // packaged` (or empty). The fields are public, so a caller can
+                // hand over `filtered.len() > packaged`. Subtracting would
+                // panic in debug and wrap in release into a false eligible
+                // count. Name the inconsistency instead of inventing one.
+                match packaged.checked_sub(filtered.len()) {
+                    Some(eligible) => write!(
+                        formatter,
+                        "runtime.no-applicable-variant: none of the {eligible} eligible \
+                         variant(s) of {packaged} packaged has an applicability guard that \
+                         holds for the bound facts{}",
+                        if filtered.is_empty() {
+                            String::new()
+                        } else {
+                            format!("; this host filtered {}", render_filtered(filtered))
+                        },
+                    ),
+                    None => write!(
+                        formatter,
+                        "runtime.no-applicable-variant: packaged {packaged} and filtered {} \
+                         are inconsistent (filtered exceeds packaged); this is not a \
+                         loader-produced count: {}",
+                        filtered.len(),
+                        render_filtered(filtered),
+                    ),
+                }
+            }
             Self::UnansweredDeferredPredicates { variant, deferred } => write!(
                 formatter,
                 "runtime.deferred-predicates: variant {variant} defers {deferred} feasibility \
@@ -1958,6 +1978,72 @@ mod tests {
         assert!(
             !text.contains("filtered"),
             "{text:?} must not report an exclusion it does not carry",
+        );
+    }
+
+    /// A publicly constructed count that the loader itself would never produce
+    /// still formats, and does not invent an eligible population.
+    ///
+    /// `packaged - filtered.len()` underflows in debug and wraps in release.
+    /// Either failure is a false story about how many guards held. The
+    /// coherent rendering above is the control: it must stay byte-identical.
+    #[test]
+    fn a_malformed_public_applicable_count_does_not_invent_an_eligible_population() {
+        let filtered = vec![
+            FilteredVariant {
+                variant: 0,
+                reason: VariantIneligibility::UnsupportedRepresentation {
+                    entry: 0,
+                    declared_backend: "tiler.metal".to_owned(),
+                    declared_representation: "metallib".to_owned(),
+                    host_backend: "tiler.test.scalar-host".to_owned(),
+                    host_representation: "tiler.test.scalar-host-image-v1".to_owned(),
+                },
+            },
+            FilteredVariant {
+                variant: 1,
+                reason: VariantIneligibility::UnsupportedRepresentation {
+                    entry: 0,
+                    declared_backend: "tiler.metal".to_owned(),
+                    declared_representation: "metallib".to_owned(),
+                    host_backend: "tiler.test.scalar-host".to_owned(),
+                    host_representation: "tiler.test.scalar-host-image-v1".to_owned(),
+                },
+            },
+        ];
+        let rejection = LoadRejection::NoApplicableVariant {
+            packaged: 1,
+            filtered,
+        };
+        let text = rejection.to_string();
+        assert!(
+            text.contains("inconsistent") && text.contains("filtered exceeds packaged"),
+            "{text:?} must name the malformed counts instead of subtracting them",
+        );
+        assert!(
+            !text.contains("none of the"),
+            "{text:?} must not claim an eligible population it cannot count",
+        );
+        // Perturb only the packaged count back to a loader-legal 2. The
+        // assertion above stays unchanged; this is the subject that must
+        // restore the coherent rendering.
+        let coherent = LoadRejection::NoApplicableVariant {
+            packaged: 2,
+            filtered: vec![FilteredVariant {
+                variant: 0,
+                reason: VariantIneligibility::UnsupportedRepresentation {
+                    entry: 0,
+                    declared_backend: "tiler.metal".to_owned(),
+                    declared_representation: "metallib".to_owned(),
+                    host_backend: "tiler.test.scalar-host".to_owned(),
+                    host_representation: "tiler.test.scalar-host-image-v1".to_owned(),
+                },
+            }],
+        };
+        let coherent_text = coherent.to_string();
+        assert!(
+            coherent_text.contains("none of the 1 eligible variant(s) of 2 packaged"),
+            "{coherent_text:?} is the loader-produced rendering this ticket must not change",
         );
     }
 }
