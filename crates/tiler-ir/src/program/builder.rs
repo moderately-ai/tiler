@@ -30,6 +30,7 @@ use super::abi::{
     binary_operand_type, evaluate, node_is_interface_only, node_phase, node_type,
     unary_operand_type,
 };
+use super::alignment::{AlignmentGuarantee, AlignmentRequirement};
 use super::error::{
     KernelProgramBuildError, KernelProgramVerificationError, ProgramAbiUse, ProgramEntityKind,
     ProgramLimitKind, invalid_handle,
@@ -316,13 +317,11 @@ impl KernelProgramBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`KernelProgramBuildError::InvalidAlignment`] for a zero or
-    /// non-power-of-two alignment, or a structural-limit error.
+    /// Returns a structural-limit error.
     pub fn push_allocation(
         &mut self,
         spec: AllocationSpec,
     ) -> Result<AllocationId, KernelProgramBuildError> {
-        check_alignment(spec.alignment)?;
         limit(
             self.allocations.len().saturating_add(1),
             MAX_PROGRAM_ALLOCATIONS,
@@ -415,12 +414,11 @@ impl KernelProgramBuilder {
         storage_scalar: StorageScalar,
         element_type: crate::kernel::KernelType,
         encoding: StorageEncoding,
-        alignment: u32,
+        alignment: AlignmentRequirement,
         memory_space: MemorySpace,
         allocation: AllocationId,
     ) -> Result<MaterializedValueId, KernelProgramBuildError> {
         let storage = self.resolve_allocation(allocation)?;
-        check_alignment(alignment)?;
         let component_type = self.check_origin(&origin, role, &shape, component_role)?;
         check_physical_storage(storage_scalar, encoding, element_type)?;
         let elements =
@@ -434,7 +432,7 @@ impl KernelProgramBuilder {
                 provided: storage.memory_space,
             });
         }
-        if storage.alignment % alignment != 0 {
+        if !storage.alignment.satisfies(alignment) {
             return Err(KernelProgramBuildError::AllocationAlignment {
                 required: alignment,
                 provided: storage.alignment,
@@ -1298,6 +1296,15 @@ impl KernelProgramBuilder {
                     actual: view.window.length / element_bytes(value.element_type),
                 });
             }
+            let required = AlignmentRequirement::natural_for(value.storage_scalar);
+            let guaranteed = self.view_alignment(view);
+            if !guaranteed.satisfies(required) {
+                return Err(KernelProgramBuildError::StageAccessAlignment {
+                    position,
+                    required,
+                    guaranteed,
+                });
+            }
             let accessible_bytes = self.check_abi_use(
                 access.accessible_bytes,
                 ProgramAbiUse::AccessibleBytes,
@@ -1372,6 +1379,21 @@ impl KernelProgramBuilder {
         self.values
             .get(index)
             .expect("a declared view addresses a declared value")
+    }
+
+    /// The alignment the view is statically guaranteed to provide after its offset.
+    ///
+    /// The base is the backing allocation's guarantee. The value starts at the
+    /// allocation origin, so the window offset is the addressed byte offset.
+    fn view_alignment(&self, view: ViewData) -> AlignmentGuarantee {
+        let value = self.view_base(view);
+        let allocation =
+            usize::try_from(value.allocation).expect("u32 fits every supported host usize");
+        self.allocations
+            .get(allocation)
+            .expect("a declared value names a declared allocation")
+            .alignment
+            .after_offset(view.window.offset)
     }
 
     fn resolve_stage(&self, id: StageId) -> Result<&StageData, KernelProgramBuildError> {
@@ -1524,13 +1546,6 @@ fn expected_component(
 /// Converts a checked arena ordinal into a host index.
 fn as_position(index: u32) -> usize {
     usize::try_from(index).expect("u32 fits every supported host usize")
-}
-
-fn check_alignment(alignment: u32) -> Result<(), KernelProgramBuildError> {
-    if alignment == 0 || !alignment.is_power_of_two() {
-        return Err(KernelProgramBuildError::InvalidAlignment { alignment });
-    }
-    Ok(())
 }
 
 fn check_physical_storage(

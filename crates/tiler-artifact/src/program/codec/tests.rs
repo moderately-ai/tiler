@@ -2661,7 +2661,10 @@ fn a_decoded_artifact_carries_everything_one_dispatch_needs() {
     assert_eq!(bindings[0].slot(), 0);
     assert_eq!(bindings[0].kind(), BindingKind::Buffer);
     assert_eq!(bindings[0].access(), BufferAccess::Read);
-    assert_eq!(bindings[0].alignment(), 4);
+    assert_eq!(
+        bindings[0].alignment(),
+        tiler_ir::program::AlignmentRequirement::natural_for(tiler_ir::program::StorageScalar::F32)
+    );
     assert_eq!(bindings[0].access_type(), KernelType::F32);
     assert_eq!(
         bindings[0].storage_scalar(),

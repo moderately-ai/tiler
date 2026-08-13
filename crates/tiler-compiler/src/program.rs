@@ -25,11 +25,11 @@ use std::fmt;
 
 use tiler_ir::kernel::KernelType;
 use tiler_ir::program::{
-    AbiExprId, AllocationOwnership, AllocationSpec, CoveredOccurrence, KernelProgramBuildError,
-    KernelProgramBuilder, KernelProgramDiagnostic, MaterializedOrigin, MaterializedValueSpec,
-    MemorySpace, RoutingCommitState, RoutingCommitTransition, StageAccess, StageAccessMode,
-    StageLaunch, StageRef, StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram,
-    ViewId,
+    AbiExprId, AlignmentGuarantee, AlignmentRequirement, AllocationOwnership, AllocationSpec,
+    CoveredOccurrence, KernelProgramBuildError, KernelProgramBuilder, KernelProgramDiagnostic,
+    MaterializedOrigin, MaterializedValueSpec, MemorySpace, RoutingCommitState,
+    RoutingCommitTransition, StageAccess, StageAccessMode, StageLaunch, StageRef, StorageEncoding,
+    StorageScalar, ValueRole, VerifiedKernelProgram, ViewId,
 };
 use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::{InputKey, OutputKey, SemanticIdentity, SemanticProgram};
@@ -40,7 +40,6 @@ use tiler_ir::program::abi::{
     evaluate as abi_evaluate,
 };
 
-use crate::boundary::ByteAlignment;
 use crate::cover::{CoverRegion, RegionCover};
 use crate::lowering::ResolvedLowering;
 use crate::physical::{
@@ -103,15 +102,14 @@ impl BoundedCarrier {
         self.storage.byte_width()
     }
 
-    /// The byte alignment every value and allocation of this carrier requires.
-    ///
-    /// Routed through [`ByteAlignment`] rather than written as an integer so the
-    /// artifact layer's alignment is the same derived quantity the boundary
-    /// contract states, and so a carrier whose width is not a positive power of
-    /// two is refused here too instead of reaching `check_alignment` as a bare
-    /// number.
-    fn element_alignment(self) -> u32 {
-        ByteAlignment::natural_for(self.storage).bytes()
+    /// The natural requirement every value of this carrier states.
+    fn element_requirement(self) -> AlignmentRequirement {
+        AlignmentRequirement::natural_for(self.storage)
+    }
+
+    /// The natural guarantee every allocation of this carrier states.
+    fn element_guarantee(self) -> AlignmentGuarantee {
+        AlignmentGuarantee::natural_for(self.storage)
     }
 }
 
@@ -1980,7 +1978,7 @@ fn storage(
 ) -> AllocationSpec {
     AllocationSpec {
         capacity_bytes,
-        alignment: carrier.element_alignment(),
+        alignment: carrier.element_guarantee(),
         memory_space: MemorySpace::Device,
         ownership,
     }
@@ -1998,7 +1996,7 @@ fn program_input(
         storage_scalar: carrier.storage,
         encoding: StorageEncoding::Unpacked,
         element_type: carrier.element_type,
-        alignment: carrier.element_alignment(),
+        alignment: carrier.element_requirement(),
         memory_space: MemorySpace::Device,
     }
 }
@@ -2011,7 +2009,7 @@ fn internal(carrier: BoundedCarrier, role: ValueRole, shape: Shape) -> Materiali
         storage_scalar: carrier.storage,
         encoding: StorageEncoding::Unpacked,
         element_type: carrier.element_type,
-        alignment: carrier.element_alignment(),
+        alignment: carrier.element_requirement(),
         memory_space: MemorySpace::Device,
     }
 }

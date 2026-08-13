@@ -107,10 +107,10 @@
 //! # use tiler_ir::kernel::{KernelType, lower_scheduled_region};
 //! # use tiler_ir::program::abi::AbiRoot;
 //! # use tiler_ir::program::{
-//! #     AllocationOwnership, AllocationSpec, CoveredOccurrence, KernelProgramBuilder,
-//! #     MaterializedOrigin, MaterializedValueSpec, MemorySpace, RoutingCommitState,
-//! #     RoutingCommitTransition, StageAccess, StageAccessMode, StageLaunch, StorageEncoding,
-//! #     StorageScalar, ValueRole,
+//! #     AlignmentGuarantee, AlignmentRequirement, AllocationOwnership, AllocationSpec,
+//! #     CoveredOccurrence, KernelProgramBuilder, MaterializedOrigin, MaterializedValueSpec,
+//! #     MemorySpace, RoutingCommitState, RoutingCommitTransition, StageAccess, StageAccessMode,
+//! #     StageLaunch, StorageEncoding, StorageScalar, ValueRole,
 //! # };
 //! # use tiler_ir::schedule::{
 //! #     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ExecutionBinding,
@@ -266,7 +266,7 @@
 //! # for key in ["left", "right"] {
 //! #     let allocation = plan.push_allocation(AllocationSpec {
 //! #         capacity_bytes: 24,
-//! #         alignment: 4,
+//! #         alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
 //! #         memory_space: MemorySpace::Device,
 //! #         ownership: AllocationOwnership::External,
 //! #     })?;
@@ -278,7 +278,7 @@
 //! #             storage_scalar: StorageScalar::F32,
 //! #             element_type: KernelType::F32,
 //! #             encoding: StorageEncoding::Unpacked,
-//! #             alignment: 4,
+//! #             alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
 //! #             memory_space: MemorySpace::Device,
 //! #         },
 //! #         allocation,
@@ -287,7 +287,7 @@
 //! # }
 //! # let owned = plan.push_allocation(AllocationSpec {
 //! #     capacity_bytes: 24,
-//! #     alignment: 4,
+//! #     alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
 //! #     memory_space: MemorySpace::Device,
 //! #     ownership: AllocationOwnership::Program,
 //! # })?;
@@ -299,7 +299,7 @@
 //! #         storage_scalar: StorageScalar::F32,
 //! #         element_type: KernelType::F32,
 //! #         encoding: StorageEncoding::Unpacked,
-//! #         alignment: 4,
+//! #         alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
 //! #         memory_space: MemorySpace::Device,
 //! #     },
 //! #     owned,
@@ -511,10 +511,17 @@ pub use builder::{
 // property under ADR 0081. A public method whose return type its callers cannot
 // spell is unusable, so the type travels with the accessor that produces it.
 pub use tiler_ir::kernel::BufferAccess;
+// Re-exported for the reason [`BufferAccess`] is: `BindingRef::alignment` and
+// `DecodedBinding::alignment` hand back an `AlignmentRequirement`, and
+// `tiler-runtime` must be able to name that type without taking a direct
+// `tiler-ir` dependency (ADR 0081).
 pub use tiler_ir::program::abi::{
     PreparedEntryTargetRequirement, PreparedEntryTargetRequirementError,
     TargetPropertyProviderIdentity, TargetPropertyQuery, TargetPropertyQueryError,
     TargetPropertyRequirementRelation,
+};
+pub use tiler_ir::program::{
+    AlignmentGuarantee, AlignmentRequirement, ByteAlignment, ByteAlignmentError,
 };
 // Re-exported for the reason [`BufferAccess`] is: a delivered-realization
 // obligation is keyed by one, `NumericalObligationKey::occurrence` hands one

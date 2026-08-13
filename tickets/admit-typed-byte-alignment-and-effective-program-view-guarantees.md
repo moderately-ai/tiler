@@ -1,11 +1,11 @@
 ---
 id: admit-typed-byte-alignment-and-effective-program-view-guarantees
 title: Admit typed byte alignment and effective program-view guarantees
-status: in-progress
+status: review
 priority: p1
 dependencies: [separate-vector-operand-alignment-from-target-realization]
 related: [derive-boundary-alignment-from-the-element-type, carry-the-byte-offset-of-a-partial-binding-view]
-scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/foundation, contracts/optimizer]
+scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/foundation, contracts/optimizer, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [alignment, placement, ir, public-boundary, correctness]
@@ -21,12 +21,15 @@ Tom accepted this exact boundary on 2026-08-12 in ChatGPT, relayed by the reposi
 
 Every alignment value is checked once, requirements cannot be confused with guarantees, and a partial view advertises only the alignment its actual byte offset preserves.
 
-## Facts at filing base `f199b26376612e4b39c35569b084dda4c67490ce`
+## Facts at worker base `be47030991284cdd51840b9c5df9be3642365c1a`
 
-- **Verified.** Compiler `ByteAlignment` already enforces positive powers of two and the correct divisibility relation, but it is crate-private while IR program and artifact surfaces carry raw `u32` alignments.
-- **Verified.** `AllocationSpec` calls its alignment a guarantee and `MaterializedValueSpec` calls its alignment a requirement, but their identical raw type permits reversed comparisons and repeated validation.
-- **Verified.** `push_view` accepts a `ByteWindow` without deriving the alignment of `base + offset`; `check_stage_accesses` checks extent, role, component, type, and access mode but no address alignment.
-- **Verified.** Existing identity encoders already carry the fixed-width alignment values and view offsets, so a pure typed replacement and derived verifier can preserve every old valid canonical byte.
+Filing-base Facts were re-read in full at this commit before any edit. Coordinator-supplied Facts 1–3 match. Coordinator Fact 5 is discharged here: encoder pins, `check_stage_accesses`, and `StorageScalar::byte_width` were re-read rather than trusted from the ticket.
+
+- **Verified.** `crates/tiler-compiler/src/boundary.rs`, anchor `pub(crate) struct ByteAlignment(u32)`, is crate-private. `new` refuses zero and non-powers of two; `satisfies` is one-directional divisibility; `natural_for` derives from `StorageScalar::byte_width` and panics only if a carrier width is unrepresentable.
+- **Verified.** `AllocationSpec` documents `alignment` as the allocation's guarantee and `MaterializedValueSpec` / `MaterializedComponentSpec` document theirs as a requirement, but every one is `pub alignment: u32`. Artifact `BindingData` is `pub(super) alignment: u32`. The identical raw type still permits reversed comparisons and repeated validation.
+- **Verified.** `KernelProgramBuilder::push_view` takes a `ByteWindow` and checks only range, packed-partial refusal, and duplicate windows. It does not derive the alignment of `base + offset`. `check_stage_accesses` checks arity, access mode, `ValueRole::fills`, component role, element type, addressed byte count, and the accessible-bytes ABI expression. It does not check address alignment.
+- **Verified.** Identity encoders already write the alignment as a fixed-width big-endian `u32` (`value.alignment.to_be_bytes()` in `value_key` / `push_value`; `allocation.alignment.to_be_bytes()` in `allocation_key` / `push_allocation`) and write each view as `(offset, length)` with no derived alignment field. Artifact bindings encode the same four-byte run. A typed in-memory replacement that keeps that spelling preserves every old valid canonical byte.
+- **Verified.** `StorageScalar::byte_width` is the single unpacked-width authority: exhaustive `U8 => 1`, `F32 => 4`, `Bf16 => 2`. There is no second carrier-width table.
 
 ## Required delivery
 

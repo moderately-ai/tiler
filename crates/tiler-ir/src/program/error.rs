@@ -20,6 +20,7 @@ use crate::semantic::{EncodedComponentRole, InputKey, OutputKey};
 
 use super::KernelProgramBuilder;
 use super::abi::{AbiEvaluationError, AbiType, AvailabilityPhase};
+use super::alignment::{AlignmentGuarantee, AlignmentRequirement};
 use super::model::{
     AllocationOwnership, MemorySpace, RoutingCommitState, SemanticOccurrence, StageAccessMode,
     StorageEncoding, StorageScalar, ValueRole,
@@ -217,17 +218,22 @@ pub enum KernelProgramBuildError {
     },
     /// A shape product or byte product exceeded `u64`.
     ElementCountOverflow,
-    /// A declared alignment was zero or not a power of two.
-    InvalidAlignment {
-        /// Rejected alignment.
-        alignment: u32,
-    },
     /// An allocation's alignment does not satisfy the bound value's requirement.
     AllocationAlignment {
         /// Alignment the value requires.
-        required: u32,
+        required: AlignmentRequirement,
         /// Alignment the allocation provides.
-        provided: u32,
+        provided: AlignmentGuarantee,
+    },
+    /// A stage access addresses a view whose effective alignment does not
+    /// satisfy the storage carrier's natural requirement.
+    StageAccessAlignment {
+        /// Ordered access position.
+        position: usize,
+        /// Natural alignment the carrier requires.
+        required: AlignmentRequirement,
+        /// Alignment the addressed view is statically guaranteed to provide.
+        guaranteed: AlignmentGuarantee,
     },
     /// An allocation's memory space differs from the bound value's.
     AllocationMemorySpace {

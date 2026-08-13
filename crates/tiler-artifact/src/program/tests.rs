@@ -28,11 +28,12 @@ use tiler_ir::program::abi::{
     TargetPropertyRequirementRelation,
 };
 use tiler_ir::program::{
-    AllocationOwnership, AllocationSpec, BitPackedEncoding, ByteWindow, CoveredOccurrence,
-    KernelProgramBuilder, MaterializedComponentSpec, MaterializedOrigin, MaterializedValueSpec,
-    MemorySpace, PackedBitOrder, PackedTailRule, RoutingCommitState, RoutingCommitTransition,
-    StageAccess, StageAccessMode, StageLaunch, StorageEncoding, StorageScalar, ValueRole,
-    VerifiedKernelProgram, ViewId,
+    AlignmentGuarantee, AlignmentRequirement, AllocationOwnership, AllocationSpec,
+    BitPackedEncoding, ByteWindow, CoveredOccurrence, KernelProgramBuilder,
+    MaterializedComponentSpec, MaterializedOrigin, MaterializedValueSpec, MemorySpace,
+    PackedBitOrder, PackedTailRule, RoutingCommitState, RoutingCommitTransition, StageAccess,
+    StageAccessMode, StageLaunch, StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram,
+    ViewId,
 };
 use tiler_ir::schedule::{
     Access, AccessMode, ApproximationEnvelope, ArithmeticType, Bf16NumericalContractKey,
@@ -655,7 +656,7 @@ fn dual_output_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
     let external = plan
         .push_allocation(AllocationSpec {
             capacity_bytes: 24,
-            alignment: 4,
+            alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
             memory_space: MemorySpace::Device,
             ownership: AllocationOwnership::External,
         })
@@ -663,7 +664,7 @@ fn dual_output_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
     let owned = plan
         .push_allocation(AllocationSpec {
             capacity_bytes: 8,
-            alignment: 4,
+            alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
             memory_space: MemorySpace::Device,
             ownership: AllocationOwnership::Program,
         })
@@ -679,7 +680,7 @@ fn dual_output_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
                 storage_scalar: StorageScalar::F32,
                 element_type: KernelType::F32,
                 encoding: StorageEncoding::Unpacked,
-                alignment: 4,
+                alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
                 memory_space: MemorySpace::Device,
             },
             external,
@@ -694,7 +695,7 @@ fn dual_output_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
                 storage_scalar: StorageScalar::F32,
                 element_type: KernelType::F32,
                 encoding: StorageEncoding::Unpacked,
-                alignment: 4,
+                alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
                 memory_space: MemorySpace::Device,
             },
             owned,
@@ -841,7 +842,7 @@ fn fused_program_with_coverage(
     let external = plan
         .push_allocation(AllocationSpec {
             capacity_bytes: 24,
-            alignment: 4,
+            alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
             memory_space: MemorySpace::Device,
             ownership: AllocationOwnership::External,
         })
@@ -849,7 +850,7 @@ fn fused_program_with_coverage(
     let owned = plan
         .push_allocation(AllocationSpec {
             capacity_bytes: 8,
-            alignment: 4,
+            alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
             memory_space: MemorySpace::Device,
             ownership: AllocationOwnership::Program,
         })
@@ -865,7 +866,7 @@ fn fused_program_with_coverage(
                 storage_scalar: StorageScalar::F32,
                 element_type: KernelType::F32,
                 encoding: StorageEncoding::Unpacked,
-                alignment: 4,
+                alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
                 memory_space: MemorySpace::Device,
             },
             external,
@@ -880,7 +881,7 @@ fn fused_program_with_coverage(
                 storage_scalar: StorageScalar::F32,
                 element_type: KernelType::F32,
                 encoding: StorageEncoding::Unpacked,
-                alignment: 4,
+                alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
                 memory_space: MemorySpace::Device,
             },
             owned,
@@ -1184,7 +1185,7 @@ struct TwoStageStorage {
 fn wire_two_stage_storage(plan: &mut KernelProgramBuilder) -> TwoStageStorage {
     let device = |capacity_bytes, ownership| AllocationSpec {
         capacity_bytes,
-        alignment: 4,
+        alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
         memory_space: MemorySpace::Device,
         ownership,
     };
@@ -1206,7 +1207,7 @@ fn wire_two_stage_storage(plan: &mut KernelProgramBuilder) -> TwoStageStorage {
         storage_scalar: StorageScalar::F32,
         element_type: KernelType::F32,
         encoding: StorageEncoding::Unpacked,
-        alignment: 4,
+        alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
         memory_space: MemorySpace::Device,
     };
     let source = plan
@@ -1602,11 +1603,11 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
 fn strict_affine_u4_dequantize_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
     let kernel = strict_affine_u4_dequantize_kernel();
     let mut plan = KernelProgramBuilder::new(semantic).expect("program builder");
-    let mut component = |role, shape, storage_scalar, element_type, encoding, bytes, alignment| {
+    let mut component = |role, shape, storage_scalar, element_type, encoding, bytes| {
         let allocation = plan
             .push_allocation(AllocationSpec {
                 capacity_bytes: bytes,
-                alignment,
+                alignment: AlignmentGuarantee::natural_for(storage_scalar),
                 memory_space: MemorySpace::Device,
                 ownership: AllocationOwnership::External,
             })
@@ -1623,7 +1624,7 @@ fn strict_affine_u4_dequantize_program(semantic: &SemanticProgram) -> VerifiedKe
                     storage_scalar,
                     element_type,
                     encoding,
-                    alignment,
+                    alignment: AlignmentRequirement::natural_for(storage_scalar),
                     memory_space: MemorySpace::Device,
                 },
                 allocation,
@@ -1638,7 +1639,6 @@ fn strict_affine_u4_dequantize_program(semantic: &SemanticProgram) -> VerifiedKe
         KernelType::U8,
         StorageEncoding::PACKED_U4_LSB_ZERO_TAIL,
         3,
-        1,
     );
     let scale = component(
         STRICT_AFFINE_SCALE_ROLE,
@@ -1646,7 +1646,6 @@ fn strict_affine_u4_dequantize_program(semantic: &SemanticProgram) -> VerifiedKe
         StorageScalar::F32,
         KernelType::F32,
         StorageEncoding::Unpacked,
-        4,
         4,
     );
     let zero_point = component(
@@ -1656,12 +1655,11 @@ fn strict_affine_u4_dequantize_program(semantic: &SemanticProgram) -> VerifiedKe
         KernelType::U8,
         StorageEncoding::Unpacked,
         1,
-        1,
     );
     let output_allocation = plan
         .push_allocation(AllocationSpec {
             capacity_bytes: 20,
-            alignment: 4,
+            alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
             memory_space: MemorySpace::Device,
             ownership: AllocationOwnership::Program,
         })
@@ -1675,7 +1673,7 @@ fn strict_affine_u4_dequantize_program(semantic: &SemanticProgram) -> VerifiedKe
                 storage_scalar: StorageScalar::F32,
                 element_type: KernelType::F32,
                 encoding: StorageEncoding::Unpacked,
-                alignment: 4,
+                alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
                 memory_space: MemorySpace::Device,
             },
             output_allocation,
@@ -2381,7 +2379,7 @@ impl PointwiseWidth {
             storage_scalar: self.storage_scalar(),
             element_type: self.access_type(),
             encoding: StorageEncoding::Unpacked,
-            alignment: u32::try_from(self.element_bytes()).expect("a scalar width fits u32"),
+            alignment: AlignmentRequirement::natural_for(self.storage_scalar()),
             memory_space: MemorySpace::Device,
         }
     }
@@ -2395,7 +2393,7 @@ impl PointwiseWidth {
         let external = plan
             .push_allocation(AllocationSpec {
                 capacity_bytes: bytes,
-                alignment: 4,
+                alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
                 memory_space: MemorySpace::Device,
                 ownership: AllocationOwnership::External,
             })
@@ -2403,7 +2401,7 @@ impl PointwiseWidth {
         let owned = plan
             .push_allocation(AllocationSpec {
                 capacity_bytes: bytes,
-                alignment: 4,
+                alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
                 memory_space: MemorySpace::Device,
                 ownership: AllocationOwnership::Program,
             })
@@ -2915,7 +2913,10 @@ fn an_entry_reads_its_plan_through_the_shared_ir_alone() {
     assert_eq!(bindings[0].access_type(), KernelType::F32);
     assert_eq!(bindings[0].storage_scalar(), StorageScalar::F32);
     assert_eq!(bindings[0].value_role(), ValueRole::Input);
-    assert_eq!(bindings[0].alignment(), 4);
+    assert_eq!(
+        bindings[0].alignment(),
+        AlignmentRequirement::natural_for(StorageScalar::F32)
+    );
     assert_eq!(bindings[0].window().length, 24);
     assert_eq!(bindings[1].value_role(), ValueRole::Output);
     assert_eq!(bindings[1].window().length, 8);

@@ -79,9 +79,9 @@ use tiler_ir::schedule::{
 use tiler_ir::semantic::ProviderIdentity;
 
 use crate::boundary::{
-    AdmittedMemoryDomains, AvailabilityGuarantee, AvailabilityRequirement, ByteAlignment,
-    ExecutionAffinity, GuaranteedProperties, GuaranteedProperty, LayoutGuarantee,
-    LayoutRequirement, MaterializationForm, MemoryDomainClass, RequiredProperties,
+    AdmittedMemoryDomains, AlignmentGuarantee, AlignmentRequirement, AvailabilityGuarantee,
+    AvailabilityRequirement, ExecutionAffinity, GuaranteedProperties, GuaranteedProperty,
+    LayoutGuarantee, LayoutRequirement, MaterializationForm, MemoryDomainClass, RequiredProperties,
     RequiredProperty, StorageEncoding, StorageScalar, VisibilityGuarantee, VisibilityRequirement,
 };
 use crate::call_declaration::{GuaranteeError, OpaqueCallDeclaration, WorkScaling};
@@ -942,7 +942,7 @@ fn bounded_requirements(carrier: StorageScalar) -> RequiredProperties {
     RequiredProperties::new([
         RequiredProperty::StorageLayout(LayoutRequirement::DenseRowMajor),
         RequiredProperty::StorageEncoding(StorageEncoding::Unpacked),
-        RequiredProperty::Alignment(ByteAlignment::natural_for(carrier)),
+        RequiredProperty::Alignment(AlignmentRequirement::natural_for(carrier)),
         RequiredProperty::Materialization(MaterializationForm::MaterializedBuffer),
         RequiredProperty::ExecutionAffinity(BOUNDED_AFFINITY),
         RequiredProperty::MemoryDomain(
@@ -968,7 +968,7 @@ fn bounded_guarantees(carrier: StorageScalar) -> GuaranteedProperties {
     GuaranteedProperties::new([
         GuaranteedProperty::StorageLayout(LayoutGuarantee::DenseRowMajor),
         GuaranteedProperty::StorageEncoding(StorageEncoding::Unpacked),
-        GuaranteedProperty::Alignment(ByteAlignment::natural_for(carrier)),
+        GuaranteedProperty::Alignment(AlignmentGuarantee::natural_for(carrier)),
         GuaranteedProperty::Materialization(MaterializationForm::MaterializedBuffer),
         GuaranteedProperty::ExecutionAffinity(BOUNDED_AFFINITY),
         GuaranteedProperty::MemoryDomain(MemoryDomainClass::Device),
@@ -3844,8 +3844,9 @@ mod tests {
         bounded_guarantees, bounded_requirements, enumerate_frontier,
     };
     use crate::boundary::{
-        BoundaryProperty, GuaranteedProperty, LayoutRequirement, MaterializationForm,
-        MemoryDomainClass, RequiredProperties, RequiredProperty, StorageScalar,
+        AlignmentGuarantee, AlignmentRequirement, BoundaryProperty, GuaranteedProperty,
+        LayoutRequirement, MaterializationForm, MemoryDomainClass, RequiredProperties,
+        RequiredProperty, StorageScalar,
     };
     use crate::call_registry::{OpaqueCallIdentity, OpaqueCallProposal, OpaqueCallRegistry};
     use crate::physical::{build_fused_scheduled_region, pointwise_region};
@@ -4100,12 +4101,16 @@ mod tests {
         assert_eq!(u64::from(derived.bytes()), carrier.byte_width());
         assert_eq!(
             needed.get(BoundaryProperty::Alignment),
-            Some(&RequiredProperty::Alignment(derived)),
+            Some(&RequiredProperty::Alignment(
+                AlignmentRequirement::from_alignment(derived)
+            )),
             "the required alignment is not the boundary value's own element width"
         );
         assert_eq!(
             offered.get(BoundaryProperty::Alignment),
-            Some(&GuaranteedProperty::Alignment(derived)),
+            Some(&GuaranteedProperty::Alignment(
+                AlignmentGuarantee::from_alignment(derived)
+            )),
             "the guaranteed alignment is not the boundary value's own element width"
         );
     }
@@ -4163,7 +4168,7 @@ mod tests {
         assert_eq!(
             bounded_requirements(StorageScalar::Bf16).get(BoundaryProperty::Alignment),
             Some(&RequiredProperty::Alignment(
-                crate::boundary::ByteAlignment::natural_for(StorageScalar::Bf16)
+                AlignmentRequirement::natural_for(StorageScalar::Bf16)
             )),
         );
         assert_ne!(
@@ -4228,12 +4233,16 @@ mod tests {
 
         assert_eq!(
             bounded_requirements(StorageScalar::U8).get(BoundaryProperty::Alignment),
-            Some(&RequiredProperty::Alignment(one)),
+            Some(&RequiredProperty::Alignment(
+                AlignmentRequirement::from_alignment(one)
+            )),
             "a one-byte carrier was required to meet some other element's alignment"
         );
         assert_eq!(
             bounded_guarantees(StorageScalar::U8).get(BoundaryProperty::Alignment),
-            Some(&GuaranteedProperty::Alignment(one)),
+            Some(&GuaranteedProperty::Alignment(
+                AlignmentGuarantee::from_alignment(one)
+            )),
             "a one-byte carrier was made to guarantee some other element's alignment"
         );
     }

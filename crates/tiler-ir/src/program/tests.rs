@@ -31,13 +31,13 @@ use crate::shape::{Axis, Shape};
 
 use super::abi::{AbiBinaryOp, AbiRoot, AbiType, AbiUnaryOp, AvailabilityPhase, TargetPropertyKey};
 use super::{
-    AbiExprId, AllocationId, AllocationOwnership, AllocationSpec, ByteWindow, CoveredOccurrence,
-    KernelProgramBuildError, KernelProgramBuilder, KernelProgramDiagnostic,
-    MaterializedComponentSpec, MaterializedOrigin, MaterializedValueId, MaterializedValueSpec,
-    MemorySpace, PartialReduction, ProgramAbiUse, ProgramEntityKind, PublishingCopy,
-    RoutingCommitState, RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessMode,
-    StageId, StageLaunch, StagedRealization, StorageEncoding, StorageScalar, ValueRole,
-    VerifiedKernelProgram, ViewId,
+    AbiExprId, AlignmentGuarantee, AlignmentRequirement, AllocationId, AllocationOwnership,
+    AllocationSpec, ByteWindow, CoveredOccurrence, KernelProgramBuildError, KernelProgramBuilder,
+    KernelProgramDiagnostic, MaterializedComponentSpec, MaterializedOrigin, MaterializedValueId,
+    MaterializedValueSpec, MemorySpace, PartialReduction, ProgramAbiUse, ProgramEntityKind,
+    PublishingCopy, RoutingCommitState, RoutingCommitTransition, SemanticOccurrence, StageAccess,
+    StageAccessMode, StageId, StageLaunch, StagedRealization, StorageEncoding, StorageScalar,
+    ValueRole, VerifiedKernelProgram, ViewId,
 };
 
 const SCALE_BITS: u32 = 0x4000_0000; // 2.0f32
@@ -590,7 +590,7 @@ fn coverage_range(
 fn device(capacity_bytes: u64, ownership: AllocationOwnership) -> AllocationSpec {
     AllocationSpec {
         capacity_bytes,
-        alignment: 4,
+        alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
         memory_space: MemorySpace::Device,
         ownership,
     }
@@ -604,7 +604,7 @@ fn value(origin: MaterializedOrigin, role: ValueRole, shape: Shape) -> Materiali
         storage_scalar: StorageScalar::F32,
         encoding: StorageEncoding::Unpacked,
         element_type: KernelType::F32,
-        alignment: 4,
+        alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
         memory_space: MemorySpace::Device,
     }
 }
@@ -2252,7 +2252,7 @@ fn an_internal_component_without_a_logical_group_is_rejected() {
                 storage_scalar: StorageScalar::F32,
                 element_type: KernelType::F32,
                 encoding: StorageEncoding::Unpacked,
-                alignment: 4,
+                alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
                 memory_space: MemorySpace::Device,
             },
             wired.temporary_allocation,
@@ -2271,7 +2271,7 @@ fn physical_storage_scalar_and_kernel_access_type_are_checked_separately() {
     let allocation = builder
         .push_allocation(AllocationSpec {
             capacity_bytes: 20,
-            alignment: 4,
+            alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
             memory_space: MemorySpace::Device,
             ownership: AllocationOwnership::External,
         })
@@ -2284,7 +2284,7 @@ fn physical_storage_scalar_and_kernel_access_type_are_checked_separately() {
         storage_scalar,
         element_type,
         encoding: StorageEncoding::PACKED_U4_LSB_ZERO_TAIL,
-        alignment: 1,
+        alignment: AlignmentRequirement::natural_for(StorageScalar::U8),
         memory_space: MemorySpace::Device,
     };
 
@@ -2317,7 +2317,7 @@ fn packed_program_views_are_bounded_to_the_complete_component() {
     let allocation = builder
         .push_allocation(AllocationSpec {
             capacity_bytes: 3,
-            alignment: 1,
+            alignment: AlignmentGuarantee::natural_for(StorageScalar::U8),
             memory_space: MemorySpace::Device,
             ownership: AllocationOwnership::External,
         })
@@ -2332,7 +2332,7 @@ fn packed_program_views_are_bounded_to_the_complete_component() {
                 storage_scalar: StorageScalar::U8,
                 element_type: KernelType::U8,
                 encoding: StorageEncoding::PACKED_U4_LSB_ZERO_TAIL,
-                alignment: 1,
+                alignment: AlignmentRequirement::natural_for(StorageScalar::U8),
                 memory_space: MemorySpace::Device,
             },
             allocation,
@@ -2365,11 +2365,11 @@ fn strict_affine_stage_bindings_are_addressed_by_component_role() {
     let kernel = strict_affine_u4_dequantize_kernel();
     let mut builder = KernelProgramBuilder::new(&semantic).expect("program builder");
 
-    let mut component = |role, shape, storage_scalar, element_type, encoding, bytes, alignment| {
+    let mut component = |role, shape, storage_scalar, element_type, encoding, bytes| {
         let allocation = builder
             .push_allocation(AllocationSpec {
                 capacity_bytes: bytes,
-                alignment,
+                alignment: AlignmentGuarantee::natural_for(storage_scalar),
                 memory_space: MemorySpace::Device,
                 ownership: AllocationOwnership::External,
             })
@@ -2384,7 +2384,7 @@ fn strict_affine_stage_bindings_are_addressed_by_component_role() {
                     storage_scalar,
                     element_type,
                     encoding,
-                    alignment,
+                    alignment: AlignmentRequirement::natural_for(storage_scalar),
                     memory_space: MemorySpace::Device,
                 },
                 allocation,
@@ -2399,7 +2399,6 @@ fn strict_affine_stage_bindings_are_addressed_by_component_role() {
         KernelType::U8,
         StorageEncoding::PACKED_U4_LSB_ZERO_TAIL,
         3,
-        1,
     );
     let scale = component(
         STRICT_AFFINE_SCALE_ROLE,
@@ -2408,7 +2407,6 @@ fn strict_affine_stage_bindings_are_addressed_by_component_role() {
         KernelType::F32,
         StorageEncoding::Unpacked,
         4,
-        4,
     );
     let zero_point = component(
         STRICT_AFFINE_ZERO_POINT_ROLE,
@@ -2416,7 +2414,6 @@ fn strict_affine_stage_bindings_are_addressed_by_component_role() {
         StorageScalar::U8,
         KernelType::U8,
         StorageEncoding::Unpacked,
-        1,
         1,
     );
     let output_allocation = builder
@@ -3849,7 +3846,7 @@ fn bf16_value(origin: MaterializedOrigin, role: ValueRole) -> MaterializedValueS
         storage_scalar: StorageScalar::Bf16,
         encoding: StorageEncoding::Unpacked,
         element_type: KernelType::Bf16,
-        alignment: 2,
+        alignment: AlignmentRequirement::natural_for(StorageScalar::Bf16),
         memory_space: MemorySpace::Device,
     }
 }
@@ -4145,5 +4142,190 @@ fn the_bf16_rows_leave_f32_executable_coverage_untouched() {
     assert!(
         !reached_bf16,
         "an f32 occurrence's reached-only coverage names no bf16 scalar"
+    );
+}
+
+/// A two-stage serial-sum whose temporary is larger than the working set so a
+/// partial window can start at a chosen byte offset.
+fn push_partial_temporary_stage(
+    offset: u64,
+) -> Result<(KernelProgramBuilder, ViewId), KernelProgramBuildError> {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let coverage = checked_coverage(&semantic, &strict_contract());
+    let mut builder = KernelProgramBuilder::new(&semantic).expect("builder");
+    let abi = fixture_abi(&mut builder);
+    let source_allocation = builder
+        .push_allocation(AllocationSpec {
+            capacity_bytes: 24,
+            alignment: AlignmentGuarantee::new(16).expect("16 is a power of two"),
+            memory_space: MemorySpace::Device,
+            ownership: AllocationOwnership::External,
+        })
+        .expect("input allocation");
+    let temporary_allocation = builder
+        .push_allocation(AllocationSpec {
+            capacity_bytes: 32,
+            alignment: AlignmentGuarantee::new(16).expect("16 is a power of two"),
+            memory_space: MemorySpace::Device,
+            ownership: AllocationOwnership::Program,
+        })
+        .expect("temporary allocation");
+    let output_allocation = builder
+        .push_allocation(device(8, AllocationOwnership::Program))
+        .expect("output allocation");
+    let source = builder
+        .push_value(
+            value(program_input("input"), ValueRole::Input, input_shape()),
+            source_allocation,
+        )
+        .expect("input value");
+    let temporary = builder
+        .push_value(
+            value(
+                MaterializedOrigin::Internal,
+                ValueRole::Temporary,
+                Shape::from_dims([8]),
+            ),
+            temporary_allocation,
+        )
+        .expect("oversized temporary");
+    let output = builder
+        .push_value(
+            value(
+                MaterializedOrigin::Internal,
+                ValueRole::Output,
+                output_shape(),
+            ),
+            output_allocation,
+        )
+        .expect("output value");
+    let source_view = builder.push_whole_view(source).expect("input view");
+    let temporary_view = builder.push_view(temporary, ByteWindow { offset, length: 24 })?;
+    let _output_view = builder.push_whole_view(output).expect("output view");
+    builder.push_stage(
+        &pointwise_kernel(0, SCALE_BITS),
+        &coverage_range(&coverage, 0..4),
+        &[
+            read(source_view, abi.input_bytes),
+            write(temporary_view, abi.input_bytes),
+        ],
+        abi.pointwise_launch(),
+    )?;
+    Ok((builder, temporary_view))
+}
+
+fn complete_partial_temporary_program(offset: u64) -> VerifiedKernelProgram {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let coverage = checked_coverage(&semantic, &strict_contract());
+    let mut builder = KernelProgramBuilder::new(&semantic).expect("builder");
+    let abi = fixture_abi(&mut builder);
+    let source_allocation = builder
+        .push_allocation(AllocationSpec {
+            capacity_bytes: 24,
+            alignment: AlignmentGuarantee::new(16).expect("16 is a power of two"),
+            memory_space: MemorySpace::Device,
+            ownership: AllocationOwnership::External,
+        })
+        .expect("input allocation");
+    let temporary_allocation = builder
+        .push_allocation(AllocationSpec {
+            capacity_bytes: 32,
+            alignment: AlignmentGuarantee::new(16).expect("16 is a power of two"),
+            memory_space: MemorySpace::Device,
+            ownership: AllocationOwnership::Program,
+        })
+        .expect("temporary allocation");
+    let output_allocation = builder
+        .push_allocation(device(8, AllocationOwnership::Program))
+        .expect("output allocation");
+    let source = builder
+        .push_value(
+            value(program_input("input"), ValueRole::Input, input_shape()),
+            source_allocation,
+        )
+        .expect("input value");
+    let temporary = builder
+        .push_value(
+            value(
+                MaterializedOrigin::Internal,
+                ValueRole::Temporary,
+                Shape::from_dims([8]),
+            ),
+            temporary_allocation,
+        )
+        .expect("oversized temporary");
+    let output = builder
+        .push_value(
+            value(
+                MaterializedOrigin::Internal,
+                ValueRole::Output,
+                output_shape(),
+            ),
+            output_allocation,
+        )
+        .expect("output value");
+    let source_view = builder.push_whole_view(source).expect("input view");
+    let temporary_view = builder
+        .push_view(temporary, ByteWindow { offset, length: 24 })
+        .expect("partial temporary view");
+    let output_view = builder.push_whole_view(output).expect("output view");
+    let pointwise = builder
+        .push_stage(
+            &pointwise_kernel(0, SCALE_BITS),
+            &coverage_range(&coverage, 0..4),
+            &[
+                read(source_view, abi.input_bytes),
+                write(temporary_view, abi.input_bytes),
+            ],
+            abi.pointwise_launch(),
+        )
+        .expect("pointwise stage");
+    let reduction = builder
+        .push_stage(
+            &reduction_kernel(1),
+            &coverage_range(&coverage, 4..5),
+            &[
+                read(temporary_view, abi.input_bytes),
+                write(output_view, abi.output_bytes),
+            ],
+            abi.reduction_launch(),
+        )
+        .expect("reduction stage");
+    builder
+        .push_data_dependency(pointwise, reduction, temporary)
+        .expect("data dependency");
+    builder
+        .push_output(OutputKey::new("result").expect("key"), output)
+        .expect("named output");
+    declare_program_contract(&mut builder);
+    builder.build().expect("verified partial-view program")
+}
+
+#[test]
+fn a_naturally_aligned_partial_f32_view_builds() {
+    let program = complete_partial_temporary_program(4);
+    let temporary = program
+        .views()
+        .find(|view| view.window().offset == 4)
+        .expect("the partial temporary view");
+    assert_eq!(temporary.alignment().bytes(), 4);
+    assert!(
+        temporary
+            .alignment()
+            .satisfies(AlignmentRequirement::natural_for(StorageScalar::F32))
+    );
+}
+
+#[test]
+fn a_one_byte_shifted_f32_view_fails_before_the_stage_is_verified() {
+    let error = push_partial_temporary_stage(1)
+        .expect_err("a one-byte-shifted F32 view must not reach artifact construction");
+    assert_eq!(
+        error,
+        KernelProgramBuildError::StageAccessAlignment {
+            position: 1,
+            required: AlignmentRequirement::natural_for(StorageScalar::F32),
+            guaranteed: AlignmentGuarantee::new(1).expect("1 is a power of two"),
+        }
     );
 }
