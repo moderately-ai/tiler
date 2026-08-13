@@ -1,7 +1,7 @@
 ---
 id: admit-shared-contributor-coverage-and-reduction-padding-identity
 title: Admit shared contributor coverage and typed reduction padding identity
-status: todo
+status: in-progress
 priority: p1
 dependencies: [accept-adr-0093-cpu-vector-lane-tier, accept-adr-0094-subgroup-execution-tier, accept-adr-0100-multi-round-reduction-composition]
 related: [admit-subgroup-bindings-into-the-schedule-vocabulary, admit-vector-lane-bindings-into-the-schedule-vocabulary]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, contracts/numerics, contrac
 shared_scopes: [project/tickets]
 paths: []
 tags: [scheduling, reductions, numerics, padding, identity, public-boundary, fail-closed]
+claimed_from: todo
+assignee: worker-shared-contributor-coverage
+lease_expires_at: 1786650560
 ---
 ## User-visible outcome
 
