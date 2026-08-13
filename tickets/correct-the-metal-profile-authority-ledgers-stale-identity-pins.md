@@ -31,3 +31,11 @@ The ledger section anchored `What those pins are today` reports artifact identit
 ## Closes when
 
 Every present-tense identity/size Fact in the ledger matches the exact current test population and its provenance is reproducible.
+
+## Worker report — 2026-08-12, base `61246804`
+
+**Fact audit.** At this base `the_standard_metal_path_publishes_its_recorded_identities` pins artifact `39e765637a7e014adac2b8a30788798758ca46584b558732c2bda41b7639ddda`, cache `7e00d9fa0ce90749e6f7d3d42e0f2aaabe5670e0359a0c20d1580a09bb967130`, `FIXED_CONTENT_BYTES = 65_313`. The ledger paragraph anchored `What those pins are today` still named `7a2bfe51…` / `8bdcde64…` / 65,294. Descriptor 2,099 remains current.
+
+**Change.** The live pin paragraph now mirrors those three values and the v16/v7 five-byte accounting. `the_authority_ledger_mirrors_the_live_standard_metal_pins` reads that paragraph via `include_str!`.
+
+**Perturbation.** Replacing `fixed content is 65,313 bytes` with `00,000` failed with `the live pin paragraph does not name FIXED_CONTENT_BYTES`. Restored.

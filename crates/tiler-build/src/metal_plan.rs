@@ -1749,6 +1749,41 @@ mod tests {
         let _ = std::fs::remove_dir_all(directory);
     }
 
+    /// The authority ledger's present-tense pin paragraph names the same
+    /// values this test pins. A hex or byte-count edit here that leaves the
+    /// ledger on yesterday's numbers is the failure this check exists for.
+    #[test]
+    fn the_authority_ledger_mirrors_the_live_standard_metal_pins() {
+        const ARTIFACT_IDENTITY: &str =
+            "39e765637a7e014adac2b8a30788798758ca46584b558732c2bda41b7639ddda";
+        const CACHE_SUBJECT: &str =
+            "7e00d9fa0ce90749e6f7d3d42e0f2aaabe5670e0359a0c20d1580a09bb967130";
+        let ledger = include_str!(
+            "../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md"
+        );
+        let today = ledger
+            .split("**What those pins are today")
+            .nth(1)
+            .and_then(|rest| rest.split("**The 2026-08-07").next())
+            .expect("the live pin paragraph is present and bounded");
+        assert!(
+            today.contains(ARTIFACT_IDENTITY),
+            "the live pin paragraph does not name ARTIFACT_IDENTITY",
+        );
+        assert!(
+            today.contains(CACHE_SUBJECT),
+            "the live pin paragraph does not name CACHE_SUBJECT",
+        );
+        assert!(
+            today.contains("fixed content is 65,313 bytes"),
+            "the live pin paragraph does not name FIXED_CONTENT_BYTES",
+        );
+        assert!(
+            today.contains("2,099"),
+            "the live pin paragraph does not name the unmoved descriptor length",
+        );
+    }
+
     /// Renders a golden over an identity preimage rather than over its bytes.
     ///
     /// Both preimages here run to tens of kilobytes, so the recorded form is a
