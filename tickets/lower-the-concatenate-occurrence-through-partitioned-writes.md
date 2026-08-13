@@ -106,6 +106,8 @@ Recomputed by that pin's own documented mechanics — running the named test on 
 
 **Correction — 2026-08-10.** Tom accepted that surface on 2026-08-07 via [`accept-the-partitioned-concatenate-realization-law`](accept-the-partitioned-concatenate-realization-law.md) (`status: done`, `## Accepted — 2026-08-07`, without exclusion). The landing-time "parked at `awaiting-decision`" / "Not self-accepted" prose above is historical only. The `law.rs` doc comment on `IndexRealizationLaw::PartitionedConcatenate` may still say "Draft boundary … awaiting Tom's decision" until that label is flipped — documentation lag after acceptance, not an open architecture choice owed by this ticket.
 
+**Correction — 2026-08-13.** [`repair-the-scheduled-vocabulary-census-and-concatenate-law-standing`](repair-the-scheduled-vocabulary-census-and-concatenate-law-standing.md) flipped that leftover draft label to `Accepted public surface`. The "may still say" clause above is historical.
+
 ## Commands run
 
 `cargo fmt --all --check`; `cargo check -p tiler-ir -p tiler-compiler --all-targets`; `cargo clippy -p tiler-ir -p tiler-compiler --all-targets -- -D warnings`; `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler-ir -p tiler-compiler --no-deps`; `cargo nextest run --workspace` (2935 passed, 0 failed, 7 skipped); `cargo test --workspace --doc`; `tkt lint`; `git diff --check`; `tkt guard tkt/lower-the-concatenate-occurrence-through-partitioned-writes --format json`; `make full`.
