@@ -1,17 +1,14 @@
 ---
 id: make-prepared-entry-observations-typed-and-key-dispatched
 title: Make prepared-entry observations typed and key-dispatched
-status: review
+status: done
 priority: p1
 dependencies: []
-related: [decide-the-prepared-subgroup-width-equality-gate, carry-subgroup-width-through-exact-prepared-entry-equality]
+related: [decide-the-prepared-subgroup-width-equality-gate, carry-subgroup-width-through-exact-prepared-entry-equality, accept-the-prepared-entry-observation-surface]
 scopes: [implementation/runtime, implementation/candle, implementation/conformance, contracts/artifacts, contracts/decisions, implementation/frontend, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, preflight, public-boundary, correctness, fail-closed]
-claimed_from: todo
-assignee: worker-prepared-entry-observations
-lease_expires_at: 1786647017
 ---
 ## User-visible outcome
 
@@ -41,3 +38,7 @@ The 2026-08-11 Fact described the defect at that base. This branch replaces the 
 ## Closes when
 
 Every prepared-property consumer is exhaustive over the typed observation, an unknown property cannot be confused with a quantity, and the old wrong-property false admission has a failing-then-green regression.
+
+## Outcome
+
+Landed at `b19bc60dd7a6f6bd35d880472885b62b2bf374d1`, merged to `main` at `0742e22dc5e3cc1e24b017f4bc2d4b0f0fde9c03`. `make full` on that hash: 3456 passed. The public observation surface is a labelled draft; Tom's packet is [`accept-the-prepared-entry-observation-surface`](accept-the-prepared-entry-observation-surface.md).

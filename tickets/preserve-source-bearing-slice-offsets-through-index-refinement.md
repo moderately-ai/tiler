@@ -1,17 +1,14 @@
 ---
 id: preserve-source-bearing-slice-offsets-through-index-refinement
 title: Preserve source-bearing Slice offsets through index refinement
-status: review
+status: done
 priority: p1
 dependencies: [admit-source-bearing-slice-selection-semantics]
-related: [admit-a-position-selecting-slice-for-the-rotary-table, admit-live-extent-operands-to-payload-indexing]
+related: [admit-a-position-selecting-slice-for-the-rotary-table, admit-live-extent-operands-to-payload-indexing, accept-the-source-bearing-slice-realization]
 scopes: [implementation/ir, implementation/compiler, contracts/foundation, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, slice, symbolic-extents, indexing, compiler]
-claimed_from: todo
-assignee: worker-source-bearing-slice
-lease_expires_at: 1786647017
 ---
 # Preserve source-bearing Slice offsets through index refinement
 
@@ -70,4 +67,4 @@ A valid source-bearing occurrence refines to a verified one-region realization a
 
 **Public surface.** `SliceSelection::names_a_symbol` is an additive query on the existing labelled-draft selection type. `IndexAccessLoweringContext::sourced_linear_combination` is crate-internal, matching `sourced_dimension`. No second source environment, backend convention, live-value specialization, or artifact/runtime carrier was added.
 
-**Checks.** `cargo test -p tiler-ir -p tiler-compiler` green, including lib, integration, trybuild, and doc-tests. `cargo clippy -p tiler-ir -p tiler-compiler --all-targets -- -D warnings` clean. `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler-ir -p tiler-compiler --no-deps` clean. `tkt lint`, `git diff --check`, and `tkt guard --base main --format json` recorded at commit time.
+**Checks.** `cargo test -p tiler-ir -p tiler-compiler` green, including lib, integration, trybuild, and doc-tests. `cargo clippy -p tiler-ir -p tiler-compiler --all-targets -- -D warnings` clean. `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler-ir -p tiler-compiler --no-deps` clean. `tkt lint`, `git diff --check`, and `tkt guard --base main --format json` recorded at commit time. Coordinator `make full` on `f903da13`: 3465 passed. Merged to `main` at `0742e22dc5e3cc1e24b017f4bc2d4b0f0fde9c03`. The widened Slice-law interpretation is a labelled draft; Tom's packet is [`accept-the-source-bearing-slice-realization`](accept-the-source-bearing-slice-realization.md).
