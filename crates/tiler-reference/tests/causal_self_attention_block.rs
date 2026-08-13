@@ -20,7 +20,7 @@
 //! Nothing here registers an operation, adds a form, or admits a structure.
 //! Every occurrence is one of the eight already-registered keys —
 //! `tiler::rms-norm-f32@1`, `tiler::strict-tensor-contraction-f32@1`,
-//! `tiler::reindex-f32@1`, `tiler::broadcast-f32@1`, `tiler::multiply-f32@1`,
+//! `tiler::reindex-f32@1`, `tiler::broadcast-f32@2`, `tiler::multiply-f32@1`,
 //! `tiler::add-f32@1`, `tiler::constant-f32@1`, and `tiler::softmax-f32@1` — and
 //! the block is a *shape* over them.
 //!
@@ -745,7 +745,7 @@ fn rotary(
 ///
 /// Two occurrences and never one: `tiler::rms-norm-f32@1` takes a weight already
 /// shaped like the value, because the graph admits no implicit broadcasting, so a
-/// per-channel weight is widened by a `tiler::broadcast-f32@1` the caller writes.
+/// per-channel weight is widened by a `tiler::broadcast-f32@2` the caller writes.
 fn normalize(
     builder: &mut SemanticProgramBuilder,
     value: Value<F32>,

@@ -45,7 +45,7 @@
 //!   ([`a_nonempty_cache_changes_no_occurrence`]).
 //! - **A single new position is not.** At `T = 1` the position axis of a
 //!   normalization weight or a rotary sign duplicates nothing, and
-//!   `tiler::broadcast-f32@1` refuses a many-to-one relation onto an extent-one
+//!   `tiler::broadcast-f32@2` refuses a many-to-one relation onto an extent-one
 //!   result axis under `broadcast.mapping.relation-does-not-widen` — its own
 //!   documentation names the replacement, "a reindex's unit-axis insertion". So
 //!   six widenings change spelling and the layer carries **sixty-two**
@@ -799,7 +799,7 @@ fn half_merge(lane_axis: u32) -> ReindexForm {
 ///
 /// **Two spellings, and `T` decides which is legal rather than which is nicer.**
 /// At `T >= 2` the position axis duplicates the weight and the relation is
-/// `tiler::broadcast-f32@1`'s `replicate`. At `T = 1` it duplicates nothing:
+/// `tiler::broadcast-f32@2`'s `replicate`. At `T = 1` it duplicates nothing:
 /// `BroadcastAxisMapping` refuses a many-to-one relation onto an extent-one
 /// result axis under `broadcast.mapping.relation-does-not-widen`, whose own
 /// documentation names the replacement — "written as a replication it is a

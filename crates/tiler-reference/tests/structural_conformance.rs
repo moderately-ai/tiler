@@ -1,5 +1,5 @@
 //! Bounded conformance evidence for `tiler::reindex-f32@1` and
-//! `tiler::broadcast-f32@1`, through the public semantic and reference boundary.
+//! `tiler::broadcast-f32@2`, through the public semantic and reference boundary.
 //!
 //! # What this covers, exactly
 //!

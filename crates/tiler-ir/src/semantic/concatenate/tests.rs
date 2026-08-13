@@ -240,7 +240,7 @@ fn an_extent_disagreement_names_the_axis_and_both_observed_extents() {
 #[test]
 fn no_extent_one_axis_is_stretched_to_match() {
     // A broadcast would widen `[1, 7]` against `[3, 4]`. This family refuses, and
-    // a caller that means the widening writes a `tiler::broadcast-f32@1`
+    // a caller that means the widening writes a `tiler::broadcast-f32@2`
     // occurrence for it.
     assert_eq!(
         refusal(&[f32_operand(&[3, 4]), f32_operand(&[1, 7])], axis(1)),

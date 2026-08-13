@@ -5,7 +5,7 @@
 //! Rotary embedding stays a *graph shape*. Nothing here registers a `Rope`
 //! operation, declares a key, or adds a form to any family: the composition's
 //! normative reference is the composition, and every occurrence below is
-//! `tiler::reindex-f32@1`, `tiler::broadcast-f32@1`, `tiler::multiply-f32@1`, or
+//! `tiler::reindex-f32@1`, `tiler::broadcast-f32@2`, `tiler::multiply-f32@1`, or
 //! `tiler::add-f32@1` exactly as those four are already registered. That is the
 //! whole claim the [L2 derivation](../../../docs/research/shapes/transformer-operation-and-shape-surface.md)
 //! and the [L4 program](../../../docs/research/program-planning/first-attention-program-vertical.md)
@@ -35,7 +35,7 @@
 //! admits no implicit broadcasting and the rank-zero admission on `Multiply` and
 //! `Add` covers a rank-zero operand alone, so the two `[T, 128]` tables against
 //! `[T, heads, 128]` and the `[2, 1]` sign against `[…, 2, 64]` are each an
-//! occurrence of `tiler::broadcast-f32@1` carrying one entry per result axis.
+//! occurrence of `tiler::broadcast-f32@2` carrying one entry per result axis.
 //! The table mapping's interior `replicate` and the sign mapping's
 //! `stretch-unit` are different relations, not two spellings of one: the table
 //! has no head axis at all, while the sign's second axis exists with extent one.
@@ -509,7 +509,7 @@ fn differing(left: &[u32], right: &[u32]) -> usize {
 /// families in a stated order, and each step's result shape is derived by its own
 /// family from its operand rather than declared here. The worked instance is
 /// rotary embedding as ten occurrences of `tiler::reindex-f32@1`,
-/// `tiler::broadcast-f32@1`, `tiler::multiply-f32@1` and `tiler::add-f32@1`. The
+/// `tiler::broadcast-f32@2`, `tiler::multiply-f32@1` and `tiler::add-f32@1`. The
 /// perturbation is pinned structurally too — dropping the within-axis swap
 /// removes one occurrence and nothing else — so the counts it produces later
 /// measure the reversal rather than a second difference that came with it.

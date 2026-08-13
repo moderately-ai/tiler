@@ -1,9 +1,13 @@
 use super::*;
 use crate::semantic::{
-    F32Broadcast, FrozenSemanticRegistry, InputKey, OperationAttributes, OutputKey, RegistryError,
-    SemanticProgramBuilder,
+    F32Broadcast, F32Reindex, FrozenSemanticRegistry, InputKey, OperationAttributes, OutputKey,
+    RegistryError, ReindexForm, SemanticProgramBuilder,
 };
-use crate::shape::Shape;
+use crate::shape::{
+    BindingSource, EXTENT_PHASE_CEILING, ExtentRelation, ExtentTerm, FactProvenance, RootBinding,
+    Shape, ShapeEnv, ShapeEnvBuilder, ShapeSymbol, SourcedExtent, SymbolScope,
+};
+use std::sync::Arc;
 
 fn axis(value: u32) -> Axis {
     Axis::new(value)
@@ -42,6 +46,12 @@ fn attributes(mapping: CanonicalValue) -> OperationAttributes {
     .expect("a test attribute record is canonical")
 }
 
+fn sourced_extent_value(extent: &SourcedExtent) -> CanonicalValue {
+    let mut bytes = Vec::new();
+    extent.encode(&mut bytes);
+    CanonicalValue::bytes_owned(bytes).expect("a test sourced extent is bounded")
+}
+
 /// Builds a mapping record from raw parts, bypassing every constructor check.
 ///
 /// This is how a frontend that hand-assembles the canonical attribute reaches
@@ -51,7 +61,26 @@ fn raw_mapping(result: &[u64], sources: Vec<CanonicalValue>) -> CanonicalValue {
     CanonicalValue::record([
         CanonicalField::new(
             BROADCAST_MAPPING_RESULT_EXTENTS,
-            CanonicalValue::sequence(result.iter().copied().map(CanonicalValue::unsigned_u64))
+            CanonicalValue::sequence(
+                result.iter().copied().map(|extent| {
+                    sourced_extent_value(&SourcedExtent::Static(Extent::new(extent)))
+                }),
+            )
+            .expect("a test extent sequence is bounded"),
+        ),
+        CanonicalField::new(
+            BROADCAST_MAPPING_SOURCES,
+            CanonicalValue::sequence(sources).expect("a test source sequence is bounded"),
+        ),
+    ])
+    .expect("a test mapping record is canonical")
+}
+
+fn raw_mapping_extents(result: &[SourcedExtent], sources: Vec<CanonicalValue>) -> CanonicalValue {
+    CanonicalValue::record([
+        CanonicalField::new(
+            BROADCAST_MAPPING_RESULT_EXTENTS,
+            CanonicalValue::sequence(result.iter().map(sourced_extent_value))
                 .expect("a test extent sequence is bounded"),
         ),
         CanonicalField::new(
@@ -733,4 +762,327 @@ fn the_broadcast_declares_no_algebraic_capability() {
         "a family that performs no arithmetic has no associativity to declare, and \
          a missing declaration is unknown rather than the inverse law"
     );
+}
+
+// --- Sourced v2 application -------------------------------------------------
+
+fn scope() -> SymbolScope {
+    SymbolScope::new("broadcast/0").unwrap()
+}
+
+fn sym(name: &str) -> ShapeSymbol {
+    ShapeSymbol::new(scope(), name).unwrap()
+}
+
+fn axis_binding(input: &str, axis: u32) -> RootBinding {
+    RootBinding::new(
+        BindingSource::InputDimension {
+            input: InputKey::new(input).expect("a valid key"),
+            axis: Axis::new(axis),
+        },
+        EXTENT_PHASE_CEILING,
+        FactProvenance::RuntimeValidated,
+    )
+    .unwrap()
+}
+
+fn env_with(relations: &[ExtentRelation], names: &[&str]) -> Arc<ShapeEnv> {
+    let mut draft = ShapeEnvBuilder::new();
+    for (index, name) in names.iter().enumerate() {
+        let declared = sym(name);
+        draft.declare(declared.clone()).unwrap();
+        draft
+            .bind(
+                &declared,
+                axis_binding("operand", u32::try_from(index).unwrap()),
+            )
+            .unwrap();
+    }
+    for relation in relations {
+        draft
+            .require(crate::shape::SemanticInputConstraint::new(
+                relation.clone(),
+                FactProvenance::FrontendRequired,
+            ))
+            .unwrap();
+    }
+    Arc::new(draft.build().unwrap())
+}
+
+fn interval(name: &str, lower: u64, upper: u64) -> ExtentRelation {
+    ExtentRelation::interval(ExtentTerm::Symbol(sym(name)), lower, upper).unwrap()
+}
+
+fn equal_to(name: &str, value: u64) -> ExtentRelation {
+    ExtentRelation::equal(ExtentTerm::Symbol(sym(name)), ExtentTerm::Constant(value))
+}
+
+fn apply_sourced(
+    environment: Arc<ShapeEnv>,
+    operand: Vec<SourcedExtent>,
+    result: Vec<SourcedExtent>,
+    sources: &[BroadcastAxisSource],
+) -> Result<Vec<SourcedExtent>, String> {
+    let mut builder = SemanticProgramBuilder::try_standard_with_shape_environment(environment)
+        .expect("the standard builder opens");
+    let input = builder
+        .input_sourced::<crate::semantic::F32>(
+            InputKey::new("operand").expect("a valid key"),
+            operand,
+        )
+        .map_err(|error| format!("input refused: {error}"))?;
+    let mapping = BroadcastAxisMapping::new(result, sources.iter().copied())
+        .map_err(|error| format!("mapping refused: {error}"))?;
+    let widened =
+        F32Broadcast::apply(&mut builder, &mapping, input).map_err(|error| match error {
+            crate::semantic::BuildError::SemanticRegistry(
+                RegistryError::RejectedOperationApplication(rejection),
+            ) => format!(
+                "{}: {}",
+                rejection.source_error().code().as_str(),
+                rejection.source_error().message()
+            ),
+            other => format!("{other}"),
+        })?;
+    builder
+        .output(OutputKey::new("widened").expect("a valid key"), widened)
+        .expect("an output");
+    let program = builder.build().expect("the program is complete");
+    let value = program.outputs().next().unwrap().value();
+    Ok(program.shape(value).unwrap().extents().collect())
+}
+
+#[test]
+fn a_literal_extent_one_still_fails_while_its_reindex_neighbour_succeeds() {
+    assert!(matches!(
+        BroadcastAxisMapping::new(
+            [Extent::new(2), Extent::new(1)],
+            [from_operand(0), REPLICATE]
+        ),
+        Err(BroadcastMappingError::RelationDoesNotWiden { .. })
+    ));
+
+    let mut builder = SemanticProgramBuilder::try_standard().expect("the standard builder opens");
+    let operand = builder
+        .input::<crate::semantic::F32>(
+            InputKey::new("operand").expect("a valid key"),
+            Shape::from_dims([2]),
+        )
+        .expect("an F32 input");
+    let inserted = F32Reindex::apply(
+        &mut builder,
+        &ReindexForm::insert_unit_axis(axis(1)).expect("a unit-axis insertion is admitted"),
+        operand,
+    )
+    .expect("the reindex neighbour of a literal unit pad succeeds");
+    builder
+        .output(OutputKey::new("inserted").expect("a valid key"), inserted)
+        .expect("an output");
+    let program = builder.build().expect("the program is complete");
+    assert_eq!(program.operation_count(), 1);
+    assert_eq!(
+        program
+            .shape(program.outputs().next().unwrap().value())
+            .unwrap()
+            .as_static()
+            .expect("the reindex result is literal"),
+        &Shape::from_dims([2, 1])
+    );
+}
+
+#[test]
+fn symbolic_many_to_one_extents_are_admitted_when_proved_positive() {
+    let t = SourcedExtent::Symbol(sym("t"));
+    let n = SourcedExtent::Symbol(sym("n"));
+    for relation in [interval("t", 1, 64), interval("t", 2, 64), equal_to("t", 1)] {
+        let environment = env_with(&[relation, interval("n", 2, 64)], &["n", "t"]);
+        let result = apply_sourced(
+            environment,
+            vec![n.clone()],
+            vec![t.clone(), n.clone()],
+            &[REPLICATE, from_operand(0)],
+        )
+        .expect("a positive symbolic widening is admitted");
+        assert_eq!(result, vec![t.clone(), n.clone()]);
+    }
+}
+
+#[test]
+fn a_symbol_whose_lower_bound_is_zero_is_refused_before_graph_mutation() {
+    let t = SourcedExtent::Symbol(sym("t"));
+    let n = SourcedExtent::Symbol(sym("n"));
+    let environment = env_with(&[interval("t", 0, 64), interval("n", 2, 64)], &["n", "t"]);
+    let mut builder = SemanticProgramBuilder::try_standard_with_shape_environment(environment)
+        .expect("the standard builder opens");
+    let input = builder
+        .input_sourced::<crate::semantic::F32>(
+            InputKey::new("operand").expect("a valid key"),
+            vec![n.clone()],
+        )
+        .expect("the operand is admitted");
+    let mapping = BroadcastAxisMapping::new(vec![t, n], [REPLICATE, from_operand(0)])
+        .expect("a symbolic mapping is context-free");
+    let error = F32Broadcast::apply(&mut builder, &mapping, input)
+        .expect_err("a possibly-zero widening is refused");
+    let crate::semantic::BuildError::SemanticRegistry(RegistryError::RejectedOperationApplication(
+        rejection,
+    )) = error
+    else {
+        panic!("the refusal is provider-attributed, not {error}");
+    };
+    assert_eq!(
+        rejection.source_error().code().as_str(),
+        "broadcast.mapping.extent-not-proved-positive"
+    );
+    builder
+        .output(OutputKey::new("operand").expect("a valid key"), input)
+        .expect("the refused apply left the input in place");
+    let program = builder.build().expect("the draft still commits");
+    assert_eq!(
+        program.operation_count(),
+        0,
+        "a zero-lower-bound symbol is refused before an occurrence exists"
+    );
+}
+
+#[test]
+fn from_operand_and_stretch_unit_proofs_fail_independently() {
+    let n = SourcedExtent::Symbol(sym("n"));
+    let m = SourcedExtent::Symbol(sym("m"));
+    let unit = SourcedExtent::Symbol(sym("unit"));
+
+    let unequal = env_with(
+        &[
+            interval("n", 2, 64),
+            interval("m", 2, 64),
+            interval("t", 2, 64),
+        ],
+        &["n", "m", "t"],
+    );
+    let error = apply_sourced(
+        unequal,
+        vec![n.clone()],
+        vec![m.clone(), SourcedExtent::Static(Extent::new(8))],
+        &[from_operand(0), REPLICATE],
+    )
+    .expect_err("unrelated symbols are not proved equal");
+    assert!(
+        error.starts_with("broadcast.mapping.extent-not-proved-equal"),
+        "FromOperand names unproved equality: {error}"
+    );
+
+    let not_unit = env_with(&[interval("n", 2, 64), interval("t", 2, 64)], &["n", "t"]);
+    let error = apply_sourced(
+        not_unit,
+        vec![n.clone()],
+        vec![SourcedExtent::Symbol(sym("t"))],
+        &[stretch_unit(0)],
+    )
+    .expect_err("a non-unit symbol may not be stretched");
+    assert!(
+        error.starts_with("broadcast.mapping.stretch-source-not-proved-unit"),
+        "StretchUnit names unproved unit: {error}"
+    );
+
+    let proved_equal = env_with(
+        &[
+            interval("n", 2, 64),
+            ExtentRelation::equal(ExtentTerm::Symbol(sym("n")), ExtentTerm::Symbol(sym("m"))),
+        ],
+        &["n", "m"],
+    );
+    let result = apply_sourced(
+        proved_equal,
+        vec![n.clone()],
+        vec![m.clone(), SourcedExtent::Static(Extent::new(8))],
+        &[from_operand(0), REPLICATE],
+    )
+    .expect("an equality constraint makes FromOperand hold");
+    assert_eq!(result, vec![m, SourcedExtent::Static(Extent::new(8))]);
+
+    let proved_unit = env_with(&[equal_to("unit", 1), interval("t", 2, 64)], &["unit", "t"]);
+    let result = apply_sourced(
+        proved_unit,
+        vec![unit],
+        vec![SourcedExtent::Symbol(sym("t"))],
+        &[stretch_unit(0)],
+    )
+    .expect("a determined unit may be stretched");
+    assert_eq!(result, vec![SourcedExtent::Symbol(sym("t"))]);
+}
+
+#[test]
+fn a_high_rank_mapping_reuses_one_semantic_solve() {
+    let t = SourcedExtent::Symbol(sym("t"));
+    let sources = vec![REPLICATE; MAX_BROADCAST_MAPPING_AXES];
+    let result_extents = vec![t.clone(); MAX_BROADCAST_MAPPING_AXES];
+    let (applied, census) = crate::shape::env::census::observe_all(|| {
+        apply_sourced(
+            env_with(&[interval("t", 1, 64)], &["t"]),
+            Vec::new(),
+            result_extents.clone(),
+            &sources,
+        )
+        .expect("a rank-zero operand with positive symbolic pads is admitted")
+    });
+    assert_eq!(applied, result_extents);
+    assert_eq!(
+        census.semantic_closure, 1,
+        "environment construction solves once; mapping application must not"
+    );
+    assert_eq!(census.guard_hypothesis, 0);
+    assert!(
+        census.positivity >= MAX_BROADCAST_MAPPING_AXES,
+        "every symbolic many-to-one axis asks the retained summary: {}",
+        census.positivity
+    );
+}
+
+#[test]
+fn undeclared_and_foreign_symbols_are_named_refusals() {
+    let ghost = ShapeSymbol::new(SymbolScope::new("other").unwrap(), "ghost").unwrap();
+    let environment = env_with(&[interval("n", 2, 64)], &["n"]);
+    let error = apply_sourced(
+        environment,
+        vec![SourcedExtent::Symbol(sym("n"))],
+        vec![
+            SourcedExtent::Symbol(ghost),
+            SourcedExtent::Symbol(sym("n")),
+        ],
+        &[REPLICATE, from_operand(0)],
+    )
+    .expect_err("a foreign symbol is refused");
+    assert!(
+        error.starts_with("broadcast.mapping.undeclared-symbol"),
+        "foreign symbols are undeclared, not a shape mismatch: {error}"
+    );
+
+    assert_eq!(
+        refusal(
+            &[1024],
+            raw_mapping_extents(
+                &[
+                    SourcedExtent::Symbol(sym("t")),
+                    SourcedExtent::Static(Extent::new(1024))
+                ],
+                vec![
+                    raw_source(BROADCAST_RELATION_REPLICATE, None),
+                    raw_source(BROADCAST_RELATION_FROM_OPERAND, Some(0)),
+                ]
+            )
+        ),
+        "broadcast.mapping.undeclared-symbol"
+    );
+}
+
+#[test]
+fn the_old_governed_key_is_absent_from_the_standard_registry() {
+    let registry = FrozenSemanticRegistry::standard().expect("the standard registry builds");
+    let old = OpKey::new("tiler", "broadcast-f32", 1).expect("the retired key is well formed");
+    assert!(
+        registry.operation_definition(&old).is_none(),
+        "v1 is not retained as a compatibility registration"
+    );
+    assert!(registry.operation_definition(&broadcast_f32_op()).is_some());
+    assert_eq!(broadcast_f32_op().semantic_version(), 2);
 }

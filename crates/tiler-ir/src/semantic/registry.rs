@@ -3360,8 +3360,8 @@ mod tests {
             tiler_digest::DigestAlgorithm::GOVERNED
                 .digest(DOMAIN, semantic.snapshot_identity().as_bytes())
                 .label(),
-            "15a35d501845fb22c48d452b89f5cf4faf14529b7b086ae4287b0d7b66b32107",
-            "the law sidecar must not move the semantic snapshot"
+            "d43dc8465a4aa96bc10978b7451f52d1b9e917bcb3c8ce303b6c9985ed9e7448",
+            "the snapshot moves with the broadcast key, definition, and participation tag"
         );
         assert!(
             laws.identity()
@@ -3373,8 +3373,8 @@ mod tests {
             tiler_digest::DigestAlgorithm::GOVERNED
                 .digest(DOMAIN, laws.identity().as_bytes())
                 .label(),
-            "7a7d1933feffa05895e4df55a5478d2f38f7390dd18e2017c9e91b61640352ea",
-            "the complete law-registry identity pins the appended row"
+            "bd9a853952791c4384422bc03f57af92ad85af233051f26b0c52c027e0fb5b2d",
+            "the complete law-registry identity pins the broadcast-f32@2 row"
         );
         assert_eq!(
             semantic.encode_index_realization_law_sidecar().len(),
@@ -3395,9 +3395,9 @@ mod tests {
                 "3c90faa8a3a9597e97fee6c1627c6363f6726a345996b9e993bce31e146382f0",
             ),
             (
-                "tiler::broadcast-f32@1",
+                "tiler::broadcast-f32@2",
                 90,
-                "5d9235ca1f0cd5023a7210a103c0e296220618d45c35e241af31bf35ecdb27ee",
+                "d713b2f4c57bc5c6a585bb2c82d3b3732d7677fb579d9e1fbff731a04ba5e3e1",
             ),
             (
                 "tiler::concatenate-f32@1",
