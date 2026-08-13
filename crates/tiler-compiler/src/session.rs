@@ -1602,6 +1602,7 @@ fn class_of(error: CompileError) -> CompileFailureClass {
 const fn rule_of(error: &RequestError) -> &'static str {
     match error {
         RequestError::UnsupportedRequestVersion => "compile.request.schema",
+        RequestError::MismatchedShapeEnvironment => "compile.request.shape-environment",
         RequestError::EmptyTargetSet => "compile.request.targets.empty",
         RequestError::DuplicateTargetProfile => "compile.request.targets.duplicate",
         RequestError::UnverifiedTargetSelection => "compile.request.targets.selection",
@@ -1623,7 +1624,8 @@ const fn rule_of(error: &RequestError) -> &'static str {
         // because `rule_of` is total over `RequestError` and the key exists;
         // `class_of` reports this refusal through its own typed fields instead.
         RequestError::BudgetExceeded { resource, .. } => resource.key(),
-        RequestError::UnsupportedCapability { rule, .. } => rule,
+        RequestError::UnsupportedCapability { rule, .. }
+        | RequestError::UnsupportedSymbolicExtent { rule, .. } => rule,
         // The refusing authority's own stable code, so the three findings it
         // distinguishes — no installed realization, an installed one that
         // could not be proved to refine, and a refining one whose evidence
@@ -2388,8 +2390,10 @@ impl InstalledCapabilities {
 /// submitted twice or mutated after the compiler has begun reading it.
 ///
 /// The inputs a caller may state are deliberately fewer than the internal
-/// request carries. Budgets and the shape environment stay internal because
-/// they admit exactly one governed value today. Target declaration is accepted
+/// request carries. Budgets stay internal because they admit exactly one
+/// governed value today. The shape environment is the program's own and is
+/// not caller-supplied: two environments over one program is the ambiguity
+/// the program constructor exists to prevent. Target declaration is accepted
 /// only through [`crate::target::TargetProfileBuilder`], which validates and
 /// freezes the whole profile before it can enter this request.
 #[derive(Clone, Debug)]
@@ -2711,6 +2715,7 @@ fn target_compile_failure(error: CompileError) -> Result<TargetCompileFailure, C
         )),
         Some(
             RequestError::UnsupportedRequestVersion
+            | RequestError::MismatchedShapeEnvironment
             | RequestError::EmptyTargetSet
             | RequestError::DuplicateTargetProfile
             | RequestError::UnverifiedTargetSelection
@@ -2727,6 +2732,7 @@ fn target_compile_failure(error: CompileError) -> Result<TargetCompileFailure, C
             | RequestError::NoApplicableNumericalContract { .. }
             | RequestError::BudgetExceeded { .. }
             | RequestError::UnsupportedCapability { .. }
+            | RequestError::UnsupportedSymbolicExtent { .. }
             | RequestError::ShapeProductOverflow { .. },
         )
         | None => None,

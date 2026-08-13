@@ -946,19 +946,15 @@ fn find_ordered_reassociation(
 
 /// Returns one semantic value's fixed shape, refusing a symbolic one.
 ///
-/// **This is where a symbolic program stops being compilable, and that is
-/// load-bearing rather than incidental.** Normalization rebuilds a program
-/// through `SemanticProgramBuilder`, which mints the rebuilt draft with no
-/// shape environment: a rebuilt symbolic input would either lose the
+/// Strategy selection already declines a symbolic extent under
+/// `RequestError::UnsupportedSymbolicExtent`, so this helper is not the
+/// compile path's first refusal. It stays fail-closed because a rewrite that
+/// rebuilt a symbolic input through `SemanticProgramBuilder` would mint the
+/// draft with no shape environment: the rebuilt input would either lose the
 /// environment its symbols resolve in or silently acquire a different one, and
 /// the program's identity folds that environment as its fifth subject. Refusing
-/// the whole program is the only answer that keeps identity a function of what
-/// the frontend wrote.
-///
-/// Every downstream stage — physical assembly, artifact packaging, reference
-/// evaluation — refuses one too, each for its own reason. Together they are why
-/// no artifact can differ by its shape-environment subject and why the
-/// envelope's three carried subjects stay sufficient.
+/// the rewrite is the only answer that keeps identity a function of what the
+/// frontend wrote.
 fn static_shape(
     program: &SemanticProgram,
     value: ValueId,
