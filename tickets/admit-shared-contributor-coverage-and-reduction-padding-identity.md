@@ -1,17 +1,14 @@
 ---
 id: admit-shared-contributor-coverage-and-reduction-padding-identity
 title: Admit shared contributor coverage and typed reduction padding identity
-status: review
+status: done
 priority: p1
 dependencies: [accept-adr-0093-cpu-vector-lane-tier, accept-adr-0094-subgroup-execution-tier, accept-adr-0100-multi-round-reduction-composition]
-related: [admit-subgroup-bindings-into-the-schedule-vocabulary, admit-vector-lane-bindings-into-the-schedule-vocabulary]
+related: [admit-subgroup-bindings-into-the-schedule-vocabulary, admit-vector-lane-bindings-into-the-schedule-vocabulary, accept-the-contributor-coverage-and-padding-identity-surface]
 scopes: [implementation/ir, implementation/compiler, contracts/numerics, contracts/decisions, implementation/metal, implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: [scheduling, reductions, numerics, padding, identity, public-boundary, fail-closed]
-claimed_from: todo
-assignee: worker-shared-contributor-coverage
-lease_expires_at: 1786650560
 ---
 ## User-visible outcome
 
@@ -57,3 +54,5 @@ Coverage validation is checked integer arithmetic plus a bounded family-specific
 ## Closes when
 
 Both exact and identity-padded contributor coverage are canonically representable, malformed combinations are unrepresentable or typed refusals, old exact topologies retain their meaning and bytes, and the subgroup and vector schedule tickets can consume one shared concept.
+
+Coordinator `make full` on `d8a09031`: 3487 passed. Fast-forwarded to `main`. The Rust spelling is a labelled draft; Tom's packet is [`accept-the-contributor-coverage-and-padding-identity-surface`](accept-the-contributor-coverage-and-padding-identity-surface.md).
