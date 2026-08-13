@@ -4,7 +4,7 @@ title: Deliver an artifact family from a region with symbolic extents
 status: todo
 priority: p1
 dependencies: [admit-live-extent-operands-to-payload-indexing]
-related: [carry-symbolic-extents-into-the-semantic-program, prototype-inline-aot-integration-proof]
+related: [carry-symbolic-extents-into-the-semantic-program, prototype-inline-aot-integration-proof, carry-live-extent-operands-through-the-artifact-envelope, prove-one-live-extent-artifact-payload-and-pipeline-at-two-n, admit-symbolic-extents-through-compiler-region-formation]
 scopes: [implementation/frontend, contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []

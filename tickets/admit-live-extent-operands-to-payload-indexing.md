@@ -1,17 +1,14 @@
 ---
 id: admit-live-extent-operands-to-payload-indexing
 title: Admit live extent operands to payload indexing
-status: in-progress
+status: review
 priority: p1
 dependencies: [admit-symbolic-extents-at-the-compiler-request-boundary]
-related: [deliver-an-artifact-family-from-a-symbolic-region, bind-repeated-invocations-over-caller-retained-tensors]
+related: [deliver-an-artifact-family-from-a-symbolic-region, bind-repeated-invocations-over-caller-retained-tensors, accept-the-live-extent-operand-public-surface, carry-live-extent-operands-through-the-artifact-envelope, prove-one-live-extent-artifact-payload-and-pipeline-at-two-n, prove-a-schedule-verified-live-contraction-consumes-s, admit-symbolic-extents-through-compiler-region-formation]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/metal, implementation/runtime, implementation/build, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, extents, kernel, artifact, runtime, identity, public-boundary]
-claimed_from: todo
-assignee: worker-admit-live-extent-operands
-lease_expires_at: 1786637762
 ---
 ## User-visible outcome
 
@@ -56,4 +53,16 @@ The exact structured-kernel operand, artifact row/view, routed parameter, and ad
 
 ## Closes when
 
-The tested public/schema draft is accepted, the identity step lands whole, every negative is fail-capable, and both the symbolic artifact-family and caller-retained-tensor binding tickets consume it without introducing a second scalar authority.
+The labelled draft at `9a8f53c937dc9b9f777a1d4b361cadc1a0b0316e` is integrated after Tom accepts the public surface, every remainder below is `done`, and both [`deliver-an-artifact-family-from-a-symbolic-region`](deliver-an-artifact-family-from-a-symbolic-region.md) and [`bind-repeated-invocations-over-caller-retained-tensors`](bind-repeated-invocations-over-caller-retained-tensors.md) can consume the capability without a second scalar authority. Do not set this ticket `done` on the draft commit alone.
+
+## Split — 2026-08-13 at base `209e0f9fd5a18486039d859a5f47ccf260f0f8cf`
+
+Review of `9a8f53c9` stopped short of a complete outcome. The kernel, schedule, Metal, and routed-runtime draft is preserved on `tkt/admit-live-extent-operands-to-payload-indexing`. The remainder is split rather than merged as done.
+
+- [`accept-the-live-extent-operand-public-surface`](accept-the-live-extent-operand-public-surface.md) — Tom packet; `awaiting-decision`; only Tom closes it.
+- [`carry-live-extent-operands-through-the-artifact-envelope`](carry-live-extent-operands-through-the-artifact-envelope.md) — envelope construction/codec/decode/validation, blocked on acceptance.
+- [`prove-one-live-extent-artifact-payload-and-pipeline-at-two-n`](prove-one-live-extent-artifact-payload-and-pipeline-at-two-n.md) — `N = 14` / `N = 15` artifact, payload, and pipeline evidence.
+- [`prove-a-schedule-verified-live-contraction-consumes-s`](prove-a-schedule-verified-live-contraction-consumes-s.md) — `LiveContraction` E2E, blocked on acceptance.
+- [`admit-symbolic-extents-through-compiler-region-formation`](admit-symbolic-extents-through-compiler-region-formation.md) — `compile()` path. **Correction of the review comment:** the first refuse is strategy selection (`RequestError::UnsupportedSymbolicExtent`, `rule: "symbolic-extent"` in `crates/tiler-compiler/src/request.rs`), not region formation. Region formation is the later fail-closed gate.
+
+Do not merge `9a8f53c9` as done. Do not release the deliver or bind-repeated dependents until the accepted capability exists.
