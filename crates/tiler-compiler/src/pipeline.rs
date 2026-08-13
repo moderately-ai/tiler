@@ -1908,21 +1908,24 @@ fn compile_target_with_explain(
     )?;
     let region_root = region_records.summary;
     if let Some(extent) = verified.normalized().first_symbolic_extent() {
-        // Region formation recorded the authored symbols. IndexRegion still
-        // requires a fixed launch geometry, so this is a typed decline past
-        // strategy rather than a scheduled region that invents a work-item count.
-        return Err(target_failure(
-            CompileError::from(RequestError::UnsupportedSymbolicExtent {
-                phase: "schedule",
-                rule: "symbolic-extent",
-                extent,
-            }),
-            ExplainStage::RegionFormation,
-            "symbolic-schedule",
-            SubjectKind::Region,
-            REGION_FORMATION_SUBJECT,
-            record_cause(region_root),
-        ));
+        // A sourced broadcast must reach physical selection so a provider that
+        // cannot implement the carrier declines under its own named rule.
+        // Same-shape elementwise without that carrier still cannot launch over
+        // a symbol: IndexRegion requires a fixed geometry.
+        if !verified.normalized().carries_parametric_broadcast() {
+            return Err(target_failure(
+                CompileError::from(RequestError::UnsupportedSymbolicExtent {
+                    phase: "schedule",
+                    rule: "symbolic-extent",
+                    extent,
+                }),
+                ExplainStage::RegionFormation,
+                "symbolic-schedule",
+                SubjectKind::Region,
+                REGION_FORMATION_SUBJECT,
+                record_cause(region_root),
+            ));
+        }
     }
     let plans = enumerate_complete_plans(
         semantic,
@@ -1989,10 +1992,18 @@ fn compile_target_with_explain(
             .failure_census
             .is_pure_vocabulary_gap(&plans.portfolio)
         {
+            // A provider that cannot implement the parametric carrier declines
+            // that named rule. Collapsing it into `region-vocabulary` would
+            // mask the capability the caller has to install.
+            let rule = if verified.normalized().carries_parametric_broadcast() {
+                crate::physical::RegionVocabularyWall::ParametricBroadcast.reason()
+            } else {
+                "region-vocabulary"
+            };
             return Err(target_failure(
                 CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
                     phase: "planning",
-                    rule: "region-vocabulary",
+                    rule,
                 }),
                 ExplainStage::Selection,
                 "portfolio-empty-with-vocabulary-gap",

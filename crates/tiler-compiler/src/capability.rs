@@ -49,11 +49,35 @@ use tiler_ir::index::{
     SymbolicExtentError, TensorAccessId, TensorId, TensorRole, VerifiedIndexRegion,
     VerifiedIndexRegionSequence,
 };
+use tiler_ir::schedule::mapping_names_a_symbol;
 use tiler_ir::semantic::{
-    FrozenSemanticRegistry, OpKey, OperationAttributes, ProviderIdentity, RegistryError,
-    ResolvedValueType, SemanticCapabilityAuthority, SemanticRegistrySnapshotIdentity,
+    BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, FrozenSemanticRegistry, OpKey,
+    OperationAttributes, ProviderIdentity, RegistryError, ResolvedValueType,
+    SemanticCapabilityAuthority, SemanticRegistrySnapshotIdentity, broadcast_f32_op,
 };
 use tiler_ir::shape::{Extent, Shape, SourcedExtent};
+
+/// Returns whether this occurrence's index law builds against the program environment.
+///
+/// Matches the law's parametric-broadcast arm: only that realization opens
+/// [`IndexRegionBuilder::new_with_shape_environment`]. A neighbour occurrence
+/// that merely lives in a program with an environment must keep the environment-free
+/// builder, or its identity would disagree with the law.
+fn occurrence_needs_shape_environment(subject: &IndexRefinementSubject) -> bool {
+    if subject.operation() != &broadcast_f32_op() {
+        return false;
+    }
+    let Some(value) = subject.attributes().get(BROADCAST_AXIS_MAPPING_ATTRIBUTE) else {
+        return false;
+    };
+    let Ok(mapping) = BroadcastAxisMapping::from_canonical_value(value) else {
+        return false;
+    };
+    let Some(input) = subject.inputs().first() else {
+        return false;
+    };
+    mapping_names_a_symbol(input.sourced_shape(), &mapping)
+}
 
 /// Canonical identity domain-separation tag for a frozen registry snapshot.
 const REGISTRY_IDENTITY_TAG: &[u8] = b"tiler.compiler.lowering-capability-registry.v2\0";
@@ -522,7 +546,16 @@ impl<'a> IndexAccessSequenceContext<'a> {
             ));
             return Ok(());
         }
-        let mut builder = match IndexRegionBuilder::new(self.scalars.clone()) {
+        let opened = match self.occurrence.shape_environment() {
+            Some(environment) if occurrence_needs_shape_environment(self.occurrence) => {
+                IndexRegionBuilder::new_with_shape_environment(
+                    self.scalars.clone(),
+                    Arc::clone(environment),
+                )
+            }
+            _ => IndexRegionBuilder::new(self.scalars.clone()),
+        };
+        let mut builder = match opened {
             Ok(builder) => builder,
             Err(source) => return Err(self.record_emit(stage, source.into())),
         };
@@ -721,6 +754,25 @@ impl<'a> IndexAccessLoweringContext<'a> {
         Ok(self.builder.dimension(role, extent)?)
     }
 
+    /// Adds one iteration dimension whose extent may name a declared symbol.
+    ///
+    /// Crate-internal: the labelled-draft parametric broadcast lowering is the
+    /// only caller. A public sourced-dimension method on this context is a new
+    /// facade field and is Tom's.
+    pub(crate) fn sourced_dimension(
+        &mut self,
+        role: DomainRole,
+        extent: SourcedExtent,
+    ) -> Result<DimensionId, LoweringEmitError> {
+        match extent {
+            SourcedExtent::Static(extent) => self.dimension(role, extent),
+            SourcedExtent::Symbol(symbol) => Ok(self.builder.symbolic_dimension(role, symbol)?),
+            _ => Err(LoweringEmitError::Occurrence {
+                rule: "sourced-extent-kind",
+            }),
+        }
+    }
+
     /// Declares one input tensor boundary.
     ///
     /// # Errors
@@ -745,6 +797,30 @@ impl<'a> IndexAccessLoweringContext<'a> {
         shape: Shape,
     ) -> Result<TensorId, LoweringEmitError> {
         Ok(self.builder.tensor(TensorRole::Output, value_type, shape)?)
+    }
+
+    /// Declares one input tensor whose extents may name declared symbols.
+    pub(crate) fn sourced_input_tensor(
+        &mut self,
+        value_type: ResolvedValueType,
+        shape: &tiler_ir::shape::SourcedShape,
+    ) -> Result<TensorId, LoweringEmitError> {
+        Ok(self
+            .builder
+            .sourced_tensor(TensorRole::Input, value_type, shape.extents().collect())?)
+    }
+
+    /// Declares one output tensor whose extents may name declared symbols.
+    pub(crate) fn sourced_output_tensor(
+        &mut self,
+        value_type: ResolvedValueType,
+        shape: &tiler_ir::shape::SourcedShape,
+    ) -> Result<TensorId, LoweringEmitError> {
+        Ok(self.builder.sourced_tensor(
+            TensorRole::Output,
+            value_type,
+            shape.extents().collect(),
+        )?)
     }
 
     /// Creates or reuses an exact constant index expression.

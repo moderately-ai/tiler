@@ -12,6 +12,8 @@ use tiler_ir::schedule::{
     AxisDecode, InputOrdinal, LogicalAccess, PointwiseBf16Expression,
     PointwiseBf16ExpressionBuilder, PointwiseBf16Value, PointwiseF32Expression,
     PointwiseF32ExpressionBuilder, PointwiseF32Node, PointwiseF32Value, TensorRole,
+    interpret_parametric_broadcast, mapping_names_a_symbol,
+    parametric_broadcast_read_is_admissible,
 };
 use tiler_ir::semantic::{
     BF16_CONSTANT_BITS_ATTRIBUTE, BROADCAST_AXIS_MAPPING_ATTRIBUTE, Bf16, BroadcastAxisMapping,
@@ -2091,6 +2093,33 @@ impl NormalizedOutput {
         }
     }
 
+    /// Returns whether some recognized read of this output is the labelled-draft
+    /// parametric broadcast carrier.
+    fn carries_parametric_broadcast(&self) -> bool {
+        match self {
+            Self::Pointwise(normalized) => normalized
+                .reads
+                .iter()
+                .any(|(_, map)| access_is_parametric_broadcast(map)),
+            Self::SerialSum(normalized) => normalized
+                .prologue_reads
+                .iter()
+                .any(|(_, map)| access_is_parametric_broadcast(map)),
+            Self::Epilogue(chain) => {
+                chain
+                    .reads
+                    .iter()
+                    .any(|(_, map)| access_is_parametric_broadcast(map))
+                    || chain.producer.carries_parametric_broadcast()
+            }
+            Self::Staged(normalized) => normalized
+                .producer
+                .as_deref()
+                .is_some_and(Self::carries_parametric_broadcast),
+            Self::Contraction(_) => false,
+        }
+    }
+
     /// Returns the recognized shape one *producer* region of this output is
     /// built from.
     ///
@@ -2702,6 +2731,18 @@ impl NormalizedProgram {
         })
     }
 
+    /// Returns whether any recognized read is the labelled-draft parametric
+    /// broadcast carrier.
+    ///
+    /// The compile path uses this to take the carrier to physical selection
+    /// instead of refusing it under the generic symbolic-extent schedule gate.
+    /// A provider that cannot implement the carrier then declines by name.
+    pub(crate) fn carries_parametric_broadcast(&self) -> bool {
+        self.outputs
+            .iter()
+            .any(NormalizedOutput::carries_parametric_broadcast)
+    }
+
     /// Returns every *occurrence* any output's walk claimed, ascending.
     ///
     /// The projection of [`Self::all_members`] onto operations, for the
@@ -2764,12 +2805,23 @@ fn read_tensor_elements(map: &LogicalAccess, domain_elements: u64) -> Option<u64
         | LogicalAccess::BroadcastReplication { operand_shape, .. } => {
             tiler_ir::schedule::element_count(operand_shape).ok()
         }
+        // A sourced operand answers only when every extent is already a
+        // literal. Folding `ExtentSources::determined` here would size the
+        // read from a bound value the request must not specialize.
+        LogicalAccess::ParametricBroadcast { operand_shape, .. } => operand_shape
+            .as_static()
+            .and_then(|shape| tiler_ir::schedule::element_count(shape).ok()),
         LogicalAccess::ScalarBroadcast
         | LogicalAccess::PackedU4LsbZeroTail { .. }
         | LogicalAccess::ReductionContributor { .. }
         | LogicalAccess::ContractionOperand { .. }
         | _ => None,
     }
+}
+
+/// Returns whether `map` is the labelled-draft parametric broadcast carrier.
+const fn access_is_parametric_broadcast(map: &LogicalAccess) -> bool {
+    matches!(map, LogicalAccess::ParametricBroadcast { .. })
 }
 
 /// Returns the one value every entry carries, or `None` when they disagree.
@@ -3731,13 +3783,20 @@ fn encode_binary_node(
 /// The run entry naming a declared input this region's read list does not read.
 ///
 /// It occupies the relation slot, and the slot's tag space is
-/// [`encode_access_relation`]'s: that function writes `0x01`, `0x02`, `0x03`, or
-/// the wildcard `0x00`, and nothing else, so `0x04` is a byte no run could carry
-/// before this entry existed. That disjointness is the whole argument holding
-/// `pointwise-f32.v4` and `serial-sum-f32.v3` where they are — a relation added
-/// to that encoder must take the wildcard or a tag above this one, never this
-/// one.
+/// [`encode_access_relation`]'s: that function writes `0x01`, `0x02`, `0x03`,
+/// `0x05`, or the wildcard `0x00`, and nothing else, so `0x04` is a byte no run
+/// could carry before this entry existed. That disjointness is the whole
+/// argument holding `pointwise-f32.v4` and `serial-sum-f32.v3` where they are —
+/// a relation added to that encoder must take the wildcard or a tag above this
+/// one, never this one.
 const UNREAD_DECLARED_INPUT_TAG: u8 = 0x04;
+
+/// Request-subject tag for the labelled-draft parametric broadcast carrier.
+///
+/// Above [`UNREAD_DECLARED_INPUT_TAG`] so the unread-input marker and this
+/// relation cannot share a byte. Crate-internal; the `tiler.compiler.request-subject.v6`
+/// domain does not step because previously encodable maps keep their payloads.
+const PARAMETRIC_BROADCAST_ACCESS_TAG: u8 = 0x05;
 
 /// Encodes which declared inputs one whole-program, prologue, or fold region
 /// reads, and how.
@@ -3826,11 +3885,15 @@ fn encode_elementwise_reads(output: &mut Vec<u8>, declared: usize, reads: &[(u32
 /// a relation this encoder refuses. Both callers reach it: an epilogue read that
 /// interposes no relation, and the dense half of a declared input read twice.
 ///
-/// **The tag space stops at `0x03`, and that is load-bearing elsewhere.**
-/// [`UNREAD_DECLARED_INPUT_TAG`] occupies this slot's `0x04` in
-/// [`encode_elementwise_reads`]'s run precisely because no relation can write it
-/// here; a relation added later takes the wildcard or a tag above `0x04`, never
-/// `0x04` itself, or two arms of that run become one byte string.
+/// **The named tag space is `0x01`/`0x02`/`0x03`/`0x05`, and `0x04` remains
+/// reserved for the unread-input marker.** [`UNREAD_DECLARED_INPUT_TAG`] occupies
+/// this slot's `0x04` in [`encode_elementwise_reads`]'s run precisely because no
+/// relation can write it here. The parametric carrier takes `0x05` rather than
+/// the refusal `0x00`, so two sourced mappings cannot share explain identity.
+/// A later relation takes the wildcard or a tag above `0x05`, never `0x04`.
+///
+/// The domain does not step: `0x05` is a previously unencodable population, and
+/// every already-encodable map keeps its bytes. The encoding stays crate-internal.
 fn encode_access_relation(output: &mut Vec<u8>, map: &LogicalAccess) {
     match map {
         LogicalAccess::ReindexBijection {
@@ -3854,10 +3917,19 @@ fn encode_access_relation(output: &mut Vec<u8>, map: &LogicalAccess) {
             encode_explain_axis_decodes(output, axes);
         }
         LogicalAccess::LinearIdentity => output.push(0x03),
-        // No other relation can be recorded here: `recognize_structural_read`
-        // is the only producer of a mapped read and it builds exactly the two
-        // above. The arm is a refusal to encode rather than a wildcard tag, so a
-        // relation added later cannot silently share one of these tags.
+        LogicalAccess::ParametricBroadcast {
+            operand_shape,
+            mapping,
+            environment,
+        } => {
+            output.push(PARAMETRIC_BROADCAST_ACCESS_TAG);
+            encode_explain_sourced_shape(output, operand_shape);
+            push_slice(output, mapping.canonical_encoding().as_bytes());
+            push_slice(output, environment.as_bytes());
+        }
+        // No other relation can be recorded here. The arm is a refusal to encode
+        // rather than a wildcard tag, so a relation added later cannot silently
+        // share one of these tags.
         _ => output.push(0x00),
     }
 }
@@ -6240,26 +6312,24 @@ fn plan_elementwise(
         // map the family denotes. That is what makes a fused region the
         // deliverable rather than a materializing copy kernel: the arithmetic
         // still comes from the neighbour, and only the addressing changes.
-        if is_structural_family(operation.key()) {
-            let Some(static_domain) = shape.as_static() else {
-                return Err(ElementwiseRefusal::Refused(unsupported_symbolic_extent(
-                    program, value, shape,
-                )));
-            };
-            if let Some((operand, map)) =
-                recognize_structural_read(program, &operation, leaves, static_domain)
+        //
+        // A sourced broadcast is recognized as the parametric carrier over the
+        // authored domain. Reindex still needs a static domain for its axis
+        // decodes; that refusal is inside [`recognize_structural_read`].
+        if is_structural_family(operation.key())
+            && let Some((operand, map)) =
+                recognize_structural_read(program, &operation, leaves, shape)
                     .map_err(ElementwiseRefusal::Refused)?
-            {
-                let leaf = LeafRead {
-                    value: operand,
-                    map,
-                };
-                record_leaf(&mut leaf_reads, leaves.staged, leaf.clone())?;
-                members.push(SemanticStage::first(SemanticMemberId(member)));
-                steps.push((value, ElementwiseMint::Read { leaf }));
-                minted.push(value);
-                continue;
-            }
+        {
+            let leaf = LeafRead {
+                value: operand,
+                map,
+            };
+            record_leaf(&mut leaf_reads, leaves.staged, leaf.clone())?;
+            members.push(SemanticStage::first(SemanticMemberId(member)));
+            steps.push((value, ElementwiseMint::Read { leaf }));
+            minted.push(value);
+            continue;
         }
         let Some(family) = elementwise_family(&operation, arithmetic) else {
             // A folding family is the *boundary* between two regions rather than
@@ -6607,12 +6677,15 @@ const fn mismatch_rule(rule: &'static str) -> RequestError {
 /// walk does not read, `structural-attributes` for a malformed or missing
 /// form record, `structural-shape` for a result at another domain, and
 /// `structural-relation` when the derived map is not one the region vocabulary
-/// admits.
+/// admits. A reindex over a symbolic extent is still
+/// [`RequestError::UnsupportedSymbolicExtent`]. A sourced broadcast is the
+/// labelled-draft [`LogicalAccess::ParametricBroadcast`] carrier, not a folded
+/// concrete neighbour.
 fn recognize_structural_read(
     program: &SemanticProgram,
     operation: &tiler_ir::semantic::OperationRef<'_>,
     leaves: &ElementwiseLeaves<'_>,
-    shape: &Shape,
+    domain: &SourcedShape,
 ) -> Result<Option<(ValueId, LogicalAccess)>, RequestError> {
     let reindex = operation.key() == &reindex_f32_op();
     if !reindex && operation.key() != &broadcast_f32_op() {
@@ -6625,14 +6698,7 @@ fn recognize_structural_read(
     if !leaves.is_leaf(*operand) {
         return mismatch("structural-operand");
     }
-    let Some(operand_shape) = static_shape_ref(program, *operand) else {
-        if let Some(extent) = first_nonstatic_extent(program, *operand) {
-            return Err(RequestError::UnsupportedSymbolicExtent {
-                phase: "strategy",
-                rule: "symbolic-extent",
-                extent,
-            });
-        }
+    let Some(operand_sourced) = sourced_shape_ref(program, *operand) else {
         return mismatch("structural-operand");
     };
     // The occurrence's result is what the region iterates, so a result at any
@@ -6641,18 +6707,19 @@ fn recognize_structural_read(
     let [result] = results.as_slice() else {
         return mismatch("structural-arity");
     };
-    if static_shape_ref(program, *result) != Some(shape) {
-        if let Some(extent) = first_nonstatic_extent(program, *result) {
-            return Err(RequestError::UnsupportedSymbolicExtent {
-                phase: "strategy",
-                rule: "symbolic-extent",
-                extent,
-            });
-        }
+    let Some(result_sourced) = sourced_shape_ref(program, *result) else {
+        return mismatch("structural-shape");
+    };
+    if result_sourced != domain {
         return mismatch("structural-shape");
     }
-    let operand_shape = operand_shape.clone();
-    let map = if reindex {
+    if reindex {
+        let Some(operand_shape) = operand_sourced.as_static() else {
+            return Err(unsupported_symbolic_extent(program, *operand, domain));
+        };
+        let Some(shape) = domain.as_static() else {
+            return Err(unsupported_symbolic_extent(program, *result, domain));
+        };
         let Some(value) = operation.attributes().get(REINDEX_MAPPING_ATTRIBUTE) else {
             return mismatch("structural-attributes");
         };
@@ -6663,59 +6730,79 @@ fn recognize_structural_read(
         // result from exactly this operand, or the region would realize a
         // different occurrence than the one requested — the same check the
         // governed index-access lowering makes for the same reason.
-        if form.result_shape(&operand_shape).ok().as_ref() != Some(shape) {
+        if form.result_shape(operand_shape).ok().as_ref() != Some(shape) {
             return mismatch("structural-shape");
         }
-        let Some(axes) = reindex_axis_decodes(&form, &operand_shape, shape) else {
+        let Some(axes) = reindex_axis_decodes(&form, operand_shape, shape) else {
             return mismatch("structural-relation");
         };
-        LogicalAccess::ReindexBijection {
-            operand_shape,
-            result_shape: shape.clone(),
-            axes,
+        if !tiler_ir::schedule::reindex_decodes_are_bijective(operand_shape, shape, &axes) {
+            return mismatch("structural-relation");
         }
-    } else {
-        let Some(value) = operation.attributes().get(BROADCAST_AXIS_MAPPING_ATTRIBUTE) else {
-            return mismatch("structural-attributes");
-        };
-        let Ok(mapping) = BroadcastAxisMapping::from_canonical_value(value) else {
-            return mismatch("structural-attributes");
-        };
-        if mapping.result_shape(&operand_shape).ok().as_ref() != Some(shape) {
-            return mismatch("structural-shape");
-        }
-        let Some(axes) = broadcast_axis_decodes(&mapping, &operand_shape, shape) else {
+        return Ok(Some((
+            *operand,
+            LogicalAccess::ReindexBijection {
+                operand_shape: operand_shape.clone(),
+                result_shape: shape.clone(),
+                axes,
+            },
+        )));
+    }
+    let Some(value) = operation.attributes().get(BROADCAST_AXIS_MAPPING_ATTRIBUTE) else {
+        return mismatch("structural-attributes");
+    };
+    let Ok(mapping) = BroadcastAxisMapping::from_canonical_value(value) else {
+        return mismatch("structural-attributes");
+    };
+    let declared: Vec<SourcedExtent> = mapping.result_extents().to_vec();
+    let observed: Vec<SourcedExtent> = result_sourced.extents().collect();
+    if declared != observed {
+        return mismatch("structural-shape");
+    }
+    if mapping_names_a_symbol(operand_sourced, &mapping) {
+        let Some(sources) = program.extent_sources() else {
             return mismatch("structural-relation");
         };
-        LogicalAccess::BroadcastReplication {
-            operand_shape,
-            result_shape: shape.clone(),
-            axes,
+        let map = LogicalAccess::ParametricBroadcast {
+            operand_shape: operand_sourced.clone(),
+            mapping,
+            environment: sources.environment_identity().clone(),
+        };
+        if !parametric_broadcast_read_is_admissible(&map, domain.rank()) {
+            return mismatch("structural-relation");
         }
+        if interpret_parametric_broadcast(&map, sources.environment()).is_err() {
+            return mismatch("structural-relation");
+        }
+        return Ok(Some((*operand, map)));
+    }
+    let Some(operand_shape) = operand_sourced.as_static() else {
+        return Err(unsupported_symbolic_extent(program, *operand, domain));
+    };
+    let Some(shape) = domain.as_static() else {
+        return Err(unsupported_symbolic_extent(program, *result, domain));
+    };
+    if mapping.result_shape(operand_shape).ok().as_ref() != Some(shape) {
+        return mismatch("structural-shape");
+    }
+    let Some(axes) = broadcast_axis_decodes(&mapping, operand_shape, shape) else {
+        return mismatch("structural-relation");
     };
     // The region verifier will refuse a map that fails its admission rule, but
     // refusing here reports the *program* property rather than letting a region
     // be assembled that cannot be built. A broadcast that widens nothing lands
     // here, which is the one case a well-formed semantic mapping can reach.
-    let admissible = match &map {
-        LogicalAccess::ReindexBijection {
-            operand_shape,
-            result_shape,
-            axes,
-        } => tiler_ir::schedule::reindex_decodes_are_bijective(operand_shape, result_shape, axes),
-        LogicalAccess::BroadcastReplication {
-            operand_shape,
-            result_shape,
-            axes,
-        } => {
-            tiler_ir::schedule::broadcast_decodes_are_replicating(operand_shape, result_shape, axes)
-        }
-        _ => false,
-    };
-    if !admissible {
+    if !tiler_ir::schedule::broadcast_decodes_are_replicating(operand_shape, shape, &axes) {
         return mismatch("structural-relation");
     }
-    Ok(Some((*operand, map)))
+    Ok(Some((
+        *operand,
+        LogicalAccess::BroadcastReplication {
+            operand_shape: operand_shape.clone(),
+            result_shape: shape.clone(),
+            axes,
+        },
+    )))
 }
 
 /// Returns the row-major suffix products of `shape`, one per axis.
@@ -7830,12 +7917,12 @@ fn reduction_axes(
 /// Returns one semantic value's fixed shape, refusing a symbolic one by name.
 ///
 /// Recognition matches a program against a physical strategy. Same-shape
-/// elementwise is admitted with extents left symbolic; every other strategy
-/// below is still stated over fixed extents: a domain a launch geometry is
-/// derived from, an element count, a reindex or broadcast axis decode. A
-/// symbolic extent is refused here rather than resolved through the
-/// environment, which would make the recognized region name extents nobody
-/// wrote.
+/// elementwise and a sourced broadcast (the labelled-draft parametric carrier)
+/// are admitted with extents left symbolic. Every other strategy below is still
+/// stated over fixed extents: a domain a launch geometry is derived from, an
+/// element count, or a reindex axis decode. A symbolic extent is refused here
+/// rather than resolved through the environment, which would make the recognized
+/// region name extents nobody wrote.
 ///
 /// The refusal names the extent as written, not the handle lookup that
 /// observed it. A bound symbol is still this refusal: specializing it into the
@@ -7971,19 +8058,19 @@ mod tests {
     use super::*;
     use tiler_ir::schedule::FlushedZeroSign;
     use tiler_ir::semantic::{
-        Bf16Add, Bf16Constant, Bf16Multiply, CanonicalValue, CanonicalValueKind, F32Add,
-        F32Constant, F32Gather, F32Multiply, F32RmsNorm, NormativeDefinitionRef, OperationArity,
-        OperationAttributeSchema, OperationAttributes, OperationConformance, OperationDefinition,
-        OperationDefinitionFacts, OperationEffect, OperationInferenceError, OperationInferencer,
-        OperationSchema, ProviderDiagnosticCode, ProviderIdentity, RegistryError,
-        ResolvedValueType, SemanticProgramBuilder, SemanticRegistryBuilder,
-        SemanticRegistryProvider, SemanticRegistryRegistrar, StrictSerialF32Sum,
-        TypeDefinitionFacts, ValueFact, ValueTypeDefinition, ValueTypeDefinitionKey,
-        gather_index_resolved_type,
+        Bf16Add, Bf16Constant, Bf16Multiply, BroadcastAxisSource, CanonicalValue,
+        CanonicalValueKind, F32Add, F32Broadcast, F32Constant, F32Gather, F32Multiply, F32RmsNorm,
+        NormativeDefinitionRef, OperationArity, OperationAttributeSchema, OperationAttributes,
+        OperationConformance, OperationDefinition, OperationDefinitionFacts, OperationEffect,
+        OperationInferenceError, OperationInferencer, OperationSchema, ProviderDiagnosticCode,
+        ProviderIdentity, RegistryError, ResolvedValueType, SemanticProgramBuilder,
+        SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar,
+        StrictSerialF32Sum, TypeDefinitionFacts, ValueFact, ValueTypeDefinition,
+        ValueTypeDefinitionKey, gather_index_resolved_type,
     };
     use tiler_ir::shape::{
-        BindingSource, ExtentRelation, ExtentTerm, FactProvenance, RootBinding,
-        SemanticInputConstraint, ShapeEnv, ShapeEnvBuilder, ShapeSymbol, SymbolScope,
+        BindingSource, ExtentRelation, ExtentTerm, FactProvenance, GuardApplicability, RootBinding,
+        SemanticInputConstraint, ShapeEnv, ShapeEnvBuilder, ShapeSymbol, SymbolScope, VariantGuard,
     };
 
     fn diagnostic_code(value: &str) -> ProviderDiagnosticCode {
@@ -12428,6 +12515,366 @@ mod tests {
         assert_eq!(
             RequestError::MismatchedShapeEnvironment.to_string(),
             "compile.request.shape-environment: request must carry the program's own environment",
+        );
+    }
+
+    fn parametric_broadcast_environment(
+        symbol: &str,
+        interval: (u64, u64),
+        guard: Option<u64>,
+    ) -> Arc<ShapeEnv> {
+        let mut draft = ShapeEnvBuilder::new();
+        let declared = request_symbol(symbol);
+        draft.declare(declared.clone()).unwrap();
+        draft.bind(&declared, request_axis_binding("a", 0)).unwrap();
+        draft
+            .require(SemanticInputConstraint::new(
+                ExtentRelation::interval(
+                    ExtentTerm::Symbol(declared.clone()),
+                    interval.0,
+                    interval.1,
+                )
+                .unwrap(),
+                FactProvenance::FrontendRequired,
+            ))
+            .unwrap();
+        if let Some(value) = guard {
+            draft
+                .guard(VariantGuard::new(
+                    ExtentRelation::equal(
+                        ExtentTerm::Symbol(declared),
+                        ExtentTerm::Constant(value),
+                    ),
+                    GuardApplicability::Schedule,
+                ))
+                .unwrap();
+        }
+        Arc::new(draft.build().unwrap())
+    }
+
+    /// `a * broadcast(w)` over `a: f32[n, 4]` and `w: f32[4]`.
+    fn parametric_broadcast_program(
+        environment: Arc<ShapeEnv>,
+        pad: &str,
+    ) -> (SemanticProgram, BroadcastAxisMapping) {
+        let pad_symbol = request_symbol(pad);
+        let mapping = BroadcastAxisMapping::new(
+            [
+                SourcedExtent::Symbol(pad_symbol),
+                SourcedExtent::Static(Extent::new(4)),
+            ],
+            [
+                BroadcastAxisSource::Replicate,
+                BroadcastAxisSource::FromOperand(Axis::new(0)),
+            ],
+        )
+        .expect("a symbolic rank-pad mapping is context-free");
+        let mut builder =
+            SemanticProgramBuilder::try_standard_with_shape_environment(environment).unwrap();
+        let activation = builder
+            .input_sourced::<F32>(
+                InputKey::new("a").unwrap(),
+                vec![
+                    SourcedExtent::Symbol(request_symbol(pad)),
+                    SourcedExtent::Static(Extent::new(4)),
+                ],
+            )
+            .unwrap();
+        let weight = builder
+            .input_sourced::<F32>(
+                InputKey::new("w").unwrap(),
+                vec![SourcedExtent::Static(Extent::new(4))],
+            )
+            .unwrap();
+        let widened = F32Broadcast::apply(&mut builder, &mapping, weight)
+            .expect("the sourced mapping applies against the program's environment");
+        let root = F32Multiply::apply(&mut builder, activation, widened).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        (builder.build().unwrap(), mapping)
+    }
+
+    /// A single sourced broadcast, so lowering has only the parametric
+    /// occurrence to refine. The fused `a * broadcast(w)` neighbour still
+    /// exercises recognition; its multiply keeps a static index law.
+    fn parametric_broadcast_only_program(environment: Arc<ShapeEnv>, pad: &str) -> SemanticProgram {
+        let mapping = BroadcastAxisMapping::new(
+            [
+                SourcedExtent::Symbol(request_symbol(pad)),
+                SourcedExtent::Static(Extent::new(4)),
+            ],
+            [
+                BroadcastAxisSource::Replicate,
+                BroadcastAxisSource::FromOperand(Axis::new(0)),
+            ],
+        )
+        .expect("a symbolic rank-pad mapping is context-free");
+        let mut builder =
+            SemanticProgramBuilder::try_standard_with_shape_environment(environment).unwrap();
+        let weight = builder
+            .input_sourced::<F32>(
+                InputKey::new("w").unwrap(),
+                vec![SourcedExtent::Static(Extent::new(4))],
+            )
+            .unwrap();
+        let widened = F32Broadcast::apply(&mut builder, &mapping, weight)
+            .expect("the sourced mapping applies against the program's environment");
+        builder
+            .output(OutputKey::new("result").unwrap(), widened)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    fn recognized_parametric_read(program: &SemanticProgram) -> LogicalAccess {
+        let verified = verify_planned_request(CompilationRequest::governed(program))
+            .expect("a sourced broadcast must pass strategy selection");
+        let pointwise = verified
+            .normalized
+            .outputs()
+            .first()
+            .and_then(NormalizedOutput::pointwise)
+            .expect("the fixture is whole-program elementwise");
+        pointwise
+            .reads
+            .iter()
+            .map(|(_, map)| map.clone())
+            .find(|map| matches!(map, LogicalAccess::ParametricBroadcast { .. }))
+            .expect("recognition must retain the parametric carrier")
+    }
+
+    fn request_subject_bytes(program: &SemanticProgram) -> Vec<u8> {
+        verify_planned_request(CompilationRequest::governed(program))
+            .expect("the fixture admits a planned request")
+            .for_target(0)
+            .expect("the governed profile admits the fixture")
+            .subject()
+            .canonical_explain_subject_bytes()
+    }
+
+    fn planning_capability_rule(
+        error: &crate::pipeline::CompileError,
+    ) -> Option<(&'static str, &'static str)> {
+        match error {
+            crate::pipeline::CompileError::UnsupportedCapability(
+                RequestError::UnsupportedCapability { phase, rule },
+            ) => Some((*phase, *rule)),
+            crate::pipeline::CompileError::Explained { source, .. } => {
+                planning_capability_rule(source)
+            }
+            _ => None,
+        }
+    }
+
+    /// One symbolic broadcast program reaches selection with its mapping and
+    /// environment unchanged.
+    ///
+    /// Watched failing under a deliberate perturbation: restoring the static
+    /// domain gate in `plan_elementwise` refuses this program as
+    /// `UnsupportedSymbolicExtent { phase: "strategy" }` before a
+    /// `NormalizedProgram` exists.
+    #[test]
+    fn a_parametric_broadcast_program_is_recognized_with_its_carrier() {
+        let environment = parametric_broadcast_environment("n", (1, 32_768), None);
+        let identity = environment.identity().clone();
+        let (program, mapping) = parametric_broadcast_program(environment, "n");
+        let request = CompilationRequest::governed(&program);
+        assert!(
+            std::ptr::eq(
+                request
+                    .shape_environment
+                    .expect("a symbolic program carries its environment")
+                    .environment(),
+                program
+                    .extent_sources()
+                    .expect("the constructed program owns its environment")
+                    .environment(),
+            ),
+            "the request must carry the program's own environment, not a second one",
+        );
+        let verified = verify_planned_request(request)
+            .expect("a sourced broadcast must pass strategy selection");
+        assert!(verified.normalized.carries_parametric_broadcast());
+        let LogicalAccess::ParametricBroadcast {
+            operand_shape,
+            mapping: retained,
+            environment: named,
+        } = recognized_parametric_read(&program)
+        else {
+            panic!("recognition must retain ParametricBroadcast, not a concrete neighbour");
+        };
+        assert_eq!(
+            operand_shape.extents().collect::<Vec<_>>(),
+            vec![SourcedExtent::Static(Extent::new(4))],
+        );
+        assert_eq!(retained, mapping);
+        assert_eq!(named, identity);
+        assert_eq!(
+            verified.normalized.first_symbolic_extent(),
+            Some(SourcedExtent::Symbol(request_symbol("n"))),
+        );
+    }
+
+    /// Perturbing a bound value does not change semantic, normalized-program, or
+    /// request identity.
+    ///
+    /// The two programs share declarations, root bindings, and the positivity
+    /// interval. They differ only in a schedule variant guard pinning `n` to 4
+    /// or 10. Guards are outside `ShapeEnvIdentity`, so a compiler that folded
+    /// the pin into `BroadcastReplication` would be the thing that moved the
+    /// identities.
+    #[test]
+    fn a_bound_value_change_does_not_move_parametric_broadcast_identity() {
+        let four = parametric_broadcast_program(
+            parametric_broadcast_environment("n", (1, 32_768), Some(4)),
+            "n",
+        )
+        .0;
+        let ten = parametric_broadcast_program(
+            parametric_broadcast_environment("n", (1, 32_768), Some(10)),
+            "n",
+        )
+        .0;
+        assert_eq!(four.semantic_identity(), ten.semantic_identity());
+        assert_eq!(
+            recognized_parametric_read(&four),
+            recognized_parametric_read(&ten),
+            "recognition must keep the same carrier; a fold to BroadcastReplication would move",
+        );
+        assert_eq!(
+            request_subject_bytes(&four),
+            request_subject_bytes(&ten),
+            "request identity must not move with a bound value the environment does not author",
+        );
+        for program in [&four, &ten] {
+            let LogicalAccess::ParametricBroadcast { operand_shape, .. } =
+                recognized_parametric_read(program)
+            else {
+                panic!("a bound value must not fold the carrier into a concrete neighbour");
+            };
+            assert_eq!(operand_shape.as_static(), Some(&Shape::from_dims([4])));
+            assert_eq!(
+                program.extent_sources().and_then(
+                    |sources| sources.determined(&SourcedExtent::Symbol(request_symbol("n")))
+                ),
+                None,
+                "a variant guard must not determine the authored symbol",
+            );
+        }
+    }
+
+    /// A provider lacking parametric support declines by the named capability
+    /// rule, not a static-signature or generic unsupported mask.
+    ///
+    /// Watched failing under a deliberate perturbation: leaving the generic
+    /// symbolic-extent schedule refuse in front of physical selection reports
+    /// `phase: "schedule", rule: "symbolic-extent"` instead of the provider's
+    /// `parametric-broadcast` rule.
+    #[test]
+    fn a_provider_lacking_parametric_support_declines_by_named_rule() {
+        let program = parametric_broadcast_only_program(
+            parametric_broadcast_environment("n", (1, 32_768), None),
+            "n",
+        );
+        crate::region::RegionGraph::from_program(&program)
+            .expect("region-graph construction must record a sourced broadcast");
+        crate::region::form_region_candidates(
+            &program,
+            DeterministicBudgets::governed(),
+            StrictF32NumericalContract::governed(),
+        )
+        .expect("region formation must accept the parametric population");
+        match crate::pipeline::compile(CompilationRequest::governed(&program)) {
+            Err(error) => {
+                assert_eq!(
+                    planning_capability_rule(&error),
+                    Some(("planning", "parametric-broadcast")),
+                    "a provider without parametric support must decline that named rule, got {error}"
+                );
+            }
+            Ok(_) => panic!("a provider without parametric support must decline, got a product"),
+        }
+
+        let literal = literal_three_input_elementwise(4);
+        crate::pipeline::compile(CompilationRequest::governed(&literal))
+            .expect("the literal neighbour still compiles");
+    }
+
+    /// Two parametric mappings that differ in one pad symbol produce different
+    /// request-subject bytes. Concrete reindex and broadcast keep tags `0x01`
+    /// and `0x02`.
+    ///
+    /// Watched failing under a deliberate perturbation: writing the parametric
+    /// carrier as `0x02` makes the two encodings share a tag with
+    /// `BroadcastReplication`.
+    #[test]
+    fn parametric_broadcast_request_subject_tag_is_injective() {
+        let n_program = parametric_broadcast_program(
+            parametric_broadcast_environment("n", (1, 32_768), None),
+            "n",
+        )
+        .0;
+        let t_env = {
+            let mut draft = ShapeEnvBuilder::new();
+            let declared = request_symbol("t");
+            draft.declare(declared.clone()).unwrap();
+            draft.bind(&declared, request_axis_binding("a", 0)).unwrap();
+            draft
+                .require(SemanticInputConstraint::new(
+                    ExtentRelation::interval(ExtentTerm::Symbol(declared), 1, 32_768).unwrap(),
+                    FactProvenance::FrontendRequired,
+                ))
+                .unwrap();
+            Arc::new(draft.build().unwrap())
+        };
+        let t_program = parametric_broadcast_program(t_env, "t").0;
+        assert_ne!(
+            request_subject_bytes(&n_program),
+            request_subject_bytes(&t_program),
+            "two pad symbols must not share request-subject bytes",
+        );
+
+        let mut parametric_bytes = Vec::new();
+        let parametric = recognized_parametric_read(&n_program);
+        encode_access_relation(&mut parametric_bytes, &parametric);
+        assert_eq!(
+            parametric_bytes.first().copied(),
+            Some(PARAMETRIC_BROADCAST_ACCESS_TAG),
+            "the parametric carrier must take tag 0x05, not the refusal 0x00",
+        );
+
+        let concrete = BroadcastAxisMapping::new(
+            [Extent::new(2), Extent::new(2)],
+            [
+                BroadcastAxisSource::Replicate,
+                BroadcastAxisSource::FromOperand(Axis::new(0)),
+            ],
+        )
+        .unwrap();
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let weight = builder
+            .input::<F32>(InputKey::new("w").unwrap(), Shape::from_dims([2]))
+            .unwrap();
+        let widened = F32Broadcast::apply(&mut builder, &concrete, weight).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), widened)
+            .unwrap();
+        let concrete_program = builder.build().unwrap();
+        let NormalizedOutput::Pointwise(recognized) = recognize(&concrete_program)
+            .expect("a literal broadcast is still BroadcastReplication")
+        else {
+            panic!("a literal broadcast is an elementwise region");
+        };
+        let (_, LogicalAccess::BroadcastReplication { .. }) = &recognized.reads[0] else {
+            panic!("a wholly literal mapping must stay BroadcastReplication");
+        };
+        let mut concrete_bytes = Vec::new();
+        encode_access_relation(&mut concrete_bytes, &recognized.reads[0].1);
+        assert_eq!(concrete_bytes.first().copied(), Some(0x02));
+        assert_ne!(
+            parametric_bytes.first(),
+            concrete_bytes.first(),
+            "colliding the parametric tag with BroadcastReplication loses injectivity",
         );
     }
 }

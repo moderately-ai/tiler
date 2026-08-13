@@ -708,6 +708,15 @@ pub(crate) enum RegionVocabularyWall {
     ///   family registered tomorrow under a law this profile cannot spell is
     ///   declined by name rather than mis-spelled.
     StagedFamilyUnspellable,
+    /// The region reads the labelled-draft parametric broadcast carrier.
+    ///
+    /// Distinct from every structural wall above: those say the cover grouped
+    /// occurrences this vocabulary cannot spell together. This says the cover
+    /// is right and the recognized relation is the parametric carrier, which
+    /// this provider does not implement. Folding it into `BroadcastReplication`
+    /// or refusing it as a generic symbolic-extent would mask that capability
+    /// gap.
+    ParametricBroadcast,
 }
 
 impl RegionVocabularyWall {
@@ -720,6 +729,7 @@ impl RegionVocabularyWall {
             // condition, so one code covers both spellings of the fact.
             Self::FusedPrologueUnspellable => "fused-prologue-unspellable",
             Self::StagedFamilyUnspellable => "region-staged-family-unspellable",
+            Self::ParametricBroadcast => "parametric-broadcast",
         }
     }
 }
@@ -803,6 +813,13 @@ fn spell_output(
 ) -> Option<Result<RegionSpelling, RegionVocabularyWall>> {
     match output {
         NormalizedOutput::Pointwise(normalized) => (members == normalized.members).then(|| {
+            if normalized
+                .reads
+                .iter()
+                .any(|(_, map)| matches!(map, LogicalAccess::ParametricBroadcast { .. }))
+            {
+                return Err(RegionVocabularyWall::ParametricBroadcast);
+            }
             Ok(RegionSpelling::new(
                 position,
                 RegionSpellingKind::Pointwise(write),
@@ -831,6 +848,13 @@ fn spell_output(
                 .prologue_members()
                 .is_some_and(|prologue| members == prologue)
             {
+                if normalized
+                    .prologue_reads
+                    .iter()
+                    .any(|(_, map)| matches!(map, LogicalAccess::ParametricBroadcast { .. }))
+                {
+                    return Some(Err(RegionVocabularyWall::ParametricBroadcast));
+                }
                 return Some(Ok(RegionSpelling::new(
                     position,
                     RegionSpellingKind::Pointwise(write),

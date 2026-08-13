@@ -3297,7 +3297,7 @@ struct ExpandedInput {
     input: usize,
     component_role: Option<EncodedComponentRole>,
     value_type: ResolvedValueType,
-    shape: Shape,
+    sourced: crate::shape::SourcedShape,
 }
 
 fn bind_operands(
@@ -3348,11 +3348,7 @@ fn bind_operands(
                         expanded_inputs: expanded.len(),
                     })?;
             let input = inputs[slot];
-            let shape = input
-                .shape()
-                .as_static()
-                .ok_or(IndexRefinementVerificationError::SymbolicBoundary)?;
-            if input.value_type() != &boundary.value_type || shape != &boundary.shape {
+            if input.value_type() != &boundary.value_type || input.shape() != &boundary.sourced {
                 return Err(IndexRefinementVerificationError::OperandInterface {
                     position: *position,
                 });
@@ -3417,11 +3413,12 @@ fn expand_inputs(
     for (input, boundary) in inputs.iter().enumerate() {
         if let Some((_, contract)) = boundary.value_type.encoded_numeric_parts() {
             for component in contract.components() {
+                let shape = component.shape_relation().component_shape(&boundary.shape);
                 expanded.push(ExpandedInput {
                     input,
                     component_role: Some(component.role()),
                     value_type: component.resolved_type().clone(),
-                    shape: component.shape_relation().component_shape(&boundary.shape),
+                    sourced: crate::shape::SourcedShape::from(shape),
                 });
             }
         } else {
@@ -3429,7 +3426,7 @@ fn expand_inputs(
                 input,
                 component_role: None,
                 value_type: boundary.value_type.clone(),
-                shape: boundary.shape.clone(),
+                sourced: boundary.sourced.clone(),
             });
         }
     }
@@ -3557,13 +3554,9 @@ fn bind_results(
             }
         }
         let output = region.tensor(*tensor)?;
-        let shape = output
-            .shape()
-            .as_static()
-            .ok_or(IndexRefinementVerificationError::SymbolicBoundary)?;
         if output.role() != TensorRole::Output
             || output.value_type() != &result.value_type
-            || shape != &result.shape
+            || output.shape() != result.sourced_shape()
         {
             return Err(IndexRefinementVerificationError::ResultInterface { position });
         }

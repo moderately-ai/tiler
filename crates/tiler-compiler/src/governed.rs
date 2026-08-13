@@ -26,6 +26,7 @@ use tiler_ir::index::{
     divide_f32_scalar_op, exp_f32_scalar_op, multiply_bf16_scalar_op, multiply_f32_scalar_op,
     rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
 };
+use tiler_ir::schedule::mapping_names_a_symbol;
 use tiler_ir::semantic::{
     AttributeFieldId, BF16_CONSTANT_BITS_ATTRIBUTE, BROADCAST_AXIS_MAPPING_ATTRIBUTE, Bf16,
     BroadcastAxisMapping, BroadcastAxisSource, CONCATENATE_AXIS_ATTRIBUTE,
@@ -2067,6 +2068,20 @@ impl IndexAccessLoweringProvider for GovernedBroadcastF32 {
         };
         let mapping = BroadcastAxisMapping::from_canonical_value(value)
             .map_err(|_| occurrence_error("broadcast-mapping"))?;
+        if mapping_names_a_symbol(input.sourced_shape(), &mapping) {
+            let input_type = input.value_type().clone();
+            let result_type = result.value_type().clone();
+            let input_shape = input.sourced_shape().clone();
+            let result_shape = result.sourced_shape().clone();
+            return lower_parametric_broadcast(
+                context,
+                &mapping,
+                input_type,
+                &input_shape,
+                result_type,
+                &result_shape,
+            );
+        }
         let input_shape = input.shape().clone();
         let result_shape = result.shape().clone();
         if mapping
@@ -2127,6 +2142,68 @@ impl IndexAccessLoweringProvider for GovernedBroadcastF32 {
         let write = context.write(output, &dimensions, &coordinates)?;
         context.output(write, value)
     }
+}
+
+/// Emits the labelled-draft parametric carrier rather than folding a bound
+/// extent into `BroadcastReplication`.
+fn lower_parametric_broadcast(
+    context: &mut IndexAccessLoweringContext<'_>,
+    mapping: &BroadcastAxisMapping,
+    input_type: ResolvedValueType,
+    input_shape: &tiler_ir::shape::SourcedShape,
+    result_type: ResolvedValueType,
+    result_shape: &tiler_ir::shape::SourcedShape,
+) -> Result<(), LoweringEmitError> {
+    let declared: Vec<_> = mapping.result_extents().to_vec();
+    let observed: Vec<_> = result_shape.extents().collect();
+    if declared != observed {
+        return Err(occurrence_error("broadcast-result-shape"));
+    }
+    let dimensions = mapping
+        .result_extents()
+        .iter()
+        .cloned()
+        .map(|extent| context.sourced_dimension(DomainRole::Parallel, extent))
+        .collect::<Result<Vec<_>, _>>()?;
+    let coordinates = dimension_expressions(context, &dimensions)?;
+    let zero = context.constant(IndexInteger::from_u64(0))?;
+    let domain: Vec<_> = mapping
+        .sources()
+        .iter()
+        .zip(&dimensions)
+        .filter(|(source, _)| matches!(source, BroadcastAxisSource::FromOperand(_)))
+        .map(|(_, dimension)| *dimension)
+        .collect();
+    let operand_rank = input_shape.rank();
+    let mut operand_coordinates = vec![None; operand_rank];
+    for (result_axis, source) in mapping.sources().iter().enumerate() {
+        let Some(axis) = source.operand_axis() else {
+            continue;
+        };
+        let index = usize::try_from(axis.get())
+            .ok()
+            .filter(|index| *index < operand_rank)
+            .ok_or_else(|| occurrence_error("broadcast-axis"))?;
+        let coordinate = match source {
+            BroadcastAxisSource::FromOperand(_) => *coordinates
+                .get(result_axis)
+                .ok_or_else(|| occurrence_error("broadcast-coordinate"))?,
+            BroadcastAxisSource::StretchUnit(_) => zero,
+            BroadcastAxisSource::Replicate => unreachable!("a replication names no axis"),
+        };
+        if operand_coordinates[index].replace(coordinate).is_some() {
+            return Err(occurrence_error("broadcast-axis-repeated"));
+        }
+    }
+    let operand_coordinates: Vec<IndexExprId> = operand_coordinates
+        .into_iter()
+        .map(|slot| slot.ok_or_else(|| occurrence_error("broadcast-axis-unmapped")))
+        .collect::<Result<_, _>>()?;
+    let tensor = context.sourced_input_tensor(input_type, input_shape)?;
+    let value = context.read(tensor, &domain, &operand_coordinates)?;
+    let output = context.sourced_output_tensor(result_type, result_shape)?;
+    let write = context.write(output, &dimensions, &coordinates)?;
+    context.output(write, value)
 }
 
 /// Emits the access relation realizing one `tiler::slice-f32@1` occurrence.
