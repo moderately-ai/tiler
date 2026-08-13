@@ -21,7 +21,9 @@ use tiler_artifact::program::{BackendEntryKey, MAX_OPAQUE_IDENTITY_BYTES};
 use tiler_build::BoundMetalCompileDeclaration;
 use tiler_compiler::session::NumericalContract;
 use tiler_ir::schedule::ContributorPartition;
-use tiler_metal::applicability::MetalHostPredicate;
+use tiler_metal::applicability::{
+    MetalGpuFamilySupport, MetalHostApplicabilityPolicy, MetalHostPredicate,
+};
 
 use super::{
     COLUMNS, GROUPING_SENSITIVE_OPERANDS, PARALLEL_COLUMNS, PARALLEL_OPERANDS, PARALLEL_ROWS,
@@ -852,6 +854,14 @@ fn the_serial_sum_identity_crosses_the_shared_opaque_bound_at_the_second_contrib
 /// structural rather than a property of this machine — which is exactly why it
 /// does not gate the runs below. Everything measured here routes on
 /// producer-declared equality, NOT host-earned eligibility.
+///
+/// The matching-row authority refusal is proven independently of this machine
+/// by `applicability::tests::the_composed_observation_answers_every_predicate`.
+/// This live-host case must not assume the coordination host remains
+/// `FIRST_MACOS_APPLE9`: a newer OS build is an outside-measured-row refusal,
+/// not a reason to widen the pin. Expected predicate is derived from this
+/// host's ambient fields plus the policy's device row, then compared to the
+/// offer path that observed the real device.
 #[test]
 fn this_host_is_refused_the_right_to_offer_the_declared_profile() {
     // The refusal is unconditional, so it is stated before a device is even
@@ -875,17 +885,26 @@ fn this_host_is_refused_the_right_to_offer_the_declared_profile() {
         refusal.predicate(),
         refusal.rule(),
     );
-    // **The deliverable, and it is the *authority* refusal rather than merely a
-    // refusal.** A fully observed row carries past every ambient and device
-    // predicate and stops at ADR 0086: native device translation of a metallib
-    // during pipeline creation is a typed capability fact whose authority is
-    // `Unknown` on every macOS row currently observable. An assertion that
-    // something refused would pass on a host that never observed its device,
-    // which says nothing about ADR 0086 at all.
+    // A fully observed host that still *is* the measured row reaches ADR 0086.
+    // A fully observed host that has left that row must stop at the first
+    // mismatched ambient predicate. Reconstructing the expected refusal from
+    // this host's `sw_vers` fields plus the policy's device row keeps the pin
+    // honest: widening `FIRST_MACOS_APPLE9` is a new measurement, not a test
+    // update. The offer path observed the real device; they agree before the
+    // device predicates whenever an ambient field already mismatches.
+    let policy = MetalHostApplicabilityPolicy::FIRST_MACOS_APPLE9;
+    let expected = refuse_to_offer_the_declared_profile(
+        &observe_host_environment()
+            .observing_device_name(policy.device_name())
+            .observing_gpu_family(MetalGpuFamilySupport::Highest(policy.gpu_family())),
+    );
     assert_eq!(
         refusal.predicate(),
-        MetalHostPredicate::NativeTranslationAuthority,
-        "an observed host must reach ADR 0086's authority refusal rather than stop earlier",
+        expected.predicate(),
+        "an observed host must refuse the first mismatched measured-row predicate, \
+         or ADR 0086 when the ambient row still matches (live os-build {:?}, pin {})",
+        observe_host_environment().os_build(),
+        policy.os_build(),
     );
     let declaration = declaration().expect("the authoritative declaration assembles");
     eprintln!(

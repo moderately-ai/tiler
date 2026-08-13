@@ -1,7 +1,7 @@
 ---
 id: state-the-rule-that-a-deterministic-budget-is-a-derivation
 title: Decide and state the deterministic-budget provenance rule
-status: in-progress
+status: todo
 priority: p3
 dependencies: []
 related: [derive-the-region-shape-budgets-from-the-declaration, design-explicit-caller-selected-budget-exhaustion-policies]
