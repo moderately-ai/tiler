@@ -12,7 +12,7 @@ tags: [implementation, shapes, constraints, performance, correctness, identity]
 ---
 ## User-visible outcome
 
-One verified symbolic environment is solved once, then every operation and broadcast axis asks the same immutable proof summary whether extents are equal, determined, positive, or bounded.
+One verified symbolic environment solves its semantic closure once, then every semantic and index consumer asks the same immutable proof summary whether extents are equal, determined, positive, or bounded. A later symbolic broadcast uses that same path rather than introducing another solver authority.
 
 ## Source-first Fact audit — 2026-08-12, exact base `e2db0a66812604897cfb7f8a6c6b7a55f231cc41`
 
@@ -24,29 +24,50 @@ One verified symbolic environment is solved once, then every operation and broad
 
 **Inference — a retained summary improves host bounds without becoming semantic authority.** The environment's entries and semantic constraints are already canonical and immutable. A summary derived solely from that population can retain canonical symbol slots, equality-class membership, and closed intervals. It answers the same one-sided questions while the authored environment remains the only encoded subject.
 
+## Refreshed Fact audit — 2026-08-12, exact base `f4d1f884b25ea9dcf99a35e88dd8eb6e2623d8b6`
+
+**Verified — the first two Facts remain current.** `ShapeEnvBuilder::build`, anchor `constraint::decide(&bound, &relations)?`, still discards the successful semantic solution. `ShapeEnv::{extent_interval, proves_positive, proves_equal}` still rebuild the semantic relation vector and call `constraint::solve` independently.
+
+**Imprecise — sourced broadcast v2 is not a live consumer yet.** `elementwise_binary_shape`, anchor `sources.proves_equal(&left, &right)`, is the current per-axis semantic consumer. The second current consumer is `IndexRegionBuilder`, anchors `fn extent_interval`, `fn determined`, `fn extents_proved_equal`, and `fn admit_divisor`, which repeatedly asks the environment for intervals, determined values, equality, and positivity. `replace-broadcast-f32-v1-with-sourced-broadcast-f32-v2-semantics` is a dependent future consumer and must add its own high-rank regression when it lands.
+
+**False — one summary plus one guard is not sufficient to decide every guard.** A semantic relation `a >= b` and a candidate guard `b >= a` form an equality cycle only when considered together. A frozen summary containing current equality classes and intervals no longer carries enough authored relation structure to discover that cycle; additive and factorization guards have analogous interactions. Guard satisfiability must remain a separate hypothetical solve over the authored semantic relations plus exactly one guard. It never widens or mutates the retained semantic summary.
+
+**Verified — the solver result has the right bounded information but the wrong retained shape.** `constraint::Solution` contains mutable union-find classes and per-class domains. The environment needs a frozen projection: one normalized class identifier and one closed interval per canonical symbol slot. Retaining the path-compressing solver object would introduce interior mutation or locking into read-only proof queries without adding proof power.
+
 ## Work
 
 - Refactor the successful semantic-constraint solve used by `ShapeEnvBuilder::build` into an immutable `ExtentProofSummary` retained by the verified environment. It contains only facts derivable from canonical entries and semantic constraints; variant guards never enter it.
 - Make equality, interval, determined-value, and positivity queries use the summary. A literal still answers directly. An undeclared symbol still returns `false` or `None`; no query invents disequality, a value, or a bound.
 - Keep the summary out of `ShapeEnvIdentity`, canonical bytes, graph identity, serialization, and public construction. Update prose that currently equates identity exclusion with retaining no derived state.
 - Preserve exact behavior for a failed internal lookup: typed public builders already reject undeclared symbols, while read-only proof queries remain fail-closed. Do not add a panic, lazy fallback solve, or second constraint interpretation.
-- Keep guard satisfiability separate. Guards are planning predicates and may be decided against the semantic summary plus the one candidate guard; they never widen the semantic proof summary.
+- Freeze the successful solution into canonical-slot records containing only a normalized equality-class identifier and the implied closed interval. Do not retain mutable/path-compressing solver state.
+- Keep guard satisfiability separate. Decide each guard against the authored semantic relations plus exactly that guard. Guard solves are hypothetical planning work, never semantic-closure solves, and never widen or mutate the retained proof summary.
 
 ## Complexity contract
 
-Environment construction performs one constraint solve and retains O(symbols) derived state. Symbol lookup is O(log symbols) or better against canonical slots; equality, interval, positivity, and determined-value answers are O(1) after lookup. An operation or broadcast remains O(total rank). No query may fall back to resolving the full semantic constraint set.
+Environment construction performs exactly one semantic-closure solve and retains O(symbols) derived state. Construction and `unsatisfiable_guards` may additionally perform separately counted guard-hypothesis solves, one per guard, because those solves answer a different planning question. Symbol lookup is O(log symbols) or better against canonical slots; equality, interval, positivity, and determined-value answers are O(1) after lookup. An operation, index proof, or future broadcast remains O(total rank). No semantic proof query may fall back to resolving the full semantic constraint set.
 
 ## Required evidence
 
-- Instrument the semantic solver in a test-only build: one environment construction increments the solve census once, while a population of repeated equality, interval, positivity, and determined-value queries does not increment it again.
+- Instrument test-only semantic-closure and guard-hypothesis censuses separately: an unguarded environment construction increments the semantic census once, while repeated equality, interval, positivity, and determined-value queries increment neither census. A guarded fixture proves its independent guard-hypothesis population without changing the semantic count.
 - Re-run the complete existing sourced-extent proof matrix and perturb equality class, determined literal, interval, undeclared symbol, and positivity subjects independently.
-- Exercise a maximum-rank symbolic elementwise application and the first symbolic broadcast-v2 fixture with a nonzero proof-query census and exactly one semantic solve.
+- Exercise a maximum-rank symbolic elementwise application and a sourced index-region fixture with nonzero interval, equality, determined-value, and positivity query censuses and exactly one semantic solve. The dependent broadcast-v2 ticket owns the equivalent broadcast regression once that family exists.
 - Prove environment canonical bytes and identities are unchanged when the summary representation is perturbed without changing authored entries or constraints.
 - Make removal of summary use fail by perturbing the query implementation while leaving assertions unchanged; quote the repeated-solve failure text.
 
 ## Public and identity boundary
 
-No new public type, constructor, serialized field, or identity component is admitted. `ExtentProofSummary` is private derived state. `ShapeEnv` equality may include it only if equality remains provably equivalent to equality of the canonical authored population; otherwise implement equality over authored state explicitly. The summary never becomes a second source of semantic facts.
+No new public type, constructor, serialized field, or identity component is admitted. `ExtentProofSummary` is private derived state. Implement `ShapeEnv` equality and debug output over the same authored fields observed today, excluding the summary, so an internal representation change cannot alter equality or diagnostics. The summary never becomes a second source of semantic facts.
+
+## Decision — accepted 2026-08-12
+
+**Provenance.** Tom accepted this repaired boundary directly in the ChatGPT coordination thread after reviewing the current-base Fact audit, guard counterexample, identity consequences, host-work bound, and ranked alternatives. Acceptance authorizes the implementation contract but does not mark the implementation complete; this ticket remains `todo`.
+
+Retain one mandatory private frozen `ExtentProofSummary` directly in every verified `ShapeEnv`. It is derived eagerly from the successful semantic solve and stores normalized class membership and implied intervals by canonical symbol slot. Proof queries use binary search over canonical entries and constant-time summary reads after lookup. There is no lazy solve, fallback solve, global cache, lock, mutable retained union-find, public proof API, or second constraint interpreter.
+
+Authored entries and semantic constraints remain the sole authority and the sole inputs to environment identity. The summary is excluded from canonical bytes, identity, serialization, equality, and debug output. Guards remain separate hypothetical solves over authored semantic relations plus one guard, with a separately named census; they never enter semantic closure.
+
+The accepted implementation order is this ticket, then `narrow-symbolic-inference-and-restore-host-owned-refusals`, then sourced broadcast v2. This decision does not authorize production implementation in the coordination turn that recorded it.
 
 ## Non-goals
 
