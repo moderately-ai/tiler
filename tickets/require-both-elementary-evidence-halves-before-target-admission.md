@@ -1,7 +1,7 @@
 ---
 id: require-both-elementary-evidence-halves-before-target-admission
 title: Require both elementary evidence halves before target admission
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [declare-elementary-realizations-on-a-target-profile, carry-the-elementary-numerical-dimensions-in-the-region-realization]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/numerics, contracts/decisions, contr
 shared_scopes: [project/tickets]
 paths: []
 tags: [correctness, numerics, evidence]
-claimed_from: todo
-assignee: worker-elementary-evidence
-lease_expires_at: 1786587491
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: narrow-symbolic-inference-and-restore-host-owned-refusals
 title: Narrow symbolic inference and restore host-owned refusals
-status: in-progress
+status: done
 priority: p1
 dependencies: [resolve-semantic-shape-inference-over-symbolic-extents, seal-and-validate-sourced-shapes-at-semantic-inference-boundaries, retain-one-derived-proof-summary-per-shape-environment]
 related: [resolve-semantic-shape-inference-over-symbolic-extents]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, contracts/foundation, implementation/compiler, imple
 shared_scopes: [project/tickets]
 paths: [docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md]
 tags: [implementation, shapes, semantic-graph, extensions, correctness, public-boundary]
-claimed_from: todo
-assignee: worker-narrow-symbolic
-lease_expires_at: 1786587491
 ---
 
 ## User-visible outcome
