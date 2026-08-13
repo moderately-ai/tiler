@@ -421,7 +421,7 @@ impl fmt::Display for AotRefusal {
                 "this region declares a symbolic extent, and a `deliver` statement selecting an \
                  artifact family compiles the region ahead of time — which needs every extent to \
                  be known at expansion time. Declare literal extents, or state `fallback-only`. \
-                 `carry-symbolic-extents-into-the-semantic-program` is the work that removes this \
+                 `deliver-an-artifact-family-from-a-symbolic-region` is the work that removes this \
                  restriction",
             ),
             Self::Declaration(source) => write!(
