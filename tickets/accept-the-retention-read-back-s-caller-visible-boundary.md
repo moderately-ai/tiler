@@ -1,7 +1,7 @@
 ---
 id: accept-the-retention-read-back-s-caller-visible-boundary
 title: Accept the retention read-back's caller-visible boundary
-status: todo
+status: in-progress
 priority: p2
 dependencies: [preserve-retained-tool-bytes-in-macro-read-back]
 related: [emit-from-a-populated-retention-in-the-inline-expansion, measure-repeated-retention-note-cost-before-adding-deduplication]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, needs-tom, public-boundary]
+claimed_from: todo
+assignee: worker-retention-read-back
+lease_expires_at: 1786665469
 ---
 ## What is awaiting acceptance
 
