@@ -34,3 +34,4 @@ The typed code digest exposes an identity already present in and validated from 
 ## Trigger check log
 
 - 2026-08-12 — **not fired.** `prototypes/candle-metal-adapter` constructs a fresh adapter and fresh cache for every route, and the accepted initial scalar CPU runtime declares no library or prepared-pipeline cache. The non-reusable Candle cache is being physically deleted under `bind-prepared-pipeline-caches-to-loader-derived-route-identity`.
+- 2026-08-13 — **not fired.** Deletion landed: the prototype retains only per-attempt libraries and prepared pipelines on `CandleMetalAdapter`; no reusable cache object outlives a route attempt. The accepted initial scalar CPU runtime still declares no library or prepared-pipeline cache.
