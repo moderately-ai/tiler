@@ -1,7 +1,7 @@
 ---
 id: construct-a-symbolic-region-as-a-semantic-program
 title: Construct a symbolic inline region as a real semantic program
-status: in-progress
+status: done
 priority: p1
 dependencies: [resolve-semantic-shape-inference-over-symbolic-extents, carry-a-sourced-shape-on-semantic-values, seal-and-validate-sourced-shapes-at-semantic-inference-boundaries, narrow-symbolic-inference-and-restore-host-owned-refusals]
 related: [carry-symbolic-extents-into-the-semantic-program, prototype-inline-proc-macro-frontend, seal-and-validate-sourced-shapes-at-semantic-inference-boundaries, narrow-symbolic-inference-and-restore-host-owned-refusals]
@@ -9,9 +9,6 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, frontend, shapes, inline-dx]
-claimed_from: todo
-assignee: worker-symbolic-region
-lease_expires_at: 1786629707
 ---
 ## User-visible outcome
 
