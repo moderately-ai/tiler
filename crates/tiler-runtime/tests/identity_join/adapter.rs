@@ -470,7 +470,7 @@ impl RuntimeAdapter for ScalarHostAdapter {
                 placement(prepared.read_transport),
                 placement(prepared.write_transport),
                 &mut self.allocations,
-                launch.grid_threads(),
+                entry,
                 None,
             )?;
             // Terminal success, observed rather than assumed. Past the commit,

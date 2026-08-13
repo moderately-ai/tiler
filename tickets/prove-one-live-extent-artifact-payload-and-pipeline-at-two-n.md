@@ -49,12 +49,18 @@ Envelope construction is the dependency. `LiveContraction` contributor-loop evid
 
 One live-extent artifact, one payload subject, and one pipeline subject index dense F32 `[2,N]` at `N = 14` and `N = 15`. The live value stays out of artifact, payload, library, and pipeline identity. Baking either neighbour is a failing identity assertion.
 
-**Address oracles.** Semantic `(row = 1, column = 0)` from the bound input extent:
+**Address oracles, executed.** Both N values dispatch through `route_with_adapter` against one assembled artifact and one payload. Semantic `(row = 1, column = 0)` is element N of the LiveRowMajor map:
 
-- `N = 14` → byte **56**
-- `N = 15` → byte **60**
+- `N = 14` → input byte **56**, executed result `mapped_bits(input[14])`
+- `N = 15` → input byte **60**, executed result `mapped_bits(input[15])`
 
-Quoted from `one_live_extent_payload_and_pipeline_indexes_dense_f32_at_two_n`: `assert_eq!(addresses, [56, 60], "semantic (row = 1, column = 0) at N=14 and N=15")`.
+Quoted: `assert_eq!(addresses, [56, 60], "semantic (row = 1, column = 0) at N=14 and N=15")`. The two executed results disagree.
+
+**Perturbation.** Making `contributor_columns` ignore `RoutedExtentParameter` and use baked `ScalarEntry.columns` fails as:
+
+`assertion \`left == right\` failed: N=14 must execute the LiveRowMajor read at byte 56`
+`left: 0`
+`right: 1106771968`
 
 **Identity.** Across the two bindings the artifact, payload, library, and pipeline subjects are equal. Each is unequal to a baked `[2, 14]` / `[2, 15]` neighbour. The live MSL contains `constant ulong& e0 [[buffer(2)]]` and neither `14ul` nor `15ul`.
 

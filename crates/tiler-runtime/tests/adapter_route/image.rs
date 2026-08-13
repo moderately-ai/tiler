@@ -37,7 +37,7 @@
 
 use std::fmt;
 
-use tiler_runtime::load::RoutedEntry;
+use tiler_runtime::load::{RoutedEntry, RoutedExtentParameter};
 
 use tiler_artifact::program::{BindingTarget, BufferAccess};
 
@@ -289,20 +289,40 @@ impl ScalarImage {
         // the image's — so a disagreement is a real artifact defect rather than
         // a restatement, and refusing here is what keeps the interpreter's own
         // bounds check unreachable in a sound route.
-        let read_bytes = u64::from(entry.rows) * u64::from(entry.columns) * ELEMENT_BYTES;
-        if read_bytes > read.accessible_bytes() {
+        //
+        // A live-extent operand is the range: LiveRowMajor windows are zero at
+        // construction, so the ABI expression cannot name 8N without failing
+        // the static window check. The bound fact is then the only size.
+        let columns = contributor_columns(routed.extent_parameters(), entry);
+        let live = !routed.extent_parameters().is_empty();
+        let read_bytes = u64::from(entry.rows) * columns * ELEMENT_BYTES;
+        let routed_read = if live {
+            read_bytes
+        } else {
+            read.accessible_bytes()
+        };
+        if read_bytes > routed_read {
             return Err(ScalarPayloadRefusal::UndersizedAccess {
                 role: "read",
                 declared: read_bytes,
-                routed: read.accessible_bytes(),
+                routed: routed_read,
             });
         }
-        let write_bytes = u64::from(entry.rows) * ELEMENT_BYTES;
-        if write_bytes > write.accessible_bytes() {
+        let write_bytes = if live {
+            u64::from(entry.rows) * columns * ELEMENT_BYTES
+        } else {
+            u64::from(entry.rows) * ELEMENT_BYTES
+        };
+        let routed_write = if live {
+            write_bytes
+        } else {
+            write.accessible_bytes()
+        };
+        if write_bytes > routed_write {
             return Err(ScalarPayloadRefusal::UndersizedAccess {
                 role: "write",
                 declared: write_bytes,
-                routed: write.accessible_bytes(),
+                routed: routed_write,
             });
         }
 
@@ -562,18 +582,30 @@ impl std::error::Error for ExecutionFault {}
 /// [`crate::adapter::ScalarHostAdapter`] allocates from its own pre-commit plan
 /// immediately after the commit, so a missing allocation is a defect in the
 /// adapter rather than a route it should have refused.
+/// Contributor-loop width: the bound live extent when the route published one,
+/// otherwise the image's baked column count.
+#[must_use]
+pub fn contributor_columns(extents: &[RoutedExtentParameter], entry: &ScalarEntry) -> u64 {
+    extents
+        .first()
+        .copied()
+        .map_or_else(|| u64::from(entry.columns), RoutedExtentParameter::value)
+}
+
 pub fn execute(
     position: usize,
     entry: &ScalarEntry,
     read: Placement,
     write: Placement,
     allocations: &mut [Vec<u8>],
-    grid_threads: u64,
+    routed: &RoutedEntry<'_>,
     halt_after: Option<u64>,
 ) -> Result<u64, ExecutionFault> {
     let scale = f32::from_bits(entry.scale_bits);
     let bias = f32::from_bits(entry.bias_bits);
-    let columns = u64::from(entry.columns);
+    let columns = contributor_columns(routed.extent_parameters(), entry);
+    let live = !routed.extent_parameters().is_empty();
+    let grid_threads = routed.launch().grid_threads();
 
     // Copied out before the first store, so that a route binding one allocation
     // to both slots reads the operand rather than what this run has written.
@@ -610,24 +642,44 @@ pub fn execute(
             // is the whole of what makes the comparison against the reference a
             // result rather than a coincidence.
             let contribution = operand * scale + bias;
-            accumulator = if column == 0 {
-                contribution
+            if live {
+                // LiveRowMajor is a map: each (row, column) writes the same
+                // dense address it read. A reduction here would collapse the
+                // (1, 0) oracle into a row sum.
+                let out = write.offset + byte;
+                if byte + ELEMENT_BYTES > write.bytes {
+                    return Err(ExecutionFault::OutOfRange {
+                        entry: position,
+                        role: "write",
+                        byte,
+                        bytes: write.bytes,
+                    });
+                }
+                let dest = usize::try_from(out).expect("a fixture range is small");
+                allocations[write.allocation][dest..dest + 4]
+                    .copy_from_slice(&contribution.to_bits().to_le_bytes());
             } else {
-                accumulator + contribution
-            };
+                accumulator = if column == 0 {
+                    contribution
+                } else {
+                    accumulator + contribution
+                };
+            }
         }
-        let byte = row * ELEMENT_BYTES;
-        if byte + ELEMENT_BYTES > write.bytes {
-            return Err(ExecutionFault::OutOfRange {
-                entry: position,
-                role: "write",
-                byte,
-                bytes: write.bytes,
-            });
+        if !live {
+            let byte = row * ELEMENT_BYTES;
+            if byte + ELEMENT_BYTES > write.bytes {
+                return Err(ExecutionFault::OutOfRange {
+                    entry: position,
+                    role: "write",
+                    byte,
+                    bytes: write.bytes,
+                });
+            }
+            let start = usize::try_from(write.offset + byte).expect("a fixture range is small");
+            allocations[write.allocation][start..start + 4]
+                .copy_from_slice(&accumulator.to_bits().to_le_bytes());
         }
-        let start = usize::try_from(write.offset + byte).expect("a fixture range is small");
-        allocations[write.allocation][start..start + 4]
-            .copy_from_slice(&accumulator.to_bits().to_le_bytes());
         executed += 1;
     }
     Ok(executed)

@@ -709,7 +709,18 @@ impl RuntimeAdapter for ScalarHostAdapter {
         for (position, entry) in preflight.entries().iter().enumerate() {
             let mut slots = Vec::with_capacity(entry.bindings().len());
             for binding in entry.bindings() {
-                let bytes = binding.accessible_bytes();
+                // LiveRowMajor windows evaluate to zero at construction. The
+                // bound extent is then the reachable span: rows × N × 4.
+                let bytes = entry
+                    .extent_parameters()
+                    .first()
+                    .map(|parameter| {
+                        u64::from(self.prepared[position].rows)
+                            * parameter.value()
+                            * crate::image::ELEMENT_BYTES
+                    })
+                    .filter(|_| binding.accessible_bytes() == 0)
+                    .unwrap_or_else(|| binding.accessible_bytes());
                 let offset = binding.accessible_offset();
                 let reach = offset + bytes;
                 let backing = if let Some(index) = backing[position][binding.slot()] {
@@ -890,7 +901,7 @@ impl RuntimeAdapter for ScalarHostAdapter {
                 read,
                 write,
                 &mut self.allocations,
-                launch.grid_threads(),
+                entry,
                 halt,
             )?;
             // Terminal success, observed rather than assumed, and per entry

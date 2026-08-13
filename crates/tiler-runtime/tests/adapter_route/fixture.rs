@@ -326,6 +326,25 @@ pub fn prepared_predicate_owned(
     }
 }
 
+/// Returns the scalar image the live-extent member carries.
+///
+/// `columns` is the baked neighbour the interpreter must not use: the bound
+/// `RoutedExtentParameter` is the contributor-loop width.
+#[must_use]
+pub fn live_extent_image() -> ScalarImage {
+    ScalarImage {
+        entries: vec![ScalarEntry {
+            symbol: "live_row_major".to_owned(),
+            read_transport: 0,
+            write_transport: 1,
+            rows: u32::try_from(ROWS).expect("a small fixture extent"),
+            columns: u32::try_from(COLUMNS).expect("a baked neighbour the live route must ignore"),
+            scale_bits: SCALE_BITS,
+            bias_bits: BIAS_BITS,
+        }],
+    }
+}
+
 /// Returns the scalar image the fused member's payload carries.
 #[must_use]
 pub fn sound_image() -> ScalarImage {
@@ -620,6 +639,7 @@ impl FixtureSpec {
     #[must_use]
     pub fn live_extent() -> Self {
         Self {
+            code: encode(&live_extent_image()),
             plan: PackagedPlan::LiveExtent,
             route_requirements: Vec::new(),
             deferred_predicates: Vec::new(),

@@ -2092,10 +2092,27 @@ fn live_extent_environment() -> ExecutionEnvironment {
     }
 }
 
+fn route_live(built: &fixture::Fixture, n: u64, input: &[u32]) -> (Outcome, ScalarHostAdapter) {
+    let mut program = DecodedProgram::decode(&built.bytes, SOLE_DELIVERY)
+        .expect("the live-extent artifact decodes");
+    let mut host = ScalarHostAdapter::new(input);
+    let outcome = route_with_adapter(
+        &mut program,
+        &mut host,
+        &built.expected,
+        &live_extent_facts(n),
+    );
+    (outcome, host)
+}
+
+fn mapped_bits(operand_bits: u32) -> u32 {
+    let operand = f32::from_bits(operand_bits);
+    (operand * f32::from_bits(fixture::SCALE_BITS) + f32::from_bits(fixture::BIAS_BITS)).to_bits()
+}
+
 #[test]
 fn one_live_extent_payload_and_pipeline_indexes_dense_f32_at_two_n() {
-    let spec = FixtureSpec::live_extent();
-    let built = assemble(&spec);
+    let built = assemble(&FixtureSpec::live_extent());
     assert_eq!(
         built.expected.as_bytes(),
         assemble(&FixtureSpec::live_extent()).expected.as_bytes(),
@@ -2107,47 +2124,48 @@ fn one_live_extent_payload_and_pipeline_indexes_dense_f32_at_two_n() {
         "a baked static neighbour is a different artifact subject",
     );
 
-    let mut addresses = Vec::new();
-    let mut pipeline_subjects = Vec::new();
-    for n in [14_u64, 15] {
-        let mut program = DecodedProgram::decode(&built.bytes, SOLE_DELIVERY)
-            .expect("the live-extent artifact decodes");
-        let preflight = program
-            .preflight(
-                &live_extent_environment(),
-                &built.expected,
-                &live_extent_facts(n),
-            )
-            .expect("both neighbouring extents preflight the same artifact");
-        let entry = &preflight.entries()[0];
-        assert_eq!(entry.entry_symbol(), "live_row_major");
-        assert_eq!(entry.extent_parameters().len(), 1);
-        assert_eq!(entry.extent_parameters()[0].value(), n);
-        assert_eq!(entry.extent_parameters()[0].transport_slot(), 2);
-        assert_eq!(entry.launch().grid_threads(), fixture::ROWS);
-        let address = dense_f32_row_major_bytes(1, 0, entry.extent_parameters()[0].value());
-        addresses.push(address);
-        pipeline_subjects.push(entry.entry_symbol().to_owned());
+    // One input buffer, sized for the larger N, with a unique value at every
+    // dense F32 slot. (row = 1, column = 0) is element N, so the two bindings
+    // must read different slots if execute uses the live extent.
+    let input: Vec<u32> = (0..fixture::ROWS * 15)
+        .map(|index| {
+            let slot = u16::try_from(index).expect("the two-N fixture stays small");
+            f32::from(slot + 1).to_bits()
+        })
+        .collect();
 
-        let elements = usize::try_from(fixture::ROWS * n).expect("the two-N fixture stays small");
-        let input: Vec<u32> = (0..elements)
-            .map(|index| u32::try_from(index).expect("the two-N fixture stays small") + 1)
-            .collect();
-        let element = usize::try_from(address / 4).expect("the two-N fixture stays small");
-        let mapped = f32::from_bits(input[element]) * f32::from_bits(fixture::SCALE_BITS)
-            + f32::from_bits(fixture::BIAS_BITS);
-        assert_ne!(
-            mapped.to_bits(),
-            0,
-            "the oracle at N={n} must read a distinctive input element",
+    let mut addresses = Vec::new();
+    let mut observed = Vec::new();
+    for n in [14_u64, 15] {
+        let (outcome, host) = route_live(&built, n, &input);
+        let completion = outcome.unwrap_or_else(|failure| {
+            panic!("N={n} must dispatch through the same payload: {failure}")
+        });
+        assert!(
+            host.stages.contains(&Stage::Dispatch),
+            "N={n} must reach program work, not stop at preflight",
         );
+        assert_eq!(completion.executed, fixture::ROWS);
+        let address = dense_f32_row_major_bytes(1, 0, n);
+        let element = usize::try_from(address / 4).expect("the two-N fixture stays small");
+        let bits = completion.result_bits[element];
+        assert_eq!(
+            bits,
+            mapped_bits(input[element]),
+            "N={n} must execute the LiveRowMajor read at byte {address}",
+        );
+        addresses.push(address);
+        observed.push(bits);
     }
     assert_eq!(
         addresses,
         [56, 60],
         "semantic (row = 1, column = 0) at N=14 and N=15",
     );
-    assert_eq!(pipeline_subjects[0], pipeline_subjects[1]);
+    assert_ne!(
+        observed[0], observed[1],
+        "the two executed oracles must disagree",
+    );
 }
 
 #[test]
