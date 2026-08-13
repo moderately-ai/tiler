@@ -900,6 +900,21 @@ pub enum ExecutionBinding {
 pub enum TailPolicy {
     /// The launch geometry covers the domain exactly with no tail.
     Exact,
+    /// The launch may be a strict superset of the logical iteration domain.
+    ///
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-12 under
+    /// [`admit-guarded-output-tails-for-cooperative-contraction`]. The first
+    /// admitted composition is the blocked-workgroup cooperative F32
+    /// contraction. Active coordinates are derived from that binding; the
+    /// variant carries no predicate payload, mask, or padding identity.
+    ///
+    /// [`admit-guarded-output-tails-for-cooperative-contraction`]: ../../../../../tickets/admit-guarded-output-tails-for-cooperative-contraction.md
+    ///
+    /// It does not mean contributor padding, inactive subgroup lanes, scalar
+    /// peeling, or a backend-chosen mask. `Exact` keeps tag `0x01` and every
+    /// earlier region's bytes.
+    Predicated,
 }
 
 /// The reduction topology and combination legality of a schedule.
@@ -2963,8 +2978,13 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
     }
     bytes.extend_from_slice(&schedule.work_items.to_be_bytes());
     bytes.extend_from_slice(&schedule.threads_per_workgroup.to_be_bytes());
-    let TailPolicy::Exact = schedule.tail;
-    bytes.push(0x01);
+    match schedule.tail {
+        TailPolicy::Exact => bytes.push(0x01),
+        // Appended tail tag. `0x01` keeps its meaning and every earlier field
+        // keeps its position, so a region that still carries `Exact` encodes
+        // the same bytes it did before this arm existed.
+        TailPolicy::Predicated => bytes.push(0x02),
+    }
     bytes.extend_from_slice(&schedule.output_owner.get().to_be_bytes());
     match &schedule.reduction {
         ReductionTopology::None => bytes.push(TAG_REDUCTION_NONE),

@@ -16,11 +16,12 @@
 //! kernel a proven refinement rather than a trusted one.
 
 use crate::schedule::{
-    Access, BoundsWitnessId, CanonicalScheduledRegionIdentity, ContributorCoverage, LogicalAccess,
-    NumericalRealization, OwnershipWitnessId, PointwiseBf16Expression, PointwiseBf16Node,
-    PointwiseF32Expression, PointwiseF32Node, ReductionPass, ReductionTopology,
-    ResourceRequirements, ScalarProgram, ScheduledRegion, TensorRole, VerifiedScheduledRegion,
-    contributor_count, element_count, live_input_extents,
+    Access, BoundsWitnessId, CanonicalScheduledRegionIdentity, ContributorCoverage,
+    ExecutionBinding, LogicalAccess, NumericalRealization, OwnershipWitnessId,
+    PointwiseBf16Expression, PointwiseBf16Node, PointwiseF32Expression, PointwiseF32Node,
+    ReductionPass, ReductionTopology, ResourceRequirements, ScalarProgram, ScheduledRegion,
+    TailPolicy, TensorRole, VerifiedScheduledRegion, contributor_count, element_count,
+    live_input_extents,
 };
 use crate::shape::Shape;
 
@@ -168,8 +169,34 @@ struct CanonicalPlan<'a> {
     contributors: u64,
     addressing: Vec<ReadAddressing>,
     cooperative: Option<CooperativePlan>,
+    contraction: Option<CooperativeContractionPlan>,
     live_extents: Vec<(TensorRole, crate::shape::Axis)>,
     live_contraction: Option<(TensorRole, crate::shape::Axis)>,
+}
+
+/// The blocked cooperative-contraction shape this lowering emits.
+///
+/// Square tiles only: `B_m == B_n == T_k`, which is the measured 16×16
+/// `contract_tiled` composition. Other representable tiles stay
+/// [`KernelDiagnostic::CooperativeLoweringShape`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CooperativeContractionPlan {
+    block: u64,
+    workgroups_m: u64,
+    workgroups_n: u64,
+    output_m: u64,
+    output_n: u64,
+    contracted: u64,
+    rounds: u64,
+    predicated: bool,
+    left_staging: crate::schedule::StagingId,
+    right_staging: crate::schedule::StagingId,
+    left_slots: u64,
+    right_slots: u64,
+    produce_phase: crate::schedule::PhaseId,
+    consume_phase: crate::schedule::PhaseId,
+    barrier: BarrierSpec,
+    round_barrier: Option<BarrierSpec>,
 }
 
 /// Lowers one verified scheduled region to its canonical verified kernel.
@@ -250,12 +277,10 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
         ReductionTopology::CooperativeWorkgroup { coverage, .. } => {
             exact_partition(*coverage)?.contributors_per_partition
         }
-        // Representable, not lowered. The Metal body is a different ticket;
-        // refusing here is what keeps this path from emitting a direct
-        // contraction over the same work items.
-        ReductionTopology::CooperativeContraction { .. } => {
-            return Err(KernelDiagnostic::CooperativeLoweringShape);
-        }
+        ReductionTopology::CooperativeContraction {
+            contracted_tile, ..
+        } => crate::schedule::element_count(contracted_tile)
+            .map_err(|_| KernelDiagnostic::ElementCountOverflow)?,
     };
     // The strict-affine decode addresses its three role-scoped components by the
     // invocation index directly, so it consults no coordinate map.
@@ -287,6 +312,7 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
         contributors,
         addressing,
         cooperative: cooperative_plan(schedule)?,
+        contraction: cooperative_contraction_plan(schedule)?,
         live_extents: live_input_extents(schedule),
         live_contraction: match &schedule.schedule.reduction {
             ReductionTopology::LiveContraction {
@@ -407,6 +433,101 @@ fn cooperative_plan(
         produce_stride: *produce_stride,
         produce_offset: write.span.offset,
         consume_offset: read.span.offset,
+        barrier,
+        round_barrier,
+    }))
+}
+
+fn cooperative_contraction_plan(
+    schedule: &ScheduledRegion,
+) -> Result<Option<CooperativeContractionPlan>, KernelDiagnostic> {
+    let ReductionTopology::CooperativeContraction {
+        tile,
+        contracted_shape,
+        contracted_tile,
+        ..
+    } = &schedule.schedule.reduction
+    else {
+        return Ok(None);
+    };
+    let shape = KernelDiagnostic::CooperativeLoweringShape;
+    let ExecutionBinding::BlockedWorkgroup { block, workgroups } = &schedule.schedule.binding
+    else {
+        return Err(shape);
+    };
+    if block.rank() != 2
+        || workgroups.rank() != 2
+        || schedule.index.iteration_shape.rank() != 2
+        || contracted_shape.rank() != 1
+        || contracted_tile.rank() != 1
+    {
+        return Err(shape);
+    }
+    let block_m = block.extents()[0].get();
+    let block_n = block.extents()[1].get();
+    let tile_k = contracted_tile.extents()[0].get();
+    if block_m == 0 || block_n == 0 || tile_k == 0 || block_m != block_n || block_n != tile_k {
+        return Err(shape);
+    }
+    let ([left, right], [produce, consume]) = (tile.staging.as_slice(), tile.phases.as_slice())
+    else {
+        return Err(shape);
+    };
+    let ([left_write, right_write], [], [], [left_read, right_read]) = (
+        produce.writes.as_slice(),
+        produce.reads.as_slice(),
+        consume.writes.as_slice(),
+        consume.reads.as_slice(),
+    ) else {
+        return Err(shape);
+    };
+    if left_write.staging != left.id
+        || right_write.staging != right.id
+        || left_read.staging != left.id
+        || right_read.staging != right.id
+    {
+        return Err(shape);
+    }
+    let edges = tile.visibility_edges();
+    if edges.is_empty() {
+        return Err(shape);
+    }
+    let mut barrier = None;
+    for edge in &edges {
+        let point = sole_discharging_barrier(&tile.discharging_points(*edge)).ok_or(shape)?;
+        match &barrier {
+            None => barrier = Some(point),
+            Some(existing) if existing.point == point.point => {}
+            Some(_) => return Err(shape),
+        }
+    }
+    let barrier = barrier.ok_or(shape)?;
+    let anti = tile.anti_dependency_edges();
+    let round_barrier = match anti.as_slice() {
+        [] => None,
+        [edge] => {
+            Some(sole_discharging_barrier(&tile.anti_discharging_points(*edge)).ok_or(shape)?)
+        }
+        _ => return Err(shape),
+    };
+    if (tile.rounds > 1) != round_barrier.is_some() {
+        return Err(shape);
+    }
+    Ok(Some(CooperativeContractionPlan {
+        block: block_m,
+        workgroups_m: workgroups.extents()[0].get(),
+        workgroups_n: workgroups.extents()[1].get(),
+        output_m: schedule.index.iteration_shape.extents()[0].get(),
+        output_n: schedule.index.iteration_shape.extents()[1].get(),
+        contracted: contracted_shape.extents()[0].get(),
+        rounds: tile.rounds,
+        predicated: matches!(schedule.schedule.tail, TailPolicy::Predicated),
+        left_staging: left.id,
+        right_staging: right.id,
+        left_slots: left.slots,
+        right_slots: right.slots,
+        produce_phase: produce.id,
+        consume_phase: consume.id,
         barrier,
         round_barrier,
     }))
@@ -811,6 +932,9 @@ fn emit(
     }
     if let Some(cooperative) = &plan.cooperative {
         return emit_cooperative(builder, plan, cooperative, requirements);
+    }
+    if let Some(contraction) = &plan.contraction {
+        return emit_cooperative_contraction(builder, plan, contraction, requirements);
     }
     // One buffer per read, in access order. The component role stays `None`
     // rather than being copied from the access: these families read dense
@@ -1393,6 +1517,224 @@ fn emit_cooperative(
             )
         })
     })?;
+    Ok(())
+}
+
+fn emit_cooperative_contraction(
+    builder: &mut KernelBuilder,
+    plan: &CanonicalPlan<'_>,
+    contraction: &CooperativeContractionPlan,
+    requirements: ResourceRequirements,
+) -> Result<(), KernelLoweringError> {
+    let ([left, right], [left_addr, right_addr]) = (plan.reads, plan.addressing.as_slice()) else {
+        return Err(KernelLoweringError::UnsupportedRegion {
+            rule: "cooperative-contraction-access-count",
+        });
+    };
+    let _ = (left_addr, right_addr);
+    let element_type = region_element_type(plan.scalar);
+    let left_buffer = builder.declare_buffer(BufferParameter {
+        tensor: left.tensor,
+        component_role: None,
+        element_type,
+        address_space: AddressSpace::Device,
+        access: BufferAccess::Read,
+        element_count: plan.read_elements.first().copied().unwrap_or(0),
+    })?;
+    let right_buffer = builder.declare_buffer(BufferParameter {
+        tensor: right.tensor,
+        component_role: None,
+        element_type,
+        address_space: AddressSpace::Device,
+        access: BufferAccess::Read,
+        element_count: plan.read_elements.get(1).copied().unwrap_or(0),
+    })?;
+    let write_buffer = builder.declare_buffer(BufferParameter {
+        tensor: plan.write_tensor,
+        component_role: None,
+        element_type,
+        address_space: AddressSpace::Device,
+        access: BufferAccess::Write,
+        element_count: plan.write_elements,
+    })?;
+    builder.admit_builtin(Builtin::GlobalInvocationIndex)?;
+    builder.admit_builtin(Builtin::LocalInvocationIndex)?;
+    let left_staging = builder.declare_staging(StagingParameter {
+        staging: contraction.left_staging,
+        element_type: KernelType::F32,
+        address_space: AddressSpace::Workgroup,
+        element_count: contraction.left_slots,
+    })?;
+    let right_staging = builder.declare_staging(StagingParameter {
+        staging: contraction.right_staging,
+        element_type: KernelType::F32,
+        address_space: AddressSpace::Workgroup,
+        element_count: contraction.right_slots,
+    })?;
+    builder.numerical(plan.numerical)?;
+    builder.requirements(requirements)?;
+
+    let gid = builder.builtin(Builtin::GlobalInvocationIndex)?;
+    let lid = builder.builtin(Builtin::LocalInvocationIndex)?;
+    let block = builder.constant(KernelConstant::Index(contraction.block))?;
+    let threads = builder.constant(KernelConstant::Index(
+        contraction.block.checked_mul(contraction.block).ok_or(
+            KernelLoweringError::Verification(KernelDiagnostic::ElementCountOverflow),
+        )?,
+    ))?;
+    let workgroups_n = builder.constant(KernelConstant::Index(contraction.workgroups_n))?;
+    let output_m = builder.constant(KernelConstant::Index(contraction.output_m))?;
+    let output_n = builder.constant(KernelConstant::Index(contraction.output_n))?;
+    let contracted = builder.constant(KernelConstant::Index(contraction.contracted))?;
+    let wg = builder.binary(BinaryOp::IndexDivide, gid, threads)?;
+    let wg_n = builder.binary(BinaryOp::IndexModulo, wg, workgroups_n)?;
+    let wg_m = builder.binary(BinaryOp::IndexDivide, wg, workgroups_n)?;
+    let local_n = builder.binary(BinaryOp::IndexModulo, lid, block)?;
+    let local_m = builder.binary(BinaryOp::IndexDivide, lid, block)?;
+    let row_base = builder.binary(BinaryOp::IndexMultiply, wg_m, block)?;
+    let col_base = builder.binary(BinaryOp::IndexMultiply, wg_n, block)?;
+    let row = builder.binary(BinaryOp::IndexAdd, row_base, local_m)?;
+    let col = builder.binary(BinaryOp::IndexAdd, col_base, local_n)?;
+    let row_active = builder.compare(CompareOp::IndexLessThan, row, output_m)?;
+    let column_active = builder.compare(CompareOp::IndexLessThan, col, output_n)?;
+    let inactive = builder.constant(KernelConstant::F32Bits(0.0_f32.to_bits()))?;
+
+    let emit_tile =
+        |builder: &mut KernelBuilder, k0: KernelValueId| -> Result<(), KernelBuildError> {
+            let left_k = builder.binary(BinaryOp::IndexAdd, k0, local_n)?;
+            let right_k = builder.binary(BinaryOp::IndexAdd, k0, local_m)?;
+            let left_row = builder.binary(BinaryOp::IndexMultiply, row, contracted)?;
+            let right_row = builder.binary(BinaryOp::IndexMultiply, col, contracted)?;
+            let left_off = builder.binary(BinaryOp::IndexAdd, left_row, left_k)?;
+            let right_off = builder.binary(BinaryOp::IndexAdd, right_row, right_k)?;
+            let left_val = if contraction.predicated {
+                builder.guarded_load(row_active, left_buffer, left_off, left.bounds, inactive)?
+            } else {
+                builder.load(left_buffer, left_off, left.bounds)?
+            };
+            let right_val = if contraction.predicated {
+                builder.guarded_load(
+                    column_active,
+                    right_buffer,
+                    right_off,
+                    right.bounds,
+                    inactive,
+                )?
+            } else {
+                builder.load(right_buffer, right_off, right.bounds)?
+            };
+            let left_slot = builder.binary(BinaryOp::IndexMultiply, local_m, block)?;
+            let left_slot = builder.binary(BinaryOp::IndexAdd, left_slot, local_n)?;
+            let right_slot = builder.binary(BinaryOp::IndexMultiply, local_n, block)?;
+            let right_slot = builder.binary(BinaryOp::IndexAdd, right_slot, local_m)?;
+            builder.staged_store(left_staging, left_slot, left_val, contraction.produce_phase)?;
+            builder.staged_store(
+                right_staging,
+                right_slot,
+                right_val,
+                contraction.produce_phase,
+            )?;
+            Ok(())
+        };
+
+    let fold_tile = |builder: &mut KernelBuilder| -> Result<KernelValueId, KernelBuildError> {
+        let zero = builder.constant(KernelConstant::Index(0))?;
+        let left_base = builder.binary(BinaryOp::IndexMultiply, local_m, block)?;
+        let right_base = builder.binary(BinaryOp::IndexMultiply, local_n, block)?;
+        let left_first = builder.binary(BinaryOp::IndexAdd, left_base, zero)?;
+        let right_first = builder.binary(BinaryOp::IndexAdd, right_base, zero)?;
+        let a0 = builder.staged_load(left_staging, left_first, contraction.consume_phase)?;
+        let b0 = builder.staged_load(right_staging, right_first, contraction.consume_phase)?;
+        let seed = builder.binary(BinaryOp::F32Multiply, a0, b0)?;
+        let seed = builder.convert(ConvertOp::CanonicalizeF32Nan, seed)?;
+        if contraction.block <= 1 {
+            return Ok(seed);
+        }
+        let results = builder.serial_loop(
+            SerialLoopSpec {
+                start: 1,
+                end: contraction.block,
+            },
+            &[seed],
+            |builder, parameters| {
+                let kk = parameters.induction();
+                let acc = parameters
+                    .accumulator(0)
+                    .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
+                let left_slot = builder.binary(BinaryOp::IndexAdd, left_base, kk)?;
+                let right_slot = builder.binary(BinaryOp::IndexAdd, right_base, kk)?;
+                let a = builder.staged_load(left_staging, left_slot, contraction.consume_phase)?;
+                let b =
+                    builder.staged_load(right_staging, right_slot, contraction.consume_phase)?;
+                let product = builder.binary(BinaryOp::F32Multiply, a, b)?;
+                let product = builder.convert(ConvertOp::CanonicalizeF32Nan, product)?;
+                let folded = builder.binary(BinaryOp::F32Add, acc, product)?;
+                let folded = builder.convert(ConvertOp::CanonicalizeF32Nan, folded)?;
+                Ok(vec![folded])
+            },
+        )?;
+        results
+            .get(0)
+            .ok_or(KernelBuildError::EmptyLoopAccumulators)
+    };
+
+    let k0 = builder.constant(KernelConstant::Index(0))?;
+    emit_tile(builder, k0)?;
+    builder.barrier(contraction.barrier.clone())?;
+    let seed = fold_tile(builder)?;
+    let total =
+        if contraction.rounds > 1 {
+            let round_barrier = contraction.round_barrier.clone().ok_or(
+                KernelLoweringError::UnsupportedRegion {
+                    rule: "cooperative-contraction-round-boundary",
+                },
+            )?;
+            let results = builder.serial_loop(
+                SerialLoopSpec {
+                    start: 1,
+                    end: contraction.rounds,
+                },
+                &[seed],
+                |builder, parameters| {
+                    let round = parameters.induction();
+                    let acc = parameters
+                        .accumulator(0)
+                        .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
+                    builder.barrier(round_barrier.clone())?;
+                    let stride = builder.constant(KernelConstant::Index(contraction.block))?;
+                    let k0 = builder.binary(BinaryOp::IndexMultiply, round, stride)?;
+                    emit_tile(builder, k0)?;
+                    builder.barrier(contraction.barrier.clone())?;
+                    let tile = fold_tile(builder)?;
+                    let folded = builder.binary(BinaryOp::F32Add, acc, tile)?;
+                    let folded = builder.convert(ConvertOp::CanonicalizeF32Nan, folded)?;
+                    Ok(vec![folded])
+                },
+            )?;
+            results
+                .get(0)
+                .ok_or(KernelBuildError::EmptyLoopAccumulators)?
+        } else {
+            seed
+        };
+
+    if contraction.predicated {
+        builder.predicated(row_active, |builder| {
+            builder.predicated(column_active, |builder| {
+                let out = builder.binary(BinaryOp::IndexMultiply, row, output_n)?;
+                let out = builder.binary(BinaryOp::IndexAdd, out, col)?;
+                builder.store(write_buffer, out, total, plan.write_bounds, plan.ownership)
+            })
+        })?;
+    } else {
+        let extent = builder.constant(KernelConstant::Index(plan.work_items))?;
+        let active = builder.compare(CompareOp::IndexLessThan, gid, extent)?;
+        builder.predicated(active, |builder| {
+            let out = builder.binary(BinaryOp::IndexMultiply, row, output_n)?;
+            let out = builder.binary(BinaryOp::IndexAdd, out, col)?;
+            builder.store(write_buffer, out, total, plan.write_bounds, plan.ownership)
+        })?;
+    }
     Ok(())
 }
 

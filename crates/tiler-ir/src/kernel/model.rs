@@ -994,6 +994,13 @@ pub(super) enum OperationKind {
         offset: u32,
         bounds: BoundsWitnessId,
     },
+    GuardedLoad {
+        predicate: u32,
+        buffer: u32,
+        offset: u32,
+        bounds: BoundsWitnessId,
+        inactive: u32,
+    },
     Store {
         buffer: u32,
         offset: u32,
@@ -1470,6 +1477,19 @@ impl<'a> OperationRef<'a> {
                 offset: kernel.value_id(*offset),
                 bounds: *bounds,
             },
+            OperationKind::GuardedLoad {
+                predicate,
+                buffer,
+                offset,
+                bounds,
+                inactive,
+            } => OperationView::GuardedLoad {
+                predicate: kernel.value_id(*predicate),
+                buffer: kernel.buffer_id(*buffer),
+                offset: kernel.value_id(*offset),
+                bounds: *bounds,
+                inactive: kernel.value_id(*inactive),
+            },
             OperationKind::Store {
                 buffer,
                 offset,
@@ -1613,6 +1633,27 @@ pub enum OperationView<'a> {
         offset: VerifiedValueId,
         /// Schedule bounds witness authorizing the access.
         bounds: BoundsWitnessId,
+    },
+    /// Loads one element when `predicate` is true; otherwise returns `inactive`
+    /// without a memory access.
+    ///
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-12 under
+    /// [`admit-guarded-output-tails-for-cooperative-contraction`]. It is a
+    /// scalar structured control over one invocation, not a vector masked load.
+    ///
+    /// [`admit-guarded-output-tails-for-cooperative-contraction`]: ../../../../../tickets/admit-guarded-output-tails-for-cooperative-contraction.md
+    GuardedLoad {
+        /// Schedule-derived Boolean that authorizes the memory access.
+        predicate: VerifiedValueId,
+        /// Buffer read when the predicate is true.
+        buffer: VerifiedBufferId,
+        /// Element offset within the buffer.
+        offset: VerifiedValueId,
+        /// Schedule bounds witness authorizing the true-path access.
+        bounds: BoundsWitnessId,
+        /// Value returned when the predicate is false. No memory access occurs.
+        inactive: VerifiedValueId,
     },
     /// Stores one element under bounds and write-ownership evidence.
     Store {
@@ -2153,6 +2194,22 @@ fn push_operation(bytes: &mut Vec<u8>, data: &KernelData, operation: &OperationD
             bytes.extend_from_slice(&offset.to_be_bytes());
             bytes.extend_from_slice(&bounds.get().to_be_bytes());
         }
+        OperationKind::GuardedLoad {
+            predicate,
+            buffer,
+            offset,
+            bounds,
+            inactive,
+        } => {
+            // Next unused append-only tag after `InputExtent` at `0x20`.
+            // `0x1f` is `SerialLoopRange`. Exact kernels keep their bytes.
+            bytes.push(0x21);
+            bytes.extend_from_slice(&predicate.to_be_bytes());
+            bytes.extend_from_slice(&buffer.to_be_bytes());
+            bytes.extend_from_slice(&offset.to_be_bytes());
+            bytes.extend_from_slice(&bounds.get().to_be_bytes());
+            bytes.extend_from_slice(&inactive.to_be_bytes());
+        }
         OperationKind::Store {
             buffer,
             offset,
@@ -2474,6 +2531,17 @@ fn operation_encoded_len(data: &KernelData, operation: &OperationData) -> usize 
         } => size_of_val(buffer)
             .saturating_add(size_of_val(offset))
             .saturating_add(size_of_val(&bounds.get())),
+        OperationKind::GuardedLoad {
+            predicate,
+            buffer,
+            offset,
+            bounds,
+            inactive,
+        } => size_of_val(predicate)
+            .saturating_add(size_of_val(buffer))
+            .saturating_add(size_of_val(offset))
+            .saturating_add(size_of_val(&bounds.get()))
+            .saturating_add(size_of_val(inactive)),
         OperationKind::Store {
             buffer,
             offset,

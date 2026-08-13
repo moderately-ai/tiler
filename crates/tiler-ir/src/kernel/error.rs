@@ -233,6 +233,15 @@ pub enum KernelDiagnostic {
     PredicateDominance,
     /// A load or store carried the wrong schedule bounds witness.
     BoundsEvidence,
+    /// The left operand load is not authorized by the derived row-active guard.
+    LeftLoadGuard,
+    /// The right operand load is not authorized by the derived column-active guard.
+    RightLoadGuard,
+    /// The owning store is not authorized by both derived axis guards.
+    OutputStoreGuard,
+    /// A staged store is enclosed by a predicate, so some slot is uninitialized
+    /// for a participant that must still reach every barrier.
+    IncompleteStaging,
     /// A store carried the wrong schedule write-ownership witness.
     OwnershipEvidence,
     /// The kernel does not commit exactly one owning store per invocation.
@@ -386,6 +395,10 @@ impl KernelDiagnostic {
             Self::ResourceRequirements => "resource-requirements",
             Self::PredicateDominance => "predicate-dominance",
             Self::BoundsEvidence => "bounds-evidence",
+            Self::LeftLoadGuard => "left-load-guard",
+            Self::RightLoadGuard => "right-load-guard",
+            Self::OutputStoreGuard => "output-store-guard",
+            Self::IncompleteStaging => "incomplete-staging",
             Self::OwnershipEvidence => "ownership-evidence",
             Self::OutputCoverage => "output-coverage",
             Self::EffectOrdering => "effect-ordering",
