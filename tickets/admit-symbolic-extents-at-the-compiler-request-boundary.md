@@ -1,7 +1,7 @@
 ---
 id: admit-symbolic-extents-at-the-compiler-request-boundary
 title: Admit symbolic extents at the compiler request boundary
-status: in-progress
+status: review
 priority: p1
 dependencies: [construct-a-symbolic-region-as-a-semantic-program]
 related: [carry-symbolic-extents-into-the-semantic-program]
@@ -108,6 +108,6 @@ From this worktree, after the implementation:
 - `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler-compiler --no-deps` — clean.
 - `tkt lint` — `ok: no problems found`.
 - `git diff --check` — clean.
-- `tkt guard --base main --format json tkt/admit-symbolic-extents-at-the-compiler-request-boundary` — recorded after commit.
+- `tkt guard --base main --format json tkt/admit-symbolic-extents-at-the-compiler-request-boundary` — `severity: warn`, `conflict: false`, `under_declared: []`. Direct `implementation/compiler` collisions with other live compiler tickets; shared `project/tickets`. Not under-declared.
 
 Did not run `make full`. Coordinator gates at integration.
