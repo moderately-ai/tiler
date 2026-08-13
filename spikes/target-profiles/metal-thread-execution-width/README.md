@@ -4,7 +4,7 @@ id: "tiler.spike.target-profiles.metal-thread-execution-width"
 kind: "experiment"
 title: "Whether Metal threadExecutionWidth stays equal across a predeclared pipeline population"
 topics: ["target-profiles", "metal", "apple-targets", "subgroup", "feasibility"]
-experiment_status: "planned"
+experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.target-profiles.first-macos-metal-compile-profile-authority-ledger", "tiler.research.scheduling.subgroup-execution-tier"]
@@ -48,7 +48,7 @@ Observed on `m3` before the run, and recorded again by the harness rather than t
 
 The Apple9 compile profile could later declare `SubgroupRealizationSubject { width, arithmetic, transfer: InRangeXorShuffle }` as `Realized` only for arithmetic types it already marks `Dispatchable`: F32 and BF16. F32 shuffle is in MSL Table 6.14. BF16 shuffle is not. F16 and F64 are profile-silent.
 
-The frozen population therefore includes the F32 XOR-shuffle butterfly at the profile-strict selection (required), the BF16 XOR-shuffle candidate (optional compile), and negative or isolating controls that vary operation family (`store`, elementwise add, `simd_sum`, `simd_shuffle_down`, `quad_shuffle_xor`, threadgroup memory, high live-register count), arithmetic type (`f16`, `bf16`, `f32`, `f64`, `i32`, `u32`), control flow (uniform, divergent, loop), threadgroup shape (descriptor max 1/32/256/1024, `threadGroupSizeIsMultipleOfThreadExecutionWidth`, source `[[threads_per_threadgroup(8,8,1)]]`, source `[[max_total_threads_per_threadgroup(32)]]`), and compiler selection.
+The frozen population therefore includes the F32 XOR-shuffle butterfly at the profile-strict selection (required), the BF16 XOR-shuffle candidate (optional compile), and negative or isolating controls that vary operation family (`store`, elementwise add, `simd_sum`, `simd_shuffle_down`, `quad_shuffle_xor`, threadgroup memory, high live-register count), arithmetic type (`f16`, `bf16`, `f32`, `f64`, `i32`, `u32`), control flow (uniform, divergent, loop), threadgroup shape (descriptor max 1/32/256/1024, `threadGroupSizeIsMultipleOfThreadExecutionWidth`, source `[[max_total_threads_per_threadgroup(64)]]` and `(32)`), and compiler selection.
 
 The 34 identities are the table on the ticket and the `PIPELINES` array. `PIPELINES.len()` is the count; a test refuses a kernel file that is not named there and a named kernel that has no file.
 
@@ -78,7 +78,27 @@ The coordination host is an M4 Max on a different OS build (`26A5406e`). `cargo 
 
 ## Result
 
-Not yet run. This section is filled after the m3 submission. The freeze above does not change when the numbers arrive.
+**Measurement, 2026-08-13**, retained at [`results/2026-08-13-apple-m3-pro-macos27.0-26A5388g/widths.json`](results/2026-08-13-apple-m3-pro-macos27.0-26A5388g/widths.json).
+
+Offline compilation: `Apple metal version 32023.883 (metalfe-32023.883)`, `AIR-LLD 32023.883 (metalfe-32023.883)`, Xcode 26.6 build 17F113, macOS SDK 26.5 build 25F70. Execution: macOS 27.0 build `26A5388g`, `arm64`, `Apple M3 Pro`, `registryID 0x1000004e5`, `device_apple9_support` true, `maxBufferLength` 10,726,686,720. rustc `1.99.0-nightly (eff8269f7 2026-07-18)`. Load averages at the run: `{ 3.66 3.52 2.77 }`.
+
+**Every successful preparation reported `threadExecutionWidth = 32`.** 31 of 34 identities compiled and prepared; 93 retained widths, all 32. `all_prepared_widths_equal` is true. No modal, first, or fallback value was substituted.
+
+The three optional compile failures, retained as rows rather than dropped:
+
+- `xor_shuffle_bf16/profile_strict/default` — `no matching function for call to 'simd_shuffle_xor'` (MSL Table 6.14 excludes `bfloat`).
+- `add_f64/profile_strict/default` and `xor_shuffle_f64/profile_strict/default` — `'double' is not supported in Metal`.
+
+Corroborating prepared facts, not the metric: descriptor `max_1` / `max_32` / `max_256` / `max_1024` reported those same `maxTotalThreadsPerThreadgroup` values; source `max_total_threads_per_threadgroup(64)` and `(32)` reported 64 and 32; both threadgroup-memory pipelines reported `staticThreadgroupMemoryLength = 16384`. Width stayed 32 in every one of those cases, including when the prepared max threadgroup size was 1.
+
+`cargo test` in this directory watched four independent perturbations fail with the assertions unchanged:
+
+- pipeline identity → `pipeline identity not-a-frozen-identity is not in the frozen population`
+- result population → `result population for xor_shuffle_f32/profile_strict/default has 2 preparations, expected 3`
+- environment → `environment digest does not match the recorded environment subject`
+- executable custody → `ending executable digest does not match retained custody`
+
+`cargo run --release -- validate results/2026-08-13-apple-m3-pro-macos27.0-26A5388g/widths.json` reports `validation passed` on the measuring host and on the coordination tree.
 
 ## Boundary
 

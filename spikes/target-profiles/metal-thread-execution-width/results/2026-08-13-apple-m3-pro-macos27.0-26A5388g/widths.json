@@ -1,0 +1,1693 @@
+{
+  "schema": "tiler.spike.target-profiles.metal-thread-execution-width/v1",
+  "metric": "MTLComputePipelineState.threadExecutionWidth",
+  "repetitions": 3,
+  "frozen_pipeline_count": 34,
+  "environment": {
+    "offline_metal": "Apple metal version 32023.883 (metalfe-32023.883)",
+    "offline_linker": "AIR-LLD 32023.883 (metalfe-32023.883) (compatible with legacy metallib linker)",
+    "offline_xcode": "Xcode 26.6 Build version 17F113",
+    "offline_sdk_version": "26.5",
+    "offline_sdk_build": "25F70",
+    "rustc_verbose": "rustc 1.99.0-nightly (eff8269f7 2026-07-18)\nbinary: rustc\ncommit-hash: eff8269f797067c30555e77f160ec84c0ed15cd9\ncommit-date: 2026-07-18\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 22.1.8\n",
+    "platform_version": "27.0",
+    "platform_build": "26A5388g",
+    "architecture": "arm64",
+    "device": "Apple M3 Pro",
+    "device_registry_id": "0x1000004e5",
+    "apple9": true,
+    "max_buffer_length": 10726686720,
+    "load_averages": "{ 3.66 3.52 2.77 }"
+  },
+  "environment_sha256": "68670da15bce2e0b4611044def345eec7c1a2c38cc70915955840f529e0a39a3",
+  "custody": {
+    "harness_source_sha256": "a918c8e423ccb85f89334ed2f397efc926d89f0622d4ea676cdb44d48bb8ba38",
+    "cargo_lock_sha256": "b6be23bed9af4eeddcae18dce6105544e1a3f7f74c28069e2e051b2f07197a2f",
+    "kernel_sha256": {
+      "add_bf16": "3e05812030d38ed7f8612a8e2f69ae9a8a3591a42b3d61e661594a685e36d4a7",
+      "add_f16": "e063a4ff79e6055e403e6790495f97fab4e1e0c89d52a925e996610ad7c53684",
+      "add_f32": "112d87f0028df5f4a4a4e5545160de8a5d2e6d93a41dcb44a6cc8748b86478d3",
+      "add_f64": "56a16c14710725276123786392310c9f1d2664a90c5b00e6c2c0f6c28d6921b6",
+      "add_i32": "0e52937bc438ceeba3261a1e2f487eea83585bfb5c491b9c4d14c6af9a9d4966",
+      "constrained_tg_8x8": "e38af518b866251f94b0629109b34970ca52316492c0a4a962232496bd4a4ad0",
+      "divergent_cf_f32": "2e4c2228f9013eed8c7040dc591fecda81f43ade9c7df2fa24e0800c6dae4b86",
+      "high_reg_f32": "651a86f8bf8d2cd193cd12e08b337a8adf03ad46b66a7e24607cdb6bf22aaacd",
+      "loop_f32": "d9762a0b613d96796137024fafb0a303ec2e7354a56af4011d2e51eeab446aa5",
+      "quad_shuffle_f32": "7066b6c2f2503790c4a8c7c78382234a686065ea973e10f2e3f67bc8ae9085eb",
+      "shuffle_down_f32": "670499770e3e13a1725d238fa82a36e9a70eb771b4d6587d9ae8dadbf370cf5d",
+      "simd_sum_f32": "57d158cd7250a3f2a57c17b0c2c1b2e53312c37dde4ad5631d06d5f655dd837d",
+      "source_max_tg_32": "e3f967c7c766f45484f60477dd93b2060e61534e3d7458bf2cb7cd977378dd22",
+      "store_u32": "cc09be2393b38f7c3789a5f733964dad08ea97a40e75e0b88fa591837159ab62",
+      "threadgroup_mem_f32": "528021c1b66f610b0676cb7b6ee2cfc9902943087c6bd202ec46428f12022c66",
+      "xor_shuffle_bf16": "30cda751f5b0f6c229c4cee611eea6ef0ae4adc9a2489e6c50c5111ffb5aeb57",
+      "xor_shuffle_f16": "5c9451b09cc83f4663d1fd189f89a273aa27fd3ef1f241f8f6259f3c4604f5a5",
+      "xor_shuffle_f32": "13c7c715c24d2993dbf7b153dc7e61a8fbc50b354a063e7e972b665ca2a8b3c0",
+      "xor_shuffle_f64": "df1286d292191b15011346c4b75675f552d80d8d8eecb8699747a8a2ba6cd929"
+    },
+    "starting_executable_sha256": "01b76a794494bf5063fe860092bb7383d43105d7af3776e6134644eb70f14d8c",
+    "ending_executable_sha256": "01b76a794494bf5063fe860092bb7383d43105d7af3776e6134644eb70f14d8c"
+  },
+  "pipelines": [
+    {
+      "id": "xor_shuffle_f32/profile_strict/default",
+      "role": "authorized-f32-xor-shuffle",
+      "kernel": "xor_shuffle_f32",
+      "arithmetic": "f32",
+      "operation_family": "in-range-xor-shuffle",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "13c7c715c24d2993dbf7b153dc7e61a8fbc50b354a063e7e972b665ca2a8b3c0",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "4607dbb613e08b1823533b7f5dd656c5d1faa2ad8a9a25de3bbfbdea7ad74097",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "xor_shuffle_bf16/profile_strict/default",
+      "role": "authorized-family-bf16-candidate",
+      "kernel": "xor_shuffle_bf16",
+      "arithmetic": "bf16",
+      "operation_family": "in-range-xor-shuffle",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": false,
+      "source_sha256": "30cda751f5b0f6c229c4cee611eea6ef0ae4adc9a2489e6c50c5111ffb5aeb57",
+      "compile": {
+        "status": "failed",
+        "metallib_sha256": null,
+        "stderr": "/Users/tsanterre/tmp/tiler-tew/spikes/target-profiles/metal-thread-execution-width/kernels/xor_shuffle_bf16.metal:9:8: error: no matching function for call to 'simd_shuffle_xor'\n  v += simd_shuffle_xor(v, ushort(1));\n       ^~~~~~~~~~~~~~~~\n/private/var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v17.6.109.0.YOmKV5/Metal.xctoolchain/usr/metal/32023/lib/clang/32023.883/include/metal/metal_simdgroup:267:14: note: candidate template ignored: requirement '__is_valid_simdgroup_type<bfloat, void>::value' was not satisfied [with T = bfloat]\nMETAL_FUNC T simd_shuffle_xor(T data METAL_MAYBE_UNDEF, ushort mask)\n             ^\n/Users/tsanterre/tmp/tiler-tew/spikes/target-profiles/metal-thread-execution-width/kernels/xor_shuffle_bf16.metal:10:8: error: no matching function for call to 'simd_shuffle_xor'\n  v += simd_shuffle_xor(v, ushort(2));\n       ^~~~~~~~~~~~~~~~\n/private/var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v17.6.109.0.YOmKV5/Metal.xctoolchain/usr/metal/32023/lib/clang/32023.883/include/metal/metal_simdgroup:267:14: note: candidate template ignored: requirement '__is_valid_simdgroup_type<bfloat, void>::value' was not satisfied [with T = bfloat]\nMETAL_FUNC T simd_shuffle_xor(T data METAL_MAYBE_UNDEF, ushort mask)\n             ^\n/Users/tsanterre/tmp/tiler-tew/spikes/target-profiles/metal-thread-execution-width/kernels/xor_shuffle_bf16.metal:11:8: error: no matching function for call to 'simd_shuffle_xor'\n  v += simd_shuffle_xor(v, ushort(4));\n       ^~~~~~~~~~~~~~~~\n/private/var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v17.6.109.0.YOmKV5/Metal.xctoolchain/usr/metal/32023/lib/clang/32023.883/include/metal/metal_simdgroup:267:14: note: candidate template ignored: requirement '__is_valid_simdgroup_type<bfloat, void>::value' was not satisfied [with T = bfloat]\nMETAL_FUNC T simd_shuffle_xor(T data METAL_MAYBE_UNDEF, ushort mask)\n             ^\n/Users/tsanterre/tmp/tiler-tew/spikes/target-profiles/metal-thread-execution-width/kernels/xor_shuffle_bf16.metal:12:8: error: no matching function for call to 'simd_shuffle_xor'\n  v += simd_shuffle_xor(v, ushort(8));\n       ^~~~~~~~~~~~~~~~\n/private/var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v17.6.109.0.YOmKV5/Metal.xctoolchain/usr/metal/32023/lib/clang/32023.883/include/metal/metal_simdgroup:267:14: note: candidate template ignored: requirement '__is_valid_simdgroup_type<bfloat, void>::value' was not satisfied [with T = bfloat]\nMETAL_FUNC T simd_shuffle_xor(T data METAL_MAYBE_UNDEF, ushort mask)\n             ^\n/Users/tsanterre/tmp/tiler-tew/spikes/target-profiles/metal-thread-execution-width/kernels/xor_shuffle_bf16.metal:13:8: error: no matching function for call to 'simd_shuffle_xor'\n  v += simd_shuffle_xor(v, ushort(16));\n       ^~~~~~~~~~~~~~~~\n/private/var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v17.6.109.0.YOmKV5/Metal.xctoolchain/usr/metal/32023/lib/clang/32023.883/include/metal/metal_simdgroup:267:14: note: candidate template ignored: requirement '__is_valid_simdgroup_type<bfloat, void>::value' was not satisfied [with T = bfloat]\nMETAL_FUNC T simd_shuffle_xor(T data METAL_MAYBE_UNDEF, ushort mask)\n             ^\n5 errors generated.\n"
+      },
+      "preparations": []
+    },
+    {
+      "id": "xor_shuffle_f32/profile_strict/max_1",
+      "role": "control",
+      "kernel": "xor_shuffle_f32",
+      "arithmetic": "f32",
+      "operation_family": "in-range-xor-shuffle",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "max_1",
+      "required": true,
+      "source_sha256": "13c7c715c24d2993dbf7b153dc7e61a8fbc50b354a063e7e972b665ca2a8b3c0",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "4607dbb613e08b1823533b7f5dd656c5d1faa2ad8a9a25de3bbfbdea7ad74097",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "xor_shuffle_f32/profile_strict/max_32",
+      "role": "control",
+      "kernel": "xor_shuffle_f32",
+      "arithmetic": "f32",
+      "operation_family": "in-range-xor-shuffle",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "max_32",
+      "required": true,
+      "source_sha256": "13c7c715c24d2993dbf7b153dc7e61a8fbc50b354a063e7e972b665ca2a8b3c0",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "4607dbb613e08b1823533b7f5dd656c5d1faa2ad8a9a25de3bbfbdea7ad74097",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 32,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 32,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 32,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "xor_shuffle_f32/profile_strict/max_256",
+      "role": "control",
+      "kernel": "xor_shuffle_f32",
+      "arithmetic": "f32",
+      "operation_family": "in-range-xor-shuffle",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "max_256",
+      "required": true,
+      "source_sha256": "13c7c715c24d2993dbf7b153dc7e61a8fbc50b354a063e7e972b665ca2a8b3c0",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "4607dbb613e08b1823533b7f5dd656c5d1faa2ad8a9a25de3bbfbdea7ad74097",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 256,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 256,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 256,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "xor_shuffle_f32/profile_strict/max_1024",
+      "role": "control",
+      "kernel": "xor_shuffle_f32",
+      "arithmetic": "f32",
+      "operation_family": "in-range-xor-shuffle",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "max_1024",
+      "required": true,
+      "source_sha256": "13c7c715c24d2993dbf7b153dc7e61a8fbc50b354a063e7e972b665ca2a8b3c0",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "4607dbb613e08b1823533b7f5dd656c5d1faa2ad8a9a25de3bbfbdea7ad74097",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "xor_shuffle_f32/profile_strict/multiple_of_width",
+      "role": "control",
+      "kernel": "xor_shuffle_f32",
+      "arithmetic": "f32",
+      "operation_family": "in-range-xor-shuffle",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "multiple_of_width",
+      "required": true,
+      "source_sha256": "13c7c715c24d2993dbf7b153dc7e61a8fbc50b354a063e7e972b665ca2a8b3c0",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "4607dbb613e08b1823533b7f5dd656c5d1faa2ad8a9a25de3bbfbdea7ad74097",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "xor_shuffle_f32/profile_strict/max_1024_multiple",
+      "role": "control",
+      "kernel": "xor_shuffle_f32",
+      "arithmetic": "f32",
+      "operation_family": "in-range-xor-shuffle",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "max_1024_multiple",
+      "required": true,
+      "source_sha256": "13c7c715c24d2993dbf7b153dc7e61a8fbc50b354a063e7e972b665ca2a8b3c0",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "4607dbb613e08b1823533b7f5dd656c5d1faa2ad8a9a25de3bbfbdea7ad74097",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "xor_shuffle_f32/math_fast/default",
+      "role": "control",
+      "kernel": "xor_shuffle_f32",
+      "arithmetic": "f32",
+      "operation_family": "in-range-xor-shuffle",
+      "compiler_selection": "math_fast",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=fast",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "13c7c715c24d2993dbf7b153dc7e61a8fbc50b354a063e7e972b665ca2a8b3c0",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "a73553b4acf3cb0ac697e578f4eb52af103769cc3dd9e65e6cb03a674ec72f59",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "xor_shuffle_f32/math_relaxed/default",
+      "role": "control",
+      "kernel": "xor_shuffle_f32",
+      "arithmetic": "f32",
+      "operation_family": "in-range-xor-shuffle",
+      "compiler_selection": "math_relaxed",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=relaxed",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "13c7c715c24d2993dbf7b153dc7e61a8fbc50b354a063e7e972b665ca2a8b3c0",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "7c8a3b6f100d0862a8df5ebbd670909c84b97190452f92046f735917f6e8c659",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "xor_shuffle_f32/contract_fast/default",
+      "role": "control",
+      "kernel": "xor_shuffle_f32",
+      "arithmetic": "f32",
+      "operation_family": "in-range-xor-shuffle",
+      "compiler_selection": "contract_fast",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=fast"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "13c7c715c24d2993dbf7b153dc7e61a8fbc50b354a063e7e972b665ca2a8b3c0",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "2626af863952d186a127d1c194cd00e3d14c47c11591041d638fa2d7758e5cb3",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "xor_shuffle_f32/opt_O0/default",
+      "role": "control",
+      "kernel": "xor_shuffle_f32",
+      "arithmetic": "f32",
+      "operation_family": "in-range-xor-shuffle",
+      "compiler_selection": "opt_O0",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off",
+        "-O0"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "13c7c715c24d2993dbf7b153dc7e61a8fbc50b354a063e7e972b665ca2a8b3c0",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "ae317d6957d2132704bd9b739de4f97eccf39bcbd5f5d6524e1f2a9663f6c0bc",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "xor_shuffle_f32/opt_Os/default",
+      "role": "control",
+      "kernel": "xor_shuffle_f32",
+      "arithmetic": "f32",
+      "operation_family": "in-range-xor-shuffle",
+      "compiler_selection": "opt_Os",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off",
+        "-Os"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "13c7c715c24d2993dbf7b153dc7e61a8fbc50b354a063e7e972b665ca2a8b3c0",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "8c73434ebd547cd0d58afd0cd5daf62286005619925bfce671ffbeef13a93dc7",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "xor_shuffle_f32/std_metal3.1/default",
+      "role": "control",
+      "kernel": "xor_shuffle_f32",
+      "arithmetic": "f32",
+      "operation_family": "in-range-xor-shuffle",
+      "compiler_selection": "std_metal3.1",
+      "compiler_flags": [
+        "-std=metal3.1",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "13c7c715c24d2993dbf7b153dc7e61a8fbc50b354a063e7e972b665ca2a8b3c0",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "c6f8edb4083e72b9303eb060e327d43a136b1d6b216425f22d51c918a9f16119",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "store_u32/profile_strict/default",
+      "role": "control",
+      "kernel": "store_u32",
+      "arithmetic": "u32",
+      "operation_family": "independent-store",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "cc09be2393b38f7c3789a5f733964dad08ea97a40e75e0b88fa591837159ab62",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "ba1b825bbbcacc50cb4fbfaceeab520bf4061cdd70970ab1335643d4a46cf6d5",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "add_f32/profile_strict/default",
+      "role": "control",
+      "kernel": "add_f32",
+      "arithmetic": "f32",
+      "operation_family": "elementwise-add",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "112d87f0028df5f4a4a4e5545160de8a5d2e6d93a41dcb44a6cc8748b86478d3",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "9dd05d2d0bc841802617dcf23eb2ad6483264960e4ffc9ef4b1e2510d5a60b87",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "add_f16/profile_strict/default",
+      "role": "control",
+      "kernel": "add_f16",
+      "arithmetic": "f16",
+      "operation_family": "elementwise-add",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "e063a4ff79e6055e403e6790495f97fab4e1e0c89d52a925e996610ad7c53684",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "1ce4ef72f44ef7d9060fb71538801112d98b928817fac72c20ad164f09fd90ac",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "add_bf16/profile_strict/default",
+      "role": "control",
+      "kernel": "add_bf16",
+      "arithmetic": "bf16",
+      "operation_family": "elementwise-add",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "3e05812030d38ed7f8612a8e2f69ae9a8a3591a42b3d61e661594a685e36d4a7",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "31e777b81d8f35c7fd02186b155e196819b54122707ad19bc48eabe198d90c6c",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "add_i32/profile_strict/default",
+      "role": "control",
+      "kernel": "add_i32",
+      "arithmetic": "i32",
+      "operation_family": "elementwise-add",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "0e52937bc438ceeba3261a1e2f487eea83585bfb5c491b9c4d14c6af9a9d4966",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "65e9cae5bd69b355891070e84590c78478c0315e3efec7d862109366bfd0f330",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "add_f64/profile_strict/default",
+      "role": "control",
+      "kernel": "add_f64",
+      "arithmetic": "f64",
+      "operation_family": "elementwise-add",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": false,
+      "source_sha256": "56a16c14710725276123786392310c9f1d2664a90c5b00e6c2c0f6c28d6921b6",
+      "compile": {
+        "status": "failed",
+        "metallib_sha256": null,
+        "stderr": "/Users/tsanterre/tmp/tiler-tew/spikes/target-profiles/metal-thread-execution-width/kernels/add_f64.metal:4:28: error: 'double' is not supported in Metal\nkernel void add_f64(device double *out [[buffer(0)]], device const double *in [[buffer(1)]],\n                           ^\n/Users/tsanterre/tmp/tiler-tew/spikes/target-profiles/metal-thread-execution-width/kernels/add_f64.metal:4:68: error: 'double' is not supported in Metal\nkernel void add_f64(device double *out [[buffer(0)]], device const double *in [[buffer(1)]],\n                                                                   ^\n2 errors generated.\n"
+      },
+      "preparations": []
+    },
+    {
+      "id": "xor_shuffle_f16/profile_strict/default",
+      "role": "control",
+      "kernel": "xor_shuffle_f16",
+      "arithmetic": "f16",
+      "operation_family": "in-range-xor-shuffle",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "5c9451b09cc83f4663d1fd189f89a273aa27fd3ef1f241f8f6259f3c4604f5a5",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "89073b5d03d42bb671e204bd739807a734a3722fc7a2cc4533c7bcce1d0c01cd",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "xor_shuffle_f64/profile_strict/default",
+      "role": "control",
+      "kernel": "xor_shuffle_f64",
+      "arithmetic": "f64",
+      "operation_family": "in-range-xor-shuffle",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": false,
+      "source_sha256": "df1286d292191b15011346c4b75675f552d80d8d8eecb8699747a8a2ba6cd929",
+      "compile": {
+        "status": "failed",
+        "metallib_sha256": null,
+        "stderr": "/Users/tsanterre/tmp/tiler-tew/spikes/target-profiles/metal-thread-execution-width/kernels/xor_shuffle_f64.metal:4:36: error: 'double' is not supported in Metal\nkernel void xor_shuffle_f64(device double *out [[buffer(0)]], device const double *in [[buffer(1)]],\n                                   ^\n/Users/tsanterre/tmp/tiler-tew/spikes/target-profiles/metal-thread-execution-width/kernels/xor_shuffle_f64.metal:4:76: error: 'double' is not supported in Metal\nkernel void xor_shuffle_f64(device double *out [[buffer(0)]], device const double *in [[buffer(1)]],\n                                                                           ^\n/Users/tsanterre/tmp/tiler-tew/spikes/target-profiles/metal-thread-execution-width/kernels/xor_shuffle_f64.metal:6:3: error: 'double' is not supported in Metal\n  double v = in[tid];\n  ^\n3 errors generated.\n"
+      },
+      "preparations": []
+    },
+    {
+      "id": "simd_sum_f32/profile_strict/default",
+      "role": "negative",
+      "kernel": "simd_sum_f32",
+      "arithmetic": "f32",
+      "operation_family": "subgroup-collective",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "57d158cd7250a3f2a57c17b0c2c1b2e53312c37dde4ad5631d06d5f655dd837d",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "d6401510bb6955aeefbe9873567f6a23410fafa52b366b49afd7bf50d0f22de9",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "shuffle_down_f32/profile_strict/default",
+      "role": "negative",
+      "kernel": "shuffle_down_f32",
+      "arithmetic": "f32",
+      "operation_family": "shuffle-down-tree",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "670499770e3e13a1725d238fa82a36e9a70eb771b4d6587d9ae8dadbf370cf5d",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "65a8e7fc6d9dbd8391186feed818332d9a28206fbc35a2bf9cf90c34d543c3eb",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "quad_shuffle_f32/profile_strict/default",
+      "role": "control",
+      "kernel": "quad_shuffle_f32",
+      "arithmetic": "f32",
+      "operation_family": "quad-shuffle",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "7066b6c2f2503790c4a8c7c78382234a686065ea973e10f2e3f67bc8ae9085eb",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "eae27325f2c7ff838de03156d71580d09fc98ab546bb1d677d24ed336cb1e413",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "divergent_cf_f32/profile_strict/default",
+      "role": "control",
+      "kernel": "divergent_cf_f32",
+      "arithmetic": "f32",
+      "operation_family": "divergent-control-flow",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "2e4c2228f9013eed8c7040dc591fecda81f43ade9c7df2fa24e0800c6dae4b86",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "db8842d0f5f200c2e3153464193bc7bf8e791e88a779e18b79d2fe3b1795af3f",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "loop_f32/profile_strict/default",
+      "role": "control",
+      "kernel": "loop_f32",
+      "arithmetic": "f32",
+      "operation_family": "loop",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "d9762a0b613d96796137024fafb0a303ec2e7354a56af4011d2e51eeab446aa5",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "54348dd3107a764daad15198821adfbcea45d35223e83dc6359a7763366f9776",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "threadgroup_mem_f32/profile_strict/default",
+      "role": "control",
+      "kernel": "threadgroup_mem_f32",
+      "arithmetic": "f32",
+      "operation_family": "threadgroup-memory",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "528021c1b66f610b0676cb7b6ee2cfc9902943087c6bd202ec46428f12022c66",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "085420eb1f85f238d9a9fc5da8bcfc6dac5a92a51ea5434376fbf15267379eca",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 16384,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 16384,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 16384,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "threadgroup_mem_f32/profile_strict/max_1024",
+      "role": "control",
+      "kernel": "threadgroup_mem_f32",
+      "arithmetic": "f32",
+      "operation_family": "threadgroup-memory",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "max_1024",
+      "required": true,
+      "source_sha256": "528021c1b66f610b0676cb7b6ee2cfc9902943087c6bd202ec46428f12022c66",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "085420eb1f85f238d9a9fc5da8bcfc6dac5a92a51ea5434376fbf15267379eca",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 16384,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 16384,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 16384,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "high_reg_f32/profile_strict/default",
+      "role": "control",
+      "kernel": "high_reg_f32",
+      "arithmetic": "f32",
+      "operation_family": "high-register-pressure",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "651a86f8bf8d2cd193cd12e08b337a8adf03ad46b66a7e24607cdb6bf22aaacd",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "17768576204912c4f96ebe55f2bf37225be0fd8a6ac6dd5f329e091358038c24",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "constrained_tg_8x8/profile_strict/default",
+      "role": "control",
+      "kernel": "constrained_tg_8x8",
+      "arithmetic": "u32",
+      "operation_family": "independent-store",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "e38af518b866251f94b0629109b34970ca52316492c0a4a962232496bd4a4ad0",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "c62bc4939a38a067e54710450dc00127e3ac6b1ca7b9fe29bdb1efcfe2d2323c",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 64,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 64,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 64,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "source_max_tg_32/profile_strict/default",
+      "role": "control",
+      "kernel": "source_max_tg_32",
+      "arithmetic": "u32",
+      "operation_family": "independent-store",
+      "compiler_selection": "profile_strict",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "e3f967c7c766f45484f60477dd93b2060e61534e3d7458bf2cb7cd977378dd22",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "14e463888d91d8a93560f3e61242c97bd30a1366d488d5068b6a9810285fae86",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 32,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 32,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 32,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "add_f32/math_fast/default",
+      "role": "control",
+      "kernel": "add_f32",
+      "arithmetic": "f32",
+      "operation_family": "elementwise-add",
+      "compiler_selection": "math_fast",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=fast",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "112d87f0028df5f4a4a4e5545160de8a5d2e6d93a41dcb44a6cc8748b86478d3",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "edbbf9aab11398de88fcf9533c879f0e2751bdd61bd7ec7cda1f44701fc1ee38",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "add_f32/opt_O0/default",
+      "role": "control",
+      "kernel": "add_f32",
+      "arithmetic": "f32",
+      "operation_family": "elementwise-add",
+      "compiler_selection": "opt_O0",
+      "compiler_flags": [
+        "-std=metal4.0",
+        "-target",
+        "air64-apple-macos26.0",
+        "-fmetal-math-mode=safe",
+        "-fmetal-math-fp32-functions=precise",
+        "-ffp-contract=off",
+        "-O0"
+      ],
+      "descriptor": "default",
+      "required": true,
+      "source_sha256": "112d87f0028df5f4a4a4e5545160de8a5d2e6d93a41dcb44a6cc8748b86478d3",
+      "compile": {
+        "status": "ok",
+        "metallib_sha256": "2855776d17614e9f62839f4e74f09862da1d7b89a334d4abc69ab9adf88540c8",
+        "stderr": null
+      },
+      "preparations": [
+        {
+          "repetition": 1,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 2,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        },
+        {
+          "repetition": 3,
+          "status": "ok",
+          "thread_execution_width": 32,
+          "max_total_threads_per_threadgroup": 1024,
+          "static_threadgroup_memory_length": 0,
+          "error": null
+        }
+      ]
+    }
+  ],
+  "verdict": {
+    "prepared_ok_count": 31,
+    "compile_failed": [
+      "xor_shuffle_bf16/profile_strict/default",
+      "add_f64/profile_strict/default",
+      "xor_shuffle_f64/profile_strict/default"
+    ],
+    "prepare_failed": [],
+    "widths_observed": [
+      32
+    ],
+    "all_prepared_widths_equal": true
+  }
+}

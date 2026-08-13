@@ -1,7 +1,7 @@
 ---
 id: measure-metal-thread-execution-width-across-prepared-pipelines
 title: Measure Metal thread execution width across prepared pipelines
-status: in-progress
+status: review
 priority: p1
 dependencies: []
 related: [declare-metal-subgroup-realization-facts-in-the-target-profile, decide-the-prepared-subgroup-width-equality-gate]
@@ -29,6 +29,7 @@ On the authorized Apple M3 Pro Apple9 host, compiled with the first macOS Metal 
 - **Verified — MSL states no numeric SIMD-group width.** [The subgroup execution tier](../docs/research/scheduling/subgroup-execution-tier.md), anchor `The Metal Shading Language Specification 4.1 states no numeric SIMD-group width anywhere`. The only width that specification fixes is the quad-group's 4.
 - **Verified — the accepted subject families this profile could later authorize.** `SubgroupRealizationSubject` is width × `ArithmeticType` × `SubgroupTransfer::InRangeXorShuffle` (`crates/tiler-ir/src/schedule/subgroup.rs`). The Apple9 compile profile declares F32 and BF16 `Dispatchable` and is silent on F16 and F64 ([the authority ledger](../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md), headings `F32 — Dispatchable` and `BF16 — Dispatchable`). `simd_shuffle`'s MSL type list excludes `bfloat` and `long` ([the subgroup execution tier](../docs/research/scheduling/subgroup-execution-tier.md), anchor `simd_shuffle's own type list in MSL Table 6.14 excludes bfloat and long`), so a BF16 XOR-shuffle pipeline is an authorized-family candidate that may fail to compile; that failure is a retained row, not a reason to drop the candidate after the fact.
 - **Verified — equality across this population would not remove ADR 0094's preflight.** Decision 7 keeps the prepared-pipeline confirmation even if a compile-profile subject is later declared. [The prepared-width gate](decide-the-prepared-subgroup-width-equality-gate.md), anchor `No compile-profile row alone can discharge this gate`.
+- **False as written, repaired before any width was read — `[[threads_per_threadgroup(8,8,1)]]` is not a function attribute.** On this toolchain `xcrun metal` rejects that spelling on a kernel with `attribute cannot be applied to types` / `only applies to parameters and global builtin variables`. The source-side 8×8 control is `[[max_total_threads_per_threadgroup(64)]]` after the function name, which compiled. No `threadExecutionWidth` had been retained when this was corrected.
 
 ## Required protocol before any submission
 
@@ -112,7 +113,7 @@ Required pipelines must compile and prepare or the run aborts with no equality c
 | `threadgroup_mem_f32/profile_strict/default` | threadgroup-memory control | yes |
 | `threadgroup_mem_f32/profile_strict/max_1024` | memory × descriptor | yes |
 | `high_reg_f32/profile_strict/default` | register-pressure control | yes |
-| `constrained_tg_8x8/profile_strict/default` | source-side `[[threads_per_threadgroup(8,8,1)]]` | yes |
+| `constrained_tg_8x8/profile_strict/default` | source-side `[[max_total_threads_per_threadgroup(64)]]` (8×8 product) | yes |
 | `source_max_tg_32/profile_strict/default` | source-side `[[max_total_threads_per_threadgroup(32)]]` | yes |
 | `add_f32/math_fast/default` | compiler × non-shuffle | yes |
 | `add_f32/opt_O0/default` | compiler × non-shuffle | yes |
@@ -136,3 +137,28 @@ This measurement may license only the observed profile/pipeline population. Even
 ## Closes when
 
 The predeclared population has a retained, reproducible result and the exact target-profile claim it supports—or fails to support—is recorded.
+
+## Outcome
+
+**Measurement, 2026-08-13, Apple M3 Pro.** Retained at [`spikes/target-profiles/metal-thread-execution-width/results/2026-08-13-apple-m3-pro-macos27.0-26A5388g/widths.json`](../spikes/target-profiles/metal-thread-execution-width/results/2026-08-13-apple-m3-pro-macos27.0-26A5388g/widths.json). Host `ssh m3`, device name `Apple M3 Pro`, `registryID 0x1000004e5`, `supportsFamily(Apple9)` true, macOS 27.0 build `26A5388g`, `arm64`. Offline: `Apple metal version 32023.883 (metalfe-32023.883)`, `AIR-LLD 32023.883`, Xcode 26.6 build 17F113, SDK 26.5 build 25F70. rustc `1.99.0-nightly (eff8269f7 2026-07-18)`. Load `{ 3.66 3.52 2.77 }`. Xcode, SDK, OS, Rust, and device state were not changed.
+
+**Frozen population:** 34 identities in `PIPELINES` / the table above. 31 compiled and prepared three times each (93 width observations). Three optional identities failed to compile and have no width: `xor_shuffle_bf16/profile_strict/default` (`no matching function for call to 'simd_shuffle_xor'`), `add_f64/profile_strict/default` and `xor_shuffle_f64/profile_strict/default` (`'double' is not supported in Metal`).
+
+**Every retained width is 32.** The 31 prepared identities, listed with their three repetitions:
+
+`xor_shuffle_f32/profile_strict/default` 32,32,32; `xor_shuffle_f32/profile_strict/max_1` 32,32,32; `xor_shuffle_f32/profile_strict/max_32` 32,32,32; `xor_shuffle_f32/profile_strict/max_256` 32,32,32; `xor_shuffle_f32/profile_strict/max_1024` 32,32,32; `xor_shuffle_f32/profile_strict/multiple_of_width` 32,32,32; `xor_shuffle_f32/profile_strict/max_1024_multiple` 32,32,32; `xor_shuffle_f32/math_fast/default` 32,32,32; `xor_shuffle_f32/math_relaxed/default` 32,32,32; `xor_shuffle_f32/contract_fast/default` 32,32,32; `xor_shuffle_f32/opt_O0/default` 32,32,32; `xor_shuffle_f32/opt_Os/default` 32,32,32; `xor_shuffle_f32/std_metal3.1/default` 32,32,32; `store_u32/profile_strict/default` 32,32,32; `add_f32/profile_strict/default` 32,32,32; `add_f16/profile_strict/default` 32,32,32; `add_bf16/profile_strict/default` 32,32,32; `add_i32/profile_strict/default` 32,32,32; `xor_shuffle_f16/profile_strict/default` 32,32,32; `simd_sum_f32/profile_strict/default` 32,32,32; `shuffle_down_f32/profile_strict/default` 32,32,32; `quad_shuffle_f32/profile_strict/default` 32,32,32; `divergent_cf_f32/profile_strict/default` 32,32,32; `loop_f32/profile_strict/default` 32,32,32; `threadgroup_mem_f32/profile_strict/default` 32,32,32; `threadgroup_mem_f32/profile_strict/max_1024` 32,32,32; `high_reg_f32/profile_strict/default` 32,32,32; `constrained_tg_8x8/profile_strict/default` 32,32,32; `source_max_tg_32/profile_strict/default` 32,32,32; `add_f32/math_fast/default` 32,32,32; `add_f32/opt_O0/default` 32,32,32.
+
+`verdict.widths_observed` is `[32]`. `verdict.all_prepared_widths_equal` is true.
+
+**Claim this supports.** On this M3 Pro Apple9 host, under this offline toolchain and this frozen population, `MTLComputePipelineState.threadExecutionWidth` did not vary: every pipeline that prepared reported 32. That is evidence a later M3 Pro compile-profile subject could name width 32 for `InRangeXorShuffle` at F32 (and at F16 as a control that prepared, not as a dispatchability row).
+
+**Claim this fails to support.** It does not source `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1` or any M4 Max qualified row. It does not license a BF16 `InRangeXorShuffle` realization — that candidate did not compile. It does not remove ADR 0094's prepared-pipeline confirmation. It is not an Apple9-family guarantee.
+
+Perturbations, assertions unchanged, quoted:
+
+- pipeline identity: `pipeline identity not-a-frozen-identity is not in the frozen population`
+- result population: `result population for xor_shuffle_f32/profile_strict/default has 2 preparations, expected 3`
+- environment: `environment digest does not match the recorded environment subject`
+- executable custody: `ending executable digest does not match retained custody`
+
+Carry: this delta is `tickets/` + `spikes/` + no `crates/`, `Cargo.*`, or `Makefile`. `4ef52cfe` (ticket-only successor of `eecc4002`) therefore carries; `tkt lint` and `make citations` are the required re-runs.

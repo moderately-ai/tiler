@@ -46,7 +46,7 @@ pub enum KernelId {
     ThreadgroupMemF32,
     /// Many simultaneously live f32 values.
     HighRegF32,
-    /// Source-side `[[threads_per_threadgroup(8, 8, 1)]]`.
+    /// Source-side `[[max_total_threads_per_threadgroup(64)]]` (8×8 product).
     ConstrainedTg8x8,
     /// Source-side `[[max_total_threads_per_threadgroup(32)]]`.
     SourceMaxTg32,
