@@ -1,14 +1,17 @@
 ---
 id: declare-elementary-realizations-on-a-target-profile
 title: Declare elementary realizations on a target profile
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-the-registered-unary-families-at-the-compiler-request-boundary, require-both-elementary-evidence-halves-before-target-admission]
 related: [carry-the-elementary-numerical-dimensions-in-the-region-realization, establish-hard-exceptional-value-evidence-for-metal-elementary-realizations]
 scopes: [implementation/compiler, contracts/decisions, implementation/build, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, compiler-api, numerics, feasibility, public-boundary, decision, needs-tom]
+tags: [implementation, compiler-api, numerics, feasibility, public-boundary, decision]
+claimed_from: todo
+assignee: worker-declare-elementary
+lease_expires_at: 1786629707
 ---
 ## User-visible outcome
 

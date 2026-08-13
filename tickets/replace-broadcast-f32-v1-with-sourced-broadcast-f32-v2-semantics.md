@@ -1,7 +1,7 @@
 ---
 id: replace-broadcast-f32-v1-with-sourced-broadcast-f32-v2-semantics
 title: Replace broadcast-f32 v1 with sourced broadcast-f32 v2 semantics
-status: todo
+status: in-progress
 priority: p1
 dependencies: [seal-and-validate-sourced-shapes-at-semantic-inference-boundaries, define-the-widening-relation-over-a-symbolic-broadcast-extent, resolve-semantic-shape-inference-over-symbolic-extents, retain-one-derived-proof-summary-per-shape-environment, narrow-symbolic-inference-and-restore-host-owned-refusals]
 related: [resolve-semantic-shape-inference-over-symbolic-extents]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, semantics, broadcast, identity]
+claimed_from: todo
+assignee: worker-broadcast-f32-v2
+lease_expires_at: 1786629706
 ---
 # Replace broadcast-f32 v1 with sourced broadcast-f32 v2 semantics
 
