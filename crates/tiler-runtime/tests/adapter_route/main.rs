@@ -2197,3 +2197,196 @@ fn a_live_extent_host_side_payload_disagreement_refuses_before_program_work() {
         "the refusal must name the missing live axis: {text}",
     );
 }
+
+/// C1 sequence extents: prefill at 10 and eight decode steps through 18.
+const C1_SEQUENCE_EXTENTS: [u64; 9] = [10, 11, 12, 13, 14, 15, 16, 17, 18];
+
+const RETAINED_HEADS: u64 = 8;
+const RETAINED_WIDTH: u64 = 128;
+const RETAINED_CAPACITY: u64 = 18;
+const RETAINED_ELEMENT_BYTES: u64 = 4;
+
+const fn exact_live_span(sequence: u64) -> u64 {
+    RETAINED_HEADS * sequence * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES
+}
+
+const fn exact_live_head1(sequence: u64) -> u64 {
+    sequence * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES
+}
+
+const fn capacity_strided_head1(capacity: u64) -> u64 {
+    capacity * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES
+}
+
+const fn retained_pool_bytes() -> u64 {
+    RETAINED_CAPACITY * RETAINED_HEADS * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES
+}
+
+fn c1_portfolio() -> fixture::Fixture {
+    assemble_portfolio(&[
+        FixtureSpec::live_extent_aligned(),
+        FixtureSpec::live_extent(),
+    ])
+}
+
+/// One artifact identity and one prepared pipeline per selected variant across
+/// C1's nine rebound extents. The ≡ 0 (mod 16) variant is selected only at 16.
+#[test]
+fn one_artifact_and_pipeline_rebind_c1_extents_and_select_the_aligned_guard_at_sixteen() {
+    let built = c1_portfolio();
+    assert_eq!(
+        built.expected.as_bytes(),
+        c1_portfolio().expected.as_bytes(),
+        "reassembling the C1 portfolio must keep one identity",
+    );
+
+    let pool_elements = usize::try_from(retained_pool_bytes() / 4).expect("the C1 pool is small");
+    let input: Vec<u32> = (0..pool_elements)
+        .map(|index| {
+            let slot = u16::try_from(index).expect("the C1 pool stays inside u16");
+            f32::from(slot + 1).to_bits()
+        })
+        .collect();
+
+    let mut identities = Vec::new();
+    let mut pipelines = Vec::new();
+    let mut symbols = Vec::new();
+    for sequence in C1_SEQUENCE_EXTENTS {
+        let mut program =
+            DecodedProgram::decode(&built.bytes, SOLE_DELIVERY).expect("the C1 portfolio decodes");
+        let preflight = program
+            .preflight(
+                &live_extent_environment(),
+                &built.expected,
+                &live_extent_facts(sequence),
+            )
+            .unwrap_or_else(|failure| {
+                panic!("S={sequence} must route from the same artifact: {failure}")
+            });
+        identities.push(preflight.identity().as_bytes().to_vec());
+        pipelines.push(preflight.kernel_program_identity().to_vec());
+        symbols.push(preflight.entries()[0].entry_symbol().to_owned());
+
+        let (outcome, host) = route_live(&built, sequence, &input);
+        let completion = outcome.unwrap_or_else(|failure| {
+            panic!("S={sequence} must dispatch through the prepared pipeline: {failure}")
+        });
+        assert!(
+            host.stages.contains(&Stage::Dispatch),
+            "S={sequence} must reach program work",
+        );
+        assert_eq!(completion.executed, fixture::ROWS);
+    }
+
+    assert!(
+        identities.windows(2).all(|pair| pair[0] == pair[1]),
+        "a per-invocation compilation would mint a new artifact identity",
+    );
+    assert_eq!(
+        symbols,
+        [
+            fixture::LIVE_EXTENT_SYMBOL,
+            fixture::LIVE_EXTENT_SYMBOL,
+            fixture::LIVE_EXTENT_SYMBOL,
+            fixture::LIVE_EXTENT_SYMBOL,
+            fixture::LIVE_EXTENT_SYMBOL,
+            fixture::LIVE_EXTENT_SYMBOL,
+            fixture::LIVE_EXTENT_ALIGNED_SYMBOL,
+            fixture::LIVE_EXTENT_SYMBOL,
+            fixture::LIVE_EXTENT_SYMBOL,
+        ],
+        "StablePriority must select the ≡ 0 (mod 16) variant only at S=16",
+    );
+
+    let mut distinct_pipelines = pipelines.clone();
+    distinct_pipelines.sort();
+    distinct_pipelines.dedup();
+    assert_eq!(
+        distinct_pipelines.len(),
+        2,
+        "nine extents must prepare two pipelines (one per variant), not one per extent: {}",
+        distinct_pipelines.len(),
+    );
+    assert_eq!(
+        pipelines[0], pipelines[5],
+        "S=10 and S=15 select the same variant and must share one pipeline",
+    );
+    assert_ne!(
+        pipelines[0], pipelines[6],
+        "S=16 selects the aligned variant and must prepare its own pipeline",
+    );
+}
+
+/// A capacity-sized pool bound at a shorter live extent addresses the exact
+/// live span. Deriving the stride from the allocation length fails the oracle.
+#[test]
+fn a_capacity_pool_addresses_the_exact_live_span_and_the_wrong_stride_fails() {
+    assert_eq!(retained_pool_bytes(), 73_728);
+    assert_eq!(exact_live_span(14), 57_344);
+    assert_eq!(exact_live_span(15), 61_440);
+    assert_eq!(exact_live_head1(14), 7_168);
+    assert_eq!(exact_live_head1(15), 7_680);
+    assert_eq!(capacity_strided_head1(RETAINED_CAPACITY), 9_216);
+
+    let built = assemble(&FixtureSpec::live_extent());
+    let pool_elements = usize::try_from(retained_pool_bytes() / 4).expect("the C1 pool is small");
+    let input: Vec<u32> = (0..pool_elements)
+        .map(|index| {
+            let slot = u16::try_from(index.min(u16::MAX as usize)).expect("index fits");
+            f32::from(slot.saturating_add(1)).to_bits()
+        })
+        .collect();
+    assert_eq!(
+        u64::try_from(input.len() * 4).expect("the C1 pool is small"),
+        retained_pool_bytes(),
+    );
+
+    let mut observed = Vec::new();
+    for sequence in [14_u64, 15] {
+        let mut program = DecodedProgram::decode(&built.bytes, SOLE_DELIVERY)
+            .expect("the live-extent artifact decodes");
+        let preflight = program
+            .preflight(
+                &live_extent_environment(),
+                &built.expected,
+                &live_extent_facts(sequence),
+            )
+            .unwrap_or_else(|failure| {
+                panic!("S={sequence} must preflight against the capacity pool: {failure}")
+            });
+        let bound = preflight.entries()[0].extent_parameters()[0].value();
+        assert_eq!(
+            bound, sequence,
+            "the routed operand is the bound S, not the pool"
+        );
+        let allocation_as_sequence =
+            retained_pool_bytes() / (RETAINED_HEADS * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES);
+        assert_eq!(allocation_as_sequence, RETAINED_CAPACITY);
+        assert_ne!(
+            bound, allocation_as_sequence,
+            "addressing from the allocation length would read the wrong head",
+        );
+        assert_eq!(exact_live_head1(bound), exact_live_head1(sequence));
+        assert_eq!(exact_live_span(bound), exact_live_span(sequence));
+        assert!(
+            retained_pool_bytes() >= exact_live_span(sequence),
+            "the capacity pool must be legal at the shorter live span",
+        );
+
+        let (outcome, host) = route_live(&built, sequence, &input);
+        outcome.unwrap_or_else(|failure| {
+            panic!("a capacity-sized pool at live S={sequence} must dispatch: {failure}")
+        });
+        assert!(
+            host.stages.contains(&Stage::Dispatch),
+            "S={sequence} must reach program work against the longer pool",
+        );
+        observed.push(exact_live_head1(bound));
+    }
+    assert_eq!(observed, [7_168, 7_680]);
+    assert_ne!(
+        exact_live_head1(14),
+        capacity_strided_head1(RETAINED_CAPACITY),
+        "the capacity-strided interpretation addresses byte 9,216 and must fail the oracle",
+    );
+}

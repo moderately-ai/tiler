@@ -22,7 +22,7 @@ use tiler_ir::schedule::{NumericalRealization, TensorRole};
 use tiler_ir::semantic::{
     InputKey, OutputKey, ProviderIdentity, ResolvedValueType, SemanticIdentity, SemanticProgram,
 };
-use tiler_ir::shape::Shape;
+use tiler_ir::shape::{Axis, Shape};
 
 use super::codec::{ArtifactEnvelope, PayloadContent, PayloadMetadata};
 use super::error::{
@@ -654,6 +654,7 @@ impl ArtifactProgramBuilder {
     /// error; an
     /// expression type, root-phase, or interface-root rejection; an accessible
     /// range, launch, or zero-work disagreement with the bound program; a
+    /// kernel specialized on a bound input extent; a
     /// duplicate variant, deferred predicate, or launch precondition; a
     /// deferred requirement bound outside the program's entry range; or a
     /// structural-limit error.
@@ -1176,6 +1177,14 @@ impl ArtifactProgramBuilder {
             let bindings = self.check_bindings(program, index, spec, stage, facts, derived)?;
             let input_extents = derive_extent_operands(index, stage)?;
             let launch = self.check_launch(index, &spec.launch, stage, facts, &derived.adopted)?;
+            refuse_bound_extent_specialization(
+                index,
+                stage,
+                &self.expressions,
+                &bindings,
+                &launch,
+                &input_extents,
+            )?;
             let declared = spec.implementation.payloads.len();
             if declared == 0 {
                 return Err(ArtifactBuildError::EmptyDelivery { entry: index });
@@ -1766,6 +1775,95 @@ fn derive_extent_operands(
         });
     }
     Ok(rows)
+}
+
+/// Refuses a kernel that baked an extent the entry still treats as a binding.
+///
+/// Variant applicability guards and artifact-owned launch preconditions may
+/// read a bound input extent — that is route-time selection or a host
+/// predicate, not specialization. Accessible-range and launch-*geometry*
+/// formulas that name `InputExtent` make the value a per-invocation binding
+/// the payload or launch consumes. A kernel that has no matching live operand
+/// and a nonzero baked `element_count` for that input has specialized on the
+/// binding.
+fn refuse_bound_extent_specialization(
+    entry: usize,
+    stage: StageRef<'_>,
+    arena: &[ExprNode],
+    bindings: &[BindingData],
+    launch: &LaunchData,
+    live_operands: &[ExtentOperandData],
+) -> Result<(), ArtifactBuildError> {
+    let mut named = Vec::new();
+    for node in bindings
+        .iter()
+        .map(|binding| binding.accessible_bytes)
+        .chain([launch.grid_threads, launch.threads_per_workgroup])
+    {
+        collect_input_extents(arena, node, &mut named);
+    }
+    named.sort_unstable();
+    named.dedup();
+    for (key, axis) in named {
+        if live_operands
+            .iter()
+            .any(|operand| operand.key == key && operand.axis == axis)
+        {
+            continue;
+        }
+        let Some(element_count) = baked_element_count(stage, &key) else {
+            continue;
+        };
+        if element_count == 0 {
+            continue;
+        }
+        return Err(ArtifactBuildError::BoundExtentSpecialization {
+            entry,
+            key: key.as_str().to_owned(),
+            axis: axis.get(),
+            element_count,
+        });
+    }
+    Ok(())
+}
+
+fn collect_input_extents(arena: &[ExprNode], node: u32, named: &mut Vec<(InputKey, Axis)>) {
+    let Some(expression) = arena.get(usize_of(node)) else {
+        return;
+    };
+    match expression {
+        ExprNode::Root(AbiRoot::InputExtent { key, axis }) => {
+            named.push((key.clone(), *axis));
+        }
+        ExprNode::Root(_) => {}
+        ExprNode::Unary { operand, .. } => collect_input_extents(arena, *operand, named),
+        ExprNode::Binary { left, right, .. } => {
+            collect_input_extents(arena, *left, named);
+            collect_input_extents(arena, *right, named);
+        }
+        ExprNode::Select {
+            condition,
+            if_true,
+            if_false,
+        } => {
+            collect_input_extents(arena, *condition, named);
+            collect_input_extents(arena, *if_true, named);
+            collect_input_extents(arena, *if_false, named);
+        }
+    }
+}
+
+fn baked_element_count(stage: StageRef<'_>, key: &InputKey) -> Option<u64> {
+    let accesses: Vec<_> = stage.accesses().collect();
+    let buffers: Vec<_> = stage.kernel().buffers().collect();
+    accesses.iter().zip(&buffers).find_map(|(access, buffer)| {
+        match access.view().value().origin() {
+            MaterializedOrigin::ProgramInput { key: bound } if bound == key => {
+                Some(buffer.element_count)
+            }
+            _ => None,
+        }
+    })
 }
 
 /// Every arena position the program's own ABI names.

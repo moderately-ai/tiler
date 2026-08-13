@@ -1,7 +1,7 @@
 ---
 id: bind-repeated-invocations-over-caller-retained-tensors
 title: Bind repeated invocations over caller-retained tensors from one artifact identity
-status: in-progress
+status: review
 priority: p1
 dependencies: [admit-live-extent-operands-to-payload-indexing, establish-a-dynamic-kv-physical-layout-authority, reclassify-language-model-work-as-a-conformance-track, supersede-the-runtime-owned-kv-state-design]
 related: [admit-the-sequence-extension-concatenate-family, design-autoregressive-state-and-kv-cache, assemble-the-causal-self-attention-block-program, expose-the-dispatch-record-on-a-decoded-artifact, evaluate-retained-shape-relations-before-routing-commit]
@@ -11,7 +11,7 @@ paths: []
 tags: [implementation, artifact, runtime, abi, consumer-neutral, language-model, class-generic-capability]
 claimed_from: todo
 assignee: worker-bind-repeated
-lease_expires_at: 1786664491
+lease_expires_at: 1786664533
 ---
 ## User-visible outcome
 
@@ -139,3 +139,30 @@ Ticket-audit wave B5 residual repair against report
 **Correction — 2026-08-10.** Supersession rationale no longer claims binding refuses "a wrong key" as a universal program-interface rule. Positional `bind_region` refuses wrong count/rank/stored scalar/literal extent; keyed request/artifact paths are separate.
 
 Reproduce anchors: `rg -n 'if declared == actual' crates/tiler/src/route.rs`; `rg -n 'if supplied < reach' crates/tiler-runtime/tests/adapter_route/adapter.rs`; `rg -n 'status: deferred' tickets/realize-the-tiled-contraction-schedule-and-its-metal-emission.md`; `rg -n 'OperandCountMismatch|RankMismatch|StorageScalarMismatch|LiteralExtentMismatch' crates/tiler/src/value.rs`.
+
+## Fact audit — 2026-08-13 at `0b3ca334793e3975a2057f18424def2c251b1202`
+
+Re-read this session at the dispatch base before editing. The 2026-08-10 wave is kept above; these verdicts replace any of its claims that have since moved.
+
+- **Verified.** Facade `checked_length` still requires `declared == actual` and returns `BindError::StorageLengthMismatch`. Reproduce: `rg -n 'if declared == actual' crates/tiler/src/route.rs`.
+- **Verified.** Adapter `plan_dispatch` still refuses only `supplied < reach` (`UndersizedStorage`); longer caller storage passes. Reproduce: `rg -n 'if supplied < reach' crates/tiler-runtime/tests/adapter_route/adapter.rs`.
+- **Verified.** `realize-the-tiled-contraction-schedule-and-its-metal-emission` is `status: deferred`. This ticket's two-variant close is the synthetic guard fixture, not that body.
+- **Verified.** Positional `bind_region` refuses `OperandCountMismatch`, `RankMismatch`, `StorageScalarMismatch`, `LiteralExtentMismatch`. Reproduce: `rg -n 'OperandCountMismatch|RankMismatch|StorageScalarMismatch|LiteralExtentMismatch' crates/tiler/src/value.rs`.
+- **Verified, prerequisite now landed.** `AbiRoot::InputExtent`, `RoutedExtentParameter`, and `DecodedExtentOperand` exist. The envelope view remains a labelled draft (`Draft surface, not yet accepted` on `DecodedExtentOperand` / `EntryRef::extent_operands`). Not self-accepted.
+- **Verified.** C1's nine invocations are `S ∈ {10, …, 18}`; only `S = 16` is `≡ 0 (mod 16)`.
+- **Verified.** Oracle arithmetic: pool `18 × 8 × 128 × 4 = 73,728`; live spans `8 × {14,15} × 128 × 4 = {57,344, 61,440}`; exact-live head 1 at `{7,168, 7,680}`; capacity-strided head 1 at `18 × 128 × 4 = 9,216`.
+- **Stale in the 2026-08-10 report, not in this ticket's Required behaviour.** Live-extent operands were `todo` at `c99ac549`; they are on this base. No KV-named second authority or artifact-identity step is required.
+
+**Facade decision.** Relaxing `checked_length` equality would widen the public `BindError` / `DenseRowMajorStorage` contract and needs Tom's acceptance. This ticket owns the runtime adapter path, which already admits `reach ≤ storage`. The close is discharged there; the facade equality is unchanged and still draft if later accepted.
+
+## Outcome
+
+One assembled artifact routes at every C1 extent `S = 10 … 18` with one identity. Two complete live-extent variants are packaged: the first applicability guard is `IsMultipleOf(InputExtent(input, 1), 16)`, the second is constantly true. `RoutingPolicy::StablePriority` selects the aligned variant only at `S = 16` and the direct variant elsewhere. Across the nine invocations the artifact identity is identical; the selected kernel-program identities collapse to two values (one per variant), not nine. `DecodedExtentOperand` was not self-accepted.
+
+A program whose launch or accessible-range formula names `AbiRoot::InputExtent` while the kernel baked a nonzero `element_count` for that input and declared no matching live operand is refused at `ArtifactProgramBuilder::push_variant` as `ArtifactBuildError::BoundExtentSpecialization`. Perturbing the subject — omitting the assembly check — fails as:
+
+`a baked kernel must not assemble over a bound extent: VariantId { owner: ArtifactBuilderId(1), index: 0 }`
+
+A 73,728-byte caller pool bound at live `S = 14` and `S = 15` dispatches on the adapter path (`reach ≤ storage`). Head 1 is bytes 7,168 and 7,680 and the live spans are 57,344 and 61,440, derived from the bound extent. Deriving the sequence from the allocation length yields capacity 18 and byte 9,216, which fails the retained oracle. No capacity stride, second physical-layout root, KV-named type, or artifact-schema identity step was added. `tiler.artifact-program.v16` does not step.
+
+**Identity.** Artifact identity is `encode_identity(&ArtifactEnvelope)` and excludes the bound value. Payload, library, and pipeline subjects of the live-extent unit are unchanged across nine prepares and unequal to a baked `[2, 14]` / `[2, 15]` neighbour. The live MSL still contains `constant ulong& e0 [[buffer(2)]]` and neither `14ul` nor `15ul`.

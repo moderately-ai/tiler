@@ -1133,6 +1133,32 @@ mod tests {
             payload_again.digest().as_bytes(),
             "payload identity excludes the bound N",
         );
+        // C1's nine rebound extents (S = 10 … 18) prepare this same subject.
+        // The bound value is not an input to prepare, so a per-extent compile
+        // would have to change the unit; repeating prepare must stay identical.
+        for _ in 0..9 {
+            let request = metal_compile_request(
+                &live,
+                OptimizationLevel::Default,
+                NumericalRealization::strict_baseline(),
+            )
+            .expect("the live-extent unit prepares at every C1 extent");
+            let prepared = tools
+                .prepare(&request)
+                .expect("the fake toolchain prepares at every C1 extent");
+            let payload = prepare_metal_payload(&live, prepared)
+                .expect("the prepared live-extent payload agrees at every C1 extent");
+            assert_eq!(
+                live_digest.as_slice(),
+                payload.digest().as_bytes(),
+                "nine C1 rebound extents must keep one payload identity",
+            );
+            assert_eq!(
+                live_compilation.as_slice(),
+                payload.compilation_identity_bytes(),
+                "nine C1 rebound extents must keep one library identity",
+            );
+        }
         assert_eq!(
             live_compilation.as_slice(),
             payload_again.compilation_identity_bytes(),

@@ -445,6 +445,24 @@ pub enum ArtifactBuildError {
         /// Rank of the bound input.
         rank: usize,
     },
+    /// A kernel baked a per-invocation bound extent into its signature.
+    ///
+    /// The entry's accessible-range or launch formula names an
+    /// `AbiRoot::InputExtent`, so the value is a binding evaluated at
+    /// `LiveDevicePreflight`. A kernel whose buffer `element_count` already
+    /// folded that axis would make the bound value a specialization constant
+    /// and mint one prepared pipeline per invocation. The check is decidable
+    /// here: the ABI formula and the kernel signature are both in hand.
+    BoundExtentSpecialization {
+        /// Ordered entry position.
+        entry: usize,
+        /// Stable input key the bound extent names.
+        key: String,
+        /// Axis the bound extent names.
+        axis: u32,
+        /// Baked element count the kernel specialized on.
+        element_count: u64,
+    },
     /// An entry declared a different binding count than its kernel signature.
     BindingCardinality {
         /// Ordered entry position.
@@ -670,6 +688,7 @@ impl Error for ArtifactBuildError {
             | Self::DeliveryCardinality { .. }
             | Self::ExtentOperandUnbound { .. }
             | Self::ExtentOperandAxis { .. }
+            | Self::BoundExtentSpecialization { .. }
             | Self::BindingCardinality { .. }
             | Self::UnnameableBindingTarget { .. }
             | Self::AliasedInternalBinding { .. }

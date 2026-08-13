@@ -2206,6 +2206,41 @@ fn scale_bias_expression() -> tiler_ir::schedule::PointwiseF32Expression {
 }
 
 pub(crate) fn live_extent_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
+    live_extent_program_with_guard(semantic, LiveExtentGuard::AlwaysHolds)
+}
+
+pub(crate) fn live_extent_artifact() -> VerifiedArtifactProgram {
+    let semantic = semantic_program();
+    let program = live_extent_program(&semantic);
+    let provider = lowering_provider(1);
+    build_artifact(&semantic, &program, provider.clone(), &[provider])
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LiveExtentGuard {
+    AlwaysHolds,
+    MultipleOfSixteen,
+}
+
+fn live_extent_guard(
+    plan: &mut KernelProgramBuilder,
+    live_n: tiler_ir::program::AbiExprId,
+    kind: LiveExtentGuard,
+) -> tiler_ir::program::AbiExprId {
+    match kind {
+        LiveExtentGuard::AlwaysHolds => plan.push_abi_root(AbiRoot::BooleanLiteral(true)).unwrap(),
+        LiveExtentGuard::MultipleOfSixteen => {
+            let sixteen = plan.push_abi_root(AbiRoot::UnsignedLiteral(16)).unwrap();
+            plan.push_abi_binary(AbiBinaryOp::IsMultipleOf, live_n, sixteen)
+                .unwrap()
+        }
+    }
+}
+
+fn live_extent_program_with_guard(
+    semantic: &SemanticProgram,
+    kind: LiveExtentGuard,
+) -> VerifiedKernelProgram {
     let kernel = live_extent_kernel();
     let mut plan = KernelProgramBuilder::new(semantic).unwrap();
     let device = |capacity_bytes, ownership| AllocationSpec {
@@ -2279,14 +2314,10 @@ pub(crate) fn live_extent_program(semantic: &SemanticProgram) -> VerifiedKernelP
             axis: Axis::new(1),
         })
         .unwrap();
-    // LiveRowMajor windows are zero-length at construction; the product still
-    // names the same InputExtent the payload reads, so range evaluation and
-    // payload binding share one fact. The static shape supplies axis 1, so the
-    // product is zero at construction and stays a function of the bound N.
     let accessible = plan
         .push_abi_binary(AbiBinaryOp::CheckedMultiply, zero, live_n)
         .unwrap();
-    let guard = plan.push_abi_root(AbiRoot::BooleanLiteral(true)).unwrap();
+    let guard = live_extent_guard(&mut plan, live_n, kind);
     plan.applicability_guard(guard).unwrap();
     for (from, to, fallback_permitted) in [
         (
@@ -2338,11 +2369,25 @@ pub(crate) fn live_extent_program(semantic: &SemanticProgram) -> VerifiedKernelP
     plan.build().unwrap()
 }
 
-pub(crate) fn live_extent_artifact() -> VerifiedArtifactProgram {
+fn live_extent_c1_portfolio() -> VerifiedArtifactProgram {
     let semantic = semantic_program();
-    let program = live_extent_program(&semantic);
+    let aligned = live_extent_program_with_guard(&semantic, LiveExtentGuard::MultipleOfSixteen);
+    let direct = live_extent_program_with_guard(&semantic, LiveExtentGuard::AlwaysHolds);
     let provider = lowering_provider(1);
-    build_artifact(&semantic, &program, provider.clone(), &[provider])
+    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+    let aligned_payload = draft.push_payload(payload(0xa1)).unwrap();
+    let direct_payload = draft.push_payload(payload(0xa2)).unwrap();
+    let formulas = formulas(&mut draft);
+    draft
+        .push_variant(&aligned, variant(&formulas, aligned_payload, b"aligned"))
+        .unwrap();
+    draft
+        .push_variant(&direct, variant(&formulas, direct_payload, b"direct"))
+        .unwrap();
+    declare_realization_over(&mut draft, &aligned, 2);
+    draft.build().unwrap()
 }
 
 // -------------------------------------------------------------------------
@@ -4999,6 +5044,177 @@ fn one_live_extent_artifact_indexes_dense_f32_at_two_n_without_baking() {
     );
 }
 
+/// C1 sequence extents: prefill at 10 and eight decode steps through 18.
+const C1_SEQUENCE_EXTENTS: [u64; 9] = [10, 11, 12, 13, 14, 15, 16, 17, 18];
+
+const RETAINED_HEADS: u64 = 8;
+const RETAINED_WIDTH: u64 = 128;
+const RETAINED_CAPACITY: u64 = 18;
+const RETAINED_ELEMENT_BYTES: u64 = 4;
+
+const fn exact_live_span(sequence: u64) -> u64 {
+    RETAINED_HEADS * sequence * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES
+}
+
+const fn exact_live_head1(sequence: u64) -> u64 {
+    sequence * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES
+}
+
+const fn capacity_strided_head1(capacity: u64) -> u64 {
+    capacity * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES
+}
+
+const fn retained_pool_bytes() -> u64 {
+    RETAINED_CAPACITY * RETAINED_HEADS * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES
+}
+
+/// One artifact identity across C1's nine extents, with the ≡ 0 (mod 16) guard
+/// selecting only at 16.
+#[test]
+fn one_artifact_identity_routes_c1_extents_and_selects_the_aligned_guard_at_sixteen() {
+    let artifact = live_extent_c1_portfolio();
+    let again = live_extent_c1_portfolio();
+    assert_eq!(
+        artifact.canonical_identity().as_bytes(),
+        again.canonical_identity().as_bytes(),
+        "reassembling the C1 portfolio must keep one identity",
+    );
+
+    let mut variants: Vec<_> = artifact.variants().collect();
+    assert_eq!(
+        variants.len(),
+        2,
+        "two complete variants, not one per extent"
+    );
+    let aligned = variants.remove(0);
+    let direct = variants.remove(0);
+    assert_eq!(aligned.routing_rank(), 0);
+    assert_eq!(direct.routing_rank(), 1);
+
+    let mut selected = Vec::new();
+    for sequence in C1_SEQUENCE_EXTENTS {
+        let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
+        binder
+            .bind_input_extent(InputKey::new("input").unwrap(), Axis::new(1), sequence)
+            .unwrap();
+        let facts = binder.build();
+        let aligned_holds = aligned
+            .applicability_guard()
+            .evaluate(&facts)
+            .expect("the aligned guard evaluates from the bound extent");
+        let direct_holds = direct
+            .applicability_guard()
+            .evaluate(&facts)
+            .expect("the direct guard evaluates from the bound extent");
+        assert_eq!(
+            direct_holds,
+            super::AbiValue::Boolean(true),
+            "the fallback variant must remain applicable at S={sequence}",
+        );
+        let rank = if aligned_holds == super::AbiValue::Boolean(true) {
+            0
+        } else {
+            assert_eq!(
+                aligned_holds,
+                super::AbiValue::Boolean(false),
+                "the aligned guard must be boolean at S={sequence}",
+            );
+            1
+        };
+        selected.push(rank);
+    }
+    assert_eq!(
+        selected,
+        [1, 1, 1, 1, 1, 1, 0, 1, 1],
+        "StablePriority must select the ≡ 0 (mod 16) variant only at S=16",
+    );
+}
+
+/// Exact-live addressing inside a capacity-sized pool: span and head-1 come
+/// from the bound extent, never from the allocation length.
+#[test]
+fn a_longer_pool_addresses_the_exact_live_span_and_capacity_stride_fails_the_oracle() {
+    assert_eq!(retained_pool_bytes(), 73_728);
+    assert_eq!(exact_live_span(14), 57_344);
+    assert_eq!(exact_live_span(15), 61_440);
+    assert_eq!(exact_live_head1(14), 7_168);
+    assert_eq!(exact_live_head1(15), 7_680);
+    assert_eq!(capacity_strided_head1(RETAINED_CAPACITY), 9_216);
+
+    let artifact = live_extent_artifact();
+    let entry = artifact
+        .variants()
+        .next()
+        .expect("one variant")
+        .entries()
+        .next()
+        .expect("one entry");
+    let mut addresses = Vec::new();
+    let mut spans = Vec::new();
+    for sequence in [14_u64, 15] {
+        let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
+        binder
+            .bind_input_extent(InputKey::new("input").unwrap(), Axis::new(1), sequence)
+            .unwrap();
+        let facts = binder.build();
+        let bound = facts
+            .input_extent(&InputKey::new("input").unwrap(), Axis::new(1))
+            .expect("the live sequence is the bound fact");
+        assert_eq!(bound, sequence, "the bound fact is S, not the pool length");
+        assert_eq!(
+            entry
+                .extent_operands()
+                .next()
+                .expect("the payload reads the live axis")
+                .axis(),
+            Axis::new(1),
+            "the routed operand is the bound sequence axis, not the allocation",
+        );
+        let allocation_as_sequence =
+            retained_pool_bytes() / (RETAINED_HEADS * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES);
+        assert_eq!(allocation_as_sequence, RETAINED_CAPACITY);
+        assert_ne!(
+            bound, allocation_as_sequence,
+            "deriving S from the allocation would silently pick the capacity stride",
+        );
+        addresses.push(exact_live_head1(bound));
+        spans.push(exact_live_span(bound));
+    }
+    assert_eq!(addresses, [7_168, 7_680]);
+    assert_eq!(spans, [57_344, 61_440]);
+    assert_ne!(
+        exact_live_head1(14),
+        capacity_strided_head1(RETAINED_CAPACITY),
+        "the capacity-strided head-1 address 9,216 must fail the retained oracle",
+    );
+}
+
+/// A kernel that baked a bound extent is refused at assembly, not packaged.
+#[test]
+fn packaging_a_kernel_specialized_on_a_bound_extent_is_refused() {
+    let semantic = baked_semantic_program(14);
+    let program = baked_dense_program_with_live_range(&semantic, 14);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+    let descriptor = draft.push_payload(payload(0xa1)).unwrap();
+    let formulas = formulas(&mut draft);
+    let error = draft
+        .push_variant(&program, variant(&formulas, descriptor, b"fused"))
+        .expect_err("a baked kernel must not assemble over a bound extent");
+    assert_eq!(
+        error,
+        ArtifactBuildError::BoundExtentSpecialization {
+            entry: 0,
+            key: "input".to_owned(),
+            axis: 1,
+            element_count: 28,
+        },
+        "the refusal must name the bound-extent specialization, not a later check",
+    );
+}
+
 /// A launch that names a different axis than the payload operand refuses before
 /// the bound N can be used as two meanings.
 #[test]
@@ -5273,6 +5489,151 @@ fn baked_dense_artifact(columns: u64) -> VerifiedArtifactProgram {
     let program = baked_dense_program(&semantic, columns);
     let provider = lowering_provider(1);
     build_artifact(&semantic, &program, provider.clone(), &[provider])
+}
+
+/// The baked `[2, N]` program whose accessible range still names `InputExtent`.
+///
+/// That pairing is the specialization the assembly check refuses: the kernel
+/// folded `N` into `element_count` while the ABI treats the same axis as a
+/// per-invocation binding.
+fn baked_dense_program_with_live_range(
+    semantic: &SemanticProgram,
+    columns: u64,
+) -> VerifiedKernelProgram {
+    let kernel = baked_dense_kernel(columns);
+    let rows = 2_u64;
+    let bytes = 4 * rows * columns;
+    let mut plan = KernelProgramBuilder::new(semantic).unwrap();
+    let device = |capacity_bytes, ownership| AllocationSpec {
+        capacity_bytes,
+        alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
+        memory_space: MemorySpace::Device,
+        ownership,
+    };
+    let external = plan
+        .push_allocation(device(bytes, AllocationOwnership::External))
+        .unwrap();
+    let owned = plan
+        .push_allocation(device(bytes, AllocationOwnership::Program))
+        .unwrap();
+    let value = |origin, role, shape| MaterializedValueSpec {
+        origin,
+        role,
+        shape,
+        storage_scalar: StorageScalar::F32,
+        element_type: KernelType::F32,
+        encoding: StorageEncoding::Unpacked,
+        alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
+        memory_space: MemorySpace::Device,
+    };
+    let source = plan
+        .push_value(
+            value(
+                MaterializedOrigin::ProgramInput {
+                    key: InputKey::new("input").unwrap(),
+                },
+                ValueRole::Input,
+                Shape::from_dims([rows, columns]),
+            ),
+            external,
+        )
+        .unwrap();
+    let result = plan
+        .push_value(
+            value(
+                MaterializedOrigin::Internal,
+                ValueRole::Output,
+                Shape::from_dims([rows, columns]),
+            ),
+            owned,
+        )
+        .unwrap();
+    let read = plan
+        .push_view(
+            source,
+            ByteWindow {
+                offset: 0,
+                length: bytes,
+            },
+        )
+        .unwrap();
+    let write = plan
+        .push_view(
+            result,
+            ByteWindow {
+                offset: 0,
+                length: bytes,
+            },
+        )
+        .unwrap();
+    let four = plan.push_abi_root(AbiRoot::UnsignedLiteral(4)).unwrap();
+    let row_count = plan.push_abi_root(AbiRoot::UnsignedLiteral(rows)).unwrap();
+    let live_n = plan
+        .push_abi_root(AbiRoot::InputExtent {
+            key: InputKey::new("input").unwrap(),
+            axis: Axis::new(1),
+        })
+        .unwrap();
+    let row_bytes = plan
+        .push_abi_binary(AbiBinaryOp::CheckedMultiply, four, row_count)
+        .unwrap();
+    let accessible = plan
+        .push_abi_binary(AbiBinaryOp::CheckedMultiply, row_bytes, live_n)
+        .unwrap();
+    let grid = plan
+        .push_abi_root(AbiRoot::UnsignedLiteral(rows * columns))
+        .unwrap();
+    let one = plan.push_abi_root(AbiRoot::UnsignedLiteral(1)).unwrap();
+    let guard = plan.push_abi_root(AbiRoot::BooleanLiteral(true)).unwrap();
+    plan.applicability_guard(guard).unwrap();
+    for (from, to, fallback_permitted) in [
+        (
+            RoutingCommitState::Preflight,
+            RoutingCommitState::Committed,
+            true,
+        ),
+        (
+            RoutingCommitState::Committed,
+            RoutingCommitState::Executing,
+            false,
+        ),
+        (
+            RoutingCommitState::Executing,
+            RoutingCommitState::Published,
+            false,
+        ),
+    ] {
+        plan.push_routing_commit_transition(RoutingCommitTransition {
+            from,
+            to,
+            fallback_permitted,
+        })
+        .unwrap();
+    }
+    plan.push_stage(
+        &kernel,
+        &checked_coverage(semantic),
+        &[
+            StageAccess {
+                view: read,
+                mode: StageAccessMode::Read,
+                accessible_bytes: accessible,
+            },
+            StageAccess {
+                view: write,
+                mode: StageAccessMode::Write,
+                accessible_bytes: accessible,
+            },
+        ],
+        StageLaunch {
+            grid_threads: grid,
+            threads_per_workgroup: one,
+        },
+    )
+    .unwrap();
+    plan.push_output(OutputKey::new("result").unwrap(), result)
+        .unwrap();
+    plan.build().unwrap()
 }
 
 /// The live artifact plus a launch precondition that names the same live axis.

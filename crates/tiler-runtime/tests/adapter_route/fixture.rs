@@ -147,6 +147,10 @@ pub const ENTRY_SYMBOL: &str = "scalar_fused_serial_sum";
 pub const POINTWISE_SYMBOL: &str = "scalar_pointwise_scale_bias";
 /// The backend's own entry-point symbol for the materialized member's second entry.
 pub const REDUCTION_SYMBOL: &str = "scalar_strict_serial_sum";
+/// The backend's own entry-point symbol for the live-extent direct variant.
+pub const LIVE_EXTENT_SYMBOL: &str = "live_row_major";
+/// The backend's own entry-point symbol for the live-extent aligned variant.
+pub const LIVE_EXTENT_ALIGNED_SYMBOL: &str = "live_row_major_aligned";
 
 /// Governed key of the route requirement this backend owns.
 pub const HOST_ARITHMETIC_FEATURE: &str = "tiler.test.scalar-host.route-requirement.strict-f32";
@@ -331,10 +335,10 @@ pub fn prepared_predicate_owned(
 /// `columns` is the baked neighbour the interpreter must not use: the bound
 /// `RoutedExtentParameter` is the contributor-loop width.
 #[must_use]
-pub fn live_extent_image() -> ScalarImage {
+pub fn live_extent_image(symbol: &str) -> ScalarImage {
     ScalarImage {
         entries: vec![ScalarEntry {
-            symbol: "live_row_major".to_owned(),
+            symbol: symbol.to_owned(),
             read_transport: 0,
             write_transport: 1,
             rows: u32::try_from(ROWS).expect("a small fixture extent"),
@@ -433,6 +437,11 @@ pub enum PackagedPlan {
     Materialized,
     /// One `LiveRowMajor` stage whose inner extent is a payload operand.
     LiveExtent,
+    /// The live-extent stage under `N ≡ 0 (mod 16)`.
+    ///
+    /// Ranked ahead of [`Self::LiveExtent`] so `StablePriority` selects it only
+    /// when the bound extent is a multiple of 16, and falls through otherwise.
+    LiveExtentAligned,
 }
 
 impl PackagedPlan {
@@ -453,6 +462,9 @@ impl PackagedPlan {
             }
             Self::Materialized => b"multiply-add then strict-serial-sum rows=2 columns=3".to_vec(),
             Self::LiveExtent => b"live-row-major e0; N is not in this subject".to_vec(),
+            Self::LiveExtentAligned => {
+                b"live-row-major e0; N is not in this subject; aligned-mod-16".to_vec()
+            }
         }
     }
 }
@@ -471,6 +483,15 @@ pub enum FusedGuard {
     NeverHolds,
     /// `1 <= extent(input, 0)`, which needs the input's shape to be bound.
     NeedsBoundInput,
+}
+
+/// Which applicability guard a live-extent plan packages.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LiveExtentGuard {
+    /// A constant that always holds.
+    AlwaysHolds,
+    /// The bound inner extent is a multiple of 16.
+    MultipleOfSixteen,
 }
 
 /// What one packaged entry's payload declares about itself.
@@ -632,6 +653,7 @@ impl FixtureSpec {
             },
             PackagedPlan::Materialized => Self::materialized(),
             PackagedPlan::LiveExtent => Self::live_extent(),
+            PackagedPlan::LiveExtentAligned => Self::live_extent_aligned(),
         }
     }
 
@@ -639,13 +661,31 @@ impl FixtureSpec {
     #[must_use]
     pub fn live_extent() -> Self {
         Self {
-            code: encode(&live_extent_image()),
+            code: encode(&live_extent_image(LIVE_EXTENT_SYMBOL)),
             plan: PackagedPlan::LiveExtent,
             route_requirements: Vec::new(),
             deferred_predicates: Vec::new(),
             entries: vec![FixtureEntry {
                 key: entry_key(b"live-row-major"),
-                symbol: "live_row_major".to_owned(),
+                symbol: LIVE_EXTENT_SYMBOL.to_owned(),
+                transports: vec![0, 1, 2],
+                arithmetic: ArithmeticType::F32,
+            }],
+            ..Self::default()
+        }
+    }
+
+    /// Returns the aligned live-extent member, selected only at `N ≡ 0 (mod 16)`.
+    #[must_use]
+    pub fn live_extent_aligned() -> Self {
+        Self {
+            code: encode(&live_extent_image(LIVE_EXTENT_ALIGNED_SYMBOL)),
+            plan: PackagedPlan::LiveExtentAligned,
+            route_requirements: Vec::new(),
+            deferred_predicates: Vec::new(),
+            entries: vec![FixtureEntry {
+                key: entry_key(b"live-row-major-aligned"),
+                symbol: LIVE_EXTENT_ALIGNED_SYMBOL.to_owned(),
                 transports: vec![0, 1, 2],
                 arithmetic: ArithmeticType::F32,
             }],
@@ -918,7 +958,10 @@ fn live_extent_preconditions(
     draft: &mut ArtifactProgramBuilder,
     plan: PackagedPlan,
 ) -> Vec<AbiExprId> {
-    if plan != PackagedPlan::LiveExtent {
+    if !matches!(
+        plan,
+        PackagedPlan::LiveExtent | PackagedPlan::LiveExtentAligned
+    ) {
         return Vec::new();
     }
     let one = draft
@@ -943,7 +986,10 @@ fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, s
         PackagedPlan::FusedInapplicable => fused_program(semantic, FusedGuard::NeverHolds),
         PackagedPlan::FusedExtentGuarded => fused_program(semantic, FusedGuard::NeedsBoundInput),
         PackagedPlan::Materialized => materialized_program(semantic),
-        PackagedPlan::LiveExtent => live_extent_program(semantic),
+        PackagedPlan::LiveExtent => live_extent_program(semantic, LiveExtentGuard::AlwaysHolds),
+        PackagedPlan::LiveExtentAligned => {
+            live_extent_program(semantic, LiveExtentGuard::MultipleOfSixteen)
+        }
     };
     let payload = draft
         .push_carried_payload(
@@ -1609,7 +1655,7 @@ fn live_row_major_kernel() -> VerifiedKernel {
     lower_scheduled_region(&region.build().expect("region")).expect("lowers")
 }
 
-fn live_extent_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
+fn live_extent_program(semantic: &SemanticProgram, kind: LiveExtentGuard) -> VerifiedKernelProgram {
     let kernel = live_row_major_kernel();
     let mut plan = KernelProgramBuilder::new(semantic).expect("a plan draft");
     let device = |capacity_bytes, ownership| AllocationSpec {
@@ -1690,9 +1736,18 @@ fn live_extent_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
     let accessible = plan
         .push_abi_binary(AbiBinaryOp::CheckedMultiply, zero, live_n)
         .expect("accessible");
-    let guard = plan
-        .push_abi_root(AbiRoot::BooleanLiteral(true))
-        .expect("guard");
+    let guard = match kind {
+        LiveExtentGuard::AlwaysHolds => plan
+            .push_abi_root(AbiRoot::BooleanLiteral(true))
+            .expect("guard"),
+        LiveExtentGuard::MultipleOfSixteen => {
+            let sixteen = plan
+                .push_abi_root(AbiRoot::UnsignedLiteral(16))
+                .expect("sixteen");
+            plan.push_abi_binary(AbiBinaryOp::IsMultipleOf, live_n, sixteen)
+                .expect("aligned guard")
+        }
+    };
     plan.applicability_guard(guard).expect("applicability");
     declare_routing_commit(&mut plan);
     plan.push_stage(
