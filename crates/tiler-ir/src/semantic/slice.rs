@@ -671,6 +671,26 @@ impl SliceSelection {
         &self.canonical_value
     }
 
+    /// Returns whether any window offset names a `ShapeEnv` symbol.
+    ///
+    /// Construction is shape-independent, so this is a fact about the
+    /// selection's spelling rather than about whether a program's environment
+    /// can prove the window. Law realization and compiler lowering use it to
+    /// open a source-aware region only when a symbol is present, so a literal
+    /// neighbour keeps the environment-free path.
+    #[must_use]
+    pub fn names_a_symbol(&self) -> bool {
+        self.axes.iter().any(|selection| {
+            matches!(
+                selection,
+                SliceAxisSelection::Window {
+                    offset: SourcedExtent::Symbol(_),
+                    ..
+                }
+            )
+        })
+    }
+
     /// Returns the domain-separated canonical encoding of this selection.
     ///
     /// Derived from [`Self::canonical_value`] rather than from a second walk of

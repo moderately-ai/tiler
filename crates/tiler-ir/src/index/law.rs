@@ -38,11 +38,12 @@ use super::{
     DimensionId, DomainRole, FrozenScalarRegistry, IndexBuildError, IndexExprId, IndexInteger,
     IndexRefinementBoundary, IndexRefinementSubject, IndexRegionBuildError, IndexRegionBuilder,
     IndexRegionSequenceError, ScalarAttributes, ScalarOpKey, ScalarReducerBodyBuilder,
-    ScalarValueId, StagedInputSource, SymbolicExtentError, TensorAccessId, TensorId, TensorRole,
-    VerifiedIndexRegion, VerifiedIndexRegionSequence, add_bf16_scalar_op, add_f32_scalar_op,
-    canonicalize_nan_f32_scalar_op, constant_bf16_scalar_op, constant_f32_scalar_op,
-    divide_f32_scalar_op, exp_f32_scalar_op, maximum_f32_scalar_op, multiply_bf16_scalar_op,
-    multiply_f32_scalar_op, rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
+    ScalarValueId, SourcedIndexInteger, StagedInputSource, SymbolicExtentError, TensorAccessId,
+    TensorId, TensorRole, VerifiedIndexRegion, VerifiedIndexRegionSequence, add_bf16_scalar_op,
+    add_f32_scalar_op, canonicalize_nan_f32_scalar_op, constant_bf16_scalar_op,
+    constant_f32_scalar_op, divide_f32_scalar_op, exp_f32_scalar_op, maximum_f32_scalar_op,
+    multiply_bf16_scalar_op, multiply_f32_scalar_op, rsqrt_f32_scalar_op,
+    strict_affine_u4_dequantize_scalar_op,
 };
 
 /// Exact binary32 payload of `1.0`, the numerator of the softmax's reciprocal.
@@ -464,7 +465,12 @@ impl IndexRealizationLaw {
         }
     }
 
-    /// Standard literal-offset slice-f32 law.
+    /// Standard slice-f32 law.
+    ///
+    /// Realizes a literal window as `d + offset` and a source-bearing window as
+    /// `t + C` through the sourced addend vocabulary. The encoded row is still
+    /// tag 13 over the record-local selection field; only the interpretation
+    /// grew.
     #[must_use]
     pub const fn slice_f32() -> Self {
         Self::Slice {
@@ -625,7 +631,10 @@ impl IndexRealizationLaw {
         scalars: &FrozenScalarRegistry,
     ) -> Result<VerifiedIndexRegion, IndexRealizationLawError> {
         let mut builder = match subject.shape_environment() {
-            Some(environment) if broadcast_subject_is_parametric(self, subject) => {
+            Some(environment)
+                if broadcast_subject_is_parametric(self, subject)
+                    || slice_subject_is_source_bearing(self, subject) =>
+            {
                 IndexRegionBuilder::new_with_shape_environment(
                     scalars.clone(),
                     std::sync::Arc::clone(environment),
@@ -1001,6 +1010,13 @@ impl LawContext<'_> {
         terms: &[(IndexInteger, IndexExprId)],
     ) -> Result<IndexExprId, IndexRealizationLawError> {
         Ok(self.builder.linear_combination(constant, terms)?)
+    }
+    fn sourced_linear_combination(
+        &mut self,
+        constant: SourcedIndexInteger,
+        terms: &[(SourcedIndexInteger, IndexExprId)],
+    ) -> Result<IndexExprId, IndexRealizationLawError> {
+        Ok(self.builder.sourced_linear_combination(constant, terms)?)
     }
     fn floor_div(
         &mut self,
@@ -1972,6 +1988,25 @@ fn realize_reindex(
     let write = context.write(output, &dimensions, &coordinates)?;
     context.output(write, value)
 }
+fn slice_subject_is_source_bearing(
+    law: &IndexRealizationLaw,
+    subject: &IndexRefinementSubject,
+) -> bool {
+    let IndexRealizationLaw::Slice {
+        selection_attribute,
+    } = law
+    else {
+        return false;
+    };
+    let Some(value) = subject.attributes().get(*selection_attribute) else {
+        return false;
+    };
+    let Ok(selection) = SliceSelection::from_canonical_value(value) else {
+        return false;
+    };
+    selection.names_a_symbol()
+}
+
 fn broadcast_subject_is_parametric(
     law: &IndexRealizationLaw,
     subject: &IndexRefinementSubject,
@@ -2129,12 +2164,18 @@ fn emit_broadcast_coordinates(
     context.output(write, value)
 }
 
-/// Emits the total literal selection relation of one slice occurrence.
+/// Emits the total selection relation of one slice occurrence.
 ///
 /// The occurrence is re-derived rather than trusted: the named field must be the
 /// complete attribute record and its selection must derive the declared result
 /// shape from the declared operand. That makes every coordinate below a function
 /// of semantic facts this law actually read.
+///
+/// A source-bearing window is realized as `t + C` through
+/// [`IndexRegionBuilder::sourced_linear_combination`]: the addend is the
+/// selection's own symbol, not a resolved value and not a second cursor input.
+/// A literal window stays on the environment-free `d + offset` path so its
+/// region bytes do not move.
 fn realize_slice(
     context: &mut LawContext<'_>,
     attribute: AttributeFieldId,
@@ -2153,6 +2194,9 @@ fn realize_slice(
     }
     let selection = SliceSelection::from_canonical_value(field.value())
         .map_err(|_| unsupported("slice-selection"))?;
+    if selection.names_a_symbol() {
+        return realize_source_bearing_slice(context, &selection, input, result);
+    }
     let input_shape = input.shape().clone();
     let result_shape = result.shape().clone();
     if selection
@@ -2187,6 +2231,54 @@ fn realize_slice(
         TensorRole::Output,
         result.value_type().clone(),
         result_shape,
+    )?;
+    let write = context.write(output, &dimensions, &coordinates)?;
+    context.output(write, value)
+}
+
+fn realize_source_bearing_slice(
+    context: &mut LawContext<'_>,
+    selection: &SliceSelection,
+    input: &IndexRefinementBoundary,
+    result: &IndexRefinementBoundary,
+) -> Result<(), IndexRealizationLawError> {
+    let Some(environment) = context.subject.shape_environment() else {
+        return Err(unsupported("slice-environment"));
+    };
+    let sources = ExtentSources::new(std::sync::Arc::clone(environment));
+    let applied = selection
+        .apply(input.sourced_shape(), Some(&sources))
+        .map_err(|_| unsupported("slice-selection"))?;
+    if &applied != result.sourced_shape() {
+        return Err(unsupported("slice-result-shape"));
+    }
+
+    let dimensions = applied
+        .extents()
+        .map(|extent| context.sourced_dimension(DomainRole::Parallel, extent))
+        .collect::<Result<Vec<_>, _>>()?;
+    let coordinates = dimension_expressions(context, &dimensions)?;
+    let mut operand_coordinates = Vec::with_capacity(selection.axes().len());
+    for (axis, coordinate) in selection.axes().iter().zip(&coordinates) {
+        operand_coordinates.push(match axis {
+            SliceAxisSelection::WholeAxis => *coordinate,
+            SliceAxisSelection::Window { offset, .. } => context.sourced_linear_combination(
+                offset.clone().into(),
+                &[(SourcedIndexInteger::from(1_u64), *coordinate)],
+            )?,
+        });
+    }
+
+    let tensor = context.sourced_tensor(
+        TensorRole::Input,
+        input.value_type().clone(),
+        input.sourced_shape(),
+    )?;
+    let value = context.read(tensor, &dimensions, &operand_coordinates)?;
+    let output = context.sourced_tensor(
+        TensorRole::Output,
+        result.value_type().clone(),
+        result.sourced_shape(),
     )?;
     let write = context.write(output, &dimensions, &coordinates)?;
     context.output(write, value)
@@ -3126,15 +3218,23 @@ fn reindex_operand_coordinates(
 mod tests {
     use super::*;
     use crate::index::{
-        FrozenScalarRegistry, JointPartitionProofView, NumericalContractIdentity,
-        ScalarOperationKindRef, ScalarOperationRef, ScalarValueDefinitionView,
-        VerifiedScalarOperationId, VerifiedScalarValueId, WriteOwnershipProofView,
+        AccessMode, BoundsProofView, FrozenScalarRegistry, IndexDomainFactSource,
+        IndexDomainUnknownReason, IndexExprView, IndexRegionBuildError, IndexRegionDiagnostic,
+        JointPartitionProofView, NumericalContractIdentity, ScalarOperationKindRef,
+        ScalarOperationRef, ScalarValueDefinitionView, VerifiedScalarOperationId,
+        VerifiedScalarValueId, WriteOwnershipProofView,
     };
     use crate::semantic::{
-        F32, InputKey, OperationAttributes, OutputKey, RMS_NORM_F32_REFERENCE_EPS_BITS,
-        SemanticProgramBuilder, StrictAffineU8, concatenate_f32_axis_attribute, concatenate_f32_op,
-        dequantize_strict_affine_op, rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute,
-        rms_norm_f32_op, softmax_f32_axis_attribute, softmax_f32_op,
+        F32, F32Slice, InputKey, OperationAttributes, OutputKey, RMS_NORM_F32_REFERENCE_EPS_BITS,
+        SemanticProgramBuilder, SliceAxisSelection, SliceSelection, StrictAffineU8,
+        concatenate_f32_axis_attribute, concatenate_f32_op, dequantize_strict_affine_op,
+        rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute, rms_norm_f32_op,
+        softmax_f32_axis_attribute, softmax_f32_op,
+    };
+    use crate::shape::{
+        BindingSource, EXTENT_PHASE_CEILING, Extent, ExtentRelation, ExtentTerm, FactProvenance,
+        RootBinding, SemanticInputConstraint, ShapeEnv, ShapeEnvBuilder, ShapeSymbol,
+        SourcedExtent, SymbolScope,
     };
 
     /// Domain separating this file's identity pins from every governed digest.
@@ -4893,6 +4993,286 @@ mod tests {
         assert!(
             region.extent_sources().is_none(),
             "a literal mapping must keep the environment-free realization path"
+        );
+    }
+
+    fn slice_symbol(name: &str) -> ShapeSymbol {
+        ShapeSymbol::new(SymbolScope::new("slice/0").unwrap(), name).unwrap()
+    }
+
+    fn slice_cursor_binding() -> RootBinding {
+        RootBinding::new(
+            BindingSource::InputDimension {
+                input: InputKey::new("tokens").unwrap(),
+                axis: Axis::new(0),
+            },
+            EXTENT_PHASE_CEILING,
+            FactProvenance::RuntimeValidated,
+        )
+        .unwrap()
+    }
+
+    fn slice_environment(lower: u64, upper: u64) -> std::sync::Arc<ShapeEnv> {
+        let cursor = slice_symbol("c");
+        let mut draft = ShapeEnvBuilder::new();
+        draft.declare(cursor.clone()).unwrap();
+        draft.bind(&cursor, slice_cursor_binding()).unwrap();
+        draft
+            .require(SemanticInputConstraint::new(
+                ExtentRelation::interval(ExtentTerm::Symbol(cursor), lower, upper).unwrap(),
+                FactProvenance::FrontendRequired,
+            ))
+            .unwrap();
+        std::sync::Arc::new(draft.build().unwrap())
+    }
+
+    fn source_bearing_slice_subject(
+        lower: u64,
+        upper: u64,
+    ) -> (
+        IndexRefinementSubject,
+        std::sync::Arc<ShapeEnv>,
+        ShapeSymbol,
+    ) {
+        let environment = slice_environment(lower, upper);
+        let cursor = slice_symbol("c");
+        let mut program =
+            SemanticProgramBuilder::try_standard_with_shape_environment(environment.clone())
+                .unwrap();
+        let table = program
+            .input::<F32>(InputKey::new("table").unwrap(), Shape::from_dims([64, 128]))
+            .unwrap();
+        let selection = SliceSelection::new([
+            SliceAxisSelection::Window {
+                offset: SourcedExtent::Symbol(cursor.clone()),
+                extent: Extent::new(6),
+            },
+            SliceAxisSelection::WholeAxis,
+        ])
+        .unwrap();
+        let rows = F32Slice::apply(&mut program, &selection, table).unwrap();
+        program
+            .output(OutputKey::new("rows").unwrap(), rows)
+            .unwrap();
+        let program = program.build().unwrap();
+        let operation = program.operations().next().unwrap().id();
+        (
+            IndexRefinementSubject::derive(&program, operation, strict_contract()).unwrap(),
+            environment,
+            cursor,
+        )
+    }
+
+    fn slice_window_region(
+        environment: Option<std::sync::Arc<ShapeEnv>>,
+        offset: SourcedIndexInteger,
+    ) -> Result<Result<VerifiedIndexRegion, IndexRegionBuildError>, SymbolicExtentError> {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let mut builder = match environment {
+            Some(environment) => {
+                IndexRegionBuilder::new_with_shape_environment(scalars, environment).unwrap()
+            }
+            None => IndexRegionBuilder::new(scalars).unwrap(),
+        };
+        let input = builder
+            .tensor(
+                TensorRole::Input,
+                F32::resolved_type(),
+                Shape::from_dims([64]),
+            )
+            .unwrap();
+        let output = builder
+            .tensor(
+                TensorRole::Output,
+                F32::resolved_type(),
+                Shape::from_dims([6]),
+            )
+            .unwrap();
+        let dimension = builder
+            .dimension(DomainRole::Parallel, Extent::new(6))
+            .unwrap();
+        let cursor = builder.dimension_expr(dimension).unwrap();
+        let displaced = builder
+            .sourced_linear_combination(offset, &[(SourcedIndexInteger::from(1_u64), cursor)])?;
+        let value = builder.read(input, &[dimension], &[displaced]).unwrap();
+        let write = builder.write(output, &[dimension], &[cursor]).unwrap();
+        builder.output(write, value).unwrap();
+        Ok(builder.build())
+    }
+
+    #[test]
+    fn the_slice_law_realizes_t_plus_c_without_duplicating_the_cursor() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let (subject, _, cursor) = source_bearing_slice_subject(0, 58);
+        let region = IndexRealizationLaw::slice_f32()
+            .realize(&subject, &scalars)
+            .unwrap();
+        assert!(
+            region.extent_sources().is_some(),
+            "a source-bearing realization retains the program environment"
+        );
+        assert_eq!(
+            region
+                .tensors()
+                .filter(|tensor| tensor.role() == TensorRole::Input)
+                .count(),
+            1,
+            "the cursor is the selection symbol, not a second operand"
+        );
+
+        let combination = region
+            .index_expressions()
+            .find(|expression| matches!(expression.view(), IndexExprView::LinearCombination { .. }))
+            .expect("the restricted axis is t + C");
+        let IndexExprView::LinearCombination { constant, terms } = combination.view() else {
+            unreachable!("matched above")
+        };
+        assert_eq!(
+            constant.to_string(),
+            "0",
+            "a symbolic addend is not stored in the constant slot"
+        );
+        let coefficients: Vec<_> = terms.map(|term| term.coefficient().clone()).collect();
+        assert!(
+            coefficients.contains(&SourcedIndexInteger::Symbol(cursor)),
+            "the canonical relation contains the source-bearing C * 1 term: {coefficients:?}"
+        );
+        assert!(
+            coefficients.contains(&SourcedIndexInteger::from(1_u64)),
+            "the cursor remains a coefficient-one term: {coefficients:?}"
+        );
+        assert_eq!(coefficients.len(), 2);
+
+        assert!(
+            region
+                .accesses()
+                .filter(|access| access.mode() == AccessMode::Read)
+                .all(|access| access.bounds_proof()
+                    == Some(BoundsProofView::Interval {
+                        facts: IndexDomainFactSource::ShapeEnvironment,
+                    })),
+            "total access is discharged from the retained environment, not by specializing C"
+        );
+        assert_eq!(region.unknown_index_domain_predicates().count(), 0);
+    }
+
+    #[test]
+    fn a_literal_slice_realization_does_not_attach_an_environment() {
+        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+        let table = program
+            .input::<F32>(InputKey::new("table").unwrap(), Shape::from_dims([64, 128]))
+            .unwrap();
+        let selection = SliceSelection::new([
+            SliceAxisSelection::static_window(4, Extent::new(6)),
+            SliceAxisSelection::WholeAxis,
+        ])
+        .unwrap();
+        let rows = F32Slice::apply(&mut program, &selection, table).unwrap();
+        program
+            .output(OutputKey::new("rows").unwrap(), rows)
+            .unwrap();
+        let program = program.build().unwrap();
+        let operation = program.operations().next().unwrap().id();
+        let subject =
+            IndexRefinementSubject::derive(&program, operation, strict_contract()).unwrap();
+        let region = IndexRealizationLaw::slice_f32()
+            .realize(&subject, &FrozenScalarRegistry::standard().unwrap())
+            .unwrap();
+        assert!(
+            region.extent_sources().is_none(),
+            "a literal window must keep the environment-free realization path"
+        );
+    }
+
+    #[test]
+    fn a_foreign_environment_refuses_the_source_bearing_offset() {
+        let foreign = slice_environment(0, 58);
+        let error = slice_window_region(
+            Some(foreign),
+            SourcedIndexInteger::Symbol(slice_symbol("ghost")),
+        )
+        .expect_err("a symbol another environment declared is undeclared here");
+        assert_eq!(
+            error.to_string(),
+            "sourced-extent.undeclared-symbol: slice/0::ghost is not declared by this program's shape environment"
+        );
+    }
+
+    #[test]
+    fn a_wrong_symbol_is_undeclared_in_this_environment() {
+        let environment = slice_environment(0, 58);
+        let other = ShapeSymbol::new(SymbolScope::new("slice/0").unwrap(), "d").unwrap();
+        let error = slice_window_region(Some(environment), SourcedIndexInteger::Symbol(other))
+            .expect_err("c's environment does not declare d");
+        assert_eq!(
+            error.to_string(),
+            "sourced-extent.undeclared-symbol: slice/0::d is not declared by this program's shape environment"
+        );
+    }
+
+    #[test]
+    fn a_missing_source_environment_refuses_the_symbol() {
+        let error = slice_window_region(None, SourcedIndexInteger::Symbol(slice_symbol("c")))
+            .expect_err("no environment can declare the cursor");
+        assert_eq!(
+            error.to_string(),
+            "sourced-extent.undeclared-symbol: slice/0::c is not declared by this program's shape environment"
+        );
+    }
+
+    #[test]
+    fn an_insufficient_interval_is_retained_as_unknown() {
+        let region = slice_window_region(
+            Some(slice_environment(0, 64)),
+            SourcedIndexInteger::Symbol(slice_symbol("c")),
+        )
+        .expect("c is declared")
+        .expect("an unproved read bound is an obligation, not a construction failure");
+        let unknown: Vec<_> = region.unknown_index_domain_predicates().collect();
+        assert_eq!(unknown.len(), 1);
+        assert_eq!(
+            unknown[0].reason(),
+            IndexDomainUnknownReason::InsufficientFacts,
+            "C in [0, 64] does not prove t + C stays inside 64: {unknown:?}"
+        );
+    }
+
+    #[test]
+    fn an_overflowing_window_is_refused_as_out_of_bounds() {
+        let error = slice_window_region(
+            Some(slice_environment(64, 64)),
+            SourcedIndexInteger::Symbol(slice_symbol("c")),
+        )
+        .expect("c is declared")
+        .expect_err("C = 64 against a 64-extent axis is outside every point");
+        assert!(
+            error.diagnostics().iter().any(|diagnostic| matches!(
+                diagnostic,
+                IndexRegionDiagnostic::CoordinateOutOfBounds { .. }
+            )),
+            "the overflowing window is a refutation: {error}"
+        );
+    }
+
+    #[test]
+    fn removing_the_bound_check_would_mint_an_unproved_region() {
+        let region = slice_window_region(
+            Some(slice_environment(0, 100)),
+            SourcedIndexInteger::Symbol(slice_symbol("c")),
+        )
+        .expect("c is declared")
+        .expect("syntax alone is not a proof");
+        assert!(
+            region.unknown_index_domain_predicates().next().is_some(),
+            "an intentionally missing interval proof must leave the access unproved: {:?}",
+            region.unknown_index_domain_predicates().collect::<Vec<_>>()
+        );
+        assert!(
+            region
+                .accesses()
+                .filter(|access| access.mode() == AccessMode::Read)
+                .all(|access| access.bounds_proof().is_none()),
+            "no bounds proof may be recorded when the check cannot close"
         );
     }
 }
