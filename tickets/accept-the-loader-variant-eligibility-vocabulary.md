@@ -1,7 +1,7 @@
 ---
 id: accept-the-loader-variant-eligibility-vocabulary
 title: Accept or revise the loader variant-eligibility vocabulary
-status: todo
+status: in-progress
 priority: p2
 dependencies: [select-executable-variants-across-registered-backend-families, preserve-governed-key-types-in-loader-eligibility-diagnostics, make-loader-selection-refusal-formatting-total]
 related: [expose-explicit-backend-provider-and-selection-policy-composition, decide-whether-a-loading-host-may-state-several-backend-families, accept-the-neutral-build-orchestration-boundary, bound-canonical-entry-ordinal-lookup-cost-in-loader-preflight]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [runtime, public-boundary, decision, needs-tom]
+claimed_from: todo
+assignee: worker-loader-eligibility
+lease_expires_at: 1786664925
 ---
 ## User-visible outcome
 

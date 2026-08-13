@@ -1,7 +1,7 @@
 ---
 id: admit-guarded-output-tails-for-cooperative-contraction
 title: Admit guarded output tails for the cooperative contraction
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-a-cooperative-tile-over-shared-operands]
 related: [realize-the-tiled-contraction-schedule-and-its-metal-emission, realize-the-strict-contraction-on-metal, admit-predicated-fixed-vector-map-tails]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, contracts/foundation, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, physical-planning, public-boundary, decision, needs-tom]
+claimed_from: todo
+assignee: worker-guarded-output-tails
+lease_expires_at: 1786664925
 ---
 ## User-visible outcome
 
