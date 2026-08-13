@@ -503,6 +503,16 @@ impl DeclaredSynchronizationRealization {
         &self.source
     }
 
+    /// The canonical sort and uniqueness key: the subject and its phase.
+    ///
+    /// Deliberately *excluding* the verdict. A profile declaring one subject both
+    /// realized and unrealizable at one phase has stated a contradiction, and
+    /// keying on the verdict would let both rows coexist with whichever the sort
+    /// put first deciding.
+    pub(crate) fn sort_key(&self) -> (SynchronizationSubject, AvailabilityPhase) {
+        (self.subject(), self.phase())
+    }
+
     /// Attributes this declaration to the profile that makes it.
     pub(crate) fn attributed_to(
         self,
@@ -565,7 +575,7 @@ impl SynchronizationRealizationFact {
     /// keying on the verdict would let both rows coexist with whichever the sort
     /// put first deciding.
     fn sort_key(&self) -> (SynchronizationSubject, AvailabilityPhase) {
-        (self.subject(), self.phase())
+        self.declared.sort_key()
     }
 }
 
@@ -747,12 +757,26 @@ impl CheckedTargetProfile {
             }
         }
         synchronization.sort_by_key(SynchronizationRealizationFact::sort_key);
-        if synchronization
-            .windows(2)
-            .any(|pair| pair[0].sort_key() == pair[1].sort_key())
-        {
+        let mut exact_duplicate = false;
+        let mut contradiction = false;
+        for pair in synchronization.windows(2) {
+            if pair[0].sort_key() != pair[1].sort_key() {
+                continue;
+            }
+            if pair[0].realization() == pair[1].realization() {
+                exact_duplicate = true;
+            } else {
+                contradiction = true;
+            }
+        }
+        if exact_duplicate {
             return Err(FeasibilityError::MalformedProfile {
                 rule: "duplicate-synchronization",
+            });
+        }
+        if contradiction {
+            return Err(FeasibilityError::MalformedProfile {
+                rule: "contradictory-synchronization",
             });
         }
         if identity.key().is_empty() {
@@ -2433,8 +2457,12 @@ mod tests {
     }
 
     /// A profile cannot answer one subject twice at one phase.
+    ///
+    /// Exact restatement and same-key contradiction are independent refusals:
+    /// neither is "sort and keep the first", and the two error rules are
+    /// distinct so a later reader cannot collapse them.
     #[test]
-    fn a_contradictory_synchronization_declaration_is_malformed() {
+    fn an_exact_duplicate_synchronization_declaration_is_malformed() {
         let id = identity();
         assert!(matches!(
             CheckedTargetProfile::new_complete(
@@ -2451,7 +2479,7 @@ mod tests {
                     synchronization_fact(
                         id,
                         REQUIRED_SUBJECT,
-                        SynchronizationRealization::Unrealizable
+                        SynchronizationRealization::Realized
                     ),
                 ],
             ),
@@ -2459,6 +2487,106 @@ mod tests {
                 rule: "duplicate-synchronization"
             })
         ));
+    }
+
+    #[test]
+    fn a_contradictory_synchronization_declaration_is_malformed() {
+        let id = identity();
+        for (first, second) in [
+            (
+                SynchronizationRealization::Realized,
+                SynchronizationRealization::Unrealizable,
+            ),
+            (
+                SynchronizationRealization::Unrealizable,
+                SynchronizationRealization::Realized,
+            ),
+        ] {
+            assert!(
+                matches!(
+                    CheckedTargetProfile::new_complete(
+                        id,
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                        vec![
+                            synchronization_fact(id, REQUIRED_SUBJECT, first),
+                            synchronization_fact(id, REQUIRED_SUBJECT, second),
+                        ],
+                    ),
+                    Err(FeasibilityError::MalformedProfile {
+                        rule: "contradictory-synchronization"
+                    })
+                ),
+                "sort order must not choose a winner between {first:?} then {second:?}"
+            );
+        }
+    }
+
+    /// Insertion order is not identity: two checked populations that differ
+    /// only in declaration order encode one descriptor and store one order.
+    #[test]
+    fn checked_synchronization_rows_canonicalize_independently_of_insertion_order() {
+        let id = identity();
+        let (_, neighbour) = neighbouring_subjects()[0];
+        let first =
+            synchronization_fact(id, REQUIRED_SUBJECT, SynchronizationRealization::Realized);
+        let second = synchronization_fact(id, neighbour, SynchronizationRealization::Unrealizable);
+        let forward = synchronizing_profile(vec![first.clone(), second.clone()]);
+        let reverse = synchronizing_profile(vec![second, first]);
+        assert_eq!(
+            forward.canonical_descriptor(),
+            reverse.canonical_descriptor()
+        );
+        let expected = if REQUIRED_SUBJECT < neighbour {
+            [REQUIRED_SUBJECT, neighbour]
+        } else {
+            [neighbour, REQUIRED_SUBJECT]
+        };
+        for profile in [&forward, &reverse] {
+            let subjects: Vec<_> = profile
+                .synchronization()
+                .iter()
+                .map(SynchronizationRealizationFact::subject)
+                .collect();
+            assert_eq!(subjects, expected);
+        }
+    }
+
+    /// Distinct phases of one subject coexist; their declaration order does not
+    /// move the checked descriptor.
+    #[test]
+    fn checked_synchronization_rows_at_distinct_phases_are_order_independent() {
+        let id = identity();
+        let compile =
+            synchronization_fact(id, REQUIRED_SUBJECT, SynchronizationRealization::Realized);
+        let later = DeclaredSynchronizationRealization::new(
+            REQUIRED_SUBJECT,
+            SynchronizationRealization::Unrealizable,
+            measured_source(FactAuthority::DeviceRuntime),
+        )
+        .attributed_to(id);
+        assert_ne!(compile.phase(), later.phase());
+        let forward = synchronizing_profile(vec![compile.clone(), later.clone()]);
+        let reverse = synchronizing_profile(vec![later, compile]);
+        assert_eq!(
+            forward.canonical_descriptor(),
+            reverse.canonical_descriptor()
+        );
+        for profile in [&forward, &reverse] {
+            let phases: Vec<_> = profile
+                .synchronization()
+                .iter()
+                .map(SynchronizationRealizationFact::phase)
+                .collect();
+            assert_eq!(
+                phases,
+                [
+                    AvailabilityPhase::CompileProfile,
+                    AvailabilityPhase::LiveDevicePreflight
+                ]
+            );
+        }
     }
 
     /// A fence over no memory domain publishes nothing, in both directions.

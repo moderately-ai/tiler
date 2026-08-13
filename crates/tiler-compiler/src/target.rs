@@ -1870,12 +1870,20 @@ impl TargetProfileBuilder {
             return Err(TargetProfileBuildError::VacuousSynchronizationSubject);
         }
         let source = source.provenance();
-        if self
+        if let Some(existing) = self
             .synchronization
             .iter()
-            .any(|declared| declared.subject() == subject && declared.phase() == source.phase())
+            .find(|declared| declared.subject() == subject && declared.phase() == source.phase())
         {
-            return Err(TargetProfileBuildError::DuplicateSynchronizationRealization);
+            // Exact restatement and same-key contradiction refuse independently
+            // of each other and of sort order. The public error is one variant
+            // because the uniqueness key already excludes the verdict; a second
+            // public type would be a new boundary Tom has not accepted.
+            let exact_duplicate = existing.realization() == realization;
+            let contradiction = existing.realization() != realization;
+            if exact_duplicate || contradiction {
+                return Err(TargetProfileBuildError::DuplicateSynchronizationRealization);
+            }
         }
         self.synchronization
             .push(DeclaredSynchronizationRealization::new(
@@ -3137,6 +3145,26 @@ impl TargetProfileBuilder {
                 return Err(TargetProfileBuildError::DuplicateDispatchability);
             }
         }
+        for fact in &self.synchronization {
+            let key = fact.sort_key();
+            let same_key: Vec<_> = self
+                .synchronization
+                .iter()
+                .filter(|candidate| candidate.sort_key() == key)
+                .collect();
+            if same_key.len() <= 1 {
+                continue;
+            }
+            let exact_duplicate = same_key
+                .windows(2)
+                .any(|pair| pair[0].realization() == pair[1].realization());
+            let contradiction = same_key
+                .windows(2)
+                .any(|pair| pair[0].realization() != pair[1].realization());
+            if exact_duplicate || contradiction {
+                return Err(TargetProfileBuildError::DuplicateSynchronizationRealization);
+            }
+        }
         for fact in &self.evaluation_order {
             fact.validate()?;
             let key = fact.subject_key();
@@ -3189,6 +3217,12 @@ impl TargetProfileBuilder {
                 .cmp(&right.resolved_type)
                 .then(left.source.phase().cmp(&right.source.phase()))
         });
+        // Subject, then phase — the complete uniqueness key, excluding the
+        // verdict so a contradiction cannot survive as two adjacent rows
+        // whose sort order would pick a winner. The complete descriptor
+        // encodes this family in the order this sort produces.
+        self.synchronization
+            .sort_by_key(DeclaredSynchronizationRealization::sort_key);
         // Subject, then licence, then phase — so the rows of one (subject,
         // licence) group are contiguous and phase-ascending, which is what makes
         // `evaluation_order_preservation`'s "latest available phase wins" scan
@@ -3572,10 +3606,12 @@ fn complete_descriptor(
             .expect("every dispatch source was inserted into the source table");
         fact.encode(&mut bytes, source_index);
     }
-    // The complete subject and its verdict, in the canonical order the builder
-    // sorted them into. Every dimension is encoded: two profiles differing only
-    // in which memory domain they fence declare different realizations and must
-    // not share a descriptor, which is the whole reason the fact is atomic.
+    // The complete subject and its verdict, in uniqueness-key order
+    // `(subject, phase)`. Insertion order is not identity: two profiles that
+    // declare the same rows in different sequences encode one descriptor.
+    // Every dimension is encoded: two profiles differing only in which memory
+    // domain they fence declare different realizations and must not share a
+    // descriptor, which is the whole reason the fact is atomic.
     push_slice(&mut bytes, SYNCHRONIZATION_DOMAIN);
     push_len(&mut bytes, synchronization.len());
     for declared in synchronization {
@@ -4217,7 +4253,10 @@ mod tests {
         RelaxationRequirement, ScalarArithmeticSubjectError, ScalarArithmeticSubjectIdentity,
         registered_arithmetic_facts, registered_scalar_format,
     };
-    use tiler_ir::schedule::{ApproximationEnvelope, ArithmeticType, MaterializationRounding};
+    use tiler_ir::schedule::{
+        ApproximationEnvelope, ArithmeticType, FencedSpaces, MaterializationRounding,
+        MemoryOrdering, SynchronizationKind, SynchronizationScope,
+    };
     use tiler_ir::semantic::{
         CanonicalValue, TypeArguments, TypeKey, builtin_scalar_value_type_facts,
         builtin_scalar_value_types,
@@ -5593,6 +5632,325 @@ mod tests {
         assert_eq!(
             forward.request_subject_bytes(),
             reverse.request_subject_bytes()
+        );
+    }
+
+    fn atomic_realization_subject(kind: SynchronizationKind) -> SynchronizationSubject {
+        SynchronizationSubject {
+            kind,
+            execution_scope: SynchronizationScope::Workgroup,
+            visibility_scope: SynchronizationScope::Workgroup,
+            fenced_spaces: FencedSpaces {
+                workgroup: true,
+                device: false,
+            },
+            ordering: MemoryOrdering::AcquireRelease,
+        }
+    }
+
+    fn atomic_realization_neighbour() -> SynchronizationSubject {
+        SynchronizationSubject {
+            fenced_spaces: FencedSpaces {
+                workgroup: true,
+                device: true,
+            },
+            ..atomic_realization_subject(SynchronizationKind::ControlBarrier)
+        }
+    }
+
+    fn declare_atomic_pair(
+        key: &str,
+        first: &(
+            SynchronizationSubject,
+            SynchronizationSupport,
+            TargetFactSource,
+        ),
+        second: &(
+            SynchronizationSubject,
+            SynchronizationSupport,
+            TargetFactSource,
+        ),
+    ) -> TargetProfile {
+        let mut builder = TargetProfileBuilder::new(TargetProfileKey::new(key.to_owned()).unwrap());
+        builder
+            .declare_synchronization_realization(first.0, first.1, &first.2)
+            .unwrap();
+        builder
+            .declare_synchronization_realization(second.0, second.1, &second.2)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    /// Insertion order is not identity for the atomic realization family.
+    ///
+    /// Two profiles that declare the same two rows in opposite order share one
+    /// complete descriptor and one checked descriptor, and the stored
+    /// population is uniqueness-key order — `(subject, phase)` — not
+    /// declaration order.
+    #[test]
+    fn atomic_realization_insertion_order_is_not_identity() {
+        let source = public_external_source(1);
+        let control = atomic_realization_subject(SynchronizationKind::ControlBarrier);
+        let collective = atomic_realization_subject(SynchronizationKind::Collective);
+        assert!(control < collective, "the fixture relies on kind order");
+        let forward = declare_atomic_pair(
+            "test.atomic-order.v1",
+            &(control, SynchronizationSupport::Realized, source.clone()),
+            &(
+                collective,
+                SynchronizationSupport::Unrealizable,
+                source.clone(),
+            ),
+        );
+        let reverse = declare_atomic_pair(
+            "test.atomic-order.v1",
+            &(
+                collective,
+                SynchronizationSupport::Unrealizable,
+                source.clone(),
+            ),
+            &(control, SynchronizationSupport::Realized, source),
+        );
+        assert_eq!(
+            forward.canonical_descriptor(),
+            reverse.canonical_descriptor()
+        );
+        assert_eq!(
+            forward.checked().canonical_descriptor(),
+            reverse.checked().canonical_descriptor()
+        );
+        for profile in [&forward, &reverse] {
+            let subjects: Vec<_> = profile
+                .checked()
+                .synchronization()
+                .iter()
+                .map(crate::target::feasibility::SynchronizationRealizationFact::subject)
+                .collect();
+            assert_eq!(subjects, [control, collective]);
+        }
+    }
+
+    #[test]
+    fn an_exact_duplicate_atomic_realization_is_refused_before_insertion() {
+        let source = public_external_source(1);
+        let subject = atomic_realization_subject(SynchronizationKind::ControlBarrier);
+        let mut builder = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.atomic-duplicate.v1".to_owned()).unwrap(),
+        );
+        builder
+            .declare_synchronization_realization(subject, SynchronizationSupport::Realized, &source)
+            .unwrap();
+        let len = builder.synchronization.len();
+        assert_eq!(
+            builder.declare_synchronization_realization(
+                subject,
+                SynchronizationSupport::Realized,
+                &source,
+            ),
+            Err(TargetProfileBuildError::DuplicateSynchronizationRealization)
+        );
+        assert_eq!(builder.synchronization.len(), len);
+    }
+
+    #[test]
+    fn a_contradictory_atomic_realization_verdict_is_refused_before_insertion() {
+        let source = public_external_source(1);
+        let subject = atomic_realization_subject(SynchronizationKind::ControlBarrier);
+        for (first, second) in [
+            (
+                SynchronizationSupport::Realized,
+                SynchronizationSupport::Unrealizable,
+            ),
+            (
+                SynchronizationSupport::Unrealizable,
+                SynchronizationSupport::Realized,
+            ),
+        ] {
+            let mut builder = TargetProfileBuilder::new(
+                TargetProfileKey::new("test.atomic-contradiction.v1".to_owned()).unwrap(),
+            );
+            builder
+                .declare_synchronization_realization(subject, first, &source)
+                .unwrap();
+            let len = builder.synchronization.len();
+            assert_eq!(
+                builder.declare_synchronization_realization(subject, second, &source),
+                Err(TargetProfileBuildError::DuplicateSynchronizationRealization),
+                "sort order must not choose a winner between {first:?} then {second:?}"
+            );
+            assert_eq!(builder.synchronization.len(), len);
+        }
+    }
+
+    /// Freeze-time validation refuses both cases even when insert-time is
+    /// bypassed, so a mutated draft cannot encode a contradiction.
+    #[test]
+    fn freeze_refuses_duplicate_and_contradictory_atomic_realizations_independently() {
+        let source = public_external_source(1).provenance();
+        let subject = atomic_realization_subject(SynchronizationKind::ControlBarrier);
+        let realized = DeclaredSynchronizationRealization::new(
+            subject,
+            SynchronizationRealization::Realized,
+            Arc::clone(&source),
+        );
+        let unrealizable = DeclaredSynchronizationRealization::new(
+            subject,
+            SynchronizationRealization::Unrealizable,
+            source,
+        );
+        for rows in [
+            vec![realized.clone(), realized.clone()],
+            vec![realized, unrealizable],
+        ] {
+            let mut builder = TargetProfileBuilder::new(
+                TargetProfileKey::new("test.atomic-freeze.v1".to_owned()).unwrap(),
+            );
+            builder.synchronization = rows;
+            assert_eq!(
+                builder.try_build(),
+                Err(TargetProfileBuildError::DuplicateSynchronizationRealization)
+            );
+        }
+    }
+
+    /// Distinct phases of one subject coexist, and declaring the later phase
+    /// first does not move either descriptor.
+    #[test]
+    fn atomic_realization_phase_is_part_of_the_uniqueness_key_and_not_insertion_order() {
+        let compile = public_external_source(1);
+        let later = device_runtime_source();
+        let subject = atomic_realization_subject(SynchronizationKind::ControlBarrier);
+        let forward = declare_atomic_pair(
+            "test.atomic-phase.v1",
+            &(subject, SynchronizationSupport::Realized, compile.clone()),
+            &(subject, SynchronizationSupport::Unrealizable, later.clone()),
+        );
+        let reverse = declare_atomic_pair(
+            "test.atomic-phase.v1",
+            &(subject, SynchronizationSupport::Unrealizable, later),
+            &(subject, SynchronizationSupport::Realized, compile),
+        );
+        assert_eq!(
+            forward.canonical_descriptor(),
+            reverse.canonical_descriptor()
+        );
+        assert_eq!(
+            forward.checked().canonical_descriptor(),
+            reverse.checked().canonical_descriptor()
+        );
+        for profile in [&forward, &reverse] {
+            let phases: Vec<_> = profile
+                .checked()
+                .synchronization()
+                .iter()
+                .map(crate::target::feasibility::SynchronizationRealizationFact::phase)
+                .collect();
+            assert_eq!(
+                phases,
+                [
+                    AvailabilityPhase::CompileProfile,
+                    AvailabilityPhase::LiveDevicePreflight
+                ]
+            );
+        }
+    }
+
+    /// Source is identity-bearing in the complete declaration and not a
+    /// uniqueness-key component: two sources at one `(subject, phase)` refuse,
+    /// and two profiles that differ only in source revision do not share a
+    /// complete descriptor.
+    #[test]
+    fn atomic_realization_source_participates_in_complete_identity_independently() {
+        let subject = atomic_realization_subject(SynchronizationKind::ControlBarrier);
+        let first = public_external_source(1);
+        let second = public_external_source(2);
+        let mut colliding = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.atomic-source.v1".to_owned()).unwrap(),
+        );
+        colliding
+            .declare_synchronization_realization(subject, SynchronizationSupport::Realized, &first)
+            .unwrap();
+        assert_eq!(
+            colliding.declare_synchronization_realization(
+                subject,
+                SynchronizationSupport::Realized,
+                &second,
+            ),
+            Err(TargetProfileBuildError::DuplicateSynchronizationRealization)
+        );
+
+        let descriptor = |source: TargetFactSource| {
+            let mut builder = TargetProfileBuilder::new(
+                TargetProfileKey::new("test.atomic-source.v1".to_owned()).unwrap(),
+            );
+            builder
+                .declare_synchronization_realization(
+                    subject,
+                    SynchronizationSupport::Realized,
+                    &source,
+                )
+                .unwrap();
+            builder.build().unwrap()
+        };
+        let left = descriptor(first);
+        let right = descriptor(second);
+        assert_ne!(
+            left.canonical_descriptor(),
+            right.canonical_descriptor(),
+            "a source-revision change must move the complete declaration"
+        );
+        assert_eq!(
+            left.checked().canonical_descriptor(),
+            right.checked().canonical_descriptor(),
+            "the checked descriptor encodes phase, authority, and validity, not the source identity"
+        );
+    }
+
+    /// Every dimension of the subject, and the verdict, participates in both
+    /// descriptors. A neighbouring subject is a different row, not a
+    /// restatement.
+    #[test]
+    fn atomic_realization_subject_and_verdict_participate_in_identity_independently() {
+        let source = public_external_source(1);
+        let baseline_subject = atomic_realization_subject(SynchronizationKind::ControlBarrier);
+        let descriptor = |subject, support| {
+            let mut builder = TargetProfileBuilder::new(
+                TargetProfileKey::new("test.atomic-subject.v1".to_owned()).unwrap(),
+            );
+            builder
+                .declare_synchronization_realization(subject, support, &source)
+                .unwrap();
+            builder.build().unwrap()
+        };
+        let realized = descriptor(baseline_subject, SynchronizationSupport::Realized);
+        let refused = descriptor(baseline_subject, SynchronizationSupport::Unrealizable);
+        assert_ne!(
+            realized.canonical_descriptor(),
+            refused.canonical_descriptor()
+        );
+        assert_ne!(
+            realized.checked().canonical_descriptor(),
+            refused.checked().canonical_descriptor()
+        );
+        let neighbour = descriptor(
+            atomic_realization_neighbour(),
+            SynchronizationSupport::Realized,
+        );
+        assert_ne!(
+            realized.canonical_descriptor(),
+            neighbour.canonical_descriptor()
+        );
+        assert_ne!(
+            realized.checked().canonical_descriptor(),
+            neighbour.checked().canonical_descriptor()
+        );
+        let collective = descriptor(
+            atomic_realization_subject(SynchronizationKind::Collective),
+            SynchronizationSupport::Realized,
+        );
+        assert_ne!(
+            realized.canonical_descriptor(),
+            collective.canonical_descriptor()
         );
     }
 
