@@ -584,7 +584,7 @@ A producer that compiles an artifact also knows what the artifact is *supposed t
 | 33 | 4 | framed payload count |
 | 37 | 32 | digest of the exact canonical manifest bytes |
 
-The magic differs from the envelope's `TILERART` in the first differing byte, so a sidecar handed to the artifact reader and an envelope handed to the sidecar reader are each refused at the magic rather than misparsed. As in the envelope, the total length is derived from the completed encoding rather than declared, and every declared count is checked against its governed budget before anything proportional to it is reserved.
+The magic differs from the envelope's `TILERART` in the first differing byte, so a sidecar handed to the artifact reader and an envelope handed to the sidecar reader are each refused at the magic rather than misparsed. As in the envelope, the total length is derived from the projected encoding rather than declared after a proportional write, and every declared count is checked against its governed budget before anything proportional to it is reserved.
 
 The header is followed by one canonical manifest and then a stream of length-delimited payloads.
 
@@ -638,7 +638,7 @@ These four, the envelope's seven, and the artifact program's seven identity and 
 
 ### Governed budgets
 
-**Fact.** Every bound is checked before any allocation proportional to it, in both directions: the encoder refuses to write a container a reader would not admit, and the reader refuses a declared count before reserving for it. The bounds are 256 MiB per complete encoding, 8 MiB per manifest, 8 MiB per derived identity, 16 MiB per case payload, 1,024 bytes per received provenance subject, 4 KiB per encoded text run, 256 proof cases, 256 UTF-8 bytes per stable case key, and 4,096 named interface entries per direction. The framed payload bound is *derived* from the case and interface bounds rather than declared, so the framing bound and the structural bounds cannot disagree.
+**Fact.** Every bound is checked with exact arithmetic before any allocation proportional to it, in both directions. The producer projects the encoded identity, manifest, framed-payload stream, and complete sidecar with checked addition and refuses before cloning a payload, hashing, reserving, or appending. The reader refuses a declared count before reserving for it, and refuses a carried identity length before copying it. A size that is not representable on the host is `Unrepresentable` rather than a wrapped or saturated length. The bounds are 256 MiB per complete encoding, 8 MiB per manifest, 8 MiB per derived identity, 16 MiB per case payload, 1,024 bytes per received provenance subject, 4 KiB per encoded text run, 256 proof cases, 256 UTF-8 bytes per stable case key, and 4,096 named interface entries per direction. The framed payload bound is *derived* from the case and interface bounds rather than declared, so the framing bound and the structural bounds cannot disagree.
 
 **Fact — the interface bound deliberately equals the artifact model's own.** A sidecar binds one payload per declared entry, so a looser bound here would admit a container no artifact could ever associate with.
 

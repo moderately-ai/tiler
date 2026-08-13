@@ -34,6 +34,9 @@ use crate::program::{
     decode_artifact, envelope_digest,
 };
 
+use super::budget::{
+    ProofBudgetError, max_payloads, project_from_data, project_from_data_with_identity,
+};
 use super::builder::{
     InterfaceProjectionError, ProofInterfaceError, project_interface, verify_case_payloads,
     verify_cases,
@@ -102,6 +105,24 @@ pub enum ProofLimitKind {
     SubjectBytes,
     /// Byte length of one encoded text run.
     TextBytes,
+}
+
+impl ProofLimitKind {
+    /// The governed byte budget this kind names, if it names a byte resource.
+    ///
+    /// Count resources return `None`. The match is wildcard-free so a new kind
+    /// is a build error here rather than an unpinned budget.
+    pub(super) const fn byte_budget(self) -> Option<usize> {
+        match self {
+            Self::SidecarBytes => Some(MAX_PROOF_SIDECAR_BYTES),
+            Self::ManifestBytes => Some(MAX_PROOF_MANIFEST_BYTES),
+            Self::IdentityBytes => Some(MAX_PROOF_IDENTITY_BYTES),
+            Self::PayloadBytes => Some(MAX_PROOF_PAYLOAD_BYTES),
+            Self::SubjectBytes => Some(MAX_PROOF_SUBJECT_BYTES),
+            Self::TextBytes => Some(MAX_TEXT_BYTES),
+            Self::Cases | Self::InterfaceEntries | Self::Payloads => None,
+        }
+    }
 }
 
 impl fmt::Display for ProofLimitKind {
@@ -311,6 +332,11 @@ pub enum ProofCodecError {
     },
     /// A governed structural bound was exceeded.
     Limit(ProofLimitExceeded),
+    /// A projected encoded size overflowed this host's `usize`.
+    Unrepresentable {
+        /// The bound whose projected size could not be represented.
+        kind: ProofLimitKind,
+    },
     /// An encoded text run is not valid UTF-8.
     InvalidText,
     /// An interface key was rejected by the shared-IR key constructor.
@@ -382,7 +408,7 @@ impl ProofCodecError {
             | Self::UnsupportedManifestSchema { .. }
             | Self::UnsupportedDigestAlgorithm { .. } => ProofFailureClass::Unsupported,
 
-            Self::Limit(_) => ProofFailureClass::Limit,
+            Self::Limit(_) | Self::Unrepresentable { .. } => ProofFailureClass::Limit,
 
             Self::NonCanonicalPayloadId { .. }
             | Self::NonCanonicalManifest
@@ -457,6 +483,10 @@ impl fmt::Display for ProofCodecError {
                 write!(formatter, "digest algorithm tag {tag:#04x}")
             }
             Self::Limit(cause) => write!(formatter, "{cause}"),
+            Self::Unrepresentable { kind } => write!(
+                formatter,
+                "a projected {kind} size is not representable on this host"
+            ),
             Self::InvalidText => formatter.write_str("an encoded text run is not valid UTF-8"),
             Self::InvalidInterfaceKey { cause } => write!(formatter, "interface key: {cause}"),
             Self::InvalidCaseKey { cause } => write!(formatter, "case key: {cause}"),
@@ -482,7 +512,8 @@ impl Error for ProofCodecError {
             Self::InvalidCaseKey { cause } => Some(cause),
             Self::InvalidSubject { cause } => Some(cause),
             Self::CasePayloads { cause } => Some(cause),
-            Self::Truncated { .. }
+            Self::Unrepresentable { .. }
+            | Self::Truncated { .. }
             | Self::TrailingBytes { .. }
             | Self::TrailingManifestBytes { .. }
             | Self::BadMagic
@@ -510,6 +541,15 @@ impl Error for ProofCodecError {
 impl From<ProofLimitExceeded> for ProofCodecError {
     fn from(cause: ProofLimitExceeded) -> Self {
         Self::Limit(cause)
+    }
+}
+
+impl From<ProofBudgetError> for ProofCodecError {
+    fn from(cause: ProofBudgetError) -> Self {
+        match cause {
+            ProofBudgetError::Limit(cause) => Self::Limit(cause),
+            ProofBudgetError::Unrepresentable { kind } => Self::Unrepresentable { kind },
+        }
     }
 }
 
@@ -617,13 +657,20 @@ fn payloads(data: &ProofSidecarData) -> impl Iterator<Item = &[u8]> {
 ///
 /// # Errors
 ///
-/// Returns [`ProofLimitExceeded`] when the derived identity exceeds
-/// [`MAX_PROOF_IDENTITY_BYTES`].
+/// Returns [`ProofBudgetError::Limit`] when the derived identity exceeds
+/// [`MAX_PROOF_IDENTITY_BYTES`], or [`ProofBudgetError::Unrepresentable`] when
+/// the projected length overflows this host's `usize`.
 pub(super) fn derive_identity(
     data: &ProofSidecarData,
-) -> Result<CanonicalProofSidecarIdentity, ProofLimitExceeded> {
+) -> Result<CanonicalProofSidecarIdentity, ProofBudgetError> {
+    let projected = project_from_data(data)?;
+    proof_limit(
+        projected.identity,
+        MAX_PROOF_IDENTITY_BYTES,
+        ProofLimitKind::IdentityBytes,
+    )?;
     let algorithm = DigestAlgorithm::GOVERNED;
-    let mut bytes = Vec::new();
+    let mut bytes = Vec::with_capacity(projected.identity);
     bytes.extend_from_slice(IDENTITY_DOMAIN);
     bytes.extend_from_slice(&MANIFEST_SCHEMA.0.to_be_bytes());
     bytes.extend_from_slice(&MANIFEST_SCHEMA.1.to_be_bytes());
@@ -651,11 +698,11 @@ pub(super) fn derive_identity(
             slot += 1;
         }
     }
-    proof_limit(
+    debug_assert_eq!(
         bytes.len(),
-        MAX_PROOF_IDENTITY_BYTES,
-        ProofLimitKind::IdentityBytes,
-    )?;
+        projected.identity,
+        "the identity encoder writes the projected length"
+    );
     Ok(CanonicalProofSidecarIdentity(bytes))
 }
 
@@ -668,34 +715,34 @@ pub(super) fn derive_identity(
 ///
 /// # Errors
 ///
-/// Returns [`ProofCodecError::Limit`] when the encoding exceeds a governed
-/// bound.
+/// Returns [`ProofCodecError::Limit`] when the projected encoding exceeds a
+/// governed bound, or [`ProofCodecError::Unrepresentable`] when a projected
+/// size overflows this host's `usize`.
 pub(super) fn encode(
     data: &ProofSidecarData,
     identity: &CanonicalProofSidecarIdentity,
 ) -> Result<Vec<u8>, ProofCodecError> {
+    let projected =
+        project_from_data_with_identity(data, Some(identity.as_bytes().len()))?.check()?;
     let algorithm = DigestAlgorithm::GOVERNED;
-    let payload_count = payloads(data).count();
-    proof_limit(payload_count, max_payloads(), ProofLimitKind::Payloads)?;
-    let manifest = encode_manifest(data, identity, algorithm)?;
-    proof_limit(
-        manifest.len(),
-        MAX_PROOF_MANIFEST_BYTES,
-        ProofLimitKind::ManifestBytes,
-    )?;
+    let manifest = encode_manifest(data, identity, algorithm, projected.manifest);
 
-    let mut bytes = Vec::with_capacity(HEADER_BYTES + manifest.len());
+    let mut bytes = Vec::with_capacity(projected.sidecar);
     bytes.extend_from_slice(&MAGIC);
     bytes.extend_from_slice(&SIDECAR_FORMAT.0.to_be_bytes());
     bytes.extend_from_slice(&SIDECAR_FORMAT.1.to_be_bytes());
     bytes.extend_from_slice(&CANONICAL_ENCODING.0.to_be_bytes());
     bytes.extend_from_slice(&CANONICAL_ENCODING.1.to_be_bytes());
     bytes.push(algorithm.tag());
-    // Derived once the framing is complete; never a producer claim.
+    // Derived from the projection, not patched after a proportional write.
     let total_length_at = bytes.len();
-    bytes.extend_from_slice(&0_u64.to_be_bytes());
+    bytes.extend_from_slice(
+        &u64::try_from(projected.sidecar)
+            .expect("supported usize fits u64")
+            .to_be_bytes(),
+    );
     push_len(&mut bytes, manifest.len());
-    bytes.extend_from_slice(&ordinal(payload_count).to_be_bytes());
+    bytes.extend_from_slice(&ordinal(projected.payload_count).to_be_bytes());
     bytes.extend_from_slice(
         algorithm
             .digest(MANIFEST_DIGEST_DOMAIN, &manifest)
@@ -714,30 +761,28 @@ pub(super) fn encode(
         bytes.extend_from_slice(payload);
     }
 
-    proof_limit(
+    debug_assert_eq!(
         bytes.len(),
-        MAX_PROOF_SIDECAR_BYTES,
-        ProofLimitKind::SidecarBytes,
-    )?;
-    let total = u64::try_from(bytes.len()).expect("supported usize fits u64");
-    bytes[total_length_at..total_length_at + 8].copy_from_slice(&total.to_be_bytes());
+        projected.sidecar,
+        "the sidecar encoder writes the projected length"
+    );
+    debug_assert_eq!(
+        &bytes[total_length_at..total_length_at + 8],
+        &u64::try_from(bytes.len())
+            .expect("supported usize fits u64")
+            .to_be_bytes(),
+        "the header total is the encoded length"
+    );
     Ok(bytes)
-}
-
-/// The largest framed payload count any admitted sidecar can reach.
-///
-/// Derived from the case and interface bounds rather than declared, so the
-/// framing bound and the structural bounds cannot disagree.
-const fn max_payloads() -> usize {
-    MAX_PROOF_CASES * (2 * MAX_PROOF_INTERFACE_ENTRIES)
 }
 
 fn encode_manifest(
     data: &ProofSidecarData,
     identity: &CanonicalProofSidecarIdentity,
     algorithm: DigestAlgorithm,
-) -> Result<Vec<u8>, ProofCodecError> {
-    let mut bytes = Vec::new();
+    projected_len: usize,
+) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(projected_len);
     bytes.extend_from_slice(MANIFEST_DOMAIN);
     bytes.extend_from_slice(&MANIFEST_SCHEMA.0.to_be_bytes());
     bytes.extend_from_slice(&MANIFEST_SCHEMA.1.to_be_bytes());
@@ -761,11 +806,6 @@ fn encode_manifest(
         push_len(&mut bytes, case.inputs.len());
         push_len(&mut bytes, case.expected.len());
         for payload in case.inputs.iter().chain(&case.expected) {
-            proof_limit(
-                payload.len(),
-                MAX_PROOF_PAYLOAD_BYTES,
-                ProofLimitKind::PayloadBytes,
-            )?;
             let id = ordinal(slot);
             bytes.extend_from_slice(&id.to_be_bytes());
             push_len(&mut bytes, payload.len());
@@ -774,7 +814,12 @@ fn encode_manifest(
         }
     }
     push_slice(&mut bytes, identity.as_bytes());
-    Ok(bytes)
+    debug_assert_eq!(
+        bytes.len(),
+        projected_len,
+        "the manifest encoder writes the projected length"
+    );
+    bytes
 }
 
 impl VerifiedProofSidecar {
@@ -786,8 +831,9 @@ impl VerifiedProofSidecar {
     ///
     /// # Errors
     ///
-    /// Returns [`ProofCodecError::Limit`] when the canonical encoding exceeds a
-    /// governed bound.
+    /// Returns [`ProofCodecError::Limit`] when the projected encoding exceeds a
+    /// governed bound, or [`ProofCodecError::Unrepresentable`] when a projected
+    /// size overflows this host's `usize`.
     pub fn encode(&self) -> Result<Vec<u8>, ProofCodecError> {
         encode(&self.data, &self.identity)
     }
@@ -936,8 +982,9 @@ impl DecodedProofSidecar {
     ///
     /// # Errors
     ///
-    /// Returns [`ProofCodecError::Limit`] when the canonical encoding exceeds a
-    /// governed bound.
+    /// Returns [`ProofCodecError::Limit`] when the projected encoding exceeds a
+    /// governed bound, or [`ProofCodecError::Unrepresentable`] when a projected
+    /// size overflows this host's `usize`.
     pub fn re_encode(&self) -> Result<Vec<u8>, ProofCodecError> {
         self.sidecar.encode()
     }
@@ -1123,7 +1170,8 @@ fn parse_manifest(bytes: &[u8]) -> Result<ParsedManifest, ProofCodecError> {
     require_distinct(&output_keys, ProofOrderedSubject::Output)?;
 
     let CaseTable { rows, descriptors } = read_case_table(&mut cursor)?;
-    let identity = cursor.slice()?.to_vec();
+    let identity_len = cursor.count(MAX_PROOF_IDENTITY_BYTES, ProofLimitKind::IdentityBytes)?;
+    let identity = cursor.take(identity_len)?.to_vec();
     if cursor.remaining() != 0 {
         return Err(ProofCodecError::TrailingManifestBytes {
             count: cursor.remaining(),
