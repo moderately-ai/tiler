@@ -803,11 +803,34 @@ pub struct IndexRegion {
 /// marking it and compiling the workspace — no consumer broke. Total maps
 /// *inside* `tiler-ir` are unaffected, because the attribute has no effect
 /// within the defining crate, which is what keeps them breaking.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ExecutionBinding {
     /// One global linear invocation per iteration coordinate.
     GlobalLinearInvocation,
+    /// Hardware workgroup and local coordinates map once onto the contraction's
+    /// logical output coordinates.
+    ///
+    /// **Labelled draft** under ADR 0075: Tom accepted the *model* on
+    /// 2026-08-11 — an explicit blocked-workgroup binding, required rather than
+    /// defaulted, whose verifier supplies the bijection
+    /// [`OwnershipProofKind::OneGlobalInvocationPerOutput`] states. The exact
+    /// included and excluded Rust surface remains a labelled draft until Tom
+    /// accepts this spelling.
+    ///
+    /// Invocation at logical workgroup `w` and local `l` owns output coordinate
+    /// `w[d] * block[d] + l[d]` on each output axis `d`. The binding is the
+    /// layer [ADR 0007](../../../../docs/decisions/0007-first-class-kernel-schedules.md)
+    /// assigns hardware-to-logical mapping to, so both operand reads and the
+    /// owning write consult it once. `Copy` is dropped because the map carries
+    /// shapes; `GlobalLinearInvocation` keeps tag `0x01` and every earlier
+    /// region's bytes.
+    BlockedWorkgroup {
+        /// Per-axis local extents, in the output shape's axis order.
+        block: Shape,
+        /// Per-axis workgroup-grid extents, in the same order.
+        workgroups: Shape,
+    },
 }
 
 /// How iteration-domain tail elements are handled.
@@ -1034,6 +1057,45 @@ pub enum ReductionTopology {
         /// the topology so the composition is checkable rather than inferred
         /// from whatever body a backend happens to emit.
         arrival: ContributorArrival,
+    },
+    /// One workgroup's invocations each own an output position and cooperate by
+    /// staging shared operand tiles.
+    ///
+    /// **Labelled draft** under ADR 0075: Tom accepted the *model* on
+    /// 2026-08-11 — a sibling of [`Self::CooperativeWorkgroup`] with its own
+    /// semantic, commit, coverage, and shape verifier, reusing the
+    /// [`CooperativeTile`] dataflow record. The one-committer theorem on
+    /// [`Self::CooperativeWorkgroup`] is unchanged. The exact included and
+    /// excluded Rust surface remains a labelled draft until Tom accepts this
+    /// spelling.
+    ///
+    /// The inverse relation: `commit` names every participant, the iteration
+    /// domain *is* the output (no trailing participant axis), and
+    /// `owned_output_positions` equals the work-item count. No helper may infer
+    /// the one-committer ownership theorem from the mere presence of a tile.
+    /// The topology requires [`ExecutionBinding::BlockedWorkgroup`]; it is
+    /// never defaulted from [`ExecutionBinding::GlobalLinearInvocation`].
+    CooperativeContraction {
+        /// The cross-invocation operand staging that tile requires.
+        tile: CooperativeTile,
+        /// Row-major shape of the contracted iteration space, in ascending
+        /// canonical contracted-index order.
+        contracted_shape: Shape,
+        /// Exact tile of that contracted space. Every extent must divide the
+        /// matching contracted extent; the quotient product is `tile.rounds`.
+        contracted_tile: Shape,
+        /// Contributor combination order within the contracted space.
+        order: ContributorOrder,
+        /// Width every combining step is performed at.
+        accumulation: ArithmeticType,
+        /// Whether the contract permits reassociation.
+        ///
+        /// Tiling the contracted space regroups the declared contributor
+        /// sequence, so the verifier admits this topology only when this is
+        /// true.
+        permits_reassociation: bool,
+        /// Whether the contract permits contributor permutation.
+        permits_permutation: bool,
     },
 }
 
@@ -1470,7 +1532,8 @@ pub fn partial_reduction_axis(output_shape: &Shape) -> Option<Axis> {
 #[must_use]
 pub fn cooperative_tile(reduction: &ReductionTopology) -> Option<&CooperativeTile> {
     match reduction {
-        ReductionTopology::CooperativeWorkgroup { tile, .. } => Some(tile),
+        ReductionTopology::CooperativeWorkgroup { tile, .. }
+        | ReductionTopology::CooperativeContraction { tile, .. } => Some(tile),
         ReductionTopology::None
         | ReductionTopology::Serial { .. }
         | ReductionTopology::MultiPass { .. }
@@ -1906,6 +1969,16 @@ const TAG_REDUCTION_CONTRACTION: u8 = 0x34;
 /// the schedule identity domain deliberately does not step. A reader that
 /// reaches `0x35` is reading a region the earlier vocabulary could not express.
 const TAG_REDUCTION_COOPERATIVE_WORKGROUP: u8 = 0x35;
+/// Reduction-topology tag of the operand-sharing cooperative contraction.
+///
+/// Appended exactly as `0x35` was. `0x36` is reserved for the accepted
+/// [`ReductionTopology`] spelling `CooperativeContractionSplit` owned by
+/// `decide-the-fixed-strided-contributor-membership-vocabulary` and is not
+/// consumed here. A reader that reaches `0x37` is reading a region the earlier
+/// vocabulary could not express; every earlier topology keeps its tag and field
+/// positions, so no previously encodable region's bytes move and the schedule
+/// identity domain does not step.
+const TAG_REDUCTION_COOPERATIVE_CONTRACTION: u8 = 0x37;
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());
@@ -2594,8 +2667,19 @@ fn push_cooperative_tile(bytes: &mut Vec<u8>, tile: &CooperativeTile) {
 }
 
 fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
-    let ExecutionBinding::GlobalLinearInvocation = schedule.binding;
-    bytes.push(0x01);
+    match &schedule.binding {
+        ExecutionBinding::GlobalLinearInvocation => bytes.push(0x01),
+        // Appended binding tag. `0x01` keeps its meaning and every earlier
+        // field keeps its position, so a region that still carries
+        // `GlobalLinearInvocation` encodes the same bytes it did before this
+        // arm existed. A reader that reaches `0x02` is reading a binding the
+        // earlier vocabulary could not express.
+        ExecutionBinding::BlockedWorkgroup { block, workgroups } => {
+            bytes.push(0x02);
+            push_shape(bytes, block);
+            push_shape(bytes, workgroups);
+        }
+    }
     bytes.extend_from_slice(&schedule.work_items.to_be_bytes());
     bytes.extend_from_slice(&schedule.threads_per_workgroup.to_be_bytes());
     let TailPolicy::Exact = schedule.tail;
@@ -2671,6 +2755,24 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
             // step has since made the position free, and it is left alone
             // because moving it would churn bytes for no gain.
             bytes.push(arrival.tag());
+        }
+        ReductionTopology::CooperativeContraction {
+            tile,
+            contracted_shape,
+            contracted_tile,
+            order,
+            accumulation,
+            permits_reassociation,
+            permits_permutation,
+        } => {
+            bytes.push(TAG_REDUCTION_COOPERATIVE_CONTRACTION);
+            push_cooperative_tile(bytes, tile);
+            push_shape(bytes, contracted_shape);
+            push_shape(bytes, contracted_tile);
+            push_order(bytes, *order);
+            bytes.push(accumulation.tag());
+            bytes.push(u8::from(*permits_reassociation));
+            bytes.push(u8::from(*permits_permutation));
         }
     }
     bytes.extend_from_slice(&schedule.launch.grid_threads.to_be_bytes());

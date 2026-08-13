@@ -241,6 +241,12 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
         ReductionTopology::CooperativeWorkgroup { partition, .. } => {
             partition.contributors_per_partition
         }
+        // Representable, not lowered. The Metal body is a different ticket;
+        // refusing here is what keeps this path from emitting a direct
+        // contraction over the same work items.
+        ReductionTopology::CooperativeContraction { .. } => {
+            return Err(KernelDiagnostic::CooperativeLoweringShape);
+        }
     };
     // The strict-affine decode addresses its three role-scoped components by the
     // invocation index directly, so it consults no coordinate map.
@@ -502,6 +508,7 @@ fn addressing(
                 | ReductionTopology::None
                 | ReductionTopology::Serial { .. }
                 | ReductionTopology::Contraction { .. }
+                | ReductionTopology::CooperativeContraction { .. }
                 | ReductionTopology::MultiPass { .. } => Ok(ReadAddressing::Linearized(terms)),
             }
         }

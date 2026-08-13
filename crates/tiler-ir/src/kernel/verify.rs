@@ -315,8 +315,10 @@ fn verify_signature(
     // needs the local one, because its participants are named by their position
     // within the workgroup. The second builtin is required rather than merely
     // permitted, so a tile whose kernel cannot name its participants is refused.
-    let mut expected_builtins = match schedule.schedule.binding {
-        ExecutionBinding::GlobalLinearInvocation => vec![Builtin::GlobalInvocationIndex],
+    let mut expected_builtins = match &schedule.schedule.binding {
+        ExecutionBinding::GlobalLinearInvocation | ExecutionBinding::BlockedWorkgroup { .. } => {
+            vec![Builtin::GlobalInvocationIndex]
+        }
     };
     if cooperative_tile(&schedule.schedule.reduction).is_some() {
         expected_builtins.push(Builtin::LocalInvocationIndex);
@@ -1143,6 +1145,9 @@ fn verify_reduction(
                 .ok_or(KernelDiagnostic::ElementCountOverflow)?,
             tile.rounds,
         ),
+        ReductionTopology::CooperativeContraction { .. } => {
+            Err(KernelDiagnostic::CooperativeLoweringShape)
+        }
     }
 }
 

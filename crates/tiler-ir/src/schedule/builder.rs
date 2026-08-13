@@ -11,13 +11,14 @@
 //! visibility and anti-dependency edges require. No later cost or feasibility
 //! query can repair a schedule this verifier rejects.
 
+use super::blocked::{participant_space_matches_block, prove_blocked_bijection};
 use super::cooperative::{
     AntiDependencyEdge, ContributorArrival, CooperativeTile, ParticipantRange, ParticipantSpace,
     StagedSpan, VisibilityEdge,
 };
 use super::error::{
-    CooperativeTileRule, ScheduleBuildError, ScheduleComponent, ScheduleLimitKind,
-    ScheduledRegionBuildError, ScheduledRegionDiagnostic,
+    BlockedWorkgroupRule, CooperativeTileRule, ScheduleBuildError, ScheduleComponent,
+    ScheduleLimitKind, ScheduledRegionBuildError, ScheduledRegionDiagnostic,
 };
 use super::handles::{InputOrdinal, RegionId, StagingId};
 use super::model::{
@@ -394,8 +395,7 @@ fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagn
     let iteration_count = element_count(&region.index.iteration_shape)
         .map_err(|_| ScheduledRegionDiagnostic::ShapeProductOverflow)?;
     let schedule = &region.schedule;
-    if schedule.binding != ExecutionBinding::GlobalLinearInvocation
-        || schedule.tail != TailPolicy::Exact
+    if schedule.tail != TailPolicy::Exact
         || schedule.work_items != iteration_count
         || schedule.launch.grid_threads != iteration_count
         || schedule.launch.threads_per_workgroup != schedule.threads_per_workgroup
@@ -403,6 +403,32 @@ fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagn
         || !schedule.launch.zero_work_skips_dispatch
     {
         return Err(ScheduledRegionDiagnostic::LaunchCoverage);
+    }
+    match &schedule.binding {
+        ExecutionBinding::GlobalLinearInvocation => {
+            if matches!(
+                schedule.reduction,
+                ReductionTopology::CooperativeContraction { .. }
+            ) {
+                return Err(blocked(BlockedWorkgroupRule::BindingRequired));
+            }
+        }
+        ExecutionBinding::BlockedWorkgroup { block, workgroups } => {
+            if !matches!(
+                schedule.reduction,
+                ReductionTopology::CooperativeContraction { .. }
+            ) {
+                return Err(blocked(BlockedWorkgroupRule::BindingForbidden));
+            }
+            prove_blocked_bijection(
+                &region.index.iteration_shape,
+                block,
+                workgroups,
+                schedule.work_items,
+                schedule.threads_per_workgroup,
+                schedule.launch.grid_threads,
+            )?;
+        }
     }
     // A cooperative tile's participant space is decided here, beside launch
     // coverage, rather than with the rest of the tile's rules — because the
@@ -493,6 +519,12 @@ fn verify_contraction(
     else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
+    if matches!(
+        region.schedule.reduction,
+        ReductionTopology::CooperativeContraction { .. }
+    ) {
+        return verify_cooperative_contraction(region, left, right, write);
+    }
     let ReductionTopology::Contraction {
         contracted_shape: scheduled_contracted,
         order: scheduled_order,
@@ -623,6 +655,174 @@ fn verify_contraction(
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
     Ok(())
+}
+
+/// Verifies the operand-sharing cooperative contraction and its blocked map.
+///
+/// The sibling of [`verify_cooperative_semantics`]. That gate proves a
+/// one-committer reduction tile; this one proves a contraction whose
+/// invocations each own an output position and cooperate only by staging
+/// operand tiles. The two share the dataflow half of
+/// [`verify_cooperative_tile`] and nothing of the ownership theorem.
+fn verify_cooperative_contraction(
+    region: &ScheduledRegion,
+    left: &Access,
+    right: &Access,
+    write: &Access,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    let ReductionTopology::CooperativeContraction {
+        tile,
+        contracted_shape: scheduled_contracted,
+        contracted_tile,
+        order: scheduled_order,
+        accumulation,
+        permits_reassociation,
+        permits_permutation,
+    } = &region.schedule.reduction
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    let ScalarProgram::StrictTensorContraction {
+        contracted_shape,
+        order,
+        ..
+    } = &region.index.scalar_program
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    let numerical = &region.index.numerical;
+    if contracted_shape != scheduled_contracted
+        || order != scheduled_order
+        || *permits_reassociation != numerical.permits_reassociation()
+        || *permits_permutation != numerical.permits_permutation()
+        || !*permits_reassociation
+    {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    verify_accumulation_width(*accumulation, &region.index.scalar_program)?;
+    let contracted_points = element_count(contracted_shape)
+        .map_err(|_| ScheduledRegionDiagnostic::ShapeProductOverflow)?;
+    if contracted_points == 0 {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    if left.mode != AccessMode::Read
+        || right.mode != AccessMode::Read
+        || left.ownership.is_some()
+        || right.ownership.is_some()
+        || write.mode != AccessMode::Write
+        || write.map != LogicalAccess::LinearIdentity
+        || write.ownership != Some(region.schedule.output_owner)
+        || !matches!(write.tensor, TensorRole::Intermediate | TensorRole::Output)
+        || write.component_role.is_some()
+    {
+        return Err(ScheduledRegionDiagnostic::AccessContract);
+    }
+    let (
+        TensorRole::Input {
+            ordinal: left_ordinal,
+        },
+        TensorRole::Input {
+            ordinal: right_ordinal,
+        },
+    ) = (left.tensor, right.tensor)
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    if left_ordinal.get() >= right_ordinal.get()
+        || left.component_role.is_some()
+        || right.component_role.is_some()
+    {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    verify_proof_records(region, &[left, right], write)?;
+
+    let mut contracted_covered = vec![false; contracted_shape.rank()];
+    let mut output_covered = vec![false; region.index.iteration_shape.rank()];
+    for access in [left, right] {
+        let LogicalAccess::ContractionOperand {
+            operand_shape,
+            output_shape,
+            contracted_shape: access_contracted,
+            sources,
+            order: access_order,
+        } = &access.map
+        else {
+            return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+        };
+        if output_shape != &region.index.iteration_shape
+            || access_contracted != contracted_shape
+            || access_order != order
+            || sources.len() != operand_shape.rank()
+        {
+            return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+        }
+        let mut seen_output = vec![false; output_shape.rank()];
+        let mut seen_contracted = vec![false; contracted_shape.rank()];
+        for (axis, source) in sources.iter().enumerate() {
+            let (shape, seen, covered) = match source {
+                ContractionAxisSource::Output { .. } => {
+                    (output_shape, &mut seen_output, &mut output_covered)
+                }
+                ContractionAxisSource::Contracted { .. } => (
+                    contracted_shape,
+                    &mut seen_contracted,
+                    &mut contracted_covered,
+                ),
+            };
+            let position = match source {
+                ContractionAxisSource::Output { position }
+                | ContractionAxisSource::Contracted { position } => usize::try_from(*position)
+                    .map_err(|_| ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?,
+            };
+            let (Some(extent), Some(slot)) =
+                (shape.extents().get(position), seen.get_mut(position))
+            else {
+                return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+            };
+            if std::mem::replace(slot, true) || operand_shape.extents()[axis] != *extent {
+                return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+            }
+            covered[position] = true;
+        }
+        if seen_contracted.iter().any(|read| !read) {
+            return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+        }
+    }
+    if output_covered.iter().any(|read| !read) || contracted_covered.iter().any(|read| !read) {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+
+    let ExecutionBinding::BlockedWorkgroup { block, .. } = &region.schedule.binding else {
+        return Err(blocked(BlockedWorkgroupRule::BindingRequired));
+    };
+    if !participant_space_matches_block(&tile.coordinates.participants, block) {
+        return Err(blocked(BlockedWorkgroupRule::ParticipantBlockMismatch));
+    }
+    if contracted_tile.rank() != contracted_shape.rank() {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    let mut tile_count = 1_u64;
+    for (extent, tile_extent) in contracted_shape
+        .extents()
+        .iter()
+        .zip(contracted_tile.extents())
+    {
+        let extent = extent.get();
+        let tile_extent = tile_extent.get();
+        if tile_extent == 0 || !extent.is_multiple_of(tile_extent) {
+            return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+        }
+        tile_count = tile_count
+            .checked_mul(extent / tile_extent)
+            .ok_or(ScheduledRegionDiagnostic::ShapeProductOverflow)?;
+    }
+    if tile.rounds == 0 || tile.rounds > MAX_COOPERATIVE_ROUNDS {
+        return Err(cooperative(CooperativeTileRule::RoundStructure));
+    }
+    if tile.rounds != tile_count {
+        return Err(cooperative(CooperativeTileRule::ContributorSplit));
+    }
+    verify_operand_tile(tile)
 }
 
 /// Verifies an N-input physical `f32` pointwise region.
@@ -1641,23 +1841,43 @@ fn verify_cooperative_semantics(
 /// what makes disjointness and coverage exact instead of a modular argument, and
 /// an unbounded tile would make it unbounded work.
 fn verify_cooperative_tile(tile: &CooperativeTile) -> Result<(), ScheduledRegionDiagnostic> {
+    let participants = cooperative_participants(tile)?;
+    // Exactly one participant performs the region's owning write, which is what
+    // makes `OneGlobalInvocationPerOutput` true of a workgroup that runs several
+    // invocations over one output position.
+    if tile.commit.count != 1 || !participants.contains_range(tile.commit) {
+        return Err(cooperative(CooperativeTileRule::CommitOwnership));
+    }
+    verify_cooperative_tile_dataflow(tile, participants)
+}
+
+/// Verifies an operand-sharing tile: every participant commits its own write.
+fn verify_operand_tile(tile: &CooperativeTile) -> Result<(), ScheduledRegionDiagnostic> {
+    let participants = cooperative_participants(tile)?;
+    if tile.commit != participants {
+        return Err(cooperative(CooperativeTileRule::OperandTileCommit));
+    }
+    verify_cooperative_tile_dataflow(tile, participants)
+}
+
+fn cooperative_participants(
+    tile: &CooperativeTile,
+) -> Result<ParticipantRange, ScheduledRegionDiagnostic> {
     let space = tile.coordinates.participants;
-    // The space itself and its agreement with the launch were decided by
-    // `verify_participant_space` before any proof arithmetic read the count, so
-    // this propagates the product rather than re-deciding it — a second copy of
-    // either rule here is one that could never say no. It is a refusal rather
-    // than an `expect` for the reason the sibling site above states.
     let participant_count = space
         .participants()
         .ok_or_else(|| cooperative(CooperativeTileRule::LocalCoordinates))?;
-    // The linearized run the phases, the points, and the commit are stated over.
-    // They are runs rather than spaces because each is a claim about which
-    // invocations reach a program point, not about the shape they are arranged
-    // in.
-    let participants = ParticipantRange {
+    Ok(ParticipantRange {
         first: 0,
         count: participant_count,
-    };
+    })
+}
+
+fn verify_cooperative_tile_dataflow(
+    tile: &CooperativeTile,
+    participants: ParticipantRange,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    let space = tile.coordinates.participants;
     if participants.count > MAX_COOPERATIVE_PARTICIPANTS
         || tile.phases.len() > MAX_COOPERATIVE_PHASES
         || tile
@@ -1675,12 +1895,6 @@ fn verify_cooperative_tile(tile: &CooperativeTile) -> Result<(), ScheduledRegion
             .is_none_or(|slots| slots > MAX_COOPERATIVE_STAGING_SLOTS)
     {
         return Err(cooperative(CooperativeTileRule::StructuralLimit));
-    }
-    // Exactly one participant performs the region's owning write, which is what
-    // makes `OneGlobalInvocationPerOutput` true of a workgroup that runs several
-    // invocations over one output position.
-    if tile.commit.count != 1 || !participants.contains_range(tile.commit) {
-        return Err(cooperative(CooperativeTileRule::CommitOwnership));
     }
 
     let phase_count = u32::try_from(tile.phases.len())
@@ -2043,6 +2257,10 @@ const fn cooperative(rule: CooperativeTileRule) -> ScheduledRegionDiagnostic {
     ScheduledRegionDiagnostic::CooperativeTile { rule }
 }
 
+const fn blocked(rule: BlockedWorkgroupRule) -> ScheduledRegionDiagnostic {
+    ScheduledRegionDiagnostic::BlockedWorkgroup { rule }
+}
+
 /// Decides a cooperative tile's participant space and its agreement with the
 /// launch.
 ///
@@ -2092,14 +2310,25 @@ fn verify_participant_space(
 /// of positions the region never writes.
 fn owned_output_positions(region: &ScheduledRegion) -> Option<u64> {
     let work_items = region.schedule.work_items;
-    let Some(tile) = cooperative_tile(&region.schedule.reduction) else {
-        return Some(work_items);
-    };
-    let participants = tile.coordinates.participants.participants()?;
-    if participants == 0 || !work_items.is_multiple_of(participants) {
-        return None;
+    // Ownership is a fact of the topology, not of the mere presence of a tile.
+    // [`ReductionTopology::CooperativeWorkgroup`] runs one invocation per
+    // (output, participant) pair and one committer writes; the operand-sharing
+    // sibling owns one position per invocation. Inferring the first from
+    // `cooperative_tile` would silently undersize the operand-sharing write.
+    match &region.schedule.reduction {
+        ReductionTopology::CooperativeWorkgroup { tile, .. } => {
+            let participants = tile.coordinates.participants.participants()?;
+            if participants == 0 || !work_items.is_multiple_of(participants) {
+                return None;
+            }
+            Some(work_items / participants)
+        }
+        ReductionTopology::None
+        | ReductionTopology::Serial { .. }
+        | ReductionTopology::MultiPass { .. }
+        | ReductionTopology::Contraction { .. }
+        | ReductionTopology::CooperativeContraction { .. } => Some(work_items),
     }
-    Some(work_items / participants)
 }
 
 /// Returns the reduction output shape this region's iteration domain realizes.
@@ -2122,6 +2351,7 @@ fn reduction_output_shape(region: &ScheduledRegion) -> Option<crate::shape::Shap
         ReductionTopology::None
         | ReductionTopology::Serial { .. }
         | ReductionTopology::Contraction { .. }
+        | ReductionTopology::CooperativeContraction { .. }
         | ReductionTopology::MultiPass { .. } => return Some(shape.clone()),
     };
     let kept = shape.rank().checked_sub(1)?;
@@ -2176,9 +2406,11 @@ fn bounds_proof_refines_access(
 ) -> bool {
     match (&proof.kind, access) {
         // The owned positions rather than the work items: they are the same
-        // number for every topology that runs one invocation per output, and a
-        // cooperative tile's write covers one position per workgroup rather than
-        // one per invocation.
+        // number for every topology that runs one invocation per output. A
+        // one-committer cooperative tile's write covers one position per
+        // workgroup; the operand-sharing sibling owns one position per
+        // invocation. `owned_output_positions` decides from the topology, not
+        // from the mere presence of a tile.
         (BoundsProofKind::LinearRange { element_count }, LogicalAccess::LinearIdentity) => {
             owned_output_positions(region).is_some_and(|owned| *element_count == owned)
         }
@@ -2459,6 +2691,12 @@ mod tests {
     /// the old `ScalarProgram::MultiplyThenAdd` tag (`0x21`) becoming the exact
     /// `ScalarProgram::PointwiseF32` expression encoding (`0x24`).
     const STRICT_F32_REGION_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e7635000000000000000002000000000000000200000000000000030000000000000002010000000000010100000000000200020100000001010000000000000000000000020000000001000000000011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
+    /// Canonical identity of the one-committer `[2, 6] -> [2]` cooperative fixture.
+    ///
+    /// Captured against the bytes this tree encodes for that fixture so a
+    /// later payload move fails this pin rather than only the domain-separator
+    /// check. The new topology and binding tags must not appear here.
+    const ONE_COMMITTER_COOPERATIVE_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e763500000000000000000200000000000000020000000000000003000000000000000202000102000000000000000200000000000000020000000000000006000000000000000100000000000000020000000000000001000000010100000000000300020100000001010000000000000000000000020000000002001200000000000000020000000000000002000000000000000600000000000000010000000000000002000000000000000100000001010000000103001100000000000000020000000003000000000000000222000000000000000100000001017fc0000000000000000000000000001574696c65722e746573742e7374726963742d6633327fc00000010101020101010101000000000000000600000003010000000035000000000000000300000000000000020100000000000000010000000000000003000000000000000100000000000000010000000001000000000000000300000000000000010000000000000002000000000000000000000000000000000000000300000000000000010000000000000000000000010000000000000001000000000000000000000000000000010000000000000000000000010000000000000000000000000000000300000000000000000000000000000001000000000000000000000001000000000000000000000000000000000000000000000003000000000000000100000000010202010002010000000000000001000000000000000000000000000000030100000000000000000000000000000001000000000000000100000001010301000100000000000000060000000301";
 
     /// The same region's identity under `tiler.schedule.v4`.
     ///
@@ -4736,7 +4974,8 @@ mod tests {
             } => *permits_reassociation = false,
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
-            | ReductionTopology::Contraction { .. } => {
+            | ReductionTopology::Contraction { .. }
+            | ReductionTopology::CooperativeContraction { .. } => {
                 panic!("the fixture has a parallel reduction")
             }
         }
@@ -7657,6 +7896,418 @@ mod tests {
         let mut tile = cooperative_tile_fixture();
         edit(&mut tile);
         tile
+    }
+
+    // ---- Operand-sharing cooperative contraction -------------------------
+    //
+    // Exact-divisible first pass: a 32×32 output blocked 16×16, K = 16 tiled
+    // by 16, every participant committing its own output. The staged accesses
+    // are ADR 0097's four measured spans. The one-committer fixtures above are
+    // untouched.
+
+    const OUTPUT_EXTENT: u64 = 32;
+    const OUTPUT_BLOCK: u64 = 16;
+    const CONTRACTED_EXTENT: u64 = 16;
+    const CONTRACTED_TILE: u64 = 16;
+    const OUTPUT_POSITIONS: u64 = OUTPUT_EXTENT * OUTPUT_EXTENT;
+
+    fn operand_tile_fixture() -> CooperativeTile {
+        let participants = ParticipantSpace::new(&[OUTPUT_BLOCK, OUTPUT_BLOCK])
+            .expect("rank two is within the bound");
+        let range = ParticipantRange {
+            first: 0,
+            count: TILE_PARTICIPANTS,
+        };
+        let a = StagingId::FIRST;
+        let b = StagingId::new(1);
+        let tile = CooperativeTile {
+            coordinates: LocalCoordinates {
+                source: LocalCoordinateSource::LocalWorkgroupPosition,
+                participants,
+            },
+            rounds: 1,
+            staging: vec![
+                tile_staging(TILE_PARTICIPANTS, PhaseId::new(1)),
+                WorkgroupStaging {
+                    id: b,
+                    ..tile_staging(TILE_PARTICIPANTS, PhaseId::new(1))
+                },
+            ],
+            phases: vec![
+                CooperativePhase {
+                    id: PhaseId::FIRST,
+                    participation: range,
+                    writes: vec![
+                        StagedWrite {
+                            staging: a,
+                            span: StagedSpan::new(&[OUTPUT_BLOCK, 1], 0, 1)
+                                .expect("rank two is within the bound"),
+                        },
+                        StagedWrite {
+                            staging: b,
+                            span: StagedSpan::new(&[1, OUTPUT_BLOCK], 0, 1)
+                                .expect("rank two is within the bound"),
+                        },
+                    ],
+                    reads: Vec::new(),
+                },
+                CooperativePhase {
+                    id: PhaseId::new(1),
+                    participation: range,
+                    writes: Vec::new(),
+                    reads: vec![
+                        StagedRead {
+                            staging: a,
+                            span: StagedSpan::new(&[OUTPUT_BLOCK, 0], 0, OUTPUT_BLOCK)
+                                .expect("rank two is within the bound"),
+                        },
+                        StagedRead {
+                            staging: b,
+                            span: StagedSpan::new(&[0, OUTPUT_BLOCK], 0, OUTPUT_BLOCK)
+                                .expect("rank two is within the bound"),
+                        },
+                    ],
+                },
+            ],
+            synchronization: Vec::new(),
+            commit: range,
+        };
+        let subject =
+            required_subject(&tile.visibility_edges()).expect("the handoff states one subject");
+        CooperativeTile {
+            synchronization: vec![SynchronizationPoint {
+                id: SyncPointId::FIRST,
+                subject,
+                placement: SynchronizationPlacement::PhaseBoundary {
+                    preceding: PhaseId::FIRST,
+                    following: PhaseId::new(1),
+                },
+                participants: range,
+                convergence: ConvergenceEvidence::EveryParticipantReachesThePoint,
+            }],
+            ..tile
+        }
+    }
+
+    fn operand_contraction_builder(
+        admitted: &crate::schedule::ExactCooperativeContraction,
+        tile: CooperativeTile,
+    ) -> ScheduledRegionBuilder {
+        let output = Shape::from_dims([OUTPUT_EXTENT, OUTPUT_EXTENT]);
+        let contracted = Shape::from_dims([CONTRACTED_EXTENT]);
+        let left = Shape::from_dims([OUTPUT_EXTENT, CONTRACTED_EXTENT]);
+        let right = Shape::from_dims([OUTPUT_EXTENT, CONTRACTED_EXTENT]);
+        let operand_map = |free_position, operand: Shape| LogicalAccess::ContractionOperand {
+            operand_shape: operand,
+            output_shape: output.clone(),
+            contracted_shape: contracted.clone(),
+            sources: vec![
+                ContractionAxisSource::Output {
+                    position: free_position,
+                },
+                ContractionAxisSource::Contracted { position: 0 },
+            ],
+            order: ContributorOrder::OriginalAxisLexicographic,
+        };
+        let mut builder = ScheduledRegionBuilder::new(RegionId::new(7));
+        builder.iteration_shape(output.clone()).unwrap();
+        for (witness, ordinal, map) in [
+            (0, 0, operand_map(0, left.clone())),
+            (1, 1, operand_map(1, right.clone())),
+        ] {
+            builder
+                .push_access(Access {
+                    tensor: TensorRole::Input {
+                        ordinal: InputOrdinal::new(ordinal),
+                    },
+                    component_role: None,
+                    mode: AccessMode::Read,
+                    map,
+                    bounds: BoundsWitnessId::new(witness),
+                    ownership: None,
+                })
+                .unwrap();
+            builder
+                .push_bounds_proof(BoundsProof {
+                    id: BoundsWitnessId::new(witness),
+                    tensor: TensorRole::Input {
+                        ordinal: InputOrdinal::new(ordinal),
+                    },
+                    component_role: None,
+                    kind: BoundsProofKind::LinearRange {
+                        element_count: OUTPUT_EXTENT * CONTRACTED_EXTENT,
+                    },
+                })
+                .unwrap();
+        }
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Output,
+                component_role: None,
+                mode: AccessMode::Write,
+                map: LogicalAccess::LinearIdentity,
+                bounds: BoundsWitnessId::new(2),
+                ownership: Some(OwnershipWitnessId::new(0)),
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(2),
+                tensor: TensorRole::Output,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: OUTPUT_POSITIONS,
+                },
+            })
+            .unwrap();
+        builder
+            .ownership_proof(OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: TensorRole::Output,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                    output_count: OUTPUT_POSITIONS,
+                },
+            })
+            .unwrap();
+        builder
+            .scalar_program(ScalarProgram::StrictTensorContraction {
+                contracted_shape: contracted.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: 0x7fc0_0000,
+            })
+            .unwrap();
+        builder.numerical(reassociating_numerical()).unwrap();
+        let threads = u32::try_from(TILE_PARTICIPANTS).expect("256 fits u32");
+        builder
+            .schedule(KernelSchedule {
+                binding: admitted.binding.clone(),
+                work_items: OUTPUT_POSITIONS,
+                threads_per_workgroup: threads,
+                tail: TailPolicy::Exact,
+                output_owner: OwnershipWitnessId::new(0),
+                reduction: ReductionTopology::CooperativeContraction {
+                    tile,
+                    contracted_shape: contracted,
+                    contracted_tile: admitted.contracted_tile.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    accumulation: ArithmeticType::F32,
+                    permits_reassociation: true,
+                    permits_permutation: false,
+                },
+                launch: LaunchPlan {
+                    grid_threads: OUTPUT_POSITIONS,
+                    threads_per_workgroup: threads,
+                    zero_work_skips_dispatch: true,
+                },
+            })
+            .unwrap();
+        builder
+    }
+
+    fn admitted_operand_tile() -> crate::schedule::ExactCooperativeContraction {
+        crate::schedule::admit_exact_cooperative_contraction(
+            &Shape::from_dims([OUTPUT_EXTENT, OUTPUT_EXTENT]),
+            &Shape::from_dims([OUTPUT_BLOCK, OUTPUT_BLOCK]),
+            &Shape::from_dims([CONTRACTED_EXTENT]),
+            &Shape::from_dims([CONTRACTED_TILE]),
+        )
+        .expect("the exact 32×32 / 16 tile divides")
+    }
+
+    /// An exactly tiled output domain verifies under the blocked binding.
+    #[test]
+    fn an_exact_cooperative_contraction_verifies_under_the_blocked_binding() {
+        let admitted = admitted_operand_tile();
+        assert_eq!(admitted.rounds, 1);
+        let verified = operand_contraction_builder(&admitted, operand_tile_fixture())
+            .build()
+            .expect("the exact-divisible operand-sharing tile verifies");
+        assert_eq!(verified.region().schedule.work_items, OUTPUT_POSITIONS);
+        assert_eq!(
+            verified.region().index.ownership_proof.kind,
+            OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: OUTPUT_POSITIONS,
+            }
+        );
+        let tile = cooperative_tile(&verified.region().schedule.reduction)
+            .expect("the topology carries its tile");
+        assert_eq!(tile.commit.count, TILE_PARTICIPANTS);
+        assert_eq!(verified.requirements().threads_per_workgroup, 256);
+    }
+
+    /// Preflight refuses a non-divisible output block by name.
+    #[test]
+    fn a_non_divisible_output_block_is_refused_in_preflight() {
+        let refusal = crate::schedule::admit_exact_cooperative_contraction(
+            &Shape::from_dims([33, OUTPUT_EXTENT]),
+            &Shape::from_dims([OUTPUT_BLOCK, OUTPUT_BLOCK]),
+            &Shape::from_dims([CONTRACTED_EXTENT]),
+            &Shape::from_dims([CONTRACTED_TILE]),
+        )
+        .expect_err("33 is not divisible by 16");
+        assert_eq!(
+            refusal,
+            crate::schedule::CooperativeContractionAdmission::OutputBlockNotDivisible {
+                axis: 0,
+                output: 33,
+                block: OUTPUT_BLOCK,
+            }
+        );
+        assert_eq!(
+            refusal.rule(),
+            "cooperative-contraction-output-block-not-divisible"
+        );
+    }
+
+    /// Preflight refuses a non-divisible contracted tile by name.
+    #[test]
+    fn a_non_divisible_contracted_tile_is_refused_in_preflight() {
+        let refusal = crate::schedule::admit_exact_cooperative_contraction(
+            &Shape::from_dims([OUTPUT_EXTENT, OUTPUT_EXTENT]),
+            &Shape::from_dims([OUTPUT_BLOCK, OUTPUT_BLOCK]),
+            &Shape::from_dims([17]),
+            &Shape::from_dims([CONTRACTED_TILE]),
+        )
+        .expect_err("17 is not divisible by 16");
+        assert_eq!(
+            refusal,
+            crate::schedule::CooperativeContractionAdmission::ContractedTileNotDivisible {
+                axis: 0,
+                contracted: 17,
+                tile: CONTRACTED_TILE,
+            }
+        );
+        assert_eq!(
+            refusal.rule(),
+            "cooperative-contraction-contracted-tile-not-divisible"
+        );
+    }
+
+    /// Two invocations claiming one output is an overlap, not a gap.
+    #[test]
+    fn a_blocked_map_with_an_overlapping_axis_is_refused() {
+        let mut builder =
+            operand_contraction_builder(&admitted_operand_tile(), operand_tile_fixture());
+        let ExecutionBinding::BlockedWorkgroup { workgroups, .. } =
+            &mut builder.schedule.as_mut().unwrap().binding
+        else {
+            panic!("the fixture carries the blocked binding")
+        };
+        *workgroups = Shape::from_dims([3, 2]);
+        assert_eq!(
+            cooperative_rejection(builder),
+            ScheduledRegionDiagnostic::BlockedWorkgroup {
+                rule: BlockedWorkgroupRule::MappingOverlap,
+            }
+        );
+    }
+
+    /// An output coordinate with no preimage is a gap, not an overlap.
+    #[test]
+    fn a_blocked_map_with_a_gapped_axis_is_refused() {
+        let mut builder =
+            operand_contraction_builder(&admitted_operand_tile(), operand_tile_fixture());
+        let ExecutionBinding::BlockedWorkgroup { workgroups, .. } =
+            &mut builder.schedule.as_mut().unwrap().binding
+        else {
+            panic!("the fixture carries the blocked binding")
+        };
+        *workgroups = Shape::from_dims([1, 2]);
+        assert_eq!(
+            cooperative_rejection(builder),
+            ScheduledRegionDiagnostic::BlockedWorkgroup {
+                rule: BlockedWorkgroupRule::MappingGap,
+            }
+        );
+    }
+
+    /// Ownership is not `work_items / participants` merely because a tile is present.
+    #[test]
+    fn a_helper_that_infers_reduction_ownership_from_a_tile_is_refused() {
+        let mut builder =
+            operand_contraction_builder(&admitted_operand_tile(), operand_tile_fixture());
+        // The false helper would report 1024 / 256 = 4 owned positions.
+        builder.ownership_proof = Some(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 4 },
+        });
+        builder.bounds_proofs[2].kind = BoundsProofKind::LinearRange { element_count: 4 };
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::ProofReference]
+        );
+    }
+
+    /// The one-committer tile still refuses every participant committing.
+    #[test]
+    fn the_one_committer_tile_still_refuses_every_participant_committing() {
+        assert_eq!(
+            cooperative_rejection(perturbed(|tile| {
+                tile.commit = ParticipantRange { first: 0, count: 3 };
+            })),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::CommitOwnership,
+            }
+        );
+    }
+
+    /// The operand-sharing tile refuses a one-committer range.
+    #[test]
+    fn the_operand_sharing_tile_refuses_a_single_committer() {
+        let mut tile = operand_tile_fixture();
+        tile.commit = ParticipantRange { first: 0, count: 1 };
+        assert_eq!(
+            cooperative_rejection(operand_contraction_builder(&admitted_operand_tile(), tile)),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::OperandTileCommit,
+            }
+        );
+    }
+
+    /// The blocked binding is required; `GlobalLinearInvocation` is not a default.
+    #[test]
+    fn a_cooperative_contraction_without_the_blocked_binding_is_refused() {
+        let mut builder =
+            operand_contraction_builder(&admitted_operand_tile(), operand_tile_fixture());
+        builder.schedule.as_mut().unwrap().binding = ExecutionBinding::GlobalLinearInvocation;
+        assert_eq!(
+            cooperative_rejection(builder),
+            ScheduledRegionDiagnostic::BlockedWorkgroup {
+                rule: BlockedWorkgroupRule::BindingRequired,
+            }
+        );
+    }
+
+    /// Existing one-committer encodings keep their bytes.
+    #[test]
+    fn existing_one_committer_schedule_encodings_keep_their_bytes() {
+        let verified = cooperative_builder(cooperative_tile_fixture())
+            .build()
+            .expect("the one-committer fixture still verifies");
+        let bytes = verified.canonical_identity().as_bytes();
+        assert!(
+            bytes.starts_with(b"tiler.schedule.v5\0"),
+            "the schedule domain must not step"
+        );
+        assert!(
+            bytes.contains(&0x35),
+            "the one-committer topology tag must still appear"
+        );
+        assert!(
+            !bytes.contains(&0x37),
+            "the new topology tag must not appear in an old region"
+        );
+        // Binding tag 0x01 sits at a known offset after the numerical payload;
+        // the new 0x02 binding is an appended alternative, so an old region
+        // that still carries GlobalLinearInvocation cannot encode it.
+        let mut hex = String::new();
+        for byte in bytes {
+            write!(&mut hex, "{byte:02x}").unwrap();
+        }
+        // Pin of the one-committer `[2, 6] -> [2]` cooperative fixture at
+        // `4333df31`. A payload move here is a domain step nobody authorized.
+        assert_eq!(hex, ONE_COMMITTER_COOPERATIVE_IDENTITY_HEX);
     }
 
     #[test]

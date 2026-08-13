@@ -125,7 +125,8 @@ impl<'a> RealizationWitness<'a> {
             ReductionTopology::Serial { order, .. }
             | ReductionTopology::MultiPass { order, .. }
             | ReductionTopology::Contraction { order, .. }
-            | ReductionTopology::CooperativeWorkgroup { order, .. } => Some(*order),
+            | ReductionTopology::CooperativeWorkgroup { order, .. }
+            | ReductionTopology::CooperativeContraction { order, .. } => Some(*order),
         }
     }
 
@@ -143,7 +144,9 @@ impl<'a> RealizationWitness<'a> {
     #[must_use]
     pub fn reduced_axes(&self) -> &'a [Axis] {
         match self.reduction {
-            ReductionTopology::None | ReductionTopology::Contraction { .. } => &[],
+            ReductionTopology::None
+            | ReductionTopology::Contraction { .. }
+            | ReductionTopology::CooperativeContraction { .. } => &[],
             ReductionTopology::Serial { axes, .. }
             | ReductionTopology::MultiPass { axes, .. }
             | ReductionTopology::CooperativeWorkgroup { axes, .. } => axes,
@@ -164,6 +167,9 @@ impl<'a> RealizationWitness<'a> {
         match self.reduction {
             ReductionTopology::Contraction {
                 contracted_shape, ..
+            }
+            | ReductionTopology::CooperativeContraction {
+                contracted_shape, ..
             } => Some(contracted_shape),
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
@@ -180,7 +186,8 @@ impl<'a> RealizationWitness<'a> {
             | ReductionTopology::CooperativeWorkgroup { partition, .. } => Some(*partition),
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
-            | ReductionTopology::Contraction { .. } => None,
+            | ReductionTopology::Contraction { .. }
+            | ReductionTopology::CooperativeContraction { .. } => None,
         }
     }
 
@@ -199,7 +206,8 @@ impl<'a> RealizationWitness<'a> {
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
             | ReductionTopology::Contraction { .. }
-            | ReductionTopology::CooperativeWorkgroup { .. } => None,
+            | ReductionTopology::CooperativeWorkgroup { .. }
+            | ReductionTopology::CooperativeContraction { .. } => None,
         }
     }
 
@@ -224,7 +232,8 @@ impl<'a> RealizationWitness<'a> {
     pub fn accumulation(&self) -> ArithmeticType {
         match self.reduction {
             ReductionTopology::MultiPass { accumulation, .. }
-            | ReductionTopology::CooperativeWorkgroup { accumulation, .. } => *accumulation,
+            | ReductionTopology::CooperativeWorkgroup { accumulation, .. }
+            | ReductionTopology::CooperativeContraction { accumulation, .. } => *accumulation,
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
             | ReductionTopology::Contraction { .. } => region_arithmetic_type(self.program),
@@ -239,7 +248,8 @@ impl<'a> RealizationWitness<'a> {
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
             | ReductionTopology::MultiPass { .. }
-            | ReductionTopology::Contraction { .. } => None,
+            | ReductionTopology::Contraction { .. }
+            | ReductionTopology::CooperativeContraction { .. } => None,
         }
     }
 

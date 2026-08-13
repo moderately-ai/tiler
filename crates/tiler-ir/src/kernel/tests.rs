@@ -851,7 +851,7 @@ fn canonical_lowering_produces_a_verified_backend_consumable_kernel() {
 /// widened vocabulary admits two bodies, only that the vocabulary widened, which
 /// is the point at which a human has to look.
 fn body_shaping_vocabulary_is_closed(
-    binding: ExecutionBinding,
+    binding: &ExecutionBinding,
     tail: TailPolicy,
     access: &LogicalAccess,
     topology: &ReductionTopology,
@@ -866,6 +866,7 @@ fn body_shaping_vocabulary_is_closed(
     (
         match binding {
             ExecutionBinding::GlobalLinearInvocation => "global-linear-invocation",
+            ExecutionBinding::BlockedWorkgroup { .. } => "blocked-workgroup",
         },
         match tail {
             TailPolicy::Exact => "exact",
@@ -893,6 +894,7 @@ fn body_shaping_vocabulary_is_closed(
             } => "multi-pass-final",
             ReductionTopology::Contraction { .. } => "contraction",
             ReductionTopology::CooperativeWorkgroup { .. } => "cooperative-workgroup",
+            ReductionTopology::CooperativeContraction { .. } => "cooperative-contraction",
         },
         match program {
             ScalarProgram::PointwiseF32(_) => "pointwise-f32",
@@ -919,7 +921,7 @@ fn the_single_spelling_profile_is_still_narrow_enough_for_derive_and_compare() {
     let scheduled = pointwise_region(RegionId::new(0), &Shape::from_dims([2, 3]));
     let region = scheduled.region();
     let names = body_shaping_vocabulary_is_closed(
-        region.schedule.binding,
+        &region.schedule.binding,
         region.schedule.tail,
         &region.index.accesses[0].map,
         &region.schedule.reduction,

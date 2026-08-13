@@ -155,6 +155,19 @@ pub enum ScheduledRegionDiagnostic {
         /// The violated synchronization rule.
         rule: super::synchronization::SynchronizationRule,
     },
+    /// The blocked-workgroup execution binding is not a bijection from launched
+    /// invocations onto the declared output domain, or it is paired with the
+    /// wrong topology.
+    ///
+    /// Separate from [`Self::CooperativeTile`] and from
+    /// [`Self::LaunchCoverage`]: the tile rules police staging dataflow, and
+    /// launch coverage is the existing 1-D exact-cover equality. This names the
+    /// blocked map itself — overlap, gap, a missing required binding, or a
+    /// binding on a topology that does not use one.
+    BlockedWorkgroup {
+        /// The violated blocked-map rule.
+        rule: BlockedWorkgroupRule,
+    },
 }
 
 /// One violated rule of a cooperative workgroup tile's dataflow.
@@ -255,6 +268,13 @@ pub enum CooperativeTileRule {
     /// Collapsing the two would make a permitted-but-unrealizable arrival report
     /// a numerical refusal the caller could not act on.
     UnadmittedArrival,
+    /// An operand-sharing tile does not name every participant as a committer.
+    ///
+    /// The inverse of [`Self::CommitOwnership`]. The one-committer theorem stays
+    /// on [`crate::schedule::ReductionTopology::CooperativeWorkgroup`]; this
+    /// sibling requires the full participant run because every invocation owns
+    /// its own output position.
+    OperandTileCommit,
 }
 
 impl CooperativeTileRule {
@@ -280,6 +300,7 @@ impl CooperativeTileRule {
             Self::EmptyContributorDomain => "cooperative-empty-contributor-domain",
             Self::ArrivalPermission => "cooperative-arrival-permission",
             Self::UnadmittedArrival => "cooperative-unadmitted-arrival",
+            Self::OperandTileCommit => "cooperative-operand-tile-commit",
         }
     }
 }
@@ -290,6 +311,139 @@ impl fmt::Display for CooperativeTileRule {
     }
 }
 impl Error for CooperativeTileRule {}
+
+/// One violated rule of a blocked-workgroup execution binding.
+///
+/// Each variant is a property the binding *states*, so overlap and gap are
+/// separately perturbable: the model can express a map that claims two
+/// invocations for one output, or a map that leaves an output unowned, and
+/// refusing what cannot be stated would be a rule nothing could ever trip.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum BlockedWorkgroupRule {
+    /// The operand-sharing tile requires this binding and did not receive it.
+    BindingRequired,
+    /// A topology that does not use a blocked map carried one.
+    BindingForbidden,
+    /// The block, workgroup grid, and output ranks disagree.
+    RankMismatch,
+    /// Two launched invocations map to the same output coordinate.
+    MappingOverlap,
+    /// An output coordinate has no launched preimage.
+    MappingGap,
+    /// The launch width or work-item count disagrees with the block product.
+    LaunchGeometry,
+    /// The tile's participant space is not the binding's output block.
+    ParticipantBlockMismatch,
+}
+
+impl BlockedWorkgroupRule {
+    /// Returns the stable rule identifier for this blocked-map failure.
+    #[must_use]
+    pub const fn rule(self) -> &'static str {
+        match self {
+            Self::BindingRequired => "blocked-workgroup-binding-required",
+            Self::BindingForbidden => "blocked-workgroup-binding-forbidden",
+            Self::RankMismatch => "blocked-workgroup-rank-mismatch",
+            Self::MappingOverlap => "blocked-workgroup-mapping-overlap",
+            Self::MappingGap => "blocked-workgroup-mapping-gap",
+            Self::LaunchGeometry => "blocked-workgroup-launch-geometry",
+            Self::ParticipantBlockMismatch => "blocked-workgroup-participant-block-mismatch",
+        }
+    }
+}
+
+impl fmt::Display for BlockedWorkgroupRule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.rule())
+    }
+}
+impl Error for BlockedWorkgroupRule {}
+
+/// Typed preflight refusal for an exact-divisible cooperative contraction.
+///
+/// A caller selecting the tiled approach receives one of these when an
+/// exact-divisibility equality is absent or false. The function that returns
+/// this never substitutes the direct contraction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum CooperativeContractionAdmission {
+    /// An output extent is not divisible by its block extent.
+    OutputBlockNotDivisible {
+        /// Output axis, in the output shape's own order.
+        axis: usize,
+        /// Declared output extent on that axis.
+        output: u64,
+        /// Requested block extent on that axis.
+        block: u64,
+    },
+    /// A contracted extent is not divisible by its tile width.
+    ContractedTileNotDivisible {
+        /// Contracted axis, in the contracted shape's own order.
+        axis: usize,
+        /// Declared contracted extent on that axis.
+        contracted: u64,
+        /// Requested tile extent on that axis.
+        tile: u64,
+    },
+    /// The output shape and the output block have different ranks.
+    OutputBlockRankMismatch {
+        /// Rank of the declared output.
+        output_rank: usize,
+        /// Rank of the requested block.
+        block_rank: usize,
+    },
+    /// The contracted shape and the contracted tile have different ranks.
+    ContractedTileRankMismatch {
+        /// Rank of the declared contracted space.
+        contracted_rank: usize,
+        /// Rank of the requested contracted tile.
+        tile_rank: usize,
+    },
+    /// A block extent is zero, so no invocation owns that axis.
+    EmptyOutputBlock {
+        /// Output axis whose block extent is zero.
+        axis: usize,
+    },
+    /// A contracted tile extent is zero, so no tile covers that axis.
+    EmptyContractedTile {
+        /// Contracted axis whose tile extent is zero.
+        axis: usize,
+    },
+    /// A workgroup-grid or tile-count product overflowed `u64`.
+    ShapeProductOverflow,
+}
+
+impl CooperativeContractionAdmission {
+    /// Returns the stable preflight-rule identifier for this refusal.
+    #[must_use]
+    pub const fn rule(self) -> &'static str {
+        match self {
+            Self::OutputBlockNotDivisible { .. } => {
+                "cooperative-contraction-output-block-not-divisible"
+            }
+            Self::ContractedTileNotDivisible { .. } => {
+                "cooperative-contraction-contracted-tile-not-divisible"
+            }
+            Self::OutputBlockRankMismatch { .. } => {
+                "cooperative-contraction-output-block-rank-mismatch"
+            }
+            Self::ContractedTileRankMismatch { .. } => {
+                "cooperative-contraction-contracted-tile-rank-mismatch"
+            }
+            Self::EmptyOutputBlock { .. } => "cooperative-contraction-empty-output-block",
+            Self::EmptyContractedTile { .. } => "cooperative-contraction-empty-contracted-tile",
+            Self::ShapeProductOverflow => "cooperative-contraction-shape-product-overflow",
+        }
+    }
+}
+
+impl fmt::Display for CooperativeContractionAdmission {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.rule())
+    }
+}
+impl Error for CooperativeContractionAdmission {}
 
 impl ScheduledRegionDiagnostic {
     /// Returns the stable intrinsic-rule identifier for this diagnostic.
@@ -308,6 +462,7 @@ impl ScheduledRegionDiagnostic {
             Self::ShapeProductOverflow => "shape-product-overflow",
             Self::CooperativeTile { rule } => rule.rule(),
             Self::Synchronization { rule } => rule.rule(),
+            Self::BlockedWorkgroup { rule } => rule.rule(),
         }
     }
 }

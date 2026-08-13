@@ -133,6 +133,7 @@
 //! # }
 //! ```
 
+mod blocked;
 mod builder;
 mod cooperative;
 mod error;
@@ -145,6 +146,9 @@ mod pointwise_bf16;
 mod synchronization;
 mod witness;
 
+pub use blocked::{
+    ExactCooperativeContraction, admit_exact_cooperative_contraction, prove_blocked_bijection,
+};
 pub use builder::ScheduledRegionBuilder;
 pub use cooperative::{
     AntiDependencyEdge, ContributorArrival, CooperativePhase, CooperativeTile,
@@ -152,8 +156,9 @@ pub use cooperative::{
     StagedRead, StagedSpan, StagedWrite, VisibilityEdge, WorkgroupStaging, workgroup_tree_tile,
 };
 pub use error::{
-    ContributorError, CooperativeTileRule, ElementCountOverflow, ScheduleBuildError,
-    ScheduleComponent, ScheduleLimitKind, ScheduledRegionBuildError, ScheduledRegionDiagnostic,
+    BlockedWorkgroupRule, ContributorError, CooperativeContractionAdmission, CooperativeTileRule,
+    ElementCountOverflow, ScheduleBuildError, ScheduleComponent, ScheduleLimitKind,
+    ScheduledRegionBuildError, ScheduledRegionDiagnostic,
 };
 pub use handles::{
     BoundsWitnessId, InputOrdinal, OwnershipWitnessId, PhaseId, RegionId, StagingId, SyncPointId,

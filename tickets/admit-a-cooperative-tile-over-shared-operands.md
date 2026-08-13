@@ -1,7 +1,7 @@
 ---
 id: admit-a-cooperative-tile-over-shared-operands
 title: Admit a cooperative tile whose participants share operands rather than one output
-status: in-progress
+status: review
 priority: p1
 dependencies: [admit-a-two-dimensional-cooperative-staging-relation]
 related: [realize-the-strict-contraction-on-metal, realize-the-tiled-contraction-schedule-and-its-metal-emission, implement-the-single-workgroup-synchronized-reduction-strategy, admit-guarded-output-tails-for-cooperative-contraction]
@@ -70,3 +70,42 @@ An exact-divisible cooperative contraction verifies under its explicit blocked e
 ## Trigger check log
 
 - 2026-08-04 — **half fired; stays `deferred`, and the half that has not fired is Tom's.** The activation trigger is a conjunction. Its first conjunct **has** fired: [`admit-a-two-dimensional-cooperative-staging-relation`](admit-a-two-dimensional-cooperative-staging-relation.md) is `done`, so the staged relation this tile's reads need is expressible. Its second conjunct has not: Tom has accepted neither of the two public boundaries this ticket requires. Checked rather than assumed — `OwnershipProofKind`, source anchor `pub enum OwnershipProofKind`, still declares exactly one variant, `OneGlobalInvocationPerOutput`, so the new proof kind does not exist, and `verify_cooperative_tile` still refuses `tile.commit.count != 1` under `CooperativeTileRule::CommitOwnership`, so the second tile relation does not either. **Reactivating on the landed dependency alone would assert an acceptance nobody relayed**, which is a product boundary this sweep does not cross; it is recorded here instead so the next reader sees one conjunct outstanding rather than two. Recheck: `rg -n 'enum OwnershipProofKind' crates/tiler-ir/src/schedule/model.rs`.
+
+## Fact audit — 2026-08-13, exact base `4333df31`
+
+1. **Verified.** `verify_cooperative_tile` still refuses `tile.commit.count != 1` under `CooperativeTileRule::CommitOwnership`. Source anchor: `if tile.commit.count != 1 || !participants.contains_range(tile.commit)`. The one-committer path still uses that rule; the sibling uses a new `OperandTileCommit` rule instead of weakening it.
+2. **Verified.** `ReductionTopology::CooperativeWorkgroup` and `OwnershipProofKind::OneGlobalInvocationPerOutput` exist and were not weakened. The proof kind still has that one variant.
+3. **Coordinator-unverified, now read.** `owned_output_positions` previously divided `work_items` by the participant count whenever `cooperative_tile` returned a tile. That helper inferred one-committer ownership from the mere presence of a tile. It now matches `CooperativeWorkgroup` only. `reduction_output_shape` still appends a trailing participant axis only for `CooperativeWorkgroup` (and multi-pass partial); `CooperativeContraction` keeps the iteration shape as the output. `ExecutionBinding` had only `GlobalLinearInvocation`, encoded as `0x01`. Schedule identity is `tiler.schedule.v5`. The two-dimensional staging relation is `done` and is what the tile's four staged accesses use.
+
+## Outcome — 2026-08-13
+
+Exact-divisible first pass as accepted 2026-08-11.
+
+- `ReductionTopology::CooperativeContraction` (labelled draft) reuses `CooperativeTile`, with its own semantic / commit / coverage / shape verifier.
+- `ExecutionBinding::BlockedWorkgroup { block, workgroups }` (labelled draft) is required, never defaulted. The verifier proves `workgroups[d] * block[d] == output[d]` per axis: greater is overlap, lesser is gap.
+- Owning write stays `LogicalAccess::LinearIdentity`. Proof kind stays `OneGlobalInvocationPerOutput`. No new access map, no new proof kind, no `tiler.schedule.v6`.
+- `admit_exact_cooperative_contraction` is the typed preflight. It never returns a direct `Contraction` schedule.
+- Kernel lowering refuses the new topology as `CooperativeLoweringShape` (Metal body is out of scope).
+
+### New identity tags
+
+| Site | Tag | Meaning |
+| --- | --- | --- |
+| `ExecutionBinding::BlockedWorkgroup` | `0x02` | appended; `GlobalLinearInvocation` keeps `0x01` |
+| `ReductionTopology::CooperativeContraction` | `0x37` | appended. `0x36` is reserved for the accepted `CooperativeContractionSplit` spelling and is not consumed |
+
+### Identity blast radius
+
+Existing one-committer `[2, 6] -> [2]` cooperative fixture bytes are identical to the encoding at `4333df31`, pinned as `ONE_COMMITTER_COOPERATIVE_IDENTITY_HEX`. `STRICT_F32_REGION_IDENTITY_HEX` is unchanged. Domain remains `tiler.schedule.v5`.
+
+### Quoted perturbations
+
+- Overlap (`workgroups = [3, 2]` over `[32, 32]` / `[16, 16]`): `blocked-workgroup-mapping-overlap`
+- Gap (`workgroups = [1, 2]`): `blocked-workgroup-mapping-gap`
+- Non-divisible output (`33` / `16`): `cooperative-contraction-output-block-not-divisible` (`OutputBlockNotDivisible { axis: 0, output: 33, block: 16 }`)
+- Non-divisible K (`17` / `16`): `cooperative-contraction-contracted-tile-not-divisible` (`ContractedTileNotDivisible { axis: 0, contracted: 17, tile: 16 }`)
+- Helper inferring ownership from a tile (`output_count: 4` on a 1024-position tile): `proof-reference`
+- One-committer still refuses every participant committing: `cooperative-commit-ownership`
+- Operand-sharing tile refuses a single committer: `cooperative-operand-tile-commit`
+
+Status `review`. Not merged. Not `done`.
