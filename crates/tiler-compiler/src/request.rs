@@ -23,7 +23,7 @@ use tiler_ir::semantic::{
     constant_f32_op, multiply_bf16_op, multiply_f32_op, reindex_f32_op, silu_f32_op,
     strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
-use tiler_ir::shape::{Axis, Extent, Shape};
+use tiler_ir::shape::{Axis, Extent, ExtentSources, Shape, SourcedExtent};
 
 // The numerical-realization vocabulary is target-neutral and owned by the shared
 // IR (ADR 0070); the compiler contract references it rather than duplicating it.
@@ -220,16 +220,19 @@ fn canonical_contract_key(
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct StaticShapeEnvironment {
-    schema_version: u32,
-}
-
-impl StaticShapeEnvironment {
-    pub(crate) const fn governed() -> Self {
-        Self {
-            schema_version: REQUEST_SCHEMA_VERSION,
-        }
+/// Returns whether the request carries the program's own environment.
+///
+/// Compared by the inner `ShapeEnv` pointer, not by a second constructed
+/// wrapper: two `ExtentSources` over one `Arc<ShapeEnv>` are one environment,
+/// and two independently built environments are two even when their identities
+/// happen to encode alike. That is the ambiguity
+/// [`tiler_ir::index::IndexRegionBuilder::new_with_shape_environment`] exists
+/// to prevent.
+fn carries_program_environment(carried: Option<&ExtentSources>, program: &SemanticProgram) -> bool {
+    match (carried, program.extent_sources()) {
+        (None, None) => true,
+        (Some(carried), Some(owned)) => std::ptr::eq(carried.environment(), owned.environment()),
+        _ => false,
     }
 }
 
@@ -1415,7 +1418,14 @@ impl Eq for CompilerCapabilitySnapshot {}
 #[derive(Clone, Debug)]
 pub(crate) struct CompilationRequest<'a> {
     pub(crate) program: &'a SemanticProgram,
-    pub(crate) shape_environment: StaticShapeEnvironment,
+    /// The program's own environment, never a second caller-supplied one.
+    ///
+    /// `None` when the program has only literal extents. Two environments over
+    /// one program is the ambiguity
+    /// [`tiler_ir::index::IndexRegionBuilder::new_with_shape_environment`]
+    /// exists to prevent; [`verify_request`] refuses a request that does not
+    /// carry this exact environment.
+    pub(crate) shape_environment: Option<&'a ExtentSources>,
     /// The caller's ordered numerical-contract preference. Required, with no
     /// `Default` and no ambient fallback (ADR 0076 item 2).
     pub(crate) numerical_contracts: NumericalContractPreference,
@@ -1427,10 +1437,11 @@ pub(crate) struct CompilationRequest<'a> {
 impl CompilationRequest<'_> {
     /// Builds the fixed governed compilation-request fixture.
     ///
-    /// Conformance and unit tests use this exact combination of governed static
-    /// shape environment, strict-`f32` numerical contract, deterministic budgets,
-    /// target profile, and installed lowering capabilities. Production resolves
-    /// the public caller's stated preference through [`Self::governed_preferring`].
+    /// Conformance and unit tests use this exact combination of the program's
+    /// own shape environment, strict-`f32` numerical contract, deterministic
+    /// budgets, target profile, and installed lowering capabilities. Production
+    /// resolves the public caller's stated preference through
+    /// [`Self::governed_preferring`].
     #[allow(
         dead_code,
         reason = "crate-internal fixed governed fixture used by conformance and unit tests; the public CompileRequest path resolves caller preferences through governed_preferring until a production caller needs this exact fixture"
@@ -1466,7 +1477,7 @@ impl CompilationRequest<'_> {
     ) -> CompilationRequest<'_> {
         CompilationRequest {
             program,
-            shape_environment: StaticShapeEnvironment::governed(),
+            shape_environment: program.extent_sources(),
             numerical_contracts,
             budgets: DeterministicBudgets::governed(),
             target_profiles: vec![TargetProfile::governed()],
@@ -4256,6 +4267,15 @@ pub(crate) enum DTypeDispatchRefusalDisposition {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RequestError {
     UnsupportedRequestVersion,
+    /// The request carried a shape environment that is not the program's own.
+    ///
+    /// Two environments over one program is the ambiguity
+    /// [`tiler_ir::index::IndexRegionBuilder::new_with_shape_environment`]
+    /// exists to prevent. Dropping the program's environment, or attaching a
+    /// different one, is this refusal rather than
+    /// [`Self::UnsupportedRequestVersion`]: the schema is current and the
+    /// authority that is wrong is the environment pairing.
+    MismatchedShapeEnvironment,
     EmptyTargetSet,
     DuplicateTargetProfile,
     UnverifiedTargetSelection,
@@ -4342,6 +4362,21 @@ pub(crate) enum RequestError {
         phase: &'static str,
         rule: &'static str,
     },
+    /// A strategy or later capability stated over fixed extents met a symbolic one.
+    ///
+    /// Named by the extent as written, never by a specialized value. A bound
+    /// symbol is still this refusal: specializing it into the logical plan is a
+    /// physical-planning decision this boundary must not make. Distinct from
+    /// [`Self::UnsupportedCapability`]: that variant names a handle, signature,
+    /// or other rule that happened to observe the shape, which is the
+    /// mis-attribution this refusal exists to close.
+    UnsupportedSymbolicExtent {
+        phase: &'static str,
+        /// The capability that cannot plan over the extent.
+        rule: &'static str,
+        /// The extent as written. Never a value the environment determines.
+        extent: SourcedExtent,
+    },
     /// The target declares no realization refining a registered elementary
     /// accuracy contract this program's operations carry.
     ///
@@ -4385,8 +4420,11 @@ impl fmt::Display for RequestError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnsupportedRequestVersion => {
-                formatter.write_str("compile.request.schema: unsupported static shape environment")
+                formatter.write_str("compile.request.schema: unsupported request schema")
             }
+            Self::MismatchedShapeEnvironment => formatter.write_str(
+                "compile.request.shape-environment: request must carry the program's own environment",
+            ),
             Self::EmptyTargetSet => formatter
                 .write_str("compile.request.targets.empty: at least one target is required"),
             Self::DuplicateTargetProfile => formatter
@@ -4465,6 +4503,14 @@ impl fmt::Display for RequestError {
                     "compile.unsupported.{phase}.{rule}: no installed capability can compile this valid semantic program"
                 )
             }
+            Self::UnsupportedSymbolicExtent {
+                phase,
+                rule,
+                extent,
+            } => write!(
+                formatter,
+                "compile.{phase}.{rule}: {extent} is a symbolic extent this capability cannot plan over"
+            ),
             Self::UnrealizedElementaryAccuracy {
                 operation,
                 target_profile,
@@ -4498,8 +4544,8 @@ impl Error for RequestError {}
 pub(crate) fn verify_request(
     request: CompilationRequest<'_>,
 ) -> Result<VerifiedRequest, RequestError> {
-    if request.shape_environment != StaticShapeEnvironment::governed() {
-        return Err(RequestError::UnsupportedRequestVersion);
+    if !carries_program_environment(request.shape_environment, request.program) {
+        return Err(RequestError::MismatchedShapeEnvironment);
     }
     if request.capabilities.schema_version != REQUEST_SCHEMA_VERSION {
         return Err(RequestError::UnsupportedRequestVersion);
@@ -7699,25 +7745,40 @@ fn reduction_axes(
 /// derived from, an element count, a reindex or broadcast axis decode. A
 /// symbolic extent is refused here rather than resolved through the
 /// environment, which would make the recognized region name extents nobody
-/// wrote. It shares the caller's rule string so a refusal still names the
-/// boundary that could not be read.
+/// wrote.
+///
+/// The refusal names the extent as written, not the handle lookup that
+/// observed it. A bound symbol is still this refusal: specializing it into the
+/// logical plan is a physical-planning decision this boundary must not make.
 ///
 /// # Errors
 ///
-/// Returns [`RequestError::UnsupportedCapability`] for a foreign handle and for
-/// a shape naming a declared symbol; the two are one refusal because either way
-/// this phase has no fixed shape to plan over.
+/// Returns [`RequestError::UnsupportedCapability`] for a foreign handle, and
+/// [`RequestError::UnsupportedSymbolicExtent`] naming the first non-static
+/// extent when the value's shape is symbolic.
 fn static_shape(
     program: &SemanticProgram,
     value: ValueId,
     rule: &'static str,
 ) -> Result<Shape, RequestError> {
-    static_shape_ref(program, value)
-        .cloned()
-        .ok_or(RequestError::UnsupportedCapability {
+    let sourced = program
+        .shape(value)
+        .map_err(|_| RequestError::UnsupportedCapability {
             phase: "strategy",
             rule,
-        })
+        })?;
+    if let Some(shape) = sourced.as_static() {
+        return Ok(shape.clone());
+    }
+    let extent = sourced
+        .extents()
+        .find(|extent| extent.as_static().is_none())
+        .expect("a non-static SourcedShape holds at least one symbol");
+    Err(RequestError::UnsupportedSymbolicExtent {
+        phase: "strategy",
+        rule: "symbolic-extent",
+        extent,
+    })
 }
 
 /// Returns one value's fixed shape, or `None` for a foreign or symbolic one.
@@ -7777,6 +7838,10 @@ mod tests {
         SemanticRegistryProvider, SemanticRegistryRegistrar, StrictSerialF32Sum,
         TypeDefinitionFacts, ValueFact, ValueTypeDefinition, ValueTypeDefinitionKey,
         gather_index_resolved_type,
+    };
+    use tiler_ir::shape::{
+        BindingSource, ExtentRelation, ExtentTerm, FactProvenance, RootBinding,
+        SemanticInputConstraint, ShapeEnv, ShapeEnvBuilder, ShapeSymbol, SymbolScope,
     };
 
     fn diagnostic_code(value: &str) -> ProviderDiagnosticCode {
@@ -11954,6 +12019,213 @@ mod tests {
         assert_ne!(
             first.semantic_identity.registry_snapshot(),
             second.semantic_identity.registry_snapshot()
+        );
+    }
+
+    fn request_symbol(name: &str) -> ShapeSymbol {
+        ShapeSymbol::new(SymbolScope::new("program/0").unwrap(), name).unwrap()
+    }
+
+    fn request_axis_binding(input: &str, axis: u32) -> RootBinding {
+        RootBinding::new(
+            BindingSource::InputDimension {
+                input: InputKey::new(input).unwrap(),
+                axis: Axis::new(axis),
+            },
+            AvailabilityPhase::LiveDevicePreflight,
+            FactProvenance::RuntimeValidated,
+        )
+        .unwrap()
+    }
+
+    fn request_environment(bound_to: Option<u64>) -> Arc<ShapeEnv> {
+        let mut draft = ShapeEnvBuilder::new();
+        let declared = request_symbol("n");
+        draft.declare(declared.clone()).unwrap();
+        draft.bind(&declared, request_axis_binding("a", 0)).unwrap();
+        if let Some(value) = bound_to {
+            draft
+                .require(SemanticInputConstraint::new(
+                    ExtentRelation::equal(
+                        ExtentTerm::Symbol(declared),
+                        ExtentTerm::Constant(value),
+                    ),
+                    FactProvenance::FrontendRequired,
+                ))
+                .unwrap();
+        }
+        Arc::new(draft.build().unwrap())
+    }
+
+    /// `(a * b) + c` over three rank-one `f32` inputs of one sourced extent.
+    fn three_input_elementwise_with(
+        environment: Option<Arc<ShapeEnv>>,
+        extents: &[SourcedExtent],
+    ) -> SemanticProgram {
+        let mut builder = match environment {
+            Some(environment) => {
+                SemanticProgramBuilder::try_standard_with_shape_environment(environment).unwrap()
+            }
+            None => SemanticProgramBuilder::try_standard().unwrap(),
+        };
+        let inputs: Vec<_> = ["a", "b", "c"]
+            .into_iter()
+            .map(|key| {
+                builder
+                    .input_sourced::<F32>(InputKey::new(key).unwrap(), extents.to_vec())
+                    .unwrap()
+            })
+            .collect();
+        let product = F32Multiply::apply(&mut builder, inputs[0], inputs[1]).unwrap();
+        let root = F32Add::apply(&mut builder, product, inputs[2]).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    fn symbolic_three_input_elementwise(bound_to: Option<u64>) -> SemanticProgram {
+        three_input_elementwise_with(
+            Some(request_environment(bound_to)),
+            &[SourcedExtent::Symbol(request_symbol("n"))],
+        )
+    }
+
+    fn literal_three_input_elementwise(extent: u64) -> SemanticProgram {
+        three_input_elementwise_with(None, &[SourcedExtent::Static(Extent::new(extent))])
+    }
+
+    fn first_symbolic_extent(program: &SemanticProgram) -> SourcedExtent {
+        program
+            .inputs()
+            .next()
+            .and_then(|input| program.shape(input.value()).ok())
+            .and_then(|shape| shape.extents().find(|extent| extent.as_static().is_none()))
+            .expect("the symbolic fixture names at least one symbol")
+    }
+
+    /// A symbolic program is admitted as far as strategy selection.
+    ///
+    /// The leftover version gate is gone: the request carries the program's own
+    /// environment and the refusal is the strategy's, not
+    /// `UnsupportedRequestVersion`. Watched failing under a deliberate
+    /// perturbation: dropping `shape_environment` from `governed_preferring`
+    /// makes the same program refuse as `MismatchedShapeEnvironment` before
+    /// recognition runs.
+    #[test]
+    fn a_symbolic_program_reaches_strategy_selection() {
+        let program = symbolic_three_input_elementwise(None);
+        let request = CompilationRequest::governed(&program);
+        assert!(
+            std::ptr::eq(
+                request
+                    .shape_environment
+                    .expect("a symbolic program carries its environment")
+                    .environment(),
+                program
+                    .extent_sources()
+                    .expect("the constructed program owns its environment")
+                    .environment(),
+            ),
+            "the request must carry the program's own environment, not a second one",
+        );
+        match verify_request(request) {
+            Err(RequestError::UnsupportedSymbolicExtent {
+                phase: "strategy",
+                rule: "symbolic-extent",
+                extent,
+            }) => {
+                assert_eq!(extent, SourcedExtent::Symbol(request_symbol("n")));
+            }
+            other => match other {
+                Ok(_) => panic!(
+                    "a well-formed symbolic request must reach strategy selection, got Planned/Refused"
+                ),
+                Err(error) => panic!(
+                    "a well-formed symbolic request must reach strategy selection, got {error}"
+                ),
+            },
+        }
+    }
+
+    /// An unsupported symbolic case names the extent; the literal neighbour compiles.
+    ///
+    /// Watched failing under a deliberate perturbation: restoring
+    /// `static_shape`'s handle-rule attribution makes the symbolic program
+    /// refuse as `UnsupportedCapability { rule: "output-handle" }` and the
+    /// extent is no longer in the diagnostic.
+    #[test]
+    fn an_unsupported_symbolic_case_names_the_extent_and_the_literal_neighbour_compiles() {
+        let symbolic = symbolic_three_input_elementwise(None);
+        let extent = first_symbolic_extent(&symbolic);
+        assert_eq!(extent, SourcedExtent::Symbol(request_symbol("n")));
+        assert_eq!(
+            verify_planned_request(CompilationRequest::governed(&symbolic)),
+            Err(RequestError::UnsupportedSymbolicExtent {
+                phase: "strategy",
+                rule: "symbolic-extent",
+                extent,
+            }),
+        );
+
+        let literal = literal_three_input_elementwise(4);
+        crate::pipeline::compile(CompilationRequest::governed(&literal))
+            .expect("the literal neighbour of the symbolic elementwise program still compiles");
+    }
+
+    /// A bound symbol is not folded into the logical plan.
+    ///
+    /// The environment pins `n` to 4. The program still names the symbol, the
+    /// request still carries that environment, and compilation still refuses
+    /// the symbol rather than emitting a `[4]` plan. Watched failing under a
+    /// deliberate perturbation: resolving the symbol through the environment
+    /// inside `static_shape` replaces the named-extent refusal with a
+    /// mis-attributed `elementwise-shape` capability refusal.
+    #[test]
+    fn a_compiled_plan_does_not_fold_a_bound_extent_value() {
+        let bound = symbolic_three_input_elementwise(Some(4));
+        let extent = first_symbolic_extent(&bound);
+        assert_eq!(
+            extent,
+            SourcedExtent::Symbol(request_symbol("n")),
+            "a constraint that pins n to 4 must not rewrite the authored shape",
+        );
+        for value in bound.values() {
+            assert_eq!(
+                value.shape().as_static(),
+                None,
+                "no authored boundary may collapse to the bound value",
+            );
+        }
+        assert_eq!(
+            verify_planned_request(CompilationRequest::governed(&bound)),
+            Err(RequestError::UnsupportedSymbolicExtent {
+                phase: "strategy",
+                rule: "symbolic-extent",
+                extent,
+            }),
+            "a bound symbol must still be refused as the symbol, not compiled as 4",
+        );
+
+        let literal = literal_three_input_elementwise(4);
+        crate::pipeline::compile(CompilationRequest::governed(&literal))
+            .expect("the literal [4] neighbour still compiles");
+    }
+
+    /// Dropping the program's environment is a pairing refusal, not a schema one.
+    #[test]
+    fn dropping_the_program_environment_is_a_pairing_refusal() {
+        let program = symbolic_three_input_elementwise(None);
+        let mut request = CompilationRequest::governed(&program);
+        request.shape_environment = None;
+        match verify_request(request) {
+            Err(RequestError::MismatchedShapeEnvironment) => {}
+            Ok(_) => panic!("dropping the environment must refuse, got a verified request"),
+            Err(error) => panic!("dropping the environment must be a pairing refusal, got {error}"),
+        }
+        assert_eq!(
+            RequestError::MismatchedShapeEnvironment.to_string(),
+            "compile.request.shape-environment: request must carry the program's own environment",
         );
     }
 }

@@ -502,7 +502,8 @@ impl Error for CompileError {
 impl From<RequestError> for CompileError {
     fn from(value: RequestError) -> Self {
         match value {
-            RequestError::UnsupportedCapability { .. } => Self::UnsupportedCapability(value),
+            RequestError::UnsupportedCapability { .. }
+            | RequestError::UnsupportedSymbolicExtent { .. } => Self::UnsupportedCapability(value),
             // A shape product that overflows, and a target that honours no
             // stated numerical contract, are both hard refusals about the
             // request rather than malformed requests — and neither is a cost.
@@ -523,6 +524,7 @@ impl From<RequestError> for CompileError {
             }
             RequestError::BudgetExceeded { .. } => Self::BudgetExhausted(value),
             RequestError::UnsupportedRequestVersion
+            | RequestError::MismatchedShapeEnvironment
             | RequestError::EmptyTargetSet
             | RequestError::DuplicateTargetProfile
             // Stating no contract at all is a malformed request, distinct from
@@ -2159,6 +2161,7 @@ fn failure_source_details(error: &CompileError) -> (String, SubjectKind, String)
 fn request_failure_details(error: &RequestError) -> (String, SubjectKind, String) {
     let reason = match error {
         RequestError::UnsupportedRequestVersion => "request-version".to_owned(),
+        RequestError::MismatchedShapeEnvironment => "shape-environment-mismatched".to_owned(),
         RequestError::EmptyTargetSet => "target-set-empty".to_owned(),
         RequestError::DuplicateTargetProfile => "target-profile-duplicate".to_owned(),
         RequestError::UnverifiedTargetSelection => "target-selection-unverified".to_owned(),
@@ -2216,7 +2219,8 @@ fn request_failure_details(error: &RequestError) -> (String, SubjectKind, String
             limit,
             actual,
         } => format!("budget-{}-{limit}-{actual}", resource.key()),
-        RequestError::UnsupportedCapability { phase, rule } => {
+        RequestError::UnsupportedCapability { phase, rule }
+        | RequestError::UnsupportedSymbolicExtent { phase, rule, .. } => {
             format!("unsupported-{phase}-{rule}")
         }
         RequestError::ShapeProductOverflow { role } => format!("shape-product-overflow-{role}"),
