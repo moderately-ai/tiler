@@ -1,7 +1,7 @@
 ---
 id: deliver-an-artifact-family-from-a-symbolic-region
 title: Deliver an artifact family from a region with symbolic extents
-status: in-progress
+status: review
 priority: p1
 dependencies: [admit-live-extent-operands-to-payload-indexing]
 related: [carry-symbolic-extents-into-the-semantic-program, prototype-inline-aot-integration-proof, carry-live-extent-operands-through-the-artifact-envelope, prove-one-live-extent-artifact-payload-and-pipeline-at-two-n, admit-symbolic-extents-through-compiler-region-formation]
@@ -65,6 +65,19 @@ Delivery of one artifact family from `sym n` + `deliver macos;` is **not** claim
 - `crates/tiler/tests/facade/fail/deliver_selects_an_artifact_family.stderr` — spanned `compile_error!` on `deliver macos;` naming the compiler's schedule refuse.
 - Literal-region cold/warm cache, wrong-entry typed refuse, and damaged-entry quarantine tests are unchanged; they still run over `approved_region()`.
 - Identity-across-extents hash: **none**. No artifact is produced for a symbolic region, so there is no identity to hash. A compiled plan specialized on a bound value would have been a different (wrong) program.
+
+### Commands
+
+From this worktree at `9173e07f6ba20a8c29389d670c5355d05a685c21`:
+
+- `cargo test -p tiler-macros --lib` — 185 tests, 1 ignored.
+- `cargo test -p tiler --test facade` — trybuild golden matches the compiler's spanned `symbolic-extent` refuse.
+- `cargo clippy -p tiler-macros --all-targets -- -D warnings` — clean.
+- `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler-macros -p tiler --no-deps` — clean.
+- `tkt lint` — `ok: no problems found`.
+- `git diff --check` — clean.
+- `tkt guard tkt/deliver-an-artifact-family-from-a-symbolic-region --format json` — `severity: warn`, `conflict: false`, `under_declared: []`. Shared `project/tickets` collisions only.
+- `make full` — passed (3553 nextest passed, 8 skipped; doc-tests passed; citations, clippy, rustdoc, release numerical, `tkt lint`, shellcheck).
 
 ### Perturbation
 
