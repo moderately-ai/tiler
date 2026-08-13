@@ -21,10 +21,10 @@ use std::sync::Arc;
 
 use tiler_ir::index::{
     DomainRole, FrozenScalarRegistry, IndexExprId, IndexInteger, ScalarAttributes, ScalarOpKey,
-    ScalarRegistryError, ScalarValueId, StagedInputSource, add_bf16_scalar_op, add_f32_scalar_op,
-    canonicalize_nan_f32_scalar_op, constant_bf16_scalar_op, constant_f32_scalar_op,
-    divide_f32_scalar_op, exp_f32_scalar_op, multiply_bf16_scalar_op, multiply_f32_scalar_op,
-    rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
+    ScalarRegistryError, ScalarValueId, SourcedIndexInteger, StagedInputSource, add_bf16_scalar_op,
+    add_f32_scalar_op, canonicalize_nan_f32_scalar_op, constant_bf16_scalar_op,
+    constant_f32_scalar_op, divide_f32_scalar_op, exp_f32_scalar_op, multiply_bf16_scalar_op,
+    multiply_f32_scalar_op, rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
 };
 use tiler_ir::schedule::mapping_names_a_symbol;
 use tiler_ir::semantic::{
@@ -2209,9 +2209,12 @@ fn lower_parametric_broadcast(
 /// Emits the access relation realizing one `tiler::slice-f32@1` occurrence.
 ///
 /// Every result coordinate reads the corresponding operand coordinate, displaced
-/// by the literal window offset on a restricted axis. The write remains the
-/// identity over the whole result domain, so one ordinary root owns the result;
-/// this is not a view-versus-copy choice and introduces no partitioned write.
+/// by the window offset on a restricted axis. A literal offset stays `d +
+/// offset`. A source-bearing offset is the selection's own symbol as the
+/// sourced addend `t + C`; it is not rebound and not specialized. The write
+/// remains the identity over the whole result domain, so one ordinary root owns
+/// the result; this is not a view-versus-copy choice and introduces no
+/// partitioned write.
 struct GovernedSliceF32;
 
 impl IndexAccessLoweringProvider for GovernedSliceF32 {
@@ -2231,6 +2234,23 @@ impl IndexAccessLoweringProvider for GovernedSliceF32 {
         }
         let selection = SliceSelection::from_canonical_value(field.value())
             .map_err(|_| occurrence_error("slice-selection"))?;
+        if selection.names_a_symbol() {
+            if occurrence.shape_environment().is_none() {
+                return Err(occurrence_error("slice-environment"));
+            }
+            let input_type = input.value_type().clone();
+            let result_type = result.value_type().clone();
+            let input_shape = input.sourced_shape().clone();
+            let result_shape = result.sourced_shape().clone();
+            return lower_source_bearing_slice(
+                context,
+                &selection,
+                input_type,
+                &input_shape,
+                result_type,
+                &result_shape,
+            );
+        }
         let input_shape = input.shape().clone();
         let result_shape = result.shape().clone();
         let input_type = input.value_type().clone();
@@ -2267,6 +2287,37 @@ impl IndexAccessLoweringProvider for GovernedSliceF32 {
         let write = context.write(output, &dimensions, &coordinates)?;
         context.output(write, value)
     }
+}
+
+fn lower_source_bearing_slice(
+    context: &mut IndexAccessLoweringContext<'_>,
+    selection: &SliceSelection,
+    input_type: tiler_ir::semantic::ResolvedValueType,
+    input_shape: &tiler_ir::shape::SourcedShape,
+    result_type: tiler_ir::semantic::ResolvedValueType,
+    result_shape: &tiler_ir::shape::SourcedShape,
+) -> Result<(), LoweringEmitError> {
+    let mut dimensions = Vec::with_capacity(result_shape.rank());
+    for extent in result_shape.extents() {
+        dimensions.push(context.sourced_dimension(DomainRole::Parallel, extent)?);
+    }
+    let coordinates = dimension_expressions(context, &dimensions)?;
+    let mut operand_coordinates = Vec::with_capacity(selection.axes().len());
+    for (axis, coordinate) in selection.axes().iter().zip(&coordinates) {
+        operand_coordinates.push(match axis {
+            SliceAxisSelection::WholeAxis => *coordinate,
+            SliceAxisSelection::Window { offset, .. } => context.sourced_linear_combination(
+                offset.clone().into(),
+                &[(SourcedIndexInteger::from(1_u64), *coordinate)],
+            )?,
+        });
+    }
+
+    let tensor = context.sourced_input_tensor(input_type, input_shape)?;
+    let value = context.read(tensor, &dimensions, &operand_coordinates)?;
+    let output = context.sourced_output_tensor(result_type, result_shape)?;
+    let write = context.write(output, &dimensions, &coordinates)?;
+    context.output(write, value)
 }
 
 /// Emits the partitioned write realizing one `tiler::concatenate-f32@1`
@@ -2523,12 +2574,15 @@ mod tests {
         LoweringCapabilityRevision, LoweringEmitError, LoweringSignature,
     };
     use crate::legality::{IndexRefinement, RefinementError, refine_index_region};
+    use crate::pipeline::compile;
+    use crate::request::CompilationRequest;
     use std::sync::Arc;
     use tiler_ir::index::{
-        DomainRole, IndexInteger, IndexRefinementSubject, IndexRegionDiagnostic,
-        JointPartitionProofView, NumericalContractIdentity, ScalarAttributes,
-        WriteOwnershipProofView, add_f32_scalar_op, constant_f32_scalar_op, divide_f32_scalar_op,
-        multiply_f32_scalar_op, rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
+        AccessMode, BoundsProofView, DomainRole, IndexDomainFactSource, IndexInteger,
+        IndexRefinementSubject, IndexRegionDiagnostic, JointPartitionProofView,
+        NumericalContractIdentity, ScalarAttributes, WriteOwnershipProofView, add_f32_scalar_op,
+        constant_f32_scalar_op, divide_f32_scalar_op, multiply_f32_scalar_op, rsqrt_f32_scalar_op,
+        strict_affine_u4_dequantize_scalar_op,
     };
     use tiler_ir::program::SemanticOccurrence;
     use tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS;
@@ -2536,15 +2590,21 @@ mod tests {
         BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
         CONCATENATE_AXIS_ATTRIBUTE, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField,
         CanonicalValue, ContractionIndex, ContractionIndexStructure, F32,
-        F32_CONSTANT_BITS_ATTRIBUTE, InputKey, MAX_CONCATENATE_OPERANDS, MIN_CONCATENATE_OPERANDS,
-        OpKey, OperationAttributes, OutputKey, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE,
-        REINDEX_MAPPING_ATTRIBUTE, RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_REDUCED_AXES_ATTRIBUTE,
-        ReindexForm, ResolvedValueType, SLICE_SELECTION_ATTRIBUTE, STRICT_AFFINE_CODES_ROLE,
-        STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE, SemanticProgramBuilder,
-        SliceAxisSelection, SliceSelection, StrictAffineU4, TypeKey, U4, add_f32_op,
-        broadcast_f32_op, concatenate_f32_axis_attribute, concatenate_f32_op, constant_f32_op,
-        dequantize_strict_affine_op, multiply_f32_op, reindex_f32_op, rms_norm_f32_eps_attribute,
-        rms_norm_f32_op, slice_f32_op, strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
+        F32_CONSTANT_BITS_ATTRIBUTE, F32Slice, InputKey, MAX_CONCATENATE_OPERANDS,
+        MIN_CONCATENATE_OPERANDS, OpKey, OperationAttributes, OutputKey, ProviderIdentity,
+        REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, RMS_NORM_EPS_BITS_ATTRIBUTE,
+        RMS_NORM_REDUCED_AXES_ATTRIBUTE, ReindexForm, ResolvedValueType, SLICE_SELECTION_ATTRIBUTE,
+        STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
+        SemanticProgramBuilder, SliceAxisSelection, SliceSelection, StrictAffineU4, TypeKey, U4,
+        add_f32_op, broadcast_f32_op, concatenate_f32_axis_attribute, concatenate_f32_op,
+        constant_f32_op, dequantize_strict_affine_op, multiply_f32_op, reindex_f32_op,
+        rms_norm_f32_eps_attribute, rms_norm_f32_op, slice_f32_op, strict_serial_sum_f32_op,
+        strict_tensor_contraction_f32_op,
+    };
+    use tiler_ir::shape::{
+        BindingSource, EXTENT_PHASE_CEILING, ExtentRelation, ExtentTerm, FactProvenance,
+        RootBinding, SemanticInputConstraint, ShapeEnv, ShapeEnvBuilder, ShapeSymbol,
+        SourcedExtent, SymbolScope,
     };
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -4406,6 +4466,125 @@ mod tests {
             ),
             vec![12, 13, 17, 18, 22, 23, 27, 28],
             "exact refinement admits the provider only when both nonzero offsets match the law"
+        );
+    }
+
+    fn source_bearing_slice_program() -> (
+        tiler_ir::semantic::SemanticProgram,
+        std::sync::Arc<ShapeEnv>,
+    ) {
+        let cursor = ShapeSymbol::new(SymbolScope::new("slice/0").unwrap(), "c").unwrap();
+        let mut draft = ShapeEnvBuilder::new();
+        draft.declare(cursor.clone()).unwrap();
+        draft
+            .bind(
+                &cursor,
+                RootBinding::new(
+                    BindingSource::InputDimension {
+                        input: InputKey::new("tokens").unwrap(),
+                        axis: Axis::new(0),
+                    },
+                    EXTENT_PHASE_CEILING,
+                    FactProvenance::RuntimeValidated,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        draft
+            .require(SemanticInputConstraint::new(
+                ExtentRelation::interval(ExtentTerm::Symbol(cursor.clone()), 0, 58).unwrap(),
+                FactProvenance::FrontendRequired,
+            ))
+            .unwrap();
+        let environment = std::sync::Arc::new(draft.build().unwrap());
+        let mut program =
+            SemanticProgramBuilder::try_standard_with_shape_environment(environment.clone())
+                .unwrap();
+        let table = program
+            .input::<F32>(InputKey::new("table").unwrap(), Shape::from_dims([64, 128]))
+            .unwrap();
+        let selection = SliceSelection::new([
+            SliceAxisSelection::Window {
+                offset: SourcedExtent::Symbol(cursor),
+                extent: Extent::new(6),
+            },
+            SliceAxisSelection::WholeAxis,
+        ])
+        .unwrap();
+        let rows = F32Slice::apply(&mut program, &selection, table).unwrap();
+        program
+            .output(OutputKey::new("rows").unwrap(), rows)
+            .unwrap();
+        (program.build().unwrap(), environment)
+    }
+
+    fn refine_source_bearing_slice() -> IndexRefinement {
+        let (program, _) = source_bearing_slice_program();
+        let scalars = governed_scalars().unwrap();
+        let registry = governed_lowering_capabilities(&scalars).unwrap();
+        let realizations = governed_realization_laws(&scalars);
+        let occurrence = IndexRefinementSubject::derive(
+            &program,
+            program.operations().next().unwrap().id(),
+            contract(),
+        )
+        .unwrap();
+        let signature = LoweringSignature::new(
+            occurrence.signature().operands().iter().cloned(),
+            occurrence.signature().results().iter().cloned(),
+        )
+        .unwrap();
+        let resolved = registry
+            .resolve_index_access(occurrence.operation(), &signature)
+            .unwrap();
+        refine_index_region(&resolved, &occurrence, &realizations, &scalars)
+            .unwrap_or_else(|error| panic!("source-bearing slice must refine: {error:?}"))
+            .into_refined()
+            .expect("a proved source-bearing window discharges every index-domain predicate")
+    }
+
+    #[test]
+    fn the_governed_slice_region_reads_the_source_bearing_offset_as_t_plus_c() {
+        let refinement = refine_source_bearing_slice();
+        let region = refinement.realization().final_stage();
+        assert!(
+            region.extent_sources().is_some(),
+            "the provider must open the same retained environment the law does"
+        );
+        assert!(
+            region
+                .accesses()
+                .filter(|access| access.mode() == AccessMode::Read)
+                .all(|access| access.bounds_proof()
+                    == Some(BoundsProofView::Interval {
+                        facts: IndexDomainFactSource::ShapeEnvironment,
+                    })),
+            "total access is discharged from the retained environment"
+        );
+        assert_eq!(
+            region
+                .tensors()
+                .filter(|tensor| tensor.role() == tiler_ir::index::TensorRole::Input)
+                .count(),
+            1,
+            "the cursor is not a duplicated input"
+        );
+    }
+
+    #[test]
+    fn a_source_bearing_slice_is_not_executable_without_the_live_extent_carrier() {
+        let refinement = refine_source_bearing_slice();
+        assert!(
+            refinement.realization().is_single_stage(),
+            "the occurrence reaches a verified index region"
+        );
+        let (program, _) = source_bearing_slice_program();
+        let error = compile(CompilationRequest::governed(&program))
+            .expect_err("live-extent payload indexing is not this ticket");
+        assert_eq!(
+            error.to_string(),
+            "compile.unsupported.strategy.operation-set: no installed capability can compile this valid semantic program",
+            "a verified source-bearing slice stays non-executable until the live-extent carrier exists"
         );
     }
 

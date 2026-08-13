@@ -45,38 +45,49 @@ use tiler_ir::index::{
     IndexRealizationAuthority, IndexRefinementBoundary, IndexRefinementSignature,
     IndexRefinementSubject, IndexRegionBuildError, IndexRegionBuilder, IndexRegionDiagnostic,
     IndexRegionSequenceError, MAX_INDEX_REGION_SEQUENCE_STAGES, ScalarAttributes, ScalarOpKey,
-    ScalarReducerBodyBuilder, ScalarRegistryError, ScalarResults, ScalarValueId, StagedInputSource,
-    SymbolicExtentError, TensorAccessId, TensorId, TensorRole, VerifiedIndexRegion,
-    VerifiedIndexRegionSequence,
+    ScalarReducerBodyBuilder, ScalarRegistryError, ScalarResults, ScalarValueId,
+    SourcedIndexInteger, StagedInputSource, SymbolicExtentError, TensorAccessId, TensorId,
+    TensorRole, VerifiedIndexRegion, VerifiedIndexRegionSequence,
 };
 use tiler_ir::schedule::mapping_names_a_symbol;
 use tiler_ir::semantic::{
     BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, FrozenSemanticRegistry, OpKey,
     OperationAttributes, ProviderIdentity, RegistryError, ResolvedValueType,
-    SemanticCapabilityAuthority, SemanticRegistrySnapshotIdentity, broadcast_f32_op,
+    SLICE_SELECTION_ATTRIBUTE, SemanticCapabilityAuthority, SemanticRegistrySnapshotIdentity,
+    SliceSelection, broadcast_f32_op, slice_f32_op,
 };
 use tiler_ir::shape::{Extent, Shape, SourcedExtent};
 
 /// Returns whether this occurrence's index law builds against the program environment.
 ///
-/// Matches the law's parametric-broadcast arm: only that realization opens
-/// [`IndexRegionBuilder::new_with_shape_environment`]. A neighbour occurrence
-/// that merely lives in a program with an environment must keep the environment-free
-/// builder, or its identity would disagree with the law.
+/// Matches the law's parametric-broadcast and source-bearing-slice arms: only
+/// those realizations open [`IndexRegionBuilder::new_with_shape_environment`].
+/// A neighbour occurrence that merely lives in a program with an environment
+/// must keep the environment-free builder, or its identity would disagree with
+/// the law.
 fn occurrence_needs_shape_environment(subject: &IndexRefinementSubject) -> bool {
-    if subject.operation() != &broadcast_f32_op() {
+    if subject.operation() == &broadcast_f32_op() {
+        let Some(value) = subject.attributes().get(BROADCAST_AXIS_MAPPING_ATTRIBUTE) else {
+            return false;
+        };
+        let Ok(mapping) = BroadcastAxisMapping::from_canonical_value(value) else {
+            return false;
+        };
+        let Some(input) = subject.inputs().first() else {
+            return false;
+        };
+        return mapping_names_a_symbol(input.sourced_shape(), &mapping);
+    }
+    if subject.operation() != &slice_f32_op() {
         return false;
     }
-    let Some(value) = subject.attributes().get(BROADCAST_AXIS_MAPPING_ATTRIBUTE) else {
+    let Some(value) = subject.attributes().get(SLICE_SELECTION_ATTRIBUTE) else {
         return false;
     };
-    let Ok(mapping) = BroadcastAxisMapping::from_canonical_value(value) else {
+    let Ok(selection) = SliceSelection::from_canonical_value(value) else {
         return false;
     };
-    let Some(input) = subject.inputs().first() else {
-        return false;
-    };
-    mapping_names_a_symbol(input.sourced_shape(), &mapping)
+    selection.names_a_symbol()
 }
 
 /// Canonical identity domain-separation tag for a frozen registry snapshot.
@@ -708,6 +719,12 @@ impl<'a> IndexAccessOccurrence<'a> {
     pub const fn attributes(self) -> &'a OperationAttributes {
         self.0.attributes()
     }
+
+    /// Returns the program environment this occurrence was derived under, if any.
+    #[must_use]
+    pub(crate) fn shape_environment(self) -> Option<&'a std::sync::Arc<tiler_ir::shape::ShapeEnv>> {
+        self.0.shape_environment()
+    }
 }
 
 /// A narrow checked context for one index/access-lowering provider.
@@ -855,6 +872,19 @@ impl<'a> IndexAccessLoweringContext<'a> {
         terms: &[(IndexInteger, IndexExprId)],
     ) -> Result<IndexExprId, LoweringEmitError> {
         Ok(self.builder.linear_combination(constant, terms)?)
+    }
+
+    /// Creates a normalized linear combination whose scalars may be sourced.
+    ///
+    /// Crate-internal: the source-bearing slice lowering is the only caller.
+    /// A public sourced-combination method on this context is a new facade
+    /// field and is Tom's.
+    pub(crate) fn sourced_linear_combination(
+        &mut self,
+        constant: SourcedIndexInteger,
+        terms: &[(SourcedIndexInteger, IndexExprId)],
+    ) -> Result<IndexExprId, LoweringEmitError> {
+        Ok(self.builder.sourced_linear_combination(constant, terms)?)
     }
 
     /// Creates Euclidean floor division by a proven-positive extent.

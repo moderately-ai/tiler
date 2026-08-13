@@ -1085,6 +1085,14 @@ fn a_symbolic_offset_is_injective_and_distinct_from_its_literal_neighbour() {
     let decoded = SliceSelection::from_canonical_value(symbolic.canonical_value())
         .expect("a selection this module encoded decodes");
     assert_eq!(decoded, symbolic);
+    assert!(
+        symbolic.names_a_symbol(),
+        "a symbolic window is the source-bearing spelling"
+    );
+    assert!(
+        !literal.names_a_symbol(),
+        "a literal neighbour must keep the environment-free realization path"
+    );
 }
 
 #[test]
