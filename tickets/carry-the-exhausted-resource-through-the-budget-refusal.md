@@ -6,7 +6,7 @@ priority: p3
 dependencies: []
 related: [measure-executable-coverage-identity-growth-against-the-program-identity-bound]
 scopes: [implementation/compiler, implementation/frontend]
-shared_scopes: [project/tickets]
+shared_scopes: [project/tickets, contracts/optimizer]
 paths: []
 tags: [compiler, diagnostics, public-boundary]
 claimed_from: todo
