@@ -24,8 +24,10 @@ It is a [runtime adapter](../glossary.md#backend-device-and-execution-context-vo
 
 The frontend macro passes an `EmbeddedBundle` backed by static manifest and
 metallib byte literals. The adapter never reads the expansion compiler cache or
-compiles MSL at runtime; it loads/caches Metal libraries and pipelines by bundle
-identity.
+compiles MSL at runtime; it loads Metal libraries and prepares pipelines from the
+artifact-carried object bytes for each route attempt. A reusable device-scoped
+library or pipeline cache is deferred until a named owner outlives one route
+attempt ([`introduce-a-persistent-runtime-pipeline-cache-for-a-real-owner`](../../tickets/introduce-a-persistent-runtime-pipeline-cache-for-a-real-owner.md)).
 
 The adapter implements the consumer-neutral
 [runtime execution contract](../research/runtime/runtime-execution-contract.md).

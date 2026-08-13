@@ -61,10 +61,9 @@ use tiler_metal_aot::input::{CompileRequest, OptimizationLevel};
 use tiler_runtime::load::{DTypeDispatch, ExecutionEnvironment};
 
 use crate::adapter::{
-    SubmissionOutcome, argument_slots_agree, load_library, prepare_pipeline_with_reflection,
-    submission_outcome,
+    PreparedPipeline, SubmissionOutcome, argument_slots_agree, load_library,
+    prepare_pipeline_with_reflection, submission_outcome,
 };
-use crate::cache::PreparedPipeline;
 use crate::refusal::{Realization, RouteRefusal, TensorRefusal};
 use crate::wrapper::{TilerPlan, WrapperError, candle_expression};
 
@@ -386,16 +385,13 @@ fn prove_member(
         // afresh and the shape it routes under is asserted every time; printing
         // the identical line twenty times would bury the four lines that differ.
         if proved == 0 {
-            let (libraries, pipelines) = report.cache_occupancy;
             println!(
                 "  {class}.{role}: {rows}x{columns} under profile {}, {}/{} entr(y/ies) encoded, \
-                 {} shared allocation(s), cache holds {libraries} librar(y/ies) and {pipelines} \
-                 pipeline(s) scoped to {}",
+                 {} shared allocation(s)",
                 report.profile_key,
                 report.encoded,
                 report.entries,
                 report.shared_allocations,
-                report.scope,
             );
             println!("    delivered: {}", applied.delivered);
             println!(
@@ -712,7 +708,7 @@ fn probe_tensor_refusals(
     // A tensor on a *second* Candle Metal device over the same GPU. Candle mints
     // a fresh `DeviceId` per `Device::new_metal`, so the two share a registry
     // identifier and share no allocator, queue, or residency set — which is
-    // exactly the pair the cache scope separates.
+    // exactly the pair `ForeignMetalDevice` refuses.
     let second = Device::new_metal(0).map_err(|cause| ProofError::Device(cause.to_string()))?;
     let elsewhere = tensor_from_bits(&input_bits, rows, columns, &second)?;
     expect_refusal(

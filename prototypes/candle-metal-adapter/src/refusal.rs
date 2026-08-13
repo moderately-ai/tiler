@@ -654,18 +654,6 @@ pub enum RouteRefusal {
         /// The buffer argument indices the compiled object addresses, ascending.
         addressed: Vec<u64>,
     },
-    /// A cache lookup named a device scope this cache was not built for.
-    ///
-    /// Unreachable through this adapter's own code, because a key carries the
-    /// scope it was minted under and a lookup from another device therefore
-    /// cannot match one. Retained as the assertion that makes that structural
-    /// claim checkable rather than only stated.
-    ForeignDeviceScope {
-        /// The scope the cache holds.
-        cache: String,
-        /// The scope the lookup named.
-        lookup: String,
-    },
     /// The declared workgroup is larger than this pipeline admits.
     WorkgroupTooLarge {
         /// Position of the entry in the route's execution order.
@@ -793,11 +781,6 @@ impl fmt::Display for RouteRefusal {
                 formatter,
                 "candle-metal.prepare: entry {entry}'s {symbol:?} addresses buffer argument(s) \
                  {addressed:?} and the entry declares transport slot(s) {declared:?}",
-            ),
-            Self::ForeignDeviceScope { cache, lookup } => write!(
-                formatter,
-                "candle-metal.cache: this cache is scoped to {cache} and the lookup named \
-                 {lookup}",
             ),
             Self::WorkgroupTooLarge {
                 entry,
@@ -1133,10 +1116,6 @@ mod tests {
                 symbol: "tiler_kernel".to_owned(),
                 declared: vec![0, 1],
                 addressed: vec![0, 1, 2],
-            },
-            RouteRefusal::ForeignDeviceScope {
-                cache: "a".to_owned(),
-                lookup: "b".to_owned(),
             },
             RouteRefusal::WorkgroupTooLarge {
                 entry: 0,

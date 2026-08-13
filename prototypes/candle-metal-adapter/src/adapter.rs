@@ -114,8 +114,22 @@ use tiler_runtime::load::{
     RoutedEntry, TargetPropertyRequest,
 };
 
-use crate::cache::{DeviceScope, PipelineCache, PreparedPipeline};
 use crate::refusal::{DispatchFailure, ReflectedBinding, ReflectedBindingClass, RouteRefusal};
+
+/// One compute pipeline together with the argument table its object addresses.
+///
+/// Held as one value because they are one observation: the argument indices are
+/// read from the reflection the device returned while compiling this exact
+/// pipeline, and `MTLComputePipelineState` publishes no argument table later.
+/// The table is retained as a fact for comparison against the current route's
+/// declaration; the satisfaction verdict is not retained.
+#[derive(Clone, Debug)]
+pub struct PreparedPipeline {
+    /// The compiled pipeline state.
+    pub pipeline: ComputePipeline,
+    /// The buffer argument indices the compiled object addresses, ascending.
+    pub addressed_slots: Vec<u64>,
+}
 
 /// Governed key of the Metal requirement naming a minimum Apple GPU family.
 ///
@@ -293,6 +307,11 @@ pub struct BoundInput {
 }
 
 /// One consumer-selected runtime adapter for `tiler.metal` / `metallib` over Candle storage.
+///
+/// One adapter serves one route attempt. Libraries and prepared pipelines are
+/// retained on this value for the attempt and are not keyed for reuse across
+/// attempts; a durable cache is owned by a separate deferred ticket when a real
+/// owner outlives one route.
 #[derive(Debug)]
 pub struct CandleMetalAdapter {
     device: MetalDevice,
@@ -300,12 +319,9 @@ pub struct CandleMetalAdapter {
     queue: candle_metal_kernels::metal::CommandQueue,
     /// The environment the producer declared, restated rather than re-derived.
     environment: ExecutionEnvironment,
-    /// The identity of the artifact being routed, which scopes every cache entry.
-    artifact_identity: Vec<u8>,
     input: BoundInput,
     output_elements: usize,
     facts: DeviceFacts,
-    cache: PipelineCache,
     /// Libraries validated from their own bytes, in execution order.
     validated: Vec<Library>,
     /// Entries promoted to prepared pipelines, in execution order.
@@ -335,7 +351,6 @@ impl CandleMetalAdapter {
     pub fn new(
         device: &MetalDevice,
         environment: ExecutionEnvironment,
-        artifact_identity: &[u8],
         input: BoundInput,
         output_elements: usize,
     ) -> Result<Self, RouteRefusal> {
@@ -346,11 +361,9 @@ impl CandleMetalAdapter {
         })?;
         Ok(Self {
             facts: device_facts(device),
-            cache: PipelineCache::new(device),
             device: device.clone(),
             queue,
             environment,
-            artifact_identity: artifact_identity.to_vec(),
             input,
             output_elements,
             validated: Vec::new(),
@@ -372,56 +385,28 @@ impl CandleMetalAdapter {
         self.shared_allocations
     }
 
-    /// Returns how many libraries and pipelines this adapter's cache holds.
-    pub fn cache_occupancy(&self) -> (usize, usize) {
-        self.cache.occupancy()
-    }
-
-    /// Returns the scope every cache entry of this adapter is minted under.
-    pub fn scope(&self) -> DeviceScope {
-        DeviceScope::of(&self.device)
-    }
-
-    /// Loads one entry's carried object into a Metal library, through the cache.
+    /// Loads one entry's carried object into a Metal library for this attempt.
     fn library_for(
         &mut self,
         position: usize,
         entry: &RoutedEntry<'_>,
     ) -> Result<Library, RouteRefusal> {
-        let scope = DeviceScope::of(&self.device);
-        let key = self
-            .cache
-            .library_key(&scope, &self.artifact_identity, position)?;
-        if let Some(cached) = self.cache.library(&key) {
-            return Ok(cached.clone());
-        }
-        let library = load_library(&self.device, position, entry.object())?;
-        self.cache.insert_library(key, library.clone());
-        Ok(library)
+        load_library(&self.device, position, entry.object())
     }
 
-    /// Builds one entry's compute pipeline and reads its argument table, through the cache.
+    /// Builds one entry's compute pipeline and reads its argument table.
     ///
     /// The pipeline is built through [`prepare_pipeline_with_reflection`] rather
     /// than Candle's `new_compute_pipeline_state_with_function`, because that
     /// wrapper discards the reflection out-param and no later call recovers it.
-    /// The table it returns is cached beside the pipeline; the *comparison*
-    /// against the entry's declaration is not cached, and runs in
-    /// [`RuntimeAdapter::prepare_entries`] on hits and misses alike.
+    /// The table is returned with the pipeline; the *comparison* against the
+    /// entry's declaration runs in [`RuntimeAdapter::prepare_entries`].
     fn pipeline_for(
         &mut self,
         position: usize,
         library: &Library,
         symbol: &str,
     ) -> Result<PreparedPipeline, RouteRefusal> {
-        let scope = DeviceScope::of(&self.device);
-        let library_key = self
-            .cache
-            .library_key(&scope, &self.artifact_identity, position)?;
-        let key = PipelineCache::pipeline_key(&library_key, symbol);
-        if let Some(cached) = self.cache.pipeline(&key) {
-            return Ok(cached.clone());
-        }
         // Function lookup and pipeline creation stay distinct stages, because a
         // missing declared symbol is an artifact invariant and a pipeline the
         // device refuses is a route fact about this device.
@@ -432,9 +417,7 @@ impl CandleMetalAdapter {
                 detail: cause.to_string(),
             }
         })?;
-        let prepared = prepare_pipeline_with_reflection(&self.device, position, symbol, &function)?;
-        self.cache.insert_pipeline(key, prepared.clone());
-        Ok(prepared)
+        prepare_pipeline_with_reflection(&self.device, position, symbol, &function)
     }
 
     /// Builds every routed entry's pipeline and compares its argument table.
@@ -578,8 +561,8 @@ pub fn load_library(
 /// optimized well, and would let an unbindable texture through whenever the
 /// compiler decided the kernel did not need it.
 ///
-/// An object refused here never becomes a [`PreparedPipeline`], so it never
-/// enters the cache and no later hit can skip the refusal.
+/// An object refused here never becomes a [`PreparedPipeline`], so it is never
+/// retained on the adapter for dispatch.
 ///
 /// # Errors
 ///
@@ -1023,17 +1006,17 @@ impl RuntimeAdapter for CandleMetalAdapter {
     /// nothing has been allocated when it refuses. It is pre-commit in the seam's
     /// own terms.
     ///
-    /// The comparison runs per entry and on every route, including one served
-    /// entirely from the pipeline cache: the cache stores the reflected table as
-    /// a fact and never the verdict, because the declared side comes from *this*
-    /// attempt's routed bindings and is not part of the cache key.
+    /// The comparison runs per entry and on every route. The reflected table is
+    /// a fact of the pipeline just prepared for this attempt; the declared side
+    /// comes from *this* attempt's routed bindings and is never assumed from a
+    /// prior route.
     ///
     /// The obligation's other half — that the object addresses no resource class
     /// the artifact ABI can express at all — arrives from
     /// [`prepare_pipeline_with_reflection`] rather than from a second comparison
     /// here, because it has no declared side to vary per attempt: it is a
     /// property of the object, answered where the reflection is read, and an
-    /// object that fails it never becomes a cache entry to be hit later.
+    /// object that fails it is refused before the pipeline is retained.
     fn prepare_entries(
         &mut self,
         _context: &LiveExecutionContext,

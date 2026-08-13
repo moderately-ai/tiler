@@ -9,8 +9,6 @@
 #[cfg(target_os = "macos")]
 mod adapter;
 #[cfg(target_os = "macos")]
-mod cache;
-#[cfg(target_os = "macos")]
 mod proof;
 #[cfg(target_os = "macos")]
 mod refusal;

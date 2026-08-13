@@ -160,10 +160,6 @@ pub struct RouteReport {
     pub encoded: usize,
     /// Shared allocations the loader paired for this route.
     pub shared_allocations: usize,
-    /// Libraries and pipelines the adapter's cache held afterwards.
-    pub cache_occupancy: (usize, usize),
-    /// The scope every one of those cache entries was minted under.
-    pub scope: String,
 }
 
 /// One delivered result, with the realization it was produced under.
@@ -206,7 +202,6 @@ pub struct TilerPlan {
     bytes: Vec<u8>,
     recorded: RecordedArtifactProgramIdentity,
     environment: ExecutionEnvironment,
-    identity: Vec<u8>,
     rows: u64,
     columns: u64,
     facts: AbiFacts,
@@ -237,8 +232,7 @@ impl TilerPlan {
         realization: Realization,
     ) -> Result<Self, WrapperError> {
         let decoded = DecodedProgram::decode(&bytes, SOLE_DELIVERY).map_err(WrapperError::Load)?;
-        let identity = decoded.identity().as_bytes().to_vec();
-        if identity != recorded.as_bytes() {
+        if decoded.identity().as_bytes() != recorded.as_bytes() {
             return Err(WrapperError::Load(LoadRejection::ProgramMismatch {
                 expected: recorded,
                 loaded: decoded.identity(),
@@ -250,7 +244,6 @@ impl TilerPlan {
             bytes,
             recorded,
             environment,
-            identity,
             rows,
             columns,
             facts,
@@ -643,7 +636,6 @@ impl TilerFusedOp<'_> {
         let mut adapter = CandleMetalAdapter::new(
             &device,
             self.plan.environment.clone(),
-            &self.plan.identity,
             input,
             output_elements,
         )
@@ -663,8 +655,6 @@ impl TilerFusedOp<'_> {
             entries: completion.entries,
             encoded: completion.encoded,
             shared_allocations: adapter.shared_allocations(),
-            cache_occupancy: adapter.cache_occupancy(),
-            scope: adapter.scope().to_string(),
         };
         Ok(((completion.storage, completion.shape), report))
     }

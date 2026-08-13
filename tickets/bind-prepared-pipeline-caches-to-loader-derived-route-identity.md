@@ -1,10 +1,10 @@
 ---
 id: bind-prepared-pipeline-caches-to-loader-derived-route-identity
 title: Decide whether to retain the non-reusable Candle pipeline cache
-status: in-progress
+status: review
 priority: p1
 dependencies: []
-related: [prototype-candle-metal-adapter, bind-runtime-library-and-pipeline-caches-to-exact-payload-bytes, decide-the-prepared-subgroup-width-equality-gate, carry-subgroup-width-through-exact-prepared-entry-equality]
+related: [prototype-candle-metal-adapter, bind-runtime-library-and-pipeline-caches-to-exact-payload-bytes, decide-the-prepared-subgroup-width-equality-gate, carry-subgroup-width-through-exact-prepared-entry-equality, introduce-a-persistent-runtime-pipeline-cache-for-a-real-owner]
 scopes: [implementation/candle, contracts/artifacts, contracts/integrations, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
@@ -72,3 +72,17 @@ Deleting transient cache state changes no semantic, schedule, kernel, artifact, 
 ## Closes when
 
 Tom chooses deletion or immediate complete implementation. Under the recommendation, the non-reusable cache and every claim/report/refusal that exists only for it are physically removed, the subgroup implementation no longer depends on an absent optimization, the prototype retains exact per-attempt libraries and pipelines without caller-stated artifact identity, and a deferred real-cache ticket carries the explicit trigger and complete consumed-subject key contract.
+
+## Outcome — 2026-08-13
+
+Physical deletion implemented under Tom's 2026-08-12 acceptance.
+
+- Deleted `prototypes/candle-metal-adapter/src/cache.rs` and its module declaration: `PipelineCache`, `DeviceScope`, `LibraryKey`, `PipelineKey`, and cache-only unit tests.
+- Moved `PreparedPipeline` into `adapter.rs` as the per-prepare result (pipeline plus reflected slots); `validated` and `prepared` remain the adapter's per-attempt retention.
+- Removed caller-supplied `artifact_identity` from `CandleMetalAdapter` and from the wrapper's constructor call. `TilerPlan` still verifies loader-derived identity against the recorded sidecar identity at load time; that bytes vector is no longer stored or passed into the adapter.
+- Removed `cache_occupancy` and device-scope reporting from `RouteReport`, the adapter accessors that fed them, and the proof line that printed cache occupancy.
+- Removed `RouteRefusal::ForeignDeviceScope` and its Display/test fixture arms.
+- Updated `docs/integration/candle.md` so it no longer claims the adapter caches libraries and pipelines by bundle identity; it names the deferred owner ticket instead.
+- Deferred reusable cache: existing `introduce-a-persistent-runtime-pipeline-cache-for-a-real-owner` already carries the trigger (first accepted cache object that outlives one route attempt) and the consumed-subject key contract from this ticket. Not recreated.
+- `carry-subgroup-width-through-exact-prepared-entry-equality` dependencies already omit this ticket at base `1dc1c9d7` (no graph edit required).
+- Identity blast radius: no artifact, envelope, expansion-cache, semantic, schedule, or kernel identity formulas changed.
