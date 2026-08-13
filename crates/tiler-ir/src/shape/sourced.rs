@@ -759,6 +759,11 @@ impl ExtentSources {
         Self { environment }
     }
 
+    /// Returns a clone of the environment `Arc` a refinement subject retains.
+    pub(crate) fn environment_arc_for_subject(&self) -> &std::sync::Arc<ShapeEnv> {
+        &self.environment
+    }
+
     /// Returns the verified environment every symbolic extent resolves in.
     ///
     /// The read-only view a consumer needs to interpret a symbol it found on a

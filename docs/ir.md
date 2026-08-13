@@ -1089,6 +1089,8 @@ address derivation. A flattened coordinate may be split with division/modulo;
 a transpose permutes coordinates; a broadcast omits an iteration coordinate or
 maps it to zero. These maps do not themselves promise a no-copy view.
 
+**Labelled draft — parametric broadcast access, 2026-08-13.** A sourced `tiler::broadcast-f32@2` mapping is carried through index realization and scheduled-region identity as one explicitly tagged `LogicalAccess::ParametricBroadcast` relation: the authored operand, the sourced mapping, and the exact `ShapeEnv` identity needed to interpret it. It is not `BroadcastReplication` and not `ReindexBijection`; those remain exact over their concrete subjects, keep tags `0x07` and `0x06`, and do not change bytes. The new carrier is tag `0x08`, so the schedule identity domain does not step. The same carrier is defined over the mapping's whole symbolic domain, including the bijective binding at one. Replication-only fusion and costing are admitted only when the named environment proves actual widening. The variant is a labelled draft under ADR 0075; dependents must not treat it as accepted vocabulary. Kernel lowering refuses it rather than binding an extent into `AxisDecode` windows.
+
 Semantic constraints, index-domain predicates, physical variant guards, and
 per-point schedule predicates are distinct. A `TensorAccessMap` is total over
 its declared domain. Tail masks belong to scheduled IR rather than weakening

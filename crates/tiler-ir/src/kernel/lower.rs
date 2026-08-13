@@ -537,6 +537,12 @@ fn addressing(
             result_shape,
             axes,
         )?)),
+        // The parametric carrier is a different coordinate language — sourced
+        // mapping extents, not concrete AxisDecode windows. Binding those
+        // extents here would specialize the one-artifact relation. Lowering
+        // refuses rather than inventing a second language or selecting a
+        // concrete neighbour.
+        LogicalAccess::ParametricBroadcast { .. } => Err(KernelDiagnostic::BodyRefinement),
     }
 }
 

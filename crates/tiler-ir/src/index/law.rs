@@ -32,14 +32,14 @@ use crate::semantic::{
     STRICT_AFFINE_ZERO_POINT_ROLE, SliceAxisSelection, SliceSelection, StrictAffineU4, TypeKey,
     concatenate_axis, concatenate_result_shape,
 };
-use crate::shape::{Axis, Extent, Shape, SourcedExtent};
+use crate::shape::{Axis, Extent, ExtentSources, Shape, SourcedExtent};
 
 use super::{
     DimensionId, DomainRole, FrozenScalarRegistry, IndexBuildError, IndexExprId, IndexInteger,
-    IndexRefinementSubject, IndexRegionBuildError, IndexRegionBuilder, IndexRegionSequenceError,
-    ScalarAttributes, ScalarOpKey, ScalarReducerBodyBuilder, ScalarValueId, StagedInputSource,
-    SymbolicExtentError, TensorAccessId, TensorId, TensorRole, VerifiedIndexRegion,
-    VerifiedIndexRegionSequence, add_bf16_scalar_op, add_f32_scalar_op,
+    IndexRefinementBoundary, IndexRefinementSubject, IndexRegionBuildError, IndexRegionBuilder,
+    IndexRegionSequenceError, ScalarAttributes, ScalarOpKey, ScalarReducerBodyBuilder,
+    ScalarValueId, StagedInputSource, SymbolicExtentError, TensorAccessId, TensorId, TensorRole,
+    VerifiedIndexRegion, VerifiedIndexRegionSequence, add_bf16_scalar_op, add_f32_scalar_op,
     canonicalize_nan_f32_scalar_op, constant_bf16_scalar_op, constant_f32_scalar_op,
     divide_f32_scalar_op, exp_f32_scalar_op, maximum_f32_scalar_op, multiply_bf16_scalar_op,
     multiply_f32_scalar_op, rsqrt_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
@@ -624,7 +624,15 @@ impl IndexRealizationLaw {
         subject: &IndexRefinementSubject,
         scalars: &FrozenScalarRegistry,
     ) -> Result<VerifiedIndexRegion, IndexRealizationLawError> {
-        let mut builder = IndexRegionBuilder::new(scalars.clone())?;
+        let mut builder = match subject.shape_environment() {
+            Some(environment) if broadcast_subject_is_parametric(self, subject) => {
+                IndexRegionBuilder::new_with_shape_environment(
+                    scalars.clone(),
+                    std::sync::Arc::clone(environment),
+                )?
+            }
+            _ => IndexRegionBuilder::new(scalars.clone())?,
+        };
         {
             let mut context = LawContext {
                 builder: &mut builder,
@@ -950,6 +958,16 @@ impl LawContext<'_> {
     ) -> Result<DimensionId, IndexRealizationLawError> {
         Ok(self.builder.dimension(role, extent)?)
     }
+    fn sourced_dimension(
+        &mut self,
+        role: DomainRole,
+        extent: SourcedExtent,
+    ) -> Result<DimensionId, IndexRealizationLawError> {
+        match extent {
+            SourcedExtent::Static(extent) => self.dimension(role, extent),
+            SourcedExtent::Symbol(symbol) => Ok(self.builder.symbolic_dimension(role, symbol)?),
+        }
+    }
     fn tensor(
         &mut self,
         role: TensorRole,
@@ -957,6 +975,16 @@ impl LawContext<'_> {
         shape: Shape,
     ) -> Result<TensorId, IndexRealizationLawError> {
         Ok(self.builder.tensor(role, value_type, shape)?)
+    }
+    fn sourced_tensor(
+        &mut self,
+        role: TensorRole,
+        value_type: ResolvedValueType,
+        shape: &crate::shape::SourcedShape,
+    ) -> Result<TensorId, IndexRealizationLawError> {
+        Ok(self
+            .builder
+            .sourced_tensor(role, value_type, shape.extents().collect())?)
     }
     fn constant(&mut self, value: IndexInteger) -> Result<IndexExprId, IndexRealizationLawError> {
         Ok(self.builder.constant(value)?)
@@ -1944,6 +1972,25 @@ fn realize_reindex(
     let write = context.write(output, &dimensions, &coordinates)?;
     context.output(write, value)
 }
+fn broadcast_subject_is_parametric(
+    law: &IndexRealizationLaw,
+    subject: &IndexRefinementSubject,
+) -> bool {
+    let IndexRealizationLaw::Broadcast { mapping_attribute } = law else {
+        return false;
+    };
+    let Some(value) = subject.attributes().get(*mapping_attribute) else {
+        return false;
+    };
+    let Ok(mapping) = BroadcastAxisMapping::from_canonical_value(value) else {
+        return false;
+    };
+    let Some(input) = subject.inputs().first() else {
+        return false;
+    };
+    crate::schedule::mapping_names_a_symbol(input.sourced_shape(), &mapping)
+}
+
 fn realize_broadcast(
     context: &mut LawContext<'_>,
     attribute: AttributeFieldId,
@@ -1961,6 +2008,9 @@ fn realize_broadcast(
         .ok_or_else(|| unsupported("broadcast-mapping-missing"))?;
     let mapping = BroadcastAxisMapping::from_canonical_value(value)
         .map_err(|_| unsupported("broadcast-mapping"))?;
+    if crate::schedule::mapping_names_a_symbol(input.sourced_shape(), &mapping) {
+        return realize_parametric_broadcast(context, &mapping, input, result);
+    }
     let input_shape = input.shape().clone();
     let result_shape = result.shape().clone();
     if mapping
@@ -1971,16 +2021,84 @@ fn realize_broadcast(
         return Err(unsupported("broadcast-result-shape"));
     }
     let dimensions = declare_parallel_domain(context, &result_shape)?;
-    let coordinates = dimension_expressions(context, &dimensions)?;
+    emit_broadcast_coordinates(
+        context,
+        &mapping,
+        input_shape.rank(),
+        &dimensions,
+        |context| context.tensor(TensorRole::Input, input.value_type().clone(), input_shape),
+        |context| {
+            context.tensor(
+                TensorRole::Output,
+                result.value_type().clone(),
+                result_shape,
+            )
+        },
+    )
+}
+
+fn realize_parametric_broadcast(
+    context: &mut LawContext<'_>,
+    mapping: &BroadcastAxisMapping,
+    input: &IndexRefinementBoundary,
+    result: &IndexRefinementBoundary,
+) -> Result<(), IndexRealizationLawError> {
+    let Some(environment) = context.subject.shape_environment() else {
+        return Err(unsupported("broadcast-environment"));
+    };
+    let sources = ExtentSources::new(std::sync::Arc::clone(environment));
+    let applied = mapping
+        .apply(input.sourced_shape(), Some(&sources))
+        .map_err(|_| unsupported("broadcast-mapping"))?;
+    if &applied != result.sourced_shape() {
+        return Err(unsupported("broadcast-result-shape"));
+    }
+    let dimensions = mapping
+        .result_extents()
+        .iter()
+        .cloned()
+        .map(|extent| context.sourced_dimension(DomainRole::Parallel, extent))
+        .collect::<Result<Vec<_>, _>>()?;
+    emit_broadcast_coordinates(
+        context,
+        mapping,
+        input.sourced_shape().rank(),
+        &dimensions,
+        |context| {
+            context.sourced_tensor(
+                TensorRole::Input,
+                input.value_type().clone(),
+                input.sourced_shape(),
+            )
+        },
+        |context| {
+            context.sourced_tensor(
+                TensorRole::Output,
+                result.value_type().clone(),
+                result.sourced_shape(),
+            )
+        },
+    )
+}
+
+fn emit_broadcast_coordinates(
+    context: &mut LawContext<'_>,
+    mapping: &BroadcastAxisMapping,
+    operand_rank: usize,
+    dimensions: &[DimensionId],
+    input: impl FnOnce(&mut LawContext<'_>) -> Result<TensorId, IndexRealizationLawError>,
+    output: impl FnOnce(&mut LawContext<'_>) -> Result<TensorId, IndexRealizationLawError>,
+) -> Result<(), IndexRealizationLawError> {
+    let coordinates = dimension_expressions(context, dimensions)?;
     let zero = context.constant(IndexInteger::from_u64(0))?;
     let domain = mapping
         .sources()
         .iter()
-        .zip(&dimensions)
+        .zip(dimensions)
         .filter(|(source, _)| matches!(source, BroadcastAxisSource::FromOperand(_)))
         .map(|(_, dimension)| *dimension)
         .collect::<Vec<_>>();
-    let mut operand_coordinates = vec![None; input_shape.rank()];
+    let mut operand_coordinates = vec![None; operand_rank];
     for (result_axis, source) in mapping.sources().iter().enumerate() {
         let Some(axis) = source.operand_axis() else {
             continue;
@@ -2004,14 +2122,10 @@ fn realize_broadcast(
         .into_iter()
         .map(|coordinate| coordinate.ok_or_else(|| unsupported("broadcast-axis-unmapped")))
         .collect::<Result<Vec<_>, _>>()?;
-    let tensor = context.tensor(TensorRole::Input, input.value_type().clone(), input_shape)?;
+    let tensor = input(context)?;
     let value = context.read(tensor, &domain, &operand_coordinates)?;
-    let output = context.tensor(
-        TensorRole::Output,
-        result.value_type().clone(),
-        result_shape,
-    )?;
-    let write = context.write(output, &dimensions, &coordinates)?;
+    let output = output(context)?;
+    let write = context.write(output, dimensions, &coordinates)?;
     context.output(write, value)
 }
 
@@ -4635,5 +4749,150 @@ mod tests {
         ]
         .concat();
         assert_eq!(encoded, expected);
+    }
+
+    fn parametric_broadcast_subject(
+        t_lower: u64,
+        t_upper: u64,
+    ) -> (
+        IndexRefinementSubject,
+        std::sync::Arc<crate::shape::ShapeEnv>,
+    ) {
+        use crate::semantic::{BroadcastAxisMapping, BroadcastAxisSource, F32Broadcast};
+        use crate::shape::{
+            BindingSource, EXTENT_PHASE_CEILING, ExtentRelation, ExtentTerm, FactProvenance,
+            RootBinding, SemanticInputConstraint, ShapeEnvBuilder, ShapeSymbol, SymbolScope,
+        };
+
+        let scope = SymbolScope::new("law-broadcast/0").unwrap();
+        let t = ShapeSymbol::new(scope.clone(), "t").unwrap();
+        let n = ShapeSymbol::new(scope, "n").unwrap();
+        let mut draft = ShapeEnvBuilder::new();
+        draft.declare(t.clone()).unwrap();
+        draft.declare(n.clone()).unwrap();
+        draft
+            .bind(
+                &t,
+                RootBinding::new(
+                    BindingSource::InputDimension {
+                        input: InputKey::new("operand").unwrap(),
+                        axis: Axis::new(0),
+                    },
+                    EXTENT_PHASE_CEILING,
+                    FactProvenance::RuntimeValidated,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        draft
+            .bind(
+                &n,
+                RootBinding::new(
+                    BindingSource::InputDimension {
+                        input: InputKey::new("operand").unwrap(),
+                        axis: Axis::new(1),
+                    },
+                    EXTENT_PHASE_CEILING,
+                    FactProvenance::RuntimeValidated,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        draft
+            .require(SemanticInputConstraint::new(
+                ExtentRelation::interval(ExtentTerm::Symbol(t.clone()), t_lower, t_upper).unwrap(),
+                FactProvenance::FrontendRequired,
+            ))
+            .unwrap();
+        draft
+            .require(SemanticInputConstraint::new(
+                ExtentRelation::interval(ExtentTerm::Symbol(n.clone()), 2, 64).unwrap(),
+                FactProvenance::FrontendRequired,
+            ))
+            .unwrap();
+        let environment = std::sync::Arc::new(draft.build().unwrap());
+        let mut program =
+            SemanticProgramBuilder::try_standard_with_shape_environment(environment.clone())
+                .unwrap();
+        let operand = program
+            .input_sourced::<F32>(
+                InputKey::new("operand").unwrap(),
+                vec![SourcedExtent::Symbol(n.clone())],
+            )
+            .unwrap();
+        let mapping = BroadcastAxisMapping::new(
+            vec![SourcedExtent::Symbol(t), SourcedExtent::Symbol(n)],
+            [
+                BroadcastAxisSource::Replicate,
+                BroadcastAxisSource::FromOperand(Axis::new(0)),
+            ],
+        )
+        .unwrap();
+        let widened = F32Broadcast::apply(&mut program, &mapping, operand).unwrap();
+        program
+            .output(OutputKey::new("widened").unwrap(), widened)
+            .unwrap();
+        let program = program.build().unwrap();
+        let operation = program.operations().next().unwrap().id();
+        (
+            IndexRefinementSubject::derive(&program, operation, strict_contract()).unwrap(),
+            environment,
+        )
+    }
+
+    #[test]
+    fn the_broadcast_law_realizes_the_same_parametric_carrier_across_bindings() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        for (lower, upper) in [
+            (1, 32_768),
+            (2, 32_768),
+            (1, 1),
+            (2, 2),
+            (10, 10),
+            (32_768, 32_768),
+        ] {
+            let (subject, _) = parametric_broadcast_subject(lower, upper);
+            let region = IndexRealizationLaw::broadcast_f32()
+                .realize(&subject, &scalars)
+                .unwrap_or_else(|error| panic!("[{lower}, {upper}]: {error}"));
+            assert_eq!(region.tensors().count(), 2);
+            assert!(
+                region.extent_sources().is_some(),
+                "the parametric realization retains the program environment"
+            );
+        }
+    }
+
+    #[test]
+    fn a_literal_broadcast_realization_does_not_attach_an_environment() {
+        use crate::semantic::{BroadcastAxisMapping, BroadcastAxisSource, F32Broadcast};
+
+        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+        let operand = program
+            .input::<F32>(InputKey::new("operand").unwrap(), Shape::from_dims([4]))
+            .unwrap();
+        let mapping = BroadcastAxisMapping::new(
+            [Extent::new(8), Extent::new(4)],
+            [
+                BroadcastAxisSource::Replicate,
+                BroadcastAxisSource::FromOperand(Axis::new(0)),
+            ],
+        )
+        .unwrap();
+        let widened = F32Broadcast::apply(&mut program, &mapping, operand).unwrap();
+        program
+            .output(OutputKey::new("widened").unwrap(), widened)
+            .unwrap();
+        let program = program.build().unwrap();
+        let operation = program.operations().next().unwrap().id();
+        let subject =
+            IndexRefinementSubject::derive(&program, operation, strict_contract()).unwrap();
+        let region = IndexRealizationLaw::broadcast_f32()
+            .realize(&subject, &FrozenScalarRegistry::standard().unwrap())
+            .unwrap();
+        assert!(
+            region.extent_sources().is_none(),
+            "a literal mapping must keep the environment-free realization path"
+        );
     }
 }

@@ -346,6 +346,30 @@ pub enum LogicalAccess {
         /// One decode per operand axis, in axis order.
         axes: Vec<AxisDecode>,
     },
+    /// A sourced broadcast relation over its whole symbolic domain.
+    ///
+    /// **Labelled draft under ADR 0075.** The exact included and excluded
+    /// surface is Tom's to accept; dependents must not treat this variant as
+    /// accepted vocabulary.
+    ///
+    /// The access relation of a sourced `tiler::broadcast-f32@2` mapping,
+    /// including the bijective binding at one. It is **not**
+    /// [`Self::BroadcastReplication`] and **not** [`Self::ReindexBijection`].
+    /// Those remain exact over their concrete subjects. Consumers must match
+    /// this carrier explicitly. Replication-only fusion and costing are
+    /// admitted only when the named environment proves actual widening.
+    ///
+    /// The payload is the authored operand, the sourced mapping, and the
+    /// environment identity needed to interpret the symbols. It does not bind
+    /// an extent and does not select a concrete neighbour.
+    ParametricBroadcast {
+        /// Sourced shape of the operand being read.
+        operand_shape: crate::shape::SourcedShape,
+        /// The sourced operand/result mapping, including symbolic pads.
+        mapping: crate::semantic::BroadcastAxisMapping,
+        /// Exact identity of the environment that interprets the mapping.
+        environment: crate::shape::ShapeEnvIdentity,
+    },
 }
 
 /// One logical tensor access performed by a scheduled region.
@@ -1780,6 +1804,16 @@ const TAG_REINDEX_BIJECTION: u8 = 0x06;
 /// in what they permit a consumer to conclude, and a shared tag would make a
 /// bijection and a replication differ only in bytes a reader has to interpret.
 const TAG_BROADCAST_REPLICATION: u8 = 0x07;
+/// Logical-access tag of a sourced parametric broadcast.
+///
+/// Appended for the same reason and with the same consequence as `0x07`. It is
+/// a tag of its own rather than a field on `0x07` because a parametric
+/// relation that may bind to one is not a concrete replication, and a shared
+/// tag would make that distinction a payload interpretation. `0x01` through
+/// `0x07` keep their tags and their field layouts, so no previously encodable
+/// region's bytes move and the schedule identity domain deliberately does not
+/// step.
+const TAG_PARAMETRIC_BROADCAST: u8 = 0x08;
 const TAG_LINEAR_RANGE: u8 = 0x11;
 const TAG_REDUCTION_DOMAIN: u8 = 0x12;
 const TAG_SCALAR_SERIAL_SUM: u8 = 0x22;
@@ -1973,7 +2007,22 @@ fn push_logical_access(bytes: &mut Vec<u8>, access: &LogicalAccess) {
             push_shape(bytes, result_shape);
             push_axis_decodes(bytes, axes);
         }
+        LogicalAccess::ParametricBroadcast {
+            operand_shape,
+            mapping,
+            environment,
+        } => {
+            bytes.push(TAG_PARAMETRIC_BROADCAST);
+            operand_shape.encode(bytes);
+            push_slice(bytes, mapping.canonical_encoding().as_bytes());
+            push_slice(bytes, environment.as_bytes());
+        }
     }
+}
+
+#[cfg(test)]
+pub(super) fn push_logical_access_for_test(bytes: &mut Vec<u8>, access: &LogicalAccess) {
+    push_logical_access(bytes, access);
 }
 
 /// Encodes one framed run of operand-axis coordinate decodes.

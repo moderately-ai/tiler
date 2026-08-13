@@ -139,6 +139,7 @@ mod error;
 mod handles;
 mod model;
 mod numerics;
+mod parametric;
 mod pointwise;
 mod pointwise_bf16;
 mod synchronization;
@@ -174,6 +175,12 @@ pub use numerics::{
     F32NumericalContractKey, FlushedZeroSign, MaterializationRounding, NumericalContractKeyError,
     NumericalPermission, NumericalRealization, SubnormalFreedom, SubnormalMode,
     ValueDomainProvenance,
+};
+pub use parametric::{
+    BroadcastTransformClass, ParametricBroadcastRule, classify_broadcast_transform,
+    environment_proves_actual_widening, interpret_parametric_broadcast, mapping_names_a_symbol,
+    parametric_broadcast, parametric_broadcast_read_is_admissible,
+    replication_only_transform_is_admitted,
 };
 pub use pointwise::{
     MAX_POINTWISE_F32_EXPRESSION_NODES, PointwiseF32Expression,

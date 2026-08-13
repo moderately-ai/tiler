@@ -827,6 +827,9 @@ fn reads_bind_boundary_tensors_in_order(reads: &[Access]) -> bool {
 ///   iteration domain exactly, so every operand element is read once.
 /// - [`LogicalAccess::BroadcastReplication`], whose decodes are required to name
 ///   distinct result axes and leave at least one replicated.
+/// - [`LogicalAccess::ParametricBroadcast`], the labelled-draft sourced carrier.
+///   Structural rank agreement is checked here; the environment proof is
+///   [`super::parametric::interpret_parametric_broadcast`].
 ///
 /// Both structural maps must state the region's own iteration shape as their
 /// result shape. That is what stops a region from carrying an access relation
@@ -863,6 +866,9 @@ fn pointwise_read_map_is_admissible(
                     result_shape,
                     axes,
                 )
+        }
+        LogicalAccess::ParametricBroadcast { .. } => {
+            super::parametric::parametric_broadcast_read_is_admissible(map, iteration_shape.rank())
         }
         // A scalar broadcast reads a rank-zero parameter and belongs to the
         // decode program; a packed carrier belongs to it too; and the two
@@ -2233,6 +2239,12 @@ fn bounds_proof_refines_access(
             | LogicalAccess::BroadcastReplication { operand_shape, .. },
         ) => super::model::element_count(operand_shape)
             .is_ok_and(|elements| *element_count == elements),
+        (
+            BoundsProofKind::LinearRange { element_count },
+            LogicalAccess::ParametricBroadcast { operand_shape, .. },
+        ) => operand_shape.as_static().is_some_and(|shape| {
+            super::model::element_count(shape).is_ok_and(|elements| *element_count == elements)
+        }),
         _ => false,
     }
 }

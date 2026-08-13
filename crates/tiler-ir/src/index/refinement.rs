@@ -186,6 +186,7 @@ const COUNTEREXAMPLE_TAG: &[u8] = b"tiler.ir.index-domain-counterexample.v1\0";
 pub struct IndexRefinementBoundary {
     value_type: ResolvedValueType,
     shape: Shape,
+    sourced: crate::shape::SourcedShape,
 }
 
 impl IndexRefinementBoundary {
@@ -195,10 +196,19 @@ impl IndexRefinementBoundary {
         &self.value_type
     }
 
-    /// Returns the boundary shape.
+    /// Returns the static boundary shape when the boundary was authored as a
+    /// literal, and an empty shape when it names a symbol.
+    ///
+    /// Prefer [`Self::sourced_shape`] when the occurrence may be parametric.
     #[must_use]
     pub const fn shape(&self) -> &Shape {
         &self.shape
+    }
+
+    /// Returns the authored sourced boundary, including symbolic extents.
+    #[must_use]
+    pub const fn sourced_shape(&self) -> &crate::shape::SourcedShape {
+        &self.sourced
     }
 }
 
@@ -505,7 +515,24 @@ pub struct IndexRefinementSubject {
     semantic_authority: SemanticCapabilityAuthority,
     realization_law_row: Option<Box<[u8]>>,
     identity: Box<[u8]>,
+    environment: SubjectEnvironment,
 }
+
+/// The program environment a subject may carry, compared by identity only.
+#[derive(Clone, Debug)]
+struct SubjectEnvironment(Option<std::sync::Arc<crate::shape::ShapeEnv>>);
+
+impl PartialEq for SubjectEnvironment {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (None, None) => true,
+            (Some(left), Some(right)) => left.identity() == right.identity(),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for SubjectEnvironment {}
 
 impl IndexRefinementSubject {
     /// Derives one exact subject from a verified semantic graph and operation handle.
@@ -543,7 +570,7 @@ impl IndexRefinementSubject {
             let reference = program
                 .value(value)
                 .map_err(IndexRefinementVerificationError::SemanticHandle)?;
-            let shape = static_boundary_shape(program, value)?;
+            let (shape, sourced) = boundary_shapes(program, value)?;
             let index = values
                 .iter()
                 .position(|candidate| *candidate == value)
@@ -552,6 +579,7 @@ impl IndexRefinementSubject {
                     inputs.push(IndexRefinementBoundary {
                         value_type: reference.resolved_type().clone(),
                         shape: shape.clone(),
+                        sourced: sourced.clone(),
                     });
                     values.len() - 1
                 });
@@ -564,11 +592,12 @@ impl IndexRefinementSubject {
             let reference = program
                 .value(value)
                 .map_err(IndexRefinementVerificationError::SemanticHandle)?;
-            let shape = static_boundary_shape(program, value)?;
+            let (shape, sourced) = boundary_shapes(program, value)?;
             result_types.push(reference.resolved_type().clone());
             results.push(IndexRefinementBoundary {
                 value_type: reference.resolved_type().clone(),
                 shape,
+                sourced,
             });
         }
         let signature = IndexRefinementSignature::new(operand_types, result_types)?;
@@ -601,6 +630,11 @@ impl IndexRefinementSubject {
             semantic_authority,
             realization_law_row,
             identity: Box::new([]),
+            environment: SubjectEnvironment(
+                program
+                    .extent_sources()
+                    .map(|sources| std::sync::Arc::clone(sources.environment_arc_for_subject())),
+            ),
         };
         subject.identity = encode_subject_identity(&subject).into_boxed_slice();
         Ok(subject)
@@ -661,6 +695,12 @@ impl IndexRefinementSubject {
     #[must_use]
     pub const fn signature(&self) -> &IndexRefinementSignature {
         &self.signature
+    }
+
+    /// Returns the program environment this subject was derived under, if any.
+    #[must_use]
+    pub fn shape_environment(&self) -> Option<&std::sync::Arc<crate::shape::ShapeEnv>> {
+        self.environment.0.as_ref()
     }
 }
 
@@ -3784,7 +3824,7 @@ fn encode_subject_identity_with(
     push_len(&mut bytes, subject.inputs.len());
     for input in &subject.inputs {
         push_slice(&mut bytes, input.value_type.canonical_encoding().as_bytes());
-        encode_shape(&mut bytes, &input.shape);
+        encode_boundary_shape(&mut bytes, input);
     }
     push_len(&mut bytes, subject.operands.len());
     for input in &subject.operands {
@@ -3796,7 +3836,7 @@ fn encode_subject_identity_with(
             &mut bytes,
             result.value_type.canonical_encoding().as_bytes(),
         );
-        encode_shape(&mut bytes, &result.shape);
+        encode_boundary_shape(&mut bytes, result);
     }
     bytes.push(match subject.effect {
         OperationEffect::Pure => 1,
@@ -3822,24 +3862,30 @@ fn encode_subject_identity_with(
     bytes
 }
 
-/// Returns one covered semantic value's fixed boundary shape.
+/// Returns one covered semantic value's static projection and authored boundary.
+///
+/// A wholly literal boundary keeps the static `Shape` the previous encoder
+/// wrote. A boundary that names a symbol keeps an empty static projection so
+/// existing subject bytes for literal occurrences do not move, and carries the
+/// sourced spelling beside it.
 ///
 /// # Errors
 ///
 /// Returns [`IndexRefinementVerificationError::SemanticHandle`] for a handle the
-/// program does not own and
-/// [`IndexRefinementVerificationError::SymbolicSemanticBoundary`] for a shape
-/// naming a declared symbol.
-fn static_boundary_shape(
+/// program does not own.
+fn boundary_shapes(
     program: &crate::semantic::SemanticProgram,
     value: crate::semantic::ValueId,
-) -> Result<Shape, IndexRefinementVerificationError> {
-    program
+) -> Result<(Shape, crate::shape::SourcedShape), IndexRefinementVerificationError> {
+    let sourced = program
         .shape(value)
         .map_err(IndexRefinementVerificationError::SemanticHandle)?
+        .clone();
+    let shape = sourced
         .as_static()
         .cloned()
-        .ok_or(IndexRefinementVerificationError::SymbolicSemanticBoundary)
+        .unwrap_or_else(|| Shape::from_dims([]));
+    Ok((shape, sourced))
 }
 
 fn encode_authority_identity(
@@ -3931,6 +3977,14 @@ fn encode_shape(output: &mut Vec<u8>, shape: &Shape) {
     }
 }
 
+fn encode_boundary_shape(output: &mut Vec<u8>, boundary: &IndexRefinementBoundary) {
+    if boundary.sourced.as_static().is_some() {
+        encode_shape(output, &boundary.shape);
+        return;
+    }
+    boundary.sourced.encode(output);
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -4007,6 +4061,7 @@ mod tests {
             )
             .unwrap(),
             shape: Shape::from_dims([1]),
+            sourced: crate::shape::SourcedShape::from_shape(Shape::from_dims([1])),
         }
     }
 
