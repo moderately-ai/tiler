@@ -1,7 +1,7 @@
 ---
 id: carry-the-parametric-broadcast-relation-through-index-and-schedule-ir
 title: Carry the parametric broadcast relation through index and schedule IR
-status: review
+status: done
 priority: p1
 dependencies: [replace-broadcast-f32-v1-with-sourced-broadcast-f32-v2-semantics]
 related: [accept-the-parametric-broadcast-access-surface, project-parametric-broadcast-into-the-compiler-request-subject]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing, scheduling, broadcast, identity]
-claimed_from: todo
-assignee: worker-parametric-broadcast
-lease_expires_at: 1786640549
 ---
 # Carry the parametric broadcast relation through index and schedule IR
 
