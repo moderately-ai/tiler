@@ -1,0 +1,13 @@
+{
+  "base": "612468048d541a1017640fc5dcbe5ff9160716cf",
+  "program": "(input * 2.0) * 1.0",
+  "elements": 12,
+  "reference_bits": ["0x40000000", "0x80000000", "0x3f800000", "0x7fc00000", "0x7f800000", "0xff800000", "0xc0000000", "0x40c00000", "0x40800000", "0x01000000", "0x47ffe000", "0xc1400000"],
+  "cpu_bits": ["0x40000000", "0x80000000", "0x3f800000", "0x7fc00000", "0x7f800000", "0xff800000", "0xc0000000", "0x40c00000", "0x40800000", "0x01000000", "0x47ffe000", "0xc1400000"],
+  "metal": { "status": "executed", "bits": ["0x40000000", "0x80000000", "0x3f800000", "0x7fc00000", "0x7f800000", "0xff800000", "0xc0000000", "0x40c00000", "0x40800000", "0x01000000", "0x47ffe000", "0xc1400000"] },
+  "offered_with_custom": ["tiler::prototype-serial-sum-physical@1", "acme::simdgroup-pointwise-metal@4"],
+  "offered_without_custom": ["tiler::prototype-serial-sum-physical@1"],
+  "portfolio_bytes": 94717,
+  "cross_family_refusals": ["runtime.no-eligible-variant: this host can execute none of the 1 packaged variant(s), and no guard was evaluated: variant 0: entry 0 is realized by a tiler.metal/metallib payload and this host states tiler.cpu.scalar/tiler.cpu.scalar-image-v1", "runtime.no-eligible-variant: this host can execute none of the 1 packaged variant(s), and no guard was evaluated: variant 0: entry 0 is realized by a tiler.cpu.scalar/tiler.cpu.scalar-image-v1 payload and this host states tiler.metal/metallib"],
+  "reference_identity_bytes": 1675780
+}
