@@ -1,7 +1,7 @@
 ---
 id: measure-metal-thread-execution-width-across-prepared-pipelines
 title: Measure Metal thread execution width across prepared pipelines
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [declare-metal-subgroup-realization-facts-in-the-target-profile, decide-the-prepared-subgroup-width-equality-gate]
@@ -9,6 +9,9 @@ scopes: [research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: [measurement, metal, subgroup, target-profiles, evidence]
+claimed_from: todo
+assignee: worker-measure-metal-width
+lease_expires_at: 1786659450
 ---
 ## User-visible outcome
 
