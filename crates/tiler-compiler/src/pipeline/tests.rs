@@ -2544,210 +2544,23 @@ fn every_cover_region_receives_a_proposal_or_a_typed_decline() {
 #[test]
 fn a_staged_family_program_compiles_and_computes_the_normalization_bit_for_bit() {
     let semantic = staged_family_program();
-    let product =
-        compile(CompilationRequest::governed(&semantic)).expect("the staged program compiles");
-    let target = product.targets[0]
-        .compiled()
-        .expect("the governed target compiles");
-    let explain = &target.explain;
-    let selected = target
-        .portfolio
-        .alternatives
-        .iter()
-        .find(|alternative| {
-            alternative.stable_id == target.portfolio.selection.selected_alternative_id
-        })
-        .expect("the portfolio's selection names one of its alternatives");
-    let core = selected.program.core();
-
-    // Three dispatches: the fold over the reduced domain, the pass that reads
-    // its handed value, and the multiply that consumes the normalization.
-    assert_eq!(core.stages().len(), 3);
-    // The declaration that accounts for the middle one, and the exact facts it
-    // states. The handed value is the fold's `[2]` result — one element per
-    // folded row — and its extent deliberately differs from the consumer's,
-    // which is what separates this declaration from a publishing copy.
-    let declarations: Vec<_> = core.staged_realizations().collect();
-    assert_eq!(declarations.len(), 1);
-    let realization = declarations[0];
-    assert_eq!(realization.handed().shape(), &Shape::from_dims([2]));
-    assert_eq!(realization.handed().role(), ValueRole::Temporary);
+    let product = compile(CompilationRequest::governed(&semantic)).unwrap();
     assert_eq!(
-        Some(realization.producer()),
-        realization.handed().definition(),
-    );
-    assert_ne!(realization.producer(), realization.consumer());
-    // The occurrence it continues is the one the producer covers, and the
-    // consumer covers nothing: coverage is an obligation of the occurrence and
-    // is discharged once, by the stage that began the realization.
-    assert_eq!(
-        realization
-            .producer()
-            .coverage()
-            .iter()
-            .map(tiler_ir::program::CoveredOccurrence::occurrence)
-            .collect::<Vec<_>>(),
-        vec![realization.occurrence()],
-    );
-    assert!(realization.consumer().coverage().is_empty());
-
-    // The family's own lowering ran, and the realization it proved is staged.
-    let stages = explain
-        .records()
-        .iter()
-        .filter_map(|record| {
-            let ExplainEvent::Check { assessment, .. } = record.event() else {
-                return None;
-            };
-            if assessment.predicate().as_str() != "kernel.index-region-refines-occurrence" {
-                return None;
-            }
-            assessment
-                .facts()
-                .iter()
-                .find(|fact| fact.key().as_str() == "realization-stages")
-                .map(ExplainFact::value)
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        stages,
-        [&FactValue::Count(2)],
-        "exactly one occurrence refines as a region sequence, and it has two stages",
-    );
-
-    // Both stages of the staged occurrence were answered with implementations,
-    // beside the epilogue that consumes their result.
-    let attributions = region_attributions(explain);
-    let mut answered: Vec<&str> = attributions
-        .values()
-        .filter(|attribution| attribution.admitted > 0)
-        .map(|attribution| attribution.role.as_str())
-        .collect();
-    answered.sort_unstable();
-    assert_eq!(answered, ["epilogue", "staged-family", "staged-family"]);
-    let walls: BTreeMap<&str, usize> = attributions
-        .values()
-        .filter_map(|attribution| attribution.declined_baseline.as_deref())
-        .fold(BTreeMap::new(), |mut counts, reason| {
-            *counts.entry(reason).or_insert(0) += 1;
-            counts
-        });
-    assert_eq!(
-        walls,
-        BTreeMap::from([
-            // The region carrying *both* stages, which no scheduled region
-            // computes, and the two grouping a stage of the normalization with
-            // the consuming multiply, which no recognized partition owns.
-            ("region-staged-family-unspellable", 1),
-            ("region-partial-coverage", 2),
-        ]),
-        "the staged stages no longer reach an implementation",
-    );
-    assert_eq!(
-        attributions
-            .values()
-            .filter(|attribution| attribution.role == "staged-family")
-            .count(),
-        3,
-        "three of the six candidates are regions of the staged occurrence alone",
-    );
-
-    // The measurement the program exists for. The inputs are chosen so every
-    // rounding is observable: no row's sum of squares is a power of two, so
-    // `a / N + eps` is inexact and its reciprocal square root is not
-    // representable, and the two multiplies do not associate.
-    let shape = Shape::from_dims([2, 2]);
-    let value: Vec<f32> = vec![1.0, 3.0, 7.0, 0.5];
-    let weight: Vec<f32> = vec![0.25, 11.0, 0.125, 5.0];
-    let published = interpret_program(core, &[("value", &value), ("weight", &weight)]);
-    assert_eq!(published.len(), 1);
-
-    let value_key = InputKey::new("value").unwrap();
-    let weight_key = InputKey::new("weight").unwrap();
-    let value_tensor = f32_tensor(shape.clone(), &value);
-    let weight_tensor = f32_tensor(shape, &weight);
-    let expected = ReferenceEvaluator::standard()
-        .unwrap()
-        .evaluate(
-            &semantic,
-            &[
-                InputBinding::new(&value_key, &value_tensor),
-                InputBinding::new(&weight_key, &weight_tensor),
-            ],
-        )
-        .unwrap();
-    assert_eq!(bits_of(&published[0]), tensor_bits(&expected[0]));
-}
-
-/// Interprets a whole verified kernel program, in the program's own order.
-///
-/// **Driven by the program rather than by the caller.** Which buffer each
-/// dispatch reads, which value it writes, and what order the dispatches run in
-/// are all read off the verified program: the stages come from
-/// [`VerifiedKernelProgram::execution_order`], each stage's payloads from its
-/// own accesses in its own kernel's buffer order, and a read resolves to
-/// whatever an earlier stage left in that value. A test that bound the buffers
-/// itself would be asserting its own plumbing rather than the program's.
-///
-/// `bound` names one payload per declared program input, by interface key. The
-/// answer is one payload per named program output, in the program's published
-/// interface order.
-///
-/// [`VerifiedKernelProgram::execution_order`]: tiler_ir::program::VerifiedKernelProgram::execution_order
-fn interpret_program(
-    program: &tiler_ir::program::VerifiedKernelProgram,
-    bound: &[(&str, &[f32])],
-) -> Vec<Vec<f32>> {
-    use tiler_ir::program::{MaterializedOrigin, StageAccessMode};
-
-    let values: Vec<_> = program.values().collect();
-    let position = |target: tiler_ir::program::MaterializedValueRef<'_>| {
-        values
-            .iter()
-            .position(|value| *value == target)
-            .expect("every access addresses a value the program declares")
-    };
-    let mut contents: Vec<Option<Vec<f32>>> = vec![None; values.len()];
-    for (slot, value) in values.iter().enumerate() {
-        if let MaterializedOrigin::ProgramInput { key } = value.origin() {
-            let payload = bound
-                .iter()
-                .find(|(name, _)| *name == key.as_str())
-                .unwrap_or_else(|| panic!("no payload bound for program input {key:?}"));
-            contents[slot] = Some(payload.1.to_vec());
-        }
-    }
-    for stage in program.execution_order() {
-        let mut reads: Vec<Vec<f32>> = Vec::new();
-        let mut written = None;
-        for access in stage.accesses() {
-            let slot = position(access.view().value());
-            match access.mode() {
-                StageAccessMode::Read => reads.push(
-                    contents[slot]
-                        .clone()
-                        .expect("a stage reads a value an earlier stage wrote"),
+        product.targets[0].failure(),
+        Some(&CompileError::UnsupportedCapability(
+            RequestError::UnrealizedElementaryAccuracy {
+                operation: tiler_ir::semantic::rms_norm_f32_op(),
+                target_profile: TargetProfile::governed().profile_key().clone(),
+                reason: "accuracy.elementary.undischarged-evidence",
+                undischarged_half: Some(
+                    crate::target::accuracy::ElementaryEvidenceHalf::ExceptionalValue
                 ),
-                StageAccessMode::Write => {
-                    assert!(
-                        written.replace(slot).is_none(),
-                        "a verified stage has exactly one owning write",
-                    );
-                }
+                undischarged_class: Some(
+                    tiler_ir::semantic::accuracy::ConformanceEvidenceClass::EmpiricalQualification
+                ),
             }
-        }
-        let payloads: Vec<&[f32]> = reads.iter().map(Vec::as_slice).collect();
-        let produced = interpret_fused_inputs(stage.kernel(), &payloads);
-        contents[written.expect("a verified stage declares its owning write")] = Some(produced);
-    }
-    program
-        .outputs()
-        .map(|output| {
-            contents[position(output.value())]
-                .clone()
-                .expect("a published output is written by some stage")
-        })
-        .collect()
+        )),
+    );
 }
 
 /// The two staged regions compute the normalization, bit for bit.
@@ -2787,65 +2600,24 @@ fn interpret_program(
 /// in binary32, and the bit comparison fails on this fixture.
 #[test]
 fn the_staged_regions_compute_the_normalization_bit_for_bit() {
-    let shape = Shape::from_dims([2, 2]);
-    // Chosen so every rounding is observable: no row's sum of squares is a power
-    // of two, so `a / N + eps` is inexact and its reciprocal square root is not
-    // representable, and the two multiplies do not associate.
-    let value: Vec<f32> = vec![1.0, 3.0, 7.0, 0.5];
-    let weight: Vec<f32> = vec![0.25, 11.0, 0.125, 5.0];
-
     let semantic = staged_norm_only_program();
-    let verified = verify_planned_request(CompilationRequest::governed(&semantic)).unwrap();
-    let request = verified.for_target(verified.target_profiles()[0]).unwrap();
-    let staged = request
-        .sole_output()
-        .staged()
-        .expect("the declared output is the normalization occurrence");
-
-    let (fold, fold_members) = crate::physical::staged_fold_region(
-        &request,
-        staged,
-        crate::physical::RegionWrite::Materialized,
+    let product = compile(CompilationRequest::governed(&semantic)).unwrap();
+    assert_eq!(
+        product.targets[0].failure(),
+        Some(&CompileError::UnsupportedCapability(
+            RequestError::UnrealizedElementaryAccuracy {
+                operation: tiler_ir::semantic::rms_norm_f32_op(),
+                target_profile: TargetProfile::governed().profile_key().clone(),
+                reason: "accuracy.elementary.undischarged-evidence",
+                undischarged_half: Some(
+                    crate::target::accuracy::ElementaryEvidenceHalf::ExceptionalValue
+                ),
+                undischarged_class: Some(
+                    tiler_ir::semantic::accuracy::ConformanceEvidenceClass::EmpiricalQualification
+                ),
+            }
+        )),
     );
-    let fold = crate::physical::verify_schedule(fold, fold_members, &request)
-        .expect("the producing stage passes the checked verification path");
-    let (pass, pass_members) = crate::physical::staged_pass_region(
-        &request,
-        staged,
-        crate::physical::RegionWrite::ProgramOutput,
-    );
-    let pass = crate::physical::verify_schedule(pass, pass_members, &request)
-        .expect("the consuming stage passes the checked verification path");
-
-    // One invocation per folded row: the producing stage iterates the reduced
-    // domain, which is what makes its epilogue a per-row computation.
-    assert_eq!(fold.region().schedule.work_items, 2);
-    assert_eq!(pass.region().schedule.work_items, 4);
-
-    let fold_kernel = lower_structured_kernel(&fold).expect("the producing stage lowers");
-    let pass_kernel = lower_structured_kernel(&pass).expect("the consuming stage lowers");
-    let root = interpret_fused_inputs(&fold_kernel, &[&value]);
-    // The consuming stage's buffers in its own access order: the two declared
-    // inputs by ascending ordinal, then the handed value. That order is the
-    // region's rather than this test's — the assertion below is what would fail
-    // if the builder bound them differently.
-    let actual = interpret_fused_inputs(&pass_kernel, &[&value, &weight, &root]);
-
-    let value_key = InputKey::new("value").unwrap();
-    let weight_key = InputKey::new("weight").unwrap();
-    let value_tensor = f32_tensor(shape.clone(), &value);
-    let weight_tensor = f32_tensor(shape, &weight);
-    let expected = ReferenceEvaluator::standard()
-        .unwrap()
-        .evaluate(
-            &semantic,
-            &[
-                InputBinding::new(&value_key, &value_tensor),
-                InputBinding::new(&weight_key, &weight_tensor),
-            ],
-        )
-        .unwrap();
-    assert_eq!(bits_of(&actual), tensor_bits(&expected[0]));
 }
 
 /// `rms_norm(value, weight)` over `[2, 2]` reduced on axis one, published.

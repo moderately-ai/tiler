@@ -60,8 +60,9 @@
 //! neither declaration. What exists is a bounded corpus on one host row. Under
 //! ADR 0042 an empirical record "detects regressions and characterizes
 //! implementations but does not prove an unmeasured worst-case bound", so it
-//! cannot discharge a hard requirement — and [`ElementaryRealization::discharge`]
-//! reports that rather than borrowing the bound the other half established.
+//! cannot discharge a hard requirement. [`ElementaryRealization::discharge`]
+//! reports that rather than borrowing the bound the other half established, and
+//! [`assess_elementary_accuracy`] refuses admission unless both halves discharge.
 //!
 //! # The refinement verdict, and the number beside it
 //!
@@ -119,6 +120,7 @@
 //! requirement gives. `the_registered_softmax_accuracy_is_twenty_four_unit_roundoffs`
 //! is that ratio made checkable rather than described.
 
+use std::fmt;
 use std::sync::Arc;
 
 use tiler_ir::semantic::accuracy::{
@@ -613,14 +615,144 @@ impl ElementaryRealization {
 
     /// Reports which half of this realization discharges a hard requirement.
     ///
-    /// Both halves are asked, and they answer differently on purpose. Reporting
-    /// one summary boolean would have to pick which half to believe.
+    /// Both halves are asked, and they answer independently. Reporting one
+    /// summary boolean would have to pick which half to believe. Admission does
+    /// not consult this summary: [`Self::require_discharged_halves`] is the
+    /// fail-closed gate.
     pub(crate) fn discharge(&self) -> ElementaryDischarge {
         ElementaryDischarge {
             bound: self.bound_evidence.discharge().is_ok(),
             exceptional: self.exceptional_evidence.discharge().is_ok(),
             exceptional_class: self.exceptional_evidence.class(),
         }
+    }
+
+    /// Refuses unless both evidence halves discharge a hard requirement.
+    ///
+    /// Bound is asked first, then exceptional-value, so a row that fails both
+    /// reports the bound half. That order is the rule, not a preference: the
+    /// two halves are independent claims and the first failing one is a
+    /// function of this sequence rather than of which record happened to be
+    /// examined last.
+    pub(crate) fn require_discharged_halves(&self) -> Result<(), UndischargedEvidenceHalf> {
+        if let Err(error) = self.bound_evidence.discharge() {
+            return Err(UndischargedEvidenceHalf {
+                half: ElementaryEvidenceHalf::Bound,
+                class: undischarged_class(&error, self.bound_evidence.class()),
+            });
+        }
+        if let Err(error) = self.exceptional_evidence.discharge() {
+            return Err(UndischargedEvidenceHalf {
+                half: ElementaryEvidenceHalf::ExceptionalValue,
+                class: undischarged_class(&error, self.exceptional_evidence.class()),
+            });
+        }
+        Ok(())
+    }
+
+    /// Declares a realization that may participate in hard target admission.
+    ///
+    /// Distinct from [`Self::new`], which records a row including one whose
+    /// evidence cannot discharge. A future internal caller that wants an
+    /// admission-eligible row has to come through here, and a malformed
+    /// retained row still cannot bypass [`assess_elementary_accuracy`] because
+    /// that path re-asks the same check.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ElementaryAccuracyRefusal`] naming the failing half and the
+    /// evidence class that failed to discharge.
+    pub(crate) fn declare(
+        operation: OpKey,
+        contract: AccuracyContract,
+        bound_evidence: ConformanceEvidence,
+        exceptional_evidence: ConformanceEvidence,
+        source: Arc<FactSourceProvenance>,
+    ) -> Result<Self, Box<ElementaryAccuracyRefusal>> {
+        let realization = Self::new(
+            operation,
+            contract,
+            bound_evidence,
+            exceptional_evidence,
+            source,
+        );
+        realization
+            .require_discharged_halves()
+            .map_err(|undischarged| {
+                Box::new(undischarged.into_refusal(
+                    realization.operation().clone(),
+                    Arc::clone(&realization.source),
+                ))
+            })?;
+        Ok(realization)
+    }
+}
+
+/// Which half of an elementary realization failed to discharge.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ElementaryEvidenceHalf {
+    /// The ordinary-domain accuracy bound.
+    Bound,
+    /// The exceptional-value, signed-zero, and subnormal behaviour.
+    ExceptionalValue,
+}
+
+impl ElementaryEvidenceHalf {
+    /// Returns the canonical spelling.
+    #[must_use]
+    pub const fn spelling(self) -> &'static str {
+        match self {
+            Self::Bound => "bound",
+            Self::ExceptionalValue => "exceptional-value",
+        }
+    }
+}
+
+impl fmt::Display for ElementaryEvidenceHalf {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.spelling())
+    }
+}
+
+/// The half and class that failed to discharge a hard requirement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct UndischargedEvidenceHalf {
+    half: ElementaryEvidenceHalf,
+    class: ConformanceEvidenceClass,
+}
+
+impl UndischargedEvidenceHalf {
+    pub(crate) const fn half(self) -> ElementaryEvidenceHalf {
+        self.half
+    }
+
+    pub(crate) const fn class(self) -> ConformanceEvidenceClass {
+        self.class
+    }
+
+    fn into_refusal(
+        self,
+        operation: OpKey,
+        declaring_profile: Arc<FactSourceProvenance>,
+    ) -> ElementaryAccuracyRefusal {
+        ElementaryAccuracyRefusal {
+            operation,
+            reason: ElementaryRefusalReason::UndischargedEvidence {
+                declaring_profile,
+                half: self.half,
+                class: self.class,
+            },
+        }
+    }
+}
+
+fn undischarged_class(
+    error: &ConformanceEvidenceError,
+    recorded: ConformanceEvidenceClass,
+) -> ConformanceEvidenceClass {
+    match error {
+        ConformanceEvidenceError::ClassCannotDischarge { class } => *class,
+        _ => recorded,
     }
 }
 
@@ -672,6 +804,24 @@ impl ElementaryAccuracyRefusal {
         &self.reason
     }
 
+    /// The failing half, when the refusal is undischarged evidence.
+    pub(crate) const fn undischarged_half(&self) -> Option<ElementaryEvidenceHalf> {
+        match self.reason {
+            ElementaryRefusalReason::UndischargedEvidence { half, .. } => Some(half),
+            ElementaryRefusalReason::NoInstalledRealization
+            | ElementaryRefusalReason::Unrefined { .. } => None,
+        }
+    }
+
+    /// The failing evidence class, when the refusal is undischarged evidence.
+    pub(crate) const fn undischarged_class(&self) -> Option<ConformanceEvidenceClass> {
+        match self.reason {
+            ElementaryRefusalReason::UndischargedEvidence { class, .. } => Some(class),
+            ElementaryRefusalReason::NoInstalledRealization
+            | ElementaryRefusalReason::Unrefined { .. } => None,
+        }
+    }
+
     /// The stable provider diagnostic code naming this refusal.
     pub(crate) const fn diagnostic_code(&self) -> &'static str {
         match self.reason {
@@ -681,11 +831,14 @@ impl ElementaryAccuracyRefusal {
             ElementaryRefusalReason::Unrefined { .. } => {
                 "accuracy.elementary.unrefined-realization"
             }
+            ElementaryRefusalReason::UndischargedEvidence { .. } => {
+                "accuracy.elementary.undischarged-evidence"
+            }
         }
     }
 }
 
-/// The two ways an elementary accuracy requirement goes unmet.
+/// The three ways an elementary accuracy requirement goes unmet.
 #[derive(Clone, Debug)]
 pub(crate) enum ElementaryRefusalReason {
     /// No installed realization speaks about the operation at all.
@@ -700,6 +853,21 @@ pub(crate) enum ElementaryRefusalReason {
         declaring_profile: Arc<FactSourceProvenance>,
         /// The unproved-refinement reason, from the conservative proof relation.
         unknown: RefinementUnknown,
+    },
+    /// A realization refined the contract, but a half's evidence cannot discharge
+    /// a hard requirement.
+    ///
+    /// Distinct from both refusals above. The contract is present and refines;
+    /// what is missing is evidence ADR 0042 permits to discharge. Empirical
+    /// qualification and `Unknown` both reach this variant, kept apart by the
+    /// class this reason carries.
+    UndischargedEvidence {
+        /// The declaring profile's versioned identity.
+        declaring_profile: Arc<FactSourceProvenance>,
+        /// Which half failed to discharge.
+        half: ElementaryEvidenceHalf,
+        /// The evidence class that failed to discharge.
+        class: ConformanceEvidenceClass,
     },
 }
 
@@ -725,42 +893,59 @@ impl ElementaryAccuracyAdmission {
     }
 }
 
-/// Decides whether some installed realization provably refines `required`.
+/// Decides whether some installed realization provably refines `required` and
+/// discharges both evidence halves.
 ///
 /// Conservative in one direction only, exactly as `refines` is: an admission is a
 /// proof, and a refusal may be a limitation of the closed algebra rather than a
 /// counterexample. That asymmetry can reject a legal implementation and can never
-/// admit an illegal one.
+/// admit an illegal one. Contract refinement is necessary and not sufficient:
+/// empirical or `Unknown` evidence on either half is not permission to compile.
 ///
 /// # Errors
 ///
 /// Returns [`ElementaryAccuracyRefusal`] naming the operation, the declaring
-/// profile, and the refusing reason. It is boxed because a refusal carries the
-/// declaring profile's whole provenance record — every measurement context, every
-/// compiler build identity — and that completeness is the point: a rejection that
-/// named less would not be reproducible.
+/// profile, and the refusing reason. A row that refines but cannot discharge is
+/// `undischarged-evidence`, not an unrefined or missing row. It is boxed because
+/// a refusal carries the declaring profile's whole provenance record — every
+/// measurement context, every compiler build identity — and that completeness is
+/// the point: a rejection that named less would not be reproducible.
 pub(crate) fn assess_elementary_accuracy(
     required: &AccuracyContract,
     installed: &[ElementaryRealization],
     registry: &RegisteredImplicationRegistry,
 ) -> Result<ElementaryAccuracyAdmission, Box<ElementaryAccuracyRefusal>> {
-    let mut refusal = None;
+    let mut undischarged = None;
+    let mut unrefined = None;
     for realization in installed {
         if realization.operation() != required.operation() {
             continue;
         }
         match tiler_ir::semantic::accuracy::refines(realization.contract(), required, registry) {
             RefinementOutcome::Refines { basis } => {
-                return Ok(ElementaryAccuracyAdmission {
-                    basis,
-                    discharge: realization.discharge(),
-                });
+                match realization.require_discharged_halves() {
+                    Ok(()) => {
+                        return Ok(ElementaryAccuracyAdmission {
+                            basis,
+                            discharge: realization.discharge(),
+                        });
+                    }
+                    Err(half) => {
+                        // A refining row whose evidence cannot discharge is a
+                        // more specific repair than an unrefined sibling. The
+                        // first such row is reported, so the cause is a
+                        // function of the installed order.
+                        undischarged.get_or_insert_with(|| {
+                            half.into_refusal(
+                                required.operation().clone(),
+                                Arc::clone(&realization.source),
+                            )
+                        });
+                    }
+                }
             }
             RefinementOutcome::Unknown { reason } => {
-                // The first refusal is reported, so the cause is a function of the
-                // installed order rather than of which candidate happened to be
-                // examined last.
-                refusal.get_or_insert_with(|| ElementaryAccuracyRefusal {
+                unrefined.get_or_insert_with(|| ElementaryAccuracyRefusal {
                     operation: required.operation().clone(),
                     reason: ElementaryRefusalReason::Unrefined {
                         declaring_profile: Arc::clone(&realization.source),
@@ -770,7 +955,7 @@ pub(crate) fn assess_elementary_accuracy(
             }
         }
     }
-    Err(Box::new(refusal.unwrap_or_else(|| {
+    Err(Box::new(undischarged.or(unrefined).unwrap_or_else(|| {
         ElementaryAccuracyRefusal {
             operation: required.operation().clone(),
             reason: ElementaryRefusalReason::NoInstalledRealization,

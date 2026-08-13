@@ -4359,10 +4359,15 @@ pub(crate) enum RequestError {
         /// Stable diagnostic code of the refusing reason.
         ///
         /// Carried rather than re-derived so the public failure key and the
-        /// refusal that produced it cannot disagree; the two reasons — no
-        /// installed realization at all, and an installed one that could not be
-        /// proved to refine — are different findings and keep different keys.
+        /// refusal that produced it cannot disagree; the three reasons — no
+        /// installed realization at all, an installed one that could not be
+        /// proved to refine, and a refining one whose evidence cannot discharge —
+        /// are different findings and keep different keys.
         reason: &'static str,
+        /// The failing half, when `reason` is undischarged evidence.
+        undischarged_half: Option<crate::target::accuracy::ElementaryEvidenceHalf>,
+        /// The failing evidence class, when `reason` is undischarged evidence.
+        undischarged_class: Option<tiler_ir::semantic::accuracy::ConformanceEvidenceClass>,
     },
     ShapeProductOverflow {
         role: &'static str,
@@ -4457,10 +4462,21 @@ impl fmt::Display for RequestError {
                 operation,
                 target_profile,
                 reason,
-            } => write!(
-                formatter,
-                "{reason}: target {target_profile} declares no realization refining the registered accuracy contract of {operation}"
-            ),
+                undischarged_half,
+                undischarged_class,
+            } => {
+                write!(
+                    formatter,
+                    "{reason}: target {target_profile} declares no realization that both refines and discharges the registered accuracy contract of {operation}"
+                )?;
+                match (undischarged_half, undischarged_class) {
+                    (Some(half), Some(class)) => write!(
+                        formatter,
+                        "; {half} evidence class {class} cannot discharge a hard requirement"
+                    ),
+                    _ => Ok(()),
+                }
+            }
             Self::ShapeProductOverflow { role } => write!(
                 formatter,
                 "compile.shape.{role}.element-count: static element count exceeds u64"
@@ -4804,6 +4820,8 @@ fn require_elementary_accuracy(
             operation: refusal.operation().clone(),
             target_profile: target.profile_key().clone(),
             reason: refusal.diagnostic_code(),
+            undischarged_half: refusal.undischarged_half(),
+            undischarged_class: refusal.undischarged_class(),
         },
     )
 }

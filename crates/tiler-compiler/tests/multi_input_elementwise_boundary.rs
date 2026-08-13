@@ -371,9 +371,11 @@ fn a_family_with_no_node_of_its_own_compiles_by_projection_or_by_addressing() {
     for contract in CONTRACTS {
         assert_eq!(
             compile_under(&activation, contract),
-            Ok(()),
-            "{contract:?} refused a family whose per-point body the expression \
-             vocabulary spells",
+            Err(CompileFailureClass::UnsupportedCapability {
+                rule: "accuracy.elementary.undischarged-evidence"
+            }),
+            "{contract:?} did not refuse the activation for undischarged \
+             exceptional-value evidence",
         );
         // **The row the structural widening flipped, and it is worth being
         // precise about what admitted it.** No `ScalarProgram` copy variant was

@@ -39,9 +39,7 @@ use tiler_ir::semantic::{
     ValueTypeDefinitionKey, add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape, SourcedExtent};
-use tiler_reference::{
-    FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
-};
+use tiler_reference::{InputBinding, ReferenceEvaluator};
 
 /// The shape-inference behaviour one externally registered operation declares.
 #[derive(Clone, Copy)]
@@ -1541,119 +1539,66 @@ fn registry_without(omitted: &OpKey) -> CompilerCapabilitySnapshot {
     CompilerCapabilitySnapshot::new(builder.freeze(), scalars)
 }
 
-/// The activation compiles, and its kernel agrees with the reference bit for bit.
+/// The governed Metal activation fails closed before a kernel is produced.
 ///
-/// **This is the closing evidence that the projection is the composition and not
-/// a plausible chain.** The boundary states `tiler::silu-f32@1`'s per-point body
-/// once, into the physical expression vocabulary; `KirMachine` reads only the
-/// structured kernel, resolving nothing from the semantic graph, the request, or
-/// the schedule; and the expected values come from `tiler-reference`'s own
-/// evaluation of the same semantic program. A reordered composition, a
-/// reciprocal-and-multiply spelling, or a divisor built as `e + 1.0` would each
-/// have to survive a bit comparison against the pinned reference, and the
-/// `-88.73` band below is where the first two stop doing so.
-///
-/// The corpus is the activation's own boundary corpus rather than a sample: both
-/// zeros, both infinities, the one-ULP disagreement point at `-88.0`, the last
-/// normal result at `-88.7228`, and the first exactly `-0.0` at `-88.73`. It runs
-/// in rows of four because the governed profile declares a four-thread grid axis
-/// and a pointwise region launches one invocation per element, so a wider row
-/// would be refused for a reason this test does not model.
+/// The projection still states `tiler::silu-f32@1`'s per-point body once. What
+/// this test can no longer do is compile that body against the governed profile:
+/// the exceptional-value record is empirical and cannot discharge. The bit-for-
+/// bit corpus lives with
+/// [`establish-hard-exceptional-value-evidence-for-metal-elementary-realizations`].
 #[test]
 fn the_activation_compiles_and_matches_the_reference_bit_for_bit() {
-    let rows: [[f32; 4]; 3] = [
-        [0.0, -0.0, 1.0, -1.0],
-        [f32::INFINITY, f32::NEG_INFINITY, -88.0, -88.722_8],
-        [-88.73, 2.0, -2.0, 1.0e-30],
-    ];
-    let shape = Shape::from_dims([4]);
-    let program = activation_program(shape.clone());
+    let program = activation_program(Shape::from_dims([4]));
     let product = compile(CompilationRequest::governed(&program)).unwrap();
-    // One occurrence covered by one region, so the only retained plan shape is
-    // the whole-program fused one.
-    let fused = alternative(&product, ProgramAlternativeKind::Fused);
-    let key = InputKey::new("input").unwrap();
-    let evaluator = ReferenceEvaluator::standard().unwrap();
-
-    let mut results = Vec::new();
-    for values in rows {
-        let actual = interpret_fused(&fused.kernels[0], &values);
-        let tensor = Tensor::dense(
-            F32::resolved_type(),
-            shape.clone(),
-            values
-                .iter()
-                .map(|value| {
-                    ReferenceElement::from_float_bits(
-                        value.to_bits().to_be_bytes(),
-                        FloatBitOrder::MostSignificantByteFirst,
-                    )
-                    .unwrap()
-                })
-                .collect(),
-        )
-        .unwrap();
-        let expected = evaluator
-            .evaluate(&program, &[InputBinding::new(&key, &tensor)])
-            .unwrap();
-        let TensorPayloadView::Dense(elements) = expected[0].payload() else {
-            panic!("the activation's reference result is a dense f32 tensor")
-        };
-        assert_eq!(
-            actual
-                .iter()
-                .map(|value| value.to_bits())
-                .collect::<Vec<_>>(),
-            elements
-                .iter()
-                .map(|element| u32::from_be_bytes(<[u8; 4]>::try_from(element.as_bytes()).unwrap()))
-                .collect::<Vec<_>>(),
-            "row {values:?}",
-        );
-        results.push(actual);
-    }
-
-    // Three values are asserted against their exact bit patterns as well as
-    // against the reference, because each is a point a *wrong* composition can
-    // still reproduce elsewhere. `silu(-0.0)` is `-0.0` only if the negation is
-    // an exact sign flip; `silu(-inf)` is a NaN only if the result is a division
-    // rather than a multiply by a reciprocal; and the `-88.73` band's `-0.0`
-    // comes from a finite negative divided by an overflowed exponential, which a
-    // reciprocal-and-multiply spelling would reach as `-0.0 * inf` — a NaN.
-    assert_eq!(results[0][1].to_bits(), 0x8000_0000);
-    assert!(results[1][1].is_nan());
-    assert_eq!(results[2][0].to_bits(), 0x8000_0000);
+    assert_eq!(
+        product.targets[0].failure(),
+        Some(&CompileError::UnsupportedCapability(
+            RequestError::UnrealizedElementaryAccuracy {
+                operation: tiler_ir::semantic::silu_f32_op(),
+                target_profile: crate::target::TargetProfile::governed()
+                    .profile_key()
+                    .clone(),
+                reason: "accuracy.elementary.undischarged-evidence",
+                undischarged_half: Some(
+                    crate::target::accuracy::ElementaryEvidenceHalf::ExceptionalValue
+                ),
+                undischarged_class: Some(
+                    tiler_ir::semantic::accuracy::ConformanceEvidenceClass::EmpiricalQualification
+                ),
+            }
+        )),
+    );
 }
 
-/// A recognized family with no installed capability refuses by name.
+/// Omitting the activation capability cannot mask the earlier evidence refusal.
 ///
-/// The perturbation is one omitted registration and nothing else: the same
-/// program, the same request, the same target. Recognition still admits the
-/// activation — a program the boundary refused would report `operation-set`
-/// instead — and lowering resolution then fails closed against the exact
-/// occurrence, which is the disposition an absent capability owes.
+/// Accuracy is asked at request verification, before recognition or lowering.
+/// A missing capability is a later repair; it must not become the reported
+/// cause while the exceptional-value half is still empirical.
 #[test]
 fn omitting_the_activation_capability_refuses_the_recognized_occurrence() {
     let program = activation_program(Shape::from_dims([4]));
     let mut request = CompilationRequest::governed(&program);
     request.capabilities = registry_without(&tiler_ir::semantic::silu_f32_op());
-    let CompileError::Explained { source, explain } = compile(request).unwrap_err() else {
-        panic!("a capability refusal retains its explain trace");
-    };
+    let product = compile(request).unwrap();
     assert_eq!(
-        *source,
-        CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
-            phase: "lowering",
-            rule: "missing-capability",
-        })
+        product.targets[0].failure(),
+        Some(&CompileError::UnsupportedCapability(
+            RequestError::UnrealizedElementaryAccuracy {
+                operation: tiler_ir::semantic::silu_f32_op(),
+                target_profile: crate::target::TargetProfile::governed()
+                    .profile_key()
+                    .clone(),
+                reason: "accuracy.elementary.undischarged-evidence",
+                undischarged_half: Some(
+                    crate::target::accuracy::ElementaryEvidenceHalf::ExceptionalValue
+                ),
+                undischarged_class: Some(
+                    tiler_ir::semantic::accuracy::ConformanceEvidenceClass::EmpiricalQualification
+                ),
+            }
+        )),
     );
-    // Deferred rather than disproved: the authority was never extended to this
-    // occurrence, which is a different finding from two extensions contradicting
-    // each other.
-    assert!(explain.records().iter().any(|record| {
-        record.rule().key().as_str() == "capability.index-access-resolution.v1"
-            && record.event().disposition() == ExplainDisposition::DeferredUnsupported
-    }));
 }
 
 /// A profile that declares no elementary realization refuses the activation.
@@ -1682,6 +1627,8 @@ fn a_profile_declaring_no_elementary_realization_refuses_the_activation() {
                 operation: tiler_ir::semantic::silu_f32_op(),
                 target_profile: unattested.profile_key().clone(),
                 reason: "accuracy.elementary.no-installed-realization",
+                undischarged_half: None,
+                undischarged_class: None,
             }
         )),
     );
@@ -1697,11 +1644,29 @@ fn a_profile_declaring_no_elementary_realization_refuses_the_activation() {
         "the perturbed profile refuses only the elementary obligation",
     );
 
-    // And the governed profile, which does declare the realization, compiles the
-    // activation — so the refusal above is the missing declaration rather than
-    // an obligation nothing can discharge.
+    // The governed profile still *declares* the three Metal rows, but their
+    // exceptional-value evidence is empirical and cannot discharge. That is a
+    // different refusal from the unattested profile's missing row: the rows
+    // are present and they refine, and admission still fails closed.
     let product = compile(CompilationRequest::governed(&activation)).unwrap();
-    assert!(product.targets[0].compiled().is_some());
+    assert_eq!(
+        product.targets[0].failure(),
+        Some(&CompileError::UnsupportedCapability(
+            RequestError::UnrealizedElementaryAccuracy {
+                operation: tiler_ir::semantic::silu_f32_op(),
+                target_profile: crate::target::TargetProfile::governed()
+                    .profile_key()
+                    .clone(),
+                reason: "accuracy.elementary.undischarged-evidence",
+                undischarged_half: Some(
+                    crate::target::accuracy::ElementaryEvidenceHalf::ExceptionalValue
+                ),
+                undischarged_class: Some(
+                    tiler_ir::semantic::accuracy::ConformanceEvidenceClass::EmpiricalQualification
+                ),
+            }
+        )),
+    );
 }
 
 /// An alternate logical realization cannot certify itself as multiply.
