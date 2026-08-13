@@ -75,3 +75,9 @@ error: `-` is not an operation this region vocabulary carries; the governed sema
     |
 114 |         out strict_serial_sum(x * -x + 1.0, [cols])
     |                                   ^
+
+error: this region is not a valid public logical program: semantic.symbolic-operand-unsupported: tiler::strict-serial-sum-f32@1 admitted by tiler::standard-semantics@7 decides shapes over literal extents only, and operand 0 axis 0 names tiler.inline-region.v1::n
+   --> tests/facade/fail/reduction_diagnostics.rs:124:13
+    |
+124 |         out strict_serial_sum(x * 2.0 + 1.0, [cols])
+    |             ^^^^^^^^^^^^^^^^^

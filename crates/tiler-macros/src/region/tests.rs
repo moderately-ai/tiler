@@ -4,6 +4,8 @@
 //! meaning rather than about the grammar; `crate::grammar::tests` is where the
 //! text is decided. Spans are integers, for the reason stated there.
 
+use tiler_ir::shape::SourcedExtent;
+
 use crate::grammar::{
     AxisExtentSyntax, AxisSyntax, Expression, Name, OperandSyntax, Operator, RegionSyntax,
     ScalarSyntax,
@@ -140,13 +142,42 @@ fn static_region() -> RegionSyntax<At> {
     }
 }
 
-/// The approved region lowers to facts that bind, and defers its program
-/// because a symbolic extent has no fixed shape to give the semantic layer.
+/// The approved region lowers to facts that bind, and is constructed as a
+/// public logical program whose three inputs and one output name `n`.
 #[test]
-fn the_approved_region_lowers_and_defers_its_public_logical_program() {
+fn the_approved_region_lowers_and_verifies_its_public_logical_program() {
     let expansion = lower(&symbolic_region()).expect("the approved region lowers");
 
-    assert!(expansion.program.verified().is_none());
+    let program = expansion.program.verified();
+    let n = program
+        .extent_sources()
+        .expect("a symbolic program retains BoundRegion's environment")
+        .environment()
+        .bindings()
+        .find_map(|(symbol, _)| (symbol.name() == "n").then(|| symbol.clone()))
+        .expect("the environment declares `n`");
+    let expected = vec![SourcedExtent::Symbol(n)];
+    let inputs: Vec<_> = program.inputs().collect();
+    assert_eq!(inputs.len(), 3, "the approved region declares three inputs");
+    for input in &inputs {
+        let shape = program
+            .shape(input.value())
+            .expect("every input is in the graph");
+        assert!(
+            shape.as_static().is_none(),
+            "a symbolic boundary is the Sourced arm, not a normalized Static"
+        );
+        assert_eq!(shape.extents().collect::<Vec<_>>(), expected);
+    }
+    let output = program
+        .outputs()
+        .next()
+        .expect("the approved region declares one output");
+    let output_shape = program
+        .shape(output.value())
+        .expect("the output is in the graph");
+    assert!(output_shape.as_static().is_none());
+    assert_eq!(output_shape.extents().collect::<Vec<_>>(), expected);
     assert_eq!(
         expansion
             .operands
@@ -185,12 +216,52 @@ fn the_approved_region_lowers_and_defers_its_public_logical_program() {
     );
 }
 
+/// Two textually identical symbolic regions produce equal semantic identity;
+/// a differently spelled symbol does not.
+#[test]
+fn symbolic_region_identity_follows_the_spelled_symbol() {
+    let left = lower(&symbolic_region())
+        .expect("the approved region lowers")
+        .program
+        .verified()
+        .semantic_identity()
+        .clone();
+    let right = lower(&symbolic_region())
+        .expect("the same text lowers again")
+        .program
+        .verified()
+        .semantic_identity()
+        .clone();
+    assert_eq!(
+        left, right,
+        "two expansions of one spelling must name one program"
+    );
+
+    let mut renamed = symbolic_region();
+    renamed.symbols = vec![name("m", 1)];
+    renamed.operands = vec![
+        operand("a", 10, "f32", vec![symbol_axis("m", 12)]),
+        operand("b", 20, "f32", vec![symbol_axis("m", 22)]),
+        operand("c", 30, "f32", vec![symbol_axis("m", 32)]),
+    ];
+    let other = lower(&renamed)
+        .expect("a differently spelled symbol still lowers")
+        .program
+        .verified()
+        .semantic_identity()
+        .clone();
+    assert_ne!(
+        left, other,
+        "a differently spelled symbol is a different program"
+    );
+}
+
 /// A region whose every extent is a literal is constructed and verified as a
 /// public logical program through the governed registry.
 #[test]
 fn a_static_region_is_constructed_as_a_public_logical_program() {
     let expansion = lower(&static_region()).expect("the static region lowers");
-    assert!(expansion.program.verified().is_some());
+    assert_eq!(expansion.program.verified().output_count(), 1);
     assert!(
         expansion
             .facts
@@ -212,15 +283,18 @@ fn a_static_region_is_constructed_as_a_public_logical_program() {
         expansion.facts,
     );
 
-    // The paired neighbour: one symbolic axis is enough to defer it, so
-    // `Verified` is a claim about representability rather than about this
-    // fixture happening to be simple.
+    // The paired neighbour: one symbolic axis is enough to take the sourced
+    // arm, so `Verified` is a claim about the registry admitting the region
+    // rather than about this fixture happening to be simple.
+    let symbolic =
+        lower(&approved_region(|| vec![symbol_axis("n", 12)])).expect("the region lowers");
+    let program = symbolic.program.verified();
     assert!(
-        lower(&approved_region(|| vec![symbol_axis("n", 12)]))
-            .expect("the region lowers")
-            .program
-            .verified()
-            .is_none(),
+        program
+            .shape(program.inputs().next().expect("one input").value())
+            .expect("the input is in the graph")
+            .as_static()
+            .is_none()
     );
 }
 
@@ -266,44 +340,55 @@ fn an_undeclared_operand_reference_is_refused_at_the_reference() {
 }
 
 /// Operand shapes must match or one operand must be scalar — the registry's own
-/// rule, refused at the operator that would have combined them.
+/// rule, refused as [`RegionError::Program`] at the operator that would have
+/// combined them.
 #[test]
-fn incompatible_operand_shapes_are_refused_at_the_operator() {
+fn incompatible_operand_shapes_are_refused_by_the_registry() {
     // Different literal extents.
     let mut region = static_region();
     region.operands[1].axes = vec![literal_axis(5, 22)];
-    assert_eq!(
-        lower(&region).expect_err("`4` and `5` are not one shape"),
-        RegionError::IncompatibleOperandShapes {
-            operator: "*",
-            left: "[4]".to_owned(),
-            right: "[5]".to_owned(),
-            span: At(51),
-        },
+    let refusal = lower(&region).expect_err("`4` and `5` are not one shape");
+    assert!(
+        matches!(
+            &refusal,
+            RegionError::Program {
+                span: At(51),
+                detail
+            } if detail.contains("operand shapes must match or one operand must be scalar")
+        ),
+        "literal disagreement is the registry's family diagnostic: {refusal}",
     );
 
     // Different ranks.
     let mut region = static_region();
     region.operands[1].axes = vec![literal_axis(4, 22), literal_axis(4, 23)];
-    assert!(matches!(
-        lower(&region).expect_err("rank 1 and rank 2 are not one shape"),
-        RegionError::IncompatibleOperandShapes { span: At(51), .. }
-    ));
+    let refusal = lower(&region).expect_err("rank 1 and rank 2 are not one shape");
+    assert!(
+        matches!(
+            &refusal,
+            RegionError::Program {
+                span: At(51),
+                detail
+            } if detail.contains("operand shapes must match or one operand must be scalar")
+        ),
+        "rank disagreement is the registry's family diagnostic: {refusal}",
+    );
 
-    // Two *different symbols* are not one shape either: nothing at expansion
-    // time proves `n` and `m` take one value, and treating them as compatible
-    // would defer a shape error into a wrong result.
+    // Two *different symbols* are not one shape either: the registry asks the
+    // environment, which does not prove `n` and `m` take one value.
     let mut region = symbolic_region();
     region.symbols.push(name("m", 2));
     region.operands[1].axes = vec![symbol_axis("m", 22)];
-    assert_eq!(
-        lower(&region).expect_err("`n` and `m` are not proved equal"),
-        RegionError::IncompatibleOperandShapes {
-            operator: "*",
-            left: "[n]".to_owned(),
-            right: "[m]".to_owned(),
-            span: At(51),
-        },
+    let refusal = lower(&region).expect_err("`n` and `m` are not proved equal");
+    assert!(
+        matches!(
+            &refusal,
+            RegionError::Program {
+                span: At(51),
+                detail
+            } if detail.contains("not-proved-equal")
+        ),
+        "distinct symbols are the registry's environment proof, not the frontend's restatement: {refusal}",
     );
 
     // The accepting neighbour: one symbol named by both.
@@ -319,7 +404,7 @@ fn a_scalar_operand_broadcasts_and_the_result_takes_the_shaped_side() {
     let mut region = static_region();
     region.operands[1].axes = Vec::new();
     let expansion = lower(&region).expect("a scalar operand broadcasts");
-    assert!(expansion.program.verified().is_some());
+    assert_eq!(expansion.program.verified().output_count(), 1);
     assert!(
         expansion
             .facts
@@ -352,7 +437,7 @@ fn a_scalar_operand_broadcasts_and_the_result_takes_the_shaped_side() {
         operand.axes = Vec::new();
     }
     let expansion = lower(&region).expect("a rank-0 region is admitted");
-    assert!(expansion.program.verified().is_some());
+    assert_eq!(expansion.program.verified().output_count(), 1);
     assert!(expansion.facts.contains("axes: &[]"), "{}", expansion.facts);
 }
 
@@ -564,7 +649,7 @@ fn serial_sum_region() -> RegionSyntax<At> {
 #[test]
 fn a_reduction_region_lowers_and_its_result_loses_the_reduced_axis() {
     let expansion = lower(&serial_sum_region()).expect("the reduction region lowers");
-    assert!(expansion.program.verified().is_some());
+    assert_eq!(expansion.program.verified().output_count(), 1);
 
     // Rank 1 rather than rank 2, and the surviving extent is `rows`.
     assert!(
@@ -606,7 +691,7 @@ fn a_reduction_region_lowers_and_its_result_loses_the_reduced_axis() {
         &[("cols", 56), ("rows", 57)],
     );
     let expansion = lower(&region).expect("reducing every axis is admitted");
-    assert!(expansion.program.verified().is_some());
+    assert_eq!(expansion.program.verified().output_count(), 1);
     assert!(
         expansion.facts.contains("axes: &[] }"),
         "{}",
@@ -635,19 +720,58 @@ fn a_wrong_result_derivation_is_refused_against_the_registry() {
         .collect();
     let mut resolved =
         super::resolve_expression(&syntax.body, &operands).expect("the body resolves");
+    let bound = {
+        let mut declarations = crate::binding::RegionDeclarations::new(syntax.region);
+        for symbol in &syntax.symbols {
+            declarations
+                .declare_symbol(symbol.text.clone(), symbol.span)
+                .expect("the fixture symbols are unique");
+        }
+        for operand in &operands {
+            declarations
+                .operand(
+                    operand.key.clone(),
+                    operand.storage_scalar,
+                    super::declared_axes(&operand.axes),
+                    operand.name.span,
+                )
+                .expect("the fixture operands are unique");
+        }
+        let result_key = tiler_ir::semantic::OutputKey::new("out").expect("out is a valid key");
+        declarations
+            .result(
+                result_key,
+                resolved.value.storage_scalar,
+                super::declared_axes(&resolved.value.axes),
+                syntax.out,
+            )
+            .expect("the fixture declares one result");
+        declarations.bind().expect("the fixture binds")
+    };
 
     assert!(
-        super::verify_public_logical_program(&syntax, &operands, &resolved)
-            .expect("the agreeing derivation verifies")
-            .verified()
-            .is_some(),
+        super::verify_public_logical_program(
+            &syntax,
+            &operands,
+            &resolved,
+            &bound.environment_arc()
+        )
+        .expect("the agreeing derivation verifies")
+        .verified()
+        .output_count()
+            == 1,
         "the correct derivation must pass, or the refusal below is about nothing",
     );
 
     // The wrong derivation: the reduced axis was kept.
     resolved.value.axes.clone_from(&operands[0].axes);
-    let refusal = super::verify_public_logical_program(&syntax, &operands, &resolved)
-        .expect_err("a derivation the registry did not infer is refused");
+    let refusal = super::verify_public_logical_program(
+        &syntax,
+        &operands,
+        &resolved,
+        &bound.environment_arc(),
+    )
+    .expect_err("a derivation the registry did not infer is refused");
     let RegionError::ResultShapeDisagreement {
         derived,
         inferred,
@@ -736,16 +860,10 @@ fn a_reduction_axis_name_must_resolve_to_one_axis() {
     let one = lower(&reducing(&[("cols", 56)])).expect("one named axis reduces");
     let forward = lower(&reducing(&[("rows", 56), ("cols", 57)])).expect("both axes reduce");
     let reversed = lower(&reducing(&[("cols", 56), ("rows", 57)])).expect("both axes reduce");
-    assert!(one.program.verified().is_some());
+    assert_eq!(one.program.verified().output_count(), 1);
     assert_eq!(
-        forward
-            .program
-            .verified()
-            .map(|program| program.semantic_identity().clone()),
-        reversed
-            .program
-            .verified()
-            .map(|program| program.semantic_identity().clone()),
+        forward.program.verified().semantic_identity(),
+        reversed.program.verified().semantic_identity(),
         "two orders of one axis set must denote one program",
     );
 }
@@ -763,7 +881,7 @@ fn a_scalar_constant_is_rank_zero_and_must_be_finite() {
         scalar("2.5", 54),
     );
     let expansion = lower(&region).expect("a constant broadcasts");
-    assert!(expansion.program.verified().is_some());
+    assert_eq!(expansion.program.verified().output_count(), 1);
     assert!(
         expansion.facts.contains(
             "axes: &[::tiler::__private::ResultAxis::Literal(2u64), \
@@ -798,12 +916,13 @@ fn a_scalar_constant_is_rank_zero_and_must_be_finite() {
         reference("x", 53),
         scalar("1e30", 54),
     );
-    assert!(
+    assert_eq!(
         lower(&region)
             .expect("`1e30` is an `f32`")
             .program
             .verified()
-            .is_some(),
+            .output_count(),
+        1,
     );
 }
 
@@ -866,23 +985,22 @@ fn conflicting_axis_names_are_refused_at_the_operator() {
     assert_eq!(unnamed(true), unnamed(false));
 }
 
-/// A reduction over a symbolic extent lowers and defers its program, for the
-/// same reason every other symbolic region does.
+/// A reduction over a symbolic extent is refused by the registry: the strict
+/// serial family still declines symbolic operands via `static_operand_shape`.
 #[test]
-fn a_symbolic_reduction_defers_its_public_logical_program() {
+fn a_symbolic_reduction_is_refused_by_the_registry() {
     let mut region = serial_sum_region();
     region.symbols = vec![name("n", 1)];
     region.operands[0].axes = vec![symbol_axis("n", 12), named_axis("cols", 2, 14)];
-    let expansion = lower(&region).expect("a symbolic reduction lowers");
-    assert!(expansion.program.verified().is_none());
-    // The result is still derived, and it is `f32[n]`: reducing `cols` removes
-    // the literal axis and leaves the symbol sourcing one.
+    let refusal = lower(&region).expect_err("a symbolic reduction is not verified");
     assert!(
-        expansion
-            .facts
-            .contains("axes: &[::tiler::__private::ResultAxis::Symbol(0usize)] }"),
-        "{}",
-        expansion.facts,
+        matches!(refusal, RegionError::Program { span: At(50), .. }),
+        "the refusal is the registry's, at the reduction: {refusal}",
+    );
+    assert!(
+        refusal.to_string().contains("symbolic-operand-unsupported")
+            || refusal.to_string().contains("literal extents only"),
+        "the family must decline by name, not silently defer: {refusal}",
     );
 }
 
@@ -919,10 +1037,7 @@ fn selected_kernels(region: &RegionSyntax<At>, contract: &str) -> Option<usize> 
     use tiler_compiler::target::TargetRequest;
 
     let expansion = lower(region).expect("the region lowers");
-    let program = expansion
-        .program
-        .verified()
-        .expect("a literal-extent region has a verified program");
+    let program = expansion.program.verified();
     let declaration =
         BoundMetalCompileDeclaration::first_macos_apple9().expect("the declaration assembles");
     let targets =
@@ -1035,12 +1150,13 @@ fn an_unrecognized_region_names_what_a_consumer_would_change() {
 
     let deliver = |region: &RegionSyntax<At>| {
         let expansion = lower(region).expect("the region lowers");
-        assert!(
-            expansion.program.verified().is_some(),
+        assert_eq!(
+            expansion.program.verified().output_count(),
+            1,
             "the region must be a valid public logical program, or this tests the wrong refusal",
         );
         crate::aot::deliver(
-            expansion.program.verified(),
+            Some(expansion.program.verified()),
             crate::numerics::resolve("flush_subnormals_to_zero_f32")
                 .expect("the flush-to-zero contract is statable"),
             ArtifactFamilySelection::new(crate::delivery::NamedProfile::MacOs.policy())

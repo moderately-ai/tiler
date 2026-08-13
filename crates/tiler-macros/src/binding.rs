@@ -42,6 +42,7 @@
 //! [`ShapeEnvError::AlreadyBound`]: tiler_ir::shape::ShapeEnvError::AlreadyBound
 
 use core::fmt;
+use std::sync::Arc;
 
 use tiler_ir::program::StorageScalar;
 use tiler_ir::program::abi::AvailabilityPhase;
@@ -551,7 +552,7 @@ impl<S: Copy> RegionDeclarations<S> {
         };
 
         Ok(BoundRegion {
-            environment,
+            environment: Arc::new(environment),
             operands: self
                 .operands
                 .into_iter()
@@ -683,17 +684,9 @@ pub(crate) struct BoundRegion {
     /// decided. Building it is what *makes* the binding decision — `declare`
     /// and `bind` are where ADR 0008's one-root-binding rule is enforced and
     /// where a second occurrence proves to be an obligation rather than a
-    /// binding — and the value itself is what a lowering slice hands to
-    /// `IndexRegionBuilder::new_with_shape_environment`, which is why it is kept
-    /// beside the lowered facts instead of being reconstructed later from them.
-    #[allow(
-        dead_code,
-        reason = "read by this module's tests and reserved for the lowering slice; nothing in this \
-                  crate calls `IndexRegionBuilder::new_with_shape_environment`, so no expansion \
-                  builds an index region yet — a delivering region included, since `crate::aot` \
-                  compiles from the semantic program rather than from an index region"
-    )]
-    environment: ShapeEnv,
+    /// binding — and the value itself is what the semantic builder is handed,
+    /// so one region has one `ShapeEnvIdentity`.
+    environment: Arc<ShapeEnv>,
     operands: Vec<BoundOperand>,
     symbols: Vec<BoundSymbol>,
     result: BoundResult,
@@ -703,15 +696,24 @@ impl BoundRegion {
     /// Returns the verified shape environment this region's symbols resolve in.
     ///
     /// This is the value a frontend hands to
-    /// `IndexRegionBuilder::new_with_shape_environment`; nothing here duplicates
-    /// what the environment decides.
+    /// `SemanticProgramBuilder::try_standard_with_shape_environment` (and, later,
+    /// to `IndexRegionBuilder::new_with_shape_environment`); nothing here
+    /// duplicates what the environment decides.
     #[allow(
         dead_code,
-        reason = "see the `environment` field: reserved for the lowering slice and read by this \
-                  module's tests"
+        reason = "read by this module's tests; the expansion path clones the Arc via \
+                  `environment_arc` rather than borrowing here"
     )]
-    pub(crate) const fn environment(&self) -> &ShapeEnv {
+    pub(crate) fn environment(&self) -> &ShapeEnv {
         &self.environment
+    }
+
+    /// Returns a clone of the `Arc` holding this region's environment.
+    ///
+    /// The clone is of the handle, not of the environment: two holders name
+    /// one `ShapeEnvIdentity`.
+    pub(crate) fn environment_arc(&self) -> Arc<ShapeEnv> {
+        Arc::clone(&self.environment)
     }
 
     /// Returns the environment's canonical identity.
@@ -725,7 +727,7 @@ impl BoundRegion {
                   cache subject yet, and this module's tests are what keep the order-independence \
                   it exists to state from regressing"
     )]
-    pub(crate) const fn environment_identity(&self) -> &ShapeEnvIdentity {
+    pub(crate) fn environment_identity(&self) -> &ShapeEnvIdentity {
         self.environment.identity()
     }
 

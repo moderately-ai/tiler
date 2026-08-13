@@ -113,4 +113,14 @@ fn main() {
         contract flush_subnormals_to_zero_f32;
         out strict_serial_sum(x * -x + 1.0, [cols])
     };
+
+    // A well-formed reduction over a symbolic operand: the registry's strict
+    // serial family declines symbolic operands, so this is a program refusal
+    // rather than a silent deferral.
+    let _symbolic_operand = tiler::tensor! {
+        sym n;
+        in x: f32[n, cols: 2];
+        contract flush_subnormals_to_zero_f32;
+        out strict_serial_sum(x * 2.0 + 1.0, [cols])
+    };
 }

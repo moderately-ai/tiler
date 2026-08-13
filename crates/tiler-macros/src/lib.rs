@@ -32,8 +32,9 @@
 //! - `region` resolves every name — element types, operands, axis names, and the
 //!   governed semantic operations `*`, `+`, a scalar literal, and
 //!   `strict_serial_sum` denote — derives the result, drives `binding`'s symbol
-//!   unification, and constructs the region as a public logical program wherever
-//!   the fixed-extent semantic layer can represent it.
+//!   unification, and constructs the region as a public logical program through
+//!   the governed registry, symbolic extents included when that registry admits
+//!   them.
 //! - emission, below, turns that into tokens, keeping each operand's own span on
 //!   the identifier that names the Rust value it will be supplied from.
 //!
@@ -248,13 +249,16 @@ const ROUTE_FACTS_BINDING: &str = "__TILER_ROUTE_FACTS";
 /// A statement selecting a family compiles the region ahead of time, during this
 /// expansion: the offline Apple toolchain runs, the result is shared through the
 /// validated expansion cache, and the artifact's bytes are embedded in the
-/// consumer's binary. Two consequences a consumer sees today: every declared
-/// extent must be literal, because a symbolic one has no program to compile, and
-/// the one family this frontend has a measured compile-time declaration for is
+/// consumer's binary. Two consequences a consumer sees today: a `deliver`
+/// statement selecting an artifact family still needs every declared extent to
+/// be literal, because AOT delivery compiles one specialized program, and the
+/// one family this frontend has a measured compile-time declaration for is
 /// macOS — so `deliver macos;` builds and anything else is refused at the
 /// `deliver` keyword with the target it can build. Delivering the fallback
 /// instead would silently give a target that asked for an artifact the very
-/// thing it asked not to have.
+/// thing it asked not to have. A symbolic region without `deliver` still
+/// expands: the public logical program is constructed through the registry, and
+/// the runtime facts unify the symbol.
 ///
 /// # What it evaluates to
 ///
@@ -488,7 +492,7 @@ fn expand(trees: &[tokens::Tree<Span>], region: Span) -> Result<TokenStream, Ref
     // resolves no root, and spawns no process.
     let (delivery, route) = if selection.invokes_backend_compiler() {
         let delivered = aot::deliver(
-            expansion.program.verified(),
+            Some(expansion.program.verified()),
             contract,
             selection,
             &cache_root::RootEnvironment::from_process(),
