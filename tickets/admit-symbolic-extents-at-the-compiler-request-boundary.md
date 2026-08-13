@@ -1,7 +1,7 @@
 ---
 id: admit-symbolic-extents-at-the-compiler-request-boundary
 title: Admit symbolic extents at the compiler request boundary
-status: review
+status: done
 priority: p1
 dependencies: [construct-a-symbolic-region-as-a-semantic-program]
 related: [carry-symbolic-extents-into-the-semantic-program]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, shapes, extents]
-claimed_from: todo
-assignee: worker-admit-symbolic-extents
-lease_expires_at: 1786631597
 ---
 ## User-visible outcome
 

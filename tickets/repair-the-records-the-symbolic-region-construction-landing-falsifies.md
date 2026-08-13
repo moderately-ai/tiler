@@ -1,7 +1,7 @@
 ---
 id: repair-the-records-the-symbolic-region-construction-landing-falsifies
 title: Repair the records the symbolic-region construction landing falsifies
-status: review
+status: done
 priority: p2
 dependencies: [construct-a-symbolic-region-as-a-semantic-program]
 related: [carry-symbolic-extents-into-the-semantic-program, deliver-an-artifact-family-from-a-symbolic-region, admit-symbolic-extents-at-the-compiler-request-boundary]
@@ -9,9 +9,6 @@ scopes: [research/shapes, implementation/frontend, contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, correction, shapes]
-claimed_from: todo
-assignee: orchestrator-record-repair
-lease_expires_at: 1786631874
 ---
 ## User-visible outcome
 
