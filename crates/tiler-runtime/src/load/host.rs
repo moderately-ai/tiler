@@ -212,8 +212,12 @@ pub enum TargetCompatibility {
     Compatible,
     /// The artifact was built for a different target family entirely.
     ///
-    /// **Labelled draft** under ADR 0075. `declared` and `host` are governed
-    /// [`TargetProfileKey`] values, not erased strings.
+    /// **Accepted public surface.** `declared` and `host` are governed
+    /// [`TargetProfileKey`] values, not erased strings. Tom accepted those
+    /// typed keys on 2026-08-11 under
+    /// [`accept-the-loader-variant-eligibility-vocabulary`].
+    ///
+    /// [`accept-the-loader-variant-eligibility-vocabulary`]: ../../../../../tickets/accept-the-loader-variant-eligibility-vocabulary.md
     ProfileKeyMismatch {
         /// Governed profile key the artifact declares.
         declared: TargetProfileKey,
@@ -226,8 +230,11 @@ pub enum TargetCompatibility {
     /// target family under a descriptor this host does not offer, which is a
     /// rebuild rather than a wrong-artifact.
     ///
-    /// **Labelled draft** under ADR 0075. `key` is a governed
-    /// [`TargetProfileKey`], not an erased string.
+    /// **Accepted public surface.** `key` is a governed [`TargetProfileKey`],
+    /// not an erased string. Tom accepted that typed key on 2026-08-11 under
+    /// [`accept-the-loader-variant-eligibility-vocabulary`].
+    ///
+    /// [`accept-the-loader-variant-eligibility-vocabulary`]: ../../../../../tickets/accept-the-loader-variant-eligibility-vocabulary.md
     DescriptorMismatch {
         /// The governed profile key both sides agree on.
         key: TargetProfileKey,

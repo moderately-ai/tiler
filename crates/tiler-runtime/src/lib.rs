@@ -47,8 +47,12 @@
 //!
 //! [`load`] and [`adapter`] are **reviewed draft boundaries** (ADR 0074 §7,
 //! ADR 0075), on the same footing as [`tiler_artifact::program`]: they are `pub`
-//! so their shape can be reviewed as a whole, and neither is an accepted public
-//! facade until Tom accepts the exact interface.
+//! so their shape can be reviewed as a whole, and neither module as a whole is
+//! an accepted public facade. The variant-eligibility vocabulary inside
+//! [`load`] is the exception: Tom accepted that included and excluded set on
+//! 2026-08-11 under [`accept-the-loader-variant-eligibility-vocabulary`].
+//!
+//! [`accept-the-loader-variant-eligibility-vocabulary`]: ../../../../tickets/accept-the-loader-variant-eligibility-vocabulary.md
 
 pub mod adapter;
 pub mod load;
