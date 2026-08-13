@@ -104,3 +104,51 @@ Per-Fact verdicts at this exact base, before any edit. The 2026-08-05 trigger lo
 - 2026-08-05 — **not fired.** Filed at `deferred` by `route-a-zero-extent-program-through-candle-metal-storage`'s typed-refusal close. Tom has not been asked and has not answered; Candle is pinned at 0.11.0, whose Metal allocator still returns `Metal error Failed to create metal resource: Buffer` for a `1 x 0` `f32` tensor, measured on macOS 27.0 (26A5388g) / Apple M4 Max. Recheck: `cargo run -p tiler-prototype-candle -- --artifact <base published by tiler-prototype-compile>` — the two `empty-domain` members print `REFUSED before any Candle storage is asked for` followed by the live allocator error while the trigger has not fired.
 - 2026-08-12 — **fired by source audit.** The standard `Tensor::from_vec` upload still asks Metal for a literal zero-length buffer and fails, but the same pinned Candle release publicly exposes a rounded typed-buffer allocation, `MetalStorage::new` with an independent logical count, and `Tensor::from_storage`. Their exact composition represents the zero-element tensor without a Tiler-private storage or route-backing class. The implementation still owes a hardware route and subject perturbations before claiming delivery.
 - 2026-08-13 — **implementation in progress at `b35bb34f`.** Status is no longer deferred. The 2026-08-05 `REFUSED before any Candle storage is asked for` close path is being replaced by explicit helper construction plus the ordinary Tensor route; `Tensor::from_vec` is retained as the comparison that explains why the helper exists.
+
+## Implementation — 2026-08-13
+
+Worker `worker-candle-zero-extent` on `tkt/decide-whether-the-candle-adapter-may-synthesize-zero-extent-storage`. Exact commit: `959f33376f23ea16a3c9b1158c9589d68dadb9f6` (parent implementation `607b46a641cdff561f192c47a869f947e26baa2f`). Merge and close left to the coordinator.
+
+`TilerPlan::empty_input_tensor` constructs the artifact's declared zero-element input as a genuine Candle `Tensor` over `MetalDevice::new_buffer(0, F32)`, `MetalStorage::new(..., count: 0, F32)`, and `From<(Storage, Shape)>`. `TilerPlan::load` admits empty inputs and still refuses empty outputs with `ZeroExtentInterface`. The ordinary `preflight` / `apply_op1_no_bwd` / `bind_candle_storage` / `Backing::CallerInput` path is unchanged. `bound_accessible_extent` returns the artifact window and ignores allocation length. No public semantic input enum and no fourth `Backing` class.
+
+### Hardware — Measurement, host-bound
+
+Workload: `cargo run -p tiler-prototype-compile --offline -- --out /tmp/serial-sum.tiler` then `cargo run -p tiler-prototype-candle --offline -- --artifact /tmp/serial-sum.tiler`. Target: Metal Apple9 / `tiler.metal` / `metallib`. Toolchain: `nightly-2026-07-19` (`rustc 1.99.0-nightly (eff8269f7 2026-07-18)`). Source: `959f33376f23ea16a3c9b1158c9589d68dadb9f6`. Host: `ssh Host m3`, Apple M3 Pro, macOS 27.0 (26A5388g). Observations are host-bound Measurements. Rust/Xcode/SDK were not changed.
+
+```text
+Tensor::from_vec still cannot upload [1, 0]: Metal error Failed to create metal resource: Buffer — that is why the helper constructs through MetalDevice::new_buffer
+empty input: logical elements 0, allocation 1 byte(s), artifact accessible extent 0 (bound 0)
+empty-domain.selected: 1x0 ... 5 case(s) agreed
+empty-domain.materialized: 1x0 ... 5 case(s) agreed
+candle adapter proof: 6 of 6 published member(s) routed and agreed ... across 30 case(s)
+```
+
+A later helper construction on the same device reused a 4-byte pooled buffer; `bound_accessible_extent(0, 4) = 0`.
+
+### Subject perturbations (quoted)
+
+Gate-reachable, subject broken independently (not the assertion):
+
+- count admits 1: `count 1 is not empty: ()`
+- shape rank check widened: `left: "candle.preflight.extent: ... carries 0" right: "candle.preflight.rank: ... rank 1"`
+- dtype admits f16: `f16 is not f32: ()`
+- window admits 4: `4 bytes is a read window: ()`
+- `bound_accessible_extent` returns allocation: `left: 1 right: 0`
+- lifetime admits tracked: `tracked is refused: ()`
+
+Hardware quotes on m3:
+
+- count: `candle.preflight.empty-input.count: constructed MetalStorage count is 1 and must be 0`
+- shape: `candle.preflight.extent: the artifact declares 1 along axis 0 and the tensor carries 2`
+- dtype: `candle.preflight.dtype: this profile's artifacts declare f32 and the tensor carries f16`
+- device: `candle.preflight.device: this adapter binds Metal storage and the tensor lives on Cpu`; foreign: `the tensor's storage belongs to DeviceId(3) and this adapter bound DeviceId(1)`
+- accessible extent: `the artifact-derived accessible extent is 4 byte(s) and an empty input may bind only a zero window`; `bound_accessible_extent(0, 4) = 0`
+- lifetime: `the tensor participates in tracked autograd and this fused forward op carries no backward formula`
+
+### Unsupported cases (unchanged first pass)
+
+Empty outputs; omitted nonempty inputs; raw placeholder binding without a Tensor; unrelated anchor tensors; widened accessible ranges; mutable or aliased views; dtypes other than F32; foreign devices; tracked autograd; kernels whose verified input window is nonzero. Candle 0.11.0 `to_dtype` on a zero-element Metal tensor panics (`attempt to divide by zero` in candle-metal-kernels); that path is not used.
+
+### Guard
+
+`tkt guard --base origin/main tkt/decide-whether-the-candle-adapter-may-synthesize-zero-extent-storage`: affected scopes match declared (`contracts/integrations`, `implementation/candle`, `project/tickets`). Verdict WARN for declared-area overlap with open siblings; no under-declaration.
