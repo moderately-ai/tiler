@@ -1,7 +1,7 @@
 ---
 id: exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio
 title: Exercise standard Metal, custom Metal, and CPU providers in one portfolio
-status: in-progress
+status: done
 priority: p1
 dependencies: [expose-explicit-backend-provider-and-selection-policy-composition, join-build-time-producers-to-runtime-adapters-through-artifact-identity]
 related: [prototype-inline-aot-integration-proof, prototype-metal-runtime-proof, decide-whether-a-loading-host-may-state-several-backend-families, select-executable-variants-across-registered-backend-families, publish-the-backend-provider-conformance-suite]
@@ -9,9 +9,6 @@ scopes: [research/runtime, research/extensions, research/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [backend-providers, pluggability, integration, metal, cpu]
-claimed_from: todo
-assignee: worker-portfolio-spike
-lease_expires_at: 1786585710
 ---
 ## User-visible outcome
 

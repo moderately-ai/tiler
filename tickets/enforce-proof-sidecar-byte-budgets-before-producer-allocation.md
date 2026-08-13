@@ -1,7 +1,7 @@
 ---
 id: enforce-proof-sidecar-byte-budgets-before-producer-allocation
 title: Enforce proof-sidecar byte budgets before producer allocation
-status: in-progress
+status: done
 priority: p1
 dependencies: [decide-whether-the-proof-payload-limit-admits-the-vocabulary-projection-weights]
 related: [retire-the-independent-proof-payload-limit-and-route-the-vocabulary-cell]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, proof, correctness, resource-bounds]
-claimed_from: todo
-assignee: worker-proof-sidecar-budgets
-lease_expires_at: 1786585710
 ---
 ## User-visible outcome
 
