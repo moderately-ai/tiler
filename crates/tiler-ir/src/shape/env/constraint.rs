@@ -789,6 +789,27 @@ fn extent_product(factors: &[u64]) -> u128 {
     product
 }
 
+/// Why one call is asking the decision procedure.
+///
+/// Semantic closure and a guard hypothesis answer different questions and are
+/// counted separately. A proof query must use neither.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SolveKind {
+    /// The environment's authored semantic constraints, solved once at `build`.
+    SemanticClosure,
+    /// Authored semantic relations plus exactly one variant guard.
+    GuardHypothesis,
+}
+
+impl SolveKind {
+    fn record(self) {
+        match self {
+            Self::SemanticClosure => super::census::SEMANTIC_CLOSURE_SOLVES.record(),
+            Self::GuardHypothesis => super::census::GUARD_HYPOTHESIS_SOLVES.record(),
+        }
+    }
+}
+
 /// Decides whether one relation set is satisfiable over the bound environment.
 ///
 /// The entries are the environment's symbols with their root bindings, in the
@@ -805,8 +826,9 @@ fn extent_product(factors: &[u64]) -> u128 {
 pub(super) fn decide(
     entries: &[(ShapeSymbol, RootBinding)],
     relations: &[&ExtentRelation],
+    kind: SolveKind,
 ) -> Result<(), ShapeEnvError> {
-    solve(entries, relations).map(|_| ())
+    solve(entries, relations, kind).map(|_| ())
 }
 
 /// The implied closed interval one symbol's extent is confined to.
@@ -851,9 +873,9 @@ impl ExtentInterval {
 
 /// The per-symbol result of one satisfiable constraint set.
 ///
-/// Recomputed by every caller rather than stored on the environment: the
-/// contract excludes "derived solver caches" from canonical identity, and
-/// deriving nothing that could be stored is the simplest way to hold that.
+/// A verified environment freezes this into a private proof summary and drops
+/// the path-compressing forest. The summary is derived state and is excluded
+/// from identity; it is not a second constraint interpreter.
 pub(super) struct Solution {
     classes: Classes,
     domains: Domains,
@@ -871,19 +893,12 @@ impl Solution {
         Some(ExtentInterval { lower, upper })
     }
 
-    /// Returns whether two slots were forced into one equality class.
+    /// Returns the normalized class identifier of `slot`.
     ///
-    /// Sound as a proof of equality because a class is only ever merged by
-    /// something that forces it: [`merge_equalities`] unions on an asserted
-    /// `left == right` between two symbols, and [`merge_comparison_cycles`]
-    /// unions a `>=` cycle, which the module documentation records as forcing
-    /// equality. Nothing merges on a coincidence of bounds.
-    ///
-    /// The converse does not hold and no caller may assume it: two symbols in
-    /// different classes may still be equal in every model — pinned to the same
-    /// constant, for instance — so `false` means *not proved here*.
-    pub(super) fn same_class(&mut self, left: usize, right: usize) -> bool {
-        self.classes.find(left) == self.classes.find(right)
+    /// The forest biases unions toward the lower slot, so the identifier is
+    /// the canonically least member of the class after path compression.
+    pub(super) fn class_of(&mut self, slot: usize) -> usize {
+        self.classes.find(slot)
     }
 }
 
@@ -891,7 +906,9 @@ impl Solution {
 pub(super) fn solve(
     entries: &[(ShapeSymbol, RootBinding)],
     relations: &[&ExtentRelation],
+    kind: SolveKind,
 ) -> Result<Solution, ShapeEnvError> {
+    kind.record();
     let index: BTreeMap<&ShapeSymbol, usize> = entries
         .iter()
         .enumerate()

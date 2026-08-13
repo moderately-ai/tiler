@@ -901,9 +901,10 @@ impl IndexRegionBuilder {
     /// A one-point interval leaves one admissible value, which is sound because
     /// the interval contains every model.
     fn determined(&self, extent: &SourcedExtent) -> Option<u64> {
-        self.extent_interval(extent)
-            .filter(|interval| interval.lower == interval.upper)
-            .map(|interval| interval.lower)
+        match extent {
+            SourcedExtent::Static(value) => Some(value.get()),
+            SourcedExtent::Symbol(_) => self.sources.as_ref()?.determined(extent).map(Extent::get),
+        }
     }
 
     /// Returns the one value this region's environment fixes for an index
