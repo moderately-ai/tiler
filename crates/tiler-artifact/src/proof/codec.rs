@@ -48,8 +48,7 @@ use super::model::{
 };
 use super::{
     MAX_PROOF_CASES, MAX_PROOF_IDENTITY_BYTES, MAX_PROOF_INTERFACE_ENTRIES,
-    MAX_PROOF_MANIFEST_BYTES, MAX_PROOF_PAYLOAD_BYTES, MAX_PROOF_SIDECAR_BYTES,
-    MAX_PROOF_SUBJECT_BYTES,
+    MAX_PROOF_MANIFEST_BYTES, MAX_PROOF_SIDECAR_BYTES, MAX_PROOF_SUBJECT_BYTES,
 };
 
 /// Fixed framing magic of the proof sidecar.
@@ -99,8 +98,6 @@ pub enum ProofLimitKind {
     InterfaceEntries,
     /// Framed payload count.
     Payloads,
-    /// Bytes of one framed payload.
-    PayloadBytes,
     /// Bytes of one received provenance subject.
     SubjectBytes,
     /// Byte length of one encoded text run.
@@ -117,7 +114,6 @@ impl ProofLimitKind {
             Self::SidecarBytes => Some(MAX_PROOF_SIDECAR_BYTES),
             Self::ManifestBytes => Some(MAX_PROOF_MANIFEST_BYTES),
             Self::IdentityBytes => Some(MAX_PROOF_IDENTITY_BYTES),
-            Self::PayloadBytes => Some(MAX_PROOF_PAYLOAD_BYTES),
             Self::SubjectBytes => Some(MAX_PROOF_SUBJECT_BYTES),
             Self::TextBytes => Some(MAX_TEXT_BYTES),
             Self::Cases | Self::InterfaceEntries | Self::Payloads => None,
@@ -1279,7 +1275,7 @@ fn read_payloads(
                 declared: declared_id,
             });
         }
-        let framed = cursor.count(MAX_PROOF_PAYLOAD_BYTES, ProofLimitKind::PayloadBytes)?;
+        let framed = cursor.framed_payload_len()?;
         let framed_len = u64::try_from(framed).expect("supported usize fits u64");
         if framed_len != descriptor.exact_len {
             return Err(ProofCodecError::PayloadLengthMismatch {
@@ -1444,6 +1440,28 @@ impl<'a> Cursor<'a> {
 
     fn u64(&mut self) -> Result<u64, ProofCodecError> {
         Ok(u64::from_be_bytes(self.array()?))
+    }
+
+    /// Reads one framed payload's declared length.
+    ///
+    /// One payload has no separate size policy. Representability, remaining
+    /// input, and the already-established complete-sidecar bound decide
+    /// admission; the three refusals stay typed and never yield a partial
+    /// decode.
+    fn framed_payload_len(&mut self) -> Result<usize, ProofCodecError> {
+        let declared = self.u64()?;
+        let available = self.remaining();
+        let len = usize::try_from(declared).map_err(|_| ProofCodecError::Unrepresentable {
+            kind: ProofLimitKind::SidecarBytes,
+        })?;
+        proof_limit(len, MAX_PROOF_SIDECAR_BYTES, ProofLimitKind::SidecarBytes)?;
+        if len > available {
+            return Err(ProofCodecError::Truncated {
+                needed: len,
+                available,
+            });
+        }
+        Ok(len)
     }
 
     /// Reads a declared count and proves it is within its governed bound.

@@ -12,7 +12,7 @@ use super::codec::{
     HEADER_BYTES, IDENTITY_DOMAIN, MANIFEST_DOMAIN, ProofLimitExceeded, ProofLimitKind, proof_limit,
 };
 use super::model::ProofSidecarData;
-use super::{MAX_PROOF_CASES, MAX_PROOF_INTERFACE_ENTRIES, MAX_PROOF_PAYLOAD_BYTES};
+use super::{MAX_PROOF_CASES, MAX_PROOF_INTERFACE_ENTRIES};
 
 /// Width of the canonical length prefix `push_len` writes.
 const LENGTH_BYTES: usize = 8;
@@ -194,7 +194,6 @@ fn project_layout(
     let mut framed_payloads = 0_usize;
     for case in layout.cases {
         for &len in case.input_lens.iter().chain(&case.expected_lens) {
-            proof_limit(len, MAX_PROOF_PAYLOAD_BYTES, ProofLimitKind::PayloadBytes)?;
             payload_count = add(payload_count, 1, ProofLimitKind::Payloads)?;
             let frame = add(PAYLOAD_FRAME_PREFIX, len, ProofLimitKind::SidecarBytes)?;
             framed_payloads = add(framed_payloads, frame, ProofLimitKind::SidecarBytes)?;

@@ -1344,7 +1344,7 @@ mod tests {
         expected.extend(
             L3_CORRECTNESS_CELLS
                 .iter()
-                .filter(|cell| cell.fits_one_proof_payload())
+                .filter(|cell| cell.fits_in_proof_sidecar())
                 .map(|cell| Some(cell.extents())),
         );
         assert_eq!(
@@ -1354,8 +1354,8 @@ mod tests {
         );
         assert_eq!(
             declared.len(),
-            6,
-            "the adversarial member and the five correctness cells a sidecar can carry are routed",
+            7,
+            "the adversarial member and the six correctness cells a sidecar can carry are routed",
         );
     }
 
