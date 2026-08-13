@@ -6107,23 +6107,23 @@ fn the_frontier_retains_the_split_beside_the_serial_reduction() {
         frontier.admitted()[1].identity(),
         "the two alternatives share one identity, so one shadows the other"
     );
-    // The single-workgroup tree is proposed for the same subject and refused by
-    // the *target*, not withheld by the strategy: the bounded prototype profile
-    // guarantees zero threadgroup memory, so the tree's eight staged bytes are a
-    // hard-feasibility rejection naming the exact axis and both quantities. That
-    // is the shape a resource refusal must have — never an arbitrary cost — and
-    // it leaves the split and the serial alternative untouched.
+    // The single-workgroup tree is withheld before a region exists: the
+    // prototype baseline declares no qualified width policy. That is a
+    // strategy decline, not a local-memory feasibility refusal — the latter
+    // is driven against a profile that *does* declare the policy. The split
+    // and the serial alternative stay untouched.
     assert!(
         matches!(
             frontier.rejections(),
-            [crate::frontier::FrontierRejection::Infeasible {
-                axis: "local-memory-bytes",
-                required: 8,
-                available: 0,
+            [crate::frontier::FrontierRejection::StrategyDeclined {
+                strategy: "tiler.reduction.single-workgroup-tree",
+                cause: crate::frontier::StrategyDeclineCause::TargetPolicyUndeclared {
+                    policy: "qualified-width-policy-undeclared",
+                },
                 ..
             }]
         ),
-        "the split request's rejections are not the tree's single resource refusal: {:?}",
+        "the split request's rejections are not the tree's policy decline: {:?}",
         frontier.rejections()
     );
 
@@ -6411,9 +6411,10 @@ fn a_cooperative_region_declares_its_own_launch() {
 
 /// Every way the tree can fail rejects before admission with its own reason.
 ///
-/// Four causes, four distinct outcomes, and the point of driving them together
+/// Five causes, five distinct outcomes, and the point of driving them together
 /// is that none of them is a cost and none of them is the same answer as another:
 /// a withheld permission is decided from the contract before a region exists, a
+/// missing width policy withholds the strategy before a region exists, a
 /// resource refusal names the axis and both quantities, a declared refusal names
 /// the profile that refused, and silence names no profile at all.
 #[test]
@@ -6451,6 +6452,58 @@ fn each_way_the_tree_can_fail_rejects_before_admission_with_its_own_reason() {
                 }
             )),
         "a strict contract withheld the tree without naming the permission"
+    );
+
+    // A missing width policy: decided from the profile, before any region is
+    // built, and it must not substitute `256` or the balanced partition.
+    let (_, undeclared) = tree_request(
+        Shape::from_dims([1, 8]),
+        TargetProfile::workgroup_tree_target_without_width_policy_for_test(
+            256,
+            1_024,
+            Some(crate::target::SynchronizationSupport::Realized),
+        ),
+    );
+    assert_eq!(
+        crate::physical::single_workgroup_tree_region(
+            &undeclared,
+            undeclared.sole_output(),
+            crate::physical::RegionWrite::ProgramOutput,
+        )
+        .err(),
+        Some(crate::physical::WorkgroupTreeUnavailable::QualifiedWidthPolicyUndeclared),
+        "omitting the policy must not offer a tree"
+    );
+    assert!(
+        reduction_frontier(&undeclared)
+            .rejections()
+            .iter()
+            .any(|rejection| matches!(
+                rejection,
+                crate::frontier::FrontierRejection::StrategyDeclined {
+                    strategy: "tiler.reduction.single-workgroup-tree",
+                    cause: crate::frontier::StrategyDeclineCause::TargetPolicyUndeclared {
+                        policy: "qualified-width-policy-undeclared",
+                    },
+                    ..
+                }
+            )),
+        "omitting the policy left the missing tree unexplained: {:?}",
+        reduction_frontier(&undeclared).rejections()
+    );
+    assert!(
+        !reduction_frontier(&undeclared)
+            .rejections()
+            .iter()
+            .any(|rejection| matches!(
+                rejection,
+                crate::frontier::FrontierRejection::StrategyDeclined {
+                    cause: crate::frontier::StrategyDeclineCause::NoAdmissibleShape { .. },
+                    ..
+                }
+            )),
+        "omitting the policy must not fall back to the balanced decline set: {:?}",
+        reduction_frontier(&undeclared).rejections()
     );
 
     // Insufficient workgroup resources: a hard bound, with the exact axis and
@@ -6518,6 +6571,60 @@ fn each_way_the_tree_can_fail_rejects_before_admission_with_its_own_reason() {
         panic!("an unasked profile did not reject the tree as undeclared: {rejections:?}")
     };
     assert_eq!(*subject, cause.subject());
+}
+
+/// A second profile that omits the policy offers no tree and does not inherit
+/// `256` or the balanced partition.
+///
+/// At 8,192 contributors the qualified rule takes 256 participants and
+/// `governed_partition` takes 128. Neither width may appear when the policy is
+/// absent: the strategy is withheld, not retuned.
+#[test]
+fn omitting_the_width_policy_offers_no_tree_and_does_not_inherit_a_width() {
+    let (_, request) = tree_request(
+        Shape::from_dims([1, 8_192]),
+        TargetProfile::workgroup_tree_target_without_width_policy_for_test(
+            32_768,
+            1 << 24,
+            Some(crate::target::SynchronizationSupport::Realized),
+        ),
+    );
+    assert_eq!(
+        crate::physical::single_workgroup_tree_region(
+            &request,
+            request.sole_output(),
+            crate::physical::RegionWrite::ProgramOutput,
+        )
+        .err(),
+        Some(crate::physical::WorkgroupTreeUnavailable::QualifiedWidthPolicyUndeclared)
+    );
+    let frontier = reduction_frontier(&request);
+    assert!(
+        frontier.rejections().iter().any(|rejection| matches!(
+            rejection,
+            crate::frontier::FrontierRejection::StrategyDeclined {
+                strategy: "tiler.reduction.single-workgroup-tree",
+                cause: crate::frontier::StrategyDeclineCause::TargetPolicyUndeclared { .. },
+                ..
+            }
+        )),
+        "the omitted-policy profile still offered or otherwise declined the tree: {:?}",
+        frontier.rejections()
+    );
+    for admitted in frontier.admitted() {
+        if let Some(region) = admitted.scheduled() {
+            assert_ne!(
+                region.region().schedule.threads_per_workgroup,
+                256,
+                "omitting the policy inherited the private 256 width"
+            );
+            assert_ne!(
+                region.region().schedule.threads_per_workgroup,
+                128,
+                "omitting the policy substituted the balanced partition"
+            );
+        }
+    }
 }
 
 /// A divergent tile cannot reach the frontier at all.

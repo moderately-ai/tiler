@@ -1662,18 +1662,15 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "e29b2918782424b605f67f0f1ba841a199fe745464cbf3c233071999c334afac";
+            "72d779eca944df675b9d26f2f688d8605bbeffe5ef835b780b7e3295793a982b";
         const CACHE_SUBJECT: &str =
-            "983e8fdd5dc710a1d5f636bc3368296cb95b223b59f49fffe1f142285d63fa45";
-        // **76,291 after the eight-dimension region-feasibility projection and
-        // standard-semantics provider 7→8.** The previous 65,327 pin was the
-        // participation-tag envelope. This step is not a per-extent encoding
-        // change, so it does not factor as `2 * n * 7`. It is the four newly
-        // asked realized dimensions (permutation, signed zero, NaN assumptions,
-        // infinity assumptions) entering selected-plan and delivered-realization
-        // evidence, plus the Slice source-bearing provider revision folded
-        // through the nested semantic subjects. Domain tags are unchanged.
-        const FIXED_CONTENT_BYTES: usize = 76_291;
+            "d35dbd21559351ab5a596fa88ef8ded753460e20ec18a6fced48caf4f9a43a36";
+        // **77,061 after the closed workgroup-tree-width policy.** The previous
+        // 76,291 pin was the eight-dimension region-feasibility projection.
+        // The policy section is 70 bytes; the envelope delta is 770, which is
+        // `11 * 70` rather than the historical seven raw-descriptor embeddings
+        // alone. Domain tags are unchanged.
+        const FIXED_CONTENT_BYTES: usize = 77_061;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
@@ -1747,9 +1744,9 @@ mod tests {
     #[test]
     fn the_authority_ledger_mirrors_the_live_standard_metal_pins() {
         const ARTIFACT_IDENTITY: &str =
-            "e29b2918782424b605f67f0f1ba841a199fe745464cbf3c233071999c334afac";
+            "72d779eca944df675b9d26f2f688d8605bbeffe5ef835b780b7e3295793a982b";
         const CACHE_SUBJECT: &str =
-            "983e8fdd5dc710a1d5f636bc3368296cb95b223b59f49fffe1f142285d63fa45";
+            "d35dbd21559351ab5a596fa88ef8ded753460e20ec18a6fced48caf4f9a43a36";
         let ledger = include_str!(
             "../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md"
         );
@@ -1767,12 +1764,12 @@ mod tests {
             "the live pin paragraph does not name CACHE_SUBJECT",
         );
         assert!(
-            today.contains("fixed content is 76,291 bytes"),
+            today.contains("fixed content is 77,061 bytes"),
             "the live pin paragraph does not name FIXED_CONTENT_BYTES",
         );
         assert!(
-            today.contains("2,099"),
-            "the live pin paragraph does not name the unmoved descriptor length",
+            today.contains("2,169"),
+            "the live pin paragraph does not name the descriptor length",
         );
     }
 

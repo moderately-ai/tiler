@@ -746,7 +746,8 @@ fn record_declined_strategy(
         // A missing region spelling is a scheduling-vocabulary fact, exactly as
         // an inadmissible shape is: the caller's numerical contract permits
         // this region, and nothing about the target refused it.
-        | crate::frontier::StrategyDeclineCause::UnspellableRegion { .. } => {
+        | crate::frontier::StrategyDeclineCause::UnspellableRegion { .. }
+        | crate::frontier::StrategyDeclineCause::TargetPolicyUndeclared { .. } => {
             ExplainStage::IntrinsicScheduling
         }
     };
@@ -775,7 +776,10 @@ fn record_declined_strategy(
                 crate::frontier::StrategyDeclineCause::NoAdmissibleShape { extent, .. } => {
                     assessment.with_fact(ExplainFact::new("extent", FactValue::Count(extent))?)?
                 }
-                crate::frontier::StrategyDeclineCause::Unrepresentable { .. } => assessment,
+                crate::frontier::StrategyDeclineCause::Unrepresentable { .. }
+                | crate::frontier::StrategyDeclineCause::TargetPolicyUndeclared { .. } => {
+                    assessment
+                }
                 crate::frontier::StrategyDeclineCause::UnspellableRegion { covered, .. } => {
                     assessment.with_fact(ExplainFact::new(
                         "covered-occurrences",
@@ -1983,6 +1987,7 @@ mod tests {
                     if assessment.reason().is_some_and(|reason| {
                         reason.as_str() == "no-admissible-partition"
                             || reason.as_str() == "no-admissible-participant-count"
+                            || reason.as_str() == "qualified-width-policy-undeclared"
                     })
             )
         }));

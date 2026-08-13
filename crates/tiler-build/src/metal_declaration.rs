@@ -111,6 +111,7 @@ use tiler_compiler::target::{
     TargetExecutionEnvironment, TargetFactProducerIdentity, TargetFactSource,
     TargetMeasurementContext, TargetNormativeReferenceIdentity, TargetProfile,
     TargetProfileBuildError, TargetProfileBuilder, TargetProfileKey, TargetProfileKeyError,
+    WorkgroupTreeWidthPolicy,
 };
 use tiler_ir::numerics::{ScalarArithmeticSubjectError, registered_arithmetic_value_type};
 use tiler_ir::program::abi::{
@@ -205,6 +206,12 @@ struct LedgerRows {
     /// profile that still compiles every program it compiled before, selecting
     /// what it selected before.
     saturated_parallel_fold_steps: Option<u64>,
+    /// Closed tree-width policy the single-workgroup tree may run under.
+    ///
+    /// `Option` so a mutation case can omit it and observe a typed tree
+    /// decline rather than an inherited `256`. This is not a public numeric
+    /// cap.
+    workgroup_tree_width_policy: Option<WorkgroupTreeWidthPolicy>,
     facts: MetalTargetFacts,
     emission: MetalEmissionRealization,
     numerical: NumericalRealization,
@@ -335,6 +342,16 @@ const FIRST_MACOS_APPLE9: LedgerRows = LedgerRows {
     // row alone. Another Apple family, OS row, dtype, or device declares its own
     // or declares none.
     saturated_parallel_fold_steps: Some(1_056),
+    // "Workgroup-tree-width policy — MeasuredNearestCap256V1, measured".
+    //
+    // **Measurement, 2026-08-07** —
+    // `spikes/program-planning/reduction-partition-calibration`, retained at
+    // `results/2026-08-07-apple-m4-max-macos27.0-26A5388g/`, on a host matching
+    // this ledger's offline and execution rows in every field. The sweep selected
+    // the nearest-admissible-width rule around the fixed internal 256. The
+    // number stays private to that rule; this row declares the closed policy,
+    // not a public cap. A profile omitting the policy does not inherit 256.
+    workgroup_tree_width_policy: Some(WorkgroupTreeWidthPolicy::MeasuredNearestCap256V1),
     // "Metal target facts, and which of them project". The deployment minimum is
     // 26.0 and the standard MSL 4.0 because `probe.fixed_flags -std=metal4.0`
     // and `requested_target air64-apple-macos26.0` are the inputs the retained
@@ -753,6 +770,16 @@ impl BoundMetalCompileDeclaration {
         // exist.
         if let Some(steps) = rows.saturated_parallel_fold_steps {
             builder.declare_measured_saturated_parallel_fold_steps(steps, measured.clone())?;
+        }
+
+        // ---- the one tree-width policy, measured ---------------------------
+        // Not a cost row and not a capability. Silence makes the tree
+        // unavailable; it does not inherit 256 or substitute the balanced
+        // partition. The same measured source, not a second one: the partition
+        // calibration ran on exactly the offline and execution environments
+        // the rows above were taken on.
+        if let Some(policy) = rows.workgroup_tree_width_policy {
+            builder.declare_measured_workgroup_tree_width_policy(policy, measured.clone())?;
         }
 
         // ---- dispatchability, measured and exact ----------------------------
@@ -1237,7 +1264,8 @@ mod tests {
         SynchronizationSupport, TargetCompilerRoleReference, TargetCostRowResolution,
         TargetFactAuthority, TargetFactProducerIdentity, TargetFactSource, TargetFactValidityScope,
         TargetNormativeReferenceIdentity, TargetNumericalEvidenceBasis, TargetProfileBuildError,
-        TargetProfileBuilder, TargetProfileKey, TargetRequest,
+        TargetProfileBuilder, TargetProfileKey, TargetRequest, WorkgroupTreeWidthPolicy,
+        WorkgroupTreeWidthPolicyResolution,
     };
     use tiler_ir::program::abi::{
         AvailabilityPhase, TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
@@ -2047,11 +2075,18 @@ mod tests {
         // (42), a fixed-width `u64` value (8), and a one-byte compact source
         // index — 100 bytes exactly. The source table does not grow, because the
         // row shares the measured source the grid-axis, dispatchability, and
-        // numerical rows already carry. **That the arithmetic closes is the
-        // evidence no layout moved**, not an assertion beside one.
+        // numerical rows already carry.
+        //
+        // It grew to **2,169** when the closed workgroup-tree-width policy
+        // landed: the new section writes its length-prefixed 52-byte domain
+        // separator (60), a row count (8), a one-byte policy tag, and a one-byte
+        // compact source index — 70 bytes exactly. The source table does not
+        // grow, because the policy shares the same measured source. **That the
+        // arithmetic closes is the evidence no layout moved**, not an assertion
+        // beside one.
         assert_eq!(
             descriptor.len(),
-            2_099,
+            2_169,
             "the canonical descriptor length moved; update the authority ledger with it",
         );
     }
@@ -2107,6 +2142,47 @@ mod tests {
             silent.profile().canonical_descriptor().len(),
             profile.canonical_descriptor().len() - 100,
             "the cost-row section is not the hundred bytes its encoding predicts",
+        );
+    }
+
+    /// The declared profile states the closed tree-width policy, and omitting
+    /// it withdraws the family rather than inheriting `256`.
+    #[test]
+    fn the_declared_profile_states_the_qualified_tree_width_policy() {
+        let declaration = declared();
+        let profile = declaration.profile();
+        assert_eq!(
+            profile.workgroup_tree_width_policy(AvailabilityPhase::CompileProfile),
+            WorkgroupTreeWidthPolicyResolution::Declared(
+                WorkgroupTreeWidthPolicy::MeasuredNearestCap256V1
+            ),
+            "the declared tree-width policy moved off the retained qualification",
+        );
+        let text = String::from_utf8_lossy(profile.canonical_descriptor());
+        assert!(
+            text.contains("tiler.target-profile.workgroup-tree-width-policy.v1"),
+            "the tree-width-policy family is absent from the descriptor",
+        );
+
+        let mut silent = FIRST_MACOS_APPLE9;
+        silent.workgroup_tree_width_policy = None;
+        let silent = BoundMetalCompileDeclaration::declare(&silent)
+            .expect("removing the tree-width policy cannot make the declaration invalid");
+        assert_eq!(
+            silent
+                .profile()
+                .workgroup_tree_width_policy(AvailabilityPhase::CompileProfile),
+            WorkgroupTreeWidthPolicyResolution::Unknown,
+        );
+        assert_eq!(
+            silent.profile().canonical_descriptor().len(),
+            profile.canonical_descriptor().len() - 70,
+            "the tree-width-policy section is not the seventy bytes its encoding predicts",
+        );
+        assert!(
+            !String::from_utf8_lossy(silent.profile().canonical_descriptor())
+                .contains("tiler.target-profile.workgroup-tree-width-policy.v1"),
+            "omitting the policy must write none of the family's bytes",
         );
     }
 
