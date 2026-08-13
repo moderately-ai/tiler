@@ -52,9 +52,11 @@
 use tiler_artifact::program::{
     ArtifactExecutionPolicy, BackendPayloadDescriptor, CanonicalArtifactProgramIdentity,
     DecodedBinding, DecodedEntry, PreparedEntryTargetRequirement, RouteRequirement,
+    TargetPropertyRequirementRelation,
 };
 
 use super::LoadRejection;
+use std::fmt;
 
 /// The evaluated launch geometry of one routed entry.
 ///
@@ -299,6 +301,20 @@ impl<'a> TargetPropertyRequest<'a> {
     pub const fn requirement(self) -> &'a PreparedEntryTargetRequirement {
         self.requirement
     }
+
+    /// Returns the owned subject this request asked about.
+    pub(super) fn property_subject(self) -> PreparedEntryPropertySubject {
+        let query = self.requirement.query();
+        let provider = query.provider();
+        PreparedEntryPropertySubject {
+            key: query.key().as_str().to_owned(),
+            provider_namespace: provider.namespace().to_owned(),
+            provider_name: provider.name().to_owned(),
+            provider_revision: provider.revision(),
+            required: self.requirement.required(),
+            relation: self.requirement.relation(),
+        }
+    }
 }
 
 /// One additional requirement the selected route places on the live device.
@@ -326,6 +342,90 @@ impl<'a> LiveDeviceRequest<'a> {
     #[must_use]
     pub const fn requirement(self) -> &'a RouteRequirement {
         self.requirement
+    }
+}
+
+/// What a host answers about one prepared-entry target property.
+///
+/// Two answers rather than a number, because "I do not own this property" is
+/// not the same as an observed quantity. Collapsing the first into a numeric
+/// sentinel would let an unknown key compare equal to a required value;
+/// collapsing it into satisfaction would route on a property nothing evaluated.
+///
+/// The comparison stays in this crate: a host reports what it measured and the
+/// loader applies the relation the requirement carries, so an adapter cannot
+/// decide a row's own comparison on its way to an answer.
+///
+/// Deliberately **not** `#[non_exhaustive]` (ADR 0074 convention 5b): an answer
+/// added here changes what a host must be able to say, and that must stop each
+/// host's build rather than reach a wildcard.
+///
+/// # Public boundary status
+///
+/// Labelled draft under ADR 0075. The type is `pub` so its shape can be reviewed
+/// as a whole. Tom has not accepted the exact included and excluded surface.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PreparedEntryObservation {
+    /// The host measured this property on the named prepared entry.
+    ///
+    /// A measurement and not a verdict. The loader compares it against the
+    /// request's required quantity by the relation the requirement carries.
+    Quantity(u64),
+    /// No adapter on this host owns or understands the property.
+    ///
+    /// The fail-closed answer, and the one a host must give for a provider
+    /// namespace, name, revision, or property key it does not recognize
+    /// exactly. A property nothing can decide is a refusal, never a quantity.
+    Unrecognized,
+}
+
+/// The prepared-entry property one observation answered or failed to own.
+///
+/// Distinct from the observation itself: the subject is what was asked, and
+/// the observation is what the adapter reported. Owned, because a refusal
+/// outlives the artifact borrow that produced it.
+///
+/// # Public boundary status
+///
+/// Labelled draft under ADR 0075, with [`PreparedEntryObservation`].
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct PreparedEntryPropertySubject {
+    /// Governed property key the request named.
+    pub key: String,
+    /// Provider namespace the request named.
+    pub provider_namespace: String,
+    /// Provider name the request named.
+    pub provider_name: String,
+    /// Nonzero provider revision the request named.
+    pub provider_revision: u32,
+    /// Required quantity the loader compares, or would have compared.
+    pub required: u64,
+    /// Directional relation the loader applies to a quantity.
+    pub relation: TargetPropertyRequirementRelation,
+}
+
+impl fmt::Display for PreparedEntryPropertySubject {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{} from {}::{}@{} required {} {}",
+            self.key,
+            self.provider_namespace,
+            self.provider_name,
+            self.provider_revision,
+            self.required,
+            match self.relation {
+                TargetPropertyRequirementRelation::ObservedAtLeastRequired => {
+                    "observed-at-least-required"
+                }
+                TargetPropertyRequirementRelation::ObservedEqualsRequired => {
+                    "observed-equals-required"
+                }
+                TargetPropertyRequirementRelation::RequiredImpliesObserved => {
+                    "required-implies-observed"
+                }
+            },
+        )
     }
 }
 
@@ -537,21 +637,33 @@ impl<'a> RoutePreparation<'a> {
 
     /// Resolves every request exactly once and yields a committable route only when all hold.
     ///
+    /// Each request is passed to `resolve` once, in predicate order. The
+    /// adapter reports an observation; this method holds the comparison, the
+    /// threshold, and the direction.
+    ///
     /// # Errors
     ///
-    /// Returns [`LoadRejection::UnsatisfiedDeferredPredicate`] for the first answered requirement that does not hold.
+    /// Returns [`LoadRejection::UnownedPreparedEntryProperty`] for a property no
+    /// adapter claimed, or [`LoadRejection::UnsatisfiedDeferredPredicate`] for
+    /// the first observed quantity that does not satisfy its retained relation.
     pub fn resolve_target_properties(
         self,
-        mut resolve: impl FnMut(TargetPropertyRequest<'a>) -> u64,
+        mut resolve: impl FnMut(TargetPropertyRequest<'a>) -> PreparedEntryObservation,
     ) -> Result<Preflight<'a>, LoadRejection> {
         for request in self.requests {
-            let observed = resolve(request);
-            if !request.requirement.is_satisfied_by(observed) {
-                return Err(LoadRejection::UnsatisfiedDeferredPredicate {
-                    variant: request.variant,
-                    predicate: request.predicate,
-                    entry: request.entry,
-                });
+            // Exhaustive on the observation rather than matching the satisfying
+            // case and defaulting the rest: an answer added later must stop this
+            // build instead of falling into a branch that refuses — or, worse,
+            // accepts — for a reason nobody chose.
+            match resolve(request) {
+                PreparedEntryObservation::Unrecognized => {
+                    return Err(LoadRejection::unowned_prepared_entry(request));
+                }
+                PreparedEntryObservation::Quantity(observed) => {
+                    if !request.requirement.is_satisfied_by(observed) {
+                        return Err(LoadRejection::unsatisfied_prepared_entry(request, observed));
+                    }
+                }
             }
         }
         Ok(Preflight::from_candidate(self.candidate))

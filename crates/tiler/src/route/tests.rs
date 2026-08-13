@@ -26,7 +26,8 @@ use crate::expansion::{OperandExtent, OperandFacts, RegionFacts, ResultAxis, Res
 use crate::runtime::adapter::{AdapterRouteFailure, LiveExecutionContext, RuntimeAdapter};
 use crate::runtime::load::{
     DTypeDispatch, DTypeDispatchResolution, ExecutionEnvironment, LiveDeviceObservation,
-    LiveDeviceRequest, Preflight, RoutedDispatch, RoutedEntry, TargetPropertyRequest,
+    LiveDeviceRequest, Preflight, PreparedEntryObservation, RoutedDispatch, RoutedEntry,
+    TargetPropertyRequest,
 };
 use crate::value::{
     AdapterCapability, BindError, DispatchAdapter, OperandAxis, RegionRequest, ResultRequest,
@@ -194,7 +195,7 @@ impl RuntimeAdapter for NoDevice<'_> {
         &mut self,
         _: &LiveExecutionContext,
         _: TargetPropertyRequest<'_>,
-    ) -> u64 {
+    ) -> PreparedEntryObservation {
         unreachable!("no context was bound, so no prepared entry is reachable")
     }
 

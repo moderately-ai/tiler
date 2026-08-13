@@ -573,6 +573,196 @@ fn a_prepared_entry_property_refuses_exactly_at_its_boundary() {
     assert_eq!(at_host.stages, COMPLETE_ROUTE);
 }
 
+/// One independent prepared-entry perturbation and the diagnostic it must name.
+struct PreparedEntryCase {
+    name: &'static str,
+    spec: FixtureSpec,
+    host: ScalarHostAdapter,
+    recognizes: fn(&LoadRejection) -> bool,
+    diagnostic: &'static str,
+}
+
+/// Unknown prepared-entry ownership cannot be confused with a quantity.
+///
+/// Each case perturbs one subject independently: provider namespace, provider
+/// name, provider revision, property key, result variant, observed value, or
+/// entry. The old path that answered every request with the entry's invocation
+/// count would admit the key, provider, and variant cases whenever that count
+/// equalled the required value — `ROWS == PREPARED_PROPERTY_MINIMUM` is that
+/// coincidence, chosen so the refusal cannot be an accidental threshold miss.
+#[test]
+fn unknown_prepared_entry_ownership_cannot_be_confused_with_a_quantity() {
+    let owned_quantity = fixture::ROWS;
+    assert_eq!(
+        owned_quantity,
+        fixture::PREPARED_PROPERTY_MINIMUM,
+        "the coincidence must be live: an adapter that ignored ownership would \
+         return a quantity that satisfies the required value",
+    );
+
+    let foreign_key = FixtureSpec {
+        deferred_predicates: vec![fixture::prepared_predicate_owned(
+            0,
+            fixture::FOREIGN_PREPARED_PROPERTY_KEY,
+            fixture::PREPARED_PROPERTY_PROVIDER_NAMESPACE,
+            fixture::PREPARED_PROPERTY_PROVIDER_NAME,
+            fixture::PREPARED_PROPERTY_PROVIDER_REVISION,
+        )],
+        ..FixtureSpec::default()
+    };
+    let foreign_namespace = FixtureSpec {
+        deferred_predicates: vec![fixture::prepared_predicate_owned(
+            0,
+            fixture::PREPARED_PROPERTY_KEY,
+            "tiler-other",
+            fixture::PREPARED_PROPERTY_PROVIDER_NAME,
+            fixture::PREPARED_PROPERTY_PROVIDER_REVISION,
+        )],
+        ..FixtureSpec::default()
+    };
+    let foreign_name = FixtureSpec {
+        deferred_predicates: vec![fixture::prepared_predicate_owned(
+            0,
+            fixture::PREPARED_PROPERTY_KEY,
+            fixture::PREPARED_PROPERTY_PROVIDER_NAMESPACE,
+            "other-prepared-entry",
+            fixture::PREPARED_PROPERTY_PROVIDER_REVISION,
+        )],
+        ..FixtureSpec::default()
+    };
+    let foreign_revision = FixtureSpec {
+        deferred_predicates: vec![fixture::prepared_predicate_owned(
+            0,
+            fixture::PREPARED_PROPERTY_KEY,
+            fixture::PREPARED_PROPERTY_PROVIDER_NAMESPACE,
+            fixture::PREPARED_PROPERTY_PROVIDER_NAME,
+            2,
+        )],
+        ..FixtureSpec::default()
+    };
+
+    let unowned = |rejection: &LoadRejection| {
+        matches!(
+            rejection,
+            LoadRejection::UnownedPreparedEntryProperty {
+                predicate: 0,
+                entry: 0,
+                ..
+            }
+        )
+    };
+    let unsatisfied = |rejection: &LoadRejection| {
+        matches!(
+            rejection,
+            LoadRejection::UnsatisfiedDeferredPredicate {
+                predicate: 0,
+                entry: 0,
+                observed,
+                ..
+            } if *observed == fixture::PREPARED_PROPERTY_MINIMUM - 1
+        )
+    };
+    let unowned_second = |rejection: &LoadRejection| {
+        matches!(
+            rejection,
+            LoadRejection::UnownedPreparedEntryProperty {
+                predicate: 1,
+                entry: 1,
+                ..
+            }
+        )
+    };
+
+    let cases = [
+        PreparedEntryCase {
+            name: "key",
+            spec: foreign_key,
+            host: ScalarHostAdapter::new(&OPERANDS),
+            recognizes: unowned,
+            diagnostic: "tiler.target.prepared-entry.thread-execution-width from tiler-test::scalar-host-prepared-entry@1",
+        },
+        PreparedEntryCase {
+            name: "provider-namespace",
+            spec: foreign_namespace,
+            host: ScalarHostAdapter::new(&OPERANDS),
+            recognizes: unowned,
+            diagnostic: "tiler.target.prepared-entry.max-invocations from tiler-other::scalar-host-prepared-entry@1",
+        },
+        PreparedEntryCase {
+            name: "provider-name",
+            spec: foreign_name,
+            host: ScalarHostAdapter::new(&OPERANDS),
+            recognizes: unowned,
+            diagnostic: "tiler.target.prepared-entry.max-invocations from tiler-test::other-prepared-entry@1",
+        },
+        PreparedEntryCase {
+            name: "provider-revision",
+            spec: foreign_revision,
+            host: ScalarHostAdapter::new(&OPERANDS),
+            recognizes: unowned,
+            diagnostic: "tiler.target.prepared-entry.max-invocations from tiler-test::scalar-host-prepared-entry@2",
+        },
+        PreparedEntryCase {
+            name: "result-variant",
+            spec: FixtureSpec::default(),
+            host: ScalarHostAdapter::new(&OPERANDS)
+                .perturbed(Perturbation::UnrecognizePreparedEntry),
+            recognizes: unowned,
+            diagnostic: "runtime.unowned-prepared-entry-property",
+        },
+        PreparedEntryCase {
+            name: "value",
+            spec: FixtureSpec::default(),
+            host: ScalarHostAdapter::new(&OPERANDS)
+                .perturbed(Perturbation::UnderreportPreparedEntry),
+            recognizes: unsatisfied,
+            diagnostic: "runtime.unsatisfied-deferred-predicate",
+        },
+        PreparedEntryCase {
+            name: "entry",
+            spec: FixtureSpec::materialized(),
+            host: ScalarHostAdapter::new(&OPERANDS)
+                .perturbed(Perturbation::UnrecognizeSecondPreparedEntry),
+            recognizes: unowned_second,
+            diagnostic: "prepared entry 1",
+        },
+    ];
+
+    for case in cases {
+        let (outcome, host) = route(&case.spec, case.host);
+        let Err(AdapterRouteFailure::Load(rejection)) = outcome else {
+            panic!(
+                "{}: expected a loader rejection, got {outcome:?}",
+                case.name
+            );
+        };
+        assert!(
+            (case.recognizes)(&rejection),
+            "{}: wrong rejection class: {rejection}",
+            case.name,
+        );
+        assert!(
+            host.stages.contains(&Stage::ObservePreparedEntry),
+            "{}: the adapter must have been asked: {:?}",
+            case.name,
+            host.stages,
+        );
+        assert!(
+            !host.stages.contains(&Stage::PlanDispatch),
+            "{}: nothing is planned once a prepared-entry property has refused: {:?}",
+            case.name,
+            host.stages,
+        );
+        let rendered = rejection.to_string();
+        assert!(
+            rendered.contains(case.diagnostic),
+            "{}: diagnostic {rendered:?} must contain {:?}",
+            case.name,
+            case.diagnostic,
+        );
+    }
+}
+
 // -------------------------------------------------------------------------
 // The backend's own payload obligation (ADR 0090 item 8)
 // -------------------------------------------------------------------------
@@ -864,6 +1054,7 @@ fn the_commit_is_the_only_boundary_that_forecloses_a_fallback() {
         Perturbation::ForeignBackend,
         Perturbation::UnrecognizeLiveDevice,
         Perturbation::UnderreportPreparedEntry,
+        Perturbation::UnrecognizePreparedEntry,
         Perturbation::RefusePreparation,
         Perturbation::UndersizedInput,
     ];

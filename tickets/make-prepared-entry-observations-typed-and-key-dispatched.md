@@ -1,11 +1,11 @@
 ---
 id: make-prepared-entry-observations-typed-and-key-dispatched
 title: Make prepared-entry observations typed and key-dispatched
-status: in-progress
+status: review
 priority: p1
 dependencies: []
 related: [decide-the-prepared-subgroup-width-equality-gate, carry-subgroup-width-through-exact-prepared-entry-equality]
-scopes: [implementation/runtime, implementation/candle, implementation/conformance, contracts/artifacts, contracts/decisions]
+scopes: [implementation/runtime, implementation/candle, implementation/conformance, contracts/artifacts, contracts/decisions, implementation/frontend, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, preflight, public-boundary, correctness, fail-closed]
@@ -20,6 +20,14 @@ A runtime adapter can report that it does not recognize a prepared-entry propert
 ## Fact — 2026-08-11
 
 `RuntimeAdapter::observe_prepared_entry` returns a bare `u64`. The Candle Metal implementation reads neither the request's property key nor its provider identity and returns `maxTotalThreadsPerThreadgroup` for every request. This is harmless only while exactly one query exists; a second legal key creates a false-admission path when the unrelated quantity equals the required value.
+
+## Fact audit — 2026-08-13 at `b0aa7d6e`
+
+- **Verified.** `RuntimeAdapter::observe_prepared_entry` returned `-> u64`. Anchor: `fn observe_prepared_entry` in `crates/tiler-runtime/src/adapter.rs`.
+- **Verified.** Candle Metal ignored the request key/provider and returned `max_total_threads_per_threadgroup` for every request. Anchor: `fn observe_prepared_entry` in `prototypes/candle-metal-adapter/src/adapter.rs`.
+- **Census at this base.** Eleven `RuntimeAdapter` implementors: the trait, Candle Metal, the scalar-host adapter-route fixture, identity-join, three facade tests, `crates/tiler/src/route/tests.rs`, inline-dispatch, and the backend-provider-portfolio Metal and CPU adapters. Eight `resolve_target_properties` closures answered a bare `u64` (serial-sum-run, conformance envelope/apple). Every one now returns `PreparedEntryObservation`.
+
+The 2026-08-11 Fact described the defect at that base. This branch replaces the bare number with `PreparedEntryObservation::{Quantity(u64), Unrecognized}` and exact-matches provider namespace/name/revision and property key before reading a quantity.
 
 ## Required delivery
 

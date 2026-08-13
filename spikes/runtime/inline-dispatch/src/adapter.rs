@@ -15,9 +15,10 @@
 //! [`RuntimeAdapter`]'s division is followed without exception.
 //! [`MetalExecutor::observe_live_device`] reports what this device says and the
 //! loader decides whether the row is met; [`MetalExecutor::observe_prepared_entry`]
-//! returns a measurement and the loader holds the threshold and the direction. A
-//! row this adapter does not recognize exactly is
-//! [`LiveDeviceObservation::Unrecognized`], which refuses the route.
+//! returns a typed observation and the loader holds the threshold and the
+//! direction. A row or property this adapter does not recognize exactly is
+//! [`LiveDeviceObservation::Unrecognized`] or
+//! [`PreparedEntryObservation::Unrecognized`], which refuses the route.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -30,8 +31,8 @@ use metal::{
 use tiler::artifact::program::{BindingTarget, RouteRequirement, RouteResourceDimension};
 use tiler::runtime::adapter::{LiveExecutionContext, RuntimeAdapter};
 use tiler::runtime::load::{
-    ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight, RoutedDispatch,
-    RoutedEntry, TargetPropertyRequest,
+    ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight,
+    PreparedEntryObservation, RoutedDispatch, RoutedEntry, TargetPropertyRequest,
 };
 use tiler::value::{
     AdapterCapability, DispatchAdapter, RegionRequest, ResultRequest, StorageScalar, TensorAdapter,
@@ -682,6 +683,30 @@ struct SharedPlan {
     needed: u64,
 }
 
+/// Governed prepared-entry key this adapter answers from a compiled pipeline.
+const METAL_PREPARED_WORKGROUP_KEY: &str =
+    "tiler.target.prepared-entry.max-threads-per-workgroup.v1";
+const METAL_PREPARED_PROVIDER_NAMESPACE: &str = "tiler";
+const METAL_PREPARED_PROVIDER_NAME: &str = "prepared-entry-properties";
+const METAL_PREPARED_PROVIDER_REVISION: u32 = 1;
+
+fn observe_metal_prepared_entry(
+    request: TargetPropertyRequest<'_>,
+    quantity: u64,
+) -> PreparedEntryObservation {
+    let query = request.requirement().query();
+    let provider = query.provider();
+    if query.key().as_str() == METAL_PREPARED_WORKGROUP_KEY
+        && provider.namespace() == METAL_PREPARED_PROVIDER_NAMESPACE
+        && provider.name() == METAL_PREPARED_PROVIDER_NAME
+        && provider.revision() == METAL_PREPARED_PROVIDER_REVISION
+    {
+        PreparedEntryObservation::Quantity(quantity)
+    } else {
+        PreparedEntryObservation::Unrecognized
+    }
+}
+
 /// This consumer's device authority for one region invocation.
 ///
 /// It holds the region's storage by borrow for exactly the route's duration,
@@ -870,9 +895,12 @@ impl RuntimeAdapter for MetalExecutor<'_> {
         &mut self,
         _: &LiveExecutionContext,
         request: TargetPropertyRequest<'_>,
-    ) -> u64 {
+    ) -> PreparedEntryObservation {
         self.session.stage("observe-prepared-entry");
-        self.prepared[request.entry()].max_total_threads_per_threadgroup()
+        observe_metal_prepared_entry(
+            request,
+            self.prepared[request.entry()].max_total_threads_per_threadgroup(),
+        )
     }
 
     /// Sizes what the route will dispatch and checks its capacity, acquiring nothing.

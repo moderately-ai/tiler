@@ -25,7 +25,8 @@ use tiler_ir::semantic::SemanticProgram;
 use tiler_runtime::adapter::{LiveExecutionContext, RuntimeAdapter, route_with_adapter};
 use tiler_runtime::load::{
     DTypeDispatch, DecodedProgram, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest,
-    LoadRejection, Preflight, RoutedDispatch, RoutedEntry, TargetPropertyRequest,
+    LoadRejection, Preflight, PreparedEntryObservation, RoutedDispatch, RoutedEntry,
+    TargetPropertyRequest,
 };
 
 /// Governed backend family of this spike's CPU path.
@@ -1135,11 +1136,10 @@ impl RuntimeAdapter for CpuAdapter {
         &mut self,
         _context: &LiveExecutionContext,
         _request: TargetPropertyRequest<'_>,
-    ) -> u64 {
-        // The Apple profile defers workgroup capacity to a prepared pipeline.
-        // A scalar host has no pipeline object; it answers the compiler-minted
-        // query with a bound large enough for this program's launch.
-        1_024
+    ) -> PreparedEntryObservation {
+        // This scalar host owns no prepared-entry property. Returning a number
+        // large enough for the launch would let an unknown key compare equal.
+        PreparedEntryObservation::Unrecognized
     }
 
     fn plan_dispatch(

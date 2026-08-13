@@ -128,6 +128,10 @@
 //!   is. An unknown key, version, or payload *within* that backend is the
 //!   adapter's own `Unrecognized`, and is equally a refusal: a requirement
 //!   nothing evaluated has not been met.
+//! - **A prepared-entry property no adapter decides.** An unknown provider
+//!   namespace, name, revision, or property key is the adapter's own
+//!   `Unrecognized`, classified separately from a measured quantity that misses
+//!   its relation: a property nothing evaluated is not a threshold miss.
 //! - **No eligible variant at all.** Every packaged variant names a backend,
 //!   representation, or target profile this host did not state, so there is
 //!   nothing here to run and the refusal names what excluded each one.
@@ -149,8 +153,8 @@ mod route;
 pub use host::{DTypeDispatch, DTypeDispatchResolution, ExecutionEnvironment, TargetCompatibility};
 pub use route::{
     EntrySlot, LiveDeviceObservation, LiveDeviceQualification, LiveDeviceRequest, Preflight,
-    RoutePreparation, RoutedBinding, RoutedDispatch, RoutedEntry, RoutedLaunch, SharedAllocation,
-    TargetPropertyRequest,
+    PreparedEntryObservation, PreparedEntryPropertySubject, RoutePreparation, RoutedBinding,
+    RoutedDispatch, RoutedEntry, RoutedLaunch, SharedAllocation, TargetPropertyRequest,
 };
 
 use route::RouteRequirementRefusal;
@@ -1488,6 +1492,11 @@ pub enum LoadRejection {
         deferred: usize,
     },
     /// One exact prepared-entry target property did not satisfy its retained requirement.
+    ///
+    /// The adapter reported a quantity; the loader applied the requirement's
+    /// own relation and it did not hold. Distinct from
+    /// [`Self::UnownedPreparedEntryProperty`], which is a property nothing
+    /// evaluated.
     UnsatisfiedDeferredPredicate {
         /// Zero-based routing rank of the selected variant.
         variant: usize,
@@ -1495,6 +1504,26 @@ pub enum LoadRejection {
         predicate: usize,
         /// Position of the queried entry in the route's execution order.
         entry: usize,
+        /// The exact property that was measured and failed its relation.
+        subject: PreparedEntryPropertySubject,
+        /// Quantity the adapter reported for that entry.
+        observed: u64,
+    },
+    /// No adapter on this host claimed one prepared-entry target property.
+    ///
+    /// The fail-closed outcome of an unknown provider namespace, name,
+    /// revision, or property key. A property nothing evaluated is not a
+    /// property that holds, and it is not a quantity that happened to miss
+    /// its threshold.
+    UnownedPreparedEntryProperty {
+        /// Zero-based routing rank of the selected variant.
+        variant: usize,
+        /// Zero-based position among that variant's deferred predicates.
+        predicate: usize,
+        /// Position of the queried entry in the route's execution order.
+        entry: usize,
+        /// The exact property nothing decided.
+        subject: PreparedEntryPropertySubject,
     },
     /// The selected variant requires live-device facts this device-free path
     /// cannot observe.
@@ -1682,10 +1711,23 @@ impl fmt::Display for LoadRejection {
                 variant,
                 predicate,
                 entry,
+                subject,
+                observed,
             } => write!(
                 formatter,
                 "runtime.unsatisfied-deferred-predicate: variant {variant}'s predicate \
-                 {predicate} does not hold for prepared entry {entry}",
+                 {predicate} does not hold for prepared entry {entry}: {subject} observed \
+                 {observed}",
+            ),
+            Self::UnownedPreparedEntryProperty {
+                variant,
+                predicate,
+                entry,
+                subject,
+            } => write!(
+                formatter,
+                "runtime.unowned-prepared-entry-property: no adapter decided variant \
+                 {variant}'s predicate {predicate} for prepared entry {entry}, {subject}",
             ),
             Self::UnansweredRouteRequirements { variant, required } => write!(
                 formatter,
@@ -1768,6 +1810,7 @@ impl Error for LoadRejection {
             | Self::NoApplicableVariant { .. }
             | Self::UnansweredDeferredPredicates { .. }
             | Self::UnsatisfiedDeferredPredicate { .. }
+            | Self::UnownedPreparedEntryProperty { .. }
             | Self::UnansweredRouteRequirements { .. }
             | Self::ForeignRouteRequirementOwner { .. }
             | Self::UnownedRouteRequirement { .. }
@@ -1807,6 +1850,27 @@ impl LoadRejection {
                 position,
                 subject,
             },
+        }
+    }
+
+    /// Builds the rejection one unrecognized prepared-entry property produces.
+    fn unowned_prepared_entry(request: TargetPropertyRequest<'_>) -> Self {
+        Self::UnownedPreparedEntryProperty {
+            variant: request.variant(),
+            predicate: request.predicate(),
+            entry: request.entry(),
+            subject: request.property_subject(),
+        }
+    }
+
+    /// Builds the rejection one observed quantity that misses its relation produces.
+    fn unsatisfied_prepared_entry(request: TargetPropertyRequest<'_>, observed: u64) -> Self {
+        Self::UnsatisfiedDeferredPredicate {
+            variant: request.variant(),
+            predicate: request.predicate(),
+            entry: request.entry(),
+            subject: request.property_subject(),
+            observed,
         }
     }
 }

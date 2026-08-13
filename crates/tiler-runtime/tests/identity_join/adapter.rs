@@ -31,8 +31,8 @@ use std::fmt;
 use tiler_artifact::program::{RouteRequirement, RouteResourceDimension, TargetProfileRef};
 use tiler_runtime::adapter::{LiveExecutionContext, RuntimeAdapter};
 use tiler_runtime::load::{
-    ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight, RoutedDispatch,
-    RoutedEntry, TargetPropertyRequest,
+    ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight,
+    PreparedEntryObservation, RoutedDispatch, RoutedEntry, TargetPropertyRequest,
 };
 
 use crate::image::{
@@ -315,10 +315,14 @@ impl RuntimeAdapter for ScalarHostAdapter {
     fn observe_prepared_entry(
         &mut self,
         _context: &LiveExecutionContext,
-        request: TargetPropertyRequest<'_>,
-    ) -> u64 {
+        _request: TargetPropertyRequest<'_>,
+    ) -> PreparedEntryObservation {
         self.stages.push(Stage::ObservePreparedEntry);
-        u64::from(self.prepared[request.entry()].rows)
+        // This backend's profile answers the workgroup bound at declaration
+        // time, so these artifacts mint no deferred predicate and this method
+        // is unreachable. A numeric sentinel would still be wrong: an unknown
+        // key must not compare equal to a required quantity.
+        PreparedEntryObservation::Unrecognized
     }
 
     fn plan_dispatch(

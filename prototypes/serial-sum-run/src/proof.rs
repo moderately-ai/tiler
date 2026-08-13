@@ -199,8 +199,9 @@ use tiler_reference::{
 };
 use tiler_runtime::load::{
     DTypeDispatch, DecodedProgram, ExecutionEnvironment, LiveDeviceObservation,
-    LiveDeviceQualification, LiveDeviceRequest, LoadRejection, Preflight, RoutePreparation,
-    RoutedDispatch, RoutedEntry, TargetCompatibility, VariantIneligibility,
+    LiveDeviceQualification, LiveDeviceRequest, LoadRejection, Preflight, PreparedEntryObservation,
+    RoutePreparation, RoutedDispatch, RoutedEntry, TargetCompatibility, TargetPropertyRequest,
+    VariantIneligibility,
 };
 
 /// The one delivery position every artifact here is built for.
@@ -211,6 +212,30 @@ use tiler_runtime::load::{
 /// argument decides *which compiled object* is loaded and a literal there says
 /// nothing about why that one.
 const SOLE_DELIVERY: usize = 0;
+
+/// Governed prepared-entry key a Metal pipeline answers.
+const METAL_PREPARED_WORKGROUP_KEY: &str =
+    "tiler.target.prepared-entry.max-threads-per-workgroup.v1";
+const METAL_PREPARED_PROVIDER_NAMESPACE: &str = "tiler";
+const METAL_PREPARED_PROVIDER_NAME: &str = "prepared-entry-properties";
+const METAL_PREPARED_PROVIDER_REVISION: u32 = 1;
+
+fn observe_metal_prepared_entry(
+    request: TargetPropertyRequest<'_>,
+    quantity: u64,
+) -> PreparedEntryObservation {
+    let query = request.requirement().query();
+    let provider = query.provider();
+    if query.key().as_str() == METAL_PREPARED_WORKGROUP_KEY
+        && provider.namespace() == METAL_PREPARED_PROVIDER_NAMESPACE
+        && provider.name() == METAL_PREPARED_PROVIDER_NAME
+        && provider.revision() == METAL_PREPARED_PROVIDER_REVISION
+    {
+        PreparedEntryObservation::Quantity(quantity)
+    } else {
+        PreparedEntryObservation::Unrecognized
+    }
+}
 
 /// Rows of the direct path's input; each row reduces to one output element.
 ///
@@ -2462,7 +2487,11 @@ fn probe_accepted_baseline(subject: &ProbeSubject<'_>) -> Result<String, ProofEr
             // a route that *does* declare one from reaching a commit unchecked.
             qualification.resolve_live_device_requirements(|_| LiveDeviceObservation::Unrecognized)
         })
-        .and_then(|preparation| preparation.resolve_target_properties(|_| u64::MAX))
+        .and_then(|preparation| {
+            preparation.resolve_target_properties(|request| {
+                observe_metal_prepared_entry(request, u64::MAX)
+            })
+        })
         .map_err(ProofError::ProbeBaseline)?;
     let entries = preflight.entries();
     let threads: u64 = entries
@@ -3598,7 +3627,10 @@ fn resolve_prepared_route<'a>(
         .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
     let preflight = preparation
         .resolve_target_properties(|request| {
-            pipelines[request.entry()].max_total_threads_per_threadgroup()
+            observe_metal_prepared_entry(
+                request,
+                pipelines[request.entry()].max_total_threads_per_threadgroup(),
+            )
         })
         .map_err(ProofError::Load)?;
     Ok((preflight, pipelines))
@@ -5673,8 +5705,8 @@ mod tests {
         contraction_program, decide_live_device_requirement, declaration,
         declared_route_environment, evaluate_metal_host_applicability, expected_shape,
         host_dtype_dispatch, normalized_architecture, observe_host_environment,
-        probe_accepted_baseline, probe_damaged_interior_byte, probe_damaged_section_content,
-        probe_foreign_expected_identity, probe_other_backend_family,
+        observe_metal_prepared_entry, probe_accepted_baseline, probe_damaged_interior_byte,
+        probe_damaged_section_content, probe_foreign_expected_identity, probe_other_backend_family,
         probe_other_profile_descriptor, probe_other_profile_key, probe_truncated_envelope,
         proof_member, require_contraction_interface, require_serial_sum_interface, result_digest,
         serial_sum_program, sha256_hex, stating_probed_family,
@@ -6090,7 +6122,7 @@ mod tests {
                 .prepare(&environment, &expected, &interface.abi)
                 .expect("the contraction route prepares"),
         )
-        .resolve_target_properties(|_| u64::MAX)
+        .resolve_target_properties(|request| observe_metal_prepared_entry(request, u64::MAX))
         .expect("the contraction's target requirements hold");
 
         let placed =
@@ -7536,9 +7568,9 @@ mod tests {
         let refused_entry = requests[1].entry();
         let mut answer = 0;
         let rejection = preparation
-            .resolve_target_properties(|_| {
+            .resolve_target_properties(|request| {
                 answer += 1;
-                if answer == 1 { u64::MAX } else { 0 }
+                observe_metal_prepared_entry(request, if answer == 1 { u64::MAX } else { 0 })
             })
             .expect_err("the second entry's insufficient answer must refuse independently");
         assert_eq!(answer, 2, "each exact-entry request is answered once");
@@ -7548,6 +7580,8 @@ mod tests {
                 variant: 0,
                 predicate: 1,
                 entry,
+                observed: 0,
+                ..
             } if entry == refused_entry
         ));
 
@@ -7558,7 +7592,7 @@ mod tests {
                 .prepare(&environment, &expected, &abi)
                 .expect("every entry of the multi-stage route prepares"),
         )
-        .resolve_target_properties(|_| u64::MAX)
+        .resolve_target_properties(|request| observe_metal_prepared_entry(request, u64::MAX))
         .expect("both exact-entry requirements hold");
 
         assert_eq!(
@@ -7648,7 +7682,7 @@ mod tests {
                 .prepare(&environment, &expected, &interface.abi)
                 .expect("the partial-window route prepares"),
         )
-        .resolve_target_properties(|_| u64::MAX)
+        .resolve_target_properties(|request| observe_metal_prepared_entry(request, u64::MAX))
         .expect("the partial-window target requirement holds");
 
         let [shared] = preflight.shared_allocations() else {

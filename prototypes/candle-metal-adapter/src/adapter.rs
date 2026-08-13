@@ -18,9 +18,10 @@
 //! [`RuntimeAdapter`]'s division is the one this file follows without
 //! exception: [`CandleMetalAdapter::observe_live_device`] reports what the device says and the
 //! loader decides whether the row is met; [`CandleMetalAdapter::observe_prepared_entry`]
-//! returns a measurement and the loader holds the threshold and the direction. A
-//! row this adapter does not know exactly is
-//! [`LiveDeviceObservation::Unrecognized`], which is fail-closed.
+//! returns a typed observation and the loader holds the threshold and the
+//! direction. A row or property this adapter does not know exactly is
+//! [`LiveDeviceObservation::Unrecognized`] or
+//! [`PreparedEntryObservation::Unrecognized`], which is fail-closed.
 //!
 //! # The synchronous checked boundary, and why it is not Candle's stream
 //!
@@ -110,8 +111,8 @@ use tiler_metal::direct_requirement::evaluate_index_arithmetic;
 use tiler_metal::synchronization_requirement::evaluate_synchronization;
 use tiler_runtime::adapter::{LiveExecutionContext, RuntimeAdapter};
 use tiler_runtime::load::{
-    ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight, RoutedDispatch,
-    RoutedEntry, TargetPropertyRequest,
+    ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight,
+    PreparedEntryObservation, RoutedDispatch, RoutedEntry, TargetPropertyRequest,
 };
 
 use crate::refusal::{DispatchFailure, ReflectedBinding, ReflectedBindingClass, RouteRefusal};
@@ -142,6 +143,16 @@ const METAL_MINIMUM_GPU_FAMILY: &str = "tiler.metal.route-requirement.minimum-gp
 /// Matched exactly. One key at two versions can mean two things, and guessing
 /// which is how a route runs on a device it was refused on.
 const METAL_MINIMUM_GPU_FAMILY_VERSION: u32 = 1;
+
+/// Governed prepared-entry key this adapter answers from a compiled pipeline.
+const METAL_PREPARED_WORKGROUP_KEY: &str =
+    "tiler.target.prepared-entry.max-threads-per-workgroup.v1";
+/// Provider namespace that answers [`METAL_PREPARED_WORKGROUP_KEY`].
+const METAL_PREPARED_PROVIDER_NAMESPACE: &str = "tiler";
+/// Provider name that answers [`METAL_PREPARED_WORKGROUP_KEY`].
+const METAL_PREPARED_PROVIDER_NAME: &str = "prepared-entry-properties";
+/// Provider revision that answers [`METAL_PREPARED_WORKGROUP_KEY`].
+const METAL_PREPARED_PROVIDER_REVISION: u32 = 1;
 
 /// Interface key of the program input this consumer binds.
 pub const INPUT_KEY: &str = "input";
@@ -1032,13 +1043,28 @@ impl RuntimeAdapter for CandleMetalAdapter {
     /// resembles it: `MTLDevice.maxThreadsPerThreadgroup` is a device bound and
     /// `MTLComputePipelineState.maxTotalThreadsPerThreadgroup` is this kernel's,
     /// and the second is what a launch is actually limited by.
+    ///
+    /// Provider namespace, name, revision, and property key are matched
+    /// exactly. Answering any other ownership with this pipeline quantity is
+    /// how a second legal key is admitted by an unrelated measurement.
     fn observe_prepared_entry(
         &mut self,
         _context: &LiveExecutionContext,
         request: TargetPropertyRequest<'_>,
-    ) -> u64 {
-        u64::try_from(self.prepared[request.entry()].max_total_threads_per_threadgroup())
-            .unwrap_or(u64::MAX)
+    ) -> PreparedEntryObservation {
+        let query = request.requirement().query();
+        let provider = query.provider();
+        if query.key().as_str() != METAL_PREPARED_WORKGROUP_KEY
+            || provider.namespace() != METAL_PREPARED_PROVIDER_NAMESPACE
+            || provider.name() != METAL_PREPARED_PROVIDER_NAME
+            || provider.revision() != METAL_PREPARED_PROVIDER_REVISION
+        {
+            return PreparedEntryObservation::Unrecognized;
+        }
+        PreparedEntryObservation::Quantity(
+            u64::try_from(self.prepared[request.entry()].max_total_threads_per_threadgroup())
+                .unwrap_or(u64::MAX),
+        )
     }
 
     /// Sizes what the route will dispatch and checks its capacity, acquiring nothing.

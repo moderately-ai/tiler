@@ -145,7 +145,10 @@ fn resolve_prepared_route<'a>(
         .map_err(|refusal| EnvelopeFailure::DevicePreflight(Box::new(refusal)))?;
     let preflight = preparation
         .resolve_target_properties(|request| {
-            pipelines[request.entry()].max_total_threads_per_threadgroup()
+            super::observe_metal_prepared_entry(
+                request,
+                pipelines[request.entry()].max_total_threads_per_threadgroup(),
+            )
         })
         .map_err(EnvelopeFailure::Load)?;
     Ok((preflight, pipelines))

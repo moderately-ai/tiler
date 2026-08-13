@@ -36,7 +36,7 @@ use tiler::artifact::program::ArithmeticType;
 use tiler::runtime::adapter::{LiveExecutionContext, RuntimeAdapter};
 use tiler::runtime::load::{
     DTypeDispatchResolution, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest,
-    Preflight, RoutedDispatch, RoutedEntry, TargetPropertyRequest,
+    Preflight, PreparedEntryObservation, RoutedDispatch, RoutedEntry, TargetPropertyRequest,
 };
 use tiler::value::{
     AdapterCapability, DispatchAdapter, RegionRequest, ResultRequest, StorageScalar, Tensor,
@@ -212,9 +212,9 @@ impl RuntimeAdapter for Executor<'_> {
         &mut self,
         _: &LiveExecutionContext,
         _: TargetPropertyRequest<'_>,
-    ) -> u64 {
+    ) -> PreparedEntryObservation {
         self.record("observe-prepared-entry");
-        0
+        PreparedEntryObservation::Unrecognized
     }
 
     fn plan_dispatch(

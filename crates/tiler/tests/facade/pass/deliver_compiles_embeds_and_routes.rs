@@ -39,8 +39,8 @@
 
 use tiler::runtime::adapter::{LiveExecutionContext, RuntimeAdapter};
 use tiler::runtime::load::{
-    ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight, RoutedDispatch,
-    RoutedEntry, TargetPropertyRequest,
+    ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight,
+    PreparedEntryObservation, RoutedDispatch, RoutedEntry, TargetPropertyRequest,
 };
 use tiler::value::{
     AdapterCapability, DispatchAdapter, RegionRequest, ResultRequest, StorageScalar, Tensor,
@@ -157,7 +157,7 @@ impl RuntimeAdapter for NoBackend {
         &mut self,
         _: &LiveExecutionContext,
         _: TargetPropertyRequest<'_>,
-    ) -> u64 {
+    ) -> PreparedEntryObservation {
         unreachable!("no context was bound")
     }
 

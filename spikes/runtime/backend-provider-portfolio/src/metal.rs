@@ -18,8 +18,8 @@ use tiler_metal_aot::input::OptimizationLevel;
 use tiler_runtime::adapter::{LiveExecutionContext, RuntimeAdapter, route_with_adapter};
 use tiler_runtime::load::{
     DTypeDispatch, DecodedProgram, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest,
-    LoadRejection, Preflight, RoutedDispatch, RoutedEntry, TargetPropertyRequest,
-    VariantIneligibility,
+    LoadRejection, Preflight, PreparedEntryObservation, RoutedDispatch, RoutedEntry,
+    TargetPropertyRequest, VariantIneligibility,
 };
 
 use crate::cpu::{SOLE_DELIVERY, bind_facts};
@@ -384,10 +384,24 @@ impl RuntimeAdapter for MetalAdapter {
         &mut self,
         _context: &LiveExecutionContext,
         request: TargetPropertyRequest<'_>,
-    ) -> u64 {
-        self.pipelines.get(request.entry()).map_or(0, |pipeline| {
-            u64::from(pipeline.max_total_threads_per_threadgroup())
-        })
+    ) -> PreparedEntryObservation {
+        let query = request.requirement().query();
+        let provider = query.provider();
+        if query.key().as_str() != "tiler.target.prepared-entry.max-threads-per-workgroup.v1"
+            || provider.namespace() != "tiler"
+            || provider.name() != "prepared-entry-properties"
+            || provider.revision() != 1
+        {
+            return PreparedEntryObservation::Unrecognized;
+        }
+        self.pipelines.get(request.entry()).map_or(
+            PreparedEntryObservation::Unrecognized,
+            |pipeline| {
+                PreparedEntryObservation::Quantity(u64::from(
+                    pipeline.max_total_threads_per_threadgroup(),
+                ))
+            },
+        )
     }
 
     fn plan_dispatch(

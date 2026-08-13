@@ -39,7 +39,7 @@ use std::fmt;
 use tiler_runtime::adapter::{LiveExecutionContext, RuntimeAdapter};
 use tiler_runtime::load::{
     DTypeDispatch, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight,
-    RoutedDispatch, RoutedEntry, TargetPropertyRequest,
+    PreparedEntryObservation, RoutedDispatch, RoutedEntry, TargetPropertyRequest,
 };
 
 use tiler_artifact::program::{
@@ -157,6 +157,16 @@ pub enum Perturbation {
     /// the threshold: a boundary asserted through a coincidence stops being a
     /// boundary the moment the fixture's extents change.
     ReportPreparedEntryAtThreshold,
+    /// Every prepared-entry request is answered `Unrecognized`, including one
+    /// this adapter owns.
+    UnrecognizePreparedEntry,
+    /// The second prepared-entry request is answered `Unrecognized`.
+    ///
+    /// Distinct from the perturbation above rather than a parameter of it: the
+    /// state it produces is a two-entry route whose first observation was a
+    /// quantity and whose second was not owned, and a single-entry route cannot
+    /// be in that state at all.
+    UnrecognizeSecondPreparedEntry,
     /// No entry can be prepared.
     RefusePreparation,
     /// The caller's input storage is one element short.
@@ -617,20 +627,38 @@ impl RuntimeAdapter for ScalarHostAdapter {
         &mut self,
         _context: &LiveExecutionContext,
         request: TargetPropertyRequest<'_>,
-    ) -> u64 {
+    ) -> PreparedEntryObservation {
         self.stages.push(Stage::ObservePreparedEntry);
+        if self.perturbed_by(Perturbation::UnrecognizePreparedEntry)
+            || (self.perturbed_by(Perturbation::UnrecognizeSecondPreparedEntry)
+                && request.entry() != 0)
+        {
+            return PreparedEntryObservation::Unrecognized;
+        }
+        // Provider namespace, name, revision, and property key matched exactly.
+        // Answering any other ownership with a quantity is how a second legal
+        // key is admitted by an unrelated pipeline measurement.
+        let query = request.requirement().query();
+        let provider = query.provider();
+        if query.key().as_str() != fixture::PREPARED_PROPERTY_KEY
+            || provider.namespace() != fixture::PREPARED_PROPERTY_PROVIDER_NAMESPACE
+            || provider.name() != fixture::PREPARED_PROPERTY_PROVIDER_NAME
+            || provider.revision() != fixture::PREPARED_PROPERTY_PROVIDER_REVISION
+        {
+            return PreparedEntryObservation::Unrecognized;
+        }
         // The exact prepared entry the request names, not a host-wide property
         // that resembles it. The comparison, the threshold, and the direction
         // stay with the loader.
         let entry = &self.prepared[request.entry()];
         let invocations = u64::from(entry.rows);
-        match self.perturbation {
+        PreparedEntryObservation::Quantity(match self.perturbation {
             Some(Perturbation::UnderreportPreparedEntry) => fixture::PREPARED_PROPERTY_MINIMUM - 1,
             Some(Perturbation::ReportPreparedEntryAtThreshold) => {
                 fixture::PREPARED_PROPERTY_MINIMUM
             }
             _ => invocations,
-        }
+        })
     }
 
     fn plan_dispatch(

@@ -157,6 +157,18 @@ pub const HOST_ARITHMETIC_PAYLOAD: &[u8] = b"subnormals-preserved";
 
 /// Prepared-entry property the fixture's deferred predicate queries.
 pub const PREPARED_PROPERTY_KEY: &str = "tiler.target.prepared-entry.max-invocations";
+/// Provider namespace that answers [`PREPARED_PROPERTY_KEY`].
+pub const PREPARED_PROPERTY_PROVIDER_NAMESPACE: &str = "tiler-test";
+/// Provider name that answers [`PREPARED_PROPERTY_KEY`].
+pub const PREPARED_PROPERTY_PROVIDER_NAME: &str = "scalar-host-prepared-entry";
+/// Provider revision that answers [`PREPARED_PROPERTY_KEY`].
+pub const PREPARED_PROPERTY_PROVIDER_REVISION: u32 = 1;
+/// A second legal prepared-entry key this adapter does not own.
+///
+/// Used to prove that an unrelated quantity equal to the required value cannot
+/// admit a property nothing evaluated.
+pub const FOREIGN_PREPARED_PROPERTY_KEY: &str =
+    "tiler.target.prepared-entry.thread-execution-width";
 /// Threshold that property must reach.
 pub const PREPARED_PROPERTY_MINIMUM: u64 = 2;
 
@@ -274,10 +286,32 @@ pub fn host_arithmetic_requirement(owner: BackendKey) -> RouteRequirement {
 /// from the named entry's own prepared state answers at least one of them wrong.
 #[must_use]
 pub fn prepared_predicate(entry: u32) -> DeferredPredicateSpec {
+    prepared_predicate_owned(
+        entry,
+        PREPARED_PROPERTY_KEY,
+        PREPARED_PROPERTY_PROVIDER_NAMESPACE,
+        PREPARED_PROPERTY_PROVIDER_NAME,
+        PREPARED_PROPERTY_PROVIDER_REVISION,
+    )
+}
+
+/// Returns one deferred prepared-entry predicate with caller-chosen ownership.
+///
+/// The adapter exact-matches namespace, name, revision, and key before reading
+/// a quantity. A fixture that names any other ownership is how an unknown
+/// property is shown to refuse rather than compare equal.
+#[must_use]
+pub fn prepared_predicate_owned(
+    entry: u32,
+    key: &str,
+    namespace: &str,
+    name: &str,
+    revision: u32,
+) -> DeferredPredicateSpec {
     let query = TargetPropertyQuery::new(
-        TargetPropertyKey::new(PREPARED_PROPERTY_KEY).expect("a governed property key"),
+        TargetPropertyKey::new(key).expect("a governed property key"),
         AvailabilityPhase::PreparedKernelPreflight,
-        TargetPropertyProviderIdentity::new("tiler-test", "scalar-host-prepared-entry", 1)
+        TargetPropertyProviderIdentity::new(namespace, name, revision)
             .expect("a property provider identity"),
     )
     .expect("a well-formed target property query");

@@ -123,7 +123,8 @@ use tiler_ir::shape::Shape;
 use tiler_metal::applicability::{AppleGpuFamilyConstant, MetalGpuFamily, MetalGpuFamilySupport};
 use tiler_runtime::load::{
     DTypeDispatch, DecodedProgram, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest,
-    LoadRejection, Preflight, VariantIneligibility,
+    LoadRejection, Preflight, PreparedEntryObservation, TargetPropertyRequest,
+    VariantIneligibility,
 };
 
 use crate::device_preflight::PreflightRefusal;
@@ -1519,6 +1520,30 @@ pub(crate) struct ProbeSubject<'a> {
     pub(crate) abi: &'a AbiFacts,
 }
 
+/// Governed prepared-entry key a Metal pipeline answers.
+const METAL_PREPARED_WORKGROUP_KEY: &str =
+    "tiler.target.prepared-entry.max-threads-per-workgroup.v1";
+const METAL_PREPARED_PROVIDER_NAMESPACE: &str = "tiler";
+const METAL_PREPARED_PROVIDER_NAME: &str = "prepared-entry-properties";
+const METAL_PREPARED_PROVIDER_REVISION: u32 = 1;
+
+pub(crate) fn observe_metal_prepared_entry(
+    request: TargetPropertyRequest<'_>,
+    quantity: u64,
+) -> PreparedEntryObservation {
+    let query = request.requirement().query();
+    let provider = query.provider();
+    if query.key().as_str() == METAL_PREPARED_WORKGROUP_KEY
+        && provider.namespace() == METAL_PREPARED_PROVIDER_NAMESPACE
+        && provider.name() == METAL_PREPARED_PROVIDER_NAME
+        && provider.revision() == METAL_PREPARED_PROVIDER_REVISION
+    {
+        PreparedEntryObservation::Quantity(quantity)
+    } else {
+        PreparedEntryObservation::Unrecognized
+    }
+}
+
 /// Reports a probe whose refusal did not arrive under the class it must.
 fn refused(probe: &'static str, outcome: String) -> EnvelopeFailure {
     EnvelopeFailure::NotFailedClosed { probe, outcome }
@@ -1552,7 +1577,11 @@ pub(crate) fn probe_accepted_baseline(
             // that *does* declare one from reaching a commit unchecked.
             qualification.resolve_live_device_requirements(|_| LiveDeviceObservation::Unrecognized)
         })
-        .and_then(|preparation| preparation.resolve_target_properties(|_| u64::MAX))
+        .and_then(|preparation| {
+            preparation.resolve_target_properties(|request| {
+                observe_metal_prepared_entry(request, u64::MAX)
+            })
+        })
         .map_err(EnvelopeFailure::ProbeBaseline)?;
     let entries = preflight.entries();
     let threads: u64 = entries

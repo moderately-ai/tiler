@@ -97,8 +97,8 @@ use tiler_artifact::program::{
 
 use crate::load::{
     DecodedProgram, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceQualification,
-    LiveDeviceRequest, LoadRejection, Preflight, RoutePreparation, RoutedDispatch, RoutedEntry,
-    TargetPropertyRequest,
+    LiveDeviceRequest, LoadRejection, Preflight, PreparedEntryObservation, RoutePreparation,
+    RoutedDispatch, RoutedEntry, TargetPropertyRequest,
 };
 
 use std::error::Error;
@@ -364,13 +364,26 @@ pub trait RuntimeAdapter {
     /// The request names the entry by its position in the route's execution
     /// order, so the answer comes from *that* entry's prepared state rather than
     /// from a device-wide property that resembles it. The loader holds the
-    /// comparison, the threshold, and the direction; this returns the measurement
-    /// alone.
+    /// comparison, the threshold, and the direction; this returns an observation
+    /// and never a satisfaction verdict.
+    ///
+    /// Answer [`PreparedEntryObservation::Unrecognized`] for any provider
+    /// namespace, name, revision, or property key this adapter does not know
+    /// exactly. That is fail-closed — the loader refuses the route as
+    /// [`crate::load::LoadRejection::UnownedPreparedEntryProperty`] — and it is
+    /// the only correct answer for a property nothing evaluated. Returning a
+    /// number for an unknown key would let an unrelated quantity compare equal
+    /// to a required value.
+    ///
+    /// # Public boundary status
+    ///
+    /// The observation type is a labelled draft under ADR 0075. There is no
+    /// compatibility method that maps an unknown property to a number.
     fn observe_prepared_entry(
         &mut self,
         context: &LiveExecutionContext,
         request: TargetPropertyRequest<'_>,
-    ) -> u64;
+    ) -> PreparedEntryObservation;
 
     /// Sizes what the route will dispatch and checks its capacity, acquiring nothing.
     ///
