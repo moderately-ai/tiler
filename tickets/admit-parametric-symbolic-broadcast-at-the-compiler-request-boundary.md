@@ -1,7 +1,7 @@
 ---
 id: admit-parametric-symbolic-broadcast-at-the-compiler-request-boundary
 title: Admit parametric symbolic broadcast at the compiler request boundary
-status: in-progress
+status: review
 priority: p1
 dependencies: [carry-the-parametric-broadcast-relation-through-index-and-schedule-ir, admit-symbolic-extents-at-the-compiler-request-boundary]
 related: []
@@ -98,6 +98,6 @@ From this worktree, after the implementation:
 - `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler-compiler -p tiler-ir --no-deps` — clean.
 - `tkt lint` — `ok: no problems found`.
 - `git diff --check` — clean.
-- `tkt guard --base main --format json tkt/admit-parametric-symbolic-broadcast-at-the-compiler-request-boundary` — `severity: ok`, `conflict: false`, `under_declared: []`. Scopes include added `implementation/ir`.
+- `tkt guard --base main --format json tkt/admit-parametric-symbolic-broadcast-at-the-compiler-request-boundary` — `severity: warn`, `conflict: false`, `under_declared: []`. Direct collisions with other live compiler/IR tickets; shared `project/tickets`. Not under-declared.
 
 Did not run `make full`. Coordinator gates at integration.
