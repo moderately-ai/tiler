@@ -429,3 +429,135 @@ fn a_structure_whose_contracted_index_sits_at_different_axes_compiles() {
          the representation admits",
     );
 }
+
+/// Compiles one program to its sole target compilation.
+fn compile_program(
+    program: &SemanticProgram,
+    contract: NumericalContract,
+) -> tiler_compiler::session::Compilation {
+    let targets = TargetRequest::new([TargetProfile::governed()]).unwrap();
+    let batch = compile(CompileRequest::new(program, contract, targets))
+        .expect("the request is well formed");
+    batch
+        .targets()
+        .next()
+        .expect("one requested profile")
+        .outcome()
+        .expect("the profile admits the program")
+        .clone()
+}
+
+/// Spellings that would mean a simdgroup or fused realization had been formed.
+const SIMDGROUP_REALIZATION_MARKERS: [&str; 6] = [
+    "simdgroup",
+    "multiply_accumulate",
+    "fma(",
+    "metal::fma",
+    "precise::fma",
+    "mad(",
+];
+
+/// `simdgroup_multiply_accumulate` is never a candidate of `@1`.
+///
+/// The owning classification is structural: the compiler enumerates only the
+/// appendable `direct` first-product separately-rounded lowering. Inventing a
+/// simdgroup alternative merely to reject it would be a fake executable
+/// candidate. The explain and retained-plan surfaces therefore stay silent
+/// about that construct, which is the honest visibility this check owns.
+#[test]
+fn the_direct_contraction_plan_never_enumerates_a_simdgroup_realization() {
+    let compilation = compile_program(&projection(2, 2, 3), NumericalContract::STRICT_F32);
+    let rendered = compilation.explain().render();
+    assert!(
+        rendered.starts_with("tiler-compilation-explain-v1 "),
+        "the composite explanation must render: {rendered}"
+    );
+    for marker in SIMDGROUP_REALIZATION_MARKERS {
+        assert!(
+            !rendered.contains(marker),
+            "{marker} must not appear in the explain of a plan that never formed \
+             that realization:\n{rendered}"
+        );
+    }
+
+    let alternatives: Vec<_> = compilation.alternatives().collect();
+    assert!(
+        !alternatives.is_empty(),
+        "a successful compilation must retain the admitted direct plan"
+    );
+    for alternative in &alternatives {
+        let identity = alternative.stable_id();
+        for marker in SIMDGROUP_REALIZATION_MARKERS {
+            assert!(
+                !identity.contains(marker),
+                "{marker} must not name a retained alternative: {identity}"
+            );
+        }
+        for capability in alternative.selected_capabilities() {
+            let key = capability.capability_key();
+            for marker in SIMDGROUP_REALIZATION_MARKERS {
+                assert!(
+                    !key.contains(marker),
+                    "{marker} must not name a selected capability: {key}"
+                );
+            }
+        }
+    }
+}
+
+/// Finding 16's `contraction_pair` and the L3 `negative_zero_seed` observations.
+///
+/// These are IEEE host reproductions of the two retained distinguishing
+/// observations, not a device probe and not a claim that the finite corpus
+/// proves unpublished MMA order or NaN behaviour. They are why the structural
+/// prohibition exists: fused rounding and a `+0.0` seed compute different
+/// values from `tiler::strict-tensor-contraction-f32@1`.
+#[test]
+fn contraction_pair_and_negative_zero_seed_disagree_with_the_strict_operation() {
+    let operand = f32::from_bits(0x3eb9_7ef9);
+    let scale = 1.5_f32;
+    let bias = 1.0_f32;
+    let separately_rounded = operand * scale + bias;
+    let fused = operand.mul_add(scale, bias);
+    assert_eq!(
+        separately_rounded.to_bits(),
+        0x3fc5_8f9e,
+        "the contraction_pair separate-rounding observation moved"
+    );
+    assert_eq!(
+        fused.to_bits(),
+        0x3fc5_8f9d,
+        "the contraction_pair fused observation moved"
+    );
+    assert_ne!(
+        separately_rounded.to_bits(),
+        fused.to_bits(),
+        "fusion must remain observable on this triple"
+    );
+
+    let product = f32::from_bits(0xbf80_0000) * f32::from_bits(0x0000_0000);
+    assert_eq!(product.to_bits(), 0x8000_0000);
+    let mut first_product = product;
+    for _ in 1..16 {
+        first_product += product;
+    }
+    let mut positive_zero_seed = 0.0_f32;
+    for _ in 0..16 {
+        positive_zero_seed += product;
+    }
+    assert_eq!(
+        first_product.to_bits(),
+        0x8000_0000,
+        "the negative_zero_seed first-product observation moved"
+    );
+    assert_eq!(
+        positive_zero_seed.to_bits(),
+        0x0000_0000,
+        "the negative_zero_seed +0.0 observation moved"
+    );
+    assert_ne!(
+        first_product.to_bits(),
+        positive_zero_seed.to_bits(),
+        "the two seeds must remain distinguishable on this vector"
+    );
+}

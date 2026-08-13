@@ -387,6 +387,8 @@ pattern.
 
 "Contraction" in this section is only ADR 0015's fused-multiply-add permission. A *tensor* contraction — summation over indices shared by two or more operands — is a reduction, and this permission governs exactly one thing about it: whether its per-contributor `accumulator + a * b` step may round once instead of twice. It says nothing about that reduction's order, and regrouping a chain of tensor contractions consumes the separate [distributivity](#distributivity-is-outside-the-order-contract) dimension, which no permission in this document grants.
 
+**Fact — `simdgroup_multiply_accumulate` is not a realization of `tiler::strict-tensor-contraction-f32@1`.** The registered operation forbids arithmetic contraction, seeds the accumulator at the first product, and canonicalizes after every combine. The retained `contraction_pair` observation distinguishes fused from separately rounded arithmetic by one bit (`0x3fc58f9d` versus `0x3fc58f9e`), and `negative_zero_seed` distinguishes a `+0.0` seed from the first-product seed (`0x00000000` versus `0x80000000`). The instruction also cannot expose a per-combine NaN site or publish its contributor order. Those mismatches are why the production lowering never enumerates the construct: the owning classification is the structural prohibition, not a feasibility refusal of a fake executable candidate. This says nothing about a future distinct seeded fused operation. The finite eight-case attribution remains bounded empirical evidence and cannot discharge those hard obligations.
+
 ## Transcendental accuracy
 
 Every transcendental operation carries a resolved, operation-specific accuracy

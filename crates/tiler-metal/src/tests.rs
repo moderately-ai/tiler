@@ -1807,46 +1807,39 @@ fn an_empty_portfolio_emits_a_declaration_free_translation_unit() {
     );
 }
 
-/// The contraction's accumulation path carries no fused multiply-add.
+/// Spellings that would mean a fused or simdgroup accumulation had been asked for.
+const FUSED_ACCUMULATION_SPELLINGS: [&str; 6] = [
+    "fma(",
+    "metal::fma",
+    "precise::fma",
+    "simdgroup",
+    "multiply_accumulate",
+    "mad(",
+];
+
+/// Emits the bounded contraction fixture and returns its translation unit.
+fn contraction_unit() -> MetalTranslationUnit {
+    let kernel = contraction_kernel();
+    emit_translation_unit(&[&kernel], &target()).expect("the contraction fixture emits")
+}
+
+/// The fusion subject: no fused spelling and no adjacent multiply-add.
 ///
-/// **The flag is not what holds this line, which is why the check is on the
-/// text.** [Finding 16 of the Apple numerical-behaviour record] established that
+/// [Finding 16 of the Apple numerical-behaviour record] established that
 /// `-ffp-contract=off` is a defence against the *compiler* contracting a written
 /// multiply and add, and no defence at all against a fused operation the source
 /// asks for; the L3 realization probe reproduced it at a new construct, where
 /// `simdgroup_multiply_accumulate` returned the fused `0x3fc58f9d` under exactly
 /// the governed flags that kept the four scalar kernels at `0x3fc58f9e`.
 ///
-/// So the property asserted here is per-statement structure, which no flag can
-/// change: every emitted arithmetic line binds one operator over two already
-/// named locals, so no statement contains a product feeding a sum. There is no
-/// adjacency for `-ffp-contract=on` to fuse and no fused intrinsic in the text.
-/// The flag requirement is still recorded — the last assertion — but as a second
-/// line of defence rather than as the guarantee.
-///
 /// [Finding 16 of the Apple numerical-behaviour record]: ../../docs/research/apple-targets/numerical-behaviour.md
-#[test]
-fn the_contraction_kernel_emits_no_fused_multiply_add_on_its_accumulation_path() {
-    let kernel = contraction_kernel();
-    let unit = emit_translation_unit(&[&kernel], &target()).expect("the contraction fixture emits");
-    let source = unit.source();
-    // Nothing in the emitted text names a fusing construct, under any spelling
-    // the profile could reach.
-    for forbidden in [
-        "fma(",
-        "metal::fma",
-        "precise::fma",
-        "simdgroup",
-        "multiply_accumulate",
-        "mad(",
-    ] {
+fn refuse_fused_accumulation(source: &str) {
+    for forbidden in FUSED_ACCUMULATION_SPELLINGS {
         assert!(
             !source.contains(forbidden),
             "{forbidden} must not appear on a path whose contract forbids contraction:\n{source}"
         );
     }
-    // No statement holds a multiply and an add together, so the pair a
-    // contracting compiler would fuse is never adjacent in one expression.
     let arithmetic: Vec<&str> = source
         .lines()
         .map(str::trim)
@@ -1866,13 +1859,6 @@ fn the_contraction_kernel_emits_no_fused_multiply_add_on_its_accumulation_path()
             "one statement carries both operators, so the pair is fusable:\n{line}"
         );
     }
-    // Counted over the `float` statements alone, because the index arithmetic
-    // uses both operators too and counting the whole text would make these
-    // assertions about the addressing rather than about the fold.
-    //
-    // Two products — the seed's and the loop body's — and one accumulation. A
-    // third product would mean the loaded operands were multiplied again, and a
-    // second accumulation would mean the fold combined twice per step.
     assert_eq!(
         arithmetic
             .iter()
@@ -1889,9 +1875,22 @@ fn the_contraction_kernel_emits_no_fused_multiply_add_on_its_accumulation_path()
         1,
         "one accumulation, inside the fold:\n{source}"
     );
-    // Every product is canonicalized before it reaches the accumulation, which
-    // is the declared `after-every-combine` rule and is also what puts a call
-    // between the two arithmetic operations.
+}
+
+/// The seed subject: the fold starts at the first product, never at `+0.0`.
+fn refuse_positive_zero_seed(source: &str) {
+    assert!(
+        source.contains("// serial loop over [1, "),
+        "the emitted fold must start at the first product:\n{source}"
+    );
+    assert!(
+        !source.contains("// serial loop over [0, "),
+        "a +0.0 seed is a different operation from the first-product fold:\n{source}"
+    );
+}
+
+/// The NaN/order subject: every combine commits the canonical payload.
+fn refuse_missing_per_combine_canonicalization(source: &str) {
     assert_eq!(
         source
             .matches("tiler_canonicalize_nan_f32_7fc00000(")
@@ -1901,11 +1900,127 @@ fn the_contraction_kernel_emits_no_fused_multiply_add_on_its_accumulation_path()
         4,
         "each emitted product and sum commits the canonical payload:\n{source}"
     );
+}
+
+/// The contraction's accumulation path carries no fused multiply-add.
+///
+/// **The flag is not what holds this line, which is why the check is on the
+/// text.** So the property asserted here is per-statement structure, which no
+/// flag can change: every emitted arithmetic line binds one operator over two
+/// already named locals, so no statement contains a product feeding a sum.
+/// The flag requirement is still recorded — the last assertion — but as a second
+/// line of defence rather than as the guarantee.
+#[test]
+fn the_contraction_kernel_emits_no_fused_multiply_add_on_its_accumulation_path() {
+    let unit = contraction_unit();
+    let source = unit.source();
+    refuse_fused_accumulation(source);
     assert!(
         unit.numerical_requirements()
             .contains(&MetalNumericalRequirement::NoFloatingPointContraction),
         "the forbidden contraction dimension still places its flag obligation"
     );
+}
+
+/// The emitted fold starts at contributor 1, which is the first-product seed.
+#[test]
+fn the_contraction_kernel_seeds_from_the_first_product() {
+    refuse_positive_zero_seed(contraction_unit().source());
+}
+
+/// Every product and sum installs the declared canonical NaN payload.
+#[test]
+fn the_contraction_kernel_canonicalizes_after_every_combine() {
+    refuse_missing_per_combine_canonicalization(contraction_unit().source());
+}
+
+/// Finding 16's `contraction_pair` and the L3 `negative_zero_seed` pair.
+///
+/// Host IEEE reproductions of the two observations that make a fused MMA and a
+/// `+0.0` seed different operations from `@1`. They do not prove unpublished
+/// contributor order or internal NaN behaviour.
+#[test]
+fn contraction_pair_and_negative_zero_seed_remain_the_distinguishing_observations() {
+    let operand = f32::from_bits(0x3eb9_7ef9);
+    assert_eq!((operand * 1.5 + 1.0).to_bits(), 0x3fc5_8f9e);
+    assert_eq!(operand.mul_add(1.5, 1.0).to_bits(), 0x3fc5_8f9d);
+
+    let product = f32::from_bits(0xbf80_0000) * f32::from_bits(0x0000_0000);
+    let mut first_product = product;
+    for _ in 1..16 {
+        first_product += product;
+    }
+    let mut positive_zero_seed = 0.0_f32;
+    for _ in 0..16 {
+        positive_zero_seed += product;
+    }
+    assert_eq!(first_product.to_bits(), 0x8000_0000);
+    assert_eq!(positive_zero_seed.to_bits(), 0x0000_0000);
+}
+
+/// Each load-bearing subject fails with its own message when that subject alone
+/// is perturbed. The production emitter is not the subject of these rows; a
+/// copy of its text is, so fusion, seed, and NaN stay independently watchable.
+#[test]
+fn fusion_seed_and_nan_subjects_fail_independently() {
+    let source = contraction_unit().source().to_string();
+    refuse_fused_accumulation(&source);
+    refuse_positive_zero_seed(&source);
+    refuse_missing_per_combine_canonicalization(&source);
+
+    let fused = format!("{source}\nfloat _perturb = fma(1.0f, 1.0f, 1.0f);\n");
+    let fused_failure = std::panic::catch_unwind(|| refuse_fused_accumulation(&fused));
+    let fused_message = panic_message(
+        fused_failure
+            .expect_err("a fused spelling must fail")
+            .as_ref(),
+    );
+    assert!(
+        fused_message.contains("fma( must not appear on a path whose contract forbids contraction"),
+        "fusion must quote its own refusal: {fused_message}"
+    );
+    refuse_positive_zero_seed(&fused);
+    refuse_missing_per_combine_canonicalization(&fused);
+
+    let seeded = source.replace("// serial loop over [1, ", "// serial loop over [0, ");
+    let seed_failure = std::panic::catch_unwind(|| refuse_positive_zero_seed(&seeded));
+    let seed_message = panic_message(seed_failure.expect_err("a +0.0 seed must fail").as_ref());
+    assert!(
+        seed_message.contains("the emitted fold must start at the first product"),
+        "seed must quote its own refusal: {seed_message}"
+    );
+    refuse_fused_accumulation(&seeded);
+    refuse_missing_per_combine_canonicalization(&seeded);
+
+    let denan = source.replace(
+        "tiler_canonicalize_nan_f32_7fc00000(",
+        "tiler_identity_f32(",
+    );
+    let nan_failure =
+        std::panic::catch_unwind(|| refuse_missing_per_combine_canonicalization(&denan));
+    let nan_message = panic_message(
+        nan_failure
+            .expect_err("dropping canonicalize must fail")
+            .as_ref(),
+    );
+    assert!(
+        nan_message.contains("each emitted product and sum commits the canonical payload"),
+        "NaN must quote its own refusal: {nan_message}"
+    );
+    refuse_fused_accumulation(&denan);
+    refuse_positive_zero_seed(&denan);
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| {
+            payload
+                .downcast_ref::<&str>()
+                .map(|text| (*text).to_string())
+        })
+        .unwrap_or_else(|| "non-string panic payload".to_string())
 }
 
 /// The `SiLU` kernel selects the precise exponential intrinsic, by name.

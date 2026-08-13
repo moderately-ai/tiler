@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 
 use super::*;
 use crate::schedule::{
-    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ContributorPartition, ConvergenceEvidence, CooperativePhase, CooperativeTile,
+    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContractionAxisSource,
+    ContributorOrder, ContributorPartition, ConvergenceEvidence, CooperativePhase, CooperativeTile,
     ExceptionalValueAssumption, ExecutionBinding, FencedSpaces, InputOrdinal, KernelSchedule,
     LaunchPlan, LocalCoordinateSource, LocalCoordinates, LogicalAccess, MemoryOrdering,
     NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
@@ -21,7 +21,7 @@ use crate::schedule::{
     ScheduledRegionBuilder, StagedElement, StagedRead, StagedSpan, StagedWrite, StagingId,
     SubnormalMode, SyncPointId, SynchronizationKind, SynchronizationPlacement,
     SynchronizationPoint, SynchronizationScope, SynchronizationSubject, TailPolicy, TensorRole,
-    VerifiedScheduledRegion, WorkgroupStaging,
+    VerifiedScheduledRegion, WorkgroupStaging, element_count,
 };
 use crate::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
@@ -4917,5 +4917,254 @@ fn a_bf16_region_proves_no_subnormal_freedom() {
     assert!(
         !crate::schedule::SubnormalFreedom::StrictAffineNormalScaleDecode
             .discharges(crate::schedule::ArithmeticType::Bf16)
+    );
+}
+
+/// The `direct` contraction of `td,od->to` over `[m, k] x [n, k] -> [m, n]`.
+fn contraction_region(id: RegionId, m: u64, n: u64, k: u64) -> VerifiedScheduledRegion {
+    let left = Shape::from_dims([m, k]);
+    let right = Shape::from_dims([n, k]);
+    let output = Shape::from_dims([m, n]);
+    let contracted = Shape::from_dims([k]);
+    let output_elements = element_count(&output).unwrap();
+    let owner = OwnershipWitnessId::new(0);
+    let mut builder = ScheduledRegionBuilder::new(id);
+    builder.iteration_shape(output.clone()).unwrap();
+    for (ordinal, (operand, free)) in [(&left, 0_u32), (&right, 1)].into_iter().enumerate() {
+        let witness = u32::try_from(ordinal).unwrap();
+        let tensor = TensorRole::Input {
+            ordinal: InputOrdinal::new(witness),
+        };
+        builder
+            .push_access(Access {
+                tensor,
+                component_role: None,
+                mode: AccessMode::Read,
+                map: LogicalAccess::ContractionOperand {
+                    operand_shape: operand.clone(),
+                    output_shape: output.clone(),
+                    contracted_shape: contracted.clone(),
+                    sources: vec![
+                        ContractionAxisSource::Output { position: free },
+                        ContractionAxisSource::Contracted { position: 0 },
+                    ],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                },
+                bounds: BoundsWitnessId::new(witness),
+                ownership: None,
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(witness),
+                tensor,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: element_count(operand).unwrap(),
+                },
+            })
+            .unwrap();
+    }
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(2),
+            ownership: Some(owner),
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(2),
+            tensor: TensorRole::Output,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: output_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .ownership_proof(OwnershipProof {
+            id: owner,
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: output_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::StrictTensorContraction {
+            contracted_shape: contracted.clone(),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: NAN_BITS,
+        })
+        .unwrap();
+    builder.numerical(numerical()).unwrap();
+    builder
+        .schedule(KernelSchedule {
+            reduction: ReductionTopology::Contraction {
+                contracted_shape: contracted,
+                order: ContributorOrder::OriginalAxisLexicographic,
+                permits_reassociation: false,
+                permits_permutation: false,
+            },
+            ..linear_schedule(output_elements, owner)
+        })
+        .unwrap();
+    builder.build().unwrap()
+}
+
+fn contraction_loop(kernel: &VerifiedKernel) -> SerialLoopRef<'_> {
+    let guarded = kernel
+        .body()
+        .operations()
+        .find_map(|operation| match operation.view() {
+            OperationView::Predicated { body, .. } => Some(body),
+            _ => None,
+        })
+        .expect("a guarded contraction");
+    guarded
+        .operations()
+        .find_map(|operation| match operation.view() {
+            OperationView::SerialLoop(reduction) => Some(reduction),
+            _ => None,
+        })
+        .expect("a first-product contraction loop")
+}
+
+fn count_canonicalizations(kernel: &VerifiedKernel) -> usize {
+    fn walk(block: BlockRef<'_>, count: &mut usize) {
+        for operation in block.operations() {
+            match operation.view() {
+                OperationView::Convert {
+                    op: ConvertOp::CanonicalizeF32Nan,
+                    ..
+                } => *count += 1,
+                OperationView::Predicated { body, .. } => walk(body, count),
+                OperationView::SerialLoop(serial) => walk(serial.body(), count),
+                _ => {}
+            }
+        }
+    }
+    let mut count = 0;
+    walk(kernel.body(), &mut count);
+    count
+}
+
+/// The canonical lowering is a first-product separately-rounded fold.
+///
+/// This is the owning KIR classification: there is no fused multiply-add
+/// construct and the loop starts at the first product. A simdgroup matrix
+/// instruction is never formed here, so it is not a realization of `@1`.
+#[test]
+fn the_contraction_lowers_to_a_first_product_separately_rounded_fold() {
+    let scheduled = contraction_region(RegionId::new(9), 2, 3, 4);
+    let kernel = lower_scheduled_region(&scheduled).expect("the direct contraction lowers");
+    let reduction = contraction_loop(&kernel);
+    assert_eq!(
+        (reduction.start(), reduction.end()),
+        (1, 4),
+        "the accumulator must start at the first product"
+    );
+    assert_eq!(
+        count_canonicalizations(&kernel),
+        3,
+        "the seed product, the fold product, and the fold sum each canonicalize"
+    );
+}
+
+/// A `+0.0` seed is `reduction-contract`, not a realization of `@1`.
+///
+/// The subject is the loop start. Fusion and NaN sites are left unperturbed so
+/// this refusal cannot be confused with either of those obligations.
+#[test]
+fn a_positive_zero_seeded_contraction_loop_is_reduction_contract() {
+    let scheduled = contraction_region(RegionId::new(9), 2, 3, 4);
+    let mut builder = KernelBuilder::new(&scheduled).unwrap();
+    let left = builder
+        .declare_buffer(BufferParameter {
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::new(0),
+            },
+            component_role: None,
+            element_type: KernelType::F32,
+            address_space: AddressSpace::Device,
+            access: BufferAccess::Read,
+            element_count: 8,
+        })
+        .unwrap();
+    let right = builder
+        .declare_buffer(BufferParameter {
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::new(1),
+            },
+            component_role: None,
+            element_type: KernelType::F32,
+            address_space: AddressSpace::Device,
+            access: BufferAccess::Read,
+            element_count: 12,
+        })
+        .unwrap();
+    let write = builder
+        .declare_buffer(BufferParameter {
+            tensor: TensorRole::Output,
+            component_role: None,
+            element_type: KernelType::F32,
+            address_space: AddressSpace::Device,
+            access: BufferAccess::Write,
+            element_count: 6,
+        })
+        .unwrap();
+    builder
+        .admit_builtin(Builtin::GlobalInvocationIndex)
+        .unwrap();
+    builder.numerical(numerical()).unwrap();
+    builder.requirements(scheduled.requirements()).unwrap();
+    let (invocation, active) = guard(&mut builder, 6);
+    builder
+        .predicated(active, |builder| {
+            let left_value = builder.load(left, invocation, BoundsWitnessId::new(0))?;
+            let right_value = builder.load(right, invocation, BoundsWitnessId::new(1))?;
+            let product = builder.binary(BinaryOp::F32Multiply, left_value, right_value)?;
+            let seed = builder.convert(ConvertOp::CanonicalizeF32Nan, product)?;
+            let results = builder.serial_loop(
+                SerialLoopSpec { start: 0, end: 4 },
+                &[seed],
+                |builder, parameters| {
+                    let accumulator = parameters
+                        .accumulator(0)
+                        .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
+                    let product = builder.convert(ConvertOp::CanonicalizeF32Nan, accumulator)?;
+                    let sum = builder.binary(BinaryOp::F32Add, accumulator, product)?;
+                    let sum = builder.convert(ConvertOp::CanonicalizeF32Nan, sum)?;
+                    Ok(vec![sum])
+                },
+            )?;
+            let total = results
+                .get(0)
+                .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
+            builder.store(
+                write,
+                invocation,
+                total,
+                BoundsWitnessId::new(2),
+                OwnershipWitnessId::new(0),
+            )
+        })
+        .unwrap();
+    let error = builder
+        .build()
+        .expect_err("a +0.0-seeded contraction loop must not verify");
+    assert_eq!(
+        error.diagnostics(),
+        [KernelDiagnostic::ReductionContract],
+        "the seed subject must fail as reduction-contract, not as a later catch-all: {error:?}"
+    );
+    assert_eq!(
+        error.diagnostics()[0].rule(),
+        "reduction-contract",
+        "the quoted seed refusal is the stable rule id"
     );
 }

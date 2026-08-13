@@ -1014,6 +1014,93 @@ fn a_contraction_over_an_input_subset_compiles_and_matches_the_reference() {
     assert_ne!(projected, vec![80.0, 320.0, 320.0, 1280.0]);
 }
 
+/// The lowered `direct` kernel reproduces the two retained seed/fusion observations.
+///
+/// `negative_zero_seed` is executed on the compiler-owned KIR: sixteen `-0.0`
+/// products fold to `0x80000000` from the first product, while a `+0.0` seed
+/// would return `0x00000000`. `contraction_pair` is the IEEE host pair the
+/// L3 simdgroup kernel disagreed on — separately rounded `0x3fc58f9e` versus
+/// fused `0x3fc58f9d` — which is why this lowering never forms a fused
+/// multiply-add. Neither observation claims unpublished MMA order or internal
+/// NaN behaviour.
+#[test]
+fn the_direct_kernel_reproduces_the_strict_seed_and_separate_rounding_observations() {
+    let operand = f32::from_bits(0x3eb9_7ef9);
+    let separately_rounded = operand * 1.5 + 1.0;
+    let fused = operand.mul_add(1.5, 1.0);
+    assert_eq!(separately_rounded.to_bits(), 0x3fc5_8f9e);
+    assert_eq!(fused.to_bits(), 0x3fc5_8f9d);
+
+    let structure = tiler_ir::semantic::ContractionIndexStructure::new(
+        [
+            [
+                tiler_ir::semantic::ContractionIndex::new(0),
+                tiler_ir::semantic::ContractionIndex::new(1),
+            ],
+            [
+                tiler_ir::semantic::ContractionIndex::new(2),
+                tiler_ir::semantic::ContractionIndex::new(1),
+            ],
+        ],
+        [
+            tiler_ir::semantic::ContractionIndex::new(0),
+            tiler_ir::semantic::ContractionIndex::new(2),
+        ],
+    )
+    .unwrap();
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let left = builder
+        .input::<F32>(InputKey::new("left").unwrap(), Shape::from_dims([1, 16]))
+        .unwrap();
+    let right = builder
+        .input::<F32>(InputKey::new("right").unwrap(), Shape::from_dims([1, 16]))
+        .unwrap();
+    let contracted =
+        tiler_ir::semantic::F32TensorContraction::apply(&mut builder, &structure, left, right)
+            .unwrap();
+    builder
+        .output(OutputKey::new("out").unwrap(), contracted)
+        .unwrap();
+    let program = builder.build().unwrap();
+
+    let compiled = compile(CompilationRequest::governed(&program))
+        .expect("a 1x16 contraction compiles on the direct path");
+    let alternatives: Vec<&ProgramAlternative> =
+        compiled.targets[0].portfolio.alternatives.iter().collect();
+    let [alternative] = alternatives.as_slice() else {
+        panic!(
+            "expected one retained alternative, found {}",
+            alternatives.len()
+        );
+    };
+    let [kernel] = alternative.kernels.as_slice() else {
+        panic!(
+            "expected one kernel on the bare contraction, found {}",
+            alternative.kernels.len()
+        );
+    };
+
+    let left_bits = [f32::from_bits(0xbf80_0000); 16];
+    let right_bits = [0.0_f32; 16];
+    let actual = interpret_fused_inputs(kernel, &[&left_bits, &right_bits]);
+    assert_eq!(
+        bits_of(&actual),
+        vec![0x8000_0000],
+        "the lowered kernel must keep the first-product seed on negative_zero_seed"
+    );
+
+    let mut positive_zero_seed = 0.0_f32;
+    for _ in 0..16 {
+        positive_zero_seed += f32::from_bits(0xbf80_0000) * f32::from_bits(0x0000_0000);
+    }
+    assert_eq!(positive_zero_seed.to_bits(), 0x0000_0000);
+    assert_ne!(
+        actual[0].to_bits(),
+        positive_zero_seed.to_bits(),
+        "a +0.0 seed is a different operation from the lowered kernel"
+    );
+}
+
 /// ADR 0072 identity conformance for a provider-only revision change.
 ///
 /// The same graph admitted by two revisions of the same external provider
