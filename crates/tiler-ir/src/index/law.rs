@@ -273,12 +273,12 @@ pub enum IndexRealizationLaw {
     /// kept coordinate — so the realization refuses by name instead of inventing a
     /// seed the reference does not have.
     ///
-    /// **Draft boundary.** This variant, its `const` constructor, its tag-11
-    /// encoding, and the standard registration for `tiler::softmax-f32@1` are a
-    /// labelled draft awaiting Tom's decision at
-    /// [`accept-the-softmax-realization-law`]. It is in use inside `tiler-ir`
-    /// meanwhile, exactly as the normalization's was; the label is what an
-    /// acceptance flips.
+    /// **Accepted public surface.** Tom accepted the exact variant, its `const`
+    /// constructor, append-only tag-11 encoding, and standard
+    /// `tiler::softmax-f32@1` registration on 2026-08-07 under
+    /// [`accept-the-softmax-realization-law`]. The acceptance is limited to this
+    /// staged law; the three general emitters stay private, and it grants no
+    /// governed lowering or scheduled-stage spelling.
     ///
     /// [`accept-the-softmax-realization-law`]: ../../../../tickets/accept-the-softmax-realization-law.md
     StagedSoftmaxF32 {
@@ -324,12 +324,13 @@ pub enum IndexRealizationLaw {
     /// point, writes no element, and contributes zero volume — which is what the
     /// joint obligation's volume identity says about a root over an empty domain.
     ///
-    /// **Draft boundary.** This variant, its `const` constructor, its tag-12
-    /// encoding, and the standard registration for `tiler::concatenate-f32@1` are
-    /// a labelled draft awaiting Tom's decision at
-    /// [`accept-the-partitioned-concatenate-realization-law`]. It is in use inside
-    /// `tiler-ir` meanwhile, exactly as the softmax's was; the label is what an
-    /// acceptance flips.
+    /// **Accepted public surface.** Tom accepted the exact variant, its `const`
+    /// constructor, append-only tag-12 encoding, and standard
+    /// `tiler::concatenate-f32@1` registration on 2026-08-07 under
+    /// [`accept-the-partitioned-concatenate-realization-law`]. The acceptance is
+    /// limited to this single-region law; the emission helpers stay private, and
+    /// it grants no scheduled-region spelling, kernel construct, or backend
+    /// realization.
     ///
     /// [`accept-the-partitioned-concatenate-realization-law`]: ../../../../tickets/accept-the-partitioned-concatenate-realization-law.md
     PartitionedConcatenate {
