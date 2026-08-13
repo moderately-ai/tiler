@@ -7113,17 +7113,17 @@ fn the_tree_matches_the_reference_at_its_declared_order_for_every_extent() {
             crate::physical::RegionWrite::ProgramOutput,
         )
         .expect("a reassociating request admits the tree at this extent");
-        let tiler_ir::schedule::ReductionTopology::CooperativeWorkgroup { partition, .. } =
+        let tiler_ir::schedule::ReductionTopology::CooperativeWorkgroup { coverage, .. } =
             &region.schedule.reduction
         else {
             panic!("the tree region carries a cooperative topology")
         };
+        let partition = coverage.partition();
         assert_eq!(partition.partitions, participants, "extent {extent}");
         assert_eq!(
             partition.contributors_per_partition, contributors_per_partition,
             "extent {extent}"
         );
-        let partition = *partition;
         let verified = crate::physical::verify_schedule(region, members, &request)
             .expect("the tree region verifies");
         let kernel = crate::physical::lower_structured_kernel(&verified)
@@ -7267,12 +7267,12 @@ fn the_tree_takes_the_capped_participant_count_where_the_balanced_split_differs(
         crate::physical::RegionWrite::ProgramOutput,
     )
     .expect("a reassociating request admits the tree at this extent");
-    let tiler_ir::schedule::ReductionTopology::CooperativeWorkgroup { partition, .. } =
+    let tiler_ir::schedule::ReductionTopology::CooperativeWorkgroup { coverage, .. } =
         &region.schedule.reduction
     else {
         panic!("the tree region carries a cooperative topology")
     };
-    let partition = *partition;
+    let partition = coverage.partition();
     assert_eq!(
         partition.partitions, 256,
         "the tree did not take the capped participant count"

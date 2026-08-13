@@ -1,11 +1,11 @@
 ---
 id: admit-shared-contributor-coverage-and-reduction-padding-identity
 title: Admit shared contributor coverage and typed reduction padding identity
-status: in-progress
+status: review
 priority: p1
 dependencies: [accept-adr-0093-cpu-vector-lane-tier, accept-adr-0094-subgroup-execution-tier, accept-adr-0100-multi-round-reduction-composition]
 related: [admit-subgroup-bindings-into-the-schedule-vocabulary, admit-vector-lane-bindings-into-the-schedule-vocabulary]
-scopes: [implementation/ir, implementation/compiler, contracts/numerics, contracts/decisions]
+scopes: [implementation/ir, implementation/compiler, contracts/numerics, contracts/decisions, implementation/metal, implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: [scheduling, reductions, numerics, padding, identity, public-boundary, fail-closed]
@@ -31,6 +31,15 @@ Tom accepted this boundary in the live decision review.
 ## Source-first evidence
 
 `ContributorPartition::covers` currently requires `partitions * contributors_per_partition == contributors`. The accepted subgroup example has `32 * 4 == 128` physical leaf positions for 101 real contributors. Strict f32 addition requires `-0.0` padding when signed zero is observable even though its empty-domain result is `+0.0`; the current maximum family uses `-inf`. These are different facts and make inference from the scalar program unsound.
+
+## Worker source-first Fact audit — 2026-08-13 at `9b4db66a`
+
+1. **Verified.** `ContributorPartition::covers`, anchor `pub const fn covers(self, contributors: u64)`, returns whether `total_contributors() == contributors`, and `partitions == 0` covers nothing. Exact meaning retained for every existing consumer.
+2. **Verified.** Exact encodings of `MultiPass` (`0x33`) and `CooperativeWorkgroup` (`0x35`) keep their previous field layout. Coverage is an appended local suffix written only in the padded arm. `tiler.schedule.v5` does not step. `STRICT_F32_REGION_IDENTITY_HEX` is a `None` topology and is unmoved.
+3. **Verified.** Sum families still pin `empty_identity_bits` to `+0.0`. That value is not a two-sided additive identity when signed zero is observable: `+0.0 + (-0.0)` is `+0.0`. The admitted pad is `-0.0`.
+4. **Verified.** `ScalarProgram::StrictSerialMaximum` still carries no empty-domain field. `0xff80_0000` (`-inf`) is the two-sided padding identity of the NaN-propagating maximum after per-combine canonicalization, not an empty-domain result.
+5. **Verified.** Every production consumer of `covers` and of the `partition` field was re-read: schedule verifier, witness, kernel plan/verify/lower, compiler physical/cost, metal and conformance fixtures. Existing Exact construction now wraps `ContributorCoverage::Exact`. Identity-padded coverage is refused at lowering under `padded-contributor-coverage`.
+6. **Imprecise as a current-code claim.** The `32 * 4 == 128` for 101 contributors is the accepted subgroup motivating example. No subgroup topology exists at this base. The shared coverage type is what that ticket will consume.
 
 ## Required delivery
 

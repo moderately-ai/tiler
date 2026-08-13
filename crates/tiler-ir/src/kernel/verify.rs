@@ -19,11 +19,12 @@ use std::ops::Range;
 
 use crate::schedule::{
     Access, AccessMode, AntiDependencyEdge, BoundsProofKind, BoundsWitnessId,
-    CanonicalScheduledRegionIdentity, ContributorPartition, CooperativeTile, ExecutionBinding,
-    FencedSpaces, MemoryOrdering, OwnershipWitnessId, PhaseId, ReductionPass, ReductionTopology,
-    ResourceRequirements, ScheduledRegion, StagedElement, StagingId, SyncPointId,
-    SynchronizationKind, SynchronizationPlacement, SynchronizationPoint, SynchronizationScope,
-    SynchronizationSubject, VisibilityEdge, contributor_count, cooperative_tile, element_count,
+    CanonicalScheduledRegionIdentity, ContributorCoverage, ContributorPartition, CooperativeTile,
+    ExecutionBinding, FencedSpaces, MemoryOrdering, OwnershipWitnessId, PhaseId, ReductionPass,
+    ReductionTopology, ResourceRequirements, ScheduledRegion, StagedElement, StagingId,
+    SyncPointId, SynchronizationKind, SynchronizationPlacement, SynchronizationPoint,
+    SynchronizationScope, SynchronizationSubject, VisibilityEdge, contributor_count,
+    cooperative_tile, element_count,
 };
 
 use super::error::KernelDiagnostic;
@@ -1101,9 +1102,9 @@ fn verify_reduction(
         // the whole sequence and reject every partition but a trivial one.
         ReductionTopology::MultiPass {
             pass: ReductionPass::Partial,
-            partition,
+            coverage,
             ..
-        } => verify_contributor_loop(walk, partition.contributors_per_partition),
+        } => verify_contributor_loop(walk, exact_partition(*coverage)?.contributors_per_partition),
         // The two-read case. A contraction's contributor count is the size of
         // its contracted index space, which no single read's map determines:
         // each operand names only the contracted coordinates its own tuple
@@ -1134,11 +1135,9 @@ fn verify_reduction(
         // number of invocations whatever shape the space arranges them in: the
         // fold this verifies is over staged partials, one per participant, and
         // it is indifferent to the participant coordinate's rank.
-        ReductionTopology::CooperativeWorkgroup {
-            partition, tile, ..
-        } => verify_cooperative_loops(
+        ReductionTopology::CooperativeWorkgroup { coverage, tile, .. } => verify_cooperative_loops(
             walk,
-            *partition,
+            exact_partition(*coverage)?,
             tile.coordinates
                 .participants
                 .participants()
@@ -1170,6 +1169,17 @@ fn verify_reduction(
 /// deeper each. The expected block depths are therefore
 /// `1, 0, 0, 2, 1` — and it is the depths, not the trip counts, that distinguish
 /// the peel's folds from the loop's.
+fn exact_partition(
+    coverage: ContributorCoverage,
+) -> Result<ContributorPartition, KernelDiagnostic> {
+    match coverage {
+        ContributorCoverage::Exact(partition) => Ok(partition),
+        ContributorCoverage::IdentityPadded { .. } => {
+            Err(KernelDiagnostic::PaddedContributorCoverage)
+        }
+    }
+}
+
 fn verify_cooperative_loops(
     walk: &Walk,
     partition: ContributorPartition,

@@ -155,6 +155,19 @@ pub enum ScheduledRegionDiagnostic {
         /// The violated synchronization rule.
         rule: super::synchronization::SynchronizationRule,
     },
+    /// A reduction topology's contributor coverage is malformed.
+    ///
+    /// Separate from [`Self::NumericalOrAccessRefinement`] and from
+    /// [`Self::CooperativeTile`] with [`CooperativeTileRule::ContributorSplit`]:
+    /// those name program/access disagreement and a tile whose split, participants,
+    /// and iteration shape disagree. This names the coverage statement itself —
+    /// exact versus identity-padded — so an exact split that misses the real
+    /// count and a padded split whose identity is not two-sided-neutral cannot
+    /// share one diagnostic.
+    ContributorCoverage {
+        /// The violated coverage rule.
+        rule: ContributorCoverageRule,
+    },
     /// The blocked-workgroup execution binding is not a bijection from launched
     /// invocations onto the declared output domain, or it is paired with the
     /// wrong topology.
@@ -360,6 +373,62 @@ impl fmt::Display for BlockedWorkgroupRule {
 }
 impl Error for BlockedWorkgroupRule {}
 
+/// One violated rule of a reduction topology's contributor coverage.
+///
+/// Exact-coverage and padded-coverage failures are named separately so a
+/// producer cannot mistake one for the other. Overflow, a capacity below the
+/// real count, a noncanonical suffix, an arithmetic-type mismatch, and a
+/// failed two-sided-neutrality proof are each independently perturbable.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum ContributorCoverageRule {
+    /// Exact coverage does not cover the real contributor sequence once each.
+    ExactCoverage,
+    /// Identity-padded coverage is not a proper padded extension of the real
+    /// sequence — typically a zero-length pad, which is exact coverage under
+    /// another name, or a padded final pass whose partials are already staged.
+    PaddedCoverage,
+    /// The partition capacity overflowed `u64`.
+    Overflow,
+    /// The split's capacity is below the real contributor count.
+    CapacityBelowRealCount,
+    /// The derived padding is not a canonical suffix of the covered sequence.
+    ///
+    /// Suffix-only is the only representable placement. This fires when the
+    /// derived pad would occupy a whole leading unit — a fully padded
+    /// intermediate round, or an all-padding sequence with no real prefix.
+    NoncanonicalPlacement,
+    /// The identity's arithmetic type is not the region's own arithmetic.
+    ArithmeticTypeMismatch,
+    /// The identity is not two-sided-neutral under the region's combiner,
+    /// arithmetic, rounding, signed-zero contract, NaN behaviour, and
+    /// family-specific canonicalization.
+    TwoSidedNeutrality,
+}
+
+impl ContributorCoverageRule {
+    /// Returns the stable rule identifier for this coverage failure.
+    #[must_use]
+    pub const fn rule(self) -> &'static str {
+        match self {
+            Self::ExactCoverage => "contributor-exact-coverage",
+            Self::PaddedCoverage => "contributor-padded-coverage",
+            Self::Overflow => "contributor-coverage-overflow",
+            Self::CapacityBelowRealCount => "contributor-capacity-below-real-count",
+            Self::NoncanonicalPlacement => "contributor-noncanonical-padding-placement",
+            Self::ArithmeticTypeMismatch => "contributor-padding-arithmetic-type",
+            Self::TwoSidedNeutrality => "contributor-padding-two-sided-neutrality",
+        }
+    }
+}
+
+impl fmt::Display for ContributorCoverageRule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.rule())
+    }
+}
+impl Error for ContributorCoverageRule {}
+
 /// Typed preflight refusal for an exact-divisible cooperative contraction.
 ///
 /// A caller selecting the tiled approach receives one of these when an
@@ -462,6 +531,7 @@ impl ScheduledRegionDiagnostic {
             Self::ShapeProductOverflow => "shape-product-overflow",
             Self::CooperativeTile { rule } => rule.rule(),
             Self::Synchronization { rule } => rule.rule(),
+            Self::ContributorCoverage { rule } => rule.rule(),
             Self::BlockedWorkgroup { rule } => rule.rule(),
         }
     }

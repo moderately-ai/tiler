@@ -522,6 +522,8 @@ Therefore `+0.0` is not bitwise-neutral padding for that strict reduction even
 though it is its empty result. Such a schedule tracks nonempty partials or uses
 another proven construction; a signed-zero relaxation may admit more choices.
 
+**Fact — contributor coverage is a required tagged statement on the reduction topology.** `ContributorCoverage` distinguishes `Exact(ContributorPartition)` from `IdentityPadded { partition, identity }`. Exact coverage carries no identity. Padded coverage cannot omit one. There is no `Option`, `Default`, unknown mode, inferred constant, or fallback to a family's `empty_identity_bits`. The padding identity is a width-discriminated exact-bit value (`F16`/`Bf16`/`F32`/`F64`) whose format and bit width cannot disagree; intrinsic verification derives two-sided neutrality against the region's scalar family, arithmetic type, rounding, signed-zero contract, NaN behaviour, and family-specific canonicalization. The verifier derives the pad count by checked subtraction and requires a canonical suffix. `ContributorPartition::covers` keeps its exact meaning. `KernelSchedule::tail` remains iteration-domain launch coverage. The types are labelled drafts under ADR 0075. Identity-padded coverage is not lowered.
+
 An optional explicit `initial` is a true reduction seed, not an empty-only
 fallback. It is converted according to the resolved reduction signature and is
 one logical contributor for every output reduction domain, including non-empty

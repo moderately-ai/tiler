@@ -17,14 +17,15 @@ use super::cooperative::{
     StagedSpan, VisibilityEdge,
 };
 use super::error::{
-    BlockedWorkgroupRule, CooperativeTileRule, ScheduleBuildError, ScheduleComponent,
-    ScheduleLimitKind, ScheduledRegionBuildError, ScheduledRegionDiagnostic,
+    BlockedWorkgroupRule, ContributorCoverageRule, CooperativeTileRule, ScheduleBuildError,
+    ScheduleComponent, ScheduleLimitKind, ScheduledRegionBuildError, ScheduledRegionDiagnostic,
 };
 use super::handles::{InputOrdinal, RegionId, StagingId};
 use super::model::{
     Access, AccessMode, BoundsProof, BoundsProofKind, CanonicalScheduledRegionIdentity,
-    ContractionAxisSource, ContributorOrder, ExecutionBinding, IndexRegion, KernelSchedule,
-    LogicalAccess, OwnershipProof, OwnershipProofKind, ReductionPass, ReductionTopology,
+    ContractionAxisSource, ContributorCoverage, ContributorOrder, ContributorPartition,
+    ExecutionBinding, IndexRegion, KernelSchedule, LogicalAccess, OwnershipProof,
+    OwnershipProofKind, ReductionPaddingIdentity, ReductionPass, ReductionTopology,
     ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
     VerifiedScheduledRegion, contributor_count, cooperative_tile, derive_requirements,
     element_count, encode_identity, partial_reduction_axis, partial_reduction_shape,
@@ -1398,14 +1399,14 @@ impl SplitFamily<'_> {
 /// is constantly true — storage in every slot and a branch in every combine, for
 /// a fact the verifier settles here.
 ///
-/// **Exact coverage is a premise of that argument, not a detail of it**, and it
-/// is what every split this vocabulary admits supplies:
-/// [`super::model::ContributorPartition::covers`] rejects anything else. A split
-/// covering a *padded* sequence has partitions whose real contributors may be
-/// none, so the factor argument does not reach it and the family's stated padding
-/// identity is what would discharge it instead — the separation
-/// [`ScalarProgram::StrictSerialMaximum`] records. Nothing here admits such a
-/// split; this notes which premise a later one would have to replace.
+/// **Exact coverage is a premise of that argument, not a detail of it.**
+/// [`super::model::ContributorPartition::covers`] still rejects anything else,
+/// and [`verify_contributor_coverage`] keeps that meaning on
+/// [`ContributorCoverage::Exact`]. A split covering a *padded* sequence has
+/// partitions whose real contributors may be none, so the factor argument does
+/// not reach it: [`ContributorCoverage::IdentityPadded`] states the family's
+/// padding identity and the verifier derives two-sided neutrality before
+/// admitting the split.
 const fn empty_domain_is_satisfied(
     contract: EmptyDomainContract,
     contributors: Option<u64>,
@@ -1541,6 +1542,260 @@ fn verify_accumulation_width(
     Ok(())
 }
 
+/// Verifies one topology's contributor coverage against the real sequence.
+///
+/// `rounds` is `1` for a multi-pass split — the partitions are the whole story —
+/// and the tile's declared round count for a cooperative one. Exact coverage
+/// reuses [`ContributorPartition::covers`] when there is no extra round factor,
+/// so that method keeps the meaning every existing consumer already applies.
+/// Identity-padded coverage derives the pad count by checked subtraction and
+/// requires a canonical suffix: the last unit of the covered sequence still
+/// holds a real contributor, and a zero-length pad is exact coverage under
+/// another name.
+fn verify_contributor_coverage(
+    coverage: ContributorCoverage,
+    contributors: u64,
+    rounds: u64,
+    program: &ScalarProgram,
+    numerical: &NumericalRealization,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    match coverage {
+        ContributorCoverage::Exact(partition) => {
+            verify_exact_coverage(partition, contributors, rounds)
+        }
+        ContributorCoverage::IdentityPadded {
+            partition,
+            identity,
+        } => {
+            verify_padded_coverage(partition, contributors, rounds)?;
+            verify_padding_identity(identity, program, numerical)
+        }
+    }
+}
+
+fn verify_exact_coverage(
+    partition: ContributorPartition,
+    contributors: u64,
+    rounds: u64,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    if rounds == 0 {
+        return Err(coverage_rule(ContributorCoverageRule::Overflow));
+    }
+    if rounds == 1 {
+        if partition.total_contributors().is_none() {
+            return Err(coverage_rule(ContributorCoverageRule::Overflow));
+        }
+        if !partition.covers(contributors) {
+            return Err(coverage_rule(ContributorCoverageRule::ExactCoverage));
+        }
+        return Ok(());
+    }
+    if partition.partitions == 0 {
+        return Err(coverage_rule(ContributorCoverageRule::ExactCoverage));
+    }
+    let Some(total) = partition.total_contributors() else {
+        return Err(coverage_rule(ContributorCoverageRule::Overflow));
+    };
+    let Some(covered) = total.checked_mul(rounds) else {
+        return Err(coverage_rule(ContributorCoverageRule::Overflow));
+    };
+    if covered != contributors {
+        return Err(coverage_rule(ContributorCoverageRule::ExactCoverage));
+    }
+    Ok(())
+}
+
+fn verify_padded_coverage(
+    partition: ContributorPartition,
+    contributors: u64,
+    rounds: u64,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    if rounds == 0 || partition.partitions == 0 {
+        return Err(coverage_rule(ContributorCoverageRule::PaddedCoverage));
+    }
+    let Some(per_round) = partition.total_contributors() else {
+        return Err(coverage_rule(ContributorCoverageRule::Overflow));
+    };
+    let Some(capacity) = per_round.checked_mul(rounds) else {
+        return Err(coverage_rule(ContributorCoverageRule::Overflow));
+    };
+    if capacity < contributors {
+        return Err(coverage_rule(
+            ContributorCoverageRule::CapacityBelowRealCount,
+        ));
+    }
+    if capacity == contributors {
+        return Err(coverage_rule(ContributorCoverageRule::PaddedCoverage));
+    }
+    // Canonical suffix: only the last unit may be ragged, and a unit with no
+    // real contributor is refused. For `rounds == 1` that is `C > 0`.
+    let Some(prefix) = per_round.checked_mul(rounds - 1) else {
+        return Err(coverage_rule(ContributorCoverageRule::Overflow));
+    };
+    if contributors <= prefix {
+        return Err(coverage_rule(
+            ContributorCoverageRule::NoncanonicalPlacement,
+        ));
+    }
+    Ok(())
+}
+
+fn verify_padding_identity(
+    identity: ReductionPaddingIdentity,
+    program: &ScalarProgram,
+    numerical: &NumericalRealization,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    let required = region_arithmetic_type(program);
+    if identity.arithmetic_type() != required {
+        return Err(coverage_rule(
+            ContributorCoverageRule::ArithmeticTypeMismatch,
+        ));
+    }
+    let Some(combiner) = reduction_combiner(program) else {
+        return Err(coverage_rule(ContributorCoverageRule::TwoSidedNeutrality));
+    };
+    if !identity_is_two_sided_neutral(identity, combiner, numerical) {
+        return Err(coverage_rule(ContributorCoverageRule::TwoSidedNeutrality));
+    }
+    Ok(())
+}
+
+/// The binary combiner a padded split injects into.
+///
+/// Derived from the scalar program rather than declared beside the identity:
+/// the identity is a statement about this combiner, and a second field would be
+/// a place for a producer to name the wrong one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReductionCombiner {
+    Add,
+    Maximum,
+}
+
+fn reduction_combiner(program: &ScalarProgram) -> Option<ReductionCombiner> {
+    match program {
+        ScalarProgram::StrictSerialSum { .. }
+        | ScalarProgram::FusedMultiplyAddSerialSum { .. }
+        | ScalarProgram::SquaredSerialSum { .. }
+        | ScalarProgram::SquaredSerialSumThenEpilogue { .. } => Some(ReductionCombiner::Add),
+        ScalarProgram::StrictSerialMaximum { .. } => Some(ReductionCombiner::Maximum),
+        ScalarProgram::PointwiseF32(_)
+        | ScalarProgram::PointwiseBf16(_)
+        | ScalarProgram::StrictAffineU4Dequantize { .. }
+        | ScalarProgram::StrictTensorContraction { .. } => None,
+    }
+}
+
+/// Derives two-sided neutrality of `identity` under the region's combiner.
+///
+/// For IEEE-754 binary32 addition the only possible identities are the two
+/// zeros; the witness set is therefore a case analysis, not a sample. `-0.0`
+/// is two-sided-neutral with signed zero observable.
+/// `+0.0 + (-0.0)` is `+0.0`, so `+0.0` is admitted only when signed-zero
+/// elimination is permitted. For the NaN-propagating maximum family with
+/// `-0.0 < +0.0`, `-inf` is the unique two-sided identity once each combine
+/// is followed by the family's canonicalization.
+fn identity_is_two_sided_neutral(
+    identity: ReductionPaddingIdentity,
+    combiner: ReductionCombiner,
+    numerical: &NumericalRealization,
+) -> bool {
+    match identity {
+        ReductionPaddingIdentity::F32(bits) => {
+            f32_identity_is_two_sided_neutral(bits, combiner, numerical)
+        }
+        ReductionPaddingIdentity::F16(_)
+        | ReductionPaddingIdentity::Bf16(_)
+        | ReductionPaddingIdentity::F64(_) => false,
+    }
+}
+
+fn f32_identity_is_two_sided_neutral(
+    identity: u32,
+    combiner: ReductionCombiner,
+    numerical: &NumericalRealization,
+) -> bool {
+    const WITNESSES: [u32; 9] = [
+        0x0000_0000, // +0.0
+        0x8000_0000, // -0.0
+        0x3f80_0000, // 1.0
+        0xbf80_0000, // -1.0
+        0x0000_0001, // smallest subnormal
+        0x0080_0000, // smallest positive normal
+        0x7f80_0000, // +inf
+        0xff80_0000, // -inf
+        0x7fc0_0001, // a non-canonical quiet NaN
+    ];
+    let combine = match combiner {
+        ReductionCombiner::Add => f32_add_bits,
+        ReductionCombiner::Maximum => f32_maximum_bits,
+    };
+    let canonical = numerical.canonical_arithmetic_nan_bits;
+    for operand in WITNESSES {
+        let left = canonicalize_f32(combine(identity, operand), canonical);
+        let right = canonicalize_f32(combine(operand, identity), canonical);
+        let expected = canonicalize_f32(operand, canonical);
+        if !f32_observably_equal(left, expected, numerical)
+            || !f32_observably_equal(right, expected, numerical)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn f32_add_bits(lhs: u32, rhs: u32) -> u32 {
+    (f32::from_bits(lhs) + f32::from_bits(rhs)).to_bits()
+}
+
+fn f32_maximum_bits(lhs: u32, rhs: u32) -> u32 {
+    let left = f32::from_bits(lhs);
+    let right = f32::from_bits(rhs);
+    if left.is_nan() {
+        return lhs;
+    }
+    if right.is_nan() {
+        return rhs;
+    }
+    match left.partial_cmp(&right) {
+        Some(std::cmp::Ordering::Less) => rhs,
+        Some(std::cmp::Ordering::Equal) => {
+            // IEEE 754-2018 maximum orders `-0.0 < +0.0`; `partial_cmp` does not.
+            if left == 0.0 && (lhs ^ rhs) == 0x8000_0000 {
+                lhs & 0x7fff_ffff
+            } else {
+                lhs
+            }
+        }
+        Some(std::cmp::Ordering::Greater) | None => lhs,
+    }
+}
+
+fn canonicalize_f32(bits: u32, canonical_nan: u32) -> u32 {
+    if f32::from_bits(bits).is_nan() {
+        canonical_nan
+    } else {
+        bits
+    }
+}
+
+fn f32_observably_equal(lhs: u32, rhs: u32, numerical: &NumericalRealization) -> bool {
+    if lhs == rhs {
+        return true;
+    }
+    if numerical.permits_signed_zero_elimination() {
+        let left = f32::from_bits(lhs);
+        let right = f32::from_bits(rhs);
+        if left == 0.0 && right == 0.0 {
+            return true;
+        }
+    }
+    false
+}
+
+const fn coverage_rule(rule: ContributorCoverageRule) -> ScheduledRegionDiagnostic {
+    ScheduledRegionDiagnostic::ContributorCoverage { rule }
+}
+
 /// Verifies one pass of a split, multi-dispatch reduction.
 ///
 /// The two passes are checked together here rather than as two more arms of the
@@ -1557,7 +1812,7 @@ fn verify_multi_pass_semantics(
 ) -> Result<(), ScheduledRegionDiagnostic> {
     let ReductionTopology::MultiPass {
         pass,
-        partition,
+        coverage,
         axes: scheduled_axes,
         order: scheduled_order,
         accumulation,
@@ -1620,12 +1875,14 @@ fn verify_multi_pass_semantics(
     if !empty_domain_is_satisfied(family.empty_domain, Some(contributors)) {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
-    let partial_shape = partial_reduction_shape(output_shape, *partition)
+    let partition = coverage.partition();
+    let partial_shape = partial_reduction_shape(output_shape, partition)
         .ok_or(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
 
     let admitted = match pass {
         // The partial pass proves the split covers its own contributor
-        // sequence exactly once each, and stages one partial per partition.
+        // sequence — exactly, or as a suffix-padded extension whose identity
+        // the verifier derives — and stages one partial per partition.
         //
         // Its write is the one fold write in this module the cover does not
         // choose, for the reason [`CommittedTensor::Exactly`] states: a partial
@@ -1633,20 +1890,27 @@ fn verify_multi_pass_semantics(
         // declared program output would publish a value that is not the fold's
         // result under any cover.
         ReductionPass::Partial => {
-            partition.covers(contributors)
-                && region.index.iteration_shape == partial_shape
+            verify_contributor_coverage(
+                *coverage,
+                contributors,
+                1,
+                &region.index.scalar_program,
+                &region.index.numerical,
+            )?;
+            region.index.iteration_shape == partial_shape
                 && CommittedTensor::Exactly(TensorRole::Intermediate).admits(write.tensor)
         }
         // The final pass proves it combines exactly one contributor per
         // partition of that same split, reading the staged partial tensor.
         //
-        // It commits the *reduction's* result, so where that result goes is the
-        // cover's decision exactly as it is for the serial fold this split
-        // replaces. Fixing it to the program output would leave a split
-        // alternative unspellable for every reduction whose result an epilogue
-        // consumes — the alternative silently lost, since nothing else in the
-        // pipeline would report a strategy the vocabulary cannot express.
+        // Padding is a fact of the first-level split. The final pass's
+        // contributors *are* the staged partials, including any identity-valued
+        // ones the partial pass already wrote, so a padded final pass would
+        // invent extra partials the tensor does not hold.
         ReductionPass::Final => {
+            if matches!(coverage, ContributorCoverage::IdentityPadded { .. }) {
+                return Err(coverage_rule(ContributorCoverageRule::PaddedCoverage));
+            }
             partial_reduction_axis(output_shape).is_some_and(|axis| axes == [axis].as_slice())
                 && *input_shape == partial_shape
                 && contributors == partition.partitions
@@ -1684,7 +1948,7 @@ fn verify_cooperative_semantics(
     write: &Access,
 ) -> Result<(), ScheduledRegionDiagnostic> {
     let ReductionTopology::CooperativeWorkgroup {
-        partition,
+        coverage,
         tile,
         axes: scheduled_axes,
         order: scheduled_order,
@@ -1803,30 +2067,31 @@ fn verify_cooperative_semantics(
     if tile.rounds == 0 || tile.rounds > MAX_COOPERATIVE_ROUNDS {
         return Err(cooperative(CooperativeTileRule::RoundStructure));
     }
-    // The split covers the sequence once across *every* round. Participant `p`
-    // on round `r` folds the contiguous range at index `r * participants + p`,
-    // so `partitions * contributors_per_partition * rounds` is the whole
-    // sequence and the coverage stays contiguous and ascending — the split is a
-    // reassociation of the declared order and never a permutation of it, exactly
-    // as it is at one round. Without the round factor a tile could declare that
-    // its phases run several times while its split accounts for one of them,
-    // and every contributor after the first round would be folded again.
+    // The split covers the sequence once across *every* round — exactly, or as
+    // a suffix-padded extension. Participant `p` on round `r` folds the
+    // contiguous range at index `r * participants + p`. `covers` is
+    // deliberately not extended to know about rounds: it is the multi-pass
+    // split's rule, where the partitions are the whole story, and teaching it
+    // a second dimension would give one method two meanings.
     //
-    // `covers` is deliberately not extended to know about rounds: it is the
-    // multi-pass split's rule, where the partitions are the whole story, and
-    // teaching it a second dimension would give one method two meanings. Its
-    // zero-partition refusal is reused rather than restated.
-    let covered = (partition.partitions != 0)
-        .then(|| partition.total_contributors())
-        .flatten()
-        .and_then(|total| total.checked_mul(tile.rounds));
+    // Coverage arithmetic is named separately from the participant/shape
+    // agreement [`CooperativeTileRule::ContributorSplit`] still owns: a tile
+    // whose split does not match its workgroup is a different defect from a
+    // tile whose coverage statement is wrong.
+    let partition = coverage.partition();
+    verify_contributor_coverage(
+        *coverage,
+        contributors,
+        tile.rounds,
+        &region.index.scalar_program,
+        &region.index.numerical,
+    )?;
     // The iteration domain appends one axis per *participant*, not one per
     // partition of the whole fold: the launch runs one invocation per (output,
     // participant) pair whatever the round count, because rounds are a loop
     // inside each invocation rather than more invocations.
-    if covered != Some(contributors)
-        || partition.partitions != participants
-        || partial_reduction_shape(output_shape, *partition)
+    if partition.partitions != participants
+        || partial_reduction_shape(output_shape, partition)
             .is_none_or(|shape| region.index.iteration_shape != shape)
     {
         return Err(cooperative(CooperativeTileRule::ContributorSplit));
@@ -2344,10 +2609,12 @@ fn reduction_output_shape(region: &ScheduledRegion) -> Option<crate::shape::Shap
     let trailing_partitions = match &region.schedule.reduction {
         ReductionTopology::MultiPass {
             pass: ReductionPass::Partial,
-            partition,
+            coverage,
             ..
         }
-        | ReductionTopology::CooperativeWorkgroup { partition, .. } => partition.partitions,
+        | ReductionTopology::CooperativeWorkgroup { coverage, .. } => {
+            coverage.partition().partitions
+        }
         ReductionTopology::None
         | ReductionTopology::Serial { .. }
         | ReductionTopology::Contraction { .. }
@@ -3723,7 +3990,7 @@ mod tests {
             .schedule(KernelSchedule {
                 reduction: ReductionTopology::MultiPass {
                     pass: ReductionPass::Partial,
-                    partition,
+                    coverage: ContributorCoverage::Exact(partition),
                     axes: vec![Axis::new(1)],
                     order: ContributorOrder::OriginalAxisLexicographic,
                     accumulation: ArithmeticType::F32,
@@ -4310,7 +4577,7 @@ mod tests {
     /// The cooperative tile over the extrema fold, under a strict contract.
     fn extrema_cooperative_builder() -> ScheduledRegionBuilder {
         let ReductionTopology::CooperativeWorkgroup {
-            partition,
+            coverage,
             tile,
             axes,
             order,
@@ -4325,7 +4592,7 @@ mod tests {
             SPLIT,
             6,
             ReductionTopology::CooperativeWorkgroup {
-                partition,
+                coverage,
                 tile,
                 axes,
                 order,
@@ -4416,7 +4683,7 @@ mod tests {
         // The control: the fixture's own sum, under the same strict realization
         // and the same tile, is refused.
         let ReductionTopology::CooperativeWorkgroup {
-            partition,
+            coverage,
             tile,
             axes,
             order,
@@ -4431,7 +4698,7 @@ mod tests {
             SPLIT,
             6,
             ReductionTopology::CooperativeWorkgroup {
-                partition,
+                coverage,
                 tile,
                 axes,
                 order,
@@ -4643,10 +4910,11 @@ mod tests {
     #[test]
     fn a_split_of_the_extrema_fold_agrees_with_the_serial_fold_bit_for_bit() {
         let verified = extrema_partial_builder(SPLIT).build().unwrap();
-        let ReductionTopology::MultiPass { partition, .. } = verified.region().schedule.reduction
+        let ReductionTopology::MultiPass { coverage, .. } = verified.region().schedule.reduction
         else {
             panic!("the extrema partial fixture schedules a multi-pass split")
         };
+        let partition = coverage.partition();
         let width = usize::try_from(partition.contributors_per_partition)
             .expect("the fixture's partition width fits usize");
         let contributors = usize::try_from(
@@ -4776,7 +5044,7 @@ mod tests {
             .schedule(KernelSchedule {
                 reduction: ReductionTopology::MultiPass {
                     pass: ReductionPass::Final,
-                    partition,
+                    coverage: ContributorCoverage::Exact(partition),
                     axes,
                     order: ContributorOrder::OriginalAxisLexicographic,
                     accumulation: ArithmeticType::F32,
@@ -5877,7 +6145,9 @@ mod tests {
                     partitions: 3,
                     contributors_per_partition: 3,
                 },
-                ScheduledRegionDiagnostic::NumericalOrAccessRefinement,
+                ScheduledRegionDiagnostic::ContributorCoverage {
+                    rule: ContributorCoverageRule::ExactCoverage,
+                },
             ),
             // The same partition count, three covered where the access supplies
             // six.
@@ -5886,24 +6156,284 @@ mod tests {
                     partitions: 3,
                     contributors_per_partition: 1,
                 },
-                ScheduledRegionDiagnostic::NumericalOrAccessRefinement,
+                ScheduledRegionDiagnostic::ContributorCoverage {
+                    rule: ContributorCoverageRule::ExactCoverage,
+                },
             ),
         ] {
             let mut builder = partial_pass_builder(SPLIT);
-            let ReductionTopology::MultiPass {
-                partition: declared,
-                ..
-            } = &mut builder.schedule.as_mut().unwrap().reduction
+            let ReductionTopology::MultiPass { coverage, .. } =
+                &mut builder.schedule.as_mut().unwrap().reduction
             else {
                 panic!("expected a split topology")
             };
-            *declared = partition;
+            *coverage = ContributorCoverage::Exact(partition);
             assert_eq!(
                 builder.build().unwrap_err().diagnostics(),
                 [expected],
                 "{partition:?} does not cover six contributors exactly once each"
             );
         }
+    }
+
+    const NEG_ZERO: ReductionPaddingIdentity = ReductionPaddingIdentity::F32(0x8000_0000);
+    const POS_ZERO: ReductionPaddingIdentity = ReductionPaddingIdentity::F32(0x0000_0000);
+    const NEG_INF: ReductionPaddingIdentity = ReductionPaddingIdentity::F32(0xff80_0000);
+    const PADDED_SPLIT: ContributorPartition = ContributorPartition {
+        partitions: 3,
+        contributors_per_partition: 3,
+    };
+
+    fn set_coverage(builder: &mut ScheduledRegionBuilder, coverage: ContributorCoverage) {
+        let ReductionTopology::MultiPass {
+            coverage: declared, ..
+        } = &mut builder.schedule.as_mut().unwrap().reduction
+        else {
+            panic!("expected a split topology")
+        };
+        *declared = coverage;
+    }
+
+    fn padded_partial(identity: ReductionPaddingIdentity) -> ScheduledRegionBuilder {
+        let mut builder = partial_pass_builder(PADDED_SPLIT);
+        set_coverage(
+            &mut builder,
+            ContributorCoverage::IdentityPadded {
+                partition: PADDED_SPLIT,
+                identity,
+            },
+        );
+        builder
+    }
+
+    /// Exact coverage of a previously encodable split keeps the pre-coverage
+    /// layout: the identity of two Exact regions is byte-identical, and a
+    /// padded sibling is a strict extension rather than a reinterpretation.
+    #[test]
+    fn exact_multi_pass_encodings_remain_byte_identical_and_padding_appends() {
+        let exact = partial_pass_builder(SPLIT)
+            .build()
+            .unwrap()
+            .canonical_identity()
+            .as_bytes()
+            .to_vec();
+        let again = partial_pass_builder(SPLIT)
+            .build()
+            .unwrap()
+            .canonical_identity()
+            .as_bytes()
+            .to_vec();
+        assert_eq!(exact, again, "exact coverage is a closed encoding");
+
+        let padded = padded_partial(NEG_ZERO)
+            .build()
+            .expect("a suffix-padded add split with -0.0 verifies")
+            .canonical_identity()
+            .as_bytes()
+            .to_vec();
+        assert_ne!(exact, padded);
+        assert!(
+            padded.len() > exact.len(),
+            "the padded arm appends a local tag and identity; exact writes neither"
+        );
+    }
+
+    /// Coverage tag: claiming a pad on an exactly covering split is padded
+    /// coverage, not exact coverage under another name.
+    #[test]
+    fn a_zero_length_pad_is_refused_as_padded_coverage() {
+        let mut builder = partial_pass_builder(SPLIT);
+        set_coverage(
+            &mut builder,
+            ContributorCoverage::IdentityPadded {
+                partition: SPLIT,
+                identity: NEG_ZERO,
+            },
+        );
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::ContributorCoverage {
+                rule: ContributorCoverageRule::PaddedCoverage,
+            }]
+        );
+    }
+
+    /// Partition capacity: a pad whose split is shorter than the real sequence
+    /// is refused by name.
+    #[test]
+    fn a_pad_below_the_real_count_is_refused() {
+        let mut builder = partial_pass_builder(SPLIT);
+        set_coverage(
+            &mut builder,
+            ContributorCoverage::IdentityPadded {
+                partition: ContributorPartition {
+                    partitions: 3,
+                    contributors_per_partition: 1,
+                },
+                identity: NEG_ZERO,
+            },
+        );
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::ContributorCoverage {
+                rule: ContributorCoverageRule::CapacityBelowRealCount,
+            }]
+        );
+    }
+
+    /// Arithmetic type: a well-formed `bf16` identity on an `f32` fold is a
+    /// named mismatch, not an unrepresentable one.
+    #[test]
+    fn a_padding_identity_of_the_wrong_arithmetic_type_is_refused() {
+        assert_eq!(
+            padded_partial(ReductionPaddingIdentity::Bf16(0x8000))
+                .build()
+                .unwrap_err()
+                .diagnostics(),
+            [ScheduledRegionDiagnostic::ContributorCoverage {
+                rule: ContributorCoverageRule::ArithmeticTypeMismatch,
+            }]
+        );
+    }
+
+    /// Identity bits: `+0.0` is the empty-domain result, not the additive pad,
+    /// when signed zero is observable.
+    #[test]
+    fn plus_zero_is_not_a_two_sided_additive_identity_under_strict_signed_zero() {
+        assert_eq!(
+            padded_partial(POS_ZERO).build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::ContributorCoverage {
+                rule: ContributorCoverageRule::TwoSidedNeutrality,
+            }]
+        );
+    }
+
+    /// Signed-zero permission: the same `+0.0` bits are admitted once
+    /// elimination is permitted, because the two zeros are then observably equal.
+    #[test]
+    fn plus_zero_is_neutral_when_signed_zero_elimination_is_permitted() {
+        let mut builder = padded_partial(POS_ZERO);
+        builder.numerical = Some(NumericalRealization {
+            signed_zero: NumericalPermission::Permitted,
+            ..reassociating_numerical()
+        });
+        builder
+            .build()
+            .expect("+0.0 is observably neutral under signed-zero elimination");
+    }
+
+    /// Family: `-0.0` is the additive pad and `-inf` is the maximum pad; each
+    /// is refused on the other family.
+    #[test]
+    fn padding_identity_is_family_specific() {
+        let mut maximum = extrema_partial_builder(PADDED_SPLIT);
+        set_coverage(
+            &mut maximum,
+            ContributorCoverage::IdentityPadded {
+                partition: PADDED_SPLIT,
+                identity: NEG_ZERO,
+            },
+        );
+        assert_eq!(
+            maximum.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::ContributorCoverage {
+                rule: ContributorCoverageRule::TwoSidedNeutrality,
+            }]
+        );
+
+        assert_eq!(
+            padded_partial(NEG_INF).build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::ContributorCoverage {
+                rule: ContributorCoverageRule::TwoSidedNeutrality,
+            }]
+        );
+
+        let mut admitted = extrema_partial_builder(PADDED_SPLIT);
+        set_coverage(
+            &mut admitted,
+            ContributorCoverage::IdentityPadded {
+                partition: PADDED_SPLIT,
+                identity: NEG_INF,
+            },
+        );
+        admitted
+            .build()
+            .expect("-inf is the two-sided identity of the NaN-propagating maximum");
+    }
+
+    /// An all-padding sequence has no real prefix and is not a canonical suffix.
+    #[test]
+    fn an_all_padding_split_is_refused_as_noncanonical_placement() {
+        let mut builder = partial_pass_builder(SPLIT);
+        let LogicalAccess::ReductionContributor { input_shape, .. } = &mut builder.accesses[0].map
+        else {
+            panic!("the fixture reads a reduction contributor");
+        };
+        *input_shape = Shape::from_dims([2, 0]);
+        let BoundsProofKind::ReductionDomain {
+            input_shape: proof_shape,
+            ..
+        } = &mut builder.bounds_proofs[0].kind
+        else {
+            panic!("the fixture proves a reduction domain");
+        };
+        *proof_shape = Shape::from_dims([2, 0]);
+        set_coverage(
+            &mut builder,
+            ContributorCoverage::IdentityPadded {
+                partition: SPLIT,
+                identity: NEG_ZERO,
+            },
+        );
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::ContributorCoverage {
+                rule: ContributorCoverageRule::NoncanonicalPlacement,
+            }]
+        );
+    }
+
+    /// Partition capacity overflow is named rather than folded into a coverage miss.
+    #[test]
+    fn an_overflowing_padded_capacity_is_refused() {
+        let mut builder = partial_pass_builder(SPLIT);
+        set_coverage(
+            &mut builder,
+            ContributorCoverage::IdentityPadded {
+                partition: ContributorPartition {
+                    partitions: 3,
+                    contributors_per_partition: u64::MAX,
+                },
+                identity: NEG_ZERO,
+            },
+        );
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::ContributorCoverage {
+                rule: ContributorCoverageRule::Overflow,
+            }]
+        );
+    }
+
+    /// A padded final pass invents partials the tensor does not hold.
+    #[test]
+    fn a_padded_final_pass_is_refused() {
+        let mut builder = final_pass_builder(SPLIT);
+        let ReductionTopology::MultiPass { coverage, .. } =
+            &mut builder.schedule.as_mut().unwrap().reduction
+        else {
+            panic!("expected a split topology")
+        };
+        *coverage = ContributorCoverage::IdentityPadded {
+            partition: SPLIT,
+            identity: NEG_ZERO,
+        };
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::ContributorCoverage {
+                rule: ContributorCoverageRule::PaddedCoverage,
+            }]
+        );
     }
 
     /// An accumulation narrower than the element width is rejected, not accepted.
@@ -6107,7 +6637,7 @@ mod tests {
         for reduction in [
             ReductionTopology::MultiPass {
                 pass: ReductionPass::Final,
-                partition: SPLIT,
+                coverage: ContributorCoverage::Exact(SPLIT),
                 axes: vec![Axis::new(1)],
                 order: ContributorOrder::OriginalAxisLexicographic,
                 accumulation: ArithmeticType::F32,
@@ -6116,10 +6646,10 @@ mod tests {
             },
             ReductionTopology::MultiPass {
                 pass: ReductionPass::Partial,
-                partition: ContributorPartition {
+                coverage: ContributorCoverage::Exact(ContributorPartition {
                     partitions: 2,
                     contributors_per_partition: 3,
-                },
+                }),
                 axes: vec![Axis::new(1)],
                 order: ContributorOrder::OriginalAxisLexicographic,
                 accumulation: ArithmeticType::F32,
@@ -6128,7 +6658,7 @@ mod tests {
             },
             ReductionTopology::MultiPass {
                 pass: ReductionPass::Partial,
-                partition: SPLIT,
+                coverage: ContributorCoverage::Exact(SPLIT),
                 axes: vec![Axis::new(1)],
                 order: ContributorOrder::OriginalAxisLexicographic,
                 accumulation: ArithmeticType::F64,
@@ -6137,12 +6667,24 @@ mod tests {
             },
             ReductionTopology::MultiPass {
                 pass: ReductionPass::Partial,
-                partition: SPLIT,
+                coverage: ContributorCoverage::Exact(SPLIT),
                 axes: vec![Axis::new(1)],
                 order: ContributorOrder::OriginalAxisLexicographic,
                 accumulation: ArithmeticType::F32,
                 permits_reassociation: true,
                 permits_permutation: true,
+            },
+            ReductionTopology::MultiPass {
+                pass: ReductionPass::Partial,
+                coverage: ContributorCoverage::IdentityPadded {
+                    partition: PADDED_SPLIT,
+                    identity: NEG_ZERO,
+                },
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+                accumulation: ArithmeticType::F32,
+                permits_reassociation: true,
+                permits_permutation: false,
             },
             ReductionTopology::Serial {
                 axes: vec![Axis::new(1)],
@@ -6260,7 +6802,7 @@ mod tests {
         arrival: ContributorArrival,
     ) -> ReductionTopology {
         ReductionTopology::CooperativeWorkgroup {
-            partition,
+            coverage: ContributorCoverage::Exact(partition),
             tile,
             axes: vec![Axis::new(1)],
             order: ContributorOrder::OriginalAxisLexicographic,
@@ -6313,7 +6855,7 @@ mod tests {
             ..reassociating_numerical()
         };
         let ReductionTopology::CooperativeWorkgroup {
-            partition,
+            coverage,
             tile,
             axes,
             order,
@@ -6328,7 +6870,7 @@ mod tests {
             SPLIT,
             6,
             ReductionTopology::CooperativeWorkgroup {
-                partition,
+                coverage,
                 tile,
                 axes,
                 order,
@@ -7090,15 +7632,17 @@ mod tests {
     ///
     /// The single-round split covers the sequence once; declared on a two-round
     /// tile it would have each participant fold the same range on both rounds,
-    /// which is a different computation and not the declared reduction.
+    /// which is a different computation and not the declared reduction. Named
+    /// as exact-coverage rather than as a tile-shape mismatch: the participants
+    /// and iteration domain still agree, and the product does not.
     #[test]
     fn a_split_that_ignores_the_round_count_is_refused() {
         let mut tile = cooperative_tile_fixture();
         tile.rounds = 2;
         assert_eq!(
             cooperative_rejection(cooperative_builder_with(tile, SPLIT)),
-            ScheduledRegionDiagnostic::CooperativeTile {
-                rule: CooperativeTileRule::ContributorSplit,
+            ScheduledRegionDiagnostic::ContributorCoverage {
+                rule: ContributorCoverageRule::ExactCoverage,
             }
         );
     }
@@ -7596,19 +8140,19 @@ mod tests {
     #[test]
     fn a_split_that_does_not_cover_the_contributors_is_rejected() {
         let mut builder = cooperative_builder(cooperative_tile_fixture());
-        let ReductionTopology::CooperativeWorkgroup { partition, .. } =
+        let ReductionTopology::CooperativeWorkgroup { coverage, .. } =
             &mut builder.schedule.as_mut().unwrap().reduction
         else {
             panic!("expected a cooperative topology")
         };
-        *partition = ContributorPartition {
+        *coverage = ContributorCoverage::Exact(ContributorPartition {
             partitions: 3,
             contributors_per_partition: 3,
-        };
+        });
         assert_eq!(
             cooperative_rejection(builder),
-            ScheduledRegionDiagnostic::CooperativeTile {
-                rule: CooperativeTileRule::ContributorSplit,
+            ScheduledRegionDiagnostic::ContributorCoverage {
+                rule: ContributorCoverageRule::ExactCoverage,
             }
         );
     }

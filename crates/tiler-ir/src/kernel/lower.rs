@@ -16,10 +16,11 @@
 //! kernel a proven refinement rather than a trusted one.
 
 use crate::schedule::{
-    Access, BoundsWitnessId, CanonicalScheduledRegionIdentity, LogicalAccess, NumericalRealization,
-    OwnershipWitnessId, PointwiseBf16Expression, PointwiseBf16Node, PointwiseF32Expression,
-    PointwiseF32Node, ReductionPass, ReductionTopology, ResourceRequirements, ScalarProgram,
-    ScheduledRegion, TensorRole, VerifiedScheduledRegion, contributor_count, element_count,
+    Access, BoundsWitnessId, CanonicalScheduledRegionIdentity, ContributorCoverage, LogicalAccess,
+    NumericalRealization, OwnershipWitnessId, PointwiseBf16Expression, PointwiseBf16Node,
+    PointwiseF32Expression, PointwiseF32Node, ReductionPass, ReductionTopology,
+    ResourceRequirements, ScalarProgram, ScheduledRegion, TensorRole, VerifiedScheduledRegion,
+    contributor_count, element_count,
 };
 use crate::shape::Shape;
 
@@ -226,9 +227,9 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
         } => contributor_count(axes, &read.map).map_err(|_| KernelDiagnostic::ContributorDomain)?,
         ReductionTopology::MultiPass {
             pass: ReductionPass::Partial,
-            partition,
+            coverage,
             ..
-        } => partition.contributors_per_partition,
+        } => exact_partition(*coverage)?.contributors_per_partition,
         // The contracted index space, which the topology states because no
         // single operand's map determines it.
         ReductionTopology::Contraction {
@@ -238,8 +239,8 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
         // What one participant folds in the producing phase, which the split
         // states directly for the reason a partial pass's does: counting the
         // access's contributors here would count the whole sequence.
-        ReductionTopology::CooperativeWorkgroup { partition, .. } => {
-            partition.contributors_per_partition
+        ReductionTopology::CooperativeWorkgroup { coverage, .. } => {
+            exact_partition(*coverage)?.contributors_per_partition
         }
         // Representable, not lowered. The Metal body is a different ticket;
         // refusing here is what keeps this path from emitting a direct
@@ -291,12 +292,12 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
 fn cooperative_plan(
     schedule: &ScheduledRegion,
 ) -> Result<Option<CooperativePlan>, KernelDiagnostic> {
-    let ReductionTopology::CooperativeWorkgroup {
-        partition, tile, ..
-    } = &schedule.schedule.reduction
+    let ReductionTopology::CooperativeWorkgroup { coverage, tile, .. } =
+        &schedule.schedule.reduction
     else {
         return Ok(None);
     };
+    let partition = exact_partition(*coverage)?;
     let shape = KernelDiagnostic::CooperativeLoweringShape;
     // One allocation and two phases: the bounded profile's tile stages one
     // partial per participant and reads the set back once, however many rounds
@@ -387,6 +388,22 @@ fn cooperative_plan(
         barrier,
         round_barrier,
     }))
+}
+
+/// Returns the exact split a lowering may fold, or refuses a padded one.
+///
+/// Identity-padded coverage is representable and intrinsically verified; this
+/// profile has no emission that injects the stated identity, so a padded
+/// region is refused rather than folded as if every capacity slot were real.
+fn exact_partition(
+    coverage: ContributorCoverage,
+) -> Result<crate::schedule::ContributorPartition, KernelDiagnostic> {
+    match coverage {
+        ContributorCoverage::Exact(partition) => Ok(partition),
+        ContributorCoverage::IdentityPadded { .. } => {
+            Err(KernelDiagnostic::PaddedContributorCoverage)
+        }
+    }
 }
 
 /// Resolves the cooperative lowering shape without exposing its private plan.
@@ -489,13 +506,16 @@ fn addressing(
             match reduction {
                 ReductionTopology::MultiPass {
                     pass: ReductionPass::Partial,
-                    partition,
+                    coverage,
                     ..
-                } => Ok(ReadAddressing::Partitioned {
-                    terms,
-                    partitions: partition.partitions,
-                    contributors_per_partition: partition.contributors_per_partition,
-                }),
+                } => {
+                    let partition = exact_partition(*coverage)?;
+                    Ok(ReadAddressing::Partitioned {
+                        terms,
+                        partitions: partition.partitions,
+                        contributors_per_partition: partition.contributors_per_partition,
+                    })
+                }
                 // A cooperative tile splits its invocation index exactly as a
                 // partial pass does, but the split is emitted *once* at the top
                 // level rather than inside each offset: the committing

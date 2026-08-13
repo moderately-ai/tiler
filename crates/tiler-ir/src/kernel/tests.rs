@@ -12,16 +12,16 @@ use std::collections::BTreeMap;
 use super::*;
 use crate::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContractionAxisSource,
-    ContributorOrder, ContributorPartition, ConvergenceEvidence, CooperativePhase, CooperativeTile,
-    ExceptionalValueAssumption, ExecutionBinding, FencedSpaces, InputOrdinal, KernelSchedule,
-    LaunchPlan, LocalCoordinateSource, LocalCoordinates, LogicalAccess, MemoryOrdering,
-    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-    OwnershipWitnessId, ParticipantRange, ParticipantSpace, PhaseId, PointwiseF32Expression,
-    PointwiseF32ExpressionBuilder, ReductionPass, ReductionTopology, RegionId, ScalarProgram,
-    ScheduledRegionBuilder, StagedElement, StagedRead, StagedSpan, StagedWrite, StagingId,
-    SubnormalMode, SyncPointId, SynchronizationKind, SynchronizationPlacement,
-    SynchronizationPoint, SynchronizationScope, SynchronizationSubject, TailPolicy, TensorRole,
-    VerifiedScheduledRegion, WorkgroupStaging, element_count,
+    ContributorCoverage, ContributorOrder, ContributorPartition, ConvergenceEvidence,
+    CooperativePhase, CooperativeTile, ExceptionalValueAssumption, ExecutionBinding, FencedSpaces,
+    InputOrdinal, KernelSchedule, LaunchPlan, LocalCoordinateSource, LocalCoordinates,
+    LogicalAccess, MemoryOrdering, NumericalPermission, NumericalRealization, OwnershipProof,
+    OwnershipProofKind, OwnershipWitnessId, ParticipantRange, ParticipantSpace, PhaseId,
+    PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionPaddingIdentity, ReductionPass,
+    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, StagedElement, StagedRead,
+    StagedSpan, StagedWrite, StagingId, SubnormalMode, SyncPointId, SynchronizationKind,
+    SynchronizationPlacement, SynchronizationPoint, SynchronizationScope, SynchronizationSubject,
+    TailPolicy, TensorRole, VerifiedScheduledRegion, WorkgroupStaging, element_count,
 };
 use crate::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
@@ -2040,10 +2040,10 @@ fn cooperative_region() -> VerifiedScheduledRegion {
         .schedule(KernelSchedule {
             threads_per_workgroup: 3,
             reduction: ReductionTopology::CooperativeWorkgroup {
-                partition: ContributorPartition {
+                coverage: ContributorCoverage::Exact(ContributorPartition {
                     partitions: 3,
                     contributors_per_partition: 2,
-                },
+                }),
                 tile: CooperativeTile {
                     rounds: 1,
                     coordinates: LocalCoordinates {
@@ -2521,10 +2521,13 @@ fn cooperative_plan_refuses_each_defensive_lowering_shape() {
         "no point discharging the round anti-dependency"
     );
     refusal("an overflowing contributors-per-round product", &|region| {
-        let ReductionTopology::CooperativeWorkgroup { partition, .. } =
+        let ReductionTopology::CooperativeWorkgroup { coverage, .. } =
             &mut region.schedule.reduction
         else {
             panic!("the fixture carries a cooperative tile")
+        };
+        let ContributorCoverage::Exact(partition) = coverage else {
+            panic!("the fixture is exact coverage")
         };
         partition.contributors_per_partition = u64::MAX;
     });
@@ -2707,11 +2710,13 @@ fn each_kernel_synchronization_rule_refuses_its_own_defect() {
 /// discharges the rewrite.
 fn multi_round_cooperative_region() -> VerifiedScheduledRegion {
     let mut region = cooperative_region().region().clone();
-    let ReductionTopology::CooperativeWorkgroup {
-        partition, tile, ..
-    } = &mut region.schedule.reduction
+    let ReductionTopology::CooperativeWorkgroup { coverage, tile, .. } =
+        &mut region.schedule.reduction
     else {
         panic!("the cooperative fixture builds a cooperative topology")
+    };
+    let ContributorCoverage::Exact(partition) = coverage else {
+        panic!("the fixture is exact coverage")
     };
     partition.contributors_per_partition = 1;
     tile.rounds = 2;
@@ -4214,7 +4219,7 @@ fn maximum_partial_pass_region() -> VerifiedScheduledRegion {
         .schedule(KernelSchedule {
             reduction: ReductionTopology::MultiPass {
                 pass: ReductionPass::Partial,
-                partition,
+                coverage: ContributorCoverage::Exact(partition),
                 axes: axes.to_vec(),
                 order: ContributorOrder::OriginalAxisLexicographic,
                 accumulation: crate::schedule::ArithmeticType::F32,
@@ -4225,6 +4230,33 @@ fn maximum_partial_pass_region() -> VerifiedScheduledRegion {
         })
         .unwrap();
     builder.build().unwrap()
+}
+
+/// Identity-padded coverage is representable and verified; this lowering has
+/// no body that injects the stated identity, so it refuses rather than folding
+/// padding slots as real contributors.
+#[test]
+fn a_padded_split_is_representable_and_not_lowered() {
+    let mut region = maximum_partial_pass_region().region().clone();
+    let ReductionTopology::MultiPass { coverage, .. } = &mut region.schedule.reduction else {
+        panic!("the fixture is a multi-pass split");
+    };
+    *coverage = ContributorCoverage::IdentityPadded {
+        partition: ContributorPartition {
+            partitions: 3,
+            contributors_per_partition: 3,
+        },
+        identity: ReductionPaddingIdentity::F32(0xff80_0000),
+    };
+    let verified = ScheduledRegionBuilder::from_region(region)
+        .build()
+        .expect("a suffix-padded extrema split verifies");
+    assert_eq!(
+        lower_scheduled_region(&verified)
+            .expect_err("padded coverage is not lowered")
+            .rule(),
+        "padded-contributor-coverage"
+    );
 }
 
 /// The cooperative realization of a `[2, 6] -> [2]` extrema fold.
@@ -4304,10 +4336,10 @@ fn cooperative_maximum_region() -> VerifiedScheduledRegion {
         .schedule(KernelSchedule {
             threads_per_workgroup: 3,
             reduction: ReductionTopology::CooperativeWorkgroup {
-                partition: ContributorPartition {
+                coverage: ContributorCoverage::Exact(ContributorPartition {
                     partitions: 3,
                     contributors_per_partition: 2,
-                },
+                }),
                 tile: CooperativeTile {
                     rounds: 1,
                     coordinates: LocalCoordinates {
@@ -4458,11 +4490,13 @@ fn a_loop_carried_extrema_tile_carries_its_maximum_across_rounds() {
 /// boundary discharging the rewrite.
 fn multi_round_maximum_region() -> VerifiedScheduledRegion {
     let mut region = cooperative_maximum_region().region().clone();
-    let ReductionTopology::CooperativeWorkgroup {
-        partition, tile, ..
-    } = &mut region.schedule.reduction
+    let ReductionTopology::CooperativeWorkgroup { coverage, tile, .. } =
+        &mut region.schedule.reduction
     else {
         panic!("the cooperative fixture builds a cooperative topology")
+    };
+    let ContributorCoverage::Exact(partition) = coverage else {
+        panic!("the fixture is exact coverage")
     };
     partition.contributors_per_partition = 1;
     tile.rounds = 2;

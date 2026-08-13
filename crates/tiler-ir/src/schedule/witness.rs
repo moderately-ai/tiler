@@ -178,12 +178,27 @@ impl<'a> RealizationWitness<'a> {
         }
     }
 
+    /// The declared contributor coverage, for a topology that states one.
+    #[must_use]
+    pub const fn contributor_coverage(&self) -> Option<crate::schedule::ContributorCoverage> {
+        match self.reduction {
+            ReductionTopology::MultiPass { coverage, .. }
+            | ReductionTopology::CooperativeWorkgroup { coverage, .. } => Some(*coverage),
+            ReductionTopology::None
+            | ReductionTopology::Serial { .. }
+            | ReductionTopology::Contraction { .. }
+            | ReductionTopology::CooperativeContraction { .. } => None,
+        }
+    }
+
     /// The declared contributor split, for a topology that states one.
     #[must_use]
     pub const fn contributor_partition(&self) -> Option<ContributorPartition> {
         match self.reduction {
-            ReductionTopology::MultiPass { partition, .. }
-            | ReductionTopology::CooperativeWorkgroup { partition, .. } => Some(*partition),
+            ReductionTopology::MultiPass { coverage, .. }
+            | ReductionTopology::CooperativeWorkgroup { coverage, .. } => {
+                Some(coverage.partition())
+            }
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
             | ReductionTopology::Contraction { .. }

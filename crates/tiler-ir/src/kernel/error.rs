@@ -297,6 +297,14 @@ pub enum KernelDiagnostic {
     UnorderedStagedRewrite,
     /// The declared staging allocations do not realize the region's tile.
     StagingContract,
+    /// The scheduled region pads its contributor sequence, and this lowering
+    /// has no body that injects the stated identity.
+    ///
+    /// Representable, not lowered. Emission of identity-padded coverage is a
+    /// different ticket; refusing here is what keeps this path from folding
+    /// padding slots as if they were real contributors, or from substituting
+    /// the family's empty-domain bits.
+    PaddedContributorCoverage,
     /// The region's cooperative dataflow carries a visibility dependency that
     /// no schedule has authorized a synchronization point for.
     ///
@@ -373,6 +381,7 @@ impl KernelDiagnostic {
             Self::StagingContract => "staging-contract",
             Self::UndischargedVisibility => "undischarged-visibility",
             Self::UndischargedAntiDependency => "undischarged-anti-dependency",
+            Self::PaddedContributorCoverage => "padded-contributor-coverage",
             Self::CooperativeLoweringShape => "cooperative-lowering-shape",
             Self::ReductionContract => "reduction-contract",
             Self::ContributorDomain => "contributor-domain",

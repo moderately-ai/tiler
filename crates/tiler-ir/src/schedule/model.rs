@@ -728,12 +728,11 @@ pub enum ScalarProgram {
     /// keeps separate from an empty-domain result in both directions: proving one
     /// neither supplies nor weakens the other, and
     /// [ADR 0100](../../../../docs/decisions/0100-admit-the-multi-round-two-level-reduction-composition.md)
-    /// decision 7 owns the walk and the admission. **No schedule this vocabulary
-    /// states pads anything**, so the value has nowhere to sit: [`TailPolicy`]
-    /// admits `Exact` alone and [`ContributorPartition::covers`] requires a split
-    /// to cover its contributors exactly once each. A field stating a padding
-    /// identity is an unaccepted public boundary rather than an omission this type
-    /// may repair.
+    /// decision 7 owns the walk and the admission. The padding identity does not
+    /// sit on this program: exact coverage still carries none, and an
+    /// identity-padded split states one on [`ContributorCoverage`]. [`TailPolicy`]
+    /// remains iteration-domain launch coverage and still admits `Exact` alone.
+    /// [`ContributorPartition::covers`] keeps its exact meaning.
     ///
     /// **The `-0.0 < +0.0` ordering makes this fold order-insensitive**, which is
     /// what separates its legality from every sum in this vocabulary: the pinned
@@ -918,8 +917,15 @@ pub enum ReductionTopology {
     MultiPass {
         /// Which pass of the split this region realizes.
         pass: ReductionPass,
-        /// How the contributor sequence is split across partial values.
-        partition: ContributorPartition,
+        /// Whether this pass covers its contributor sequence exactly or extends
+        /// it by proved identity values.
+        ///
+        /// **Labelled draft** under ADR 0075: Tom accepted the *model* on
+        /// 2026-08-11 — a required tagged coverage, exact or identity-padded,
+        /// belonging to the reduction topology rather than to
+        /// [`KernelSchedule::tail`]. The exact included and excluded Rust
+        /// surface remains a labelled draft until Tom accepts this spelling.
+        coverage: ContributorCoverage,
         /// Reduced axes of *this pass*, in canonical ascending order.
         ///
         /// The partial pass reduces the original axes; the final pass reduces
@@ -1013,17 +1019,24 @@ pub enum ReductionTopology {
     /// partition owns, and the staged partials are combined in ascending `p`.
     CooperativeWorkgroup {
         /// How one output's contributor sequence is split across participants,
-        /// per round.
+        /// per round, and whether that split covers the real sequence or a
+        /// suffix-padded one.
+        ///
+        /// **Labelled draft** under ADR 0075: Tom accepted the *model* on
+        /// 2026-08-11. The exact included and excluded Rust surface remains a
+        /// labelled draft until Tom accepts this spelling.
         ///
         /// `contributors_per_partition` is what one participant folds on *one*
-        /// round, so the sequence this split covers is
+        /// round, so the sequence an exact split covers is
         /// `partitions * contributors_per_partition * tile.rounds`. On a
         /// single-round tile that is the plain product and the field means
         /// exactly what it does for [`Self::MultiPass`]; on a loop-carried one,
         /// participant `p` of round `r` owns the contiguous range at index
         /// `r * partitions + p`, which is why the coverage stays ascending and
-        /// the strategy still consumes reassociation alone.
-        partition: ContributorPartition,
+        /// the strategy still consumes reassociation alone. An identity-padded
+        /// split covers that same capacity, with the verifier deriving the
+        /// padding count as capacity minus the real contributor count.
+        coverage: ContributorCoverage,
         /// The cross-invocation dataflow that split requires.
         tile: CooperativeTile,
         /// Reduced axes in canonical ascending order.
@@ -1182,6 +1195,101 @@ impl ContributorPartition {
         match self.total_contributors() {
             Some(total) => total == contributors,
             None => false,
+        }
+    }
+}
+
+/// Whether a reduction topology covers its contributor sequence exactly or
+/// extends it by proved identity values.
+///
+/// **Labelled draft** under ADR 0075: Tom accepted the *model* on 2026-08-11 —
+/// a required tagged coverage whose exact arm carries no identity and whose
+/// padded arm cannot omit one. The exact included and excluded Rust surface
+/// remains a labelled draft until Tom accepts this spelling.
+///
+/// `#[non_exhaustive]` under ADR 0074 convention 5a: every out-of-crate
+/// consumer constructs a variant or reads a field, and none classifies this
+/// type by exhaustive match, so a new coverage mode lands additively. Total
+/// maps *inside* `tiler-ir` are unaffected, because the attribute has no
+/// effect within the defining crate, which is what keeps them breaking.
+///
+/// Exact coverage is [`ContributorPartition::covers`] (and that product times
+/// the tile's round count, for a cooperative split). Identity-padded coverage
+/// states a [`ReductionPaddingIdentity`] the intrinsic verifier must prove
+/// two-sided-neutral; it never falls back to a family's empty-domain bits.
+///
+/// ```compile_fail,E0004
+/// use tiler_ir::schedule::ContributorCoverage;
+/// fn classify(coverage: ContributorCoverage) -> u8 {
+///     match coverage {
+///         ContributorCoverage::Exact(_) => 0,
+///     }
+/// }
+/// ```
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum ContributorCoverage {
+    /// The split covers the real contributor sequence exactly once each.
+    Exact(ContributorPartition),
+    /// The split covers a suffix-padded sequence whose extra positions hold
+    /// the stated identity.
+    IdentityPadded {
+        /// The physical split whose capacity is the padded length.
+        partition: ContributorPartition,
+        /// The value every padded position holds.
+        identity: ReductionPaddingIdentity,
+    },
+}
+
+impl ContributorCoverage {
+    /// Returns the physical split this coverage states.
+    #[must_use]
+    pub const fn partition(self) -> ContributorPartition {
+        match self {
+            Self::Exact(partition) | Self::IdentityPadded { partition, .. } => partition,
+        }
+    }
+}
+
+/// An exact arithmetic value a padded contributor position holds.
+///
+/// **Labelled draft** under ADR 0075: Tom accepted the *model* on 2026-08-11 —
+/// an opaque or width-discriminated exact-bit carrier whose format and bit
+/// width cannot disagree, proved two-sided-neutral by intrinsic verification
+/// rather than trusted as a statement. The exact included and excluded Rust
+/// surface remains a labelled draft until Tom accepts this spelling.
+///
+/// Each variant is the format's own width. A raw `u32` field would freeze an
+/// `f32`-only boundary and let a `bf16` payload occupy four bytes; pairing a
+/// separate [`ArithmeticType`] with a widest-width integer would let the two
+/// disagree. The verifier still checks the variant against the region's own
+/// arithmetic, so a well-typed `bf16` identity on an `f32` fold is a named
+/// mismatch rather than an unrepresentable one.
+///
+/// Not `#[non_exhaustive]`: the encoder maps every variant onto a tag and a
+/// fixed-width payload, so widening this set is a build error there instead of
+/// a silent identity collision (ADR 0074 convention 5b).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ReductionPaddingIdentity {
+    /// IEEE-754 binary16 bits.
+    F16(u16),
+    /// `bf16` bits.
+    Bf16(u16),
+    /// IEEE-754 binary32 bits.
+    F32(u32),
+    /// IEEE-754 binary64 bits.
+    F64(u64),
+}
+
+impl ReductionPaddingIdentity {
+    /// Returns the arithmetic type this identity is spelled in.
+    #[must_use]
+    pub const fn arithmetic_type(self) -> ArithmeticType {
+        match self {
+            Self::F16(_) => ArithmeticType::F16,
+            Self::Bf16(_) => ArithmeticType::Bf16,
+            Self::F32(_) => ArithmeticType::F32,
+            Self::F64(_) => ArithmeticType::F64,
         }
     }
 }
@@ -1979,6 +2087,13 @@ const TAG_REDUCTION_COOPERATIVE_WORKGROUP: u8 = 0x35;
 /// positions, so no previously encodable region's bytes move and the schedule
 /// identity domain does not step.
 const TAG_REDUCTION_COOPERATIVE_CONTRACTION: u8 = 0x37;
+/// Local coverage tag of an identity-padded contributor split.
+///
+/// Written only in the padded arm, after every field the earlier topology
+/// payload already wrote. Exact coverage writes nothing here, so a previously
+/// encodable exact split keeps its bytes. A reader that reaches `0x01` is
+/// reading a padded split the earlier vocabulary could not express.
+const TAG_COVERAGE_PADDED: u8 = 0x01;
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());
@@ -2666,6 +2781,39 @@ fn push_cooperative_tile(bytes: &mut Vec<u8>, tile: &CooperativeTile) {
     push_participant_range(bytes, tile.commit);
 }
 
+/// Encodes the coverage suffix of one reduction topology.
+///
+/// Exact coverage is the implicit default of the earlier payload, so it writes
+/// nothing. The padded arm appends a local tag and then the identity, and only
+/// the identity: the partition has already been written in the position the
+/// earlier encoding used.
+fn push_coverage_suffix(bytes: &mut Vec<u8>, coverage: ContributorCoverage) {
+    match coverage {
+        ContributorCoverage::Exact(_) => {}
+        ContributorCoverage::IdentityPadded { identity, .. } => {
+            bytes.push(TAG_COVERAGE_PADDED);
+            push_padding_identity(bytes, identity);
+        }
+    }
+}
+
+/// Encodes one padding identity as its arithmetic-type tag plus exact-width bits.
+///
+/// The variant determines both the tag and the payload width, so a format and
+/// a bit width cannot disagree in these bytes. The tags are
+/// [`ArithmeticType::tag`], which is why a `bf16` identity and an `f32` identity
+/// cannot collide even when their low bits agree.
+fn push_padding_identity(bytes: &mut Vec<u8>, identity: ReductionPaddingIdentity) {
+    bytes.push(identity.arithmetic_type().tag());
+    match identity {
+        ReductionPaddingIdentity::F16(bits) | ReductionPaddingIdentity::Bf16(bits) => {
+            bytes.extend_from_slice(&bits.to_be_bytes());
+        }
+        ReductionPaddingIdentity::F32(bits) => bytes.extend_from_slice(&bits.to_be_bytes()),
+        ReductionPaddingIdentity::F64(bits) => bytes.extend_from_slice(&bits.to_be_bytes()),
+    }
+}
+
 fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
     match &schedule.binding {
         ExecutionBinding::GlobalLinearInvocation => bytes.push(0x01),
@@ -2701,7 +2849,7 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
         }
         ReductionTopology::MultiPass {
             pass,
-            partition,
+            coverage,
             axes,
             order,
             accumulation,
@@ -2710,6 +2858,7 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
         } => {
             bytes.push(TAG_REDUCTION_MULTI_PASS);
             bytes.push(pass.tag());
+            let partition = coverage.partition();
             bytes.extend_from_slice(&partition.partitions.to_be_bytes());
             bytes.extend_from_slice(&partition.contributors_per_partition.to_be_bytes());
             push_axes(bytes, axes);
@@ -2717,6 +2866,12 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
             bytes.push(accumulation.tag());
             bytes.push(u8::from(*permits_reassociation));
             bytes.push(u8::from(*permits_permutation));
+            // Appended after every field the earlier `0x33` arm wrote, so an
+            // exact-coverage region encodes the same bytes it did before this
+            // suffix existed. The padded arm is a sequence no earlier region
+            // could carry: the local tag and the identity sit where an earlier
+            // reader would already have moved on to the launch record.
+            push_coverage_suffix(bytes, *coverage);
         }
         ReductionTopology::Contraction {
             contracted_shape,
@@ -2731,7 +2886,7 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
             bytes.push(u8::from(*permits_permutation));
         }
         ReductionTopology::CooperativeWorkgroup {
-            partition,
+            coverage,
             tile,
             axes,
             order,
@@ -2741,6 +2896,7 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
             arrival,
         } => {
             bytes.push(TAG_REDUCTION_COOPERATIVE_WORKGROUP);
+            let partition = coverage.partition();
             bytes.extend_from_slice(&partition.partitions.to_be_bytes());
             bytes.extend_from_slice(&partition.contributors_per_partition.to_be_bytes());
             push_cooperative_tile(bytes, tile);
@@ -2755,6 +2911,11 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
             // step has since made the position free, and it is left alone
             // because moving it would churn bytes for no gain.
             bytes.push(arrival.tag());
+            // Coverage suffix after `arrival`, for the same reason the
+            // multi-pass arm appends after its last earlier field: exact
+            // encodings keep every previously written byte and the padded arm
+            // is a sequence no earlier `0x35` region could carry.
+            push_coverage_suffix(bytes, *coverage);
         }
         ReductionTopology::CooperativeContraction {
             tile,
@@ -2878,8 +3039,9 @@ mod tests {
     use crate::schedule::ExceptionalValueAssumption;
 
     use super::{
-        ContributorOrder, push_exceptional_assumption, push_order, push_permission, push_subnormal,
-        push_synchronization_subject,
+        ContributorCoverage, ContributorOrder, ContributorPartition, ReductionPaddingIdentity,
+        TAG_COVERAGE_PADDED, push_coverage_suffix, push_exceptional_assumption, push_order,
+        push_padding_identity, push_permission, push_subnormal, push_synchronization_subject,
     };
 
     /// The subject encoder is injective over its entire 648-value domain.
@@ -2969,5 +3131,44 @@ mod tests {
 
         assert_eq!(ORDERS.len(), 1);
         assert_injective_fixed_width(&ORDERS, 1, push_order);
+    }
+
+    /// Exact coverage writes no suffix; the padded arm is an appended local tag
+    /// plus a width-discriminated identity.
+    #[test]
+    fn exact_coverage_writes_no_suffix_and_padded_encodings_are_injective() {
+        let split = ContributorPartition {
+            partitions: 3,
+            contributors_per_partition: 2,
+        };
+        let mut exact = Vec::new();
+        push_coverage_suffix(&mut exact, ContributorCoverage::Exact(split));
+        assert_eq!(exact, [], "exact coverage is the implicit default");
+
+        let identities = [
+            ReductionPaddingIdentity::F16(0x8000),
+            ReductionPaddingIdentity::Bf16(0x8000),
+            ReductionPaddingIdentity::F32(0x8000_0000),
+            ReductionPaddingIdentity::F32(0x0000_0000),
+            ReductionPaddingIdentity::F64(0x8000_0000_0000_0000),
+        ];
+        let mut seen = Vec::new();
+        for identity in identities {
+            let mut bytes = Vec::new();
+            push_coverage_suffix(
+                &mut bytes,
+                ContributorCoverage::IdentityPadded {
+                    partition: split,
+                    identity,
+                },
+            );
+            assert_eq!(bytes[0], TAG_COVERAGE_PADDED);
+            assert!(
+                !seen.contains(&bytes),
+                "{identity:?} collided with an earlier padding identity"
+            );
+            seen.push(bytes);
+        }
+        assert_injective(&identities, push_padding_identity);
     }
 }

@@ -225,9 +225,8 @@ fn work_span(schedule: &KernelSchedule, accesses: &[Access]) -> Option<StageWork
         // work. The partial pass launches one invocation per partition and folds
         // `contributors_per_partition`; the final pass launches one per output
         // position and folds the `partitions` staged partials.
-        ReductionTopology::MultiPass {
-            pass, partition, ..
-        } => {
+        ReductionTopology::MultiPass { pass, coverage, .. } => {
+            let partition = coverage.partition();
             let depth = match pass {
                 ReductionPass::Partial => partition.contributors_per_partition,
                 ReductionPass::Final => partition.partitions,
@@ -254,9 +253,8 @@ fn work_span(schedule: &KernelSchedule, accesses: &[Access]) -> Option<StageWork
         // `workgroup_tree_tile` states, so the multiplier is correct by derivation
         // and unexercised by the compile path; the unit test below drives it for
         // that reason.
-        ReductionTopology::CooperativeWorkgroup {
-            partition, tile, ..
-        } => {
+        ReductionTopology::CooperativeWorkgroup { coverage, tile, .. } => {
+            let partition = coverage.partition();
             let per_round_work =
                 work_items.checked_mul(partition.contributors_per_partition.checked_add(1)?)?;
             let per_round_depth = partition
@@ -339,9 +337,9 @@ const fn exact_ratio(input: u64, output: u64) -> Option<u64> {
 mod tests {
     use super::*;
     use tiler_ir::schedule::{
-        AccessMode, ArithmeticType, BoundsWitnessId, ContributorArrival, ContributorOrder,
-        ContributorPartition, CooperativeTile, ExecutionBinding, LaunchPlan, OwnershipWitnessId,
-        TailPolicy, TensorRole, workgroup_tree_tile,
+        AccessMode, ArithmeticType, BoundsWitnessId, ContributorArrival, ContributorCoverage,
+        ContributorOrder, ContributorPartition, CooperativeTile, ExecutionBinding, LaunchPlan,
+        OwnershipWitnessId, TailPolicy, TensorRole, workgroup_tree_tile,
     };
     use tiler_ir::shape::Shape;
 
@@ -381,7 +379,7 @@ mod tests {
 
     fn cooperative(partition: ContributorPartition, tile: CooperativeTile) -> ReductionTopology {
         ReductionTopology::CooperativeWorkgroup {
-            partition,
+            coverage: ContributorCoverage::Exact(partition),
             tile,
             axes: Vec::new(),
             order: ContributorOrder::OriginalAxisLexicographic,
@@ -477,7 +475,7 @@ mod tests {
         };
         let pass = |pass| ReductionTopology::MultiPass {
             pass,
-            partition,
+            coverage: ContributorCoverage::Exact(partition),
             axes: Vec::new(),
             order: ContributorOrder::OriginalAxisLexicographic,
             accumulation: ArithmeticType::F32,

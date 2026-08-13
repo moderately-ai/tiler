@@ -16,10 +16,10 @@ use crate::schedule::handles::{
     BoundsWitnessId, InputOrdinal, OwnershipWitnessId, PhaseId, RegionId, StagingId, SyncPointId,
 };
 use crate::schedule::model::{
-    Access, AccessMode, BoundsProof, BoundsProofKind, ContractionAxisSource, ContributorOrder,
-    ContributorPartition, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
-    OwnershipProof, OwnershipProofKind, ReductionPass, ReductionTopology, ScalarProgram,
-    TailPolicy, TensorRole, VerifiedScheduledRegion, partial_reduction_axis,
+    Access, AccessMode, BoundsProof, BoundsProofKind, ContractionAxisSource, ContributorCoverage,
+    ContributorOrder, ContributorPartition, ExecutionBinding, KernelSchedule, LaunchPlan,
+    LogicalAccess, OwnershipProof, OwnershipProofKind, ReductionPass, ReductionTopology,
+    ScalarProgram, TailPolicy, TensorRole, VerifiedScheduledRegion, partial_reduction_axis,
     partial_reduction_shape,
 };
 use crate::schedule::numerics::{
@@ -415,7 +415,7 @@ fn partial_pass_region(accumulation: ArithmeticType) -> ScheduledRegionBuilder {
             partial_elements,
             ReductionTopology::MultiPass {
                 pass: ReductionPass::Partial,
-                partition: SPLIT,
+                coverage: ContributorCoverage::Exact(SPLIT),
                 axes: FOLD_AXES.to_vec(),
                 order: ContributorOrder::OriginalAxisLexicographic,
                 accumulation,
@@ -500,7 +500,7 @@ fn final_pass_region() -> ScheduledRegionBuilder {
             2,
             ReductionTopology::MultiPass {
                 pass: ReductionPass::Final,
-                partition: SPLIT,
+                coverage: ContributorCoverage::Exact(SPLIT),
                 axes,
                 order: ContributorOrder::OriginalAxisLexicographic,
                 accumulation: ArithmeticType::F32,
@@ -680,7 +680,7 @@ fn cooperative_region(
             ..linear_schedule(
                 work_items,
                 ReductionTopology::CooperativeWorkgroup {
-                    partition: split,
+                    coverage: ContributorCoverage::Exact(split),
                     tile,
                     axes: FOLD_AXES.to_vec(),
                     order: ContributorOrder::OriginalAxisLexicographic,

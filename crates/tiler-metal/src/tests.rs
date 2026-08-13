@@ -27,9 +27,9 @@ use tiler_ir::kernel::{
 };
 use tiler_ir::schedule::{
     Access, AccessMode, ArithmeticType, AxisDecode, BoundsProof, BoundsProofKind, BoundsWitnessId,
-    ContractionAxisSource, ContributorArrival, ContributorOrder, ContributorPartition,
-    ConvergenceEvidence, ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign,
-    InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
+    ContractionAxisSource, ContributorArrival, ContributorCoverage, ContributorOrder,
+    ContributorPartition, ConvergenceEvidence, ExceptionalValueAssumption, ExecutionBinding,
+    FlushedZeroSign, InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
     PointwiseBf16Expression, PointwiseBf16ExpressionBuilder, PointwiseF32Expression,
     PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
@@ -1001,10 +1001,10 @@ fn cooperative_region(id: RegionId) -> VerifiedScheduledRegion {
         .schedule(KernelSchedule {
             threads_per_workgroup: u32::try_from(PARTICIPANTS).unwrap(),
             reduction: ReductionTopology::CooperativeWorkgroup {
-                partition: ContributorPartition {
+                coverage: ContributorCoverage::Exact(ContributorPartition {
                     partitions: PARTICIPANTS,
                     contributors_per_partition: CONTRIBUTORS_PER_PARTITION,
-                },
+                }),
                 tile: workgroup_tree_tile(PARTICIPANTS).expect("the canonical tree tile"),
                 axes,
                 order: ContributorOrder::OriginalAxisLexicographic,
@@ -1038,11 +1038,13 @@ pub(crate) fn cooperative_kernel() -> VerifiedKernel {
 /// discharges the rewrite.
 fn loop_carried_cooperative_region(id: RegionId) -> VerifiedScheduledRegion {
     let mut region = cooperative_region(id).region().clone();
-    let ReductionTopology::CooperativeWorkgroup {
-        partition, tile, ..
-    } = &mut region.schedule.reduction
+    let ReductionTopology::CooperativeWorkgroup { coverage, tile, .. } =
+        &mut region.schedule.reduction
     else {
         panic!("the cooperative fixture builds a cooperative topology")
+    };
+    let ContributorCoverage::Exact(partition) = coverage else {
+        panic!("the fixture is exact coverage")
     };
     partition.contributors_per_partition = 1;
     tile.rounds = 2;

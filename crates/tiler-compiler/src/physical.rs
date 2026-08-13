@@ -15,9 +15,9 @@ use tiler_ir::shape::{Axis, Shape};
 pub(crate) use tiler_ir::kernel::VerifiedKernel;
 pub(crate) use tiler_ir::schedule::{
     Access, AccessMode, AxisDecode, BoundsProof, BoundsProofKind, BoundsWitnessId,
-    ContractionAxisSource, ContributorOrder, ContributorPartition, ExecutionBinding,
-    IndexArithmetic, IndexRegion, InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess,
-    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
+    ContractionAxisSource, ContributorCoverage, ContributorOrder, ContributorPartition,
+    ExecutionBinding, IndexArithmetic, IndexRegion, InputOrdinal, KernelSchedule, LaunchPlan,
+    LogicalAccess, NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
     PointwiseF32Expression, PointwiseF32Node, ReductionTopology, RegionId, ResourceRequirements,
     ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
 };
@@ -2856,7 +2856,7 @@ pub(crate) fn single_workgroup_tree_region(
         schedule: KernelSchedule {
             threads_per_workgroup,
             reduction: ReductionTopology::CooperativeWorkgroup {
-                partition,
+                coverage: ContributorCoverage::Exact(partition),
                 tile,
                 axes: subject.reduction_axes.clone(),
                 order: ContributorOrder::OriginalAxisLexicographic,
@@ -3004,9 +3004,9 @@ pub(crate) fn declared_partial_partition(region: &ScheduledRegion) -> Option<Con
     match &region.schedule.reduction {
         ReductionTopology::MultiPass {
             pass: tiler_ir::schedule::ReductionPass::Partial,
-            partition,
+            coverage,
             ..
-        } => Some(*partition),
+        } => Some(coverage.partition()),
         _ => None,
     }
 }
@@ -3027,7 +3027,7 @@ fn multi_pass_topology(
 ) -> ReductionTopology {
     ReductionTopology::MultiPass {
         pass,
-        partition,
+        coverage: ContributorCoverage::Exact(partition),
         axes,
         order: ContributorOrder::OriginalAxisLexicographic,
         accumulation: request.numerical_contract().arithmetic,
@@ -3682,10 +3682,7 @@ fn verify_multi_pass_subject_binding(
     normalized: &crate::request::NormalizedSerialSumSubject,
     subject: &VerifiedRequestSubject,
 ) -> Result<(), PhysicalError> {
-    let ReductionTopology::MultiPass {
-        pass, partition, ..
-    } = &region.schedule.reduction
-    else {
+    let ReductionTopology::MultiPass { pass, coverage, .. } = &region.schedule.reduction else {
         return intrinsic("request-binding", region.index.id);
     };
     let expected = match pass {
@@ -3705,7 +3702,7 @@ fn verify_multi_pass_subject_binding(
                 )
                 && tiler_ir::schedule::partial_reduction_shape(
                     normalized.output_shape(),
-                    *partition,
+                    coverage.partition(),
                 )
                 .is_some_and(|shape| shape == region.index.iteration_shape)
         }
@@ -3754,7 +3751,7 @@ fn verify_workgroup_tree_subject_binding(
     normalized: &crate::request::NormalizedSerialSumSubject,
     subject: &VerifiedRequestSubject,
 ) -> Result<(), PhysicalError> {
-    let ReductionTopology::CooperativeWorkgroup { partition, .. } = &region.schedule.reduction
+    let ReductionTopology::CooperativeWorkgroup { coverage, .. } = &region.schedule.reduction
     else {
         return intrinsic("request-binding", region.index.id);
     };
@@ -3771,8 +3768,11 @@ fn verify_workgroup_tree_subject_binding(
             normalized,
             subject_contributor_tensor(normalized),
         )
-        && tiler_ir::schedule::partial_reduction_shape(normalized.output_shape(), *partition)
-            .is_some_and(|shape| shape == region.index.iteration_shape);
+        && tiler_ir::schedule::partial_reduction_shape(
+            normalized.output_shape(),
+            coverage.partition(),
+        )
+        .is_some_and(|shape| shape == region.index.iteration_shape);
     if !expected {
         return intrinsic("request-binding", region.index.id);
     }

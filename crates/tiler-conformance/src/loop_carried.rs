@@ -52,11 +52,11 @@ use tiler_compiler::session::NumericalContract;
 use tiler_ir::kernel::lower_scheduled_region;
 use tiler_ir::schedule::{
     Access, AccessMode, ArithmeticType, BoundsProof, BoundsProofKind, BoundsWitnessId,
-    ContributorArrival, ContributorOrder, ContributorPartition, ConvergenceEvidence,
-    ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess, NumericalRealization,
-    OwnershipProof, OwnershipProofKind, OwnershipWitnessId, ReductionTopology, RegionId,
-    ScalarProgram, ScheduledRegionBuilder, SynchronizationPlacement, SynchronizationPoint,
-    TailPolicy, TensorRole, VerifiedScheduledRegion, workgroup_tree_tile,
+    ContributorArrival, ContributorCoverage, ContributorOrder, ContributorPartition,
+    ConvergenceEvidence, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
+    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
+    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SynchronizationPlacement,
+    SynchronizationPoint, TailPolicy, TensorRole, VerifiedScheduledRegion, workgroup_tree_tile,
 };
 use tiler_ir::semantic::{CANONICAL_F32_ARITHMETIC_NAN_BITS, F32};
 use tiler_ir::shape::{Axis, Shape};
@@ -279,10 +279,10 @@ fn cooperative_region(contributors_per_partition: u64, rounds: u64) -> VerifiedS
         .schedule(KernelSchedule {
             threads_per_workgroup: u32::try_from(PARTICIPANTS).expect("participants fit a u32"),
             reduction: ReductionTopology::CooperativeWorkgroup {
-                partition: ContributorPartition {
+                coverage: ContributorCoverage::Exact(ContributorPartition {
                     partitions: PARTICIPANTS,
                     contributors_per_partition,
-                },
+                }),
                 tile,
                 axes,
                 order: ContributorOrder::OriginalAxisLexicographic,
@@ -345,9 +345,8 @@ pub(crate) fn staging_slots(region: &VerifiedScheduledRegion) -> u64 {
 /// so a vacuous comparison has a name.
 #[must_use]
 pub(crate) fn scheduled_grouping(region: &VerifiedScheduledRegion) -> CooperativeGrouping {
-    let ReductionTopology::CooperativeWorkgroup {
-        partition, tile, ..
-    } = &region.region().schedule.reduction
+    let ReductionTopology::CooperativeWorkgroup { coverage, tile, .. } =
+        &region.region().schedule.reduction
     else {
         panic!("the cooperative fixture builds a cooperative topology")
     };
@@ -356,7 +355,7 @@ pub(crate) fn scheduled_grouping(region: &VerifiedScheduledRegion) -> Cooperativ
             .participants
             .participants()
             .expect("the tile's participant product fits"),
-        partition.contributors_per_partition,
+        coverage.partition().contributors_per_partition,
         tile.rounds,
     )
 }
