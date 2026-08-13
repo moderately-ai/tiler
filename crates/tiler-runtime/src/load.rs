@@ -56,11 +56,14 @@
 //! removed from the candidate set before any guard is evaluated. Eligibility is
 //! decided from the loading host's stated [`ExecutionEnvironment`] and nothing
 //! else: the backend family and executable representation every entry's payload
-//! declares, compared *as a pair*, and the target profiles the variant and each
-//! of those payloads declare, classified. Those are exactly the comparisons
+//! declares, compared *as a pair*; the target profiles the variant and each of
+//! those payloads declare, classified; and each entry's delivered-realization
+//! arithmetic, resolved against the host's stated dtype map. Those are exactly
+//! the comparisons
 //! [ADR 0090](../../../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md)
-//! item 4 leaves to the loader, and none of them needs an ABI fact, an adapter,
-//! or a device — the host stated which machine it is.
+//! item 4 leaves to the loader, plus the dtype filter Tom accepted on 2026-08-06,
+//! and none of them needs an ABI fact, an adapter, or a device — the host stated
+//! which machine it is.
 //!
 //! **Priority second.** Among the eligible variants, and only among those,
 //! declaration order is meaning under [`RoutingPolicy::StablePriority`], and the
@@ -133,8 +136,8 @@
 //!   `Unrecognized`, classified separately from a measured quantity that misses
 //!   its relation: a property nothing evaluated is not a threshold miss.
 //! - **No eligible variant at all.** Every packaged variant names a backend,
-//!   representation, or target profile this host did not state, so there is
-//!   nothing here to run and the refusal names what excluded each one.
+//!   representation, target profile, or dtype this host did not state, so there
+//!   is nothing here to run and the refusal names what excluded each one.
 //! - **Every eligible guard false.** An artifact whose own guards exclude the
 //!   bound facts has nothing applicable to route to, and taking a variant anyway
 //!   is how a plan gets executed on a host it was proven not to fit. Distinct
@@ -146,6 +149,33 @@
 //!   representation, and how a payload reaches an executable state is not among
 //!   them. A portfolio that offers a translated and a native member declares two
 //!   *representations*, which the pair comparison already filters on.
+//!
+//! # Accepted public surface — variant eligibility
+//!
+//! Tom accepted this vocabulary on 2026-08-11 under
+//! [`accept-the-loader-variant-eligibility-vocabulary`]. The rest of this
+//! module remains a reviewed draft under ADR 0075.
+//!
+//! **Included.** [`VariantIneligibility`] (`AssessedProfile`,
+//! `UnsupportedRepresentation`, `PayloadProfile`, `UndispatchableDType`),
+//! [`FilteredVariant`] with public `variant` and `reason` fields,
+//! [`LoadRejection::NoEligibleVariant`] and
+//! [`LoadRejection::NoApplicableVariant`] with `filtered`, governed
+//! [`tiler_artifact::program::BackendKey`],
+//! [`tiler_artifact::program::RepresentationKey`], and
+//! [`tiler_artifact::program::TargetProfileKey`] payloads on those types and
+//! the directly coupled [`TargetCompatibility`] fields, and total public
+//! [`std::fmt::Display`] over every constructible count. One explicit
+//! [`ExecutionEnvironment`] per attempt; eligibility precedes applicability.
+//!
+//! **Excluded.** A set-valued execution environment, exact caller-selected
+//! variant ranks, automatic family fallback, fallback on an unanswerable
+//! guard, compatibility aliases for the removed `UnexecutablePayload`,
+//! `IncompatibleTarget`, and `TargetDeclaration` classes, a cost-based
+//! runtime selector, artifact identity changes, and a device probe during
+//! eligibility filtering.
+//!
+//! [`accept-the-loader-variant-eligibility-vocabulary`]: ../../../../tickets/accept-the-loader-variant-eligibility-vocabulary.md
 
 mod host;
 mod route;
@@ -1278,6 +1308,12 @@ impl fmt::Display for AbiSubject {
 
 /// Why one packaged variant was not a candidate on this host.
 ///
+/// **Accepted public surface.** Tom accepted this exact vocabulary on
+/// 2026-08-11 under [`accept-the-loader-variant-eligibility-vocabulary`].
+/// Dependents may treat these four classes as accepted vocabulary.
+///
+/// [`accept-the-loader-variant-eligibility-vocabulary`]: ../../../../tickets/accept-the-loader-variant-eligibility-vocabulary.md
+///
 /// Every class here is decided from the host's own stated
 /// [`ExecutionEnvironment`] before any guard is evaluated, so none of them is a
 /// statement about the caller's bound facts. They stay separate because the
@@ -1310,7 +1346,7 @@ pub enum VariantIneligibility {
     /// report here, because "this host cannot execute these bytes" is one
     /// finding with one remedy.
     ///
-    /// **Labelled draft** under ADR 0075. The four key fields are the governed
+    /// **Accepted public surface.** The four key fields are the governed
     /// [`tiler_artifact::program::BackendKey`] and
     /// [`tiler_artifact::program::RepresentationKey`] values the loader already
     /// compared, not erased strings.
@@ -1346,7 +1382,7 @@ pub enum VariantIneligibility {
     /// 0051's routing commit. Reported from the host's stated declaration here,
     /// so the refusal arrives while a fallback is still permitted.
     ///
-    /// **Labelled draft** under ADR 0075. `host_profile` is the governed
+    /// **Accepted public surface.** `host_profile` is the governed
     /// [`tiler_artifact::program::TargetProfileKey`] the host stated, not an
     /// erased string.
     UndispatchableDType {
@@ -1410,6 +1446,13 @@ impl fmt::Display for VariantIneligibility {
 }
 
 /// One packaged variant this host excluded, and why.
+///
+/// **Accepted public surface.** Tom accepted these public `variant` and
+/// `reason` fields on 2026-08-11 under
+/// [`accept-the-loader-variant-eligibility-vocabulary`]. The pair is leaf
+/// value-data and carries no independent cross-field invariant.
+///
+/// [`accept-the-loader-variant-eligibility-vocabulary`]: ../../../../tickets/accept-the-loader-variant-eligibility-vocabulary.md
 ///
 /// Carried by both selection refusals so a reader can tell what was *filtered*
 /// from what *failed*. A refusal reporting only that nothing routed leaves a
@@ -1487,6 +1530,12 @@ pub enum LoadRejection {
     /// Distinct from [`Self::NoApplicableVariant`], which is the opposite
     /// finding: the host *can* execute what is packaged and the producer's own
     /// guards exclude these facts.
+    ///
+    /// **Accepted public surface.** Tom accepted this refusal class, and its
+    /// split from [`Self::NoApplicableVariant`], on 2026-08-11 under
+    /// [`accept-the-loader-variant-eligibility-vocabulary`].
+    ///
+    /// [`accept-the-loader-variant-eligibility-vocabulary`]: ../../../../tickets/accept-the-loader-variant-eligibility-vocabulary.md
     NoEligibleVariant {
         /// How many plan variants the artifact packages.
         packaged: usize,
@@ -1502,6 +1551,12 @@ pub enum LoadRejection {
     /// plans it packages, and none of those applies to the facts this host bound.
     /// What excluded them is the producer's own guard rather than anything about
     /// the host, which is what separates this from [`Self::NoEligibleVariant`].
+    ///
+    /// **Accepted public surface.** Tom accepted this refusal class, its
+    /// `filtered` field, and total `Display` over every constructible count on
+    /// 2026-08-11 under [`accept-the-loader-variant-eligibility-vocabulary`].
+    ///
+    /// [`accept-the-loader-variant-eligibility-vocabulary`]: ../../../../tickets/accept-the-loader-variant-eligibility-vocabulary.md
     NoApplicableVariant {
         /// How many plan variants the artifact packages.
         packaged: usize,

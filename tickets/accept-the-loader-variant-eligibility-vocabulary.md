@@ -5,7 +5,7 @@ status: in-progress
 priority: p2
 dependencies: [select-executable-variants-across-registered-backend-families, preserve-governed-key-types-in-loader-eligibility-diagnostics, make-loader-selection-refusal-formatting-total]
 related: [expose-explicit-backend-provider-and-selection-policy-composition, decide-whether-a-loading-host-may-state-several-backend-families, accept-the-neutral-build-orchestration-boundary, bound-canonical-entry-ordinal-lookup-cost-in-loader-preflight]
-scopes: [contracts/decisions]
+scopes: [contracts/decisions, implementation/runtime]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [runtime, public-boundary, decision, needs-tom]
@@ -19,9 +19,13 @@ The `tiler_runtime::load` variant-eligibility vocabulary rests on Tom's acceptan
 
 **Correction — 2026-08-10.** Earlier wording said runtime was "the only one of the three that never reached him." Among the three composition-adjacent public surfaces, build orchestration is Tom-accepted (2026-08-05 under [`accept-the-neutral-build-orchestration-boundary`](accept-the-neutral-build-orchestration-boundary.md)); installed physical-provider and this loader vocabulary both still await Tom. Runtime is not uniquely node-less: this ticket is its accept node.
 
+**Correction — 2026-08-13.** The clause "this loader vocabulary both still await Tom" is retired for this node. Tom accepted the vocabulary on 2026-08-11. The installed physical-provider node is a different ticket.
+
 ## Why this exists
 
 **Fact — the surface was provisionally accepted by the coordinator and recorded for Tom, and no Tom decision yet supersedes that provisional vocabulary.** [`select-executable-variants-across-registered-backend-families`](select-executable-variants-across-registered-backend-families.md) closed `done` with a section headed "Provisional boundary acceptance (2026-08-01, overnight mode)" which states the coordinator accepted the loader vocabulary change and that it was "Recorded for Tom's morning review". No *other* `accept-*` ticket names that provisional review; **this ticket is the carrier node** for Tom's durable answer. Absence of a superseding Tom decision is not absence of a ticket. The three near-miss accept nodes — [`accept-the-public-route-requirement-answer-boundary`](accept-the-public-route-requirement-answer-boundary.md), [`accept-the-route-facts-dtype-dispatch-field`](accept-the-route-facts-dtype-dispatch-field.md), and [`accept-the-route-resource-requirement-spelling`](accept-the-route-resource-requirement-spelling.md) — are all about route *requirements* and none mentions variant eligibility.
+
+**Correction — 2026-08-13.** The clause "no Tom decision yet supersedes that provisional vocabulary" is retired. Tom accepted the vocabulary on 2026-08-11; the originating paragraph is now headed "Provisional boundary acceptance (2026-08-01, overnight mode), superseded 2026-08-11" and names this ticket as the durable record. This node remains the carrier; the supersession it was filed to obtain has happened.
 
 **Fact — the precedent says a provisional acceptance is superseded rather than left standing.** [ADR 0090](../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md), anchor `superseding the provisional overnight acceptance`, records that the build orchestration surface was accepted by Tom on 2026-08-05 at the live decision review under [`accept-the-neutral-build-orchestration-boundary`](accept-the-neutral-build-orchestration-boundary.md). The compiler surface has its node in [`accept-the-installed-physical-provider-public-surface`](accept-the-installed-physical-provider-public-surface.md). **Correction — 2026-08-11:** that node is now `todo`, not `awaiting-decision`: Tom accepted its four decisions and it awaits the mechanical rename and label sweep. This ticket is the corresponding accept node for the runtime loader eligibility vocabulary.
 
@@ -53,6 +57,8 @@ Accept removal of the three superseded broad classes and accept the three origin
 
 **Decision.** Tom accepted the coordinator's ranked recommendation in the Codex coordination thread by replying `sounds good, accept`. The relay source is Tom's direct response in that thread. The routing semantics are accepted now; the ticket moves to `todo` because the exact public surface must land the two narrow correctness repairs below before its draft label can be retired.
 
+**Correction — 2026-08-13.** Both named repairs have landed: [`preserve-governed-key-types-in-loader-eligibility-diagnostics`](preserve-governed-key-types-in-loader-eligibility-diagnostics.md) and [`make-loader-selection-refusal-formatting-total`](make-loader-selection-refusal-formatting-total.md) are `done`. What remains is documentation and draft-label retirement.
+
 1. **One explicit execution environment per attempt.** The caller chooses exactly one target profile, backend family, executable representation, and dtype declaration before `preflight` or `prepare`. The loader may filter packaged variants only against that one atomic choice. It never retries another backend family, invents a default environment, or treats an absent dtype declaration as permission. A different backend requires a separate caller-controlled attempt before routing commit.
 2. **Eligibility precedes applicability.** A host-ineligible variant is not a candidate and its guard is not evaluated. Among eligible variants, declared stable priority remains authoritative: a guard answering false advances to the next eligible member, while an unanswerable guard aborts rather than silently substituting a lower-ranked plan.
 3. **The refusal split is accepted.** `NoEligibleVariant` means every packaged member was filtered by the stated environment. `NoApplicableVariant` means at least one eligible guard ran and every eligible guard answered false; it retains the reasons for members filtered before their guards. Collapsing these would erase opposite repairs.
@@ -77,3 +83,19 @@ The typed-key and total-formatting repairs land; the provisional-acceptance para
 ## Fact audit — 2026-08-10
 
 Board status stays `awaiting-decision`: Tom has not answered the three questions for the provisional vocabulary, the originating provisional paragraph is not annotated, and partial prior acceptance of `UndispatchableDType` does not close this node. Repair corrected imprecise present-tense framing (unique node-less claim; "no accept-* ticket"; first-acceptance language for an already-accepted class; uniform-accessors mandate) without fabricating a supersession.
+
+## Fact audit — 2026-08-13 at `4275c14b`
+
+Every ticket Fact was re-read at this base before the close-out edit. The 2026-08-10 audit is **stale** as present-tense repository state.
+
+1. **[FALSE as present-tense]** "Board status stays `awaiting-decision`" / "Tom has not answered the three questions." Status is `in-progress`. Tom accepted the ranked recommendation on 2026-08-11. The three questions stay as historical packet text; they are not open.
+2. **[FALSE as present-tense]** "no Tom decision yet supersedes that provisional vocabulary" / "the originating provisional paragraph is not annotated." The originating Outcome paragraph is headed `Provisional boundary acceptance (2026-08-01, overnight mode), superseded 2026-08-11` and names this ticket. Verified by reading [`select-executable-variants-across-registered-backend-families`](select-executable-variants-across-registered-backend-families.md) at this base.
+3. **[VERIFIED]** Both hard dependencies are `done`. `UnsupportedRepresentation` carries `BackendKey`/`RepresentationKey`; `UndispatchableDType::host_profile` and `TargetCompatibility::{ProfileKeyMismatch,DescriptorMismatch}` carry `TargetProfileKey`. `NoApplicableVariant` `Display` uses `checked_sub` and names an inconsistent public count rather than subtracting. `UnexecutablePayload`, `IncompatibleTarget`, and `TargetDeclaration` are absent from `crates/tiler-runtime`.
+4. **[VERIFIED, already true]** The originating provisional paragraph was already annotated at this base. This close-out only retires the now-stale "keeps completion dependent" clause after those repairs landed.
+5. **[FALSE as complete]** "the module documentation states the accepted included and excluded boundary rather than a draft." At this base the routing docs described the walk but did not name the accepted included/excluded set, and four sites still said `Labelled draft` under ADR 0075: `UnsupportedRepresentation`, `UndispatchableDType`, `TargetCompatibility::ProfileKeyMismatch`, and `TargetCompatibility::DescriptorMismatch`. Crate-level `lib.rs` still called the whole of `load` a reviewed draft with no eligibility carve-out.
+6. **[VERIFIED]** The 2026-08-10 correction that "this loader vocabulary both still await Tom" is false for this node after 2026-08-11. The physical-provider node is a different ticket.
+7. **[VERIFIED]** Surface inventory at `750b29e0` remains a dated snapshot. The live types still match the Added/Changed/Removed/Unchanged census, with the two later repairs (typed keys, total `Display`) applied.
+
+## Scope addition
+
+`implementation/runtime` was added with `tkt set --add-scope` before `crates/tiler-runtime` module docs were edited. The labelled-draft markers lived only there; retiring them without the scope would have been a silent escape. `prototypes/serial-sum-run` is in that glob and was not edited.
