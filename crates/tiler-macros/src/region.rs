@@ -40,30 +40,28 @@
 //! optimizer against a target profile; this module hands over the same program
 //! either way.
 //!
-//! # The public logical program is constructed exactly when it is representable
+//! # The public logical program is constructed through the registry
 //!
-//! `tiler_ir::shape::Shape` is a **fixed**-extent vocabulary: an
-//! [`Extent`](tiler_ir::shape::Extent) is a `u64`, and no symbol reaches it. A
-//! region's `sym n` is bound from operand metadata at
-//! [`AvailabilityPhase::LiveDevicePreflight`] — at run time, from the values the
-//! invocation is handed — so at expansion time there is no extent to give the
-//! semantic layer.
+//! A region's declared extents — literal or symbolic — are handed to
+//! [`SemanticProgramBuilder`] as [`SourcedExtent`]s, resolving in the one
+//! [`ShapeEnv`] [`BoundRegion`] already verified. The builder is opened with
+//! that environment rather than a second one, so the program and the binding
+//! share one [`ShapeEnvIdentity`]. A wholly literal region still produces the
+//! `Static` arm of [`SourcedShape`] by that type's own normalization; a
+//! symbolic axis takes the same constructor.
 //!
-//! So a region whose every declared extent is a literal is constructed and
-//! verified as a real [`SemanticProgram`], and the shape that program's
-//! registry *infers* for the result is required to equal the shape this module
-//! *derived*: the authority decides, and the derivation is checked against it
-//! wherever it can be. A region carrying a symbolic extent cannot be, and this
-//! module says so in [`ProgramEvidence`] rather than substituting a
-//! representative extent and calling the result verified — a program built over
-//! invented extents would be a different program, and its identity would name
-//! something no consumer wrote.
+//! The registry is the authority over whether the region's operations admit
+//! those operands. Governed elementwise families decide symbol-involving
+//! equality through the environment's own proof. A family that still declines
+//! symbolic operands — today the strict serial sum — surfaces as
+//! [`RegionError::Program`], not as a silent deferral. The shape that program
+//! *infers* for the result is required to equal the shape this module
+//! *derived*: the authority decides, and the derivation is checked against it.
 //!
-//! That gap is the frontend's half of the workspace's open symbolic profile, not
-//! a shortcut taken here; `carry-symbolic-extents-into-the-semantic-program`
-//! owns it. What is *not* deferred for either kind of region is the runtime contract:
-//! the emitted facts check every operand's rank and stored scalar, unify every
-//! symbol, and construct the declared result, symbolic or not.
+//! What does not change is the runtime contract: the emitted facts check every
+//! operand's rank and stored scalar, unify every symbol, and construct the
+//! declared result, symbolic or not. Delivering an artifact family from a
+//! symbolic program is a later ticket.
 //!
 //! # The compiler is not invoked *here*
 //!
@@ -93,15 +91,21 @@
 //! [`add_f32_op`]: tiler_ir::semantic::add_f32_op
 //! [`strict_serial_sum_f32_op`]: tiler_ir::semantic::strict_serial_sum_f32_op
 //! [`constant_f32_op`]: tiler_ir::semantic::constant_f32_op
+//! [`SourcedExtent`]: tiler_ir::shape::SourcedExtent
+//! [`SourcedShape`]: tiler_ir::shape::SourcedShape
+//! [`ShapeEnv`]: tiler_ir::shape::ShapeEnv
+//! [`ShapeEnvIdentity`]: tiler_ir::shape::ShapeEnvIdentity
+//! [`BoundRegion`]: crate::binding::BoundRegion
 
 use core::fmt;
+use std::sync::Arc;
 
 use tiler_ir::program::StorageScalar;
 use tiler_ir::semantic::{
     BuildError, F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
     SemanticProgramBuilder, StrictSerialF32Sum, Value,
 };
-use tiler_ir::shape::{Axis, Shape};
+use tiler_ir::shape::{Axis, Extent, ShapeEnv, SourcedExtent};
 
 use crate::binding::{BoundRegion, DeclaredAxis, RegionBindError, RegionDeclarations};
 use crate::grammar::{
@@ -145,23 +149,19 @@ const SCALAR_CONSTANT_TYPE: StorageScalar = StorageScalar::F32;
 /// whichever of the two the driver happened to be handed.
 #[derive(Clone, Debug)]
 pub(crate) enum ProgramEvidence {
-    /// Every declared extent is a literal, so the region was constructed as a
-    /// [`SemanticProgram`] through the governed registry, verified, and its
-    /// inferred result shape checked against the derived one.
+    /// The region was constructed as a [`SemanticProgram`] through the governed
+    /// registry, verified, and its inferred result shape checked against the
+    /// derived one. Symbolic extents are carried as sourced shapes; a family
+    /// that still declines them is [`RegionError::Program`], not a second
+    /// variant here.
     Verified(SemanticProgram),
-    /// A declared extent is symbolic, which the fixed-extent semantic shape
-    /// vocabulary cannot carry. The operations were still resolved through the
-    /// governed registry's keys and the runtime contract is unchanged; what is
-    /// absent is the specialized program and everything derived from it.
-    DeferredSymbolicExtent,
 }
 
 impl ProgramEvidence {
-    /// Returns the verified public logical program, when one was constructible.
-    pub(crate) const fn verified(&self) -> Option<&SemanticProgram> {
+    /// Returns the verified public logical program.
+    pub(crate) const fn verified(&self) -> &SemanticProgram {
         match self {
-            Self::Verified(program) => Some(program),
-            Self::DeferredSymbolicExtent => None,
+            Self::Verified(program) => program,
         }
     }
 }
@@ -212,11 +212,8 @@ pub(crate) enum RegionError<S> {
         /// The reference.
         span: S,
     },
-    /// An operation's operands are neither equally shaped nor scalar.
-    ///
-    /// The registry's own rule, applied here so a region carrying a symbolic
-    /// extent — which it cannot hand to the registry — is refused by the same
-    /// rule as one that can.
+    /// An operation's operands cannot be combined because their stored scalars
+    /// differ. Shape agreement is the registry's, and arrives as [`Self::Program`].
     IncompatibleOperandShapes {
         /// The operator as written.
         operator: &'static str,
@@ -533,7 +530,8 @@ pub(crate) fn lower<S: Copy>(syntax: &RegionSyntax<S>) -> Result<Expansion<S>, R
     )?;
 
     let bound: BoundRegion = declarations.bind()?;
-    let program = verify_public_logical_program(syntax, &operands, &result)?;
+    let environment = bound.environment_arc();
+    let program = verify_public_logical_program(syntax, &operands, &result, &environment)?;
 
     Ok(Expansion {
         facts: bound.facts_source(),
@@ -801,17 +799,24 @@ fn declared_axes<S: Clone>(axes: &[ResolvedAxis<S>]) -> Vec<DeclaredAxis<S>> {
     axes.iter().map(|axis| axis.declared.clone()).collect()
 }
 
-/// Applies the registry's elementwise shape rule to two resolved shapes.
+/// Derives named result axes for the binding facts. Shape *agreement* is not
+/// decided here.
 ///
-/// Equal shapes, or one side scalar. Two axes naming different symbols are
-/// *not* equal: nothing at expansion time proves `n` and `m` take one value, and
-/// treating them as compatible would defer a shape error into a wrong result.
+/// The registry's `elementwise_binary_shape` is the authority over whether two
+/// operands may combine: it already decides rank, literal inequality, scalar
+/// broadcast, and `proves_equal` for symbols, and it is the rule a constructed
+/// program will run. This function used to restate that rule so a symbolic
+/// region — which never reached the registry — was still refused. Once the
+/// region is constructed through the registry, a second independent refusal
+/// would be a second authority.
 ///
-/// Axis *names* are unioned rather than taken from a side, so `a + b` and
-/// `b + a` expose the same named axes and a later reduction over one of them
-/// does not depend on which operand was written first.
+/// What remains here is only what the registry does not know: axis-name union,
+/// so `a + b` and `b + a` expose the same named axes, and
+/// [`RegionError::ConflictingAxisNames`]. When the operands do not agree, the
+/// left axes are kept as a placeholder so binding can proceed; `verify` then
+/// reports the registry's own refusal as [`RegionError::Program`].
 fn elementwise_axes<S: Copy>(
-    operator: Operator,
+    _operator: Operator,
     left: &[ResolvedAxis<S>],
     right: &[ResolvedAxis<S>],
     span: S,
@@ -823,12 +828,7 @@ fn elementwise_axes<S: Copy>(
         return Ok(left.to_vec());
     }
     if !axes_agree(left, right) {
-        return Err(RegionError::IncompatibleOperandShapes {
-            operator: operator.as_str(),
-            left: rendered_axes(left),
-            right: rendered_axes(right),
-            span,
-        });
+        return Ok(left.to_vec());
     }
 
     let mut merged = Vec::with_capacity(left.len());
@@ -888,38 +888,63 @@ fn rendered_axes<S>(axes: &[ResolvedAxis<S>]) -> String {
     format!("[{rendered}]")
 }
 
-/// Returns the literal extents of a resolved shape, or `None` if any is
-/// symbolic.
-fn literal_extents<S>(axes: &[ResolvedAxis<S>]) -> Option<Vec<u64>> {
+/// Builds one operand or result boundary from the region's own axes.
+///
+/// Literal and symbolic axes take this one path. [`SourcedShape`](tiler_ir::shape::SourcedShape)
+/// normalizes an all-literal vector to the `Static` arm, so a wholly literal
+/// region is unchanged by construction rather than by a branch.
+fn sourced_extents<S: Copy>(
+    axes: &[ResolvedAxis<S>],
+    environment: &ShapeEnv,
+) -> Result<Vec<SourcedExtent>, RegionError<S>> {
     axes.iter()
-        .map(|axis| match axis.declared {
-            DeclaredAxis::Literal(extent) => Some(extent),
-            DeclaredAxis::Symbol { .. } => None,
+        .map(|axis| match &axis.declared {
+            DeclaredAxis::Literal(extent) => Ok(SourcedExtent::Static(Extent::new(*extent))),
+            DeclaredAxis::Symbol { name, span } => environment
+                .bindings()
+                .find_map(|(symbol, _)| (symbol.name() == name).then(|| symbol.clone()))
+                .map(SourcedExtent::Symbol)
+                .ok_or_else(|| RegionError::Program {
+                    span: *span,
+                    detail: format!(
+                        "declared symbol `{name}` is missing from the bound environment"
+                    ),
+                }),
         })
         .collect()
 }
 
+/// Renders sourced extents the way a region spells them: a literal as its
+/// integer, a symbol as the name the region wrote, never the scoped encoding.
+fn rendered_sourced_extents(extents: &[SourcedExtent]) -> String {
+    let rendered = extents
+        .iter()
+        .map(|extent| {
+            if let Some(literal) = extent.as_static() {
+                literal.get().to_string()
+            } else if let Some(symbol) = extent.symbol() {
+                symbol.name().to_owned()
+            } else {
+                extent.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{rendered}]")
+}
+
 /// Constructs and verifies the region as a public logical program.
 ///
-/// Returns [`ProgramEvidence::DeferredSymbolicExtent`] without constructing
-/// anything when a declared extent is symbolic, because the semantic shape
-/// vocabulary is fixed-extent and no value for the symbol exists yet.
+/// Hands [`BoundRegion`]'s environment to the builder rather than constructing
+/// a second one. Operand shapes are sourced extents built from [`DeclaredAxis`],
+/// so a literal axis and a symbolic axis take one path. A family that declines
+/// those operands is [`RegionError::Program`].
 fn verify_public_logical_program<S: Copy>(
     syntax: &RegionSyntax<S>,
     operands: &[ResolvedOperand<S>],
     result: &Resolved<S>,
+    environment: &Arc<ShapeEnv>,
 ) -> Result<ProgramEvidence, RegionError<S>> {
-    let mut extents = Vec::with_capacity(operands.len());
-    for operand in operands {
-        let Some(literal) = literal_extents(&operand.axes) else {
-            return Ok(ProgramEvidence::DeferredSymbolicExtent);
-        };
-        extents.push(literal);
-    }
-    let Some(derived) = literal_extents(&result.value.axes) else {
-        return Ok(ProgramEvidence::DeferredSymbolicExtent);
-    };
-
     let refused = |span: S| {
         move |source: BuildError| RegionError::Program {
             span,
@@ -928,24 +953,22 @@ fn verify_public_logical_program<S: Copy>(
     };
 
     let mut builder =
-        SemanticProgramBuilder::try_standard().map_err(|source| RegionError::Program {
-            span: syntax.region,
-            detail: source.to_string(),
-        })?;
+        SemanticProgramBuilder::try_standard_with_shape_environment(Arc::clone(environment))
+            .map_err(|source| RegionError::Program {
+                span: syntax.region,
+                detail: source.to_string(),
+            })?;
 
     let mut values: Vec<Value<F32>> = Vec::with_capacity(operands.len());
-    for (operand, extents) in operands.iter().zip(&extents) {
-        let shape = Shape::try_from_dims(extents.iter().copied()).map_err(|source| {
-            RegionError::Program {
-                span: operand.name.span,
-                detail: source.to_string(),
-            }
-        })?;
+    for operand in operands {
+        let extents = sourced_extents(&operand.axes, environment)?;
         let value = builder
-            .input::<F32>(operand.key.clone(), shape)
+            .input_sourced::<F32>(operand.key.clone(), extents)
             .map_err(refused(operand.name.span))?;
         values.push(value);
     }
+
+    let derived = sourced_extents(&result.value.axes, environment)?;
 
     let root = apply_expression(&mut builder, &result.expression, &values)?;
     let output_key =
@@ -964,7 +987,8 @@ fn verify_public_logical_program<S: Copy>(
 
     // The registry is the authority over a result's shape, so what this module
     // derived is compared against what the registry inferred rather than
-    // trusted beside it.
+    // trusted beside it. Both sides are sourced extents; a wholly literal
+    // region compares as the `Static` arm on each side by normalization.
     let output = program
         .outputs()
         .next()
@@ -977,25 +1001,12 @@ fn verify_public_logical_program<S: Copy>(
         .map_err(|source| RegionError::Program {
             span: syntax.out,
             detail: source.to_string(),
-        })?
-        // An inline region's result shape is inferred by the frozen semantic
-        // authority, which still carries a fixed `Shape`, so a sourced one here
-        // would mean the layer below started inferring over symbols without
-        // this comparison being taught to read them.
-        .as_static()
-        .ok_or_else(|| RegionError::Program {
-            span: syntax.out,
-            detail: "the verified program's output shape names a declared symbol".to_owned(),
         })?;
-    let inferred_extents: Vec<u64> = inferred
-        .extents()
-        .iter()
-        .map(|extent| extent.get())
-        .collect();
+    let inferred_extents: Vec<SourcedExtent> = inferred.extents().collect();
     if inferred_extents != derived {
         return Err(RegionError::ResultShapeDisagreement {
             derived: rendered_axes(&result.value.axes),
-            inferred: inferred.to_string(),
+            inferred: rendered_sourced_extents(&inferred_extents),
             span: syntax.out,
         });
     }

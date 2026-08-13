@@ -363,8 +363,10 @@ const fn dtype_dispatch_path(verdict: DTypeDispatchability) -> &'static str {
 /// the toolchain.
 #[derive(Debug)]
 pub(crate) enum AotRefusal {
-    /// The region carries a symbolic extent, so it has no semantic program to
-    /// optimize.
+    /// The region carries a symbolic extent. Expansion now constructs the
+    /// public logical program, but AOT delivery still needs every extent known
+    /// at expansion time; that gate belongs to
+    /// `deliver-an-artifact-family-from-a-symbolic-region`.
     SymbolicExtent,
     /// The one authoritative Metal compile declaration would not assemble.
     Declaration(BoundMetalDeclarationError),
@@ -618,6 +620,22 @@ fn rendered_target(target: MetalTarget) -> String {
     )
 }
 
+/// Reports whether any input or output boundary names a declared symbol.
+///
+/// The expansion now constructs a verified program for an admitted symbolic
+/// region. AOT delivery still needs every extent known at expansion time, so
+/// this is the remaining gate — not "there is no program", but "this program
+/// is not yet a deliverable family".
+fn program_interface_is_symbolic(program: &SemanticProgram) -> bool {
+    let symbolic = |value| {
+        program
+            .shape(value)
+            .is_ok_and(|shape| shape.as_static().is_none())
+    };
+    program.inputs().any(|input| symbolic(input.value()))
+        || program.outputs().any(|output| symbolic(output.value()))
+}
+
 /// Runs the offline Metal driver for one stated selection and returns what the
 /// expansion must emit.
 ///
@@ -662,6 +680,9 @@ pub(crate) fn deliver(
     toolchain: &Toolchain,
 ) -> Result<Delivered, AotRefusal> {
     let program = program.ok_or(AotRefusal::SymbolicExtent)?;
+    if program_interface_is_symbolic(program) {
+        return Err(AotRefusal::SymbolicExtent);
+    }
     let declaration =
         BoundMetalCompileDeclaration::first_macos_apple9().map_err(AotRefusal::Declaration)?;
     require_buildable(&selection, &declaration)?;

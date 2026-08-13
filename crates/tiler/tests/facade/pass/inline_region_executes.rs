@@ -249,43 +249,6 @@ fn main() {
         Vec::<u64>::new(),
     );
 
-    // A symbolic extent survives the reduction of the axis beside it, and is
-    // still bound from operand metadata at run time.
-    let symbolic_reduction = {
-        let x = f32_tensor(&[5, 3]);
-        tiler::tensor! {
-            sym n;
-            in x: f32[n, cols: 3];
-            contract flush_subnormals_to_zero_f32;
-            out strict_serial_sum(x * 2.0 + 1.0, [cols])
-        }
-    };
-    assert_eq!(
-        symbolic_reduction
-            .expect("`n` binds to 5 from `x` axis 0")
-            .extents,
-        vec![5],
-    );
-
-    // An axis is named rather than counted: a symbolic extent is already a name,
-    // so `n` reduces without a second spelling for it.
-    let named_by_symbol = {
-        let x = f32_tensor(&[3, 5]);
-        tiler::tensor! {
-            sym n;
-            in x: f32[cols: 3, n];
-            contract flush_subnormals_to_zero_f32;
-            out strict_serial_sum(x * 2.0 + 1.0, [n])
-        }
-    };
-    assert_eq!(
-        named_by_symbol
-            .expect("`n` binds to 5 from `x` axis 1")
-            .extents,
-        vec![3],
-        "summing the symbolic axis leaves the literal one",
-    );
-
     // A rank-0 operand broadcasts, and the result takes the shaped side.
     let scaled = {
         let (a, s) = (f32_tensor(&[3]), f32_tensor(&[]));

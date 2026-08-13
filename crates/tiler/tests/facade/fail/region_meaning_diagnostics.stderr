@@ -28,14 +28,14 @@ error: `b` is used in the region's result but no `in` statement declares it; a r
 48 |         out a * b
    |                 ^
 
-error: `*` cannot combine a `[4]` operand with a `[5]` one; operand shapes must match or one operand must be scalar
-  --> tests/facade/fail/region_meaning_diagnostics.rs:55:15
+error: this region is not a valid public logical program: provider tiler::standard-semantics@7 rejected operation tiler::multiply-f32@1: binary.shape: operand shapes must match or one operand must be scalar
+  --> tests/facade/fail/region_meaning_diagnostics.rs:56:15
    |
-55 |         out a * b
+56 |         out a * b
    |               ^
 
-error: `*` cannot combine a `[n]` operand with a `[m]` one; operand shapes must match or one operand must be scalar
-  --> tests/facade/fail/region_meaning_diagnostics.rs:64:15
+error: this region is not a valid public logical program: sourced-extent.not-proved-equal: this program's shape environment does not prove that tiler.inline-region.v1::n and tiler.inline-region.v1::m are one extent at axis 0
+  --> tests/facade/fail/region_meaning_diagnostics.rs:65:15
    |
-64 |         out a * b
+65 |         out a * b
    |               ^
