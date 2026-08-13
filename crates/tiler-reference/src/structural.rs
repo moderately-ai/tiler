@@ -1,6 +1,6 @@
 //! Reference semantics for the four governed structural families.
 //!
-//! `tiler::reindex-f32@1`, `tiler::broadcast-f32@1`, `tiler::slice-f32@1`, and
+//! `tiler::reindex-f32@1`, `tiler::broadcast-f32@2`, `tiler::slice-f32@1`, and
 //! `tiler::concatenate-f32@1` move elements and compute nothing, so these
 //! evaluators decode no floating-point value and produce none: each result
 //! element is the operand element its coordinate map — or, for the concatenation,

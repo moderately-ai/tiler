@@ -1687,8 +1687,8 @@ impl OperationDefinition {
 
     /// Creates a governed environment-aware operation-family definition.
     ///
-    /// Crate-private: only built-in elementwise families may consult the
-    /// program's shape environment. There is no public symbolic-provider surface.
+    /// Crate-private: only governed built-ins taught the question may consult
+    /// the program's shape environment. There is no public symbolic-provider surface.
     #[must_use]
     pub(crate) fn new_governed_environment_aware(
         key: OpKey,

@@ -159,7 +159,7 @@ use crate::program::abi::AvailabilityPhase;
 
 use super::{
     Axis, Extent, ExtentInterval, MAX_SHAPE_RANK, Shape, ShapeEnv, ShapeEnvIdentity, ShapeError,
-    ShapeSymbol,
+    ShapeSymbol, SymbolScope,
 };
 
 /// The last availability phase a sourced extent may be read from.
@@ -254,6 +254,50 @@ impl SourcedExtent {
             Self::Symbol(symbol) => 1 + symbol.encoded_len(),
         }
     }
+
+    /// Reconstructs one extent from bytes [`Self::encode`] wrote.
+    ///
+    /// Crate-internal and paired with [`Self::encode`], so a consumer cannot
+    /// invent a second tag table or a second symbol language. `None` is a
+    /// malformed payload rather than an undeclared symbol: decoding does not
+    /// consult an environment.
+    pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
+        let (tag, rest) = bytes.split_first()?;
+        match *tag {
+            0x01 => {
+                let value: [u8; 8] = rest.try_into().ok()?;
+                Some(Self::Static(Extent::new(u64::from_be_bytes(value))))
+            }
+            0x02 => {
+                let (symbol, rest) = decode_symbol(rest)?;
+                rest.is_empty().then_some(Self::Symbol(symbol))
+            }
+            _ => None,
+        }
+    }
+}
+
+impl From<Extent> for SourcedExtent {
+    /// Lifts a literal extent into the one constant-or-symbol vocabulary.
+    fn from(extent: Extent) -> Self {
+        Self::Static(extent)
+    }
+}
+
+/// Reads one length-prefixed run framed the way [`crate::identity::push_slice`] writes it.
+fn decode_slice(bytes: &[u8]) -> Option<(&[u8], &[u8])> {
+    let (length, rest) = bytes.split_at_checked(8)?;
+    let length = usize::try_from(u64::from_be_bytes(length.try_into().ok()?)).ok()?;
+    rest.split_at_checked(length)
+}
+
+/// Reads one [`ShapeSymbol`] framed the way [`ShapeSymbol::encode`] writes it.
+fn decode_symbol(bytes: &[u8]) -> Option<(ShapeSymbol, &[u8])> {
+    let (scope, rest) = decode_slice(bytes)?;
+    let (name, rest) = decode_slice(rest)?;
+    let name = std::str::from_utf8(name).ok()?;
+    let symbol = ShapeSymbol::new(SymbolScope::new(scope).ok()?, name).ok()?;
+    Some((symbol, rest))
 }
 
 impl std::fmt::Display for SourcedExtent {
@@ -653,6 +697,22 @@ mod tests {
                 limit: MAX_SHAPE_RANK,
             }
         );
+    }
+
+    #[test]
+    fn sourced_extent_decode_round_trips_the_encoder() {
+        for original in [
+            SourcedExtent::Static(Extent::new(0)),
+            SourcedExtent::Static(Extent::new(1)),
+            SourcedExtent::Symbol(symbol()),
+        ] {
+            let mut bytes = Vec::new();
+            original.encode(&mut bytes);
+            assert_eq!(SourcedExtent::decode(&bytes), Some(original));
+        }
+        assert_eq!(SourcedExtent::decode(&[]), None);
+        assert_eq!(SourcedExtent::decode(&[0x03]), None);
+        assert_eq!(SourcedExtent::decode(&[0x01, 0x00]), None);
     }
 }
 

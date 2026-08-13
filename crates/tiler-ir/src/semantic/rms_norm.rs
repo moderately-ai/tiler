@@ -570,7 +570,7 @@ impl OperationInferencer for RmsNormF32 {
         // `docs/ir.md` admits no implicit broadcasting, and the rank-zero scalar
         // admission does not cover a per-channel weight. The workload's weight is
         // `[N]` against `[T, N]`, so the program spells that widening as a
-        // `tiler::broadcast-f32@1` node and this key receives two operands of one
+        // `tiler::broadcast-f32@2` node and this key receives two operands of one
         // shape. Accepting the narrow shape here would be implicit broadcasting
         // under another name, and it would put the broadcast's own access
         // relation inside an operation whose identity does not carry one.
@@ -591,7 +591,7 @@ impl OperationInferencer for RmsNormF32 {
                 "rms-norm.f32.weight-shape",
                 "the binary32 RMS normalization admits no implicit broadcasting; the weight \
                  operand must already have the normalized value's shape, which a \
-                 tiler::broadcast-f32@1 occurrence produces",
+                 tiler::broadcast-f32@2 occurrence produces",
             ));
         }
         let attributes = request.attributes();

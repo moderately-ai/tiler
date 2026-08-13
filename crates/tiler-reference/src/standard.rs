@@ -187,7 +187,7 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
         registrar.register(silu_f32_op(), unary_signature, revision, silu_reference())?;
         // The normalization takes its weight as a second operand of the same
         // shape, because the graph admits no implicit broadcasting: the widening
-        // from `[N]` to `[T, N]` is a `tiler::broadcast-f32@1` occurrence the
+        // from `[N]` to `[T, N]` is a `tiler::broadcast-f32@2` occurrence the
         // program writes, and this signature is what refuses to absorb it.
         registrar.register(
             rms_norm_f32_op(),

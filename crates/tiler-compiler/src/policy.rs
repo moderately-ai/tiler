@@ -547,7 +547,7 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
             consumes: &[],
         },
         OperationNumericalCapability {
-            key: "tiler::broadcast-f32@1",
+            key: "tiler::broadcast-f32@2",
             consumes: &[],
         },
         // These operations carry a complete, fixed strict-affine conversion

@@ -120,7 +120,7 @@ const PINNED_IDENTITY_DOMAINS: &[&[u8]] = &[
     b"tiler.accuracy-domain.v1\0",
     b"tiler.accuracy-predicate.v1\0",
     b"tiler.artifact-program.abi-expr.v1\0",
-    b"tiler.broadcast-axis-mapping.v1\0",
+    b"tiler.broadcast-axis-mapping.v2\0",
     b"tiler.conformance-evidence.v1\0",
     b"tiler.contract.bf16.v1",
     b"tiler.contract.f32.v2",

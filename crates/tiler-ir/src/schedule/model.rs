@@ -321,7 +321,7 @@ pub enum LogicalAccess {
     /// A widening replication: several iteration coordinates read one operand
     /// element.
     ///
-    /// The access relation of the registered `tiler::broadcast-f32@1` family
+    /// The access relation of the registered `tiler::broadcast-f32@2` family
     /// when it actually widens. It is **not** [`Self::ScalarBroadcast`], and the
     /// difference is the whole reason it exists: `ScalarBroadcast` is a
     /// rank-zero operand element read by every invocation, so it carries no

@@ -536,7 +536,7 @@ impl F32Silu {
 ///
 /// Two operands and never one: the weight arrives already shaped like the value,
 /// because the graph admits no implicit broadcasting and a per-channel weight is
-/// widened by a `tiler::broadcast-f32@1` occurrence the caller writes. Passing
+/// widened by a `tiler::broadcast-f32@2` occurrence the caller writes. Passing
 /// the narrow weight here is a typed refusal rather than a convenience.
 ///
 /// `eps` is taken as an exact binary32 payload rather than an `f32`, so a caller

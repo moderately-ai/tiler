@@ -38,7 +38,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::identity::push_slice;
-use crate::shape::{Axis, Extent, Shape};
+use crate::program::abi::AvailabilityPhase;
+use crate::shape::{Axis, Extent, ExtentSources, Shape, ShapeSymbol, SourcedExtent, SourcedShape};
 
 use super::registry::standard_conformance;
 use super::{
@@ -106,7 +107,12 @@ pub const BROADCAST_RELATION_STRETCH_UNIT: &str = "stretch-unit";
 pub const BROADCAST_RELATION_REPLICATE: &str = "replicate";
 
 /// Domain separator of a canonical broadcast axis-mapping encoding.
-const BROADCAST_AXIS_MAPPING_DOMAIN: &[u8] = b"tiler.broadcast-axis-mapping.v1\0";
+///
+/// `v2` rather than `v1`: declared result extents are sourced, so a mapping
+/// encodes a tag-and-payload per axis instead of a bare unsigned literal. The
+/// domain steps with that grammar rather than letting two encodings share one
+/// separator.
+const BROADCAST_AXIS_MAPPING_DOMAIN: &[u8] = b"tiler.broadcast-axis-mapping.v2\0";
 
 /// Returns the governed binary32 broadcast operation key.
 ///
@@ -116,7 +122,7 @@ const BROADCAST_AXIS_MAPPING_DOMAIN: &[u8] = b"tiler.broadcast-axis-mapping.v1\0
 /// identity grammar.
 #[must_use]
 pub fn broadcast_f32_op() -> OpKey {
-    OpKey::new("tiler", "broadcast-f32", 1).expect("the governed broadcast key is valid")
+    OpKey::new("tiler", "broadcast-f32", 2).expect("the governed broadcast key is valid")
 }
 
 /// What one result axis of a broadcast reads.
@@ -316,6 +322,53 @@ pub enum BroadcastMappingError {
     CanonicalBound(TypeIdentityError),
     /// The result shape exceeded the governed rank profile.
     ResultShape(crate::shape::ShapeError),
+    /// A declared extent named a symbol the program environment does not declare.
+    UndeclaredSymbol {
+        /// The symbol the rejected extent named.
+        symbol: ShapeSymbol,
+    },
+    /// A declared extent named a symbol whose value arrives after it is needed.
+    SourceTooLate {
+        /// The symbol the rejected extent named.
+        symbol: ShapeSymbol,
+        /// The phase its root binding declares.
+        available: AvailabilityPhase,
+        /// The last phase an extent may be sourced from.
+        ceiling: AvailabilityPhase,
+    },
+    /// A symbolic many-to-one extent is not proved positive.
+    ///
+    /// A symbol whose interval includes zero is not a defined widening: the
+    /// family refuses it at application, before the graph mutates. Distinct from
+    /// [`Self::RelationDoesNotWiden`], which is the literal canonicality rule.
+    ExtentNotProvedPositive {
+        /// The result axis.
+        result_axis: usize,
+        /// The extent it declares.
+        declared: SourcedExtent,
+    },
+    /// The environment does not prove a one-to-one pair is one extent.
+    ///
+    /// Distinct from [`Self::ExtentDisagreement`]: that variant is two different
+    /// literals, and this one is a pair the environment does not prove equal.
+    ExtentsNotProvedEqual {
+        /// The result axis.
+        result_axis: usize,
+        /// The extent the mapping declares.
+        declared: SourcedExtent,
+        /// The operand extent behind it.
+        operand: SourcedExtent,
+    },
+    /// The environment does not prove a stretched operand extent is one.
+    ///
+    /// Distinct from [`Self::StretchSourceNotUnit`], which fires when the
+    /// operand extent is a literal other than one.
+    StretchSourceNotProvedUnit {
+        /// The named operand axis.
+        operand_axis: Axis,
+        /// The operand extent the mapping asked about.
+        extent: SourcedExtent,
+    },
 }
 
 impl BroadcastMappingError {
@@ -335,6 +388,13 @@ impl BroadcastMappingError {
             Self::MalformedAttribute { .. } => "broadcast.mapping.malformed-attribute",
             Self::CanonicalBound(_) => "broadcast.mapping.canonical-bound",
             Self::ResultShape(_) => "broadcast.mapping.result-shape",
+            Self::UndeclaredSymbol { .. } => "broadcast.mapping.undeclared-symbol",
+            Self::SourceTooLate { .. } => "broadcast.mapping.source-too-late",
+            Self::ExtentNotProvedPositive { .. } => "broadcast.mapping.extent-not-proved-positive",
+            Self::ExtentsNotProvedEqual { .. } => "broadcast.mapping.extent-not-proved-equal",
+            Self::StretchSourceNotProvedUnit { .. } => {
+                "broadcast.mapping.stretch-source-not-proved-unit"
+            }
         }
     }
 }
@@ -405,6 +465,41 @@ impl fmt::Display for BroadcastMappingError {
             Self::ResultShape(source) => {
                 write!(formatter, "the result shape is not admitted: {source}")
             }
+            Self::UndeclaredSymbol { symbol } => write!(
+                formatter,
+                "{symbol} is not declared by this program's shape environment"
+            ),
+            Self::SourceTooLate {
+                symbol,
+                available,
+                ceiling,
+            } => write!(
+                formatter,
+                "{symbol} is available at {available}, after {ceiling}"
+            ),
+            Self::ExtentNotProvedPositive {
+                result_axis,
+                declared,
+            } => write!(
+                formatter,
+                "result axis {result_axis} declares {declared}, and a many-to-one relation requires this program's shape environment to prove that extent is at least one"
+            ),
+            Self::ExtentsNotProvedEqual {
+                result_axis,
+                declared,
+                operand,
+            } => write!(
+                formatter,
+                "result axis {result_axis} declares {declared} and reads operand extent {operand}, and this program's shape environment does not prove they are one extent"
+            ),
+            Self::StretchSourceNotProvedUnit {
+                operand_axis,
+                extent,
+            } => write!(
+                formatter,
+                "operand axis {} names {extent}, and this program's shape environment does not prove that extent is one",
+                operand_axis.get()
+            ),
         }
     }
 }
@@ -435,14 +530,14 @@ impl CanonicalBroadcastAxisMapping {
 ///
 /// Construction decides every rule that is a property of the mapping alone —
 /// that it accounts for every declared result axis, that it consumes operand
-/// axes in order, that a widening relation actually widens, and that at least one
-/// many-to-one relation is stated. [`Self::result_shape`] decides the rules that
-/// need the operand: that the consumed axes are the operand's axes, that a
-/// one-to-one correspondence agrees on its extent, and that a stretched axis has
-/// extent one.
+/// axes in order, that a *literal* widening relation actually widens, and that
+/// at least one many-to-one relation is stated. Environment-dependent rules —
+/// admission, positivity, `from-operand` equality, and `stretch-unit` unit
+/// proof — are decided when the mapping is applied against the program's one
+/// environment, never here.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct BroadcastAxisMapping {
-    result_extents: Vec<Extent>,
+    result_extents: Vec<SourcedExtent>,
     sources: Vec<BroadcastAxisSource>,
     canonical_value: CanonicalValue,
 }
@@ -450,14 +545,18 @@ pub struct BroadcastAxisMapping {
 impl BroadcastAxisMapping {
     /// Builds an axis mapping from a declared result shape and one source per axis.
     ///
+    /// Context-free: a symbolic many-to-one extent is admitted here and proved
+    /// positive only when the mapping is applied. A literal many-to-one extent
+    /// below two is still refused, so one relation keeps one spelling.
+    ///
     /// # Errors
     ///
     /// Returns [`BroadcastMappingError`] naming the violated rule.
     pub fn new(
-        result_extents: impl IntoIterator<Item = Extent>,
+        result_extents: impl IntoIterator<Item = impl Into<SourcedExtent>>,
         sources: impl IntoIterator<Item = BroadcastAxisSource>,
     ) -> Result<Self, BroadcastMappingError> {
-        let result_extents = collect_bounded(result_extents)?;
+        let result_extents = collect_bounded(result_extents.into_iter().map(Into::into))?;
         let sources = collect_bounded(sources)?;
         if sources.len() != result_extents.len() {
             return Err(BroadcastMappingError::SourceCountMismatch {
@@ -481,11 +580,13 @@ impl BroadcastAxisMapping {
             }
         }
         for (result_axis, (source, extent)) in sources.iter().zip(&result_extents).enumerate() {
-            if source.is_many_to_one() && extent.get() < 2 {
+            if let (true, Some(literal)) = (source.is_many_to_one(), extent.as_static())
+                && literal.get() < 2
+            {
                 return Err(BroadcastMappingError::RelationDoesNotWiden {
                     result_axis,
                     relation: source.canonical_name(),
-                    declared: extent.get(),
+                    declared: literal.get(),
                 });
             }
         }
@@ -528,7 +629,7 @@ impl BroadcastAxisMapping {
 
     /// Returns the declared result extents.
     #[must_use]
-    pub fn result_extents(&self) -> &[Extent] {
+    pub fn result_extents(&self) -> &[SourcedExtent] {
         &self.result_extents
     }
 
@@ -557,18 +658,43 @@ impl BroadcastAxisMapping {
         CanonicalBroadcastAxisMapping(bytes)
     }
 
-    /// Decides this mapping against one operand shape and returns the result shape.
+    /// Decides this mapping against one static operand shape and returns the result.
     ///
-    /// The result shape is the declared one; what this method establishes is that
-    /// declaring it was legal — that the mapping consumes exactly the operand's
-    /// axes, that every one-to-one correspondence agrees on its extent, and that
-    /// every stretched axis has extent one.
+    /// The static/reference path: every declared extent must be a literal, and
+    /// equality and unit proofs are decided by comparing those literals. A
+    /// mapping that names a symbol is refused rather than applied against a
+    /// second environment this method does not hold.
     ///
     /// # Errors
     ///
     /// Returns [`BroadcastMappingError`] naming the violated rule.
     pub fn result_shape(&self, operand: &Shape) -> Result<Shape, BroadcastMappingError> {
-        let extents = operand.extents();
+        let sourced = self.apply(&SourcedShape::from(operand.clone()), None)?;
+        if let Some(shape) = sourced.as_static() {
+            return Ok(shape.clone());
+        }
+        if let Some(symbol) = self.result_extents.iter().find_map(SourcedExtent::symbol) {
+            return Err(BroadcastMappingError::UndeclaredSymbol {
+                symbol: symbol.clone(),
+            });
+        }
+        Err(BroadcastMappingError::NoManyToOneRelation)
+    }
+
+    /// Decides this mapping against one operand and the program's environment.
+    ///
+    /// One `O(rank)` walk. Admission, positivity, equality, and unit proofs
+    /// read the environment's retained summary; this method does not solve.
+    /// `sources == None` treats every symbol as undeclared.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BroadcastMappingError`] naming the violated rule.
+    pub(crate) fn apply(
+        &self,
+        operand: &SourcedShape,
+        sources: Option<&ExtentSources>,
+    ) -> Result<SourcedShape, BroadcastMappingError> {
         let consumed = self
             .sources
             .iter()
@@ -580,37 +706,112 @@ impl BroadcastAxisMapping {
                 rank: operand.rank(),
             });
         }
+        let operand_extents: Vec<SourcedExtent> = operand.extents().collect();
         for (result_axis, (source, declared)) in
             self.sources.iter().zip(&self.result_extents).enumerate()
         {
+            admit_declared(declared, sources)?;
+            if source.is_many_to_one()
+                && declared.as_static().is_none()
+                && !sources.is_some_and(|sources| sources.proves_positive(declared))
+            {
+                return Err(BroadcastMappingError::ExtentNotProvedPositive {
+                    result_axis,
+                    declared: declared.clone(),
+                });
+            }
             // The mapping consumes axes `0..consumed` in order and `consumed`
-            // equals the operand's rank, so every named axis indexes `extents`.
+            // equals the operand's rank, so every named axis indexes `operand_extents`.
             match source {
                 BroadcastAxisSource::FromOperand(axis) => {
-                    let operand_extent = extents[usize::try_from(axis.get()).unwrap_or(0)];
-                    if operand_extent != *declared {
-                        return Err(BroadcastMappingError::ExtentDisagreement {
-                            result_axis,
-                            declared: declared.get(),
-                            operand_axis: *axis,
-                            operand_extent: operand_extent.get(),
-                        });
+                    let operand_extent = &operand_extents[usize::try_from(axis.get()).unwrap_or(0)];
+                    match (declared.as_static(), operand_extent.as_static()) {
+                        (Some(declared_literal), Some(operand_literal)) => {
+                            if declared_literal != operand_literal {
+                                return Err(BroadcastMappingError::ExtentDisagreement {
+                                    result_axis,
+                                    declared: declared_literal.get(),
+                                    operand_axis: *axis,
+                                    operand_extent: operand_literal.get(),
+                                });
+                            }
+                        }
+                        _ if sources.is_some_and(|sources| {
+                            sources.proves_equal(declared, operand_extent)
+                        }) => {}
+                        _ => {
+                            return Err(BroadcastMappingError::ExtentsNotProvedEqual {
+                                result_axis,
+                                declared: declared.clone(),
+                                operand: operand_extent.clone(),
+                            });
+                        }
                     }
                 }
                 BroadcastAxisSource::StretchUnit(axis) => {
-                    let operand_extent = extents[usize::try_from(axis.get()).unwrap_or(0)];
-                    if operand_extent.get() != 1 {
-                        return Err(BroadcastMappingError::StretchSourceNotUnit {
-                            operand_axis: *axis,
-                            extent: operand_extent.get(),
-                        });
+                    let operand_extent = &operand_extents[usize::try_from(axis.get()).unwrap_or(0)];
+                    match operand_extent.as_static() {
+                        Some(literal) if literal.get() != 1 => {
+                            return Err(BroadcastMappingError::StretchSourceNotUnit {
+                                operand_axis: *axis,
+                                extent: literal.get(),
+                            });
+                        }
+                        Some(_) => {}
+                        None if sources.is_some_and(|sources| {
+                            sources.proves_equal(
+                                operand_extent,
+                                &SourcedExtent::Static(Extent::new(1)),
+                            )
+                        }) => {}
+                        None => {
+                            return Err(BroadcastMappingError::StretchSourceNotProvedUnit {
+                                operand_axis: *axis,
+                                extent: operand_extent.clone(),
+                            });
+                        }
                     }
                 }
                 BroadcastAxisSource::Replicate => {}
             }
         }
-        Shape::try_new(self.result_extents.iter().copied())
+        SourcedShape::sourced(self.result_extents.clone())
             .map_err(BroadcastMappingError::ResultShape)
+    }
+}
+
+fn admit_declared(
+    extent: &SourcedExtent,
+    sources: Option<&ExtentSources>,
+) -> Result<(), BroadcastMappingError> {
+    match sources {
+        Some(sources) => sources
+            .admit(extent)
+            .map(|_| ())
+            .map_err(|error| match error {
+                crate::shape::ExtentSourceError::UndeclaredSymbol { symbol } => {
+                    BroadcastMappingError::UndeclaredSymbol { symbol }
+                }
+                crate::shape::ExtentSourceError::SourceTooLate {
+                    symbol,
+                    available,
+                    ceiling,
+                } => BroadcastMappingError::SourceTooLate {
+                    symbol,
+                    available,
+                    ceiling,
+                },
+                crate::shape::ExtentSourceError::DivisorNotProvedPositive { .. }
+                | crate::shape::ExtentSourceError::ExtentsNotProvedEqual(_) => {
+                    unreachable!("admit reports only undeclared and too-late")
+                }
+            }),
+        None => match extent.symbol() {
+            Some(symbol) => Err(BroadcastMappingError::UndeclaredSymbol {
+                symbol: symbol.clone(),
+            }),
+            None => Ok(()),
+        },
     }
 }
 
@@ -651,7 +852,7 @@ fn collect_bounded<T>(items: impl IntoIterator<Item = T>) -> Result<Vec<T>, Broa
     Ok(collected)
 }
 
-fn decode_extents(value: &CanonicalValue) -> Result<Vec<Extent>, BroadcastMappingError> {
+fn decode_extents(value: &CanonicalValue) -> Result<Vec<SourcedExtent>, BroadcastMappingError> {
     let CanonicalValueView::Sequence(values) = value.view() else {
         return Err(malformed(BroadcastAttributeSubject::ResultExtents));
     };
@@ -664,14 +865,10 @@ fn decode_extents(value: &CanonicalValue) -> Result<Vec<Extent>, BroadcastMappin
     values
         .iter()
         .map(|value| {
-            let CanonicalValueView::Unsigned {
-                width: CanonicalIntegerWidth::Bits64,
-                bits,
-            } = value.view()
-            else {
+            let CanonicalValueView::Bytes(bytes) = value.view() else {
                 return Err(malformed(BroadcastAttributeSubject::ResultExtents));
             };
-            Ok(Extent::new(bits))
+            SourcedExtent::decode(bytes).ok_or(malformed(BroadcastAttributeSubject::ResultExtents))
         })
         .collect()
 }
@@ -755,14 +952,16 @@ fn decode_axis(value: &CanonicalValue) -> Result<Axis, BroadcastMappingError> {
 /// replication has no axis, so a parallel encoding would need a sentinel axis
 /// value, and a sentinel is a value a caller can also write.
 fn encode_mapping(
-    result_extents: &[Extent],
+    result_extents: &[SourcedExtent],
     sources: &[BroadcastAxisSource],
 ) -> Result<CanonicalValue, TypeIdentityError> {
-    let extents = CanonicalValue::sequence(
-        result_extents
-            .iter()
-            .map(|extent| CanonicalValue::unsigned_u64(extent.get())),
-    )?;
+    let mut encoded_extents = Vec::with_capacity(result_extents.len());
+    for extent in result_extents {
+        let mut bytes = Vec::with_capacity(extent.encoded_len());
+        extent.encode(&mut bytes);
+        encoded_extents.push(CanonicalValue::bytes_owned(bytes)?);
+    }
+    let extents = CanonicalValue::sequence(encoded_extents)?;
     let mut encoded = Vec::with_capacity(sources.len());
     for source in sources {
         let relation = CanonicalField::new(
@@ -793,7 +992,7 @@ fn encode_mapping(
 pub(super) fn register_standard_broadcast(
     registrar: &mut SemanticRegistryRegistrar<'_>,
 ) -> Result<(), RegistryError> {
-    registrar.register_operation(OperationDefinition::new(
+    registrar.register_operation(OperationDefinition::new_governed_environment_aware(
         broadcast_f32_op(),
         OperationSchema::new(
             OperationArity::exact(1),
@@ -815,15 +1014,21 @@ pub(super) fn register_standard_broadcast(
     // missing declaration is unknown rather than the inverse law.
 }
 
-/// The complete normative definition of `tiler::broadcast-f32@1`.
+/// The complete normative definition of `tiler::broadcast-f32@2`.
 const BROADCAST_F32_NORMATIVE_DEFINITION: &str = concat!(
-    "tiler::broadcast-f32@1; a total output-to-input binary32 coordinate relation stated by an ",
+    "tiler::broadcast-f32@2; a total output-to-input binary32 coordinate relation stated by an ",
     "explicit axis mapping with exactly one entry per result axis, so every result axis is ",
     "accounted for and every many-to-one relation is written down. ",
+    "Declared result extents are sourced: a literal or a symbol declared by the program's exact ",
+    "shape environment. ",
     "Admitted relations, and no others: from-operand, a one-to-one correspondence whose result ",
-    "extent equals the named operand axis's extent; stretch-unit, a many-to-one widening of a ",
-    "named operand axis whose extent is one, to a result extent of at least two; and replicate, a ",
-    "many-to-one result axis of extent at least two with no operand axis behind it. ",
+    "extent the environment proves equal to the named operand axis's extent; stretch-unit, a ",
+    "many-to-one widening of a named operand axis the environment proves has extent one; and ",
+    "replicate, a many-to-one result axis with no operand axis behind it. ",
+    "A literal many-to-one result extent must be at least two. A symbolic many-to-one result ",
+    "extent is admitted only when the environment proves it positive; it may bind to one, ",
+    "including when the environment determines it is always one. A symbol that may be zero is ",
+    "refused. ",
     "The mapping consumes every operand axis exactly once and in ascending order; a reordering is ",
     "a reindex and a dropped operand axis is a reduction or a slice, and each is refused by name. ",
     "A mapping stating only one-to-one correspondences denotes no broadcast and is refused. ",
@@ -901,15 +1106,10 @@ impl OperationInferencer for BroadcastF32 {
                 "a broadcast operand must be f32".to_owned(),
             ));
         }
-        // A broadcast mapping relates a source extent to a declared result
-        // extent, so deciding it needs the extents themselves. Widening it to a
-        // symbolic source is a separate rule with its own proof obligation, and
-        // until that rule exists the operand is declined by name rather than
-        // compared by spelling.
         let shape = mapping
-            .result_shape(request.static_operand_shape(0)?)
+            .apply(operand.shape(), request.extent_sources())
             .map_err(|error| mapping_rejection(&error))?;
-        outputs.try_push(ValueFact::new(F32::resolved_type(), shape))
+        outputs.try_push(ValueFact::from_sourced(F32::resolved_type(), shape))
     }
 }
 
