@@ -15,7 +15,7 @@ lease_expires_at: 1786681121
 ---
 ## Outcome
 
-Measure the retained physical-frontier harness on the idle Apple M3 Pro under the repository performance protocol. Compiler behavior under test is exact base `4fb0427319b1504e1549e03ba023ac486343a743`; the retained executable harness and corrected independent proposal-assessment counter are exact commit `bef9a39afaeb929eef99d7d43232bdc61c9b5e2a`. Run that commit, or a final descendant only after proving its executable harness is unchanged. Record identical release-profile warm-up 8, repeats 50, minimum/median/p90/maximum/mean, child-process peak RSS, load/noise controls, toolchain, OS, and both commits for the 1, 2, 8, and 16-target five-operation governed and installed-specialist requests plus the four-contract add-chain population. Include the 1,024 narrow-population candidate and the 16,384 full-32-provider-activity candidate in the host-runtime and memory comparison. Do not change host or toolchain components.
+Measure the retained physical-frontier harness on the idle Apple M3 Pro under the repository performance protocol. Compiler behavior under test is exact base `4fb0427319b1504e1549e03ba023ac486343a743`; the retained workload and corrected independent proposal-assessment counter are exact commit `bef9a39afaeb929eef99d7d43232bdc61c9b5e2a`, and exact executable evidence commit `981ddf7f10dcecb109962fbd39ba56cd80d10c78` adds only raw timing/RSS custody and deterministic recomputation. Run the custody commit after proving its workload is unchanged. Record identical release-profile warm-up 8, repeats 50, minimum/median/p90/maximum/mean, child-process peak RSS, load/noise controls, toolchain, OS, and both commits for the 1, 2, 8, and 16-target five-operation governed and installed-specialist requests plus the four-contract add-chain population. Include the 1,024 narrow-population candidate and the 16,384 full-32-provider-activity candidate in the host-runtime and memory comparison. Do not change host or toolchain components.
 
 ## Why this is separate
 
@@ -44,6 +44,12 @@ The available host on 2026-08-13 was an active Apple M4 Max, not the required id
 - **Verified.** No production budget value or public seam is authorized by this ticket.
 
 No false premise changed this ticket's purpose, so measurement proceeded.
+
+## Custody repair and 2026-08-14 idle precheck
+
+**Fact.** Review found that the 2026-08-13 request-wide artifacts retain only five timing summaries per row and one parsed RSS integer: they omit every ordered duration, complete `/usr/bin/time -l` stderr, and the child exit status. Those distributions and RSS values therefore remain useful history but are withdrawn as independently recomputable live evidence. Exact executable commit `981ddf7f10dcecb109962fbd39ba56cd80d10c78` retains all fifty integer-nanosecond durations in execution order, complete stderr and status for every RSS child, refuses absent or duplicate maximum-RSS lines and unsuccessful children, keys every series by ordinal/name/targets/provider count/kind/program kind, exports raw timing/RSS artifacts, and verifies summaries, raw artifacts, annotation equality, and SHA-256 custody.
+
+**Measurement hold, 2026-08-14 00:50 EDT.** The M3 Pro was on AC power at 100 percent with no thermal/performance warning and no swap I/O, but the formal pre-run load was `{ 3.08 2.45 2.26 }`; an immediate process control observed one Chrome renderer at 82.0 percent CPU and its Chrome parent at 24.3 percent, with load `{ 2.84 2.42 2.25 }`. The `record` command was not started, no timing or RSS samples were collected, and no host, toolchain, OS, Xcode, or SDK component changed. The clean detached custody executable and precheck snapshot remain retained on the measurement host for the next idle check.
 
 ## Measurement record
 
