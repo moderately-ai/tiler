@@ -8,20 +8,23 @@
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use super::*;
 use crate::schedule::{
-    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContractionAxisSource,
-    ContributorCoverage, ContributorOrder, ContributorPartition, ConvergenceEvidence,
-    CooperativePhase, CooperativeTile, ExceptionalValueAssumption, ExecutionBinding, FencedSpaces,
-    InputOrdinal, KernelSchedule, LaunchPlan, LocalCoordinateSource, LocalCoordinates,
-    LogicalAccess, MemoryOrdering, NumericalPermission, NumericalRealization, OwnershipProof,
-    OwnershipProofKind, OwnershipWitnessId, ParticipantRange, ParticipantSpace, PhaseId,
-    PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionPaddingIdentity, ReductionPass,
-    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, StagedElement, StagedRead,
-    StagedSpan, StagedWrite, StagingId, SubnormalMode, SyncPointId, SynchronizationKind,
-    SynchronizationPlacement, SynchronizationPoint, SynchronizationScope, SynchronizationSubject,
-    TailPolicy, TensorRole, VerifiedScheduledRegion, WorkgroupStaging, element_count,
+    Access, AccessMode, ArithmeticType, BoundsProof, BoundsProofKind, BoundsWitnessId,
+    ContractionAxisSource, ContributorCoverage, ContributorOrder, ContributorPartition,
+    ConvergenceEvidence, CooperativePhase, CooperativeTile, ExceptionalValueAssumption,
+    ExecutionBinding, FencedSpaces, InputOrdinal, KernelSchedule, LaunchPlan,
+    LocalCoordinateSource, LocalCoordinates, LogicalAccess, MemoryOrdering, NumericalPermission,
+    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId, ParticipantRange,
+    ParticipantSpace, PhaseId, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
+    ReductionPaddingIdentity, ReductionPass, ReductionTopology, RegionId, ScalarProgram,
+    ScheduledRegionBuilder, StagedElement, StagedRead, StagedSpan, StagedWrite, StagingId,
+    SubgroupRealizationSubject, SubgroupTransfer, SubgroupWidth, SubnormalMode, SyncPointId,
+    SynchronizationKind, SynchronizationPlacement, SynchronizationPoint, SynchronizationScope,
+    SynchronizationSubject, TailPolicy, TensorRole, VerifiedScheduledRegion, WorkgroupStaging,
+    element_count,
 };
 use crate::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
@@ -31,6 +34,7 @@ use crate::shape::{Axis, Shape};
 const NAN_BITS: u32 = 0x7fc0_0000;
 const SCALE_BITS: u32 = 0x4000_0000;
 const BIAS_BITS: u32 = 0x3f80_0000;
+const ABSENT_SUBGROUP_KERNEL_IDENTITY_HEX: &str = "74696c65722e6b65726e656c2e763700000000000000018a74696c65722e7363686564756c652e7635000000000000000002000000000000000200000000000000030000000000000002010000000000010100000000000200020100000001010000000000000000000000020000000001000000000011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc00000010101010101010101000000000000000600000001010000000031000000000000000600000001010000000000000002010000000000030101000000000000000602000301020000000000000006000000000000000101000000000000001574696c65722e746573742e7374726963742d6633327fc000000101010101010101000000020000000100000000000000000101000101010101010101000000000000000a020201030303030303030000000000000000000000000000000411010000000000000001000000001202000000000000000600000000000000010000000114010000000000000001000000000000000100000002180000000200000000000000000000000000000008160000000000000000000000000000000000000001000000031203400000000000000000000001000000041306000000030000000400000000000000010000000515010000000500000000000000010000000612033f8000000000000000000001000000071305000000060000000700000000000000010000000815010000000800000000000000010000000917000000010000000000000009000000010000000000000000000000000000000000000000";
 
 fn numerical() -> NumericalRealization {
     NumericalRealization::new(
@@ -769,6 +773,69 @@ fn canonical_pointwise(scheduled: &VerifiedScheduledRegion, elements: u64) -> Ke
     builder
 }
 
+/// Builds the same verified pointwise kernel under a prospective subgroup
+/// requirement. No admitted schedule derives a present requirement yet, so the
+/// test has to replace both copies of that derived fact before running the real
+/// refinement verifier; every other kernel field still comes through the public
+/// producer path above.
+fn pointwise_with_subgroup_requirement(
+    scheduled: &VerifiedScheduledRegion,
+    subject: SubgroupRealizationSubject,
+) -> VerifiedKernel {
+    let mut requirements = scheduled.requirements();
+    requirements.subgroup = Some(subject);
+    let mut builder = KernelBuilder::from_parts(
+        scheduled.region().clone(),
+        scheduled.canonical_identity().clone(),
+        requirements,
+    )
+    .unwrap();
+    let read = builder
+        .declare_buffer(BufferParameter {
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            component_role: None,
+            element_type: KernelType::F32,
+            address_space: AddressSpace::Device,
+            access: BufferAccess::Read,
+            element_count: 6,
+        })
+        .unwrap();
+    let write = builder
+        .declare_buffer(BufferParameter {
+            tensor: TensorRole::Intermediate,
+            component_role: None,
+            element_type: KernelType::F32,
+            address_space: AddressSpace::Device,
+            access: BufferAccess::Write,
+            element_count: 6,
+        })
+        .unwrap();
+    builder
+        .admit_builtin(Builtin::GlobalInvocationIndex)
+        .unwrap();
+    builder.numerical(numerical()).unwrap();
+    builder.requirements(requirements).unwrap();
+    let (invocation, active) = guard(&mut builder, 6);
+    builder
+        .predicated(active, |builder| {
+            let loaded = builder.load(read, invocation, BoundsWitnessId::new(0))?;
+            let value = scale_bias(builder, loaded);
+            builder.store(
+                write,
+                invocation,
+                value,
+                BoundsWitnessId::new(1),
+                OwnershipWitnessId::new(0),
+            )
+        })
+        .unwrap();
+    builder
+        .build()
+        .expect("the prospective subgroup requirement is identity-bearing")
+}
+
 fn diagnostics(builder: KernelBuilder) -> Vec<KernelDiagnostic> {
     builder.build().unwrap_err().into_parts().1
 }
@@ -1117,6 +1184,67 @@ fn identity_is_independent_of_planning_ordinals_and_separates_content() {
     assert_ne!(
         first.canonical_identity().as_bytes(),
         reduction.canonical_identity().as_bytes()
+    );
+}
+
+/// A present subgroup requirement appends one self-contained identity subject.
+///
+/// The ordinary lowering is the absence control: it still ends at the exact
+/// pre-subgroup identity bytes. Each constructible subject dimension then moves
+/// the whole identity independently. The final byte is the transfer tag, which
+/// pins its governed position without pretending that a second typed transfer
+/// exists to perturb.
+#[test]
+fn subgroup_requirement_is_append_only_and_identity_bearing() {
+    fn appended_subject<'a>(kernel: &'a VerifiedKernel, absent: &[u8]) -> &'a [u8] {
+        kernel
+            .canonical_identity()
+            .as_bytes()
+            .strip_prefix(absent)
+            .expect("a present subgroup requirement only appends to the absent identity")
+    }
+
+    let scheduled = pointwise_region(RegionId::new(0), &Shape::from_dims([2, 3]));
+    let absent = canonical_pointwise(&scheduled, 6).build().unwrap();
+    assert_eq!(absent.requirements().subgroup, None);
+
+    let subject = |lanes, arithmetic| {
+        SubgroupRealizationSubject::new(
+            SubgroupWidth::new(lanes).unwrap(),
+            arithmetic,
+            SubgroupTransfer::InRangeXorShuffle,
+        )
+        .unwrap()
+    };
+    let required =
+        pointwise_with_subgroup_requirement(&scheduled, subject(32, ArithmeticType::F32));
+    let wider = pointwise_with_subgroup_requirement(&scheduled, subject(64, ArithmeticType::F32));
+    let bf16 = pointwise_with_subgroup_requirement(&scheduled, subject(32, ArithmeticType::Bf16));
+
+    let absent_bytes = absent.canonical_identity().as_bytes();
+    assert_eq!(
+        appended_subject(&required, absent_bytes),
+        [0x01, 0x00, 0x00, 0x00, 0x20, 0x03, 0x01],
+        "presence, width, arithmetic, and transfer append in governed order"
+    );
+    assert_eq!(
+        appended_subject(&wider, absent_bytes),
+        [0x01, 0x00, 0x00, 0x00, 0x40, 0x03, 0x01],
+        "width must move the prospective kernel identity"
+    );
+    assert_eq!(
+        appended_subject(&bf16, absent_bytes),
+        [0x01, 0x00, 0x00, 0x00, 0x20, 0x02, 0x01],
+        "arithmetic must move the prospective kernel identity"
+    );
+
+    let mut absent_hex = String::with_capacity(absent_bytes.len().saturating_mul(2));
+    for byte in absent_bytes {
+        write!(&mut absent_hex, "{byte:02x}").unwrap();
+    }
+    assert_eq!(
+        absent_hex, ABSENT_SUBGROUP_KERNEL_IDENTITY_HEX,
+        "adding a conditional subgroup suffix must not move the absent kernel pin"
     );
 }
 
