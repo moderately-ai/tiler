@@ -403,25 +403,16 @@ fn a_structurally_invalid_body_fails_the_compilation_closed() {
     }
 }
 
-/// Claim 6 — the *offered* provider set is still lowering-only.
+/// Claim 6 — the offered lowering and physical environments are distinct.
 ///
-/// The one absence this spike still records, and it is a narrower one than the
-/// two it retired. `Compilation::offered_providers` is the complete frozen
-/// environment a compilation was given, including authorities no retained plan
-/// chose; `PlanAlternative::selected_physical_providers` is what a plan
-/// actually used. Only the second half discloses physical providers, so an
-/// installed provider that reached no retained plan is *invisible* here — a
-/// caller cannot tell its registration failing to take effect from its provider
-/// losing on cost, which is exactly the conflation splitting the disclosure in
-/// two exists to prevent.
-///
-/// `InstalledPhysicalProviders::identities` is the caller's own record of what
-/// it installed and closes half the gap; what has no reading is the
-/// compilation's own account of the environment it ran under. Recorded as a
-/// measured absence rather than argued for: whether the offered half should
-/// grow a physical row is ADR 0090 item 5's subject and not this spike's.
+/// A compilation exposes two complete frozen environments under qualified
+/// names. Lowering identities cannot leak into the physical environment, and
+/// neither the governed nor caller-installed physical identity can leak into
+/// the lowering environment. The physical population is ordered governed first
+/// and then caller installation order; the selected population remains a
+/// separate statement about which providers a retained plan actually used.
 #[test]
-fn the_offered_provider_set_is_still_lowering_only() {
+fn the_offered_lowering_and_physical_environments_are_distinct() {
     let program = serial_sum_program(ROWS, COLUMNS);
     let specialized = AcmeProvider::new(Specialization::WideWorkgroup);
     let composed = compile_with(
@@ -433,26 +424,32 @@ fn the_offered_provider_set_is_still_lowering_only() {
     )
     .expect("the composed environment compiles");
 
-    let offered = composed.offered_providers();
+    let lowering = composed.offered_lowering_providers();
     assert!(
-        !offered.is_empty(),
+        !lowering.is_empty(),
         "the governed lowering providers are disclosed, so an empty answer here \
          would make the two assertions below vacuous",
     );
     assert!(
-        !offered.contains(&acme_provider::identity()),
-        "the installed physical provider is not disclosed by the offered half: {offered:?}",
+        !lowering.contains(&acme_provider::identity()),
+        "the installed physical provider leaked into the lowering environment: {lowering:?}",
     );
     assert!(
-        !offered.contains(&governed_identity()),
-        "not even the governed physical provider is disclosed there: {offered:?}",
+        !lowering.contains(&governed_identity()),
+        "the governed physical provider leaked into the lowering environment: {lowering:?}",
     );
-    // The control that makes this an *absence of a physical row* rather than a
-    // compilation that selected nothing: the same provider is named by the
-    // selected half of the same compilation.
+
+    let physical = composed.offered_physical_providers();
+    assert_eq!(
+        physical,
+        [governed_identity(), acme_provider::identity()],
+        "the physical environment is governed first and then caller installation order",
+    );
+    // The control that keeps *offered* distinct from *selected*: this provider
+    // reached a retained plan too, but that is a separate population and claim.
     assert!(
         selected_provider_identities(&composed).contains(&acme_provider::identity()),
-        "the provider missing from the offered half did reach a retained plan",
+        "the offered physical provider did not reach a retained plan",
     );
 }
 

@@ -39,6 +39,8 @@ CPU always runs. Metal payload production needs the system `xcrun` toolchain; Me
 
 Spikes gate nothing. The `Makefile` has no target for this directory.
 
+**Current-tree compatibility check — 2026-08-14.** `cargo check` passes against the accepted provider-surface rename: portfolio assembly reads the lowering-only artifact environment through `Compilation::offered_lowering_providers`, while the physical-provider reporting below continues to read `Compilation::offered_physical_providers`. This is a build check, not a re-run of the device measurement; the result table and JSON remain bounded to `61246804`.
+
 ## What one run does, in order
 
 1. **Builds one semantic program** — the smallest pointwise shape the compiler admits, `(input * 2.0) * 1.0` over a 4×3 `f32` tensor — and evaluates it through `tiler-reference`.

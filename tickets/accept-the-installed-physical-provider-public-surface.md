@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [drive-an-external-physical-implementation-provider-through-compilation]
 related: [accept-the-public-backend-provider-composition-boundary, disclose-offered-and-selected-physical-provider-sets-separately, publish-occurrence-bound-selected-physical-implementation-evidence]
-scopes: [contracts/decisions, contracts/optimizer, contracts/foundation, implementation/compiler, implementation/build, research/extensions]
+scopes: [contracts/decisions, contracts/optimizer, contracts/foundation, implementation/compiler, implementation/build, research/extensions, research/runtime]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [backend-providers, public-boundary, decision, needs-tom]
@@ -85,6 +85,8 @@ The implementing worker re-read this ticket, its completed dependency, ADRs 0075
 - **Production-subject perturbation.** Temporarily restoring only `pub fn offered_providers` made `cargo check -p tiler-build` fail E0599 at `plan_artifact.rs` with `no method named 'offered_lowering_providers'` and a suggestion for the restored old name. Restoring the accepted method made the check green.
 - Focused evidence passed: 22 tests across `caller_target_profile` and `external_physical_provider`, all 93 `tiler-build` tests, all-target checks for the two touched packages, Clippy with warnings denied, rustdoc with warnings denied, and all 13 `tiler-compiler` doctests including the four provider-boundary compile-fail cases.
 - `make check` passed: citation and formatting populations, workspace all-target check and Clippy, 3,613 nextest tests with 8 skipped, and the workspace doctest population. `tkt lint`, `git diff --check`, and exact-base `tkt guard` are the final branch checks.
+
+**Independent-review repair.** The root gate does not reach two nested path-dependent workspaces. Review found both still called the removed method: `backend-provider-portfolio` in `research/runtime` and the forkless-provider probe in `research/extensions`. The portfolio now reads the lowering-only artifact environment through `offered_lowering_providers`. Forkless Claim 6 now asserts the exact separation between nonempty lowering identities and the governed-first physical population instead of repeating its dated 2026-08-08 absence result; the retained JSON remains unchanged. `cargo check` in the portfolio, `cargo check --workspace --tests` plus all eight forkless nextest cases, and both nested formatting populations pass. Perturbing Claim 6 to read the lowering accessor as its physical population fails with the 21 lowering identities on the left and `[tiler::prototype-serial-sum-physical@1, acme::simdgroup-pointwise-metal@4]` on the right.
 
 ## Closes when
 
