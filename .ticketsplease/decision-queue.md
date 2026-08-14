@@ -2,7 +2,7 @@
 
 Operational queue for the continuous-delivery coordinator. Ticket files remain the authority; this file records presentation order, holds, exact release triggers, and the current recommendation so a later cycle does not rediscover or prematurely present a packet.
 
-Updated 2026-08-14 after Tom accepted item 1; publication remains gated below.
+Updated 2026-08-14 after Tom accepted items 1 and 2; publication remains gated below.
 
 ## 1. Truthful public class for complete-explain capacity refusal — accepted; implementation and evidence queued
 
@@ -12,19 +12,19 @@ Updated 2026-08-14 after Tom accepted item 1; publication remains gated below.
 - Strongest counterpoint: the explain limits are build constants rather than request-budget fields. The accepted public contract already says `BudgetExhausted` reports a deterministic bound "this build" declares, so a dedicated top-level class duplicates the same payload and caller action.
 - Release trigger: the accepted implementation and evidence tickets both land with independent review. The two downstream capacity tickets remain blocked on both nodes until then.
 
-## 2. Atomic subgroup realization surface — awaiting Tom
+## 2. Atomic subgroup realization surface — accepted
 
 - Tickets: `accept-the-atomic-subgroup-realization-surface` (`p1`, `awaiting-decision`) and `minimize-and-prove-the-atomic-subgroup-public-surface-before-acceptance`.
 - Packet evidence: the exact-surface repair and independent source review landed. A fresh read-only audit at `67fc9cac` found no source drift and one ticket-only identity imprecision, now repaired: both descriptors encode phase, authority, and validity, while only the complete declaration encodes the structured source and the checked descriptor deliberately excludes source identity. Focused IR, compiler, external-API, and UI populations remain green.
-- Current recommendation: present this exact packet next; its minimized surface remains the sole nondominated public spelling and no unresolved construction, identity, error, schema, or artifact-boundary prerequisite remains.
-- Release trigger: Tom accepts or revises the atomic packet's exact included and excluded surface.
+- Accepted 2026-08-14 by Tom in the live Codex conversation: the exact minimized surface at `efa83d9d8ac01de35091fd2dd2b47064dd89c524`, including its explicit unsupported population and reopening triggers.
+- Release trigger: none. The accepted implementation/evidence already landed; the decision ticket is terminal.
 
-## 3. Schedule-local input ordinal model — awaiting Tom behind item 2
+## 3. Schedule-local input ordinal model — awaiting Tom
 
 - Tickets: `decide-the-schedule-local-input-ordinal-model` (`p1`, decision packet) and implementation/evidence carrier `reconcile-input-ordinal-region-local-and-declared-input-semantics` (`p1`, blocked).
 - Packet evidence: exact-base reading proves `InputOrdinal` and pointwise expressions require a dense local leaf/access coordinate, while `TensorRole::Input`, physical scheduling, and `CoverAssembly` reinterpret it as a sparse declared program-input index. The verified region already retains the exact request subject containing ordered reads and declared ordinals, but assembly does not project that checked authority. Artifact mapping already follows the correct stage-access/materialized-origin path to `InputKey`.
 - Current recommendation: both surviving surfaces keep the coordinate dense region-local and project declared binding from the already-retained verified request subject. Option 1 retains an explicit ordinal on `TensorRole::Input`, preserving dense-corpus bytes with redundant validation. Option 3 makes the role fieldless, uses ordered access/kernel-buffer positions plus explicit handles for out-of-list references, and trades a complete identity/live-extent codec migration for one positional authority and smaller canonical bytes. Recommend Option 3 because the current carrier census supplies an ordered, witnessed, handled, or named companion coordinate everywhere and pre-production policy favors removing redundant invalid states; Option 1 is the narrower compatibility choice. Public declared ordinals, an unproved duplicate retained vector, a cosmetic rename, and the status quo remain eliminated.
-- Release trigger: item 2 leaves the active Tom decision slot, then Tom accepts or rejects the exact local meaning. Acceptance makes the existing carrier ready; source-bound live-row-major remains blocked until that carrier lands with sparse-subset, reorder, and identity evidence.
+- Release trigger: Tom accepts or rejects the exact local meaning. Acceptance makes the existing carrier ready; source-bound live-row-major remains blocked until that carrier lands with sparse-subset, reorder, and identity evidence.
 
 ## 4. Source-bound live-row-major access — blocked before decision
 

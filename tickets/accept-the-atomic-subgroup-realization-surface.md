@@ -1,13 +1,13 @@
 ---
 id: accept-the-atomic-subgroup-realization-surface
 title: Accept the atomic subgroup realization surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [minimize-and-prove-the-atomic-subgroup-public-surface-before-acceptance]
 related: [admit-an-atomic-subgroup-realization-subject-to-target-profiles]
 scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
-paths: []
+paths: [.ticketsplease/decision-queue.md]
 tags: [decision, needs-tom, public-boundary]
 ---
 ## User-visible outcome
@@ -84,6 +84,10 @@ Adding `ResourceRequirements.subgroup` was the original implementation's source-
 ## Recommendation
 
 **Proposal — accept the exact narrowed surface at `efa83d9d8ac01de35091fd2dd2b47064dd89c524`.** Strongest counterargument: because no admitted schedule yet derives `Some`, acceptance precedes the first executable subgroup consumer and the first artifact round trip; either could expose pressure on the subject spelling. `SubgroupTransfer` being non-exhaustive also prevents downstream exhaustive matches over today's sole variant, but no such total recognizer exists and ADR 0074 deliberately reserves that pattern for a closed vocabulary. Evidence that would reverse the recommendation is a concrete second transfer or schema whose correct construction cannot use the private-tag/public-subject-encode split without duplication or ambiguity. The recorded triggers ensure that evidence reopens the exact boundary instead of being silently absorbed.
+
+## Accepted by Tom — 2026-08-14
+
+Tom accepted the exact included and excluded surface above in the live Codex conversation, relayed by the coordinating agent. Acceptance is bounded to the repaired source and evidence commit `efa83d9d8ac01de35091fd2dd2b47064dd89c524`: it does not admit an artifact codec, KIR subgroup operation, Metal realization, governed-profile row, decoder, raw public tag, default, unchecked constructor, or second transfer. Those populations retain their stated reopening triggers.
 
 ## Closes when
 
