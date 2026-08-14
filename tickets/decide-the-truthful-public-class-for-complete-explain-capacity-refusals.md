@@ -1,7 +1,7 @@
 ---
 id: decide-the-truthful-public-class-for-complete-explain-capacity-refusals
 title: Decide the truthful public class for complete-explain capacity refusals
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [decide-how-explain-capacity-bounds-active-physical-provider-populations, calibrate-the-physical-frontier-provider-and-outcome-budgets, refuse-nothing-legal-on-the-explain-detail-ceiling]
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [public-boundary, explain, budgets, correctness]
+claimed_from: todo
+assignee: worker-explain-public-class
+lease_expires_at: 1786718386
 ---
 
 ## Outcome
