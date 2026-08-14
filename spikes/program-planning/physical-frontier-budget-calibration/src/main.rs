@@ -31,6 +31,13 @@ fn main() -> ExitCode {
         Some("--quick") => record(None, true),
         Some("census") => census_only(Perturb::None),
         Some("request-census") => request_census_only(),
+        Some("request-boundary") => {
+            let maximum = args
+                .next()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(31);
+            request_boundary(maximum)
+        }
         Some("perturb") => {
             if let Some(perturb) = args.next().as_deref().and_then(Perturb::parse) {
                 census_only(perturb)
@@ -65,21 +72,24 @@ fn main() -> ExitCode {
         }
         Some("child-request-measure") => {
             let _name = args.next().unwrap_or_else(|| "child-request".to_owned());
-            let targets = args.next().and_then(|value| value.parse().ok()).unwrap_or(1);
-            let extra = args.next().and_then(|value| value.parse().ok()).unwrap_or(0);
+            let targets = args
+                .next()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(1);
+            let extra = args
+                .next()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
             let kind = args.next().unwrap_or_else(|| "empty".to_owned());
             let program_kind = args.next().unwrap_or_else(|| "five-op".to_owned());
-            let (program, contracts, profiles) = request_measurement_subject(
-                &program_kind,
-                targets,
-                "test.child-request-measure",
-            );
+            let (program, contracts, profiles) =
+                request_measurement_subject(&program_kind, targets, "test.child-request-measure");
             child_request_measure(&program, &contracts, &profiles, extra, &kind);
             ExitCode::SUCCESS
         }
         Some("help" | "--help") => {
             println!(
-                "physical-frontier-budget-calibration [record [path]|census|request-census|perturb <name>|--quick]"
+                "physical-frontier-budget-calibration [record [path]|census|request-census|request-boundary [maximum-specialists]|perturb <name>|--quick]"
             );
             ExitCode::SUCCESS
         }
@@ -88,6 +98,46 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+fn request_boundary(maximum_specialists: usize) -> ExitCode {
+    let program = five_op_program(4, 3);
+    for specialists in 1..=maximum_specialists {
+        let tally = shared_tally();
+        let providers = flock(
+            "request-boundary",
+            specialists,
+            Answer::Specialize { threads: 32 },
+            &tally,
+        );
+        let environment = tiler_compiler::physical_provider::InstalledPhysicalProviders::installed(
+            as_dyn(&providers),
+        )
+        .expect("the boundary-control providers install");
+        let profile =
+            declared_workgroup_profile(&format!("test.request-boundary-{specialists}.v1"), 64);
+        let compiled = compile_request(
+            &program,
+            [tiler_compiler::session::NumericalContract::STRICT_F32],
+            [profile],
+            &environment,
+        );
+        let tally = tally.borrow();
+        println!(
+            "specialists={specialists} successes={} invocations={} proposals={} declines={} raw={} alternatives={} explain_record_lines={} explain_bytes={} failure={:?} failure_tail={:?}",
+            compiled.successes,
+            tally.invocations,
+            tally.proposals,
+            tally.declines,
+            tally.raw_outcomes(),
+            compiled.alternatives,
+            compiled.explain_record_lines,
+            compiled.explain_bytes,
+            compiled.failure,
+            compiled.failure_explain_last_line,
+        );
+    }
+    ExitCode::SUCCESS
 }
 
 #[derive(Debug)]

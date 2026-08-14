@@ -24,21 +24,26 @@ cd spikes/program-planning/physical-frontier-budget-calibration
 CARGO_TARGET_DIR=./target cargo build --release
 ./target/release/physical-frontier-budget-calibration census
 ./target/release/physical-frontier-budget-calibration request-census
+./target/release/physical-frontier-budget-calibration request-boundary 31
 ./target/release/physical-frontier-budget-calibration perturb extra-production-provider
-./target/release/physical-frontier-budget-calibration record results/2026-08-13-macos-27.0-m3-pro.json
+./target/release/physical-frontier-budget-calibration record /tmp/physical-frontier-request-wide-rerun.json
 ```
 
 The last command is reserved for the idle M3 Pro. It now measures request-wide 1, 2, 8, and 16-target governed/specialist rows, the four-contract add chain, the governed-plus-two-specialist population, and the full 31-installed-specialist population with the same warm-up 8, repeats 50, and child-RSS protocol. `--quick` shortens warmup, repeats, and sweep points and skips `/usr/bin/time -l`. Spikes gate nothing.
 
-The compiler behavior under test is exact base `4fb0427319b1504e1549e03ba023ac486343a743`. The request harness and corrected independent proposal-assessment census are executable at `bef9a39afaeb929eef99d7d43232bdc61c9b5e2a`; the evidence record lands in a descendant that leaves that executable code unchanged. To rerun the exact evidence revision without depending on the current checkout:
+The compiler behavior under test is exact base `4fb0427319b1504e1549e03ba023ac486343a743`. The request measurement harness and corrected independent proposal-assessment census are executable at `bef9a39afaeb929eef99d7d43232bdc61c9b5e2a`. The request-wide record below was run from that exact detached commit. This descendant adds only the public-spike `request-boundary` diagnostic and rendered-record observation used after measurement to locate an independent explain-capacity refusal; it is not the executable measurement revision. To rerun the exact evidence revision without depending on the current checkout:
 
 ```sh
 evidence_worktree=$(mktemp -d /tmp/tiler-frontier-evidence.XXXXXX)
 git worktree add --detach "$evidence_worktree" bef9a39afaeb929eef99d7d43232bdc61c9b5e2a
 CARGO_TARGET_DIR="$evidence_worktree/target" cargo test --manifest-path "$evidence_worktree/Cargo.toml" -p tiler-compiler --lib request_wide_physical_planning_population_is_pinned -- --nocapture
 CARGO_TARGET_DIR="$evidence_worktree/spike-target" cargo run --quiet --manifest-path "$evidence_worktree/spikes/program-planning/physical-frontier-budget-calibration/Cargo.toml" -- census
+CARGO_TARGET_DIR="$evidence_worktree/spike-target" cargo build --release --manifest-path "$evidence_worktree/spikes/program-planning/physical-frontier-budget-calibration/Cargo.toml"
+"$evidence_worktree/spike-target/release/physical-frontier-budget-calibration" record /tmp/physical-frontier-request-wide-rerun.json
 git worktree remove --force "$evidence_worktree"
 ```
+
+Run the release `record` line only after the idle/noise precheck. The retained snapshots used `sw_vers`, `uname -a`, `sysctl -n machdep.cpu.brand_string`, `sysctl -n hw.ncpu`, `sysctl -n hw.memsize`, `sysctl -n vm.loadavg`, `uptime`, `pmset -g batt`, `pmset -g therm`, `memory_pressure`, `df -h /`, and `ps -Ao pid,ppid,%cpu,%mem,state,etime,comm -r`; the same load, power, thermal, memory, filesystem, and process checks ran immediately after the record. The [pre-run](results/2026-08-13-request-wide-macos-27.0-m3-pro.environment-before.txt) and [post-run](results/2026-08-13-request-wide-macos-27.0-m3-pro.environment-after.txt) artifacts retain those outputs with only `memory_pressure`'s trailing spaces normalized.
 
 The compiler-owned governed census is a targeted crate test because the old `ProviderOffer` public surface cannot expose raw governed emissions:
 
@@ -54,15 +59,15 @@ The old raw-outcome recommendation is withdrawn. It compiled one target per requ
 | --- | --- | ---: | ---: | --- |
 | 256 | governed sixteen-target five-op | 304 | −48 | eliminated |
 | 1,024 | governed + two active specialists | 848 | 176 | nondominated if 3+ active specialists are intentionally unsupported |
-| 16,384 | governed + all 31 installed slots active | 8,736 | 7,648 | nondominated; idle-M3 time/RSS held |
+| 16,384 | governed + all 31 installed slots active | 8,736 | 7,648 | eliminated under current explain authority; first target refuses at seven specialists |
 
-No exact value is recommended yet. `InstalledPhysicalProviders::installed` has no count branch, and the harness successfully installs 129 identities. The separate provider-count proposal remains 32 governed-included; that bounds invocation/provenance overhead and need not promise that every provider is active on every subject. Choosing 1,024 requires an explicit two-active-specialist support boundary. Choosing 16,384 covers the complete proposed provider cardinality but requires the held idle-M3 measurement.
+No exact value is recommended yet. `InstalledPhysicalProviders::installed` has no count branch, and the harness successfully installs 129 identities. The separate provider-count proposal remains 32 governed-included; that bounds invocation/provenance overhead and need not promise that every provider is active on every subject. Choosing 1,024 still requires an explicit two-active-specialist support boundary. A raw limit of 16,384 alone cannot cover the named full-provider population: the independent complete-explain authority refuses one target at seven specialists, long before 31 specialists can emit 8,736 request-wide outcomes. Full-provider activity is now a composite option behind [`decide-how-explain-capacity-bounds-active-physical-provider-populations`](../../../tickets/decide-how-explain-capacity-bounds-active-physical-provider-populations.md), not a surviving raw-budget value.
 
-Intermediate powers 2,048, 4,096, and 8,192 cover 6, 13, and 29 installed specialists. No ticket or consumer names any of those populations, so they are not material choices until such a support requirement exists.
+Intermediate powers 2,048, 4,096, and 8,192 cover 6, 13, and 29 installed specialists arithmetically. Six is also the largest active-specialist count this exact one-target subject carries under the current explain byte ceiling, but that incidental implementation boundary is not an accepted consumer population. No ticket or consumer names 6, 13, or 29 as the intended support boundary, so those powers remain non-material until such a requirement exists.
 
 ## What these limits do not bound
 
-They do not bound arbitrary native provider computation or allocation before an emission. A provider that loops, allocates a huge `ScheduledRegion`, or builds an oversized body still does that work before the host can charge the outcome. They also do not replace `physical_plan_combinations` (4096), and they do not sandbox explain-record growth except by cutting the outcomes that feed it.
+They do not bound arbitrary native provider computation or allocation before an emission. A provider that loops, allocates a huge `ScheduledRegion`, or builds an oversized body still does that work before the host can charge the outcome. They also do not replace `physical_plan_combinations` (4096). Raw outcomes and complete-explain capacity are different dimensions: this subject's installed emissions grow as `17n`, while retained alternatives grow as `(n + 1)(n + 2)` and rendered record lines through the last successful row grow as `39n² + 116n + 191`.
 
 ## Census
 
@@ -123,9 +128,48 @@ It reports target indexes 0–12 compiled and 13–15 refused with `BudgetExhaus
 
 The retained result is [`results/2026-08-13-macos-27.0-m3-pro.json`](results/2026-08-13-macos-27.0-m3-pro.json).
 
-### Request-wide timing hold
+### Request-wide M3 Pro timing and RSS
 
-The request harness was not recorded on 2026-08-13 because the available machine was an active Apple M4 Max, not the required idle M3 Pro: 36 GiB, 14 cores, load `{ 4.66 3.87 3.49 }`, iTerm 24.5%, WindowServer 14.1%. [`measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro`](../../../tickets/measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro.md) owns the external prerequisite. No M4 runtime or RSS is retained as decision evidence.
+**Measurement**, 2026-08-13 local / 2026-08-14 UTC, exact executable commit `bef9a39afaeb929eef99d7d43232bdc61c9b5e2a`, behavior base `4fb0427319b1504e1549e03ba023ac486343a743`. Apple M3 Pro, macOS 27.0 build `26A5388g`, Darwin 27.0.0, 11 logical CPUs, 18 GiB, `rustc 1.99.0-nightly (eff8269f7 2026-07-18)`, release profile. Runtime rows discard eight warm-ups and summarize fifty in-process compiles. RSS is macOS `/usr/bin/time -l` maximum resident set size for a child that warms twice and compiles once.
+
+The machine was on AC power at 100 percent battery, reported no thermal or performance warning, and had no swap I/O. Load moved from `{ 2.17 2.39 2.26 }` before the run to `{ 2.12 2.32 2.24 }` after it; the harness's intervening embedded snapshot was `{ 2.22 2.39 2.26 }`. Free-memory percentage was 73 then 72. No Cargo, rustc, make, nextest, or measurement binary appears in the process-name snapshot; the retained `pgrep` lines are the snapshot shell and a long-lived Node process whose argv or environment contains a search token, not competing builds. Apart from the observing SSH session, the highest pre-run process was `opendirectoryd` at 4.9 percent CPU; the highest post-run processes were Tailscale and `opendirectoryd` at 3.5 percent. The earlier build was allowed to settle before these snapshots.
+
+| Row | Targets | Installed outcomes | Alternatives / failure | Min / median / p90 / max / mean µs | Peak RSS bytes |
+| --- | ---: | ---: | --- | --- | ---: |
+| five-op, governed | 1 | 0 | 2 | 3,857 / 3,869 / 3,878 / 3,901 / 3,870 | 29,687,808 |
+| five-op, one specialist | 1 | 17 | 6 | 6,577 / 6,597 / 6,617 / 6,627 / 6,599 | 40,779,776 |
+| add chain, four groups | 1 | 10 | 2 | 3,041 / 3,050 / 3,057 / 3,060 / 3,050 | 25,690,112 |
+| five-op, governed | 2 | 0 | 4 | 7,747 / 7,763 / 7,787 / 7,808 / 7,766 | 39,813,120 |
+| five-op, one specialist | 2 | 34 | 12 | 13,244 / 13,276 / 13,298 / 13,309 / 13,278 | 59,080,704 |
+| add chain, four groups | 2 | 20 | 4 | 6,103 / 6,120 / 6,134 / 6,142 / 6,121 | 30,425,088 |
+| five-op, governed | 8 | 0 | 16 | 31,486 / 31,537 / 31,581 / 32,266 / 31,555 | 93,716,480 |
+| five-op, one specialist | 8 | 136 | 48 | 54,048 / 54,100 / 54,172 / 54,215 / 54,112 | 166,674,432 |
+| add chain, four groups | 8 | 124 | 24 | 35,017 / 35,056 / 35,085 / 35,185 / 35,065 | 88,195,072 |
+| five-op, governed | 16 | 0 | 32 | 63,418 / 63,483 / 63,555 / 64,080 / 63,502 | 165,855,232 |
+| five-op, one specialist | 16 | 272 | 96 | 108,601 / 108,698 / 108,853 / 110,835 / 108,767 | 309,837,824 |
+| five-op, two specialists | 16 | 544 | 192 | 177,748 / 178,847 / 179,403 / 185,961 / 179,058 | 531,202,048 |
+| five-op, 31 specialists | 16 requested | 527 reached | `InvalidCompilerOutput` on target 1 | 49,507 / 49,621 / 49,761 / 51,084 / 49,665 | 788,185,088 |
+| add chain, four groups | 16 | 248 | 48 | 70,420 / 70,496 / 70,558 / 70,688 / 70,505 | 156,270,592 |
+
+“Installed outcomes” excludes governed emissions because the public provider tally observes only caller-installed providers; the independent compiler census gives 304 governed outcomes and therefore 848 total raw outcomes for the successful two-specialist request. The 31-specialist row is refusal timing and RSS, not a measurement of the named 8,736-outcome population. It reached one target's 527 installed outcomes (93 proposals and 434 declines) before complete explain construction refused.
+
+The annotated record is [`results/2026-08-13-request-wide-macos-27.0-m3-pro.json`](results/2026-08-13-request-wide-macos-27.0-m3-pro.json); the harness-generated JSON is retained byte-for-byte in [`results/2026-08-13-request-wide-macos-27.0-m3-pro.generated.json`](results/2026-08-13-request-wide-macos-27.0-m3-pro.generated.json). Retained raw files are [stdout](results/2026-08-13-request-wide-macos-27.0-m3-pro.stdout.txt), [pre-run environment](results/2026-08-13-request-wide-macos-27.0-m3-pro.environment-before.txt), [post-run environment](results/2026-08-13-request-wide-macos-27.0-m3-pro.environment-after.txt), [green baselines](results/2026-08-13-request-wide-macos-27.0-m3-pro.baselines.txt), [compiler perturbations](results/2026-08-13-request-wide-macos-27.0-m3-pro.compiler-negatives.txt), and [candidate-calculation perturbations](results/2026-08-13-request-wide-macos-27.0-m3-pro.spike-negatives.txt). The generated rationale's `propose_per_outcome_ns=0` is not evidence: the unchanged helper selects a request-add minimum below the singleton governed floor and saturates that mixed-population subtraction to zero.
+
+### Explain-capacity boundary control
+
+`request-boundary 31` holds the one-target five-operation strict subject fixed and varies only the number of installed specialists. Six specialists succeed with 102 installed outcomes, 56 alternatives, 2,291 rendered record lines, and 650,099 rendered bytes. Seven emit 119 installed outcomes and fail with the exact final retained line:
+
+```text
+2257 target-feasibility compiler-failure rule=compile.failure@1 provider=compiler:tiler.compiler@1 subject=region:program-alternative:b489b9770d000255/region:0 event=compiler-failure:explain-detail-capacity causes=2256
+```
+
+**Fact.** Source anchor `let exceeds = if terminal` in `ExplainWriter::push` gives two non-terminal bounds: 4,096 detail records and 1 MiB of canonical detail bytes. Each declined strategy contributes a detail record under `for rejection in frontier.rejections()`, while complete-plan explanation grows with the Cartesian plan population.
+
+**Fact.** `DeterministicBudgets` has no physical-provider raw-outcome field at the behavior base. `16,384` is a calibration candidate rather than an installed authority, so it cannot fire on this compile path; the preserved 256-outcome draft is read-only evidence on a different commit.
+
+**Inference.** Explain record IDs are zero-based (`local` is minted from `self.records.len()`), so terminal ordinal 2,257 and 2,258 rendered record lines mean 2,257 detail records had been retained. The record-count arm therefore did not fire. `explain-detail-capacity` identifies the non-terminal disjunction; eliminating its record-count arm leaves the canonical byte ceiling as the first governing authority. [`decide-how-explain-capacity-bounds-active-physical-provider-populations`](../../../tickets/decide-how-explain-capacity-bounds-active-physical-provider-populations.md) now owns the decision to retain, widen, or compact that independent authority.
+
+The full [1-through-31 control](results/2026-08-13-request-wide-macos-27.0-m3-pro.boundary-full.txt) and a separate [six/seven first-failure control](results/2026-08-13-request-wide-macos-27.0-m3-pro.boundary-first-failure.txt) retain the exact public outputs.
 
 ## Perturbations
 
@@ -170,8 +214,10 @@ The request-wide compiler test also accepts a subject perturbation through `TILE
 | `candidate-contract-population` | `the four-contract semantic-candidate population changed` — left `224/40/216` invocation/proposal/decline population against `248/24/224` |
 | `governed-outcome-inclusion` | `the raw-outcome authority must include governed and installed emissions` — left 272 raw outcomes against 576 |
 
+The idle-M3 rerun retained the exact green compiler/spike baselines and all six closing-condition negatives in the linked raw files above. The four compiler perturbations exit 101 at their unchanged assertions; the two calculation perturbations exit 1 after the other 41 census checks remain green.
+
 ## Measurement boundary
 
-The finite census covers the five-operation strict program and tensor add chain, 1/2/8/16 distinct profiles, four numerical-contract groups, target order, the governed provider, and synthetic installed specialists. It does not claim a universal program, candidate, provider, or plan population. The historical timing covers one M3 Pro and singleton requests only; request-wide timing/RSS is held. Nothing here is a portable guarantee or a kernel time. Synthetic providers exercise the public seam, not a third-party crate's native compute.
+The finite census covers the five-operation strict program and tensor add chain, 1/2/8/16 distinct profiles, four numerical-contract groups, target order, the governed provider, and synthetic installed specialists. The valid request-wide timing/RSS rows cover governed, one-specialist, two-specialist, and four-contract add-chain populations on one M3 Pro. The attempted 31-specialist row measures only the existing explain-capacity refusal and does not reach all targets or 8,736 raw outcomes. Nothing here claims a universal program, candidate, provider, or plan population, a portable guarantee, or kernel time. Synthetic providers exercise the public seam, not a third-party crate's native compute.
 
 An accepted budget value directly changes the compiler-internal canonical request/evidence subject and explain request qualifier. Budget bytes do not directly enter plan, artifact, or cache identity; those identities move only indirectly if the changed bound changes selected packaged content.

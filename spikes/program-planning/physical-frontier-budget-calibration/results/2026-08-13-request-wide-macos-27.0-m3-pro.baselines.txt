@@ -1,0 +1,75 @@
+BASELINE_COMPILER_CENSUS
+   Compiling typenum v1.20.1
+   Compiling autocfg v1.5.1
+   Compiling libc v0.2.189
+   Compiling const-oid v0.10.2
+   Compiling cfg-if v1.0.4
+   Compiling num-traits v0.2.19
+   Compiling hybrid-array v0.4.13
+   Compiling crypto-common v0.2.2
+   Compiling block-buffer v0.12.1
+   Compiling cpufeatures v0.3.0
+   Compiling digest v0.11.3
+   Compiling sha2 v0.11.0
+   Compiling num-integer v0.1.46
+   Compiling num-bigint v0.4.8
+   Compiling tiler-digest v0.0.0 (/private/tmp/tiler-frontier-negatives.O9hS52/crates/tiler-digest)
+   Compiling tiler-ir v0.0.0 (/private/tmp/tiler-frontier-negatives.O9hS52/crates/tiler-ir)
+   Compiling tiler-reference v0.0.0 (/private/tmp/tiler-frontier-negatives.O9hS52/crates/tiler-reference)
+   Compiling tiler-compiler v0.0.0 (/private/tmp/tiler-frontier-negatives.O9hS52/crates/tiler-compiler)
+    Finished `test` profile [optimized + debuginfo] target(s) in 28.10s
+     Running unittests src/lib.rs (/tmp/tiler-frontier-negatives.O9hS52/target/debug/deps/tiler_compiler-bb92e80302cc4a84)
+
+running 1 test
+MEASURE request-wide strict governed census: PhysicalPlanningCensus { provider_invocations: 272, proposals: 48, declines: 256, proposal_assessments_started: 48, schedule_verifications: 48, admitted_implementations: 48, retained_implementations: 48, proposal_rejections: 0, frontier_rejections: 256, admitted_sort_items: 48, rejection_sort_items: 256, plan_combinations: 32, accepted_plan_combinations: 32, rejected_plan_combinations: 0, retained_complete_plans: 32, complete_plan_sort_items: 32 }
+MEASURE request-wide strict installed census: PhysicalPlanningCensus { provider_invocations: 544, proposals: 96, declines: 480, proposal_assessments_started: 96, schedule_verifications: 96, admitted_implementations: 96, retained_implementations: 96, proposal_rejections: 0, frontier_rejections: 480, admitted_sort_items: 96, rejection_sort_items: 480, plan_combinations: 96, accepted_plan_combinations: 96, rejected_plan_combinations: 0, retained_complete_plans: 96, complete_plan_sort_items: 96 }
+MEASURE request-wide strict infeasible census: PhysicalPlanningCensus { provider_invocations: 544, proposals: 96, declines: 480, proposal_assessments_started: 96, schedule_verifications: 96, admitted_implementations: 48, retained_implementations: 48, proposal_rejections: 48, frontier_rejections: 528, admitted_sort_items: 48, rejection_sort_items: 528, plan_combinations: 32, accepted_plan_combinations: 32, rejected_plan_combinations: 0, retained_complete_plans: 32, complete_plan_sort_items: 32 }
+MEASURE request-wide grouped governed census: PhysicalPlanningCensus { provider_invocations: 248, proposals: 24, declines: 224, proposal_assessments_started: 24, schedule_verifications: 24, admitted_implementations: 24, retained_implementations: 24, proposal_rejections: 0, frontier_rejections: 224, admitted_sort_items: 24, rejection_sort_items: 224, plan_combinations: 24, accepted_plan_combinations: 24, rejected_plan_combinations: 0, retained_complete_plans: 24, complete_plan_sort_items: 24 }
+test pipeline::tests::request_wide_physical_planning_population_is_pinned ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 837 filtered out; finished in 0.36s
+
+BASELINE_SPIKE_CENSUS
+PASS source-declared-production-provider-impls expected=1 observed=1
+PASS distinct-region-subjects expected=17 observed=17
+PASS observer-emits-nothing expected=0/0 observed=0/0
+PASS observer-compile-succeeds expected=ok observed=ok
+PASS many-declines-proposals expected=0 observed=0
+PASS many-declines-count expected=17 observed=17
+PASS many-declines-raw-outcomes expected=17 observed=17
+PASS many-declines-not-selected expected=offered-unselected observed=offered-unselected
+PASS external-vertical-proposals expected=3 observed=3
+PASS external-vertical-declines expected=14 observed=14
+PASS external-vertical-raw-outcomes expected=17 observed=17
+PASS external-vertical-selected expected=selected observed=selected
+PASS external-vertical-invocations expected=17 observed=17
+PASS two-additive-provider-count expected=2 observed=2
+PASS two-additive-invocations expected=34 observed=34
+PASS equal-cost-grows-alternatives expected=grew observed=grew
+PASS equal-cost-offered expected=3 observed=3
+PASS infeasible-proposals-emitted expected=emitted observed=emitted
+PASS infeasible-not-selected expected=rejected observed=rejected
+PASS infeasible-compile-still-succeeds expected=ok observed=ok
+PASS empty-providers-proposals expected=0 observed=0
+PASS empty-providers-declines expected=0 observed=0
+PASS empty-providers-invocations expected=68 observed=68
+PASS empty-providers-offered expected=5 observed=5
+PASS empty-providers-selected-only-governed expected=1 observed=1
+PASS governed-only-offered expected=1 observed=1
+PASS governed-only-compiles expected=ok observed=ok
+PASS governed-only-has-alternatives expected=nonzero observed=nonzero
+PASS type-admits-129-installed-providers expected=129 observed=129
+PASS request-target-count-population expected=1,2,8,16 observed=1,2,8,16
+PASS request-strict-16-invocations expected=272 observed=272
+PASS request-strict-16-proposals expected=48 observed=48
+PASS request-strict-16-declines expected=224 observed=224
+PASS request-strict-16-rendered-explain-bytes expected=1651952 observed=1651952
+PASS request-grouped-contract-count expected=4 observed=4
+PASS request-grouped-candidate-invocations expected=248 observed=248
+PASS request-grouped-proposals expected=24 observed=24
+PASS request-grouped-declines expected=224 observed=224
+PASS request-grouped-rendered-explain-bytes expected=1030032 observed=1030032
+PASS request-reversed-target-order expected=["test.request-reversed-15.v1", "test.request-reversed-14.v1", "test.request-reversed-13.v1", "test.request-reversed-12.v1", "test.request-reversed-11.v1", "test.request-reversed-10.v1", "test.request-reversed-9.v1", "test.request-reversed-8.v1", "test.request-reversed-7.v1", "test.request-reversed-6.v1", "test.request-reversed-5.v1", "test.request-reversed-4.v1", "test.request-reversed-3.v1", "test.request-reversed-2.v1", "test.request-reversed-1.v1", "test.request-reversed-0.v1"] observed=["test.request-reversed-15.v1", "test.request-reversed-14.v1", "test.request-reversed-13.v1", "test.request-reversed-12.v1", "test.request-reversed-11.v1", "test.request-reversed-10.v1", "test.request-reversed-9.v1", "test.request-reversed-8.v1", "test.request-reversed-7.v1", "test.request-reversed-6.v1", "test.request-reversed-5.v1", "test.request-reversed-4.v1", "test.request-reversed-3.v1", "test.request-reversed-2.v1", "test.request-reversed-1.v1", "test.request-reversed-0.v1"]
+PASS request-narrow-limit-calculation expected=1024 observed=1024
+PASS request-full-provider-limit-calculation expected=16384 observed=16384
+perturb=none checks=42 failed=0

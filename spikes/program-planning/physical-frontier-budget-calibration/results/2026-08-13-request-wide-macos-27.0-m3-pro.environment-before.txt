@@ -1,0 +1,88 @@
+measurement_phase=pre
+utc=2026-08-14T03:27:44Z
+local=2026-08-13T23:27:44-0400
+ProductName:		macOS
+ProductVersion:		27.0
+BuildVersion:		26A5388g
+Darwin Thomass-MacBook-Pro.local 27.0.0 Darwin Kernel Version 27.0.0: Tue Jul 14 21:38:48 PDT 2026; root:xnu-13432.0.94.501.4~1/RELEASE_ARM64_T6030 arm64
+Apple M3 Pro
+11
+19327352832
+{ 2.17 2.39 2.26 }
+23:27  up 12 days, 21:36, 1 user, load averages: 2.17 2.39 2.26
+Now drawing from 'AC Power'
+ -InternalBattery-0 (id=35651683)	100%; charged; 0:00 remaining present: true
+Note: No thermal warning level has been recorded
+Note: No performance warning level has been recorded
+Note: No CPU power status has been recorded
+The system has 19327352832 (1179648 pages with a page size of 16384).
+
+Stats:
+Pages free: 95061
+Pages purgeable: 2667
+Pages purged: 4049258
+
+Swap I/O:
+Swapins: 0
+Swapouts: 0
+
+Page Q counts:
+Pages active: 368723
+Pages inactive: 374826
+Pages speculative: 1546
+Pages throttled: 0
+Pages wired down: 107654
+
+Compressor Stats:
+Pages used by compressor: 192454
+Pages decompressed: 857778
+Pages compressed: 1459905
+
+File I/O:
+Pageins: 10919143
+Pageouts: 5591
+
+System-wide memory free percentage: 73%
+Filesystem        Size    Used   Avail Capacity iused ifree %iused  Mounted on
+/dev/disk3s3s1   460Gi    16Gi   163Gi     9%    481k  1.7G    0%   /
+  PID  PPID  %CPU %MEM STAT     ELAPSED COMM
+33695     1  19.9  0.1 Ss         00:00 sshd-session: tsanterre [priv]
+  570     1   4.9  0.1 Ss   12-21:35:18 /usr/libexec/opendirectoryd
+ 1278     1   3.4  0.3 Ss   12-21:34:46 /Library/SystemExtensions/3CF902F3-0FAE-4A84-A4DD-C99D44817123/io.tailscale.ipn.macsys.network-extension.systemextension/Contents/MacOS/io.tailscale.ipn.macsys.network-extension
+  740     1   3.1  0.3 Ss   12-21:35:17 /System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/com.apple.DriverKit-AppleBCMWLAN
+    1     0   1.8  0.1 Ss   12-21:36:19 /sbin/launchd
+  595     1   1.0  0.0 Ss   12-21:35:18 /usr/sbin/notifyd
+  529     1   0.6  0.3 Ss   12-21:35:18 /usr/libexec/logd
+33698 33695   0.3  0.0 S          00:00 sshd-session: tsanterre@notty
+  810     1   0.3  0.0 Ss   12-21:35:15 /usr/libexec/clocksyncd
+ 1221     1   0.2  0.2 S    12-21:34:48 /System/Library/CoreServices/ControlCenter.app/Contents/MacOS/ControlCenter
+  827     1   0.1  0.1 Ss   12-21:35:14 /usr/libexec/wifip2pd
+  789     1   0.1  0.2 Ss   12-21:35:16 /usr/sbin/coreaudiod
+ 8837  8823   0.1  1.5 S    12-15:25:41 node
+  718     1   0.1  0.1 Ss   12-21:35:17 /usr/libexec/symptomsd
+  532     1   0.1  0.1 Ss   12-21:35:18 /usr/libexec/UserEventAgent
+  705     1   0.1  0.1 Ss   12-21:35:17 /usr/libexec/airportd
+27884     1   0.0  0.1 S       09:34:06 /usr/libexec/remindd
+25149     1   0.0  0.1 S       19:04:35 /System/Library/PrivateFrameworks/CoreAnalytics.framework/Support/analyticsagent
+10345     1   0.0  0.3 Ss   03-07:00:47 /System/Volumes/Update/MobileAsset/AssetsV2/com_apple_MobileAsset_MobileSoftwareUpdate_MacUpdateBrain/be99f10143f7fd9f45266da70db50d4eb4679112.asset/AssetData/com.apple.MobileSoftwareUpdate.UpdateBrainService.xpc/Contents/MacOS/com.apple.MobileSoftwareUpdate.UpdateBrainService
+10343     1   0.0  0.0 Ss   03-07:00:49 /System/Library/AssetsV2/com_apple_MobileAsset_RecoveryOSUpdateBrain/7a84bd1c89069f2e742ece792e84523266f36fdf.asset/AssetData/com.apple.NRD.UpdateBrainService.xpc/Contents/MacOS/com.apple.NRD.UpdateBrainService
+10340     1   0.0  0.0 S    03-07:00:50 /System/Library/Frameworks/MediaAccessibility.framework/Versions/A/XPCServices/com.apple.accessibility.mediaaccessibilityd.xpc/Contents/MacOS/com.apple.accessibility.mediaaccessibilityd
+10337     1   0.0  0.0 Ss   03-07:00:50 /usr/libexec/NRDUpdated
+10336     1   0.0  0.0 S    03-07:00:50 /System/Library/PrivateFrameworks/IASUtilities.framework/Versions/A/Resources/installerauthagent
+10335     1   0.0  0.2 Ss   03-07:00:50 /System/Library/PrivateFrameworks/UIFoundation.framework/Versions/A/XPCServices/nsattributedstringagent.xpc/Contents/MacOS/nsattributedstringagent
+10333     1   0.0  0.0 S    03-07:00:51 /System/Library/Frameworks/MediaAccessibility.framework/Versions/A/XPCServices/com.apple.accessibility.mediaaccessibilityd.xpc/Contents/MacOS/com.apple.accessibility.mediaaccessibilityd
+10330     1   0.0  0.2 Ss   03-07:00:51 /System/Library/PrivateFrameworks/UIFoundation.framework/Versions/A/XPCServices/nsattributedstringagent.xpc/Contents/MacOS/nsattributedstringagent
+10328     1   0.0  0.0 Ss   03-07:01:46 /System/Library/PrivateFrameworks/SoftwareUpdateCore.framework/Versions/A/XPCServices/SUCoreHelperService.xpc/Contents/MacOS/SUCoreHelperService
+ 9322     1   0.0  0.0 S    03-13:03:50 /System/Cryptexes/App/usr/libexec/com.apple.Safari.History
+ 2180     1   0.0  0.0 Ss   05-09:34:39 /System/Library/PrivateFrameworks/StreamingZip.framework/Versions/A/XPCServices/com.apple.StreamingUnzipService.privileged.xpc/Contents/MacOS/com.apple.StreamingUnzipService.privileged
+8823 npm exec t3@0.0.31 serve --host 127.0.0.1 --port 3773 --base-dir /Users/tsanterre/.t3 NVM_INC=/Users/tsanterre/.nvm/versions/node/v24.18.1/include/node NVM_CD_FLAGS= SHELL=/bin/zsh SSH_CLIENT=100.67.124.113 65001 22 TMPDIR=/var/folders/6r/sj1bfpw10fv840rm0w7xznl80000gn/T/ VOLTA_HOME=/Users/tsanterre/.volta USER=tsanterre NVM_DIR=/Users/tsanterre/.nvm PATH=/Users/tsanterre/.nvm/versions/node/v24.18.1/bin:/opt/homebrew/bin:/Users/tsanterre/bin:/Users/tsanterre/.local/bin:/Users/tsanterre/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin PWD=/Users/tsanterre
+33699 /bin/zsh -lc out=/tmp/tiler-frontier-m3-pre.txt; { echo measurement_phase=pre; date -u "+utc=%Y-%m-%dT%H:%M:%SZ"; date "+local=%Y-%m-%dT%H:%M:%S%z"; sw_vers; uname -a; sysctl -n machdep.cpu.brand_string; sysctl -n hw.ncpu; sysctl -n hw.memsize; sysctl -n vm.loadavg; uptime; pmset -g batt; pmset -g therm; memory_pressure; df -h /; ps -Ao pid,ppid,%cpu,%mem,state,etime,comm -r | head -30; pgrep -alf "cargo|rustc|make|nextest|physical-frontier" || true; git -C /tmp/tiler-frontier-evidence.9wdOsu rev-parse HEAD; git -C /tmp/tiler-frontier-evidence.9wdOsu status --porcelain=v1; cd /tmp/tiler-frontier-evidence.9wdOsu/spikes/program-planning/physical-frontier-budget-calibration; rustup show active-toolchain; rustc -vV; } > "$out"; sed -n "1,220p" "$out"
+bef9a39afaeb929eef99d7d43232bdc61c9b5e2a
+nightly-2026-07-19-aarch64-apple-darwin (overridden by '/private/tmp/tiler-frontier-evidence.9wdOsu/rust-toolchain.toml')
+rustc 1.99.0-nightly (eff8269f7 2026-07-18)
+binary: rustc
+commit-hash: eff8269f797067c30555e77f160ec84c0ed15cd9
+commit-date: 2026-07-18
+host: aarch64-apple-darwin
+release: 1.99.0-nightly
+LLVM version: 22.1.8

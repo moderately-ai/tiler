@@ -10,9 +10,7 @@ use tiler_compiler::session::NumericalContract;
 use tiler_compiler::target::TargetProfile;
 use tiler_ir::semantic::SemanticProgram;
 
-use crate::program::{
-    Compiled, compile_governed_only, compile_installed, compile_request,
-};
+use crate::program::{Compiled, compile_governed_only, compile_installed, compile_request};
 use crate::providers::{Answer, as_dyn, flock, shared_tally};
 
 /// Timing and memory statistics for one workload.

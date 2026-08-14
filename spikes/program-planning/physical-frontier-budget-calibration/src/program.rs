@@ -110,6 +110,10 @@ pub struct Compiled {
     pub failure: Option<CompileFailureClass>,
     /// Rendered explain bytes retained on the successful or failed path.
     pub explain_bytes: usize,
+    /// Rendered trace lines that begin with a record ordinal.
+    pub explain_record_lines: usize,
+    /// Last rendered failure-trace line, when a target refused with a trace.
+    pub failure_explain_last_line: Option<String>,
     /// Retained complete-plan alternatives.
     pub alternatives: usize,
     /// Offered physical-provider identities, governed first.
@@ -154,6 +158,8 @@ pub fn compile_request(
     let mut summary = Compiled {
         failure: None,
         explain_bytes: 0,
+        explain_record_lines: 0,
+        failure_explain_last_line: None,
         alternatives: 0,
         offered: 0,
         selected_providers: 0,
@@ -172,6 +178,7 @@ pub fn compile_request(
                 let one = summarize_ok(&compilation);
                 summary.successes += 1;
                 summary.explain_bytes += one.explain_bytes;
+                summary.explain_record_lines += one.explain_record_lines;
                 summary.alternatives += one.alternatives;
                 summary.offered = summary.offered.max(one.offered);
                 summary
@@ -186,8 +193,13 @@ pub fn compile_request(
             }
             Err(failure) => {
                 summary.failure.get_or_insert(failure.class());
-                summary.explain_bytes +=
-                    failure.explain().map_or(0, |report| report.render().len());
+                if let Some(report) = failure.explain() {
+                    let rendered = report.render();
+                    summary.explain_bytes += rendered.len();
+                    summary.explain_record_lines += rendered_record_lines(&rendered);
+                    summary.failure_explain_last_line =
+                        rendered.lines().last().map(ToOwned::to_owned);
+                }
             }
         }
     }
@@ -212,7 +224,9 @@ pub fn compile_installed<'a>(
 }
 
 fn summarize_ok(compilation: &Compilation) -> Compiled {
-    let explain_bytes = compilation.explain().render().len();
+    let rendered_explain = compilation.explain().render();
+    let explain_bytes = rendered_explain.len();
+    let explain_record_lines = rendered_record_lines(&rendered_explain);
     let alternatives = compilation.alternatives().len();
     let offered = compilation.offered_physical_providers().len();
     let selected_providers = compilation
@@ -228,6 +242,8 @@ fn summarize_ok(compilation: &Compilation) -> Compiled {
     Compiled {
         failure: None,
         explain_bytes,
+        explain_record_lines,
+        failure_explain_last_line: None,
         alternatives,
         offered,
         selected_providers,
@@ -244,9 +260,15 @@ fn summarize_ok(compilation: &Compilation) -> Compiled {
 }
 
 fn summarize_request_failure(failure: &tiler_compiler::session::CompileFailure) -> Compiled {
+    let rendered = failure.explain().map(|report| report.render());
     Compiled {
         failure: Some(failure.class()),
-        explain_bytes: failure.explain().map_or(0, |report| report.render().len()),
+        explain_bytes: rendered.as_ref().map_or(0, String::len),
+        explain_record_lines: rendered.as_deref().map_or(0, rendered_record_lines),
+        failure_explain_last_line: rendered
+            .as_deref()
+            .and_then(|rendered| rendered.lines().last())
+            .map(ToOwned::to_owned),
         alternatives: 0,
         offered: 0,
         selected_providers: 0,
@@ -254,4 +276,14 @@ fn summarize_request_failure(failure: &tiler_compiler::session::CompileFailure) 
         successes: 0,
         resolved_contracts: Vec::new(),
     }
+}
+
+fn rendered_record_lines(rendered: &str) -> usize {
+    rendered
+        .lines()
+        .filter(|line| {
+            line.split_once(' ')
+                .is_some_and(|(ordinal, _)| ordinal.parse::<u32>().is_ok())
+        })
+        .count()
 }
