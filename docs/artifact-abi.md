@@ -65,6 +65,10 @@ a normative requirement that a decoder reconstruct shared IR through its checked
 builders; the decision that replaced it, and what it cost, are recorded under
 "Implemented envelope profile" below.
 
+**Accepted compiler-to-assembler boundary — occurrence-bound selected physical provenance.** For every cover-region selection, `PlanAlternative::selected_physical_providers` yields a compiler-constructed borrowed view in canonical whole-occurrence-byte order. A neutral assembler may forward exactly four subjects from that view: the whole opaque canonical region-occurrence identity bytes, the whole opaque compiler-minted implementation-proposal identity bytes, the readable physical `ProviderIdentity`, and the closed proposal-kind code. Occurrence multiplicity is preserved: selecting one provider more than once yields more than one row. The assembler neither parses the canonical bytes nor reconstructs proposal identity from provider and kind.
+
+This is a construction boundary, not a claim about the current manifest layout. The artifact codec and `VerifiedArtifactProgram` builder do not yet package these physical-selection rows; that downstream work owns their manifest membership, schema/version step, validation, and identity placement. The accepted projection exposes no proposal body, constructor, cost, rejected alternative, offered-provider environment, installation order, or selection-policy control, and only the compiler can construct or replace its checked occurrence-to-proposal association.
+
 This document also owns the **proof-case evidence sidecar**, a second container
 produced by the same crate and specified under "Proof-case evidence sidecar"
 below. It is owned here for the two reasons that make its boundary with the

@@ -1303,11 +1303,45 @@ impl<'a> SelectedCapability<'a> {
 ///
 /// A borrowed view rather than an owned record, for the reason
 /// [`PlanAlternative`] is one: the selection-level representation behind it is
-/// still moving, and this boundary commits to no field set of it.
+/// still moving, and this boundary commits to no field set of it. The compiler
+/// is its only constructor: an artifact assembler may forward the four subjects
+/// in the accepted artifact projection, but cannot mint or replace the checked
+/// occurrence-to-proposal binding.
+///
+/// ```compile_fail,E0423
+/// use tiler_compiler::session::SelectedImplementation;
+///
+/// let _ = SelectedImplementation(std::todo!());
+/// ```
 #[derive(Clone, Copy, Debug)]
 pub struct SelectedImplementation<'a>(&'a crate::selection::RegionSelection);
 
 impl<'a> SelectedImplementation<'a> {
+    /// Returns the whole canonical identity of the cover-region occurrence.
+    ///
+    /// This is the occurrence side of the compiler-checked binding, not the
+    /// scheduled body's reusable structural identity. Two equal bodies at two
+    /// graph sites therefore keep two rows. The bytes are handed over whole:
+    /// callers must not parse them into graph-local parts or substitute a
+    /// presentation label for the collision-free identity.
+    #[must_use]
+    pub fn region_occurrence_identity(self) -> &'a [u8] {
+        self.0.occurrence().as_bytes()
+    }
+
+    /// Returns the whole canonical identity of the admitted implementation.
+    ///
+    /// The frontier mints this identity only after host verification and folds
+    /// the exact structural body subject, host-stamped provider, proposal kind,
+    /// applicability, derived boundary contract, and deferred feasibility
+    /// evidence. Cost and enumeration order are deliberately absent. A caller
+    /// forwards these opaque bytes rather than reconstructing the identity from
+    /// this view's readable provider and kind.
+    #[must_use]
+    pub fn implementation_proposal_identity(self) -> &'a [u8] {
+        self.0.implementation().identity().as_bytes()
+    }
+
     /// Returns the identity of the provider whose proposal was admitted.
     #[must_use]
     pub fn provider(self) -> &'a ProviderIdentity {
@@ -1336,6 +1370,21 @@ impl<'a> SelectedImplementation<'a> {
     #[must_use]
     pub fn proposal_kind(self) -> &'static str {
         self.0.implementation().provenance().kind().name()
+    }
+}
+
+#[cfg(test)]
+impl<'a> SelectedImplementation<'a> {
+    /// Wraps one crate-private selection for subject-perturbation tests.
+    ///
+    /// Production has no corresponding constructor: this exists only so the
+    /// selection authority can demonstrate that the public projection follows a
+    /// deliberately moved occurrence while checked-plan verification refuses the
+    /// same rebinding.
+    pub(crate) const fn from_selection_for_test(
+        selection: &'a crate::selection::RegionSelection,
+    ) -> Self {
+        Self(selection)
     }
 }
 
