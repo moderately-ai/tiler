@@ -3,7 +3,7 @@ id: calibrate-the-physical-frontier-provider-and-outcome-budgets
 title: Calibrate the physical-frontier provider and raw-outcome budgets
 status: todo
 priority: p1
-dependencies: [decide-whether-the-implementation-frontier-owes-a-retention-budget, measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro, decide-how-explain-capacity-bounds-active-physical-provider-populations]
+dependencies: [decide-whether-the-implementation-frontier-owes-a-retention-budget, measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro, decide-how-explain-capacity-bounds-active-physical-provider-populations, decide-the-truthful-public-class-for-complete-explain-capacity-refusals]
 related: [replace-provider-offer-with-a-host-bounded-frontier-sink]
 scopes: [research/program-planning, implementation/compiler]
 shared_scopes: [project/tickets, contracts/navigation]
@@ -107,6 +107,8 @@ The assessment column is independently observed at proposal-loop entry. A provid
 **Eliminated — per-target or per-candidate authority.** Either lets one request spend the ceiling repeatedly and changes retry and partial-product behaviour, reopening the accepted accounting authority rather than merely changing a value. A nested request total plus sublimits adds a fairness authority no evidence requires. Request scope is the surviving authority; exact value is held.
 
 The raw-budget frontier now has one conditional survivor: `1,024`, only if Tom explicitly chooses two active specialists as the supported population. The measurement supplies no such policy, so it is not accepted by this ticket. A future full-provider candidate is a composite decision, not `16,384` alone. Whichever value is accepted directly changes the compiler-internal canonical request/evidence subject and explain request qualifier. Budget bytes do not directly enter plan, artifact, or cache identity; those move only indirectly if the changed bound changes selected packaged content. No public surface or schema is added by this census; the sink stays a labelled draft.
+
+**Graph safety.** The truthful-classification decision is not sufficient evidence by itself. Before that decision closes, it must create the exact accepted implementation and regression/evidence tickets and add this calibration as a hard dependent of both. This ticket must remain blocked until the false public `InvalidCompilerOutput` path is removed or made unreachable and the required public/evidence regression is complete.
 
 ## Idle-M3 request-wide measurement
 
