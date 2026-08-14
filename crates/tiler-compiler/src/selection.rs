@@ -1018,6 +1018,8 @@ pub(crate) fn select_physical_plans(
     }
 
     let mut plans: Vec<SelectedPlan> = retained.into_values().collect();
+    #[cfg(test)]
+    crate::workcount::record_complete_plan_retention(plans.len());
     plans.sort_by(|left, right| left.identity.as_bytes().cmp(right.identity.as_bytes()));
     let identity = encode_portfolio_identity(&plans);
     Ok(SelectedPortfolio {
@@ -1230,9 +1232,13 @@ fn enumerate_cover_plans(
         }
         match assemble_plan(cover, selections) {
             Ok(plan) => {
+                #[cfg(test)]
+                crate::workcount::record_plan_combination(true);
                 retained.entry(plan.identity.clone()).or_insert(plan);
             }
             Err(PlanFault::Disagreement(disagreement)) => {
+                #[cfg(test)]
+                crate::workcount::record_plan_combination(false);
                 let rejection = PlanRejection::BoundaryDisagreement {
                     disagreement,
                     cover: cover_identity.to_vec(),

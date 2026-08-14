@@ -3,7 +3,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use tiler_compiler::physical_provider::PhysicalImplementationProvider;
+use tiler_compiler::physical_provider::{
+    InstalledPhysicalProviders, PhysicalImplementationProvider,
+};
 use tiler_compiler::target::TargetProfile;
 use tiler_ir::semantic::SemanticProgram;
 
@@ -59,6 +61,10 @@ pub enum Perturb {
     OneAdditiveSpecialist,
     /// An "infeasible" specialist that actually fits the profile.
     FeasibleInsteadOfInfeasible,
+    /// Recalculate from three installed specialists instead of two.
+    LimitRecommendationPopulation,
+    /// Recalculate the full provider-slot population from 29 specialists.
+    FullLimitPopulation,
 }
 
 impl Perturb {
@@ -74,6 +80,8 @@ impl Perturb {
             "decline-instead-of-propose" => Some(Self::DeclineInsteadOfPropose),
             "one-additive-specialist" => Some(Self::OneAdditiveSpecialist),
             "feasible-instead-of-infeasible" => Some(Self::FeasibleInsteadOfInfeasible),
+            "limit-recommendation-population" => Some(Self::LimitRecommendationPopulation),
+            "full-limit-population" => Some(Self::FullLimitPopulation),
             _ => None,
         }
     }
@@ -87,6 +95,8 @@ impl Perturb {
         Self::DeclineInsteadOfPropose,
         Self::OneAdditiveSpecialist,
         Self::FeasibleInsteadOfInfeasible,
+        Self::LimitRecommendationPopulation,
+        Self::FullLimitPopulation,
     ];
 
     /// Stable name used on the command line and in the record.
@@ -101,6 +111,8 @@ impl Perturb {
             Self::DeclineInsteadOfPropose => "decline-instead-of-propose",
             Self::OneAdditiveSpecialist => "one-additive-specialist",
             Self::FeasibleInsteadOfInfeasible => "feasible-instead-of-infeasible",
+            Self::LimitRecommendationPopulation => "limit-recommendation-population",
+            Self::FullLimitPopulation => "full-limit-population",
         }
     }
 }
@@ -169,7 +181,24 @@ pub fn run_checks(repo: &Path, perturb: Perturb) -> Vec<Check> {
     checks.extend(infeasible_checks(&program, &declared, perturb));
     checks.extend(empty_checks(&program, &profile));
     checks.extend(governed_only_checks(&program, &profile));
+    checks.extend(installation_checks());
     checks
+}
+
+fn installation_checks() -> Vec<Check> {
+    // This is a finite witness for the source reading: `installed` collects the
+    // entire iterator and validates identity, but carries no count branch. It is
+    // deliberately one above the old 128-outcome failure population so an
+    // unrelated explain bound cannot be misread as an installation bound.
+    let tally = shared_tally();
+    let providers = flock("installation", 129, Answer::Empty, &tally);
+    let environment = InstalledPhysicalProviders::installed(as_dyn(&providers))
+        .expect("the public installation type has no count refusal");
+    vec![Check::eq(
+        "type-admits-129-installed-providers",
+        129,
+        environment.identities().len(),
+    )]
 }
 
 fn observer_checks(

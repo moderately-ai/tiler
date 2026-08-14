@@ -2345,6 +2345,8 @@ pub(crate) fn enumerate_frontier(
     let applicable_key = target_profile_key.clone();
     let mut admitted = Vec::new();
     let mut rejections = Vec::new();
+    #[cfg(test)]
+    let mut raw_declines = 0_usize;
     // One context for the whole enumeration rather than one per provider, so the
     // baseline spelling it derives on demand is derived at most once however many
     // providers ask for it. Nothing in it is provider-specific: it carries the
@@ -2359,6 +2361,11 @@ pub(crate) fn enumerate_frontier(
             .provenance()
             .map_err(|source| FrontierError::UnrepresentableProviderProvenance { source })?;
         let offer = provider.propose(&context);
+        #[cfg(test)]
+        {
+            raw_declines = raw_declines.saturating_add(offer.declined.len());
+            crate::workcount::record_provider_offer(offer.proposals.len(), offer.declined.len());
+        }
         // A withheld strategy is recorded before the offered ones are assessed,
         // so a reader sees what the provider ruled out for this request beside
         // what it proposed for it rather than only in the proposals' absence.
@@ -2549,6 +2556,8 @@ pub(crate) fn enumerate_frontier(
                     continue;
                 }
             };
+            #[cfg(test)]
+            crate::workcount::record_schedule_verification();
             match verify_schedule_with_feasibility(
                 region,
                 subject.semantic_members.clone(),
@@ -2621,6 +2630,8 @@ pub(crate) fn enumerate_frontier(
             }
         }
     }
+    #[cfg(test)]
+    crate::workcount::record_frontier_result(admitted.len(), rejections.len(), raw_declines);
     admitted.sort_by(|left, right| left.identity.as_bytes().cmp(right.identity.as_bytes()));
     rejections.sort_by_key(encode_rejection);
     Ok(ImplementationFrontier {

@@ -23,20 +23,32 @@ From this directory. `rust-toolchain.toml` is resolved by directory ancestry fro
 cd spikes/program-planning/physical-frontier-budget-calibration
 CARGO_TARGET_DIR=./target cargo build --release
 ./target/release/physical-frontier-budget-calibration census
+./target/release/physical-frontier-budget-calibration request-census
 ./target/release/physical-frontier-budget-calibration perturb extra-production-provider
 ./target/release/physical-frontier-budget-calibration record results/2026-08-13-macos-27.0-m3-pro.json
 ```
 
-`--quick` shortens warmup, repeats, and sweep points and skips `/usr/bin/time -l`. Nothing recorded here was produced with `--quick`. Spikes gate nothing.
+The last command is reserved for the idle M3 Pro. It now measures request-wide 1, 2, 8, and 16-target governed/specialist rows, the four-contract add chain, the governed-plus-two-specialist population, and the full 31-installed-specialist population with the same warm-up 8, repeats 50, and child-RSS protocol. `--quick` shortens warmup, repeats, and sweep points and skips `/usr/bin/time -l`. Spikes gate nothing.
 
-## Recommended first limits
+The compiler-owned governed census is a targeted crate test because the old `ProviderOffer` public surface cannot expose raw governed emissions:
 
-| Limit | Value | Headroom | Why not eight |
-| --- | --- | --- | --- |
-| Provider count, including the governed provider | **32** | **32** (measured-good empty and decline populations through 64 extras; untyped `InvalidCompilerOutput` at 128 all-decline extras) | Empty extras through 64 stay inside 1.11× the governed floor. Eight is below every measured binding constraint. |
-| Raw proposal+decline outcomes, request-scoped | **256** | **256** (512 still below the 1088-decline working point and the 1920-decline untyped wall) | The governed five-op program already emits 17 extra-provider outcomes per installed observer, and the governed provider itself answers every one of those 17 subjects. A request-scoped eight would refuse the ordinary governed compile. |
+```sh
+CARGO_TARGET_DIR=./target cargo test -p tiler-compiler --lib request_wide_physical_planning_population_is_pinned -- --nocapture
+```
 
-One raw-outcome *count* remains the accepted cardinality bound. It is sized from the expensive side: an admitted proposal is about 34× a named decline on incremental host time (39 µs vs 1.1 µs). Using decline cost to pick the ceiling would admit a proposal-heavy population the host-time envelope did not measure.
+## Corrected request-wide result
+
+The old raw-outcome recommendation is withdrawn. It compiled one target per request, while the accepted authority is request-scoped and the public request admits sixteen distinct targets. The old harness comment also called 256 "above" a 272-outcome specialist population; that was false (`256 < 272`).
+
+| Candidate | Population | Raw outcomes | Headroom | Status |
+| --- | --- | ---: | ---: | --- |
+| 256 | governed sixteen-target five-op | 304 | −48 | eliminated |
+| 1,024 | governed + two active specialists | 848 | 176 | nondominated if 3+ active specialists are intentionally unsupported |
+| 16,384 | governed + all 31 installed slots active | 8,736 | 7,648 | nondominated; idle-M3 time/RSS held |
+
+No exact value is recommended yet. `InstalledPhysicalProviders::installed` has no count branch, and the harness successfully installs 129 identities. The separate provider-count proposal remains 32 governed-included; that bounds invocation/provenance overhead and need not promise that every provider is active on every subject. Choosing 1,024 requires an explicit two-active-specialist support boundary. Choosing 16,384 covers the complete proposed provider cardinality but requires the held idle-M3 measurement.
+
+Intermediate powers 2,048, 4,096, and 8,192 cover 6, 13, and 29 installed specialists. No ticket or consumer names any of those populations, so they are not material choices until such a support requirement exists.
 
 ## What these limits do not bound
 
@@ -60,7 +72,34 @@ Workload: `hot_path.rs`'s five-operation scale-then-reduce at 4×3, `NumericalCo
 
 **Fact.** Equal-cost incomparable proposals grow retained alternatives linearly here (`alternatives = extra + 1`) because only the baseline subjects receive an extra body and the selected covers have one varying region. That is a fact about this program, not a bound on Cartesian growth in general.
 
-## Host-runtime record
+### Full request
+
+| Program / providers | Targets | Raw | Proposals / admission assessments | Declines | Verified | Admitted / retained | Proposal / total rejections | Sort items admitted / rejected | Plan combinations / retained plans |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| five-op / governed | 16 | **304** | 48 / 48 | 256 | 48 | 48 / 48 | 0 / 256 | 48 / 256 | 32 / 32 |
+| five-op / governed + feasible specialist | 16 | **576** | 96 / 96 | 480 | 96 | 96 / 96 | 0 / 480 | 96 / 480 | 96 / 96 |
+| five-op / governed + infeasible specialist | 16 | **576** | 96 / 96 | 480 | 96 | 48 / 48 | 48 / 528 | 48 / 528 | 32 / 32 |
+| add chain / four contract groups / governed | 16 | **248** | 24 / 24 | 224 | 24 | 24 / 24 | 0 / 224 | 24 / 224 | 24 / 24 |
+
+The public installed specialist alone emits 17, 34, 136, and 272 outcomes at 1, 2, 8, and 16 strict targets. Its summed rendered explanation retention is 103,137, 206,274, 825,096, and 1,651,952 bytes. The four-contract add-chain rows are 10, 20, 124, and 248 outcomes and 42,545, 85,170, 514,744, and 1,030,032 rendered bytes. These are `Compilation::explain().render()` lengths, separate from compiler work counts and process RSS. In the 16-target add-chain row, eight targets evaluate one semantic candidate and eight evaluate two. Reversed target order preserves the work totals and is returned unchanged.
+
+The retained population result is [`results/2026-08-13-request-population-census.json`](results/2026-08-13-request-population-census.json).
+
+### Preserved draft reproduction
+
+[`fixtures/draft_request_budget.rs`](fixtures/draft_request_budget.rs) is a public-only integration fixture for preserved draft `54e272baa525027a6f6f9d982bd3bd7c387597fb`. It does not modify the preserved branch:
+
+```sh
+draft_worktree=$(mktemp -d /tmp/tiler-frontier-draft.XXXXXX)
+git worktree add --detach "$draft_worktree" 54e272baa525027a6f6f9d982bd3bd7c387597fb
+cp fixtures/draft_request_budget.rs "$draft_worktree/crates/tiler-compiler/tests/"
+CARGO_TARGET_DIR="$draft_worktree/target" cargo test --manifest-path "$draft_worktree/Cargo.toml" -p tiler-compiler --test draft_request_budget -- --nocapture
+git worktree remove --force "$draft_worktree"
+```
+
+It reports target indexes 0–12 compiled and 13–15 refused with `BudgetExhausted { resource: PhysicalFrontierOutcomes, limit: 256, reported: 257 }`. That compiled prefix is a separate propagation defect in the draft; the calibration remains request-scoped.
+
+## Historical single-target host-runtime record
 
 **Measurement**, 2026-08-13, Apple M3 Pro, macOS 27.0 (26A5388g / Darwin 27.0.0), 11 logical CPUs, 18 GiB, `rustc 1.99.0-nightly (eff8269f7 2026-07-18)` — the `rust-toolchain.toml` pin `nightly-2026-07-19`. Release profile. Warm-up 8, repeats 50, estimator is the minimum. Load averages at start `{ 6.82 3.66 2.70 }` (the cargo release build had just finished on the same host); at end `{ 6.32 3.66 2.71 }`. Min/p90 on the governed row are 3205 / 3251 µs, so the floor is readable even under that load. Peak RSS is `/usr/bin/time -l` maximum resident set size of a child that warms twice and compiles once.
 
@@ -73,6 +112,10 @@ Workload: `hot_path.rs`'s five-operation scale-then-reduce at 4×3, `NumericalCo
 | infeasible 16 / 32 | 16 / 32 | 5549 / 7349 | 1.73 / 2.29 | 30.3 / 31.1 MB | verification without selection growth |
 
 The retained result is [`results/2026-08-13-macos-27.0-m3-pro.json`](results/2026-08-13-macos-27.0-m3-pro.json).
+
+### Request-wide timing hold
+
+The request harness was not recorded on 2026-08-13 because the available machine was an active Apple M4 Max, not the required idle M3 Pro: 36 GiB, 14 cores, load `{ 4.66 3.87 3.49 }`, iTerm 24.5%, WindowServer 14.1%. [`measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro`](../../../tickets/measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro.md) owns the external prerequisite. No M4 runtime or RSS is retained as decision evidence.
 
 ## Perturbations
 
@@ -87,7 +130,18 @@ Each load-bearing check keeps its assertion and fails when its subject is pertur
 | `decline-instead-of-propose` | `FAIL external-vertical-proposals expected=3 observed=0` |
 | `one-additive-specialist` | `FAIL two-additive-provider-count expected=2 observed=1` |
 | `feasible-instead-of-infeasible` | `FAIL infeasible-not-selected expected=rejected observed=selected` |
+| `limit-recommendation-population` | `FAIL request-narrow-limit-calculation expected=1024 observed=2048` |
+| `full-limit-population` | `FAIL request-full-provider-limit-calculation expected=16384 observed=8192` |
+
+The request-wide compiler test also accepts a subject perturbation through `TILER_FRONTIER_CENSUS_PERTURB`:
+
+| Perturb | Failure quoted |
+| --- | --- |
+| `target-count` | `the request-wide census must reach all sixteen admitted target slots` — left 15, right 16 |
+| `target-order` | `the compiler must preserve caller target order in the population under test` — reversed keys against forward keys |
+| `candidate-contract-population` | `the four-contract semantic-candidate population changed` — left `224/40/216` invocation/proposal/decline population against `248/24/224` |
+| `governed-outcome-inclusion` | `the raw-outcome authority must include governed and installed emissions` — left 272 raw outcomes against 576 |
 
 ## Measurement boundary
 
-One host, one toolchain, one five-operation program, one numerical contract, two target profiles (governed prototype and a declared-capacity profile for infeasible rows). Nothing here is a portable guarantee or a kernel time. Provider identities are synthetic `acme::*@1` specialists; they exercise the public seam, not a third-party crate's own compute.
+The finite census covers the five-operation strict program and tensor add chain, 1/2/8/16 distinct profiles, four numerical-contract groups, target order, the governed provider, and synthetic installed specialists. It does not claim a universal program, candidate, provider, or plan population. The historical timing covers one M3 Pro and singleton requests only; request-wide timing/RSS is held. Nothing here is a portable guarantee or a kernel time. Synthetic providers exercise the public seam, not a third-party crate's native compute.

@@ -16,10 +16,13 @@ use tiler_compiler::target::TargetProfile;
 use tiler_ir::semantic::SemanticProgram;
 
 use census::{Perturb, repo_root, run_checks};
-use measure::{Sample, child_measure, measure_population, micros};
-use profile::{declared_workgroup_profile, governed};
-use program::five_op_program;
-use providers::Answer;
+use measure::{
+    Sample, child_measure, child_request_measure, measure_population, measure_request_population,
+    micros,
+};
+use profile::{declared_workgroup_profile, governed, request_profiles};
+use program::{compile_request, five_op_program, tensor_add_chain};
+use providers::{Answer, as_dyn, flock, shared_tally};
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
@@ -27,6 +30,7 @@ fn main() -> ExitCode {
         None | Some("record") => record(args.next(), false),
         Some("--quick") => record(None, true),
         Some("census") => census_only(Perturb::None),
+        Some("request-census") => request_census_only(),
         Some("perturb") => {
             if let Some(perturb) = args.next().as_deref().and_then(Perturb::parse) {
                 census_only(perturb)
@@ -59,9 +63,23 @@ fn main() -> ExitCode {
             child_measure(&program, &profile, extra, &kind);
             ExitCode::SUCCESS
         }
+        Some("child-request-measure") => {
+            let _name = args.next().unwrap_or_else(|| "child-request".to_owned());
+            let targets = args.next().and_then(|value| value.parse().ok()).unwrap_or(1);
+            let extra = args.next().and_then(|value| value.parse().ok()).unwrap_or(0);
+            let kind = args.next().unwrap_or_else(|| "empty".to_owned());
+            let program_kind = args.next().unwrap_or_else(|| "five-op".to_owned());
+            let (program, contracts, profiles) = request_measurement_subject(
+                &program_kind,
+                targets,
+                "test.child-request-measure",
+            );
+            child_request_measure(&program, &contracts, &profiles, extra, &kind);
+            ExitCode::SUCCESS
+        }
         Some("help" | "--help") => {
             println!(
-                "physical-frontier-budget-calibration [record [path]|census|perturb <name>|--quick]"
+                "physical-frontier-budget-calibration [record [path]|census|request-census|perturb <name>|--quick]"
             );
             ExitCode::SUCCESS
         }
@@ -72,8 +90,129 @@ fn main() -> ExitCode {
     }
 }
 
+#[derive(Debug)]
+struct RequestPopulation {
+    name: &'static str,
+    targets: usize,
+    target_keys: Vec<String>,
+    resolved_contracts: Vec<String>,
+    successes: usize,
+    invocations: u64,
+    subjects: u64,
+    proposals: u64,
+    declines: u64,
+    alternatives: usize,
+    rendered_explain_bytes: usize,
+    failure: Option<String>,
+}
+
+fn request_census_only() -> ExitCode {
+    for row in request_populations() {
+        println!(
+            "{} targets={} successes={} invocations={} subjects={} proposals={} declines={} alternatives={} rendered_explain_bytes={} contracts={:?} keys={:?} failure={:?}",
+            row.name,
+            row.targets,
+            row.successes,
+            row.invocations,
+            row.subjects,
+            row.proposals,
+            row.declines,
+            row.alternatives,
+            row.rendered_explain_bytes,
+            row.resolved_contracts,
+            row.target_keys,
+            row.failure,
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+fn request_populations() -> Vec<RequestPopulation> {
+    let five = five_op_program(4, 3);
+    let add = tensor_add_chain();
+    let mut rows = Vec::new();
+    for count in [1, 2, 8, 16] {
+        let profiles = (0..count)
+            .map(|index| {
+                declared_workgroup_profile(&format!("test.request-strict-{count}-{index}.v1"), 64)
+            })
+            .collect::<Vec<_>>();
+        rows.push(census_request(
+            "five-op-strict",
+            &five,
+            [tiler_compiler::session::NumericalContract::STRICT_F32],
+            profiles,
+        ));
+    }
+    for count in [1, 2, 8, 16] {
+        rows.push(census_request(
+            "add-chain-four-contract-groups",
+            &add,
+            [
+                tiler_compiler::session::NumericalContract::STRICT_F32,
+                tiler_compiler::session::NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+                tiler_compiler::session::NumericalContract::REASSOCIATE_F32,
+                tiler_compiler::session::NumericalContract::FLUSH_AND_REASSOCIATE_F32,
+            ],
+            request_profiles(&format!("test.request-contract-{count}"), count),
+        ));
+    }
+    let mut reversed = request_profiles("test.request-reversed", 16);
+    reversed.reverse();
+    rows.push(census_request(
+        "add-chain-reversed-target-order",
+        &add,
+        [
+            tiler_compiler::session::NumericalContract::STRICT_F32,
+            tiler_compiler::session::NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+            tiler_compiler::session::NumericalContract::REASSOCIATE_F32,
+            tiler_compiler::session::NumericalContract::FLUSH_AND_REASSOCIATE_F32,
+        ],
+        reversed,
+    ));
+    rows
+}
+
+fn census_request(
+    name: &'static str,
+    program: &SemanticProgram,
+    contracts: impl IntoIterator<Item = tiler_compiler::session::NumericalContract>,
+    profiles: Vec<TargetProfile>,
+) -> RequestPopulation {
+    let targets = profiles.len();
+    let tally = shared_tally();
+    let providers = flock(
+        &format!("request-{}", name.replace('-', "_")),
+        1,
+        Answer::Specialize { threads: 32 },
+        &tally,
+    );
+    let environment = tiler_compiler::physical_provider::InstalledPhysicalProviders::installed(
+        as_dyn(&providers),
+    )
+    .expect("the request census provider installs");
+    let compiled = compile_request(program, contracts, profiles, &environment);
+    let tally = tally.borrow();
+    RequestPopulation {
+        name,
+        targets,
+        target_keys: compiled.target_keys,
+        resolved_contracts: compiled.resolved_contracts,
+        successes: compiled.successes,
+        invocations: tally.invocations,
+        subjects: tally.distinct_subjects(),
+        proposals: tally.proposals,
+        declines: tally.declines,
+        alternatives: compiled.alternatives,
+        rendered_explain_bytes: compiled.explain_bytes,
+        failure: compiled.failure.map(|class| format!("{class:?}")),
+    }
+}
+
 fn census_only(perturb: Perturb) -> ExitCode {
-    let checks = run_checks(&repo_root(), perturb);
+    let populations = request_populations();
+    let mut checks = run_checks(&repo_root(), perturb);
+    checks.extend(request_population_checks(&populations, perturb));
     let mut failed = 0_usize;
     for check in &checks {
         let mark = if check.passed { "PASS" } else { "FAIL" };
@@ -103,7 +242,9 @@ fn record(path: Option<String>, quick: bool) -> ExitCode {
     let host = host_record(&repo);
     println!("host {}", host.replace('\n', " | "));
 
-    let checks = run_checks(&repo, Perturb::None);
+    let populations = request_populations();
+    let mut checks = run_checks(&repo, Perturb::None);
+    checks.extend(request_population_checks(&populations, Perturb::None));
     let failed: Vec<_> = checks.iter().filter(|check| !check.passed).collect();
     if !failed.is_empty() {
         for check in &failed {
@@ -147,6 +288,74 @@ fn record(path: Option<String>, quick: bool) -> ExitCode {
         collect_rss,
         exe.as_deref(),
     ));
+
+    let request_counts: &[usize] = if quick { &[1, 16] } else { &[1, 2, 8, 16] };
+    for &count in request_counts {
+        let (five, strict, strict_profiles) =
+            request_measurement_subject("five-op", count, "test.measure-request-five");
+        samples.push(measure_request_named(
+            "request-five-governed",
+            "five-op",
+            &five,
+            &strict,
+            &strict_profiles,
+            0,
+            Answer::Empty,
+            warmup,
+            repeats,
+            collect_rss,
+            exe.as_deref(),
+        ));
+        samples.push(measure_request_named(
+            "request-five-specialist",
+            "five-op",
+            &five,
+            &strict,
+            &strict_profiles,
+            1,
+            Answer::Specialize { threads: 32 },
+            warmup,
+            repeats,
+            collect_rss,
+            exe.as_deref(),
+        ));
+        if count == 16 {
+            for extra in [2, 31] {
+                samples.push(measure_request_named(
+                    if extra == 2 {
+                        "request-five-two-specialists"
+                    } else {
+                        "request-five-full-32-provider-population"
+                    },
+                    "five-op",
+                    &five,
+                    &strict,
+                    &strict_profiles,
+                    extra,
+                    Answer::Specialize { threads: 32 },
+                    warmup,
+                    repeats,
+                    collect_rss,
+                    exe.as_deref(),
+                ));
+            }
+        }
+        let (add, contracts, grouped_profiles) =
+            request_measurement_subject("add-chain", count, "test.measure-request-add");
+        samples.push(measure_request_named(
+            "request-add-four-groups",
+            "add-chain",
+            &add,
+            &contracts,
+            &grouped_profiles,
+            1,
+            Answer::Specialize { threads: 32 },
+            warmup,
+            repeats,
+            collect_rss,
+            exe.as_deref(),
+        ));
+    }
     samples.push(measure_named(
         "two-additive",
         &program,
@@ -236,8 +445,8 @@ fn record(path: Option<String>, quick: bool) -> ExitCode {
         ));
     }
 
-    let limits = recommend(&samples);
-    let json = render_record(&host, &checks, &samples, &limits, quick);
+    let limits = recommend(&samples, &populations);
+    let json = render_record(&host, &checks, &populations, &samples, &limits, quick);
     match path {
         Some(path) => {
             let dest = PathBuf::from(path);
@@ -290,15 +499,99 @@ fn measure_named(
     sample
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the measurement call states every workload and noise control explicitly"
+)]
+fn measure_request_named(
+    name: &str,
+    program_kind: &'static str,
+    program: &SemanticProgram,
+    contracts: &[tiler_compiler::session::NumericalContract],
+    profiles: &[TargetProfile],
+    extra: usize,
+    answer: Answer,
+    warmup: u32,
+    repeats: u32,
+    collect_rss: bool,
+    exe: Option<&str>,
+) -> Sample {
+    println!(
+        "measure {name} targets={} extra={extra} kind={answer:?}",
+        profiles.len()
+    );
+    let sample = measure_request_population(
+        name,
+        program_kind,
+        program,
+        contracts,
+        profiles,
+        extra,
+        answer,
+        warmup,
+        repeats,
+        collect_rss,
+        exe,
+    );
+    println!(
+        "  targets={} subjects={} invocations={} proposals={} declines={} alternatives={} min_us={} fail={:?}",
+        sample.targets,
+        sample.subjects,
+        sample.invocations,
+        sample.proposals,
+        sample.declines,
+        sample.alternatives,
+        micros(sample.min),
+        sample.failure
+    );
+    sample
+}
+
+fn request_measurement_subject(
+    program_kind: &str,
+    targets: usize,
+    prefix: &str,
+) -> (
+    SemanticProgram,
+    Vec<tiler_compiler::session::NumericalContract>,
+    Vec<TargetProfile>,
+) {
+    match program_kind {
+        "five-op" => (
+            five_op_program(4, 3),
+            vec![tiler_compiler::session::NumericalContract::STRICT_F32],
+            (0..targets)
+                .map(|index| {
+                    declared_workgroup_profile(&format!("{prefix}-{targets}-{index}.v1"), 64)
+                })
+                .collect(),
+        ),
+        "add-chain" => (
+            tensor_add_chain(),
+            vec![
+                tiler_compiler::session::NumericalContract::STRICT_F32,
+                tiler_compiler::session::NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+                tiler_compiler::session::NumericalContract::REASSOCIATE_F32,
+                tiler_compiler::session::NumericalContract::FLUSH_AND_REASSOCIATE_F32,
+            ],
+            request_profiles(&format!("{prefix}-{targets}"), targets),
+        ),
+        other => panic!("unknown request measurement program {other}"),
+    }
+}
+
 struct Limits {
     provider_count: u64,
     provider_headroom: u64,
-    raw_output: u64,
-    raw_headroom: u64,
+    raw_output: Option<u64>,
+    narrow_raw_output: u64,
+    narrow_raw_headroom: u64,
+    full_provider_raw_output: u64,
+    full_provider_raw_headroom: u64,
     rationale: String,
 }
 
-fn recommend(samples: &[Sample]) -> Limits {
+fn recommend(samples: &[Sample], populations: &[RequestPopulation]) -> Limits {
     // Provider-count: empty providers still consume one invocation per subject.
     // Find the largest empty population whose min time stays within 2x governed.
     let governed = samples
@@ -335,9 +628,14 @@ fn recommend(samples: &[Sample]) -> Limits {
     // one. One raw-outcome *count* remains the accepted cardinality bound, sized
     // from the expensive (proposal + verification + selection) side so a
     // decline-heavy population cannot push the limit past a proposal-heavy
-    // host-time envelope. 256 is above the governed five-op emission (~17) and
-    // above a 16-specialist extra population (272) that stayed at 4.6x the
-    // governed floor; 8 would refuse the governed program if request-scoped.
+    // host-time envelope. The compiler-owned census pins 304 governed outcomes
+    // over sixteen strict targets; each installed specialist adds the public
+    // harness's 272. Two specialists therefore produce 848, whose next power
+    // of two is 1,024. The competing complete-cardinality reading is governed
+    // plus 31 installed specialists: 8,736 outcomes, whose next power of two is
+    // 16,384. The harness reports both until policy says whether three or more
+    // active specialists are intentionally refused; measurement cannot decide
+    // that support boundary.
     let decline_per = per_outcome_nanos(&decline, floor);
     let propose_per = per_outcome_nanos(&propose, floor);
     let ratio = if decline_per == 0 {
@@ -345,12 +643,24 @@ fn recommend(samples: &[Sample]) -> Limits {
     } else {
         propose_per / decline_per.max(1)
     };
-    let raw_output = 256;
-    let raw_headroom = 256;
+    let installed_request_outcomes = populations
+        .iter()
+        .find(|row| row.name == "five-op-strict" && row.targets == 16)
+        .map_or(0, |row| row.proposals.saturating_add(row.declines));
+    let governed_request_outcomes = 304_u64;
+    let narrow_population =
+        governed_request_outcomes.saturating_add(installed_request_outcomes.saturating_mul(2));
+    let narrow_raw_output = narrow_population.next_power_of_two();
+    let narrow_raw_headroom = narrow_raw_output.saturating_sub(narrow_population);
+    let full_provider_population = governed_request_outcomes
+        .saturating_add(installed_request_outcomes.saturating_mul(provider_count - 1));
+    let full_provider_raw_output = full_provider_population.next_power_of_two();
+    let full_provider_raw_headroom =
+        full_provider_raw_output.saturating_sub(full_provider_population);
     let _ = empty;
 
     let rationale = format!(
-        "governed_min_ns={floor}; empty_64_min_ns={}; decline_64_min_ns={}; decline_128_failure={decline_128_fault}; propose_16_min_ns={}; propose_per_outcome_ns={propose_per}; decline_per_outcome_ns={decline_per}; propose_over_decline={ratio}; one_count_is_cardinality_sized_from_proposals=true; folklore_eight_refuses_governed_if_request_scoped=true",
+        "governed_min_ns={floor}; empty_64_min_ns={}; decline_64_min_ns={}; decline_128_failure={decline_128_fault}; propose_16_min_ns={}; propose_per_outcome_ns={propose_per}; decline_per_outcome_ns={decline_per}; propose_over_decline={ratio}; request_governed_outcomes={governed_request_outcomes}; request_installed_specialist_outcomes={installed_request_outcomes}; two_specialist_population={narrow_population}; three_specialist_population={}; full_32_provider_population={full_provider_population}; raw_value_held_for_population_policy=true; one_count_is_request_scoped=true",
         samples
             .iter()
             .find(|sample| sample.name == "sweep-empty" && sample.extra_providers == 64)
@@ -363,13 +673,17 @@ fn recommend(samples: &[Sample]) -> Limits {
             .iter()
             .find(|sample| sample.name == "sweep-propose" && sample.extra_providers == 16)
             .map_or(0, |sample| sample.min.as_nanos()),
+        governed_request_outcomes.saturating_add(installed_request_outcomes.saturating_mul(3)),
     );
 
     Limits {
         provider_count,
         provider_headroom,
-        raw_output,
-        raw_headroom,
+        raw_output: None,
+        narrow_raw_output,
+        narrow_raw_headroom,
+        full_provider_raw_output,
+        full_provider_raw_headroom,
         rationale,
     }
 }
@@ -420,6 +734,7 @@ fn command_text_in(dir: &std::path::Path, program: &str, args: &[&str]) -> Strin
 fn render_record(
     host: &str,
     checks: &[census::Check],
+    populations: &[RequestPopulation],
     samples: &[Sample],
     limits: &Limits,
     quick: bool,
@@ -429,7 +744,7 @@ fn render_record(
     out.push_str("  \"experiment\": \"physical-frontier-budget-calibration\",\n");
     out.push_str(&format!("  \"quick\": {quick},\n"));
     out.push_str(&format!("  \"host\": {},\n", json_string(host)));
-    out.push_str("  \"recommended_limits\": {\n");
+    out.push_str("  \"candidate_limits\": {\n");
     out.push_str(&format!(
         "    \"provider_count\": {},\n",
         limits.provider_count
@@ -438,8 +753,28 @@ fn render_record(
         "    \"provider_headroom\": {},\n",
         limits.provider_headroom
     ));
-    out.push_str(&format!("    \"raw_output\": {},\n", limits.raw_output));
-    out.push_str(&format!("    \"raw_headroom\": {},\n", limits.raw_headroom));
+    out.push_str(&format!(
+        "    \"raw_output\": {},\n",
+        limits
+            .raw_output
+            .map_or_else(|| "null".to_owned(), |value| value.to_string())
+    ));
+    out.push_str(&format!(
+        "    \"narrow_raw_output\": {},\n",
+        limits.narrow_raw_output
+    ));
+    out.push_str(&format!(
+        "    \"narrow_raw_headroom\": {},\n",
+        limits.narrow_raw_headroom
+    ));
+    out.push_str(&format!(
+        "    \"full_provider_raw_output\": {},\n",
+        limits.full_provider_raw_output
+    ));
+    out.push_str(&format!(
+        "    \"full_provider_raw_headroom\": {},\n",
+        limits.full_provider_raw_headroom
+    ));
     out.push_str(&format!(
         "    \"rationale\": {}\n",
         json_string(&limits.rationale)
@@ -457,11 +792,36 @@ fn render_record(
         ));
     }
     out.push_str("  ],\n");
+    out.push_str("  \"request_populations\": [\n");
+    for (index, row) in populations.iter().enumerate() {
+        let comma = if index + 1 == populations.len() {
+            ""
+        } else {
+            ","
+        };
+        out.push_str(&format!(
+            "    {{\"name\": {}, \"targets\": {}, \"successes\": {}, \"invocations\": {}, \"subjects\": {}, \"proposals\": {}, \"declines\": {}, \"alternatives\": {}, \"rendered_explain_bytes\": {}, \"resolved_contracts\": {}, \"target_keys\": {}, \"failure\": {}}}{comma}\n",
+            json_string(row.name),
+            row.targets,
+            row.successes,
+            row.invocations,
+            row.subjects,
+            row.proposals,
+            row.declines,
+            row.alternatives,
+            row.rendered_explain_bytes,
+            json_strings(&row.resolved_contracts),
+            json_strings(&row.target_keys),
+            row.failure.as_deref().map_or_else(|| "null".to_owned(), json_string),
+        ));
+    }
+    out.push_str("  ],\n");
     out.push_str("  \"samples\": [\n");
     for (index, sample) in samples.iter().enumerate() {
         let comma = if index + 1 == samples.len() { "" } else { "," };
         out.push_str("    {\n");
         out.push_str(&format!("      \"name\": {},\n", json_string(&sample.name)));
+        out.push_str(&format!("      \"targets\": {},\n", sample.targets));
         out.push_str(&format!(
             "      \"extra_providers\": {},\n",
             sample.extra_providers
@@ -517,6 +877,134 @@ fn render_record(
     out.push_str("  \"unsupported_guarantee\": \"These limits bound compiler-owned accepted outcomes and subsequent verification. They do not bound arbitrary native provider computation or allocation before an emission.\"\n");
     out.push_str("}\n");
     out
+}
+
+fn request_population_checks(
+    populations: &[RequestPopulation],
+    perturb: Perturb,
+) -> Vec<census::Check> {
+    let strict_rows = populations
+        .iter()
+        .filter(|row| row.name == "five-op-strict")
+        .collect::<Vec<_>>();
+    let strict_sixteen = strict_rows
+        .iter()
+        .copied()
+        .find(|row| row.targets == 16)
+        .expect("the sixteen-target row exists");
+    let grouped = populations
+        .iter()
+        .find(|row| row.name == "add-chain-four-contract-groups" && row.targets == 16)
+        .expect("the grouped sixteen-target row exists");
+    let reversed = populations
+        .iter()
+        .find(|row| row.name == "add-chain-reversed-target-order")
+        .expect("the reversed-order row exists");
+    let distinct_contracts = grouped
+        .resolved_contracts
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    let expected_reversed = (0..16)
+        .rev()
+        .map(|index| format!("test.request-reversed-{index}.v1"))
+        .collect::<Vec<_>>();
+    let specialists = if perturb == Perturb::LimitRecommendationPopulation {
+        3_u64
+    } else {
+        2_u64
+    };
+    let narrow_candidate = 304_u64
+        .saturating_add(
+            strict_sixteen
+                .proposals
+                .saturating_add(strict_sixteen.declines)
+                .saturating_mul(specialists),
+        )
+        .next_power_of_two();
+    let full_specialists = if perturb == Perturb::FullLimitPopulation {
+        29_u64
+    } else {
+        31_u64
+    };
+    let full_provider_candidate = 304_u64
+        .saturating_add(
+            strict_sixteen
+                .proposals
+                .saturating_add(strict_sixteen.declines)
+                .saturating_mul(full_specialists),
+        )
+        .next_power_of_two();
+    vec![
+        check_eq(
+            "request-target-count-population",
+            "1,2,8,16",
+            strict_rows
+                .iter()
+                .map(|row| row.targets.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
+        check_eq(
+            "request-strict-16-invocations",
+            272,
+            strict_sixteen.invocations,
+        ),
+        check_eq("request-strict-16-proposals", 48, strict_sixteen.proposals),
+        check_eq("request-strict-16-declines", 224, strict_sixteen.declines),
+        check_eq(
+            "request-strict-16-rendered-explain-bytes",
+            1_651_952,
+            strict_sixteen.rendered_explain_bytes,
+        ),
+        check_eq("request-grouped-contract-count", 4, distinct_contracts),
+        check_eq(
+            "request-grouped-candidate-invocations",
+            248,
+            grouped.invocations,
+        ),
+        check_eq("request-grouped-proposals", 24, grouped.proposals),
+        check_eq("request-grouped-declines", 224, grouped.declines),
+        check_eq(
+            "request-grouped-rendered-explain-bytes",
+            1_030_032,
+            grouped.rendered_explain_bytes,
+        ),
+        check_eq(
+            "request-reversed-target-order",
+            format!("{expected_reversed:?}"),
+            format!("{:?}", reversed.target_keys),
+        ),
+        check_eq("request-narrow-limit-calculation", 1024, narrow_candidate),
+        check_eq(
+            "request-full-provider-limit-calculation",
+            16_384,
+            full_provider_candidate,
+        ),
+    ]
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn check_eq(name: &'static str, expected: impl ToString, observed: impl ToString) -> census::Check {
+    let expected = expected.to_string();
+    let observed = observed.to_string();
+    census::Check {
+        name,
+        passed: expected == observed,
+        expected,
+        observed,
+    }
+}
+
+fn json_strings(values: &[String]) -> String {
+    format!(
+        "[{}]",
+        values
+            .iter()
+            .map(|value| json_string(value))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 fn json_string(value: &str) -> String {

@@ -4485,6 +4485,22 @@ impl TargetProfile {
     }
 
     #[cfg(test)]
+    pub(crate) fn governed_with_workgroup_limit_for_test(key: &str, limit: u32) -> Self {
+        let mut builder = TargetProfileBuilder::governed();
+        builder.key = TargetProfileKey::declared(key.to_owned())
+            .expect("the test target-profile key is valid");
+        builder
+            .queries
+            .retain(|query| query.axis != CapabilityAxis::WorkgroupThreads);
+        builder
+            .declare_max_threads_per_workgroup(limit, TargetFactSource(governed_profile_source()))
+            .expect("the test workgroup limit replaces the governed query");
+        builder
+            .build()
+            .expect("the bounded test target profile is intrinsically valid")
+    }
+
+    #[cfg(test)]
     pub(crate) fn governed_with_key_for_test(key: &str) -> Self {
         let mut builder = TargetProfileBuilder::governed();
         builder.key = TargetProfileKey::declared(key.to_owned())
@@ -4524,6 +4540,37 @@ impl TargetProfile {
         builder
             .build()
             .expect("the flush-only test profile is intrinsically valid")
+    }
+
+    /// One exact subnormal/reassociation realization for request-population
+    /// tests that must force distinct numerical-contract groups.
+    #[cfg(test)]
+    pub(crate) fn numerical_realization_for_test(
+        key: &str,
+        subnormals: SubnormalMode,
+        reassociation: NumericalPermission,
+    ) -> Self {
+        let mut builder = TargetProfileBuilder::governed();
+        builder.key = TargetProfileKey::declared(key.to_owned())
+            .expect("the test target-profile key is valid");
+        builder
+            .scalar
+            .retain(|declaration| match declaration.dimension {
+                NumericalDimension::InputSubnormals | NumericalDimension::ResultSubnormals => {
+                    declaration.behaviour == DimensionBehaviour::Subnormals(subnormals)
+                }
+                NumericalDimension::Contraction => {
+                    declaration.behaviour
+                        == DimensionBehaviour::Transform(NumericalPermission::Forbidden)
+                }
+                NumericalDimension::Reassociation => {
+                    declaration.behaviour == DimensionBehaviour::Transform(reassociation)
+                }
+                _ => true,
+            });
+        builder
+            .build()
+            .expect("the exact numerical test profile is intrinsically valid")
     }
 
     #[cfg(test)]
