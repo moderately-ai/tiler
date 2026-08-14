@@ -20,7 +20,7 @@ Tom accepts or revises the labelled-draft Rust spelling of the atomic subgroup r
 
 ## Ready decision packet — 2026-08-13
 
-The minimizing dependency re-audited the surface at exact base `b2ab50f278616a1ad8f171184a16d60ae7e608ff`, removed the unconsumed decoder and unreachable error, privatized the raw transfer tag, marked both growing enums non-exhaustive, and added a verified `Some(subgroup)` kernel-identity subject. The exact repaired source commit is `d9ddd8c07509830241381de30e67b0318c491954`. This packet is ready for Tom only at that named commit.
+The minimizing dependency re-audited the surface at exact base `b2ab50f278616a1ad8f171184a16d60ae7e608ff`, removed the unconsumed decoder and unreachable error, privatized the raw transfer tag, marked both growing enums non-exhaustive, and added a verified `Some(subgroup)` kernel-identity subject. The exact repaired source commit is `595ddea1f47b167a9cb6d017f4ce5d10e0c1413a`. This packet is ready for Tom only at that named commit.
 
 ## Exact included surface
 
@@ -83,8 +83,8 @@ Adding `ResourceRequirements.subgroup` was the original implementation's source-
 
 ## Recommendation
 
-**Proposal — accept the exact narrowed surface at `d9ddd8c07509830241381de30e67b0318c491954`.** Strongest counterargument: because no admitted schedule yet derives `Some`, acceptance precedes the first executable subgroup consumer and the first artifact round trip; either could expose pressure on the subject spelling. `SubgroupTransfer` being non-exhaustive also prevents downstream exhaustive matches over today's sole variant, but no such total recognizer exists and ADR 0074 deliberately reserves that pattern for a closed vocabulary. Evidence that would reverse the recommendation is a concrete second transfer or schema whose correct construction cannot use the private-tag/public-subject-encode split without duplication or ambiguity. The recorded triggers ensure that evidence reopens the exact boundary instead of being silently absorbed.
+**Proposal — accept the exact narrowed surface at `595ddea1f47b167a9cb6d017f4ce5d10e0c1413a`.** Strongest counterargument: because no admitted schedule yet derives `Some`, acceptance precedes the first executable subgroup consumer and the first artifact round trip; either could expose pressure on the subject spelling. `SubgroupTransfer` being non-exhaustive also prevents downstream exhaustive matches over today's sole variant, but no such total recognizer exists and ADR 0074 deliberately reserves that pattern for a closed vocabulary. Evidence that would reverse the recommendation is a concrete second transfer or schema whose correct construction cannot use the private-tag/public-subject-encode split without duplication or ambiguity. The recorded triggers ensure that evidence reopens the exact boundary instead of being silently absorbed.
 
 ## Closes when
 
-Tom accepts the exact `d9ddd8c07509830241381de30e67b0318c491954` surface, accepts it with named exclusions, or requests a named revision. Only Tom closes this ticket.
+Tom accepts the exact `595ddea1f47b167a9cb6d017f4ce5d10e0c1413a` surface, accepts it with named exclusions, or requests a named revision. Only Tom closes this ticket.
