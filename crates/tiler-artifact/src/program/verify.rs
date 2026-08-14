@@ -49,11 +49,11 @@ pub(super) fn verify_artifact(data: &ArtifactProgramData) -> Vec<ArtifactDiagnos
 
 /// Returns whether every arena node is reachable from a declared use site.
 ///
-/// Identity encodes expressions by content key at their use sites, so an
-/// unreferenced node does not change it — which is exactly the hazard. The node
-/// would still be retained by the verified product and written by a codec,
-/// making two byte-different artifacts share one identity. Rejecting keeps the
-/// arena a function of what the artifact actually says.
+/// Identity writes the arena once in a traversal seeded by declared use sites
+/// and names every use by canonical position. Its pre-validation encoder can
+/// append an unreached position only so a malformed draft receives this typed
+/// rejection rather than panicking during identity derivation. Rejecting keeps
+/// a verified artifact's arena exactly equal to its use-site-reached arena.
 fn expressions_are_reachable(data: &ArtifactProgramData) -> bool {
     let mut reached = vec![false; data.expressions.len()];
     let mut work: Vec<u32> = Vec::new();

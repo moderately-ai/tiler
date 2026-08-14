@@ -22,7 +22,7 @@ use std::time::Instant;
 
 use tiler_ir::identity::push_slice;
 use tiler_ir::kernel::{AddressSpace, BufferAccess, KernelType};
-use tiler_ir::program::abi::{TargetPropertyRequirementRelation, compare_expr_nodes, expr_key};
+use tiler_ir::program::abi::{TargetPropertyRequirementRelation, compare_expr_nodes};
 use tiler_ir::program::{StorageEncoding, StorageScalar};
 use tiler_ir::schedule::{
     ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
@@ -543,9 +543,10 @@ fn expression_assembly_order_does_not_change_the_bytes() {
     let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
 
     // The same formulas, minted through two different arena orders. Identity is
-    // already order-independent because it cross-references by content key; the
-    // envelope must be too, or one artifact would have two byte identities and
-    // an envelope digest could not serve as a cache key.
+    // already order-independent because it writes one canonical arena and names
+    // every use by canonical position; the envelope must be too, or one artifact
+    // would have two byte identities and an envelope digest could not serve as a
+    // cache key.
     let assemble = |reversed: bool| {
         let mut draft = ArtifactProgramBuilder::new(&semantic, environment.clone()).unwrap();
         draft.select_provider(selection(provider.clone())).unwrap();
@@ -1946,7 +1947,7 @@ fn a_repeated_expression_node_is_rejected() {
     );
 }
 
-/// The five nodes on which the content key and the comparator disagree.
+/// The five nodes on which the schema-13 historical order and comparator disagree.
 ///
 /// Both binary nodes apply one operation to one shared right operand, so the
 /// only thing separating them is their left operand — an input extent whose key
@@ -1955,15 +1956,15 @@ fn a_repeated_expression_node_is_rejected() {
 /// [`compare_expr_nodes`] compares those two roots by their encoded bytes, and a
 /// root's encoding opens with its constructor tag: an input extent is `0x03` and
 /// a target property is `0x04`, so the extent-bearing node is the smaller.
-/// [`expr_key`] frames each operand's whole key behind an eight-byte big-endian
-/// length, so comparing the two keys compares `64` against `47` before reaching
-/// any content, and the *property*-bearing node is the smaller. The two orders
-/// are opposite on this pair, which is what makes the switch a schema step
-/// rather than a refactor.
+/// The retired standalone subtree key framed each operand's whole key behind an
+/// eight-byte big-endian length, so comparing the two keys compared `64` against
+/// `47` before reaching any content, and the *property*-bearing node was the
+/// smaller. The two orders are opposite on this pair, which is what made the
+/// switch a schema step rather than a refactor.
 ///
-/// Returned in comparator order; `key_ordered_arena` is the same five nodes in
-/// the other one.
-fn divergent_arena() -> Vec<ExprNode> {
+/// Returned in comparator order; [`schema_13_historical_arena`] is a fixed
+/// transcription of the same five nodes in the earlier order.
+fn comparator_ordered_arena() -> Vec<ExprNode> {
     vec![
         ExprNode::Root(AbiRoot::UnsignedLiteral(1)),
         ExprNode::Root(AbiRoot::InputExtent {
@@ -1987,18 +1988,33 @@ fn divergent_arena() -> Vec<ExprNode> {
     ]
 }
 
-/// [`divergent_arena`]'s five nodes in canonical *content-key* order.
+/// The schema-13 historical canonical order for the five-node fixture.
 ///
-/// The two binary nodes swap places and their operand references are unaffected,
-/// because both name roots the swap does not move.
-fn key_ordered_arena() -> Vec<ExprNode> {
-    let nodes = divergent_arena();
+/// This is deliberately a literal fixture, not another implementation of the
+/// retired subtree-key encoder. The two binary nodes appear in the historical
+/// order while their operand references are unaffected because both name roots
+/// that the permutation does not move.
+fn schema_13_historical_arena() -> Vec<ExprNode> {
     vec![
-        nodes[0].clone(),
-        nodes[1].clone(),
-        nodes[2].clone(),
-        nodes[4].clone(),
-        nodes[3].clone(),
+        ExprNode::Root(AbiRoot::UnsignedLiteral(1)),
+        ExprNode::Root(AbiRoot::InputExtent {
+            key: InputKey::new("extent-key-aaaa").expect("a bounded interface key"),
+            axis: Axis::new(1),
+        }),
+        ExprNode::Root(AbiRoot::TargetProperty {
+            key: super::super::expr::TargetPropertyKey::new("p").expect("a bounded governed key"),
+            phase: AvailabilityPhase::LiveDevicePreflight,
+        }),
+        ExprNode::Binary {
+            op: AbiBinaryOp::CheckedAdd,
+            left: 2,
+            right: 0,
+        },
+        ExprNode::Binary {
+            op: AbiBinaryOp::CheckedAdd,
+            left: 1,
+            right: 0,
+        },
     ]
 }
 
@@ -2011,58 +2027,52 @@ fn arena_of(nodes: &[ExprNode]) -> Vec<u8> {
     bytes
 }
 
-/// The codec's arena order follows the comparator where the key disagrees.
+/// The codec's arena order follows the comparator where schema 13 disagrees.
 ///
-/// **The disagreement is asserted rather than assumed.** Both directions are
-/// checked on the same five nodes, so a future change that made the two
-/// relations agree again would fail here instead of leaving the case testing
-/// nothing.
+/// **The disagreement is asserted rather than assumed.** The fixed historical
+/// fixture is proven to be the comparator fixture with its final pair swapped,
+/// then the live ordering is checked against it. A future change that made the
+/// relation accept the historical order would fail here instead of leaving the
+/// case testing nothing.
 ///
-/// Watched failing under two perturbations before it was trusted. Replacing
+/// Watched failing under a subject perturbation before it was trusted. Replacing
 /// `ReadyNode::order`'s comparison with the arena position alone made the third
 /// assertion report `[0, 1, 2, 3, 4]` — and failed
-/// `the_arena_parser_accepts_the_comparator_order_and_refuses_the_key_order` at
-/// the same time. Lengthening the target-property key to twenty bytes took its
-/// content key past the input extent's, collapsing the two relations onto each
-/// other, and failed the second assertion.
+/// `the_arena_parser_accepts_the_comparator_order_and_refuses_the_schema_13_historical_order`
+/// at the same time.
 #[test]
-fn the_canonical_arena_order_follows_the_comparator_where_the_content_key_disagrees() {
-    let nodes = divergent_arena();
-    let mut keys: Vec<Vec<u8>> = Vec::new();
-    for node in &nodes {
-        let key = expr_key(node, &keys);
-        keys.push(key);
-    }
+fn the_canonical_arena_order_follows_the_comparator_where_schema_13_disagrees() {
+    let comparator = comparator_ordered_arena();
+    let historical = schema_13_historical_arena();
 
     assert!(
-        compare_expr_nodes(&nodes, 3, 4).is_lt(),
+        compare_expr_nodes(&comparator, 3, 4).is_lt(),
         "the extent-bearing node is structurally the smaller",
     );
-    assert!(
-        keys[4] < keys[3],
-        "and its content key is the larger, through the operand length prefix",
-    );
+    assert_eq!(&historical[..3], &comparator[..3]);
+    assert_eq!(historical[3], comparator[4]);
+    assert_eq!(historical[4], comparator[3]);
     assert_eq!(
-        super::model::canonical_expression_order(&key_ordered_arena()),
+        super::model::canonical_expression_order(&historical),
         vec![0, 1, 2, 4, 3],
-        "the codec orders by structure, so the key order is not canonical",
+        "the codec orders by structure, so the schema-13 historical order is not canonical",
     );
 }
 
-/// The arena parser accepts the comparator order and refuses the key order.
+/// The arena parser accepts the comparator order and refuses schema 13's order.
 ///
 /// The same five nodes on both sides, driven through the decode path rather than
 /// through `canonical_expression_order` directly, because that is the site a
 /// forger reaches.
 #[test]
-fn the_arena_parser_accepts_the_comparator_order_and_refuses_the_key_order() {
-    let canonical = divergent_arena();
+fn the_arena_parser_accepts_the_comparator_order_and_refuses_the_schema_13_historical_order() {
+    let canonical = comparator_ordered_arena();
     assert_eq!(
         parse_expression_arena(&arena_of(&canonical)),
         Ok(canonical.clone()),
     );
     assert_eq!(
-        parse_expression_arena(&arena_of(&key_ordered_arena())),
+        parse_expression_arena(&arena_of(&schema_13_historical_arena())),
         Err(ArtifactCodecError::NonCanonicalOrder {
             subject: OrderedSubject::Expression,
         }),
@@ -2228,8 +2238,9 @@ fn an_expression_reference_outside_the_arena_is_rejected() {
     let artifact = default_artifact();
     let envelope = envelope_of(&artifact);
     let beyond = u32::try_from(envelope.expressions.len()).unwrap();
-    // Encoding reads the guard's content key, so the forgery is applied to the
-    // encoded bytes rather than to the model.
+    // The builder and model cannot admit an out-of-range guard, and identity's
+    // canonical traversal assumes that construction invariant. Mutate the wire
+    // after an honest encode to reach the parser's reference check directly.
     let bytes = encode(&envelope).expect("the envelope encodes");
     // The variant record spells its guard immediately before its length-
     // prefixed target-profile key, which makes the pair a unique locator.
@@ -4055,15 +4066,15 @@ fn min_and_mean(repeats: u32, mut run: impl FnMut()) -> (std::time::Duration, st
     (best, total.elapsed() / repeats)
 }
 
-/// Reports decode cost, and how much of it is the canonicity re-encode.
+/// Reports decode cost beside the cost of independently encoding its result.
 ///
-/// **The share is the finding.** `decode` re-encodes the whole envelope to
-/// prove one artifact has one byte spelling. Its cost is therefore worth
-/// knowing exactly rather than estimating, and
-/// `decide-whether-the-canonicity-re-encode-is-redundant` settled on evidence
-/// which non-canonical spellings only that re-encode rejects.
+/// A fresh encode derives identity and section digests before writing the whole
+/// envelope. Decode's canonicity backstop instead reuses the identity and
+/// section digests it already derived and compares the canonical runs without
+/// accumulating another envelope. The ratio is therefore a reproducible cost
+/// comparison, not the backstop's share of decode.
 #[test]
-fn hot_path_decode_and_reencode_share() {
+fn hot_path_decode_and_fresh_encode_costs() {
     const REPEATS: u32 = 400;
     let bytes = encoded(&default_artifact());
 
@@ -4072,33 +4083,35 @@ fn hot_path_decode_and_reencode_share() {
     });
 
     let envelope = decode(&bytes).expect("the fixture decodes");
-    let (reencode, reencode_mean) = min_and_mean(REPEATS, || {
+    let (fresh_encode, fresh_encode_mean) = min_and_mean(REPEATS, || {
         let _ = super::encode::encode(&envelope).expect("the envelope re-encodes");
     });
 
     println!("MEASURE envelope bytes   : {}", bytes.len());
     println!("MEASURE decode           : min {full:?}, mean {full_mean:?} over {REPEATS}");
-    println!("MEASURE re-encode alone  : min {reencode:?}, mean {reencode_mean:?} over {REPEATS}");
     println!(
-        "MEASURE re-encode share  : {:.1}%",
-        (reencode.as_secs_f64() / full.as_secs_f64()) * 100.0
+        "MEASURE fresh encode     : min {fresh_encode:?}, mean {fresh_encode_mean:?} over {REPEATS}"
+    );
+    println!(
+        "MEASURE encode / decode  : {:.1}%",
+        (fresh_encode.as_secs_f64() / full.as_secs_f64()) * 100.0
     );
 }
 
-/// Reports what one decode spends on each of its four stages.
+/// Reports what one decode spends on selected stages and nested operations.
 ///
-/// **The split is the finding, and it is not the one reading the source
-/// suggests.** `decode` parses the framing and manifest, re-proves the model's
-/// obligations, derives the canonical identity to compare against the manifest's,
-/// and re-encodes as its canonicity backstop. Deriving the identity is the
-/// single largest stage, and it is paid *twice* over the decode as a whole —
-/// once directly and once inside the re-encode's manifest, which embeds the
-/// identity bytes. The last stage is the canonical arena order, printed because
-/// it is where the decode's worst amplification used to sit: it derived a
-/// content-key table quadratic in arena depth, and now walks the same arena
-/// through `compare_expr_nodes` without materializing one. The stages are
-/// measured against the same decoded envelope so the numbers add up against the
-/// full decode above them.
+/// **The split is the finding, and it is not inferred from the source.**
+/// `decode` parses the framing and manifest, re-proves the model's obligations,
+/// derives the canonical identity to compare its digest against the manifest's,
+/// and passes that same derivation to the canonicity backstop. The backstop
+/// hashes the identity into the manifest's fixed-width declaration and hashes
+/// the rebuilt manifest; it neither derives identity nor section digests a
+/// second time, and it does not embed the identity preimage. The last stage is
+/// the canonical arena order, printed because it is where the decode's worst
+/// amplification used to sit: it derived a content-key table quadratic in arena
+/// depth, and now walks the same arena through `compare_expr_nodes` without
+/// materializing one. The stages are measured against the same decoded envelope
+/// so the numbers can be compared with the full decode above them.
 #[test]
 fn hot_path_decode_stage_budget() {
     const REPEATS: u32 = 400;
@@ -4120,9 +4133,11 @@ fn hot_path_decode_stage_budget() {
     let (derive, _) = min_and_mean(REPEATS, || {
         let _ = envelope.canonical_identity().expect("the envelope derives");
     });
-    let (reencode, _) = min_and_mean(REPEATS, || {
-        let _ = super::encode::encode_with_identity(&envelope, &identity, &digests)
-            .expect("the envelope re-encodes");
+    let (backstop, _) = min_and_mean(REPEATS, || {
+        assert!(
+            super::encode::matches_canonical_encoding(&envelope, &identity, &digests, &bytes,)
+                .expect("the canonical envelope compares")
+        );
     });
     let (section_hash, _) = min_and_mean(REPEATS, || {
         for section in envelope.sections() {
@@ -4145,8 +4160,8 @@ fn hot_path_decode_stage_budget() {
         share(derive)
     );
     println!(
-        "MEASURE   re-encode       : {reencode:?} ({:.1}%)",
-        share(reencode)
+        "MEASURE   canonicity      : {backstop:?} ({:.1}%)",
+        share(backstop)
     );
     println!(
         "MEASURE   section digests : {section_hash:?} ({:.1}%, no longer paid twice)",
@@ -4190,14 +4205,13 @@ fn hot_path_carried_metadata_decode() {
     );
 }
 
-/// Reports the governed digest's throughput against the bytes a decode hashes.
+/// Reports governed digest throughput over one envelope-sized byte run.
 ///
-/// **This is what the decode budget above actually is.** A decode hashes the
-/// manifest once and every section once; its canonicity re-encode hashes both
-/// again. So a decode of an `N`-byte envelope drives roughly `2N` bytes through
-/// SHA-256, and at the throughput printed here that product is most of the
-/// decode. Neither the parse, the model re-proof, nor the identity derivation is
-/// close to it.
+/// This is a per-byte baseline, not a reconstruction of decode's hash traffic.
+/// Decode hashes the received manifest and each section once, its derived
+/// identity once for the declaration check, then the same identity and the
+/// rebuilt manifest once in the canonicity backstop; section digests are reused.
+/// [`hot_path_decode_stage_budget`] measures those stages in context.
 #[test]
 fn hot_path_digest_throughput() {
     const REPEATS: u32 = 400;
@@ -4219,9 +4233,10 @@ fn hot_path_digest_throughput() {
 ///
 /// **This is the harness that says *where* decode time goes.** A single decode
 /// is microseconds, which is one sample; reading a list of suspected costs off
-/// the source instead optimizes the list it started with. Recording this loop is
-/// what showed that the canonical-identity derivation, not the framing parse,
-/// dominates a decode.
+/// the source instead optimizes the list it started with. Recording this loop
+/// supplies frame-level attribution for whichever stage dominates at the
+/// measured commit; [`hot_path_decode_stage_budget`] and
+/// [`hot_path_digest_throughput`] isolate the current candidates.
 ///
 /// It is `#[ignore]`d because it deliberately runs for seconds and asserts
 /// nothing. Record it with:
@@ -4263,10 +4278,13 @@ fn hot_path_decode_profile_loop() {
 
 /// Reports how large a canonical identity is relative to the bytes it names.
 ///
-/// Identities are canonical byte strings rather than digests, and the ABI
-/// expression encoding embeds each operand's whole key, so a node's key carries
-/// its entire subtree. `encode-abi-expression-identity-in-linear-space` is the
-/// ticket; this is the number it moves.
+/// Artifact identity remains a canonical byte string rather than a digest. Its
+/// ABI-expression portion writes the reached arena once in canonical order and
+/// names every use by canonical position; the manifest carries only a digest of
+/// those identity bytes. This measurement therefore no longer tracks a pending
+/// flattening. It reports the current identity preimage size beside the envelope
+/// size as a reproducible baseline for the governed identity budget and later
+/// identity-grammar changes.
 #[test]
 fn hot_path_identity_size() {
     let artifact = default_artifact();

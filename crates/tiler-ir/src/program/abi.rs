@@ -40,13 +40,11 @@ use crate::identity::{push_len, push_slice};
 use crate::semantic::{InputKey, ProviderIdentity, RegistryError};
 use crate::shape::Axis;
 
-const EXPR_DOMAIN: &[u8] = b"tiler.artifact-program.abi-expr.v1\0";
-
 /// Canonical-arena encoding domain.
 ///
-/// Separate from [`EXPR_DOMAIN`] because it frames a different subject: that one
-/// names one node's whole subtree standalone, this one names a whole arena once
-/// and lets its use sites reference nodes by canonical position.
+/// Separate from the retired standalone subtree-key domain because this one
+/// names a whole arena once and lets its use sites reference nodes by canonical
+/// position.
 const ARENA_DOMAIN: &[u8] = b"tiler.kernel-program.abi-arena.v1\0";
 
 const CANONICAL_ID_BYTES: usize = size_of::<u64>();
@@ -230,8 +228,9 @@ impl AbiRoot {
 
     /// Encodes this root's canonical byte form.
     ///
-    /// The same encoding serves the content key and the artifact envelope's
-    /// wire form, so a root can never carry one spelling into identity and a
+    /// The retired standalone subtree key used this same root encoding, and the
+    /// live canonical-arena identity and artifact envelope wire form still
+    /// share it. A root therefore cannot carry one spelling into identity and a
     /// different one onto disk. `tiler_artifact::program::codec` owns the
     /// inverse and is pinned against this function by an exhaustive round-trip
     /// test.
@@ -602,61 +601,6 @@ impl AbiFacts {
             .find(|(bound, _)| bound == key)
             .map(|(_, value)| *value)
     }
-}
-
-/// Derives the canonical content key of one expression node.
-///
-/// The key names the node's whole subtree by content, never its arena position,
-/// so two structurally equal expressions assembled in different orders produce
-/// the same bytes and cross-references by key stay injective.
-///
-/// # Cost, and what uses this
-///
-/// A standalone key for one node has to determine that node's whole subtree, so
-/// it cannot be smaller than the subtree — and because this form nests each
-/// operand's key rather than referencing it, a node whose operand is shared *k*
-/// times pays for that operand *k* times. On a chain the array of all keys is
-/// quadratic in arena size; on a shared DAG one key alone doubles per level.
-///
-/// Kernel-program identity therefore no longer uses this. It encodes the arena
-/// once, in a canonical numbering, and references nodes by canonical position,
-/// which is linear in arena size and equally injective. `tiler-artifact`
-/// still derives per-node keys this way for envelope identity and for the
-/// canonical arena order its codec writes; moving it to the same flat form is
-/// `encode-artifact-abi-identity-in-linear-space`, which has to change all four
-/// of that crate's key derivations at once or they stop agreeing.
-#[must_use]
-pub fn expr_key(node: &ExprNode, keys: &[Vec<u8>]) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(EXPR_DOMAIN);
-    match node {
-        ExprNode::Root(root) => {
-            bytes.push(0x01);
-            root.encode(&mut bytes);
-        }
-        ExprNode::Unary { op, operand } => {
-            bytes.push(0x02);
-            bytes.push(op.tag());
-            push_slice(&mut bytes, &keys[position(*operand)]);
-        }
-        ExprNode::Binary { op, left, right } => {
-            bytes.push(0x03);
-            bytes.push(op.tag());
-            push_slice(&mut bytes, &keys[position(*left)]);
-            push_slice(&mut bytes, &keys[position(*right)]);
-        }
-        ExprNode::Select {
-            condition,
-            if_true,
-            if_false,
-        } => {
-            bytes.push(0x04);
-            push_slice(&mut bytes, &keys[position(*condition)]);
-            push_slice(&mut bytes, &keys[position(*if_true)]);
-            push_slice(&mut bytes, &keys[position(*if_false)]);
-        }
-    }
-    bytes
 }
 
 /// A canonical numbering of every arena node one ordered root list reaches.
@@ -1586,4 +1530,17 @@ impl PreparedEntryTargetRequirement {
         });
         bytes
     }
+}
+
+/// The retired standalone subtree-key domain remains historical identity evidence.
+///
+/// The domain ledger pins superseded spellings only while source evidence still
+/// names them. Keeping the bytes in this assertion preserves that evidence
+/// without restoring either a live domain constant or the retired encoder.
+#[cfg(test)]
+#[test]
+fn the_retired_subtree_key_domain_is_distinct_from_the_live_arena_domain() {
+    let retired = b"tiler.artifact-program.abi-expr.v1\0";
+    assert!(!retired.starts_with(ARENA_DOMAIN));
+    assert!(!ARENA_DOMAIN.starts_with(retired));
 }

@@ -570,9 +570,9 @@ pub enum KernelProgramDiagnostic {
     MissingApplicabilityGuard,
     /// An ABI expression is reachable from no use site of the program.
     ///
-    /// Identity folds each use site by content key, and a content key names its
-    /// whole subtree, so a node no use site reaches would be retained bytes
-    /// that identity does not cover.
+    /// Identity writes the reached arena once and names every use by canonical
+    /// position, so a node no use reaches would be retained program state
+    /// omitted by that traversal.
     UnreferencedAbiExpression,
     /// A stage covers no semantic occurrence and has no declared account.
     ///

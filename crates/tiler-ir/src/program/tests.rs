@@ -2613,8 +2613,9 @@ fn a_routing_commit_step_that_breaks_the_lifecycle_is_rejected_at_insertion() {
 
 #[test]
 fn an_abi_expression_no_use_site_reaches_is_rejected() {
-    // Identity folds each use site by content key and nothing else, so an arena
-    // node no use site reaches would be retained bytes identity does not cover.
+    // Identity writes the reached arena once and names each use by canonical
+    // position, so a node no use reaches would be retained program state omitted
+    // by that traversal.
     let semantic = serial_sum_program(SCALE_BITS);
     let mut builder = complete_two_stage(two_stage(&semantic, TwoStageShape::Canonical));
     literal(&mut builder, 4_096);

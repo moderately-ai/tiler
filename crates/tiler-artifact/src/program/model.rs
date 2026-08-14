@@ -756,10 +756,11 @@ impl BindingTargetData {
 /// # Why the interface, and not a program value
 ///
 /// The obvious spelling — the materialized value the binding's stage access
-/// reaches — has no durable name this layer can carry. A builder arena position
-/// is exactly the transient fact artifact identity replaces with canonical
-/// content keys everywhere else, and the shared IR's own canonical *value* key
-/// is crate-private to `tiler_ir::program` with no read view publishing it.
+/// reaches — has no durable name this layer can carry. A program value's builder
+/// arena position is a transient implementation detail, while artifact identity
+/// uses content-derived orderings where its other entity references need stable
+/// names. The shared IR's own canonical *value* key is crate-private to
+/// `tiler_ir::program` with no read view publishing it.
 ///
 /// What an artifact can name is the **semantic interface**, which the envelope
 /// already carries and which artifact identity already folds. Every value an
@@ -944,14 +945,16 @@ pub(super) fn packaged_entry_positions(variants: &[VariantData]) -> Vec<u32> {
 /// It deliberately excludes three things. **Unused compilation-environment
 /// providers** never enter it: only reached admission provenance and selected
 /// capability providers do, so an artifact is not invalidated by a provider it
-/// never used (ADR 0072). **Transient ordinals** never enter it: expression
-/// arena positions, builder insertion order, and program-local stage positions
-/// are all replaced by canonical content keys, so two structurally equal
-/// artifacts assembled in different orders share bytes. Variant order is the
-/// one retained order, because routing priority is meaning rather than
-/// insertion. And **emitted backend object bytes** never enter it: a payload is
-/// named by the digest of its compilation subject, so a non-reproducible linker
-/// does not change what artifact this is.
+/// never used (ADR 0072). **Transient ordinals** never enter it: expressions are
+/// written once in canonical arena order and referenced by canonical position;
+/// providers and payloads are ordered by canonical key, payload references carry
+/// that key, and an entry carries its stage's canonical key. Two structurally
+/// equal artifacts assembled in different builder or program-local stage orders
+/// therefore share bytes. Variant order is the one retained order, because
+/// routing priority is meaning rather than insertion. And **emitted backend
+/// object bytes** never enter it: a payload is named by the digest of its
+/// compilation subject, so a non-reproducible linker does not change what
+/// artifact this is.
 ///
 /// # This is a pre-compilation subject
 ///

@@ -94,19 +94,19 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 ///
 /// Raised to `14.0` when the canonical arena order and the canonical launch
 /// precondition order stopped being derived from
-/// `tiler_ir::program::abi::expr_key` and started being derived from
-/// `tiler_ir::program::abi::compare_expr_nodes`. This is the first step whose
-/// framing is untouched — every field keeps its width and its position — and it
-/// is nonetheless **major**, because a manifest schema names one canonical byte
-/// spelling of an artifact and this step changes which spelling that is. The two
-/// orders are different relations rather than two implementations of one: a
-/// content key frames each operand's whole key behind an eight-byte length
-/// prefix, so comparing two keys compares operand *lengths* before operand
-/// content, while the comparator compares structure directly. An arena whose
-/// nodes disagree between the two encodes to different bytes at `13.0` and at
-/// `14.0`, and a `13.0` reader — admitted at `minor <= implemented` — would
-/// refuse such an artifact as a non-canonical spelling, which names the wrong
-/// thing about it.
+/// the now-retired standalone subtree content key and started being derived
+/// from `tiler_ir::program::abi::compare_expr_nodes`. This is the first step
+/// whose framing is untouched — every field keeps its width and its position —
+/// and it is nonetheless **major**, because a manifest schema names one
+/// canonical byte spelling of an artifact and this step changes which spelling
+/// that is. The two orders are different relations rather than two
+/// implementations of one: a content key frames each operand's whole key behind
+/// an eight-byte length prefix, so comparing two keys compares operand *lengths*
+/// before operand content, while the comparator compares structure directly. An
+/// arena whose nodes disagree between the two encodes to different bytes at
+/// `13.0` and at `14.0`, and a `13.0` reader — admitted at `minor <= implemented`
+/// — would refuse such an artifact as a non-canonical spelling, which names the
+/// wrong thing about it.
 ///
 /// The switch is a bound rather than a preference: a key names its node's whole
 /// subtree, so a table of them over an arena of `d` chained nodes is quadratic
