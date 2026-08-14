@@ -90,6 +90,13 @@ pub struct KernelProgramBuilder {
     expression_types: Vec<AbiType>,
     expression_phases: Vec<AvailabilityPhase>,
     expression_interface_only: Vec<bool>,
+    /// Canonical program-input extents required to be nonzero before routing.
+    ///
+    /// Each entry is derived from a verified stage kernel and resolved through
+    /// that stage's checked access binding. The corresponding ABI nodes are
+    /// materialized only at `build`, after all stages are known, so equivalent
+    /// programs get one order-independent conjunction.
+    required_nonzero_extents: Vec<(InputKey, Axis)>,
     applicability_guard: Option<u32>,
     routing_commit: Vec<RoutingCommitTransition>,
 }
@@ -150,6 +157,7 @@ impl KernelProgramBuilder {
             expression_types: Vec::new(),
             expression_phases: Vec::new(),
             expression_interface_only: Vec::new(),
+            required_nonzero_extents: Vec::new(),
             applicability_guard: None,
             routing_commit: Vec::new(),
         })
@@ -267,6 +275,7 @@ impl KernelProgramBuilder {
             AbiType::Boolean,
             false,
         )?;
+        self.ensure_required_nonzero_guard_capacity(&self.required_nonzero_extents, Some(node))?;
         self.applicability_guard = Some(node);
         Ok(())
     }
@@ -599,8 +608,22 @@ impl KernelProgramBuilder {
                 limit: MAX_PROGRAM_STAGES,
             },
         )?;
+        let mut required_nonzero_extents = self.required_nonzero_extents.clone();
+        required_nonzero_extents.extend(self.check_required_nonzero_extents(kernel, &accesses)?);
+        required_nonzero_extents.sort_by(|(left_key, left_axis), (right_key, right_axis)| {
+            left_key
+                .as_str()
+                .cmp(right_key.as_str())
+                .then_with(|| left_axis.get().cmp(&right_axis.get()))
+        });
+        required_nonzero_extents.dedup();
+        self.ensure_required_nonzero_guard_capacity(
+            &required_nonzero_extents,
+            self.applicability_guard,
+        )?;
         self.covered
             .extend(coverage.iter().map(CoveredOccurrence::occurrence));
+        self.required_nonzero_extents = required_nonzero_extents;
         self.stages.push(StageData {
             kernel: kernel.clone(),
             coverage,
@@ -895,6 +918,9 @@ impl KernelProgramBuilder {
     /// Returns a [`KernelProgramVerificationError`] carrying every whole-program
     /// diagnostic and the recoverable builder when verification fails.
     pub fn build(mut self) -> Result<VerifiedKernelProgram, KernelProgramVerificationError> {
+        let authored_expression_count = self.expressions.len();
+        let authored_guard = self.applicability_guard;
+        self.materialize_required_nonzero_guard();
         let data = self.take_data();
         match super::verify::verify_program(&data, &self.subject).and_then(|(derived, keys)| {
             let identity = encode_identity(&data, &keys, &derived.definitions)?;
@@ -907,6 +933,7 @@ impl KernelProgramBuilder {
             }),
             Err(diagnostic) => {
                 self.restore_data(data);
+                self.restore_authored_abi(authored_expression_count, authored_guard);
                 Err(KernelProgramVerificationError {
                     builder: Box::new(self),
                     diagnostics: vec![diagnostic],
@@ -993,8 +1020,19 @@ impl KernelProgramBuilder {
                 },
             );
         }
+        let prospective_len = self.expressions.len().saturating_add(1);
+        let mut prospective_interned = self.interned_expressions.clone();
+        let prospective_index =
+            u32::try_from(self.expressions.len()).expect("a bounded arena fits u32");
+        prospective_interned.insert(node.clone(), prospective_index);
+        let derived = planned_required_nonzero_nodes(
+            &prospective_interned,
+            prospective_len,
+            &self.required_nonzero_extents,
+            self.applicability_guard,
+        );
         limit(
-            self.expressions.len().saturating_add(1),
+            prospective_len.saturating_add(derived),
             MAX_PROGRAM_ABI_EXPRESSIONS,
             ProgramLimitKind::AbiExpressions,
         )?;
@@ -1017,6 +1055,72 @@ impl KernelProgramBuilder {
         self.interned_expressions.insert(node.clone(), index);
         self.expressions.push(node);
         Ok(id)
+    }
+
+    /// Ensures the latent derived guard still fits the governed ABI arena.
+    ///
+    /// Requirements are retained as typed input axes until `build`, so every
+    /// insertion that can change the final arena reserves the exact number of
+    /// nodes its canonical materialization will add. The planner interns into a
+    /// clone of the real table, counting shared user-authored nodes only once.
+    fn ensure_required_nonzero_guard_capacity(
+        &self,
+        requirements: &[(InputKey, Axis)],
+        authored_guard: Option<u32>,
+    ) -> Result<(), KernelProgramBuildError> {
+        let derived = planned_required_nonzero_nodes(
+            &self.interned_expressions,
+            self.expressions.len(),
+            requirements,
+            authored_guard,
+        );
+        limit(
+            self.expressions.len().saturating_add(derived),
+            MAX_PROGRAM_ABI_EXPRESSIONS,
+            ProgramLimitKind::AbiExpressions,
+        )
+    }
+
+    /// Materializes the canonical `1 <= InputExtent` conjunction reserved by
+    /// insertion-time checks and makes it part of the routing guard.
+    fn materialize_required_nonzero_guard(&mut self) {
+        let Some(required_guard) = materialize_required_nonzero_nodes(
+            &mut self.expressions,
+            &mut self.interned_expressions,
+            &mut self.expression_types,
+            &mut self.expression_phases,
+            &mut self.expression_interface_only,
+            &self.required_nonzero_extents,
+        ) else {
+            return;
+        };
+        self.applicability_guard = Some(match self.applicability_guard {
+            Some(authored) => intern_reserved_node(
+                &mut self.expressions,
+                &mut self.interned_expressions,
+                &mut self.expression_types,
+                &mut self.expression_phases,
+                &mut self.expression_interface_only,
+                ExprNode::Binary {
+                    op: AbiBinaryOp::And,
+                    left: authored,
+                    right: required_guard,
+                },
+            ),
+            None => required_guard,
+        });
+    }
+
+    /// Removes build-time derived ABI nodes after a recoverable verification
+    /// failure, restoring exactly the producer-authored builder state.
+    fn restore_authored_abi(&mut self, expression_count: usize, guard: Option<u32>) {
+        self.expressions.truncate(expression_count);
+        self.expression_types.truncate(expression_count);
+        self.expression_phases.truncate(expression_count);
+        self.expression_interface_only.truncate(expression_count);
+        self.interned_expressions
+            .retain(|_, index| as_position(*index) < expression_count);
+        self.applicability_guard = guard;
     }
 
     fn expect_abi_type(&self, node: u32, expected: AbiType) -> Result<(), KernelProgramBuildError> {
@@ -1329,6 +1433,64 @@ impl KernelProgramBuilder {
         Ok(resolved)
     }
 
+    /// Resolves each schedule-derived live-contraction extent through the
+    /// stage's already-checked buffer/access correspondence.
+    ///
+    /// Distinct component buffers may legitimately lead to the same logical
+    /// input and are deduplicated. Every selected live-contraction kernel in
+    /// the current vocabulary has exactly one buffer for its live-input role,
+    /// so more than one distinct owner is presently uninhabited after kernel
+    /// verification. The check remains deliberately fail-closed for a future
+    /// kernel vocabulary that may put several buffers behind one tensor role:
+    /// zero distinct owners would silently omit a required predicate, while
+    /// more than one would guess which caller input owns it. Both therefore
+    /// fail with the exact tensor, axis, and observed count.
+    fn check_required_nonzero_extents(
+        &self,
+        kernel: &VerifiedKernel,
+        accesses: &[StageAccessData],
+    ) -> Result<Vec<(InputKey, Axis)>, KernelProgramBuildError> {
+        let buffers: Vec<_> = kernel.buffers().collect();
+        let mut resolved_requirements = Vec::new();
+        for parameter in &kernel.required_nonzero_input_extents {
+            let mut owners = Vec::new();
+            for (buffer, access) in buffers.iter().zip(accesses) {
+                if buffer.tensor != parameter.tensor {
+                    continue;
+                }
+                let view = self.views[as_position(access.view)];
+                let value = self.view_base(view);
+                let MaterializedOrigin::ProgramInput { key } = &value.origin else {
+                    continue;
+                };
+                let axis_exists = self.subject.inputs.iter().any(|(declared, shape, _)| {
+                    declared == key
+                        && usize::try_from(parameter.axis.get())
+                            .is_ok_and(|axis| axis < shape.rank())
+                });
+                if axis_exists {
+                    owners.push((key.clone(), parameter.axis));
+                }
+            }
+            owners.sort_by(|(left_key, left_axis), (right_key, right_axis)| {
+                left_key
+                    .as_str()
+                    .cmp(right_key.as_str())
+                    .then_with(|| left_axis.get().cmp(&right_axis.get()))
+            });
+            owners.dedup();
+            if owners.len() != 1 {
+                return Err(KernelProgramBuildError::RequiredInputExtentBinding {
+                    tensor: parameter.tensor,
+                    axis: parameter.axis,
+                    matches: owners.len(),
+                });
+            }
+            resolved_requirements.extend(owners);
+        }
+        Ok(resolved_requirements)
+    }
+
     /// Proves one stage's declared launch geometry realizes its bound kernel.
     ///
     /// Only the workgroup width has a kernel-side counterpart to check against:
@@ -1546,6 +1708,173 @@ fn expected_component(
 /// Converts a checked arena ordinal into a host index.
 fn as_position(index: u32) -> usize {
     usize::try_from(index).expect("u32 fits every supported host usize")
+}
+
+/// Counts the exact nodes a canonical required-nonzero guard would add.
+fn planned_required_nonzero_nodes(
+    interned: &HashMap<ExprNode, u32>,
+    expression_count: usize,
+    requirements: &[(InputKey, Axis)],
+    authored_guard: Option<u32>,
+) -> usize {
+    if requirements.is_empty() {
+        return 0;
+    }
+    let mut planned = interned.clone();
+    let mut next = u32::try_from(expression_count).expect("a bounded ABI arena fits u32");
+    let one = plan_reserved_node(
+        &mut planned,
+        &mut next,
+        ExprNode::Root(AbiRoot::UnsignedLiteral(1)),
+    );
+    let mut required = None;
+    for (key, axis) in requirements {
+        let extent = plan_reserved_node(
+            &mut planned,
+            &mut next,
+            ExprNode::Root(AbiRoot::InputExtent {
+                key: key.clone(),
+                axis: *axis,
+            }),
+        );
+        let predicate = plan_reserved_node(
+            &mut planned,
+            &mut next,
+            ExprNode::Binary {
+                op: AbiBinaryOp::LessOrEqual,
+                left: one,
+                right: extent,
+            },
+        );
+        required = Some(match required {
+            Some(left) => plan_reserved_node(
+                &mut planned,
+                &mut next,
+                ExprNode::Binary {
+                    op: AbiBinaryOp::And,
+                    left,
+                    right: predicate,
+                },
+            ),
+            None => predicate,
+        });
+    }
+    let required = required.expect("a nonempty requirement set produces a predicate");
+    if let Some(authored) = authored_guard {
+        plan_reserved_node(
+            &mut planned,
+            &mut next,
+            ExprNode::Binary {
+                op: AbiBinaryOp::And,
+                left: authored,
+                right: required,
+            },
+        );
+    }
+    as_position(next).saturating_sub(expression_count)
+}
+
+/// Interns one node in the planning table and returns its prospective ordinal.
+fn plan_reserved_node(
+    interned: &mut HashMap<ExprNode, u32>,
+    next: &mut u32,
+    node: ExprNode,
+) -> u32 {
+    if let Some(existing) = interned.get(&node) {
+        return *existing;
+    }
+    let index = *next;
+    *next = next
+        .checked_add(1)
+        .expect("the governed ABI arena is smaller than u32");
+    interned.insert(node, index);
+    index
+}
+
+/// Materializes the canonical required-nonzero conjunction into a reserved arena.
+fn materialize_required_nonzero_nodes(
+    expressions: &mut Vec<ExprNode>,
+    interned: &mut HashMap<ExprNode, u32>,
+    expression_types: &mut Vec<AbiType>,
+    expression_phases: &mut Vec<AvailabilityPhase>,
+    expression_interface_only: &mut Vec<bool>,
+    requirements: &[(InputKey, Axis)],
+) -> Option<u32> {
+    if requirements.is_empty() {
+        return None;
+    }
+    let one = intern_reserved_node(
+        expressions,
+        interned,
+        expression_types,
+        expression_phases,
+        expression_interface_only,
+        ExprNode::Root(AbiRoot::UnsignedLiteral(1)),
+    );
+    let mut required = None;
+    for (key, axis) in requirements {
+        let extent = intern_reserved_node(
+            expressions,
+            interned,
+            expression_types,
+            expression_phases,
+            expression_interface_only,
+            ExprNode::Root(AbiRoot::InputExtent {
+                key: key.clone(),
+                axis: *axis,
+            }),
+        );
+        let predicate = intern_reserved_node(
+            expressions,
+            interned,
+            expression_types,
+            expression_phases,
+            expression_interface_only,
+            ExprNode::Binary {
+                op: AbiBinaryOp::LessOrEqual,
+                left: one,
+                right: extent,
+            },
+        );
+        required = Some(match required {
+            Some(left) => intern_reserved_node(
+                expressions,
+                interned,
+                expression_types,
+                expression_phases,
+                expression_interface_only,
+                ExprNode::Binary {
+                    op: AbiBinaryOp::And,
+                    left,
+                    right: predicate,
+                },
+            ),
+            None => predicate,
+        });
+    }
+    required
+}
+
+/// Interns a node whose capacity was proven by the matching planner.
+fn intern_reserved_node(
+    expressions: &mut Vec<ExprNode>,
+    interned: &mut HashMap<ExprNode, u32>,
+    expression_types: &mut Vec<AbiType>,
+    expression_phases: &mut Vec<AvailabilityPhase>,
+    expression_interface_only: &mut Vec<bool>,
+    node: ExprNode,
+) -> u32 {
+    if let Some(existing) = interned.get(&node) {
+        return *existing;
+    }
+    debug_assert!(expressions.len() < MAX_PROGRAM_ABI_EXPRESSIONS);
+    let index = u32::try_from(expressions.len()).expect("a bounded ABI arena fits u32");
+    expression_types.push(node_type(&node, expression_types));
+    expression_phases.push(node_phase(&node, expression_phases));
+    expression_interface_only.push(node_is_interface_only(&node, expression_interface_only));
+    interned.insert(node.clone(), index);
+    expressions.push(node);
+    index
 }
 
 fn check_physical_storage(

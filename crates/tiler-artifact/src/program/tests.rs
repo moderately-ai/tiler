@@ -37,13 +37,14 @@ use tiler_ir::program::{
 };
 use tiler_ir::schedule::{
     Access, AccessMode, ApproximationEnvelope, ArithmeticType, Bf16NumericalContractKey,
-    BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder, ExceptionalValueAssumption,
-    ExecutionBinding, F32NumericalContractKey, FencedSpaces, FlushedZeroSign, InputOrdinal,
-    KernelSchedule, LaunchPlan, LogicalAccess, MaterializationRounding, MemoryOrdering,
-    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-    OwnershipWitnessId, PointwiseBf16ExpressionBuilder, PointwiseF32ExpressionBuilder,
-    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode,
-    SynchronizationKind, SynchronizationScope, SynchronizationSubject, TailPolicy, TensorRole,
+    BoundsProof, BoundsProofKind, BoundsWitnessId, ContractionAxisSource, ContributorOrder,
+    ExceptionalValueAssumption, ExecutionBinding, F32NumericalContractKey, FencedSpaces,
+    FlushedZeroSign, InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess,
+    MaterializationRounding, MemoryOrdering, NumericalPermission, NumericalRealization,
+    OwnershipProof, OwnershipProofKind, OwnershipWitnessId, PointwiseBf16ExpressionBuilder,
+    PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
+    ScheduledRegionBuilder, SubnormalMode, SynchronizationKind, SynchronizationScope,
+    SynchronizationSubject, TailPolicy, TensorRole,
 };
 use tiler_ir::semantic::{
     AttributeFieldId, BF16_CONSTANT_BITS_ATTRIBUTE, Bf16, Bf16Add, Bf16Constant, Bf16Multiply,
@@ -2367,6 +2368,297 @@ fn live_extent_program_with_guard(
     plan.push_output(OutputKey::new("result").unwrap(), result)
         .unwrap();
     plan.build().unwrap()
+}
+
+fn live_contraction_semantic() -> SemanticProgram {
+    let shape = Shape::from_dims([2, 3]);
+    let mut draft = SemanticProgramBuilder::try_standard().unwrap();
+    let left = draft
+        .input::<F32>(InputKey::new("left").unwrap(), shape.clone())
+        .unwrap();
+    let right = draft
+        .input::<F32>(InputKey::new("right").unwrap(), shape)
+        .unwrap();
+    let result = F32Add::apply(&mut draft, left, right).unwrap();
+    draft
+        .output(OutputKey::new("result").unwrap(), result)
+        .unwrap();
+    draft.build().unwrap()
+}
+
+/// A strict unseeded fold whose contributor count is input 0, axis 1.
+fn live_contraction_kernel() -> VerifiedKernel {
+    let left = Shape::from_dims([2]);
+    let right = Shape::from_dims([3]);
+    let output = Shape::from_dims([2, 3]);
+    let contracted = Shape::from_dims([]);
+    let owner = OwnershipWitnessId::new(0);
+    let mut region = ScheduledRegionBuilder::new(RegionId::new(41));
+    region.iteration_shape(output.clone()).unwrap();
+    for (ordinal, (operand, free)) in [(&left, 0_u32), (&right, 1)].into_iter().enumerate() {
+        let witness = u32::try_from(ordinal).unwrap();
+        let tensor = TensorRole::Input {
+            ordinal: InputOrdinal::new(witness),
+        };
+        region
+            .push_access(Access {
+                tensor,
+                component_role: None,
+                mode: AccessMode::Read,
+                map: LogicalAccess::ContractionOperand {
+                    operand_shape: operand.clone(),
+                    output_shape: output.clone(),
+                    contracted_shape: contracted.clone(),
+                    sources: vec![ContractionAxisSource::Output { position: free }],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                },
+                bounds: BoundsWitnessId::new(witness),
+                ownership: None,
+            })
+            .unwrap();
+        region
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(witness),
+                tensor,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange { element_count: 0 },
+            })
+            .unwrap();
+    }
+    region
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(2),
+            ownership: Some(owner),
+        })
+        .unwrap();
+    region
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(2),
+            tensor: TensorRole::Output,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange { element_count: 6 },
+        })
+        .unwrap();
+    region
+        .ownership_proof(OwnershipProof {
+            id: owner,
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 6 },
+        })
+        .unwrap();
+    region
+        .scalar_program(ScalarProgram::StrictTensorContraction {
+            contracted_shape: contracted,
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: CANONICAL_NAN,
+        })
+        .unwrap();
+    region.numerical(strict()).unwrap();
+    region
+        .schedule(KernelSchedule {
+            binding: ExecutionBinding::GlobalLinearInvocation,
+            work_items: 6,
+            threads_per_workgroup: 1,
+            tail: TailPolicy::Exact,
+            output_owner: owner,
+            reduction: ReductionTopology::LiveContraction {
+                live_input: InputOrdinal::FIRST,
+                live_axis: Axis::new(1),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                permits_reassociation: false,
+                permits_permutation: false,
+            },
+            launch: LaunchPlan {
+                grid_threads: 6,
+                threads_per_workgroup: 1,
+                zero_work_skips_dispatch: true,
+            },
+        })
+        .unwrap();
+    lower_scheduled_region(&region.build().unwrap()).unwrap()
+}
+
+fn live_contraction_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
+    let kernel = live_contraction_kernel();
+    let mut plan = KernelProgramBuilder::new(semantic).unwrap();
+    let allocation = |ownership| AllocationSpec {
+        capacity_bytes: 24,
+        alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
+        memory_space: MemorySpace::Device,
+        ownership,
+    };
+    let left_allocation = plan
+        .push_allocation(allocation(AllocationOwnership::External))
+        .unwrap();
+    let right_allocation = plan
+        .push_allocation(allocation(AllocationOwnership::External))
+        .unwrap();
+    let output_allocation = plan
+        .push_allocation(allocation(AllocationOwnership::Program))
+        .unwrap();
+    let value = |origin, role| MaterializedValueSpec {
+        origin,
+        role,
+        shape: Shape::from_dims([2, 3]),
+        storage_scalar: StorageScalar::F32,
+        element_type: KernelType::F32,
+        encoding: StorageEncoding::Unpacked,
+        alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
+        memory_space: MemorySpace::Device,
+    };
+    let left = plan
+        .push_value(
+            value(
+                MaterializedOrigin::ProgramInput {
+                    key: InputKey::new("left").unwrap(),
+                },
+                ValueRole::Input,
+            ),
+            left_allocation,
+        )
+        .unwrap();
+    let right = plan
+        .push_value(
+            value(
+                MaterializedOrigin::ProgramInput {
+                    key: InputKey::new("right").unwrap(),
+                },
+                ValueRole::Input,
+            ),
+            right_allocation,
+        )
+        .unwrap();
+    let output = plan
+        .push_value(
+            value(MaterializedOrigin::Internal, ValueRole::Output),
+            output_allocation,
+        )
+        .unwrap();
+    let left_view = plan
+        .push_view(
+            left,
+            ByteWindow {
+                offset: 0,
+                length: 0,
+            },
+        )
+        .unwrap();
+    let right_view = plan
+        .push_view(
+            right,
+            ByteWindow {
+                offset: 0,
+                length: 0,
+            },
+        )
+        .unwrap();
+    let output_view = plan.push_whole_view(output).unwrap();
+    let zero = plan.push_abi_root(AbiRoot::UnsignedLiteral(0)).unwrap();
+    let twenty_four = plan.push_abi_root(AbiRoot::UnsignedLiteral(24)).unwrap();
+    let six = plan.push_abi_root(AbiRoot::UnsignedLiteral(6)).unwrap();
+    let one = plan.push_abi_root(AbiRoot::UnsignedLiteral(1)).unwrap();
+    let guard = plan.push_abi_root(AbiRoot::BooleanLiteral(true)).unwrap();
+    plan.applicability_guard(guard).unwrap();
+    for (from, to, fallback_permitted) in [
+        (
+            RoutingCommitState::Preflight,
+            RoutingCommitState::Committed,
+            true,
+        ),
+        (
+            RoutingCommitState::Committed,
+            RoutingCommitState::Executing,
+            false,
+        ),
+        (
+            RoutingCommitState::Executing,
+            RoutingCommitState::Published,
+            false,
+        ),
+    ] {
+        plan.push_routing_commit_transition(RoutingCommitTransition {
+            from,
+            to,
+            fallback_permitted,
+        })
+        .unwrap();
+    }
+    plan.push_stage(
+        &kernel,
+        &checked_coverage(semantic),
+        &[
+            StageAccess {
+                view: left_view,
+                mode: StageAccessMode::Read,
+                accessible_bytes: zero,
+            },
+            StageAccess {
+                view: right_view,
+                mode: StageAccessMode::Read,
+                accessible_bytes: zero,
+            },
+            StageAccess {
+                view: output_view,
+                mode: StageAccessMode::Write,
+                accessible_bytes: twenty_four,
+            },
+        ],
+        StageLaunch {
+            grid_threads: six,
+            threads_per_workgroup: one,
+        },
+    )
+    .unwrap();
+    plan.push_output(OutputKey::new("result").unwrap(), output)
+        .unwrap();
+    plan.build().unwrap()
+}
+
+fn live_contraction_artifact() -> VerifiedArtifactProgram {
+    let semantic = live_contraction_semantic();
+    let program = live_contraction_program(&semantic);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+    let descriptor = draft.push_payload(payload(0xa1)).unwrap();
+    draft
+        .push_variant(
+            &program,
+            VariantSpec {
+                target_profile: profile(),
+                feasibility_rules: rules(),
+                deferred_predicates: Vec::new(),
+                entries: vec![EntrySpec {
+                    bindings: vec![
+                        BindingSpec {
+                            kind: BindingKind::Buffer,
+                        },
+                        BindingSpec {
+                            kind: BindingKind::Buffer,
+                        },
+                        BindingSpec {
+                            kind: BindingKind::Buffer,
+                        },
+                    ],
+                    launch: LaunchSpec {
+                        zero_work_skips_dispatch: true,
+                        preconditions: Vec::new(),
+                    },
+                    implementation: BackendEntryRef {
+                        payloads: vec![descriptor],
+                        entry_key: BackendEntryKey::from_bytes(b"live-contraction").unwrap(),
+                    },
+                }],
+            },
+        )
+        .unwrap();
+    declare_realization(&mut draft, &program);
+    draft.build().unwrap()
 }
 
 fn live_extent_c1_portfolio() -> VerifiedArtifactProgram {
@@ -4936,6 +5228,57 @@ fn a_live_extent_operand_round_trips_through_the_envelope() {
             .evaluate(&facts)
             .expect("launch evaluates from the same facts"),
         super::AbiValue::Unsigned(2),
+    );
+}
+
+#[test]
+fn a_live_contraction_nonzero_guard_round_trips_from_the_same_input_extent() {
+    let artifact = live_contraction_artifact();
+    let bytes = artifact.encode().expect("artifact encodes");
+    let decoded = super::decode_artifact(&bytes).expect("artifact decodes");
+    let variant = decoded.variants().next().expect("one variant");
+    let extent = variant
+        .entries()
+        .next()
+        .expect("one entry")
+        .extent_operands()
+        .next()
+        .expect("one live extent operand");
+    assert_eq!(extent.key().as_str(), "left");
+    assert_eq!(extent.axis(), Axis::new(1));
+
+    let key = InputKey::new("left").unwrap();
+    let guard_at = |bound| {
+        let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
+        binder
+            .bind_input_extent(key.clone(), Axis::new(1), bound)
+            .unwrap();
+        variant
+            .applicability_guard()
+            .evaluate(&binder.build())
+            .expect("the carried guard evaluates")
+    };
+    assert_eq!(guard_at(0), AbiValue::Boolean(false));
+    assert_eq!(guard_at(1), AbiValue::Boolean(true));
+    assert_eq!(guard_at(14), AbiValue::Boolean(true));
+    assert_eq!(guard_at(15), AbiValue::Boolean(true));
+}
+
+#[test]
+fn a_zero_live_row_major_extent_remains_an_applicable_no_work_neighbour() {
+    let artifact = live_extent_artifact();
+    let variant = artifact.variants().next().expect("one variant");
+    let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
+    binder
+        .bind_input_extent(InputKey::new("input").unwrap(), Axis::new(1), 0)
+        .unwrap();
+    assert_eq!(
+        variant
+            .applicability_guard()
+            .evaluate(&binder.build())
+            .expect("row-major guard evaluates"),
+        AbiValue::Boolean(true),
+        "LiveRowMajor performs all element access inside its empty range"
     );
 }
 

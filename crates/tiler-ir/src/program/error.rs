@@ -17,6 +17,7 @@ use std::fmt;
 use crate::kernel::KernelType;
 use crate::schedule::TensorRole;
 use crate::semantic::{EncodedComponentRole, InputKey, OutputKey};
+use crate::shape::Axis;
 
 use super::KernelProgramBuilder;
 use super::abi::{AbiEvaluationError, AbiType, AvailabilityPhase};
@@ -356,6 +357,20 @@ pub enum KernelProgramBuildError {
         expected: u64,
         /// Elements the declared view addresses.
         actual: u64,
+    },
+    /// A required live input extent did not resolve to exactly one program input.
+    ///
+    /// The count is over distinct `(InputKey, axis)` owners reached through the
+    /// kernel's checked buffer/access correspondence. Zero would drop a
+    /// schedule-derived precondition; more than one would guess which caller
+    /// extent governs it. Both are refused.
+    RequiredInputExtentBinding {
+        /// Region-local tensor role whose extent requires the predicate.
+        tensor: TensorRole,
+        /// Required logical input axis.
+        axis: Axis,
+        /// Distinct program input-axis owners found.
+        matches: usize,
     },
     /// A dependency named one stage as both predecessor and successor.
     SelfDependency,

@@ -927,6 +927,7 @@ impl KernelBuilder {
                 region: self.region,
                 schedule_identity: self.schedule_identity,
                 subnormal_freedom: subnormal_freedom_of(&self.schedule.index.scalar_program),
+                required_nonzero_input_extents: required_nonzero_input_extents(&self.schedule),
                 data,
                 identity,
             }),
@@ -1197,6 +1198,34 @@ impl KernelBuilder {
             .get(id.as_usize())
             .copied()
             .ok_or_else(|| invalid_handle(KernelEntityKind::Staging, false))
+    }
+}
+
+/// Derives every input extent whose scheduled operation has no empty result.
+///
+/// A live contraction seeds its strict fold from contributor zero before its
+/// remaining range begins, so its selected contraction extent must be nonzero.
+/// `LiveRowMajor` deliberately contributes nothing here: its whole element
+/// access is inside a range bounded by the live extent and therefore performs
+/// no work when that extent is zero.
+fn required_nonzero_input_extents(schedule: &ScheduledRegion) -> Vec<InputExtentParameter> {
+    match schedule.schedule.reduction {
+        ReductionTopology::LiveContraction {
+            live_input,
+            live_axis,
+            ..
+        } => vec![InputExtentParameter {
+            tensor: TensorRole::Input {
+                ordinal: live_input,
+            },
+            axis: live_axis,
+        }],
+        ReductionTopology::None
+        | ReductionTopology::Serial { .. }
+        | ReductionTopology::MultiPass { .. }
+        | ReductionTopology::Contraction { .. }
+        | ReductionTopology::CooperativeWorkgroup { .. }
+        | ReductionTopology::CooperativeContraction { .. } => Vec::new(),
     }
 }
 

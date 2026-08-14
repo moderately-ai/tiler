@@ -5335,6 +5335,47 @@ fn a_live_row_major_kernel_reads_the_declared_extent_and_does_not_bake_it() {
     assert_eq!(dense_f32_row_major_bytes(1, 0, 15), 60);
 }
 
+fn count_element_access_placement(
+    block: BlockRef<'_>,
+    in_live_loop: bool,
+    inside: &mut usize,
+    outside: &mut usize,
+) {
+    for operation in block.operations() {
+        match operation.view() {
+            OperationView::Load { .. }
+            | OperationView::GuardedLoad { .. }
+            | OperationView::Store { .. } => {
+                if in_live_loop {
+                    *inside += 1;
+                } else {
+                    *outside += 1;
+                }
+            }
+            OperationView::Predicated { body, .. } => {
+                count_element_access_placement(body, in_live_loop, inside, outside);
+            }
+            OperationView::SerialLoop(loop_ref) => {
+                count_element_access_placement(loop_ref.body(), true, inside, outside);
+            }
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn every_live_row_major_element_access_is_inside_its_live_range() {
+    let kernel = lower_scheduled_region(&live_row_major_region(2)).unwrap();
+    let mut inside = 0;
+    let mut outside = 0;
+    count_element_access_placement(kernel.body(), false, &mut inside, &mut outside);
+    assert_eq!(inside, 2, "the one load and one store form the census");
+    assert_eq!(
+        outside, 0,
+        "a zero-trip live range must leave no executable element access"
+    );
+}
+
 const fn dense_f32_row_major_bytes(row: u64, column: u64, inner_extent: u64) -> u64 {
     4 * (row * inner_extent + column)
 }
@@ -5545,7 +5586,11 @@ fn live_input_load_sites(kernel: &VerifiedKernel) -> (u64, u64) {
 
 fn live_contraction_loads(kernel: &VerifiedKernel, bound: u64) -> u64 {
     let (seed, body) = live_input_load_sites(kernel);
-    seed.saturating_add(bound.saturating_sub(1).saturating_mul(body))
+    let remaining = bound
+        .checked_sub(1)
+        .expect("preflight must refuse an empty strict contraction before execution");
+    seed.checked_add(remaining.checked_mul(body).unwrap())
+        .unwrap()
 }
 
 /// Neighbouring live extents move the load-count oracle and leave identity still.
@@ -5573,8 +5618,13 @@ fn a_live_contraction_consumes_s_as_the_contributor_bound_without_baking_it() {
         "the contributor bound must be the live operand, not a literal S"
     );
 
+    let loads_1 = live_contraction_loads(&kernel, 1);
     let loads_14 = live_contraction_loads(&kernel, 14);
     let loads_15 = live_contraction_loads(&kernel, 15);
+    assert_eq!(
+        loads_1, 1,
+        "S = 1 must execute exactly the unseeded fold's first contributor"
+    );
     assert_eq!(
         loads_14, 14,
         "S = 14 must perform exactly 14 loads of the live input"
