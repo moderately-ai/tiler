@@ -5,7 +5,7 @@
 //! without changing the numerical contract; this module answers a different,
 //! strictly *local* question. For one legal region and one target profile it
 //! enumerates the physical *implementations* proposed by one or more physical
-//! providers and returns the bounded, non-dominated set that is both intrinsically
+//! providers and returns the complete admitted set that is both intrinsically
 //! valid and hard-feasible (the [`ImplementationFrontier`], per
 //! `docs/compiler/fusion-and-scheduling.md` and the `Implementation frontier`
 //! glossary entry).
@@ -1410,34 +1410,126 @@ impl DeclinedStrategy {
     }
 }
 
-/// Everything one provider has to say about one region subject.
+/// Request-scoped raw-outcome counter the host owns and every sink charges.
 ///
-/// Proposals and declines are returned together rather than through two calls,
-/// because they are two halves of one answer: a provider that offered a serial
-/// reduction and withheld a split considered both in the same derivation, and
-/// splitting the call would let the two disagree about which request they were
-/// answering.
-#[derive(Debug, Default)]
-pub struct ProviderOffer {
+/// One compilation shares one counter across every region subject, so the
+/// bound is the request's rather than a per-region accident. Overflow latches:
+/// the first refused insertion is `limit + 1`, and later insertions stay
+/// refused even if the provider ignores the individual `Err`.
+#[derive(Debug)]
+pub(crate) struct FrontierOutcomeBudget {
+    limit: u64,
+    accepted: u64,
+    overflowed: bool,
+}
+
+impl FrontierOutcomeBudget {
+    /// A fresh counter for one compilation request.
+    pub(crate) const fn new(limit: u64) -> Self {
+        Self {
+            limit,
+            accepted: 0,
+            overflowed: false,
+        }
+    }
+
+    /// Charges one raw outcome. Latches overflow at `limit + 1`.
+    fn charge(&mut self) -> Result<(), PhysicalFrontierBudget> {
+        if self.overflowed {
+            return Err(PhysicalFrontierBudget { _private: () });
+        }
+        let next = self.accepted.saturating_add(1);
+        if next > self.limit {
+            self.overflowed = true;
+            return Err(PhysicalFrontierBudget { _private: () });
+        }
+        self.accepted = next;
+        Ok(())
+    }
+
+    const fn overflowed(&self) -> bool {
+        self.overflowed
+    }
+
+    const fn limit(&self) -> u64 {
+        self.limit
+    }
+}
+
+/// Why a sink insertion was refused.
+///
+/// The host has already latched overflow. A well-behaved provider stops
+/// emitting; a provider that ignores this result cannot keep later items.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhysicalFrontierBudget {
+    _private: (),
+}
+
+/// Host-owned bounded emission channel for one provider's answer about one subject.
+///
+/// A labelled draft under ADR 0075. The host constructs the sink, charges every
+/// proposal and every [`DeclinedStrategy`] before accepting it, and latches
+/// overflow so an ignored insertion result cannot retain a prefix. Providers
+/// cannot construct an unbounded stand-in: there is no public constructor.
+pub struct PhysicalFrontierSink<'budget> {
+    budget: &'budget mut FrontierOutcomeBudget,
     proposals: Vec<ImplementationProposal>,
     declined: Vec<DeclinedStrategy>,
 }
 
-impl ProviderOffer {
-    /// An offer of proposals with nothing withheld.
-    #[must_use]
-    pub const fn proposing(proposals: Vec<ImplementationProposal>) -> Self {
+impl<'budget> PhysicalFrontierSink<'budget> {
+    fn new(budget: &'budget mut FrontierOutcomeBudget) -> Self {
         Self {
-            proposals,
+            budget,
+            proposals: Vec::new(),
             declined: Vec::new(),
         }
     }
 
-    /// Records that a strategy was considered for this subject and withheld.
-    #[must_use]
-    pub fn decline(mut self, declined: DeclinedStrategy) -> Self {
+    /// Emits one proposal. Charges the request-scoped raw-outcome budget first.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PhysicalFrontierBudget`] when this insertion would exceed the
+    /// declared limit. The item is not retained. Further insertions fail too.
+    pub fn propose(
+        &mut self,
+        proposal: ImplementationProposal,
+    ) -> Result<(), PhysicalFrontierBudget> {
+        self.budget.charge()?;
+        self.proposals.push(proposal);
+        Ok(())
+    }
+
+    /// Records one withheld strategy. Charges the same raw-outcome budget.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PhysicalFrontierBudget`] when this insertion would exceed the
+    /// declared limit. The item is not retained. Further insertions fail too.
+    pub fn decline(&mut self, declined: DeclinedStrategy) -> Result<(), PhysicalFrontierBudget> {
+        self.budget.charge()?;
         self.declined.push(declined);
-        self
+        Ok(())
+    }
+}
+
+/// A deterministic budget that bounds raw physical-frontier emission.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum FrontierBudgetResource {
+    /// Raw proposal and decline outcomes admitted for one compilation request.
+    Outcomes,
+}
+
+impl FrontierBudgetResource {
+    /// Returns this budget's resource in the shared refusal vocabulary.
+    ///
+    /// Total and wildcard-free, so a frontier budget added above must decide
+    /// how a caller names it before this crate compiles.
+    pub(crate) const fn resource(self) -> crate::request::BudgetResource {
+        match self {
+            Self::Outcomes => crate::request::BudgetResource::PhysicalFrontierOutcomes,
+        }
     }
 }
 
@@ -1445,10 +1537,10 @@ impl ProviderOffer {
 /// region on a target profile.
 ///
 /// The provider is trusted, deterministic, and side-effect-free: it depends only
-/// on its explicit context and returns zero or more proposals, together with the
-/// strategies it considered and withheld. Trust does not mean belief — the host
-/// resubmits every scheduled-kernel and subprogram body through the ordinary
-/// checked verification path before admitting it.
+/// on its explicit context and emits zero or more proposals, together with the
+/// strategies it considered and withheld, through a host-owned sink. Trust does
+/// not mean belief — the host resubmits every scheduled-kernel and subprogram
+/// body through the ordinary checked verification path before admitting it.
 ///
 /// **A provider states three things and stamps none of them.** Its identity is
 /// read once from [`Self::provenance`] and stamped by the host onto every
@@ -1467,15 +1559,16 @@ pub trait PhysicalImplementationProvider {
     /// enumeration fails closed rather than admitting anonymous work.
     fn provenance(&self) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError>;
 
-    /// Proposes physical implementations for the region in `context`.
+    /// Emits physical implementations for the region in `context` into `sink`.
     ///
-    /// An empty offer is legitimate: it means the provider recognizes nothing
+    /// Emitting nothing is legitimate: it means the provider recognizes nothing
     /// about this region and target, which is neither an error nor a
-    /// global-coverage claim. An offer that proposes nothing but declines a
-    /// named strategy says something stronger — the strategy applied and this
+    /// global-coverage claim. Emitting no proposal but declining a named
+    /// strategy says something stronger — the strategy applied and this
     /// request did not admit it — and that difference is what the frontier
-    /// records.
-    fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer;
+    /// records. The host charges every insertion before accepting it; a
+    /// provider that ignores an individual refusal cannot retain the item.
+    fn propose(&self, context: &ImplementationContext<'_>, sink: &mut PhysicalFrontierSink<'_>);
 }
 
 /// The region one frontier is a local authority for.
@@ -2094,13 +2187,15 @@ impl FrontierRejection {
     }
 }
 
-/// The bounded local implementation frontier for one region and target profile.
+/// The local implementation frontier for one region and target profile.
 ///
 /// The admitted implementations are the feasible, verified proposals in canonical
-/// identity order. An empty admitted set is a valid, legitimate local result — no
-/// provider offered a feasible implementation — not an error and not a claim
-/// about global coverage. The rejections retain every non-admitted proposal with
-/// its typed reason for a complete explanation.
+/// identity order. This stored set has no independent retention cap: raw
+/// provider output is charged before admission, and this type keeps every
+/// admitted body that passed. An empty admitted set is a valid, legitimate
+/// local result — no provider offered a feasible implementation — not an error
+/// and not a claim about global coverage. The rejections retain every
+/// non-admitted proposal with its typed reason for a complete explanation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ImplementationFrontier {
     target_profile: TargetProfile,
@@ -2153,9 +2248,11 @@ impl ImplementationFrontier {
     /// requirements are no stronger*, its *guarantees are at least as strong*,
     /// and its cost estimate strictly dominates. Cost alone is not sufficient,
     /// because "interesting boundary properties such as useful unit-stride axes
-    /// are retained on a bounded Pareto frontier even when they are not locally
+    /// are retained on the Pareto view even when they are not locally
     /// cheapest": a cheaper implementation that demands more of its inputs or
     /// delivers less to its consumers is not a replacement for one that does not.
+    /// The view itself has no count bound; it is a borrowed filter over the
+    /// complete admitted set.
     ///
     /// Domination still runs strictly *after* feasibility admission and never
     /// establishes or refutes feasibility.
@@ -2237,6 +2334,16 @@ pub(crate) enum FrontierError {
         /// The exact proposal whose proof path was incomplete.
         proposal: Box<OpaqueCallProposal>,
     },
+    /// A request-scoped physical-frontier budget refused an insertion or a
+    /// provider-count preflight.
+    BudgetExceeded {
+        /// Which frontier budget refused.
+        resource: crate::request::BudgetResource,
+        /// The declared limit.
+        limit: u64,
+        /// The first excess, or the complete preflighted provider count.
+        reported: u64,
+    },
 }
 
 impl FrontierError {
@@ -2249,6 +2356,7 @@ impl FrontierError {
             Self::UndeterminedBoundaryProperty { .. } => "undetermined-boundary-property",
             Self::MalformedOpaqueCallAssessment { .. } => "malformed-opaque-call-assessment",
             Self::UnresolvedOpaqueCallAssessment { .. } => "unresolved-opaque-call-assessment",
+            Self::BudgetExceeded { resource, .. } => resource.key(),
         }
     }
 }
@@ -2285,6 +2393,15 @@ impl fmt::Display for FrontierError {
                 formatter,
                 "frontier.unresolved-opaque-call-assessment: provider {provider} did not resolve at compile-profile feasibility"
             ),
+            Self::BudgetExceeded {
+                resource,
+                limit,
+                reported,
+            } => write!(
+                formatter,
+                "frontier.budget-exceeded: {} limit={limit} reported={reported}",
+                resource.key()
+            ),
         }
     }
 }
@@ -2297,14 +2414,16 @@ impl Error for FrontierError {
             Self::MalformedCostProvenance { .. }
             | Self::UndeterminedBoundaryProperty { .. }
             | Self::MalformedOpaqueCallAssessment { .. }
-            | Self::UnresolvedOpaqueCallAssessment { .. } => None,
+            | Self::UnresolvedOpaqueCallAssessment { .. }
+            | Self::BudgetExceeded { .. } => None,
         }
     }
 }
 
-/// Enumerates the bounded implementation frontier for one region and target.
+/// Enumerates the local implementation frontier for one region and target.
 ///
-/// Each provider is asked for proposals over the region subject; every proposal
+/// Each provider emits through a host-owned sink that charges the request-scoped
+/// raw-outcome budget before any item is accepted. Every accepted proposal
 /// is processed in this fixed order:
 ///
 /// 1. provenance — the provider's complete governed identity must fit the exact
@@ -2332,14 +2451,55 @@ impl Error for FrontierError {
 /// Returns [`FrontierError`] when a provider emits malformed compiler output: a
 /// structurally invalid scheduled-kernel body or a cost estimate attributed to an
 /// ungoverned cost model.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "the compile path charges a shared request-scoped budget through enumerate_frontier_with_outcomes; this wrapper is the isolated-enumeration entry used by this crate's tests"
+    )
+)]
 pub(crate) fn enumerate_frontier(
     request: &VerifiedTargetRequest,
     subject: &FrontierRegionSubject,
     providers: &[&dyn PhysicalImplementationProvider],
     calls: &OpaqueCallRegistry,
 ) -> Result<ImplementationFrontier, FrontierError> {
+    let mut outcomes = FrontierOutcomeBudget::new(request.budgets().physical_frontier_outcomes);
+    enumerate_frontier_with_outcomes(request, subject, providers, calls, &mut outcomes)
+}
+
+/// Refuses when the complete provider population, governed included, exceeds
+/// the request's physical-provider budget.
+///
+/// The count is exact: the host already holds the full list, so the reported
+/// demand is that length rather than a truncated `limit + 1`.
+pub(crate) fn preflight_physical_providers(
+    providers: &[&dyn PhysicalImplementationProvider],
+    limit: u32,
+) -> Result<(), FrontierError> {
+    let limit = u64::from(limit);
+    let reported = u64::try_from(providers.len()).unwrap_or(u64::MAX);
+    if reported > limit {
+        return Err(FrontierError::BudgetExceeded {
+            resource: crate::request::BudgetResource::PhysicalProviders,
+            limit,
+            reported,
+        });
+    }
+    Ok(())
+}
+
+/// Enumerates one region's frontier while charging a shared request-scoped budget.
+pub(crate) fn enumerate_frontier_with_outcomes(
+    request: &VerifiedTargetRequest,
+    subject: &FrontierRegionSubject,
+    providers: &[&dyn PhysicalImplementationProvider],
+    calls: &OpaqueCallRegistry,
+    outcomes: &mut FrontierOutcomeBudget,
+) -> Result<ImplementationFrontier, FrontierError> {
     #[cfg(test)]
     crate::workcount::FRONTIER_ENUMERATIONS.record();
+    preflight_physical_providers(providers, request.budgets().physical_providers)?;
     let target_profile = request.target_profile().clone();
     let target_profile_key = target_profile.profile_key().clone();
     let applicable_key = target_profile_key.clone();
@@ -2358,18 +2518,31 @@ pub(crate) fn enumerate_frontier(
         let provenance = provider
             .provenance()
             .map_err(|source| FrontierError::UnrepresentableProviderProvenance { source })?;
-        let offer = provider.propose(&context);
+        let mut sink = PhysicalFrontierSink::new(outcomes);
+        provider.propose(&context, &mut sink);
+        if sink.budget.overflowed() {
+            return Err(FrontierError::BudgetExceeded {
+                resource: FrontierBudgetResource::Outcomes.resource(),
+                limit: sink.budget.limit(),
+                reported: sink.budget.limit().saturating_add(1),
+            });
+        }
+        let PhysicalFrontierSink {
+            proposals,
+            declined,
+            ..
+        } = sink;
         // A withheld strategy is recorded before the offered ones are assessed,
         // so a reader sees what the provider ruled out for this request beside
         // what it proposed for it rather than only in the proposals' absence.
-        for declined in offer.declined {
+        for declined in declined {
             rejections.push(FrontierRejection::StrategyDeclined {
                 provider: provenance.clone(),
                 strategy: declined.strategy,
                 cause: declined.cause,
             });
         }
-        for proposal in offer.proposals {
+        for proposal in proposals {
             let kind = proposal.body.kind();
             if !proposal.applicability.applies_to(&applicable_key) {
                 match &proposal.body {
@@ -3239,6 +3412,8 @@ fn encode_subprogram_subject(stages: &[VerifiedScheduledRegion]) -> Vec<u8> {
 pub(crate) struct PhysicalAuthorities<'providers> {
     providers: Vec<&'providers dyn PhysicalImplementationProvider>,
     calls: OpaqueCallRegistry,
+    /// Request-scoped raw-outcome counter shared by every region enumeration.
+    outcomes: std::cell::RefCell<FrontierOutcomeBudget>,
 }
 
 impl<'providers> PhysicalAuthorities<'providers> {
@@ -3265,6 +3440,9 @@ impl<'providers> PhysicalAuthorities<'providers> {
         Self {
             providers: crate::physical_provider::InstalledPhysicalProviders::governed().providers(),
             calls: OpaqueCallRegistry::new(),
+            outcomes: std::cell::RefCell::new(FrontierOutcomeBudget::new(
+                crate::request::DeterministicBudgets::governed().physical_frontier_outcomes,
+            )),
         }
     }
 
@@ -3277,7 +3455,24 @@ impl<'providers> PhysicalAuthorities<'providers> {
         providers: Vec<&'providers dyn PhysicalImplementationProvider>,
         calls: OpaqueCallRegistry,
     ) -> Self {
-        Self { providers, calls }
+        Self {
+            providers,
+            calls,
+            outcomes: std::cell::RefCell::new(FrontierOutcomeBudget::new(
+                crate::request::DeterministicBudgets::governed().physical_frontier_outcomes,
+            )),
+        }
+    }
+
+    /// Replaces the request-scoped outcome budget with the request's own limit.
+    pub(crate) fn with_outcome_budget(self, limit: u64) -> Self {
+        self.outcomes.replace(FrontierOutcomeBudget::new(limit));
+        self
+    }
+
+    /// The shared raw-outcome counter for this compilation.
+    pub(crate) fn outcomes(&self) -> &std::cell::RefCell<FrontierOutcomeBudget> {
+        &self.outcomes
     }
 
     /// The providers proposing implementations for each region subject.
@@ -3616,7 +3811,7 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
         PhysicalProviderProvenance::new(Self::identity())
     }
 
-    fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
+    fn propose(&self, context: &ImplementationContext<'_>, sink: &mut PhysicalFrontierSink<'_>) {
         let request = context.request();
         let subject = context.subject();
         let members = subject.semantic_members();
@@ -3627,9 +3822,10 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
             parallel,
         } = match govern_spelling(request, subject) {
             Ok(spelling) => spelling,
-            Err(UnspelledSubject::Coverless) => return ProviderOffer::default(),
+            Err(UnspelledSubject::Coverless) => return,
             Err(UnspelledSubject::Declined(declined)) => {
-                return ProviderOffer::default().decline(declined);
+                let _ = sink.decline(declined);
+                return;
             }
         };
         // A published-and-consumed region is two dispatches: the one just built,
@@ -3667,18 +3863,19 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
         // The serial alternative is offered unconditionally, and each parallel
         // strategy is additive beside it: a request that admits neither still
         // has a legal plan, and one that admits both retains all three. Whether
-        // a parallel one *wins* is not decided here.
-        let mut proposals = vec![serial];
-        let mut offer_declines = Vec::new();
+        // a parallel one *wins* is not decided here. The host charges every
+        // insertion; ignoring a refusal still cannot retain the item.
+        let _ = sink.propose(serial);
         for outcome in parallel {
             match outcome {
-                Ok(proposal) => proposals.push(proposal),
-                Err(declined) => offer_declines.push(declined),
+                Ok(proposal) => {
+                    let _ = sink.propose(proposal);
+                }
+                Err(declined) => {
+                    let _ = sink.decline(declined);
+                }
             }
         }
-        offer_declines
-            .into_iter()
-            .fold(ProviderOffer::proposing(proposals), ProviderOffer::decline)
     }
 }
 
@@ -3909,13 +4106,14 @@ fn encode_provider(output: &mut Vec<u8>, provider: &ProviderIdentity) {
 #[cfg(test)]
 mod tests {
     use super::{
-        AdmittedImplementation, BoundaryOwnership, FrontierError, FrontierRegionSubject,
-        FrontierRejection, GovernedPhysicalProvider, ImplementationBody, ImplementationContext,
-        ImplementationFrontier, ImplementationProposal, KernelSubprogram, OpaqueCallRejectionCause,
-        PhysicalCostEstimate, PhysicalImplementationProvider, PhysicalProposalKind,
-        PhysicalProviderProvenance, PhysicalProviderProvenanceError, ProposalBody, ProviderOffer,
-        ReservedProposalSeam, SubprogramStage, TargetApplicability, boundary_carrier,
-        bounded_guarantees, bounded_requirements, enumerate_frontier,
+        AdmittedImplementation, BoundaryOwnership, DeclinedStrategy, FrontierError,
+        FrontierOutcomeBudget, FrontierRegionSubject, FrontierRejection, GovernedPhysicalProvider,
+        ImplementationBody, ImplementationContext, ImplementationFrontier, ImplementationProposal,
+        KernelSubprogram, OpaqueCallRejectionCause, PhysicalCostEstimate, PhysicalFrontierSink,
+        PhysicalImplementationProvider, PhysicalProposalKind, PhysicalProviderProvenance,
+        PhysicalProviderProvenanceError, ProposalBody, ReservedProposalSeam, SubprogramStage,
+        TargetApplicability, boundary_carrier, bounded_guarantees, bounded_requirements,
+        enumerate_frontier, enumerate_frontier_with_outcomes,
     };
     use crate::boundary::{
         AlignmentGuarantee, AlignmentRequirement, BoundaryProperty, GuaranteedProperty,
@@ -4003,12 +4201,16 @@ mod tests {
             PhysicalProviderProvenance::new(self.provider.clone())
         }
 
-        fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
-            ProviderOffer::proposing(vec![ImplementationProposal::new(
+        fn propose(
+            &self,
+            context: &ImplementationContext<'_>,
+            sink: &mut PhysicalFrontierSink<'_>,
+        ) {
+            let _ = sink.propose(ImplementationProposal::new(
                 ProposalBody::ScheduledKernel(Box::new(fused_region(context.request()))),
                 governed_applicability(),
                 self.cost,
-            )])
+            ));
         }
     }
 
@@ -4025,7 +4227,7 @@ mod tests {
                 PhysicalProviderProvenance::new(self.identity.clone())
             }
 
-            fn propose(&self, _: &ImplementationContext<'_>) -> ProviderOffer {
+            fn propose(&self, _: &ImplementationContext<'_>, _: &mut PhysicalFrontierSink<'_>) {
                 panic!("unrepresentable provenance must fail before proposals are requested")
             }
         }
@@ -4447,25 +4649,23 @@ mod tests {
             ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("opaque", 1))
             }
-            fn propose(&self, _: &ImplementationContext<'_>) -> ProviderOffer {
-                ProviderOffer::proposing(vec![
-                    ImplementationProposal::new(
-                        ProposalBody::OpaqueCall(Box::new(
-                            OpaqueCallProposal::new(
-                                OpaqueCallIdentity::new("test", "mystery", 1).expect("named"),
-                                Vec::new(),
-                            )
-                            .expect("fixture proposal is exactly reportable"),
-                        )),
-                        governed_applicability(),
-                        PhysicalCostEstimate::structural(1, 2, 0),
-                    ),
-                    ImplementationProposal::new(
-                        ProposalBody::View(ReservedProposalSeam::new("view")),
-                        governed_applicability(),
-                        PhysicalCostEstimate::structural(1, 2, 0),
-                    ),
-                ])
+            fn propose(&self, _: &ImplementationContext<'_>, sink: &mut PhysicalFrontierSink<'_>) {
+                let _ = sink.propose(ImplementationProposal::new(
+                    ProposalBody::OpaqueCall(Box::new(
+                        OpaqueCallProposal::new(
+                            OpaqueCallIdentity::new("test", "mystery", 1).expect("named"),
+                            Vec::new(),
+                        )
+                        .expect("fixture proposal is exactly reportable"),
+                    )),
+                    governed_applicability(),
+                    PhysicalCostEstimate::structural(1, 2, 0),
+                ));
+                let _ = sink.propose(ImplementationProposal::new(
+                    ProposalBody::View(ReservedProposalSeam::new("view")),
+                    governed_applicability(),
+                    PhysicalCostEstimate::structural(1, 2, 0),
+                ));
             }
         }
 
@@ -4535,18 +4735,22 @@ mod tests {
             ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("infeasible", 1))
             }
-            fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
+            fn propose(
+                &self,
+                context: &ImplementationContext<'_>,
+                sink: &mut PhysicalFrontierSink<'_>,
+            ) {
                 let (region, _) = pointwise_region(
                     context.request(),
                     context.request().sole_output(),
                     crate::physical::RegionWrite::Materialized,
                 );
-                ProviderOffer::proposing(vec![ImplementationProposal::new(
+                let _ = sink.propose(ImplementationProposal::new(
                     ProposalBody::ScheduledKernel(Box::new(region)),
                     governed_applicability(),
                     // A deliberately cheap estimate cannot rescue an infeasible plan.
                     PhysicalCostEstimate::structural(1, 1, 0),
-                )])
+                ));
             }
         }
 
@@ -4614,14 +4818,18 @@ mod tests {
             ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("malformed", 1))
             }
-            fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
+            fn propose(
+                &self,
+                context: &ImplementationContext<'_>,
+                sink: &mut PhysicalFrontierSink<'_>,
+            ) {
                 let mut region = fused_region(context.request());
                 region.index.numerical.canonical_arithmetic_nan_bits ^= 1;
-                ProviderOffer::proposing(vec![ImplementationProposal::new(
+                let _ = sink.propose(ImplementationProposal::new(
                     ProposalBody::ScheduledKernel(Box::new(region)),
                     governed_applicability(),
                     PhysicalCostEstimate::structural(1, 2, 0),
-                )])
+                ));
             }
         }
 
@@ -4643,12 +4851,16 @@ mod tests {
             ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("wrong-cost", 1))
             }
-            fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
-                ProviderOffer::proposing(vec![ImplementationProposal::new(
+            fn propose(
+                &self,
+                context: &ImplementationContext<'_>,
+                sink: &mut PhysicalFrontierSink<'_>,
+            ) {
+                let _ = sink.propose(ImplementationProposal::new(
                     ProposalBody::ScheduledKernel(Box::new(fused_region(context.request()))),
                     governed_applicability(),
                     PhysicalCostEstimate::new("tiler.cost.ungoverned.v9", 1, 2, 0),
-                )])
+                ));
             }
         }
 
@@ -4687,12 +4899,16 @@ mod tests {
             ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("analytical", 1))
             }
-            fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
-                ProviderOffer::proposing(vec![ImplementationProposal::new(
+            fn propose(
+                &self,
+                context: &ImplementationContext<'_>,
+                sink: &mut PhysicalFrontierSink<'_>,
+            ) {
+                let _ = sink.propose(ImplementationProposal::new(
                     ProposalBody::ScheduledKernel(Box::new(fused_region(context.request()))),
                     governed_applicability(),
                     PhysicalCostEstimate::new(crate::component_cost::ANALYTICAL_MODEL_KEY, 1, 2, 0),
-                )])
+                ));
             }
         }
 
@@ -5345,15 +5561,19 @@ mod tests {
         ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
             PhysicalProviderProvenance::new(provider_identity("opaque", 1))
         }
-        fn propose(&self, _context: &ImplementationContext<'_>) -> ProviderOffer {
-            ProviderOffer::proposing(vec![ImplementationProposal::new(
+        fn propose(
+            &self,
+            _context: &ImplementationContext<'_>,
+            sink: &mut PhysicalFrontierSink<'_>,
+        ) {
+            let _ = sink.propose(ImplementationProposal::new(
                 ProposalBody::OpaqueCall(Box::new(
                     OpaqueCallProposal::new(self.0, self.1.clone())
                         .expect("fixture proposal is exactly reportable"),
                 )),
                 governed_applicability(),
                 PhysicalCostEstimate::structural(1, 2, 0),
-            )])
+            ));
         }
     }
 
@@ -6020,14 +6240,18 @@ mod tests {
             ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("foreign", 1))
             }
-            fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
-                ProviderOffer::proposing(vec![ImplementationProposal::new(
+            fn propose(
+                &self,
+                context: &ImplementationContext<'_>,
+                sink: &mut PhysicalFrontierSink<'_>,
+            ) {
+                let _ = sink.propose(ImplementationProposal::new(
                     ProposalBody::ScheduledKernel(Box::new(fused_region(context.request()))),
                     TargetApplicability::for_targets([TargetProfileKey::governed(
                         "tiler.some-other-target.v1",
                     )]),
                     PhysicalCostEstimate::structural(1, 2, 0),
-                )])
+                ));
             }
         }
 
@@ -6539,14 +6763,14 @@ mod tests {
         ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
             PhysicalProviderProvenance::new(provider_identity("subprogram", 1))
         }
-        fn propose(&self, _: &ImplementationContext<'_>) -> ProviderOffer {
-            ProviderOffer::proposing(vec![ImplementationProposal::new(
+        fn propose(&self, _: &ImplementationContext<'_>, sink: &mut PhysicalFrontierSink<'_>) {
+            let _ = sink.propose(ImplementationProposal::new(
                 ProposalBody::KernelSubprogram(Box::new(KernelSubprogram::new(
                     self.stages.clone(),
                 ))),
                 governed_applicability(),
                 PhysicalCostEstimate::structural(2, 6, 16),
-            )])
+            ));
         }
     }
 
@@ -6706,5 +6930,229 @@ mod tests {
                 "two splits over different extents share one identity"
             );
         }
+    }
+
+    /// A provider that emits `count` named declines and ignores every sink refusal.
+    struct FloodDeclines {
+        identity: ProviderIdentity,
+        count: usize,
+    }
+
+    impl PhysicalImplementationProvider for FloodDeclines {
+        fn provenance(
+            &self,
+        ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
+            PhysicalProviderProvenance::new(self.identity.clone())
+        }
+
+        fn propose(&self, _: &ImplementationContext<'_>, sink: &mut PhysicalFrontierSink<'_>) {
+            for _ in 0..self.count {
+                let _ = sink.decline(DeclinedStrategy::new(
+                    "flood",
+                    super::StrategyDeclineCause::NoAdmissibleShape {
+                        rule: "test.flood",
+                        extent: 1,
+                    },
+                ));
+            }
+        }
+    }
+
+    /// A provider that emits `count` fused-kernel proposals and ignores refusals.
+    struct FloodProposals {
+        identity: ProviderIdentity,
+        count: usize,
+    }
+
+    impl PhysicalImplementationProvider for FloodProposals {
+        fn provenance(
+            &self,
+        ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
+            PhysicalProviderProvenance::new(self.identity.clone())
+        }
+
+        fn propose(
+            &self,
+            context: &ImplementationContext<'_>,
+            sink: &mut PhysicalFrontierSink<'_>,
+        ) {
+            for _ in 0..self.count {
+                let _ = sink.propose(ImplementationProposal::new(
+                    ProposalBody::ScheduledKernel(Box::new(fused_region(context.request()))),
+                    governed_applicability(),
+                    PhysicalCostEstimate::structural(1, 2, 0),
+                ));
+            }
+        }
+    }
+
+    fn flood_declines(name: &str, count: usize) -> FloodDeclines {
+        FloodDeclines {
+            identity: provider_identity(name, 1),
+            count,
+        }
+    }
+
+    fn flood_proposals(name: &str, count: usize) -> FloodProposals {
+        FloodProposals {
+            identity: provider_identity(name, 1),
+            count,
+        }
+    }
+
+    fn assert_frontier_budget(
+        error: FrontierError,
+        resource: crate::request::BudgetResource,
+        limit: u64,
+        reported: u64,
+    ) {
+        match error {
+            FrontierError::BudgetExceeded {
+                resource: got,
+                limit: got_limit,
+                reported: got_reported,
+            } => {
+                assert_eq!(got, resource);
+                assert_eq!(got_limit, limit);
+                assert_eq!(got_reported, reported);
+            }
+            other => panic!("expected frontier budget refusal, got {other:?}"),
+        }
+    }
+
+    /// Exceeding the provider-count preflight refuses the whole enumeration.
+    ///
+    /// The complete population is counted, governed included, so 33 providers
+    /// against a limit of 32 report 33 rather than a reserved prefix.
+    #[test]
+    fn too_many_providers_refuse_the_complete_population() {
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
+        let extras: Vec<FloodDeclines> = (0..32)
+            .map(|index| flood_declines(&format!("extra-{index}"), 0))
+            .collect();
+        let mut providers: Vec<&dyn PhysicalImplementationProvider> =
+            vec![&GovernedPhysicalProvider];
+        providers.extend(
+            extras
+                .iter()
+                .map(|provider| provider as &dyn PhysicalImplementationProvider),
+        );
+        assert_eq!(providers.len(), 33);
+        let error = enumerate_frontier(
+            &request,
+            &fused_subject(&request),
+            &providers,
+            &OpaqueCallRegistry::new(),
+        )
+        .expect_err("33 providers including governed exceed the governed limit of 32");
+        assert_frontier_budget(
+            error,
+            crate::request::BudgetResource::PhysicalProviders,
+            32,
+            33,
+        );
+    }
+
+    /// The 257th raw proposal refuses the enumeration and retains no prefix.
+    #[test]
+    fn the_first_excess_proposal_refuses_the_enumeration() {
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
+        let flood = flood_proposals("proposals", 257);
+        let mut outcomes = FrontierOutcomeBudget::new(2);
+        let error = enumerate_frontier_with_outcomes(
+            &request,
+            &fused_subject(&request),
+            &[&flood as &dyn PhysicalImplementationProvider],
+            &OpaqueCallRegistry::new(),
+            &mut outcomes,
+        )
+        .expect_err("three proposals against a limit of two must refuse");
+        assert_frontier_budget(
+            error,
+            crate::request::BudgetResource::PhysicalFrontierOutcomes,
+            2,
+            3,
+        );
+    }
+
+    /// The 257th named decline is the same raw-outcome population as a proposal.
+    #[test]
+    fn the_first_excess_decline_refuses_the_enumeration() {
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
+        let flood = flood_declines("declines", 257);
+        let mut outcomes = FrontierOutcomeBudget::new(2);
+        let error = enumerate_frontier_with_outcomes(
+            &request,
+            &fused_subject(&request),
+            &[&flood as &dyn PhysicalImplementationProvider],
+            &OpaqueCallRegistry::new(),
+            &mut outcomes,
+        )
+        .expect_err("three declines against a limit of two must refuse");
+        assert_frontier_budget(
+            error,
+            crate::request::BudgetResource::PhysicalFrontierOutcomes,
+            2,
+            3,
+        );
+    }
+
+    /// Ignoring every sink `Err` still latches overflow at `limit + 1`.
+    ///
+    /// The provider tries to dump ten declines into a budget of two. The host
+    /// reports 3, not 10, and does not return a two-item prefix.
+    #[test]
+    fn ignored_sink_refusal_still_latches_at_the_first_excess() {
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
+        let flood = flood_declines("ignored", 10);
+        let mut outcomes = FrontierOutcomeBudget::new(2);
+        let error = enumerate_frontier_with_outcomes(
+            &request,
+            &fused_subject(&request),
+            &[&flood as &dyn PhysicalImplementationProvider],
+            &OpaqueCallRegistry::new(),
+            &mut outcomes,
+        )
+        .expect_err("an ignored sink refusal cannot retain a prefix");
+        assert_frontier_budget(
+            error,
+            crate::request::BudgetResource::PhysicalFrontierOutcomes,
+            2,
+            3,
+        );
+        assert!(outcomes.overflowed());
+    }
+
+    /// Installation order cannot change whether the same provider set exhausts.
+    #[test]
+    fn exhaustion_is_independent_of_installation_order() {
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
+        let first = flood_declines("first", 2);
+        let second = flood_declines("second", 2);
+        let mut forward_budget = FrontierOutcomeBudget::new(3);
+        let mut reverse_budget = FrontierOutcomeBudget::new(3);
+        let forward = enumerate_frontier_with_outcomes(
+            &request,
+            &fused_subject(&request),
+            &[&first as &dyn PhysicalImplementationProvider, &second],
+            &OpaqueCallRegistry::new(),
+            &mut forward_budget,
+        )
+        .expect_err("four declines against a limit of three must refuse");
+        let reverse = enumerate_frontier_with_outcomes(
+            &request,
+            &fused_subject(&request),
+            &[&second as &dyn PhysicalImplementationProvider, &first],
+            &OpaqueCallRegistry::new(),
+            &mut reverse_budget,
+        )
+        .expect_err("reversing installation order cannot admit the same four declines");
+        assert_eq!(forward, reverse);
+        assert_frontier_budget(
+            forward,
+            crate::request::BudgetResource::PhysicalFrontierOutcomes,
+            3,
+            4,
+        );
     }
 }

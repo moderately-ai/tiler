@@ -396,6 +396,14 @@ pub(super) fn enumerate_complete_plans(
     // which the subject already has.
     let mut frontiers_by_subject: Vec<(FrontierRegionSubject, ImplementationFrontier)> = Vec::new();
     let mut failure_census = PlanningFailureCensus::new(enumeration.covers().len());
+    crate::frontier::preflight_physical_providers(physical.providers(), budgets.physical_providers)
+        .map_err(|source| {
+            failure_at_source(
+                source.into(),
+                ExplainStage::IntrinsicScheduling,
+                record_cause(numerical_cause),
+            )
+        })?;
     for cover in enumeration.covers() {
         if cover
             .regions()
@@ -464,15 +472,20 @@ pub(super) fn enumerate_complete_plans(
             {
                 enumerated.clone()
             } else {
-                let enumerated =
-                    enumerate_frontier(verified, &subject, physical.providers(), physical.calls())
-                        .map_err(|source| {
-                            failure_at_source(
-                                source.into(),
-                                ExplainStage::IntrinsicScheduling,
-                                record_cause(numerical_cause),
-                            )
-                        })?;
+                let enumerated = crate::frontier::enumerate_frontier_with_outcomes(
+                    verified,
+                    &subject,
+                    physical.providers(),
+                    physical.calls(),
+                    &mut physical.outcomes().borrow_mut(),
+                )
+                .map_err(|source| {
+                    failure_at_source(
+                        source.into(),
+                        ExplainStage::IntrinsicScheduling,
+                        record_cause(numerical_cause),
+                    )
+                })?;
                 frontiers_by_subject.push((subject.clone(), enumerated.clone()));
                 enumerated
             };

@@ -1822,9 +1822,9 @@ mod tests {
     use crate::cover::{RegionCover, enumerate_covers};
     use crate::frontier::{
         BoundaryOwnership, FrontierRegionSubject, ImplementationContext, ImplementationProposal,
-        PhysicalCostEstimate, PhysicalImplementationProvider, PhysicalProviderProvenance,
-        PhysicalProviderProvenanceError, ProposalBody, ProviderOffer, TargetApplicability,
-        enumerate_frontier,
+        PhysicalCostEstimate, PhysicalFrontierSink, PhysicalImplementationProvider,
+        PhysicalProviderProvenance, PhysicalProviderProvenanceError, ProposalBody,
+        TargetApplicability, enumerate_frontier,
     };
     use crate::physical::{ScheduledRegion, build_fused_scheduled_region, build_scheduled_regions};
     use crate::request::{
@@ -1894,8 +1894,8 @@ mod tests {
             PhysicalProviderProvenance::new(provider_identity("opaque", 1))
         }
 
-        fn propose(&self, _: &ImplementationContext<'_>) -> ProviderOffer {
-            ProviderOffer::proposing(vec![ImplementationProposal::new(
+        fn propose(&self, _: &ImplementationContext<'_>, sink: &mut PhysicalFrontierSink<'_>) {
+            let _ = sink.propose(ImplementationProposal::new(
                 ProposalBody::OpaqueCall(Box::new(
                     crate::call_registry::OpaqueCallProposal::new(
                         self.identity,
@@ -1905,7 +1905,7 @@ mod tests {
                 )),
                 governed_applicability(),
                 self.cost,
-            )])
+            ));
         }
     }
 
@@ -2045,12 +2045,12 @@ mod tests {
             PhysicalProviderProvenance::new(self.provider.clone())
         }
 
-        fn propose(&self, _: &ImplementationContext<'_>) -> ProviderOffer {
-            ProviderOffer::proposing(vec![ImplementationProposal::new(
+        fn propose(&self, _: &ImplementationContext<'_>, sink: &mut PhysicalFrontierSink<'_>) {
+            let _ = sink.propose(ImplementationProposal::new(
                 ProposalBody::ScheduledKernel(Box::new(self.region.clone())),
                 governed_applicability(),
                 self.cost,
-            )])
+            ));
         }
     }
 
