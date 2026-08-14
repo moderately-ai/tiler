@@ -15,7 +15,7 @@ tags: [public-boundary, explain, budgets, correctness]
 
 Decide the exact truthful public classification for a complete-explain detail-capacity refusal reached by an otherwise valid public compile request. Keep complete-or-refused trace construction intact. Do not select a capacity value, active-provider cardinality, or full-provider support policy here; this decision is mandatory independently of whether full 32-slot activity is ever promised.
 
-If a public change survives the Pareto gate, create a narrow implementation ticket. Tom must accept the exact included and excluded public surface before implementation.
+If a change survives the Pareto gate, Tom must accept the exact included and excluded public surface before implementation. Before this decision ticket closes, it must create the narrow accepted implementation ticket and its required evidence/regression ticket, then add hard dependencies from both downstream capacity tickets named under **Graph** to the implementation **and** evidence tickets. A decision-only closure is forbidden because it would satisfy the current hard dependency while the false `InvalidCompilerOutput` behavior still ships.
 
 ## Facts at discovery base `e37c05b8ec28114736648edebbbdee745f4a051b`
 
@@ -34,9 +34,10 @@ Compare at least:
 1. extend `BudgetExhausted` with one or two explain-capacity resources and the exact refusal provenance/payload needed to make `limit` and `reported` truthful;
 2. add a dedicated typed explain-capacity class/resource that does not claim the refusal is a request budget, infeasible plan, unsupported capability, invalid request, or compiler defect;
 3. make the public refusal unreachable by a proven complete source aggregation or sufficiently governed widening; and
-4. defer the exact surface while treating current public reachability as a live defect, never as an acceptable support statement.
+4. remove both hard ceilings without silent truncation; and
+5. defer the exact surface while treating current public reachability as a live defect, never as an acceptable support statement.
 
-Eliminate `InvalidRequest`, `UnsupportedCapability`, and `NoFeasiblePlan`: the request is valid, installing a provider can increase the demand, and the compiler has not proved the plan space infeasible. Eliminate a bare rename that carries no actionable resource or provenance. Do not let an eventual full-provider support decision stand in for this classification decision.
+Eliminate `InvalidRequest`, `UnsupportedCapability`, and `NoFeasiblePlan`: the request is valid, installing a provider can increase the demand, and the compiler has not proved the plan space infeasible. Eliminate a bare rename that carries no actionable resource or provenance. Eliminate removing both hard ceilings: the installed/active population is unbounded, trace growth is combinatorial, and `never-truncate-the-governed-explain-trace` deliberately retained the hard record/byte ceiling as real host-memory protection after removing the redundant soft truncation limit. Do not let an eventual full-provider support decision stand in for this classification decision.
 
 For every survivor state:
 
@@ -60,3 +61,11 @@ For every survivor state:
 ## Graph
 
 Both [`decide-how-explain-capacity-bounds-active-physical-provider-populations`](decide-how-explain-capacity-bounds-active-physical-provider-populations.md) and [`calibrate-the-physical-frontier-provider-and-outcome-budgets`](calibrate-the-physical-frontier-provider-and-outcome-budgets.md) depend on this decision. The first cannot call the current wall a supported-population policy; the second cannot land a raw budget while a smaller valid request can still surface the false defect class through an independent capacity.
+
+## Closing conditions
+
+- Tom accepts the exact public surface, or accepts a complete source/capacity change that makes the public refusal unreachable.
+- Create `implement-<accepted-truthful-explain-capacity-outcome>` with this decision as a dependency. Do not use a generic implementation ticket whose body leaves the accepted surface implicit.
+- Create the accepted regression/evidence ticket depending on that implementation. It must reproduce the seven-specialist public path, both independent capacity arms, and a genuine verifier defect that remains `InvalidCompilerOutput`.
+- Add hard dependencies from **both** `decide-how-explain-capacity-bounds-active-physical-provider-populations` and `calibrate-the-physical-frontier-provider-and-outcome-budgets` to **both** the accepted implementation and evidence tickets. Verify the graph after all four edges exist.
+- Only then may this decision close. If no change survives, it remains open with the live defect rather than satisfying dependents by declaration.

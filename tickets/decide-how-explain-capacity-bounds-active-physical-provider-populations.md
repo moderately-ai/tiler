@@ -49,8 +49,9 @@ Compare at least:
 
 1. retain the one-MiB ceiling and explicitly support no more than the measured active-provider population for this subject;
 2. widen both independent explain dimensions enough to carry the named full-provider population — a byte-only widening is not sufficient under the measured growth continuation — with identity/schema and idle-M3 memory consequences stated;
-3. reduce repeated frontier/plan explanation while preserving complete typed reasons and canonical identity; and
-4. defer wider active-provider support and keep the calibration/value sink held.
+3. remove both hard detail ceilings without reintroducing silent truncation;
+4. reduce repeated frontier/plan explanation while preserving complete typed reasons and canonical identity; and
+5. defer wider active-provider support and keep the calibration/value sink held.
 
 Eliminate any option that drops records, silently truncates the trace, invents an active-provider policy, or treats raw outcomes as a uniform work unit. Compare correctness, fail-closed strictness, maintainability, host runtime/RSS, identity/schema consequences, and the interaction with `physical_plan_combinations` separately.
 
@@ -101,7 +102,11 @@ No accepted consumer or request authority says two, six, or another specialist c
 
 It addresses the arm that fires first at seven but not the independent 4,096-detail ceiling projected to fail for the named full population. It therefore cannot deliver its claimed outcome. Raising an arbitrary byte value now would also choose a budget without measuring the complete 31-specialist demand.
 
-#### 5. Widen both detail ceilings to the complete 31-specialist demand — not implementation-ready
+#### 5. Remove both hard detail ceilings — eliminated
+
+This preserves complete records only by making explain retention unbounded. It does not silently truncate, but it also does not fail closed before exhausting host memory. The public installation seam has no provider-count branch, 129 installed identities are already a finite witness, and neither active providers nor their native pre-emission computation is bounded. Their retained frontier and complete-plan explanation can grow combinatorially. [`never-truncate-the-governed-explain-trace`](never-truncate-the-governed-explain-trace.md), anchor `The reachable case the retained bound protects against`, removed the redundant soft truncation limit but deliberately kept the incrementally checked 4,096-record/one-MiB hard ceiling because candidate enumeration is combinatorial and the byte limit is a real memory bound. Removing both would discard that accepted host-safety rationale without installing another authority. Reintroducing a soft limit or omitted-record summary is separately forbidden because it loses reasons. This option is worse than a truthful hard refusal on correctness and host RSS, and is eliminated.
+
+#### 6. Widen both detail ceilings to the complete 31-specialist demand — not implementation-ready
 
 - **Correctness / strictness.** Completeness can survive if both limits are sized from a completed trace rather than extrapolated and refusal remains atomic. No silent truncation is admissible.
 - **Maintainability.** Mechanically simple after sizing, but a fixed constant can drift behind governed populations again, as the earlier `refuse-nothing-legal-on-the-explain-detail-ceiling` defect demonstrated.
@@ -111,7 +116,7 @@ It addresses the arm that fires first at seven but not the independent 4,096-det
 - **Strongest counterargument.** It pays memory for repeated attribution without asking whether the same complete information has a smaller representation, and it may create an unusable host envelope.
 - **Reversal evidence / perturbation.** A diagnostic-only run must first lift both bounds, retain exact required detail count and bytes through all 31 specialists, and then measure 1/2/8/16 target runtime and RSS on the unchanged idle M3. Independently lowering each lifted limit by one must reproduce record-capacity and byte-capacity refusals separately; no implementation ticket is justified before those results.
 
-#### 6. Complete compaction or deduplication — not implementation-ready
+#### 7. Complete compaction or deduplication — not implementation-ready
 
 Two materially different changes hide under this label and must not be conflated.
 
@@ -120,15 +125,15 @@ Two materially different changes hide under this label and must not be conflated
 
 No retained artifact classifies the 31-specialist trace's exact repeated tuples or cause graph because construction stops at seven. Aggregating merely similar records would drop reasons or associations; dictionary encoding without an in-memory result may not solve the host problem. The strongest counterargument is implementation complexity across causal identity for an unrequested population. Reversal evidence is an exact structural census showing a large, losslessly aggregable or dictionary-compressible share, with expansion equality and subject perturbations that distinguish provider, region, strategy, plan, evidence, and cause. An unchanged renderer compared byte-for-byte after lossless source aggregation is a useful negative control but cannot alone prove canonical or causal equivalence.
 
-#### 7. Further bounded research — survivor only if full activity becomes a named requirement
+#### 8. Further bounded research — survivor only if full activity becomes a named requirement
 
-This is the only path that can make options 4 or 5 decision-ready without choosing a budget. It must use a diagnostic-only capacity override, never production constants, and must record exact detail/terminal counts, canonical bytes, rendered bytes, per-rule/event/subject populations, causal edges, lossless grouping candidates, and the first independent bound at each contour. The idle-M3 phase follows only after a one-target stop condition shows the full subject fits safely; host/toolchain configuration remains unchanged. The exact conditional follow-up is `measure-complete-explain-demand-and-lossless-compaction-for-full-physical-provider-activity`; it depends on this decision ticket, so it cannot dispatch before Tom answers the support-requirement question.
+This is the only path that can make options 6 or 7 decision-ready without choosing a budget. It must use a diagnostic-only capacity override, never production constants, and must record exact detail/terminal counts, canonical bytes, rendered bytes, per-rule/event/subject populations, causal edges, lossless grouping candidates, and the first independent bound at each contour. The idle-M3 phase follows only after a one-target stop condition shows the full subject fits safely; host/toolchain configuration remains unchanged. The exact conditional follow-up is `measure-complete-explain-demand-and-lossless-compaction-for-full-physical-provider-activity`; it depends on this decision ticket, so it cannot dispatch before Tom answers the support-requirement question.
 
 ### Pareto frontier and recommendation
 
 The current public behavior does not survive correctness review. Before the support choice, one independent action is mandatory:
 
-1. **Decide and implement a truthful capacity refusal, or prove the capacity refusal unreachable.** The exact public surface is not ready in this ticket. Until the P1 boundary decision lands, this ticket and the raw calibration remain held.
+1. **Decide and implement a truthful capacity refusal, or prove the capacity refusal unreachable.** The exact public surface is not ready in this ticket. The decision may close only after it creates the accepted implementation and required evidence tickets and adds both this ticket and the raw calibration as hard dependents of those downstream tickets. A decision-only closure must not unblock either while the false `InvalidCompilerOutput` behavior remains.
 
 After that prerequisite, two support choices are nondominated:
 
