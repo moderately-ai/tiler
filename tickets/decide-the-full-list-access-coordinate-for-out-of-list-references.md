@@ -1,7 +1,7 @@
 ---
 id: decide-the-full-list-access-coordinate-for-out-of-list-references
 title: Decide the full-list access coordinate for out-of-list references
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [decide-the-schedule-local-input-ordinal-model]
 related: [reconcile-input-ordinal-region-local-and-declared-input-semantics, scope-an-in-place-append-into-a-caller-retained-allocation]
@@ -345,6 +345,14 @@ schedule, kernel, proposal, explain-schema, and explain-renderer domains — or
 defer implementation and keep the dependent ticket blocked? No second nondominated
 implementation model remains at this base.
 
+## Accepted decision — 2026-08-14
+
+Tom accepted the exact complete replacement in the live Codex conversation,
+relayed by the coordinating agent. Implementation must use the public and
+private coordinate types, field and diagnostic spellings, opaque-call regional
+`InOut` refusal, validation order, identity/version migrations, unchanged wire
+grammars, and required controls specified above without amendment.
+
 ## Required controls after acceptance
 
 - **Positive declared rebinding.** Compile two independently verified requests whose local region is identical but whose declared association differs. For sparse declared subset `[0, 2]`, local read positions `[0, 1]` reach the intended two `InputKey`s in each request. Schedule and kernel canonical bytes remain identical; request-subject identity changes, the two `CoverAssembly` values bind the corresponding declared inputs, and kernel-program/artifact identity changes where those exact `InputKey` origins are encoded. A changed valid association is not a `request-binding` failure.
@@ -357,8 +365,8 @@ implementation model remains at this base.
 - **Opaque validation and ordering negatives.** Bind `In` to the write and `Out` to a read and quote `access-mode-mismatch` separately; name an absent coordinate and quote `access-out-of-range`; omit one otherwise valid boundary access and quote `unbound-access`. Bind two distinct compatible `In` parameters to one read (and, independently, compatible `Out` parameters to the owning write) and prove admission plus one facet at that access; then perturb only one storage declaration and quote `access-storage-disagreement`. Reverse binding order while keeping access assignments and prove proposal identity changes but boundary facets remain in access-list order.
 - Perturb the schedule, kernel, physical-proposal, explain-schema, and explain-renderer spellings independently so each owning pin names its stale row/header. Prove artifact row bytes remain `(InputKey, Axis, AbiType)`, manifest schema remains 17.0, and all downstream values folding a moved identity are regenerated.
 
-## Closes when
+## Outcome
 
-Tom accepts the exact replacement and acceptance provenance is recorded. The
-implementation ticket then consumes the choice without another public
-signature, coordinate-domain, diagnostic, identity, or schema decision.
+The exact replacement is accepted with provenance recorded above. The
+implementation ticket consumes the choice without another public signature,
+coordinate-domain, diagnostic, identity, or schema decision.

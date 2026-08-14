@@ -19,22 +19,23 @@ Updated 2026-08-14 after Tom accepted the four previously published decisions; t
 - Accepted 2026-08-14 by Tom in the live Codex conversation: the exact minimized surface at `efa83d9d8ac01de35091fd2dd2b47064dd89c524`, including its explicit unsupported population and reopening triggers.
 - Release trigger: none. The accepted implementation/evidence already landed; the decision ticket is terminal.
 
-## 3. Schedule-local input ordinal model — accepted; reconciliation blocked on its full-list coordinate
+## 3. Schedule-local input ordinal model — accepted; reconciliation ready
 
 - Tickets: `decide-the-schedule-local-input-ordinal-model` (`p1`, decision packet) and implementation/evidence carrier `reconcile-input-ordinal-region-local-and-declared-input-semantics` (`p1`, blocked).
 - Packet evidence: exact-base reading proves `InputOrdinal` and pointwise expressions require a dense local leaf/access coordinate, while `TensorRole::Input`, physical scheduling, and `CoverAssembly` reinterpret it as a sparse declared program-input index. The verified region already retains the exact request subject containing ordered reads and declared ordinals, but assembly does not project that checked authority. Artifact mapping already follows the correct stage-access/materialized-origin path to `InputKey`.
 - Accepted 2026-08-14 by Tom in the live Codex conversation after reviewing the rationale: Option 3. `TensorRole::Input` becomes fieldless; ordered access/kernel-buffer position is the sole in-list local coordinate; explicit `InputOrdinal` remains for out-of-list references; compiler-owned checked projection retains declared association and `InputKey` authority.
-- Hold evidence: exact implementation-base audit found the accepted packet's retained input-only `InputOrdinal` cannot name the full access-list positions it requires input-extent verification to reject. In an epilogue `[Intermediate, input 2]`, filtering inputs shifts the coordinate and cannot name either the intermediate read or final write. Item 4 owns the complete replacement.
-- Release trigger: item 4 is accepted, then `reconcile-input-ordinal-region-local-and-declared-input-semantics` lands the complete IR/compiler/artifact/Metal/build/conformance/runtime and identity/codec migration with its sparse-subset, positive rebinding, opaque-call, and independent subject evidence. Source-bound live-row-major remains blocked until then.
+- Correction evidence: exact implementation-base audit found the first accepted packet's retained input-only `InputOrdinal` could not name the full access-list positions it required input-extent verification to reject. Item 4 now supplies the accepted complete replacement.
+- Release trigger: `reconcile-input-ordinal-region-local-and-declared-input-semantics` lands the complete IR/compiler/artifact/Metal/build/conformance/runtime and identity/codec migration with its sparse-subset, positive rebinding, opaque-call, and independent subject evidence. Source-bound live-row-major remains blocked until then.
 
-## 4. Full-list access coordinate for local references — awaiting Tom
+## 4. Full-list access coordinate for local references — accepted; implementation ready
 
 - Tickets: `decide-the-full-list-access-coordinate-for-out-of-list-references` (`p1`, `awaiting-decision`) and blocked implementation carrier `reconcile-input-ordinal-region-local-and-declared-input-semantics`.
 - Packet evidence: exact ticket-only packet `61a1d54f8c4589a092165fa58fb0b33e3de1cc7b`, independently reviewed with no findings. The existing `InputOrdinal` claims an input-only dense prefix, while pointwise leaves, live extents, opaque bindings, and kernel buffers need the exact position in the complete read-prefix-plus-write access list. Filtering or role/axis search can silently rebind repeated inputs and epilogues.
 - Recommendation: accept the sole nondominated complete replacement. Remove public `InputOrdinal`; add one public `AccessOrdinal` for the complete ordered schedule-access/kernel-buffer list; use compiler-private `DeclaredInputOrdinal` for retained interface associations; make every live-extent and opaque-call consumer index directly; and fail closed on regional `InOut` until the separately governed mutating-boundary model exists.
 - Strongest counterpoint: `AccessOrdinal` is available at pointwise-expression sites whose legal population is only the dense read prefix. Existing expression and region verification makes every invalid use unretainable, so a second read-only public coordinate would add no constructible strictness and would duplicate the same numeric domain.
 - Identity/public consequences: exact field and diagnostic spellings are fixed in the packet; schedule moves to v6, kernel to v8, physical proposal to v3, explain schema to v11, and renderer to v9. Kernel-program, artifact-stage/program, manifest 17.0, request-subject, compilation-explain wrapper, and artifact extent-row grammars stay unchanged, although folded values move where their nested identity or valid `InputKey` binding changes.
-- Release trigger: Tom accepts the exact packet or explicitly defers it. Acceptance unblocks the implementation carrier; deferral keeps reconciliation and source-bound live-row-major work blocked.
+- Accepted 2026-08-14 by Tom in the live Codex conversation: the exact packet at `61a1d54f8c4589a092165fa58fb0b33e3de1cc7b`, without amendment.
+- Release trigger: the reconciliation implementation lands the accepted migration and independently reviewed evidence.
 
 ## 5. Structured selected-lowering capability Rust surface — accepted; implementation ready
 
@@ -48,7 +49,7 @@ Updated 2026-08-14 after Tom accepted the four previously published decisions; t
 ## 6. Source-bound live-row-major access — blocked before decision
 
 - Tickets: `reconcile-input-ordinal-region-local-and-declared-input-semantics` (`p1`, `blocked`), then `decide-the-source-bound-live-row-major-access-surface` (`p1`, blocked by that dependency), then `admit-symbolic-extents-through-schedule-formation` (`p1`, `blocked`).
-- Hold evidence: the defining `InputOrdinal` docs call it dense, region-local, and not an interface key, while `TensorRole::Input`, intrinsic verification, and compiler construction give it sparse declared-input meaning. Artifact mapping instead follows the checked stage access to `InputKey`. Until that contradiction is resolved, no exact public source-field type is truthful.
+- Hold evidence: the exact coordinate model is now accepted, but its implementation has not landed. The source-bound packet cannot replace its placeholder or re-run its Pareto gate against an implemented, checked `AccessOrdinal` projection until reconciliation completes.
 - Current recommendation: keep the schedule-stage `symbolic-extent` refusal. After the ordinal prerequisite lands, rerun the reviewed four-way frontier: complete per-access replacement, one region-level source binding, additive disjoint self/non-source-read spelling, or typed deferral.
 - Release trigger: the ordinal prerequisite aligns every IR/compiler/artifact/Metal/build/conformance/runtime consumer and identity; the topology packet replaces its placeholder with the exact type, repeats the Pareto gate, and receives independent review before presentation.
 

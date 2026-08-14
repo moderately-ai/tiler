@@ -1,7 +1,7 @@
 ---
 id: reconcile-input-ordinal-region-local-and-declared-input-semantics
 title: Reconcile InputOrdinal region-local and declared-input semantics
-status: blocked
+status: todo
 priority: p1
 dependencies: [decide-the-schedule-local-input-ordinal-model, decide-the-full-list-access-coordinate-for-out-of-list-references]
 related: [decide-the-source-bound-live-row-major-access-surface, admit-symbolic-extents-through-schedule-formation, associate-live-extent-operands-with-symbolic-semantic-interface-axes, scope-an-in-place-append-into-a-caller-retained-allocation]
