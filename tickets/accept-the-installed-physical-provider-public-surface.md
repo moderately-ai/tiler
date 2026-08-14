@@ -1,7 +1,7 @@
 ---
 id: accept-the-installed-physical-provider-public-surface
 title: Accept or revise the installed physical-provider public surface
-status: in-progress
+status: done
 priority: p1
 dependencies: [drive-an-external-physical-implementation-provider-through-compilation]
 related: [accept-the-public-backend-provider-composition-boundary, disclose-offered-and-selected-physical-provider-sets-separately, publish-occurrence-bound-selected-physical-implementation-evidence]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, contracts/optimizer, contracts/foundation, impleme
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [backend-providers, public-boundary, decision, needs-tom]
-claimed_from: todo
-assignee: worker-provider-surface-acceptance
-lease_expires_at: 1786718048
 ---
 ## User-visible outcome
 
