@@ -1,7 +1,7 @@
 ---
 id: admit-a-materialized-producer-in-a-serial-reduction-contributor
 title: Admit a materialized producer in a serial-reduction contributor
-status: awaiting-decision
+status: todo
 priority: p3
 dependencies: [name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set]
 related: [name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set, admit-a-recognized-chain-more-than-one-materialization-boundary-deep]
@@ -275,3 +275,7 @@ No ADR is required for a `pub(crate)` contributor enum and a new request-subject
 ## Packet readiness
 
 The census names one bounded injective carrier, its identity/schema consequences, the admitted versus named-refusal population, and the implicit-work tickets. This packet is ready for Tom. Status stays `in-progress`; the coordinator moves it to `awaiting-decision`.
+
+## Readiness correction — 2026-08-13 at `aa389fe1`
+
+Independent exact-base review disproved the single-option frontier. Extending the currently unboxed `NormalizedSerialSum` can enlarge every output and does not itself force broad `NormalizedOutput` consumers to classify the materialized arm. A boxed top-level produced-sum variant that shares a fold core may preserve the old layout and make every output match exhaustive, so option (6) remains nondominated until layout and consumer-migration evidence compares the two exact forms. The census also missed `pipeline/verify.rs`: its fused numerical-proof check exempts every serial sum with `prologue.is_none()`, which a materialized contributor could accidentally satisfy unless the verifier matches the declared-input arm explicitly. This ticket is not Tom-ready and returns to `todo`; repair the full census, prototype/measure both carriers, and repeat the decision gate before restoring `awaiting-decision`.

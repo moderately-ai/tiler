@@ -25,10 +25,9 @@ Updated 2026-08-13 at main `4fb04273` plus the pending atomic-surface repair del
 - Current recommendation: accept a host-owned bounded emission surface in principle, but do not accept this exact packet/value yet.
 - Release trigger: `calibrate-the-physical-frontier-provider-and-outcome-budgets` supplies a full-request authority/value; the preserved branch is rebased and all four review findings receive subject perturbations; independent exact-commit review passes; packet is updated on main.
 
-## 4. Materialized producer in a serial-reduction contributor — ready, lower priority
+## 4. Materialized producer in a serial-reduction contributor — held for carrier comparison
 
-- Ticket: `admit-a-materialized-producer-in-a-serial-reduction-contributor` (`p3`, `awaiting-decision`).
-- Evidence: construction/consumption census and Pareto gate select an exhaustive contributor-source arm on `NormalizedSerialSum`, bounded by `OneEdge` / `NoEdge`; it retains producer identity and the numerical materialization boundary without widening KIR/artifact schema.
-- Recommendation: accept option 7 with the sides-rule bound.
-- Strongest counterpoint: the bound still refuses deeper well-formed produced-sum trees; admitting those requires the separately scoped iterative producer-walk work.
-- Release trigger: no graph prerequisite remains. Re-audit the exact base after higher-priority correctness repairs and present only after the earlier ready packet has been resolved or deliberately deferred by Tom.
+- Ticket: `admit-a-materialized-producer-in-a-serial-reduction-contributor` (`p3`, `todo`).
+- Hold evidence: option 7 can enlarge every unboxed serial-sum value without forcing broad `NormalizedOutput` matches to classify the new state. A boxed produced-sum variant sharing a fold core may preserve old layout and improve exhaustiveness, so the earlier dominance claim is false. `pipeline/verify.rs` also contains an uncensused `prologue.is_none()` numerical-proof exemption that would include the proposed materialized arm unless repaired.
+- Current recommendation: do not present a carrier yet. Preserve the one-edge sides rule, then prototype/measure the two nondominated layouts and audit every broad serial-sum/output consumer.
+- Release trigger: exact layout/host-memory evidence, complete consumer/refusal/identity census including numerical verification, independent review, and a repeated Pareto gate.
