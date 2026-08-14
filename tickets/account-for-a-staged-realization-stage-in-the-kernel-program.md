@@ -108,3 +108,9 @@ Six in `crates/tiler-ir/src/program/tests.rs` and the rewritten end-to-end compi
 ### Checks
 
 `make fmt`, `cargo check --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings` (crates; `prototypes/` excluded per the Makefile), `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`, `cargo nextest run --workspace` — 2884 passed, 7 skipped — `cargo test --workspace --doc`, the release numerical run, `ticketsplease lint`, and `shellcheck`. All of it through `make full`, green on this branch.
+
+## Evidence correction — 2026-08-13 at `c9da757e`
+
+The `StagedRealization` implementation, `tiler.kernel-program.v11` identity step, assembler emission, and typed removal of `program-assembly/realization-stage-unaccounted` remain present. The Outcome's end-to-end governed-profile and bit-agreement proof does not: `a_staged_family_program_compiles_and_computes_the_normalization_bit_for_bit` now stops during request verification at `accuracy.elementary.no-installed-realization` because `TargetProfile::governed()` intentionally declares no elementary rows. Its name and documentation are stale, and the test cannot currently detect a missing staged declaration or wrong staged computation.
+
+The capability node stays `done`; reopening it would misstate that its program declaration disappeared. The invalidated proof is withdrawn and reassigned to [`drive-staged-materialization-boundary-tests-past-elementary-accuracy`](drive-staged-materialization-boundary-tests-past-elementary-accuracy.md), which must use a caller profile carrying both discharging RMS evidence halves, retain the governed refusal separately, and independently perturb the program declaration. Any later claim that a staged family compiles end to end or agrees bit for bit depends on that evidence ticket rather than on the historical test result above.

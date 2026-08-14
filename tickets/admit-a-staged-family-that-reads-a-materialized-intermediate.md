@@ -83,3 +83,9 @@ Three things deliberately not done, each with its reason: no `tiler-ir` edit (th
 - **Contraction declared-count rule name.** The residual three-input headline refusal is under **`contraction-input-arity`**, not `input-arity` (the latter remains the program-wide zero-input check). Guard site `normalize_contraction`'s `input_count() != 2` is unchanged; naming landed under [`name-the-contraction-operand-arity-wall-and-separate-its-rule`](name-the-contraction-operand-arity-wall-and-separate-its-rule.md).
 
 Live body above this block was rewritten to match; this dated note exists so a reader who stops at the 2026-08-07 "repair" does not re-adopt the false residual-wall map.
+
+## Evidence correction — 2026-08-13 at `c9da757e`
+
+The recognizer's `BoundaryRead` carrier, staged producer relation, ownership predicate, and `staged-family.v2` subject remain present, so this implementation ticket stays `done`. Its external control and residual-wall fixture no longer establish the phases their comments claim: `staged_family_over_a_materialized_intermediate.rs` now sends both the materialized subject and declared-input control through `TargetProfile::governed()`, and both stop first at `accuracy.elementary.no-installed-realization`.
+
+The current green assertions are only evidence that missing elementary authority fails closed. [`drive-staged-materialization-boundary-tests-past-elementary-accuracy`](drive-staged-materialization-boundary-tests-past-elementary-accuracy.md) must supply a caller-declared discharging RMS row, then re-derive and pin the materialized subject's actual downstream wall with a progressing declared-input control. Until then, do not use this fixture as evidence that recognition or the scheduled-region boundary was reached.

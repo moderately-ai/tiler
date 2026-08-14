@@ -3,7 +3,7 @@ id: admit-a-materialized-producer-in-a-serial-reduction-contributor
 title: Admit a materialized producer in a serial-reduction contributor
 status: todo
 priority: p3
-dependencies: [name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set]
+dependencies: [name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set, drive-staged-materialization-boundary-tests-past-elementary-accuracy]
 related: [name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set, admit-a-recognized-chain-more-than-one-materialization-boundary-deep]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
@@ -279,3 +279,9 @@ The census names one bounded injective carrier, its identity/schema consequences
 ## Readiness correction — 2026-08-13 at `aa389fe1`
 
 Independent exact-base review disproved the single-option frontier. Extending the currently unboxed `NormalizedSerialSum` can enlarge every output and does not itself force broad `NormalizedOutput` consumers to classify the materialized arm. A boxed top-level produced-sum variant that shares a fold core may preserve the old layout and make every output match exhaustive, so option (6) remains nondominated until layout and consumer-migration evidence compares the two exact forms. The census also missed `pipeline/verify.rs`: its fused numerical-proof check exempts every serial sum with `prologue.is_none()`, which a materialized contributor could accidentally satisfy unless the verifier matches the declared-input arm explicitly. This ticket is not Tom-ready and returns to `todo`; repair the full census, prototype/measure both carriers, and repeat the decision gate before restoring `awaiting-decision`.
+
+The corrected nondominated frontier is status quo, a bare-producer fail-closed slice with no continuation, a boxed top-level produced-sum arm sharing a fold core, and an exhaustive contributor source whose rare materialized payload is boxed. A true complete replacement would make every producer walk iterative; the earlier option (8) is only a second flat representation and must not stand in for that alternative. Prototype `size_of::<NormalizedSerialSum>()` and `size_of::<NormalizedOutput>()`, count which consumers fail to compile under each carrier, and compare allocation/dispatch cost before eliminating any survivor.
+
+The verifier repair is a correctness requirement, not a cleanup: the no-proof exemption must match the `DeclaredInput` contributor source explicitly. Perturb only the source to `Materialized` and require the ordinary `portfolio-equivalence` proof path to run. Also distinguish recognizer admission from target admission for `sum(rms_norm(...))`: the governed target intentionally has no elementary row, so positive end-to-end evidence depends on [`drive-staged-materialization-boundary-tests-past-elementary-accuracy`](drive-staged-materialization-boundary-tests-past-elementary-accuracy.md) and a caller-declared discharging RMS realization.
+
+Finally, the source-bearing identity consequence is additive, not absent: old `serial-sum-f32.v3` subjects and pins may remain byte-identical, while newly admitted programs naturally produce new request, plan, schedule, KIR, artifact, and cache identities. No existing domain necessarily steps, but every prototype must prove the new subject cannot encode under the old tag and must enumerate the downstream identities it creates.

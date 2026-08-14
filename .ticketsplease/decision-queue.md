@@ -2,7 +2,7 @@
 
 Operational queue for the continuous-delivery coordinator. Ticket files remain the authority; this file records presentation order, holds, exact release triggers, and the current recommendation so a later cycle does not rediscover or prematurely present a packet.
 
-Updated 2026-08-13 at main `4fb04273` plus the pending atomic-surface repair delta.
+Updated 2026-08-13 at main `c9da757e` plus the pending staged-evidence repair delta.
 
 ## 1. Atomic subgroup realization surface — held for exact-surface repair
 
@@ -28,6 +28,6 @@ Updated 2026-08-13 at main `4fb04273` plus the pending atomic-surface repair del
 ## 4. Materialized producer in a serial-reduction contributor — held for carrier comparison
 
 - Ticket: `admit-a-materialized-producer-in-a-serial-reduction-contributor` (`p3`, `todo`).
-- Hold evidence: option 7 can enlarge every unboxed serial-sum value without forcing broad `NormalizedOutput` matches to classify the new state. A boxed produced-sum variant sharing a fold core may preserve old layout and improve exhaustiveness, so the earlier dominance claim is false. `pipeline/verify.rs` also contains an uncensused `prologue.is_none()` numerical-proof exemption that would include the proposed materialized arm unless repaired.
-- Current recommendation: do not present a carrier yet. Preserve the one-edge sides rule, then prototype/measure the two nondominated layouts and audit every broad serial-sum/output consumer.
-- Release trigger: exact layout/host-memory evidence, complete consumer/refusal/identity census including numerical verification, independent review, and a repeated Pareto gate.
+- Hold evidence: option 7 can enlarge every unboxed serial-sum value without forcing broad `NormalizedOutput` matches to classify the new state. A boxed produced-sum variant sharing a fold core may preserve old layout and improve exhaustiveness; a narrower bare-producer slice also trades support for smaller state. `pipeline/verify.rs` contains an uncensused `prologue.is_none()` numerical-proof exemption that would include a materialized arm unless repaired. The staged-family positive also stops first at missing governed elementary authority.
+- Current recommendation: do not present a carrier yet. Preserve the one-edge sides rule, prototype/measure the bare, boxed-top-level, and boxed-rare-payload survivors, audit every broad serial-sum/output consumer, and repair the staged evidence with a caller-declared RMS row.
+- Release trigger: exact layout/host-memory evidence, complete consumer/refusal/identity census including numerical verification, `drive-staged-materialization-boundary-tests-past-elementary-accuracy` closed, independent review, and a repeated Pareto gate.
