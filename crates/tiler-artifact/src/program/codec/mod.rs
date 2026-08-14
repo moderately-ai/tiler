@@ -20,7 +20,7 @@
 //!
 //! The manifest carries every fact the artifact layer owns: the governed
 //! component schema versions, the routing policy, the derived required-feature
-//! set, the three reached semantic subjects, the ordered named interface, the
+//! set, the reached semantic subjects including the retained shape environment, the ordered named interface, the
 //! selected capability providers, the backend payload descriptors, the shared
 //! ABI expression arena, and each plan variant with its guard, declared target
 //! profile and feasibility rule set, deferred predicates, and executable
@@ -35,8 +35,9 @@
 //! **The frozen registry snapshot.** ADR 0072 keeps the provenance of providers
 //! a plan never used out of packaged artifact identity. Carrying it here would
 //! put it back into the envelope's bytes and therefore into its digest, so an
-//! unused provider could invalidate a cache entry. Only the three reached
-//! subjects travel.
+//! unused provider could invalidate a cache entry. The three reached semantic
+//! subjects travel, and so does the fifth subject's lossless retained
+//! environment. The snapshot stays out.
 //!
 //! **Presentation-only declaration order.** Providers, payloads, deferred
 //! predicates, launch preconditions, entries, expression arena nodes, and

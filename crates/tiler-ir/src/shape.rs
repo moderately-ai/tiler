@@ -43,6 +43,14 @@ pub use env::{
     SemanticInputConstraint, ShapeEnv, ShapeEnvBuilder, ShapeEnvError, ShapeEnvIdentity,
     ShapeSymbol, SymbolScope, VariantGuard,
 };
+// Cross-crate encode/decode of the identity-bearing fifth subject. Hidden: the
+// accepted public construction path is still `ShapeEnvBuilder`, and the
+// artifact layer is the only consumer that must regenerate and revalidate the
+// same bytes `ShapeEnvIdentity` already carries.
+#[doc(hidden)]
+pub use env::subject::{
+    ShapeEnvSubject, ShapeEnvSubjectError, decode_shape_env_subject, encode_shape_env_subject,
+};
 
 // Governed implementation limit. Keep numeric limits private; typed dynamic
 // failures expose both the rejected rank and the active limit.

@@ -137,7 +137,7 @@ impl ExtentTerm {
         }
     }
 
-    fn encode(&self, bytes: &mut Vec<u8>) {
+    pub(super) fn encode(&self, bytes: &mut Vec<u8>) {
         bytes.push(self.tag());
         match self {
             Self::Symbol(symbol) => symbol.encode(bytes),
@@ -356,7 +356,7 @@ impl ExtentRelation {
         });
     }
 
-    fn encode(&self, bytes: &mut Vec<u8>) {
+    pub(super) fn encode(&self, bytes: &mut Vec<u8>) {
         bytes.push(self.tag());
         match self {
             Self::Equal { left, right } => {

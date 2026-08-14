@@ -29,6 +29,7 @@
 mod adapter;
 mod fixture;
 mod image;
+mod retained;
 
 use adapter::{DispatchFamily, Perturbation, ScalarHostAdapter, Stage};
 use fixture::{FixtureSpec, PackagedPlan, assemble, assemble_portfolio};

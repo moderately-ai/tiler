@@ -3713,16 +3713,13 @@ fn a_reached_semantic_provider_revision_changes_identity() {
 
 /// A symbolic semantic program never opens an artifact builder.
 ///
-/// **This is the assertion `project_semantic`'s three carried subjects rest
-/// on.** The envelope travels the semantic graph identity, the reached
-/// definitions, and the admission provenance; it deliberately leaves the
-/// registry snapshot behind under ADR 0072, and it leaves the shape-environment
-/// subject behind for a weaker reason — no two packaged artifacts can differ by
-/// it. That is only true while no program whose interface names a declared
-/// symbol reaches this builder. If this test fails, two programs over
-/// differently bound environments encode to one envelope digest, and
-/// `docs/artifact-abi.md`'s "only the three reached subjects travel" becomes an
-/// unkeyed symbolic program rather than a deliberate exclusion.
+/// A symbolic *interface* still never opens an artifact builder.
+///
+/// The envelope now carries the fifth subject's lossless retained environment,
+/// so two fixed-interface programs that differ only by an unused environment
+/// are different artifacts. What this test still pins is the published
+/// interface: an extent that names a declared symbol is refused here rather
+/// than encoded as a static `Shape`.
 #[test]
 fn a_symbolic_semantic_program_never_reaches_the_artifact_builder() {
     let scope = SymbolScope::new("artifact/0").unwrap();
@@ -4952,7 +4949,7 @@ fn empty_extent_lists_do_not_move_previously_encodable_artifact_bytes() {
         "two no-extent artifacts must keep one identity",
     );
     assert!(
-        super::model::ARTIFACT_DOMAIN.ends_with(b"v16\0"),
+        super::model::ARTIFACT_DOMAIN.ends_with(b"v17\0"),
         "empty extent lists write nothing, so the artifact identity domain must not step",
     );
     let with = live_extent_artifact();

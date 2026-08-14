@@ -355,6 +355,10 @@ fn parse_manifest(bytes: &[u8]) -> Result<ParsedManifest, ArtifactCodecError> {
         graph: SemanticGraphSubject::from_bytes(cursor.slice()?)?,
         reached_definitions: ReachedDefinitionsSubject::from_bytes(cursor.slice()?)?,
         admission_provenance: AdmissionProvenanceSubject::from_bytes(cursor.slice()?)?,
+        retained_shape: super::super::retained::RetainedShapeEnvironment::from_bytes(
+            cursor.slice()?,
+        )
+        .map_err(ArtifactCodecError::from)?,
     };
 
     let inputs = read_inputs(&mut cursor)?;

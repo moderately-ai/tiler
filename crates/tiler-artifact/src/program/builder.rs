@@ -187,6 +187,7 @@ struct DerivedAbi {
 pub struct ArtifactProgramBuilder {
     owner: ArtifactBuilderId,
     semantic: SemanticIdentity,
+    retained: super::retained::RetainedShapeEnvironment,
     interface: SemanticInterface,
     environment: CompilationEnvironment,
     providers: Vec<SelectedProvider>,
@@ -238,6 +239,7 @@ impl ArtifactProgramBuilder {
         Ok(Self {
             owner,
             semantic: semantic.semantic_identity().clone(),
+            retained: super::retained::RetainedShapeEnvironment::project(semantic)?,
             interface,
             environment,
             providers: Vec::new(),
@@ -932,6 +934,7 @@ impl ArtifactProgramBuilder {
         ArtifactProgramData {
             schema: ArtifactSchema::GOVERNED,
             semantic: self.semantic.clone(),
+            retained: self.retained.clone(),
             routing: self.routing,
             inputs,
             outputs,
@@ -968,6 +971,7 @@ impl ArtifactProgramBuilder {
             schema: _,
             routing: _,
             semantic: _,
+            retained: _,
             inputs: _,
             outputs: _,
             realization: _,

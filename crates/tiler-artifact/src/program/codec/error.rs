@@ -20,7 +20,7 @@ use std::fmt;
 
 use tiler_ir::program::ByteAlignmentError;
 use tiler_ir::semantic::{BuildError, RegistryError};
-use tiler_ir::shape::ShapeError;
+use tiler_ir::shape::{ShapeEnvSubjectError, ShapeError};
 
 use super::super::error::{ArtifactBuildError, ArtifactDiagnostic, ProvenanceField};
 use super::super::expr::AbiType;
@@ -707,6 +707,15 @@ pub(crate) enum ArtifactCodecError {
         /// The model's own typed diagnostic.
         cause: ArtifactDiagnostic,
     },
+    /// The framed retained shape environment did not decode.
+    ///
+    /// Canonical order, table closure, unknown source or relation tags, and
+    /// identity-byte mismatch are all decided here before a view exists, so an
+    /// unsupported future tag cannot become an ignored runtime row.
+    RetainedShapeEnvironment {
+        /// The subject's own typed rejection.
+        cause: Box<ShapeEnvSubjectError>,
+    },
     /// The framed delivered-realization record did not decode.
     ///
     /// Distinct from [`Self::ModelObligation`], which carries the record's
@@ -737,6 +746,7 @@ impl Error for ArtifactCodecError {
             Self::ModelRule { cause } => Some(cause.as_ref()),
             Self::ModelObligation { cause } | Self::IdentityDerivation { cause } => Some(cause),
             Self::DeliveredRealization { cause } => Some(cause.as_ref()),
+            Self::RetainedShapeEnvironment { cause } => Some(cause.as_ref()),
             Self::Truncated { .. }
             | Self::TrailingBytes { .. }
             | Self::TrailingManifestBytes { .. }
@@ -789,6 +799,14 @@ impl Error for ArtifactCodecError {
             | Self::ExpressionOperandType { .. }
             | Self::ExpressionSelectBranchType { .. }
             | Self::InvalidText => None,
+        }
+    }
+}
+
+impl From<ShapeEnvSubjectError> for ArtifactCodecError {
+    fn from(cause: ShapeEnvSubjectError) -> Self {
+        Self::RetainedShapeEnvironment {
+            cause: Box::new(cause),
         }
     }
 }

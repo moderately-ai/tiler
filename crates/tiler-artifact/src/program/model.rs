@@ -252,7 +252,7 @@ use super::requirement::{RouteRequirement, push_requirements};
 /// bytes by `starts_with` on this separator, so a governed domain that prefixed
 /// it would let another subject's bytes be accepted as an artifact identity.
 /// `crate::domains` enumerates it and checks that no such domain exists.
-pub(crate) const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v16\0";
+pub(crate) const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v17\0";
 
 /// [`ARTIFACT_DOMAIN`] without its terminator, for rendering in a diagnostic.
 ///
@@ -885,6 +885,7 @@ pub(super) struct InterfaceComponentData {
 pub(super) struct ArtifactProgramData {
     pub(super) schema: ArtifactSchema,
     pub(super) semantic: SemanticIdentity,
+    pub(super) retained: super::retained::RetainedShapeEnvironment,
     pub(super) routing: RoutingPolicy,
     pub(super) inputs: Vec<InterfaceEntryData<InputKey>>,
     pub(super) outputs: Vec<InterfaceEntryData<OutputKey>>,
@@ -2359,6 +2360,7 @@ pub(super) fn encode_identity(
         &mut bytes,
         envelope.semantic().admission_provenance.as_bytes(),
     );
+    push_slice(&mut bytes, envelope.semantic().retained_shape.as_bytes());
     push_interface(&mut bytes, envelope);
     push_sorted_keys(
         &mut bytes,

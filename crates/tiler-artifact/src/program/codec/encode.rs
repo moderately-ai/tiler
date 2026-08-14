@@ -175,7 +175,18 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// programs that differ in what index arithmetic they need are two artifacts,
 /// and the `ARTIFACT_DOMAIN` step to `v16` is what makes the earlier subject
 /// incomparable rather than merely unlikely to collide.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (16, 0);
+///
+/// **`17.0` carries the retained shape environment inside the semantic-subject run.**
+///
+/// The lossless fifth-subject projection lands after admission provenance
+/// and before the interface population. A `16.0` reader would consume its
+/// length prefix as the input count and lose framing for the rest of the
+/// manifest, so the step is major rather than minor. Artifact identity
+/// moves with it: two programs that differ only by an unused retained
+/// environment are different artifacts, and `ARTIFACT_DOMAIN` steps to
+/// `v17` so an earlier subject is incomparable rather than silently
+/// colliding.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (17, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 ///
@@ -513,6 +524,7 @@ fn encode_manifest(
     push_slice(&mut bytes, semantic.graph.as_bytes());
     push_slice(&mut bytes, semantic.reached_definitions.as_bytes());
     push_slice(&mut bytes, semantic.admission_provenance.as_bytes());
+    push_slice(&mut bytes, semantic.retained_shape.as_bytes());
 
     push_len(&mut bytes, envelope.inputs().len());
     for input in envelope.inputs() {

@@ -192,17 +192,23 @@ received_subject!(
     "The canonical content key of the program stage one entry dispatches."
 );
 
-/// The three reached semantic subjects an artifact envelope carries.
+/// The reached semantic subjects an artifact envelope carries.
 ///
 /// The frozen registry snapshot is deliberately absent. It is the subject that
 /// moves when a provider the plan never used changes, and ADR 0072 keeps it out
 /// of packaged artifact identity; carrying it here would put it back into the
 /// envelope's bytes and therefore into its digest.
+///
+/// The fifth `SemanticIdentity` subject — the shape environment — travels as
+/// [`super::super::retained::RetainedShapeEnvironment`], the lossless artifact
+/// projection of every declaration, root binding, and semantic input
+/// constraint. Invocation values are not part of those bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SemanticSubjects {
     pub(crate) graph: SemanticGraphSubject,
     pub(crate) reached_definitions: ReachedDefinitionsSubject,
     pub(crate) admission_provenance: AdmissionProvenanceSubject,
+    pub(crate) retained_shape: super::super::retained::RetainedShapeEnvironment,
 }
 
 /// The declared numerical realization of one entry's bound kernel.
@@ -1035,6 +1041,7 @@ fn project_semantic(data: &ArtifactProgramData) -> Result<SemanticSubjects, Arti
             .map_err(|_| subject(definitions))?,
         admission_provenance: AdmissionProvenanceSubject::from_bytes(provenance)
             .map_err(|_| subject(provenance))?,
+        retained_shape: data.retained.clone(),
     })
 }
 

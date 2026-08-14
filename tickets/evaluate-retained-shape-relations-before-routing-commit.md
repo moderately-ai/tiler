@@ -6,7 +6,7 @@ priority: p1
 dependencies: [admit-an-additive-extent-relation, reclassify-language-model-work-as-a-conformance-track]
 related: [bind-repeated-invocations-over-caller-retained-tensors, design-autoregressive-state-and-kv-cache, execute-the-decode-step-path, test-the-autoregressive-state-failure-cases, construct-a-symbolic-region-as-a-semantic-program, admit-symbolic-extents-at-the-compiler-request-boundary, deliver-an-artifact-family-from-a-symbolic-region]
 scopes: [implementation/ir, implementation/artifact, implementation/runtime, implementation/build, contracts/artifacts]
-shared_scopes: [project/tickets]
+shared_scopes: [project/tickets, implementation/frontend, research/target-profiles]
 paths: []
 tags: [implementation, validation, shapes, runtime, consumer-neutral, fail-closed, class-generic-capability, decision, needs-tom, public-boundary, identity]
 claimed_from: todo
@@ -56,6 +56,13 @@ Invocation values do not enter artifact identity. One decoded artifact remains v
 **Excluded surface.** This acceptance does not add a runtime dependency on `tiler-ir`, expose `ShapeEnv` or solver types, admit caller-supplied duplicate extent scalars, detect content-stale allocations, infer an allocation-capacity policy, treat a larger consistent allocation as invalid, expose variant guards through this table, or permit refusal and fallback after routing commit.
 
 **Strongest counterpoint accepted with the decision.** Carrying only the opaque fifth-subject identity would avoid an artifact projection, but it could not be evaluated. Pairing it with an unchecked relation table would create two authorities, while carrying full IR into the runtime would violate ADR 0081. The lossless, byte-checked private carrier is accepted as the smallest boundary that fixes both the existing identity collision and launch-time relation enforcement.
+
+## Fact audit — 2026-08-13 at `b2e707c2`
+
+- **Verified.** `ExtentRelation::AdditiveEquality` and `ShapeEnvBuilder::build` check static/root-bound contradictions; a runtime-bound additive relation is retained only when the lower-bound model exhibits a solution; no launch-preflight consumer existed at this base.
+- **Verified.** `ArtifactBuildError::SymbolicSemanticInterface` and `a_symbolic_semantic_program_never_reaches_the_artifact_builder` refuse a symbolic interface. `project_semantic` dropped the fifth subject. `try_standard_with_shape_environment` accepts ordinary fixed-shape inputs, so two artifact-reachable programs could already differ only by an unused environment.
+- **Verified.** `BindingSource::InputDimension`, `AbiRoot::InputExtent`, and `AbiFactBinder::bind_input_extent` already supply authoritative term values.
+- **Verified.** Identity domain was `tiler.artifact-program.v16` and the neutral manifest was `16.0`. All six `ExtentRelation` forms and all four `BindingSource` forms exist. Tom's 2026-08-11 acceptance is present.
 
 ## Required work
 
