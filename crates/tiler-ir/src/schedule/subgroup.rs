@@ -50,10 +50,14 @@ impl SubgroupWidth {
 
 /// The register-transfer operation one subgroup realization performs.
 ///
-/// Deliberately not `#[non_exhaustive]`: the identity encoder and the
-/// subject's constructor map this totally, so a widened vocabulary is a
-/// build error at each rather than a silently admitted transfer.
+/// `#[non_exhaustive]` under ADR 0074 convention 5a: no out-of-crate consumer
+/// maps or recognizes this vocabulary totally. The identity tag and the
+/// subject's width rule are exhaustive same-crate matches, where the attribute
+/// has no effect, so widening still stops both authorities until they define
+/// the new transfer. Out-of-crate consumers construct or partially classify a
+/// transfer and must leave growth additive.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
 pub enum SubgroupTransfer {
     /// An in-range XOR shuffle: `source(lane) = lane xor mask` for every
     /// power-of-two mask in `1..width`.
