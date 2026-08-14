@@ -109,10 +109,10 @@ fn ordinal(index: usize) -> u32 {
 
 /// Proves the program declares a guard and retains no unreachable ABI node.
 ///
-/// Identity folds each ABI use site by content key, and a content key names the
-/// node's whole subtree, so an arena node no use site reaches would be retained
-/// bytes that identity does not cover. Rejecting it here is what lets the
-/// identity encoder fold the arena transitively instead of a second time.
+/// Identity writes the reached ABI arena once and names each use site by its
+/// canonical position. A node no use site reaches would be retained program
+/// state omitted by that traversal, so rejecting it keeps the retained arena
+/// exactly equal to the identity-bearing arena.
 fn verify_abi(data: &KernelProgramData) -> Result<(), KernelProgramDiagnostic> {
     let Some(guard) = data.applicability_guard else {
         return Err(KernelProgramDiagnostic::MissingApplicabilityGuard);
@@ -261,9 +261,9 @@ fn verify_coverage(
 
 /// Proves each canonical key category is pairwise distinct.
 ///
-/// Identity encodes every cross-reference by content key. A collision would let
-/// two structurally different programs share bytes, so it fails closed here
-/// instead of being resolved by an arena position.
+/// Canonical keys induce the ranks identity uses for entity cross-references. A
+/// collision would leave two distinct entities without distinct content-derived
+/// ranks, so it fails closed here instead of being resolved by builder position.
 fn verify_unambiguous(keys: &CanonicalKeys) -> Result<(), KernelProgramDiagnostic> {
     for (entity, category) in [
         (ProgramEntityKind::Stage, &keys.stages),

@@ -165,10 +165,10 @@ impl KernelProgramBuilder {
 
     /// Declares one typed root fact of the program's ABI expression arena.
     ///
-    /// The arena is canonically deduplicated by content key: an identical
-    /// expression returns the handle already minted for it, so the arena is a
-    /// function of what the program says rather than of how often a producer
-    /// rebuilt the same formula.
+    /// The arena is deduplicated by structural equality: an identical expression
+    /// returns the handle already minted for it, so the arena is a function of
+    /// what the program says rather than of how often a producer rebuilt the
+    /// same formula.
     ///
     /// # Errors
     ///

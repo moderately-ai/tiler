@@ -902,10 +902,12 @@ pub(super) struct DerivedProgramFacts {
 /// encoded twice.
 ///
 /// It excludes every transient ordinal: builder insertion order, the program's
-/// own stage/value/view/allocation/arena positions, and the planning `RegionId`
-/// already excluded by the kernel and schedule identities. Cross-references are
-/// encoded by canonical content key, never by position, so two structurally
-/// equal programs assembled in different orders share bytes.
+/// own declared stage/value/view/allocation/expression positions, and the
+/// planning `RegionId` already excluded by the kernel and schedule identities.
+/// Expressions are written once in canonical arena order and referenced by
+/// canonical position; the other entity tables are written in content-derived
+/// order and referenced by canonical rank. Two structurally equal programs
+/// assembled in different orders therefore share bytes.
 ///
 /// The one order it does fold is the **published output interface**, and that
 /// is not a transient ordinal: whole-program verification proves the published
@@ -1716,15 +1718,15 @@ const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
 /// tag steps: every program ever encoded maps to different bytes now, so a
 /// cache or artifact holding a `v2` identity must miss rather than match.
 ///
-/// `v2` named each use site's expression by [`expr_key`], a standalone content
-/// key that embeds its operands' keys. A key therefore restated its whole
-/// subtree, so an identity was quadratic in arena size along a chain and
+/// `v2` named each use site's expression by a standalone content key, since
+/// retired, that embedded its operands' keys. A key therefore restated its
+/// whole subtree, so an identity was quadratic in arena size along a chain and
 /// doubled per level wherever one node was shared — a five-operation program
-/// measured 13,623 bytes. `v3` writes the reachable arena once, in the
-/// canonical order of the use sites that reach it, and each use site names its
-/// expression by canonical position. Injectivity is unchanged: the arena
-/// section determines the whole DAG including its sharing, and an 8-byte
-/// canonical position determines which node a use site means.
+/// measured 13,623 bytes. `v3` writes the reachable arena once, in the canonical
+/// order of the use sites that reach it, and each use site names its expression
+/// by canonical position. Injectivity is unchanged: the arena section
+/// determines the whole DAG including its sharing, and an 8-byte canonical
+/// position determines which node a use site means.
 ///
 /// `v4` additionally folds each materialization's semantic component role,
 /// producer-derived component type, and complete storage encoding. Those facts

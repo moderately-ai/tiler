@@ -21,9 +21,10 @@
 //! Neither the byte windows, the kernel signature, nor the program's value table
 //! travel in this profile, so a decoder cannot recompute them. They are not
 //! therefore unguarded: all three are folded into the artifact's canonical
-//! identity through the binding's expression content key, its encoded target,
-//! and the entry's stage key, and the identity is re-derived and compared below.
-//! A forged envelope can restate them only by becoming a different artifact.
+//! identity through its one canonical arena and the binding's canonical-position
+//! expression references, its encoded target, and the entry's stage key. The
+//! identity is re-derived and compared below; a forged envelope can restate them
+//! only by becoming a different artifact.
 //!
 //! The binding target is the first such row whose misreading would silently bind
 //! the wrong buffer rather than fail, so the part of it that *is* decidable here

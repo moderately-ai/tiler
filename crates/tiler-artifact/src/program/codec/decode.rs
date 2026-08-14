@@ -667,7 +667,8 @@ fn parse_component_schemas(cursor: &mut Cursor<'_>) -> Result<ArtifactSchema, Ar
 /// The three obligations are exactly the ones the transactional builder
 /// discharges at insertion: every operand precedes its node, every operand has
 /// the value type its operation requires, and no two nodes denote the same
-/// expression. The last is what keeps a cross-reference by content injective.
+/// expression. The last keeps each canonical arena position naming a distinct
+/// expression, so a fixed-width position reference remains injective.
 ///
 /// **Distinctness is recognized by shallow structural equality, and that decides
 /// deep structural equality by induction** — the argument
