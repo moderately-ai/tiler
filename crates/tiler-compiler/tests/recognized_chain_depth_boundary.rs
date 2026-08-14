@@ -62,10 +62,11 @@
 //! materialization edges. `staged_family_over_a_materialized_intermediate.rs`'s
 //! `a_staged_family_over_an_edge_is_recognized_and_stops_at_the_region_vocabulary`
 //! is what says so: it asserts that the *one*-boundary chain
-//! `rms_norm(matmul(a, b), w)` remains uncompiled, with a class determined by
-//! the complete causes under each contract. Strict and flush-only isolate the
-//! region-vocabulary wall as `UnsupportedCapability`; reassociation-permitting
-//! contracts add fusion-legality `Unknown` and remain `NoFeasiblePlan`. It is
+//! `rms_norm(matmul(a, b), w)` remains uncompiled, with the complete causes
+//! determined at each of the fixture's five named F32 preset points. Strict and
+//! flush-only isolate the region-vocabulary wall as `UnsupportedCapability`;
+//! reassociation-permitting presets add fusion-legality `Unknown` and remain
+//! `NoFeasiblePlan`. It is
 //! that file's assertion rather than this file's so one measurement keeps one
 //! owner.
 //! When [`admit-a-scheduled-region-that-reads-two-materialization-edges`] lands,
@@ -91,12 +92,13 @@ use tiler_ir::shape::{Axis, Shape};
 mod staged_rms_profile;
 use staged_rms_profile::{RmsRealizationFixture, staged_rms_profile};
 
-/// Every numerical contract a caller can state.
+/// The five named F32 contract points this boundary suite exercises.
 ///
-/// Stated exhaustively rather than sampled, for the reason
-/// `staged_family_over_a_materialized_intermediate.rs` states it: the schedule
-/// wall and uncompiled outcome are structural, while the public class depends
-/// on whether a contract adds fusion-legality `Unknown` to the cause census.
+/// Named together rather than sampled at one preset, for the reason
+/// `staged_family_over_a_materialized_intermediate.rs` states: the schedule wall
+/// and uncompiled outcome are structural, while the public class depends on
+/// whether a preset adds fusion-legality `Unknown` to the cause census. This is
+/// not the complete population of caller-composable numerical contracts.
 const CONTRACTS: [NumericalContract; 5] = [
     NumericalContract::STRICT_F32,
     NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
@@ -242,24 +244,28 @@ fn a_chain_two_materialization_boundaries_deep_refuses_at_recognition_by_name() 
     assert_eq!(refused, CONTRACTS.len());
 }
 
-/// The same chain one boundary shallower compiles under the same request.
+/// The RMS-free chain one boundary shallower compiles under the governed profile.
 ///
 /// Without it the assertion above is consistent with a broken session boundary
 /// or a fixture that never reaches the recognizer, and this file would be
-/// evidence for nothing. The count is asserted rather than described so a
-/// population that stopped compiling cannot look like a population that never
-/// ran.
+/// evidence for nothing. It deliberately does not borrow the subject's
+/// synthetic RMS authority: removing RMS also makes the governed profile a
+/// sufficient independent control. The subject and neighbour share their
+/// declared inputs, contraction, trailing multiply, and five named F32 preset
+/// points, but not their target profile. The count is asserted rather than
+/// described so a population that stopped compiling cannot look like a
+/// population that never ran.
 ///
 /// Watched failing under a deliberate perturbation of the subject, and of this
 /// property alone: replacing `physical::spell_output`'s epilogue arm with
-/// `Err(RegionVocabularyWall::PartialCoverage)` reports *every contract must
-/// compile the one-boundary chain, or the refusal above is evidence about
-/// the session boundary rather than about chain depth*, while the depth
+/// `Err(RegionVocabularyWall::PartialCoverage)` reports *all five named contract
+/// presets must compile the one-boundary chain, or the refusal above is evidence
+/// about the session boundary rather than about chain depth*, while the depth
 /// assertion above stays green. The two perturbations are separate because
 /// either alone leaves the other's claim standing, which is what says each
 /// assertion is load-bearing on its own.
 #[test]
-fn a_chain_one_materialization_boundary_deep_compiles_under_the_same_request() {
+fn the_governed_rms_free_one_boundary_neighbour_compiles_at_all_five_preset_points() {
     let control = one_boundary_chain();
     let profile = TargetProfile::governed();
     let compiled = CONTRACTS
@@ -269,7 +275,7 @@ fn a_chain_one_materialization_boundary_deep_compiles_under_the_same_request() {
     assert_eq!(
         compiled,
         CONTRACTS.len(),
-        "every contract must compile the one-boundary chain, or the refusal above is evidence \
-         about the session boundary rather than about chain depth",
+        "all five named contract presets must compile the one-boundary chain, or the refusal \
+         above is evidence about the session boundary rather than about chain depth",
     );
 }

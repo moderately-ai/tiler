@@ -40,12 +40,14 @@ use tiler_ir::shape::{Axis, Shape};
 mod staged_rms_profile;
 use staged_rms_profile::{RmsRealizationFixture, staged_rms_profile};
 
-/// Every numerical contract a caller can state.
+/// The five named F32 contract points this boundary suite exercises.
 ///
-/// Stated exhaustively rather than sampled. The two strict-order contracts
-/// isolate the structural vocabulary wall. The three reassociation-permitting
-/// contracts make some multi-occurrence covers fusion-legality `Unknown`; that
-/// mixed cause is deliberately not absorbed into the pure vocabulary class.
+/// Named together rather than sampled at one preset: the two strict-order
+/// points isolate the structural vocabulary wall, while the three
+/// reassociation-permitting points make some multi-occurrence covers
+/// fusion-legality `Unknown`. That mixed cause is deliberately not absorbed
+/// into the pure vocabulary class. This is not the complete population of
+/// caller-composable numerical contracts.
 const CONTRACTS: [NumericalContract; 5] = [
     NumericalContract::STRICT_F32,
     NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
