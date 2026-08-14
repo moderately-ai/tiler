@@ -1,7 +1,7 @@
 ---
 id: retire-or-re-document-the-now-consumerless-expr-key-in-tiler-ir
 title: Retire or re-document the now-consumerless expr_key in tiler-ir
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [replace-the-codec-arena-content-key-with-the-existing-comparator, encode-artifact-abi-identity-in-linear-space]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, contracts/decisions, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, identity, cleanup, decision, needs-tom, public-boundary]
+claimed_from: todo
+assignee: worker-retire-expr-key
+lease_expires_at: 1786723108
 ---
 After `replace-the-codec-arena-content-key-with-the-existing-comparator`, `tiler_ir::program::abi::expr_key` has **no production consumer anywhere in the workspace**. `tiler-ir` stopped calling it at `encode-abi-expression-identity-in-linear-space`; `tiler-artifact` stopped at the artifact identity flattening and, for the codec, at the `14.0` manifest step. The one remaining caller is a `tiler-artifact` codec test, `the_canonical_arena_order_follows_the_comparator_where_the_content_key_disagrees`, which uses it precisely to assert that the key order and `compare_expr_nodes` are *different relations* on a constructed pair.
 
