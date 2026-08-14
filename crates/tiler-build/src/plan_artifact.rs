@@ -191,7 +191,8 @@ pub fn assemble_plan_artifact(
     let compilation = plan.compilation();
     let profile = target_profile(compilation)?;
     let rules = feasibility_rules(compilation)?;
-    let environment = CompilationEnvironment::new(compilation.offered_providers().iter().cloned())?;
+    let environment =
+        CompilationEnvironment::new(compilation.offered_lowering_providers().iter().cloned())?;
     let mut builder = ArtifactProgramBuilder::new(semantic, environment)?;
 
     for selected in plan.selected_capabilities() {

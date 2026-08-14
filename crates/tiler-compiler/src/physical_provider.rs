@@ -57,11 +57,11 @@
 //! ([`ProviderOffer::decline`]) says something stronger than silence, which is
 //! why the decline channel exists at all.
 //!
-//! # Draft boundary
+//! # Accepted boundary
 //!
-//! Every item here is a **labelled draft** under [ADR 0075] until Tom accepts
-//! its exact included and excluded surface. The excluded set is deliberate and
-//! is stated in [`ImplementationProposal::scheduled_kernel`],
+//! Tom accepted this module's exact included and excluded public surface on
+//! 2026-08-11 under [ADR 0075]. The excluded set is deliberate and is stated in
+//! [`ImplementationProposal::scheduled_kernel`],
 //! [`ImplementationContext::baseline`], and
 //! [`FrontierRegionSubject::covered_occurrences`] rather than left to be
 //! inferred from what is missing.

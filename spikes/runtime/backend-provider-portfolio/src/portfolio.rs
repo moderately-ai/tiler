@@ -123,8 +123,12 @@ fn assemble_with(
     metal_content: &PayloadContent,
     cpu: &ProducedCpu,
 ) -> Result<VerifiedArtifactProgram, ArtifactBuildError> {
-    let environment =
-        CompilationEnvironment::new(metal_compilation.offered_providers().iter().cloned())?;
+    let environment = CompilationEnvironment::new(
+        metal_compilation
+            .offered_lowering_providers()
+            .iter()
+            .cloned(),
+    )?;
     let mut draft = ArtifactProgramBuilder::new(semantic, environment)?;
     for selected in metal_plan.selected_capabilities() {
         draft.select_provider(SelectedProvider {
