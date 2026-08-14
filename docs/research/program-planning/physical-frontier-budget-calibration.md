@@ -76,6 +76,19 @@ The intermediate powers 2,048, 4,096, and 8,192 admit at most 6, 13, and 29 inst
 
 **Hold.** The exact raw value is not chosen here. `1,024` remains viable only if Tom explicitly makes two active specialists the supported population; the measurement does not supply that authority. Full-provider activity now depends on [`decide-how-explain-capacity-bounds-active-physical-provider-populations`](../../../tickets/decide-how-explain-capacity-bounds-active-physical-provider-populations.md). The implementation sink remains transitively held through the calibration graph.
 
+## Explain-capacity decision packet
+
+**Fact.** The exact-base audit at `e37c05b8ec28114736648edebbbdee745f4a051b` confirms that seven specialists first exhaust the one-MiB canonical detail-byte arm: the terminal record has ordinal 2,257, hence 2,257 prior nonterminal details, and the refused next detail remains below the independent 4,096-detail limit. The public failure maps to `CompileFailureClass::InvalidCompilerOutput`; that is this path's mapping, not the enum's complete vocabulary.
+
+**Inference.** A byte-only widening does not carry the named full population. Continuing the exact measured formulas to 31 specialists projects 1,056 retained alternatives and 41,266 ordinal record lines. Success contributes one terminal selection record per alternative, leaving 40,210 projected nonterminal details (`41,266 - 1,056`), above 4,096. This separation does not promote the six measured rows into a universal guarantee; it shows that the widening candidate must measure and size both independent dimensions rather than treating the first-firing arm as the only one.
+
+**Decision packet, pending Tom.** No accepted request or consumer authority names a numeric active-provider maximum. Two, six, and 31 are respectively a calibration reading, one subject's finite boundary, and a proposed full population — none is policy. The nondominated choices are therefore:
+
+1. retain both explain ceilings and intentionally leave full 32-slot activity unsupported, without relabelling six as a support promise; or
+2. make full activity a named requirement and authorize bounded research that completes the 31-specialist trace under diagnostic-only overrides before comparing a two-dimensional widening with lossless source or encoding compaction.
+
+The recommendation is the first until a consumer names the requirement. The strongest counterargument is that the public provider seam can reach an `InvalidCompilerOutput` wall despite satisfying every declared request budget, so deferral preserves a defect-shaped public result and leaves this calibration held. The conditional research is fully specified in [`measure-complete-explain-demand-and-lossless-compaction-for-full-physical-provider-activity`](../../../tickets/measure-complete-explain-demand-and-lossless-compaction-for-full-physical-provider-activity.md); its dispatch condition is Tom accepting the full-activity requirement. Neither production widening nor compaction is implementation-ready, so no implementation or post-change M3 dependency exists yet.
+
 ## Authority and identity
 
 **Inference from accepted architecture.** One request-scoped raw-outcome counter remains the only survivor. Per-target or per-candidate counters permit the same caller request to spend the limit repeatedly and change retry/partial-product semantics, reopening the accepted accounting authority rather than merely changing a value. A nested request total plus sublimits adds authority and schema without evidence of a distinct fairness requirement. These scopes are not implementation defaults.
