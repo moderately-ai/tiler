@@ -2269,6 +2269,71 @@ mod tests {
         .unwrap();
     }
 
+    /// Moving only a retained occurrence moves only the public occurrence
+    /// subject, and the checked-plan authority refuses that rebinding.
+    #[test]
+    fn selected_evidence_tracks_an_occurrence_that_cannot_be_rebound() {
+        let program = serial_sum_program();
+        let request = request_for(&program);
+        let formation = formation_of(&program);
+        let cover = cover_with_partitions(&program, &[vec![0, 1, 2, 3], vec![4]]);
+        let source = CoverFrontiers::new(
+            &cover,
+            vec![
+                pointwise_frontier(&request, "pw", PhysicalCostEstimate::structural(1, 6, 0)),
+                reduction_frontier(&request, "rd", PhysicalCostEstimate::structural(1, 2, 0)),
+            ],
+        );
+        let portfolio =
+            select_physical_plans(&program, budgets(), &formation, cover_policy(), &[source])
+                .unwrap();
+        let plan = &portfolio.plans()[0];
+        assert_eq!(plan.selections.len(), 2, "the perturbation needs two sites");
+
+        // Clone one genuinely admitted selection, then move only its retained
+        // occurrence to the other selected site. The exact admitted body token
+        // is kept, rather than reconstructed from any public subject.
+        let original = plan.selections[0].clone();
+        let mut moved = original.clone();
+        moved.occurrence = plan.selections[1].occurrence.clone();
+        assert_eq!(moved.implementation, original.implementation);
+
+        let original_view =
+            crate::session::SelectedImplementation::from_selection_for_test(&original);
+        let moved_view = crate::session::SelectedImplementation::from_selection_for_test(&moved);
+        assert!(
+            original_view.region_occurrence_identity() != moved_view.region_occurrence_identity(),
+            "moving the retained occurrence did not move the projected occurrence subject",
+        );
+        assert_eq!(
+            original_view.implementation_proposal_identity(),
+            moved_view.implementation_proposal_identity(),
+        );
+        assert_eq!(original_view.provider(), moved_view.provider());
+        assert_eq!(original_view.proposal_kind(), moved_view.proposal_kind());
+
+        // Preserve the cover's exact occurrence population but swap which
+        // unchanged admitted body it is associated with. Re-assembly must reject
+        // the first member/occurrence mismatch; the test-only view cannot turn a
+        // forged association into a valid selected plan.
+        let mut tampered = plan.clone();
+        let first_occurrence = tampered.selections[0].occurrence.clone();
+        tampered.selections[0].occurrence = tampered.selections[1].occurrence.clone();
+        tampered.selections[1].occurrence = first_occurrence;
+        assert_eq!(
+            tampered.selections[0].implementation,
+            plan.selections[0].implementation,
+        );
+        assert_eq!(
+            tampered.selections[1].implementation,
+            plan.selections[1].implementation,
+        );
+        let error = verify_selected_plan(&program, &formation, cover_policy(), &tampered)
+            .expect_err("checked-plan verification must refuse occurrence rebinding");
+        assert_eq!(error.class(), "binding");
+        assert_eq!(error.reason(), "member-mismatch");
+    }
+
     /// A target key is not a complete target identity.
     ///
     /// Two profiles can retain the same governed key while declaring different

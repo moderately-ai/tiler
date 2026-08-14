@@ -340,6 +340,31 @@ enum Disclosure {
     OfferedAndSelected,
 }
 
+/// Owned test projection of the four public selected-implementation subjects.
+///
+/// Production keeps the compiler-minted view borrowed; tests own the bytes only
+/// so they can compare rows reached through different short-lived plan views.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SelectedPhysicalEvidence {
+    occurrence: Vec<u8>,
+    proposal: Vec<u8>,
+    provider: ProviderIdentity,
+    kind: &'static str,
+}
+
+fn selected_physical_evidence(
+    plan: &tiler_compiler::session::PlanAlternative<'_>,
+) -> Vec<SelectedPhysicalEvidence> {
+    plan.selected_physical_providers()
+        .map(|selected| SelectedPhysicalEvidence {
+            occurrence: selected.region_occurrence_identity().to_vec(),
+            proposal: selected.implementation_proposal_identity().to_vec(),
+            provider: selected.provider().clone(),
+            kind: selected.proposal_kind(),
+        })
+        .collect()
+}
+
 /// Classifies one provider identity against one compilation's two sets.
 fn disclosure(compilation: &Compilation, identity: &ProviderIdentity) -> Disclosure {
     let offered = compilation.offered_physical_providers().contains(identity);
@@ -546,6 +571,95 @@ fn an_installed_provider_reaches_the_frontier_and_is_retained_additively() {
     }
 }
 
+/// **Every selected cover occurrence remains a separate, canonically ordered
+/// row even when one provider is selected more than once.**
+///
+/// The multi-region alternative is found from the compiler's population rather
+/// than assumed at one stable id. All rows name the governed provider, so two or
+/// more rows also prove this projection did not collapse to a provider set.
+#[test]
+fn selected_implementation_evidence_preserves_population_order_and_multiplicity() {
+    let program = semantic_program();
+    let profile = acme_profile("test.acme-selected-population.v1", 256);
+    let compilation = compile_with(&program, &profile, &InstalledPhysicalProviders::governed())
+        .expect("the governed environment compiles this program");
+
+    let rows = compilation
+        .alternatives()
+        .map(|plan| selected_physical_evidence(&plan))
+        .find(|rows| rows.len() > 1)
+        .expect("the materialized population contains more than one cover region");
+    assert!(
+        rows.windows(2)
+            .all(|pair| pair[0].occurrence < pair[1].occurrence),
+        "selected rows are not in strict canonical occurrence order",
+    );
+    let provider = &rows[0].provider;
+    assert!(
+        rows.iter().all(|row| &row.provider == provider),
+        "the multiplicity control needs one provider selected for every row: {rows:?}",
+    );
+    assert!(
+        rows.iter()
+            .all(|row| !row.occurrence.is_empty() && !row.proposal.is_empty()),
+        "a selected row omitted one of its two canonical identity subjects",
+    );
+}
+
+/// **Changing only provider authority changes proposal identity while the
+/// occurrence and structural specialization stay fixed.**
+///
+/// Both providers clone the same host baseline, apply the same workgroup width,
+/// and retain the baseline cost. The frontier stamps distinct provider
+/// identities; a matching occurrence therefore isolates provider authority as
+/// the only proposal-identity input that moved.
+#[test]
+fn provider_authority_moves_selected_evidence_without_moving_the_body() {
+    let program = semantic_program();
+    let profile = acme_profile("test.acme-selected-provider-authority.v1", 256);
+    let first = AcmeProvider::new("same-body-first", 1, Specialization::Workgroup(32));
+    let second = AcmeProvider::new("same-body-second", 1, Specialization::Workgroup(32));
+    let compilation = compile_with(
+        &program,
+        &profile,
+        &InstalledPhysicalProviders::installed([
+            &first as &dyn PhysicalImplementationProvider,
+            &second,
+        ])
+        .expect("two distinct identities install"),
+    )
+    .expect("the two equal-body providers compile");
+
+    let first_identity = first.identity.clone();
+    let second_identity = second.identity.clone();
+    let all_rows: Vec<_> = compilation
+        .alternatives()
+        .flat_map(|plan| selected_physical_evidence(&plan))
+        .collect();
+    let pair = all_rows.iter().find_map(|left| {
+        if left.provider != first_identity {
+            return None;
+        }
+        all_rows
+            .iter()
+            .find(|right| {
+                right.provider == second_identity
+                    && right.occurrence == left.occurrence
+                    && right.kind == left.kind
+            })
+            .map(|right| (left, right))
+    });
+    let (left, right) = pair
+        .expect("both equal-body providers should be retained for at least one shared occurrence");
+    assert_ne!(left.provider, right.provider);
+    assert_eq!(left.occurrence, right.occurrence);
+    assert_eq!(left.kind, right.kind);
+    assert_ne!(
+        left.proposal, right.proposal,
+        "provider authority did not enter the compiler-minted proposal identity",
+    );
+}
+
 /// **Compilation is deterministic under an installed provider.**
 ///
 /// The frontier's admitted set is canonical and provider-order-independent, so
@@ -567,9 +681,7 @@ fn an_installed_provider_leaves_selection_deterministic() {
         let plan = compilation.selected().expect("a plan is selected");
         (
             plan.stable_id().to_owned(),
-            plan.selected_physical_providers()
-                .map(|implementation| implementation.provider_explain_subject().to_owned())
-                .collect::<Vec<_>>(),
+            selected_physical_evidence(&plan),
         )
     };
     assert_eq!(selected(&profile), selected(&profile));
