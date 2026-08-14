@@ -3,7 +3,7 @@ id: calibrate-the-physical-frontier-provider-and-outcome-budgets
 title: Calibrate the physical-frontier provider and raw-outcome budgets
 status: todo
 priority: p1
-dependencies: [decide-whether-the-implementation-frontier-owes-a-retention-budget, measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro, decide-how-explain-capacity-bounds-active-physical-provider-populations, decide-the-truthful-public-class-for-complete-explain-capacity-refusals]
+dependencies: [decide-whether-the-implementation-frontier-owes-a-retention-budget, measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro, decide-how-explain-capacity-bounds-active-physical-provider-populations, decide-the-truthful-public-class-for-complete-explain-capacity-refusals, implement-the-truthful-explain-capacity-budget-refusal, prove-the-truthful-explain-capacity-budget-refusal-boundary]
 related: [replace-provider-offer-with-a-host-bounded-frontier-sink]
 scopes: [research/program-planning, implementation/compiler]
 shared_scopes: [project/tickets, contracts/navigation]

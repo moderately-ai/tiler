@@ -3,7 +3,7 @@ id: decide-how-explain-capacity-bounds-active-physical-provider-populations
 title: Decide how explain capacity bounds active physical-provider populations
 status: todo
 priority: p1
-dependencies: [decide-the-truthful-public-class-for-complete-explain-capacity-refusals]
+dependencies: [decide-the-truthful-public-class-for-complete-explain-capacity-refusals, implement-the-truthful-explain-capacity-budget-refusal, prove-the-truthful-explain-capacity-budget-refusal-boundary]
 related: [calibrate-the-physical-frontier-provider-and-outcome-budgets, measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro]
 scopes: [research/program-planning]
 shared_scopes: [project/tickets]

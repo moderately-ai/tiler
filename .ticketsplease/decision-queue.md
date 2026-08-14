@@ -2,22 +2,22 @@
 
 Operational queue for the continuous-delivery coordinator. Ticket files remain the authority; this file records presentation order, holds, exact release triggers, and the current recommendation so a later cycle does not rediscover or prematurely present a packet.
 
-Updated 2026-08-14 at integration main `bbbf936a`; publication is gated below.
+Updated 2026-08-14 after Tom accepted item 1; publication remains gated below.
 
-## 1. Truthful public class for complete-explain capacity refusal — awaiting Tom
+## 1. Truthful public class for complete-explain capacity refusal — accepted; implementation and evidence queued
 
 - Ticket: `decide-the-truthful-public-class-for-complete-explain-capacity-refusals` (`p1`, `awaiting-decision`).
 - Packet evidence: exact implementation packet `272d7e5ca7f8dbf2996e84e5f85c9e73785d88d4`, independently reviewed and merged at `7b4b991f`. A valid seven-specialist request reaches the one-MiB explain-detail byte guard but currently surfaces as `InvalidCompilerOutput`, contradicting that public class's defect-only contract.
-- Current recommendation: accept the sole nondominated surface: reuse `CompileFailureClass::BudgetExhausted { resource, limit, reported }`; add report-only `BudgetResource::{ExplainDetailRecords, ExplainDetailCanonicalBytes}` and closed `BudgetRefusal::ConstructionLowerBound`; keep both limits outside `DeterministicBudgets`; preserve a distinct outer/request-wide internal capacity carrier so no candidate, contract, or target fallback and no partial output is possible.
+- Accepted 2026-08-14 by Tom in the live Codex conversation: reuse `CompileFailureClass::BudgetExhausted { resource, limit, reported }`; add report-only `BudgetResource::{ExplainDetailRecords, ExplainDetailCanonicalBytes}` and closed `BudgetRefusal::ConstructionLowerBound`; keep both limits outside `DeterministicBudgets`; preserve a distinct outer/request-wide internal capacity carrier so no candidate, contract, or target fallback and no partial output is possible.
 - Strongest counterpoint: the explain limits are build constants rather than request-budget fields. The accepted public contract already says `BudgetExhausted` reports a deterministic bound "this build" declares, so a dedicated top-level class duplicates the same payload and caller action.
-- Release trigger: Tom accepts or rejects that exact included/excluded surface. On acceptance, create the named implementation and evidence tickets and add the four downstream hard edges before this decision closes. On rejection, leave the ticket and both downstream paths blocked and record the requested revision.
+- Release trigger: the accepted implementation and evidence tickets both land with independent review. The two downstream capacity tickets remain blocked on both nodes until then.
 
-## 2. Atomic subgroup realization surface — awaiting decision behind item 1
+## 2. Atomic subgroup realization surface — awaiting Tom
 
 - Tickets: `accept-the-atomic-subgroup-realization-surface` (`p1`, `awaiting-decision`) and `minimize-and-prove-the-atomic-subgroup-public-surface-before-acceptance`.
 - Packet evidence: the exact-surface repair and independent source review landed. A fresh read-only audit at `67fc9cac` found no source drift and one ticket-only identity imprecision, now repaired: both descriptors encode phase, authority, and validity, while only the complete declaration encodes the structured source and the checked descriptor deliberately excludes source identity. Focused IR, compiler, external-API, and UI populations remain green.
-- Current recommendation: do not present concurrently with item 1. Present this exact packet next; its minimized surface remains the sole nondominated public spelling and no unresolved construction, identity, error, schema, or artifact-boundary prerequisite remains.
-- Release trigger: item 1 leaves the active Tom decision slot, then Tom accepts or revises the atomic packet's exact included and excluded surface.
+- Current recommendation: present this exact packet next; its minimized surface remains the sole nondominated public spelling and no unresolved construction, identity, error, schema, or artifact-boundary prerequisite remains.
+- Release trigger: Tom accepts or revises the atomic packet's exact included and excluded surface.
 
 ## 3. Schedule-local input ordinal model — awaiting Tom behind item 2
 

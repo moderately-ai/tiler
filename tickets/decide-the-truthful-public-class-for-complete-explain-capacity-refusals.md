@@ -1,13 +1,13 @@
 ---
 id: decide-the-truthful-public-class-for-complete-explain-capacity-refusals
 title: Decide the truthful public class for complete-explain capacity refusals
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [decide-how-explain-capacity-bounds-active-physical-provider-populations, calibrate-the-physical-frontier-provider-and-outcome-budgets, refuse-nothing-legal-on-the-explain-detail-ceiling]
 scopes: [research/program-planning]
 shared_scopes: [project/tickets]
-paths: []
+paths: [.ticketsplease/decision-queue.md]
 tags: [public-boundary, explain, budgets, correctness]
 ---
 
@@ -16,6 +16,12 @@ tags: [public-boundary, explain, budgets, correctness]
 Decide the exact truthful public classification for a complete-explain detail-capacity refusal reached by an otherwise valid public compile request. Keep complete-or-refused trace construction intact. Do not select a capacity value, active-provider cardinality, or full-provider support policy here; this decision is mandatory independently of whether full 32-slot activity is ever promised.
 
 If a change survives the Pareto gate, Tom must accept the exact included and excluded public surface before implementation. Before this decision ticket closes, it must create the narrow accepted implementation ticket and its required evidence/regression ticket, then add hard dependencies from both downstream capacity tickets named under **Graph** to the implementation **and** evidence tickets. A decision-only closure is forbidden because it would satisfy the current hard dependency while the false `InvalidCompilerOutput` behavior still ships.
+
+## Accepted by Tom — 2026-08-14
+
+Tom accepted the exact sole-survivor `BudgetExhausted` surface in the live Codex conversation, relayed by the coordinating agent. The accepted answer is option 1 below without expansion: the two report-only explain resources, `ConstructionLowerBound`, the existing build-constant ceilings and prefix-lower-bound arithmetic, and a distinct internal outer/request-wide carrier that forbids candidate, contract, or target retry and partial output.
+
+The required implementation and evidence tickets are [`implement-the-truthful-explain-capacity-budget-refusal`](implement-the-truthful-explain-capacity-budget-refusal.md) and [`prove-the-truthful-explain-capacity-budget-refusal-boundary`](prove-the-truthful-explain-capacity-budget-refusal-boundary.md). This decision may become terminal only with both nodes present and both downstream tickets depending on both nodes.
 
 ## Facts at discovery base `e37c05b8ec28114736648edebbbdee745f4a051b`
 
