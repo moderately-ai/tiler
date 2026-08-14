@@ -5,7 +5,7 @@ status: todo
 priority: p1
 dependencies: [admit-an-atomic-subgroup-realization-subject-to-target-profiles]
 related: [accept-the-atomic-subgroup-realization-surface]
-scopes: [implementation/ir, implementation/compiler, contracts/decisions]
+scopes: [implementation/ir, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [subgroup, public-boundary, identity, correctness]
@@ -51,3 +51,4 @@ These repairs narrow the exact spelling presented for acceptance; they do not ch
 ## Closure
 
 Close when the dominated speculative surface is gone, present-subject kernel identity has a subject perturbation, targeted tests and package gates pass, and the dependent acceptance packet names the exact repaired surface and its honest evidence boundary.
+## Scope correction — 2026-08-13\n\nThe exact work census touches production/test source only in `tiler-ir` plus the decision ticket. `tiler-compiler` is a read-and-test consumer, not an edit owner, so its exclusive scope was removed before claim. If implementation proves a compiler edit necessary, stop and add the scope before touching it.
