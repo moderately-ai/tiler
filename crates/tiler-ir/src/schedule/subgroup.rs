@@ -67,19 +67,9 @@ pub enum SubgroupTransfer {
 
 impl SubgroupTransfer {
     /// Returns the canonical tag naming this transfer in an identity encoding.
-    #[must_use]
-    pub const fn tag(self) -> u8 {
+    const fn tag(self) -> u8 {
         match self {
             Self::InRangeXorShuffle => 0x01,
-        }
-    }
-
-    /// Resolves a governed wire tag, or `None` for an unrecognized transfer.
-    #[must_use]
-    pub const fn from_tag(tag: u8) -> Option<Self> {
-        match tag {
-            0x01 => Some(Self::InRangeXorShuffle),
-            _ => None,
         }
     }
 
@@ -94,6 +84,7 @@ impl SubgroupTransfer {
 
 /// Why one checked subgroup subject could not be formed.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
 pub enum SubgroupRealizationError {
     /// A width of zero names no lane set.
     ZeroWidth,
@@ -103,8 +94,6 @@ pub enum SubgroupRealizationError {
     /// not a power of two at least 2: width 1 has no mask, and a non-power of
     /// two leaves `lane xor mask` out of range.
     UnsupportedWidth,
-    /// The transfer tag is not one this build can name.
-    UndefinedTransfer,
 }
 
 impl SubgroupRealizationError {
@@ -114,7 +103,6 @@ impl SubgroupRealizationError {
         match self {
             Self::ZeroWidth => "subgroup-width-zero",
             Self::UnsupportedWidth => "subgroup-width-unsupported",
-            Self::UndefinedTransfer => "subgroup-transfer-undefined",
         }
     }
 }
@@ -147,10 +135,7 @@ impl SubgroupRealizationSubject {
     /// # Errors
     ///
     /// Returns [`SubgroupRealizationError::UnsupportedWidth`] when `transfer`
-    /// cannot define a realization at `width`, and
-    /// [`SubgroupRealizationError::UndefinedTransfer`] is reserved for a tag
-    /// this build does not name (the public constructor only accepts a typed
-    /// transfer).
+    /// cannot define a realization at `width`.
     pub const fn new(
         width: SubgroupWidth,
         arithmetic: ArithmeticType,
@@ -274,15 +259,6 @@ mod tests {
             )
             .expect("XOR shuffle is defined for every exact arithmetic type");
         }
-    }
-
-    #[test]
-    fn unknown_transfer_tag_is_undefined() {
-        assert_eq!(SubgroupTransfer::from_tag(0x02), None);
-        assert_eq!(
-            SubgroupRealizationError::UndefinedTransfer.rule(),
-            "subgroup-transfer-undefined"
-        );
     }
 
     #[test]
