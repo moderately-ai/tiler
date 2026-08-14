@@ -871,16 +871,17 @@ pub enum BudgetRefusal {
 ///
 /// # Which of these a public caller can actually observe
 ///
-/// Only the five program-scoped resources today. The other eight are raised by
-/// the three searches, which reach a caller only through an empty portfolio,
-/// and `crate::session`'s reachability note records why that route is currently
-/// unreachable from the public surface: the region-shape bounds are now the
-/// same formulas as the program-scoped bounds they derive from, so a program
-/// large enough to truncate a search is refused for its size first. Reaching it
-/// needs a caller-stated budget set, which the public surface does not admit.
-/// The vocabulary is nevertheless complete, because the mapping into it must be
-/// total over what the compiler can raise and reachability is a property of the
-/// budgets a request carries rather than of this type.
+/// The five program-scoped resources remain the ones a public caller can hit
+/// by submitting a large enough program. `PhysicalProviders` is also reachable
+/// from the public surface: installing more providers than the request admits
+/// (governed included) refuses before any `propose` call. The search rows,
+/// including `PhysicalFrontierOutcomes`, still reach a caller only through an
+/// empty portfolio or a typed frontier refuse, and `crate::session`'s
+/// reachability note records why most search rows stay unreachable from the
+/// public surface without a caller-stated budget set. The vocabulary is
+/// complete, because the mapping into it must be total over what the compiler
+/// can raise and reachability is a property of the budgets a request carries
+/// rather than of this type.
 ///
 /// # Why `#[non_exhaustive]`
 ///
@@ -919,6 +920,10 @@ pub enum BudgetResource {
     RegionCoverExpansions,
     /// Complete-plan combinations admitted for one cover source.
     PhysicalPlanCombinations,
+    /// Installed physical providers admitted for one compilation, governed included.
+    PhysicalProviders,
+    /// Raw proposal and decline outcomes admitted for one compilation request.
+    PhysicalFrontierOutcomes,
 }
 
 impl BudgetResource {
@@ -945,6 +950,8 @@ impl BudgetResource {
         Self::RegionCovers,
         Self::RegionCoverExpansions,
         Self::PhysicalPlanCombinations,
+        Self::PhysicalProviders,
+        Self::PhysicalFrontierOutcomes,
     ];
 
     /// Returns the stable diagnostic key of this budget.
@@ -970,6 +977,8 @@ impl BudgetResource {
             Self::RegionCovers => "region-covers",
             Self::RegionCoverExpansions => "region-cover-expansions",
             Self::PhysicalPlanCombinations => "physical-plan-combinations",
+            Self::PhysicalProviders => "physical-providers",
+            Self::PhysicalFrontierOutcomes => "physical-frontier-outcomes",
         }
     }
 
@@ -982,14 +991,14 @@ impl BudgetResource {
     /// conservative planning envelope computed before selection, and a lower
     /// bound recorded where enumeration stopped.
     ///
-    /// The five search bounds stop an enumeration at the first demand they
+    /// The six search bounds stop an enumeration at the first demand they
     /// refuse, and all three stop records say so in their own documentation:
     /// the value is a lower bound on the unexplored space rather than its size.
     /// The three request-gate planning envelopes (`Regions`,
     /// `HostExpressionNodes`, `Buffers`) are computed before a plan is chosen
     /// and may exceed what a particular reachable plan uses. The remaining
-    /// five are completed counts of a submitted program or of one refused
-    /// region candidate.
+    /// six are completed counts of a submitted program, of one refused
+    /// region candidate, or of the installed physical-provider population.
     ///
     /// This is the answer a `&'static str` resource could not give. A caller
     /// holding a key has no way to learn the number's provenance without
@@ -1002,7 +1011,8 @@ impl BudgetResource {
             | Self::SemanticOperations
             | Self::RegionMembers
             | Self::RegionBoundaryOutputs
-            | Self::RegionLiveValues => BudgetRefusal::ExactDemand,
+            | Self::RegionLiveValues
+            | Self::PhysicalProviders => BudgetRefusal::ExactDemand,
             Self::Regions | Self::HostExpressionNodes | Self::Buffers => {
                 BudgetRefusal::PlanningUpperBound
             }
@@ -1010,7 +1020,8 @@ impl BudgetResource {
             | Self::RegionExpansions
             | Self::RegionCovers
             | Self::RegionCoverExpansions
-            | Self::PhysicalPlanCombinations => BudgetRefusal::SearchLowerBound,
+            | Self::PhysicalPlanCombinations
+            | Self::PhysicalFrontierOutcomes => BudgetRefusal::SearchLowerBound,
         }
     }
 }
@@ -1076,6 +1087,19 @@ pub(crate) struct DeterministicBudgets {
     pub(crate) region_cover_expansions: u64,
     /// Complete-plan combinations admitted for one cover source.
     pub(crate) physical_plan_combinations: u64,
+    /// Installed physical providers admitted for one compilation, governed included.
+    ///
+    /// Preflighted against the complete population before any `propose` call.
+    /// A provider that emits nothing still consumes one slot, so this bound is
+    /// independent of [`Self::physical_frontier_outcomes`].
+    pub(crate) physical_providers: u32,
+    /// Raw proposal and decline outcomes admitted for one compilation request.
+    ///
+    /// One count over every proposal and every [`crate::frontier::DeclinedStrategy`]
+    /// the host accepts. It is a cardinality bound sized from the expensive
+    /// (proposal) side, not a uniform work unit, and it does not bound native
+    /// provider work before an emission.
+    pub(crate) physical_frontier_outcomes: u64,
 }
 
 impl DeterministicBudgets {
@@ -1181,10 +1205,13 @@ impl DeterministicBudgets {
     /// every governed compilation's qualifier moved with them. The one pinned
     /// literal is `explain`'s
     /// `deterministic_trace_is_sealed_and_rendered_separately` request qualifier
-    /// — and its ledger comment records the recomputation. No encoding version
-    /// moved: the field set, widths, and order are untouched, so a value change
-    /// stays injective inside the current `tiler.compiler.request-subject.v6`
-    /// domain.
+    /// — and its ledger comment records the recomputation. That value widening
+    /// did not step the encoding version: the field set, widths, and order were
+    /// untouched, so a value change stayed injective inside
+    /// `tiler.compiler.request-subject.v6`. The two physical-frontier fields
+    /// added 2026-08-13 are a field-set change and *did* step the domain to
+    /// `tiler.compiler.request-subject.v7`. Artifact and cache identity did
+    /// not move: they are not request-subject fields.
     ///
     /// They move again when the decoder layer becomes plannable, and that is a
     /// second identity move this one cannot honestly absorb. The three
@@ -1245,10 +1272,12 @@ impl DeterministicBudgets {
     /// selected packaged content moves. The one checked-in literal derived from
     /// these bytes is `explain`'s
     /// `deterministic_trace_is_sealed_and_rendered_separately` request
-    /// qualifier, whose ledger comment records the recomputation. No encoding
-    /// version moved with it — the field set, widths, and order are untouched,
-    /// so a value change stays injective inside the current
-    /// `tiler.compiler.request-subject.v6` domain.
+    /// qualifier, whose ledger comment records the recomputation. The later
+    /// value widening that comment records did not step the encoding version.
+    /// The two physical-frontier fields added 2026-08-13 did, because they
+    /// changed the field set: the encoder prefix is now
+    /// `tiler.compiler.request-subject.v7`. Artifact and cache identity did
+    /// not move.
     ///
     /// A budget is an upper bound, so widening admits program shapes and never
     /// requires them: [`check_program_budgets`] still refuses a program one step
@@ -1279,6 +1308,8 @@ impl DeterministicBudgets {
             region_covers: 1_024,
             region_cover_expansions: 100_000,
             physical_plan_combinations: 4_096,
+            physical_providers: 32,
+            physical_frontier_outcomes: 256,
         }
     }
 }
@@ -3261,7 +3292,12 @@ impl VerifiedRequestSubject {
         // input key, and a caller may name an input whatever it likes — and that
         // argument does not close. Stepping the domain makes the separation
         // structural instead.
-        bytes.extend_from_slice(b"tiler.compiler.request-subject.v6\0");
+        //
+        // The step to `v7` appends the two physical-frontier budgets after the
+        // existing u64 run. A `v6` reader would consume those bytes as the
+        // target-profile subject that follows, so the field-set change cannot
+        // stay inside `v6`.
+        bytes.extend_from_slice(b"tiler.compiler.request-subject.v7\0");
         push_slice(&mut bytes, self.semantic_identity.graph().as_bytes());
         push_slice(
             &mut bytes,
@@ -3309,12 +3345,14 @@ impl VerifiedRequestSubject {
             self.budgets.region_candidates_per_seed,
             self.budgets.region_expansions,
             self.budgets.region_covers,
+            self.budgets.physical_providers,
         ] {
             bytes.extend_from_slice(&budget.to_be_bytes());
         }
         for budget in [
             self.budgets.region_cover_expansions,
             self.budgets.physical_plan_combinations,
+            self.budgets.physical_frontier_outcomes,
         ] {
             bytes.extend_from_slice(&budget.to_be_bytes());
         }
@@ -11634,7 +11672,7 @@ mod tests {
         );
         assert_eq!(
             BudgetResource::ALL.len(),
-            13,
+            15,
             "the vocabulary changed size; every dependent claim about it needs re-reading",
         );
     }
@@ -11668,6 +11706,7 @@ mod tests {
             .filter_map(|stop| stop.truncating_resource()),
         );
         image.push(crate::selection::PlanBudgetResource::Combinations.resource());
+        image.push(crate::frontier::FrontierBudgetResource::Outcomes.resource());
 
         let distinct: BTreeSet<BudgetResource> = image.iter().copied().collect();
         assert_eq!(
@@ -11677,8 +11716,8 @@ mod tests {
         );
         assert_eq!(
             image.len(),
-            8,
-            "five region stops, two cover stops, one plan stop"
+            9,
+            "five region stops, two cover stops, one plan stop, one frontier stop"
         );
         assert!(
             crate::cover::CoverBudgetResource::Refusals
@@ -11687,9 +11726,10 @@ mod tests {
             "the explanation budget refuses no compilation and holds no row",
         );
 
-        // Every one of the eight is a search or shape stop reached after a
-        // target is consulted, and the five program-scoped rows are exactly the
-        // ones no stop vocabulary maps onto.
+        // Every one of the nine is a search or shape stop reached after a
+        // target is consulted, and the request-boundary rows — five program-
+        // scoped plus the physical-provider preflight — are exactly the ones no
+        // stop vocabulary maps onto.
         for resource in BudgetResource::ALL {
             let program_scoped = matches!(
                 resource,
@@ -11698,6 +11738,7 @@ mod tests {
                     | BudgetResource::Regions
                     | BudgetResource::HostExpressionNodes
                     | BudgetResource::Buffers
+                    | BudgetResource::PhysicalProviders
             );
             assert_eq!(
                 program_scoped,
@@ -11717,7 +11758,7 @@ mod tests {
     /// search stop is a floor on unexplored work, not the budget success needs.
     ///
     /// The match is wildcard-free over [`BudgetResource::ALL`], which is itself
-    /// sized by `variant_count`, so a fourteenth resource is a build error here
+    /// sized by `variant_count`, so a newly added resource is a build error here
     /// rather than a census that still reports three classes over a smaller set.
     #[test]
     fn every_budget_resource_reports_exactly_one_provenance() {
@@ -11730,7 +11771,8 @@ mod tests {
                 | BudgetResource::SemanticOperations
                 | BudgetResource::RegionMembers
                 | BudgetResource::RegionBoundaryOutputs
-                | BudgetResource::RegionLiveValues => BudgetRefusal::ExactDemand,
+                | BudgetResource::RegionLiveValues
+                | BudgetResource::PhysicalProviders => BudgetRefusal::ExactDemand,
                 BudgetResource::Regions
                 | BudgetResource::HostExpressionNodes
                 | BudgetResource::Buffers => BudgetRefusal::PlanningUpperBound,
@@ -11738,7 +11780,8 @@ mod tests {
                 | BudgetResource::RegionExpansions
                 | BudgetResource::RegionCovers
                 | BudgetResource::RegionCoverExpansions
-                | BudgetResource::PhysicalPlanCombinations => BudgetRefusal::SearchLowerBound,
+                | BudgetResource::PhysicalPlanCombinations
+                | BudgetResource::PhysicalFrontierOutcomes => BudgetRefusal::SearchLowerBound,
             };
             assert_eq!(
                 resource.refusal(),
@@ -11753,7 +11796,7 @@ mod tests {
         }
         assert_eq!(
             (exact, envelope, search, exact + envelope + search),
-            (5, 3, 5, BudgetResource::ALL.len()),
+            (6, 3, 6, BudgetResource::ALL.len()),
             "provenance census changed; re-read every dependent claim. exact={exact} envelope={envelope} search={search} total={}",
             BudgetResource::ALL.len(),
         );
@@ -11970,6 +12013,52 @@ mod tests {
         assert_ne!(
             alone.subject().canonical_explain_subject_bytes(),
             with_fallback.subject().canonical_explain_subject_bytes(),
+        );
+    }
+
+    /// The two physical-frontier budgets are request-subject fields.
+    ///
+    /// Changing either value must move the canonical bytes. If it did not, two
+    /// compilations that admit different provider or outcome populations would
+    /// share one explain qualifier.
+    #[test]
+    fn physical_frontier_budget_fields_participate_in_the_request_subject() {
+        let program = program();
+        let baseline = verify_planned_request(CompilationRequest::governed(&program))
+            .unwrap()
+            .for_target(0)
+            .unwrap()
+            .subject()
+            .canonical_explain_subject_bytes();
+
+        let mut providers = CompilationRequest::governed(&program);
+        providers.budgets.physical_providers += 1;
+        let provider_bytes = verify_planned_request(providers)
+            .unwrap()
+            .for_target(0)
+            .unwrap()
+            .subject()
+            .canonical_explain_subject_bytes();
+        assert_ne!(
+            baseline, provider_bytes,
+            "changing physical_providers must move the request subject"
+        );
+
+        let mut outcomes = CompilationRequest::governed(&program);
+        outcomes.budgets.physical_frontier_outcomes += 1;
+        let outcome_bytes = verify_planned_request(outcomes)
+            .unwrap()
+            .for_target(0)
+            .unwrap()
+            .subject()
+            .canonical_explain_subject_bytes();
+        assert_ne!(
+            baseline, outcome_bytes,
+            "changing physical_frontier_outcomes must move the request subject"
+        );
+        assert_ne!(
+            provider_bytes, outcome_bytes,
+            "the two new budget fields must occupy distinct subject slots"
         );
     }
 

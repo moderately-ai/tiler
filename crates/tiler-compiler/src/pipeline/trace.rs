@@ -623,7 +623,7 @@ pub(super) fn record_numerical_equivalence(
     )
 }
 
-/// Records one region subject's bounded implementation frontier.
+/// Records one region subject's implementation frontier.
 ///
 /// **`key` is the region's own explain subject, not its role.** The role is a
 /// four-valued presentation label and a cover places many regions under

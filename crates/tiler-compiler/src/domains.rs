@@ -125,7 +125,7 @@ const PINNED_IDENTITY_DOMAINS: &[PinnedDomain] = &[
     PinnedDomain::new(b"tiler.compiler.region-content.v1\0", 1, 0),
     PinnedDomain::new(b"tiler.compiler.region-cover.v1\0", 1, 0),
     PinnedDomain::new(b"tiler.compiler.region-occurrence.v1\0", 1, 0),
-    PinnedDomain::new(b"tiler.compiler.request-subject.v6\0", 1, 0),
+    PinnedDomain::new(b"tiler.compiler.request-subject.v7\0", 1, 0),
     PinnedDomain::new(b"tiler.compiler.selected-physical-plan.v2\0", 1, 0),
     PinnedDomain::new(b"tiler.compiler.selected-physical-portfolio.v1\0", 1, 0),
     PinnedDomain::new(b"tiler.explain.compilation.v1\0", 1, 0),

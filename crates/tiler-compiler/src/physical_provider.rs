@@ -47,15 +47,17 @@
 //!
 //! # Five refusals a caller can tell apart
 //!
-//! An empty [`ProviderOffer`] is a legitimate local result and is *not* an
-//! error: it means this provider recognizes nothing about this region and
-//! target. It stays distinguishable from the four other outcomes — a hard
-//! target rejection naming the disproved capability predicate, an analysis that
-//! could not be completed, malformed provider output that fails the whole
-//! enumeration closed, and a proposal that was admitted and lost on cost. A
-//! provider that offers nothing but *declines a named strategy*
-//! ([`ProviderOffer::decline`]) says something stronger than silence, which is
-//! why the decline channel exists at all.
+//! Emitting nothing into the host-owned [`PhysicalFrontierSink`] is a
+//! legitimate local result and is *not* an error: it means this provider
+//! recognizes nothing about this region and target. It stays distinguishable
+//! from the four other outcomes — a hard target rejection naming the disproved
+//! capability predicate, an analysis that could not be completed, malformed
+//! provider output that fails the whole enumeration closed, and a proposal that
+//! was admitted and lost on cost. A provider that emits no proposal but
+//! *declines a named strategy* ([`PhysicalFrontierSink::decline`]) says
+//! something stronger than silence, which is why the decline channel exists at
+//! all. The host charges every insertion before accepting it and latches
+//! overflow, so ignoring an individual refusal cannot retain a prefix.
 //!
 //! # Draft boundary
 //!
@@ -112,6 +114,21 @@
 //! use tiler_compiler::frontier::enumerate_frontier;
 //! ```
 //!
+//! **The sink has no public constructor**, so a provider cannot supply the
+//! bounded channel or stand in an unbounded collector for it.
+//!
+//! ```compile_fail,E0451
+//! use tiler_compiler::physical_provider::PhysicalFrontierSink;
+//!
+//! fn construct() -> PhysicalFrontierSink<'static> {
+//!     PhysicalFrontierSink {
+//!         budget: unimplemented!(),
+//!         proposals: Vec::new(),
+//!         declined: Vec::new(),
+//!     }
+//! }
+//! ```
+//!
 //! [ADR 0045]: https://github.com/moderately-ai/tiler/blob/main/docs/decisions/0045-bound-proc-macro-providers-to-host-dependencies.md
 //! [ADR 0075]: https://github.com/moderately-ai/tiler/blob/main/docs/decisions/0075-scope-public-boundary-approval-by-change-category.md
 //! [ADR 0090]: https://github.com/moderately-ai/tiler/blob/main/docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md
@@ -123,8 +140,8 @@ use tiler_ir::semantic::ProviderIdentity;
 
 pub use crate::frontier::{
     BaselineImplementation, DeclinedStrategy, FrontierRegionSubject, ImplementationContext,
-    ImplementationProposal, PhysicalCostEstimate, PhysicalImplementationProvider,
-    PhysicalProviderProvenance, PhysicalProviderProvenanceError, ProviderOffer,
+    ImplementationProposal, PhysicalCostEstimate, PhysicalFrontierBudget, PhysicalFrontierSink,
+    PhysicalImplementationProvider, PhysicalProviderProvenance, PhysicalProviderProvenanceError,
     StrategyDeclineCause, TargetApplicability,
 };
 
@@ -354,9 +371,9 @@ impl Error for PhysicalProviderInstallationError {
 #[cfg(test)]
 mod tests {
     use super::{
-        InstalledPhysicalProviders, PhysicalImplementationProvider,
+        InstalledPhysicalProviders, PhysicalFrontierSink, PhysicalImplementationProvider,
         PhysicalProviderInstallationError, PhysicalProviderProvenance,
-        PhysicalProviderProvenanceError, ProviderIdentity, ProviderOffer,
+        PhysicalProviderProvenanceError, ProviderIdentity,
     };
     use crate::frontier::{GovernedPhysicalProvider, ImplementationContext};
 
@@ -370,9 +387,7 @@ mod tests {
             PhysicalProviderProvenance::new(self.0.clone())
         }
 
-        fn propose(&self, _: &ImplementationContext<'_>) -> ProviderOffer {
-            ProviderOffer::default()
-        }
+        fn propose(&self, _: &ImplementationContext<'_>, _: &mut PhysicalFrontierSink<'_>) {}
     }
 
     fn named(name: &str, revision: u32) -> NamedProvider {

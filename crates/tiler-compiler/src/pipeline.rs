@@ -47,7 +47,7 @@ use crate::explain::{
 };
 use crate::frontier::{
     FrontierError, FrontierRegionSubject, GovernedPhysicalProvider, ImplementationFrontier,
-    PhysicalAuthorities, enumerate_frontier,
+    PhysicalAuthorities,
 };
 use crate::fusion::{
     FusionError, FusionNumericalProof, prove_fused_numerics, verify_fused_numerics,
@@ -641,7 +641,18 @@ impl From<FusionLegalityError> for CompileError {
 
 impl From<FrontierError> for CompileError {
     fn from(value: FrontierError) -> Self {
-        Self::InvalidCompilerOutput(CompilerOutputError::Frontier(value))
+        match value {
+            FrontierError::BudgetExceeded {
+                resource,
+                limit,
+                reported,
+            } => Self::BudgetExhausted(RequestError::BudgetExceeded {
+                resource,
+                limit,
+                reported,
+            }),
+            other => Self::InvalidCompilerOutput(CompilerOutputError::Frontier(other)),
+        }
     }
 }
 
@@ -689,11 +700,11 @@ pub(crate) fn compile_with_physical_providers(
     request: CompilationRequest<'_>,
     providers: Vec<&dyn crate::frontier::PhysicalImplementationProvider>,
 ) -> Result<CompilationProduct, CompileError> {
-    compile_configured(
-        request,
-        AlgebraicRuleConfiguration::all(),
-        &PhysicalAuthorities::composed(providers, crate::call_registry::OpaqueCallRegistry::new()),
-    )
+    crate::frontier::preflight_physical_providers(&providers, request.budgets.physical_providers)?;
+    let physical =
+        PhysicalAuthorities::composed(providers, crate::call_registry::OpaqueCallRegistry::new())
+            .with_outcome_budget(request.budgets.physical_frontier_outcomes);
+    compile_configured(request, AlgebraicRuleConfiguration::all(), &physical)
 }
 
 /// Compiles under stated rewrite and physical authorities.

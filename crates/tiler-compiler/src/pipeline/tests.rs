@@ -29,7 +29,7 @@ fn test_root(explain: &mut ExplainWriter) -> ExplainRecordId {
         .unwrap()
 }
 use crate::explain::ExplainDisposition;
-use crate::frontier::{PhysicalImplementationProvider, PhysicalProposalKind};
+use crate::frontier::{PhysicalImplementationProvider, PhysicalProposalKind, enumerate_frontier};
 use crate::physical::{InputOrdinal, RegionId, TensorRole};
 use crate::request::{
     CompilerCapabilitySnapshot, NumericalContractPreference, StrictF32NumericalContract,
@@ -5955,21 +5955,20 @@ impl PhysicalImplementationProvider for UnregisteredOpaqueProvider {
     fn propose(
         &self,
         context: &crate::frontier::ImplementationContext<'_>,
-    ) -> crate::frontier::ProviderOffer {
-        crate::frontier::ProviderOffer::proposing(vec![
-            crate::frontier::ImplementationProposal::new(
-                crate::frontier::ProposalBody::OpaqueCall(Box::new(
-                    crate::call_registry::OpaqueCallProposal::new(self.call, self.bindings.clone())
-                        .expect("fixture proposal is exactly reportable"),
-                )),
-                crate::frontier::TargetApplicability::for_targets([context
-                    .request()
-                    .target_profile()
-                    .profile_key()
-                    .clone()]),
-                crate::frontier::PhysicalCostEstimate::structural(1, 2, 0),
-            ),
-        ])
+        sink: &mut crate::frontier::PhysicalFrontierSink<'_>,
+    ) {
+        let _ = sink.propose(crate::frontier::ImplementationProposal::new(
+            crate::frontier::ProposalBody::OpaqueCall(Box::new(
+                crate::call_registry::OpaqueCallProposal::new(self.call, self.bindings.clone())
+                    .expect("fixture proposal is exactly reportable"),
+            )),
+            crate::frontier::TargetApplicability::for_targets([context
+                .request()
+                .target_profile()
+                .profile_key()
+                .clone()]),
+            crate::frontier::PhysicalCostEstimate::structural(1, 2, 0),
+        ));
     }
 }
 
@@ -6177,24 +6176,23 @@ impl PhysicalImplementationProvider for WholeProgramCallProvider {
     fn propose(
         &self,
         context: &crate::frontier::ImplementationContext<'_>,
-    ) -> crate::frontier::ProviderOffer {
+        sink: &mut crate::frontier::PhysicalFrontierSink<'_>,
+    ) {
         if context.subject().role() != "whole-program" {
-            return crate::frontier::ProviderOffer::default();
+            return;
         }
-        crate::frontier::ProviderOffer::proposing(vec![
-            crate::frontier::ImplementationProposal::new(
-                crate::frontier::ProposalBody::OpaqueCall(Box::new(
-                    crate::call_registry::OpaqueCallProposal::new(self.call, Self::bindings())
-                        .expect("fixture proposal is exactly reportable"),
-                )),
-                crate::frontier::TargetApplicability::for_targets([context
-                    .request()
-                    .target_profile()
-                    .profile_key()
-                    .clone()]),
-                crate::frontier::PhysicalCostEstimate::structural(1, 2, 0),
-            ),
-        ])
+        let _ = sink.propose(crate::frontier::ImplementationProposal::new(
+            crate::frontier::ProposalBody::OpaqueCall(Box::new(
+                crate::call_registry::OpaqueCallProposal::new(self.call, Self::bindings())
+                    .expect("fixture proposal is exactly reportable"),
+            )),
+            crate::frontier::TargetApplicability::for_targets([context
+                .request()
+                .target_profile()
+                .profile_key()
+                .clone()]),
+            crate::frontier::PhysicalCostEstimate::structural(1, 2, 0),
+        ));
     }
 }
 

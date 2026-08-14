@@ -15,9 +15,9 @@ use std::collections::BTreeSet;
 
 use tiler_compiler::physical_provider::{
     DeclinedStrategy, GOVERNED_PHYSICAL_COST_MODEL_KEY, ImplementationContext,
-    ImplementationProposal, InstalledPhysicalProviders, PhysicalImplementationProvider,
-    PhysicalProviderInstallationError, PhysicalProviderProvenance, PhysicalProviderProvenanceError,
-    ProviderOffer, StrategyDeclineCause, TargetApplicability,
+    ImplementationProposal, InstalledPhysicalProviders, PhysicalFrontierSink,
+    PhysicalImplementationProvider, PhysicalProviderInstallationError, PhysicalProviderProvenance,
+    PhysicalProviderProvenanceError, StrategyDeclineCause, TargetApplicability,
 };
 use tiler_compiler::session::{
     Compilation, CompileFailureClass, CompileRequest, NumericalContract, compile,
@@ -107,28 +107,29 @@ impl PhysicalImplementationProvider for AcmeProvider {
         PhysicalProviderProvenance::new(self.identity.clone())
     }
 
-    fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
+    fn propose(&self, context: &ImplementationContext<'_>, sink: &mut PhysicalFrontierSink<'_>) {
         let Some(baseline) = context.baseline() else {
             // Silence and a named decline are different answers, and this is the
             // second: the strategy applied and this subject admitted no shape
             // for it. A subject with no single-dispatch baseline is exactly the
             // published-and-consumed and unspellable cases the seam documents.
-            return ProviderOffer::default().decline(DeclinedStrategy::new(
+            let _ = sink.decline(DeclinedStrategy::new(
                 WIDE_WORKGROUP_STRATEGY,
                 StrategyDeclineCause::NoAdmissibleShape {
                     rule: "acme.no-single-dispatch-baseline",
                     extent: context.subject().covered_occurrences() as u64,
                 },
             ));
+            return;
         };
-        ProviderOffer::proposing(vec![ImplementationProposal::scheduled_kernel(
+        let _ = sink.propose(ImplementationProposal::scheduled_kernel(
             self.specialize(baseline.region()),
             TargetApplicability::for_targets([context.target_profile().profile_key().clone()]),
             // The host's own estimate for the region this specializes. A wider
             // workgroup changes no structural dimension, so inventing a lower
             // number would win a comparison that measured nothing.
             baseline.cost(),
-        )])
+        ));
     }
 }
 
@@ -149,9 +150,7 @@ impl PhysicalImplementationProvider for GovernedImpostor {
         )
     }
 
-    fn propose(&self, _: &ImplementationContext<'_>) -> ProviderOffer {
-        ProviderOffer::default()
-    }
+    fn propose(&self, _: &ImplementationContext<'_>, _: &mut PhysicalFrontierSink<'_>) {}
 }
 
 impl PhysicalImplementationProvider for SilentProvider {
@@ -159,9 +158,7 @@ impl PhysicalImplementationProvider for SilentProvider {
         PhysicalProviderProvenance::new(self.0.clone())
     }
 
-    fn propose(&self, _: &ImplementationContext<'_>) -> ProviderOffer {
-        ProviderOffer::default()
-    }
+    fn propose(&self, _: &ImplementationContext<'_>, _: &mut PhysicalFrontierSink<'_>) {}
 }
 
 fn guarantee_source() -> TargetFactSource {
@@ -738,13 +735,12 @@ fn an_installed_provider_is_offered_every_region_subject() {
             PhysicalProviderProvenance::new(self.identity.clone())
         }
 
-        fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
+        fn propose(&self, context: &ImplementationContext<'_>, _: &mut PhysicalFrontierSink<'_>) {
             self.subjects.borrow_mut().insert((
                 context.subject().role().to_owned(),
                 context.subject().covered_occurrences(),
                 context.baseline().is_some(),
             ));
-            ProviderOffer::default()
         }
     }
 
@@ -775,4 +771,140 @@ fn an_installed_provider_is_offered_every_region_subject() {
         observed.iter().all(|(_, covered, _)| *covered > 0),
         "a subject naming no occurrence reached an installed provider: {observed:?}"
     );
+}
+
+/// Thirty-two extras plus the governed provider is one over the preflight limit.
+#[test]
+fn thirty_three_providers_refuse_the_compilation() {
+    let extras: Vec<SilentProvider> = (0..32)
+        .map(|index| {
+            SilentProvider(
+                ProviderIdentity::new("acme", format!("silent-{index}"), 1)
+                    .expect("the test identity is valid"),
+            )
+        })
+        .collect();
+    let installed: Vec<&dyn PhysicalImplementationProvider> = extras
+        .iter()
+        .map(|provider| provider as &dyn PhysicalImplementationProvider)
+        .collect();
+    let environment = InstalledPhysicalProviders::installed(installed)
+        .expect("thirty-two distinct extras install");
+    let program = semantic_program();
+    let class = compile_with(
+        &program,
+        &acme_profile("test.acme-provider-count.v1", 256),
+        &environment,
+    )
+    .expect_err("governed plus 32 extras is 33 providers");
+    match class {
+        CompileFailureClass::BudgetExhausted {
+            resource,
+            limit,
+            reported,
+        } => {
+            assert_eq!(resource.key(), "physical-providers");
+            assert_eq!(limit, 32);
+            assert_eq!(reported, 33);
+        }
+        other => panic!("expected provider-count exhaustion, got {other:?}"),
+    }
+}
+
+/// A provider that dumps declines past the request-scoped raw-outcome limit.
+struct FloodProvider(ProviderIdentity);
+
+impl PhysicalImplementationProvider for FloodProvider {
+    fn provenance(&self) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
+        PhysicalProviderProvenance::new(self.0.clone())
+    }
+
+    fn propose(&self, _: &ImplementationContext<'_>, sink: &mut PhysicalFrontierSink<'_>) {
+        for _ in 0..300 {
+            let _ = sink.decline(DeclinedStrategy::new(
+                "flood",
+                StrategyDeclineCause::NoAdmissibleShape {
+                    rule: "acme.flood",
+                    extent: 1,
+                },
+            ));
+        }
+    }
+}
+
+/// The first raw outcome past 256 refuses the compilation, even if the provider
+/// ignores every sink refusal and keeps emitting.
+#[test]
+fn overflowing_raw_outcomes_refuse_the_compilation() {
+    let flood = FloodProvider(
+        ProviderIdentity::new("acme", "flood", 1).expect("the test identity is valid"),
+    );
+    let environment =
+        InstalledPhysicalProviders::installed([&flood as &dyn PhysicalImplementationProvider])
+            .expect("one flood identity installs");
+    let program = semantic_program();
+    let class = compile_with(
+        &program,
+        &acme_profile("test.acme-outcome-flood.v1", 256),
+        &environment,
+    )
+    .expect_err("300 ignored declines must not compile a prefix");
+    match class {
+        CompileFailureClass::BudgetExhausted {
+            resource,
+            limit,
+            reported,
+        } => {
+            assert_eq!(resource.key(), "physical-frontier-outcomes");
+            assert_eq!(limit, 256);
+            assert_eq!(reported, 257);
+        }
+        other => panic!("expected outcome exhaustion, got {other:?}"),
+    }
+}
+
+/// The same overflowing pair refuses the same way in either installation order.
+#[test]
+fn outcome_exhaustion_does_not_depend_on_installation_order() {
+    let first = FloodProvider(
+        ProviderIdentity::new("acme", "flood-a", 1).expect("the test identity is valid"),
+    );
+    let second = FloodProvider(
+        ProviderIdentity::new("acme", "flood-b", 1).expect("the test identity is valid"),
+    );
+    let program = semantic_program();
+    let profile = acme_profile("test.acme-outcome-order.v1", 256);
+    let forward = compile_with(
+        &program,
+        &profile,
+        &InstalledPhysicalProviders::installed([
+            &first as &dyn PhysicalImplementationProvider,
+            &second,
+        ])
+        .expect("two flood identities install"),
+    )
+    .expect_err("two floods exceed the outcome budget");
+    let reverse = compile_with(
+        &program,
+        &profile,
+        &InstalledPhysicalProviders::installed([
+            &second as &dyn PhysicalImplementationProvider,
+            &first,
+        ])
+        .expect("two flood identities install reversed"),
+    )
+    .expect_err("reversing the floods cannot admit them");
+    assert_eq!(forward, reverse);
+    match forward {
+        CompileFailureClass::BudgetExhausted {
+            resource,
+            limit,
+            reported,
+        } => {
+            assert_eq!(resource.key(), "physical-frontier-outcomes");
+            assert_eq!(limit, 256);
+            assert_eq!(reported, 257);
+        }
+        other => panic!("expected outcome exhaustion, got {other:?}"),
+    }
 }

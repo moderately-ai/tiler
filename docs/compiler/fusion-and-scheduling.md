@@ -123,11 +123,11 @@ feasible implementations. Boundary contracts and actual materializations
 belong to region implementations and complete kernel programs.
 
 For each candidate and target profile, iteration/access lowering plus local
-scheduling returns a bounded `ImplementationFrontier`. The mature model has an
+scheduling returns an `ImplementationFrontier`. The mature model has an
 additive sum-typed body (`ScheduledKernel`, `KernelSubprogram`, `OpaqueCall`, or
 `View`), boundary requirements/guarantees, applicability predicates, target
 requirements, exact/proven resource requirements, resource estimates, and a
-cost estimate. The bounded frontier admits checked `ScheduledKernel` and
+cost estimate. The frontier admits checked `ScheduledKernel` and
 `KernelSubprogram` proposals and explicitly rejects `View` while preserving that
 additive seam; `OpaqueCall` is admitted through its own registration and
 binding path. A `KernelSubprogram` is what makes one region subject realizable

@@ -3870,13 +3870,17 @@ mod tests {
     ///   `target_outcomes_preserve_request_order_cardinality_and_profile_identity`
     ///   through a profile that declares no strict-`f32` behaviour.
     /// - `BudgetExhausted` — reached by a program that exceeds a deterministic
-    ///   budget. `RequestError::BudgetExceeded` is still its sole carrier, and
-    ///   it is raised from two places: `check_program_budgets`, for a program
-    ///   whose *size* a bound refuses before any target compiles, and the empty
-    ///   portfolio, for a target whose *analysis* a bound truncated before it
-    ///   reached a plan. `tests/region_search_budget_coverage.rs` reaches the
-    ///   first from this surface with a sixty-three-operation chain, one past
-    ///   `semantic_operations`.
+    ///   budget. `RequestError::BudgetExceeded` is still its sole carrier. It
+    ///   is raised from `check_program_budgets`, for a program whose *size* a
+    ///   bound refuses before any target compiles; from the empty portfolio,
+    ///   for a target whose *analysis* a bound truncated before it reached a
+    ///   plan; and from the physical-frontier preflight and host-owned sink,
+    ///   for a complete provider population or a raw proposal/decline count
+    ///   that exceeds the request's calibrated limits. `tests/region_search_budget_coverage.rs`
+    ///   reaches the first from this surface with a sixty-three-operation
+    ///   chain, one past `semantic_operations`. The provider-count and
+    ///   frontier-outcome refusals are reached from the public
+    ///   installable-provider path in `tests/external_physical_provider.rs`.
     ///
     ///   **The second is no longer reachable through this surface, and that is
     ///   a consequence of a decision rather than a gap.**
@@ -4207,8 +4211,9 @@ mod tests {
         // Public regressions for the two provenances the request-gate chain
         // test cannot reach: a search stop's reported value is a lower bound,
         // and a planning envelope is not an exact demand. Constructed here
-        // because only program-scoped exact-demand rows are reachable through
-        // `compile_governed` today.
+        // because `compile_governed` still only reaches program-scoped
+        // exact-demand rows; provider-count and frontier-outcome refusals are
+        // pinned on the public installable-provider path instead.
         assert_eq!(
             BudgetResource::RegionExpansions.refusal(),
             BudgetRefusal::SearchLowerBound,
