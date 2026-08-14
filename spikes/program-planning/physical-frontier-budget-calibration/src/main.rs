@@ -1,5 +1,6 @@
 //! Census and host-runtime calibration of physical-frontier provider and raw-outcome budgets.
 
+mod boundary;
 mod census;
 mod custody;
 mod measure;
@@ -16,6 +17,7 @@ use std::process::{Command, ExitCode};
 use tiler_compiler::target::TargetProfile;
 use tiler_ir::semantic::SemanticProgram;
 
+use boundary::compile_request_diagnostic;
 use census::{Perturb, repo_root, run_checks};
 use custody::{
     CUSTODY_SCHEMA, annotate_record, export_raw_artifacts, verify_evidence, verify_record_path,
@@ -186,7 +188,7 @@ fn request_boundary(maximum_specialists: usize) -> ExitCode {
         .expect("the boundary-control providers install");
         let profile =
             declared_workgroup_profile(&format!("test.request-boundary-{specialists}.v1"), 64);
-        let compiled = compile_request(
+        let diagnostic = compile_request_diagnostic(
             &program,
             [tiler_compiler::session::NumericalContract::STRICT_F32],
             [profile],
@@ -195,16 +197,16 @@ fn request_boundary(maximum_specialists: usize) -> ExitCode {
         let tally = tally.borrow();
         println!(
             "specialists={specialists} successes={} invocations={} proposals={} declines={} raw={} alternatives={} explain_record_lines={} explain_bytes={} failure={:?} failure_tail={:?}",
-            compiled.successes,
+            diagnostic.successes,
             tally.invocations,
             tally.proposals,
             tally.declines,
             tally.raw_outcomes(),
-            compiled.alternatives,
-            compiled.explain_record_lines,
-            compiled.explain_bytes,
-            compiled.failure,
-            compiled.failure_explain_last_line,
+            diagnostic.alternatives,
+            diagnostic.explain_record_lines,
+            diagnostic.explain_bytes,
+            diagnostic.failure,
+            diagnostic.failure_explain_last_line,
         );
     }
     ExitCode::SUCCESS
