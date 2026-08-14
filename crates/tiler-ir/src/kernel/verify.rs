@@ -1805,9 +1805,11 @@ fn verify_cooperative_loops(
 
 /// Proves the body realizes exactly the scheduled contributor fold.
 ///
-/// Zero contributors commit the reduction identity and exactly one contributor
-/// commits the single loaded value; neither admits a bounded loop, whose range
-/// would have to be empty.
+/// A live contraction has no empty result, so a program selecting this verified
+/// kernel derives the precondition that its contributor extent is nonzero.
+/// Exactly one contributor therefore commits the single loaded value and leaves
+/// the `1..S` loop body empty; no admitted zero-contributor invocation executes
+/// the seed.
 fn verify_live_contributor_loop(
     walk: &Walk,
     data: &KernelData,

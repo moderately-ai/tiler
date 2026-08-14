@@ -1,7 +1,7 @@
 ---
 id: prove-a-schedule-verified-live-contraction-consumes-s
 title: Prove a schedule-verified live contraction consumes S
-status: in-progress
+status: done
 priority: p1
 dependencies: [accept-the-live-extent-operand-public-surface, refuse-empty-live-domains-before-routing-commit]
 related: [admit-live-extent-operands-to-payload-indexing]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, contraction, extents, identity]
-claimed_from: todo
-assignee: root-live-contraction-closure
-lease_expires_at: 1786720572
 ---
 ## User-visible outcome
 
@@ -82,10 +79,18 @@ Each new check was removed and its negative failed:
 - `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler-ir -p tiler-compiler --no-deps`
 - `tkt lint`, `git diff --check`, `tkt guard tkt/prove-a-schedule-verified-live-contraction-consumes-s --format json`, `make full`
 
-Parent `admit-live-extent-operands-to-payload-indexing` stays `review`. Not merged.
+Parent `admit-live-extent-operands-to-payload-indexing` remains `todo`. Closing this narrower schedule/kernel evidence ticket neither merges that parent nor claims its artifact, payload, or pipeline outcome.
 
 ## Reopened — zero is inside the admitted extent type 2026-08-13
 
 The positive 14/15 evidence and identity checks remain valid, but `performs exactly S loads` is false at `S = 0`. `Extent(0)` is a valid empty axis, generic fact binding accepts it, and `emit_contraction` performs the seed product before looping from 1 to `S`. The former `saturating_sub(1)` oracle masks this as one load while the strict semantic contraction refuses an empty unseeded fold.
 
-This ticket now depends on [`refuse-empty-live-domains-before-routing-commit`](refuse-empty-live-domains-before-routing-commit.md). Re-close after zero refuses before program work, one performs exactly one product, positive neighbours retain their moving oracle, and removing the derived nonzero precondition fails the unchanged zero negative.
+This ticket now depends on [`refuse-empty-live-domains-before-routing-commit`](refuse-empty-live-domains-before-routing-commit.md). Closure requires zero to refuse before program work, one to perform exactly one product, positive neighbours to retain their moving oracle, and removing the derived nonzero precondition to fail the unchanged zero negative.
+
+## Closure audit — 2026-08-14 at `21cbe870a2a85407ef3aeac62cc56ce5e6c05f90`
+
+- **Verified — accepted spelling and identity.** `LiveContraction` and `LiveRowMajor` remain accepted at tags `0x38` and `0x09`; lowering consumes an `InputExtent` value rather than a literal, live re-lowering is identity-stable, and baked 14/15 neighbours have distinct identities.
+- **Verified — positive population.** The authoritative IR and compiler fixtures use checked subtraction, pin `S = 1` to one product, pin `S = 14` and `S = 15` to their exact moving load counts, and contain no saturating zero oracle.
+- **Verified — zero-domain closure.** Dependency [`refuse-empty-live-domains-before-routing-commit`](refuse-empty-live-domains-before-routing-commit.md) is `done`; landed commit `2a599522` derives the canonical `1 <= InputExtent` applicability guard, replays it through artifact construction, and evaluates it before routing commit. Its retained subject perturbations prove producer derivation, artifact replay, and runtime enforcement independently.
+- **Imprecise, repaired — verifier prose.** `verify_live_contributor_loop` still said zero contributors commit a reduction identity. Strict live contraction has no admitted empty result: the selected program owes `S >= 1`, `S = 1` executes the seed product with an empty loop body, and `S = 0` refuses before work.
+- **False, repaired — parent status.** The outcome record said the parent remained `review`; the current board records `admit-live-extent-operands-to-payload-indexing` as `todo`. This ticket closes only its schedule/kernel evidence and does not advance that broader parent.
