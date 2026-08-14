@@ -156,7 +156,7 @@ pub(crate) struct PhysicalPlanningCensus {
     pub(crate) provider_invocations: u64,
     pub(crate) proposals: u64,
     pub(crate) declines: u64,
-    pub(crate) admission_assessments: u64,
+    pub(crate) proposal_assessments_started: u64,
     pub(crate) schedule_verifications: u64,
     pub(crate) admitted_implementations: u64,
     pub(crate) retained_implementations: u64,
@@ -194,12 +194,21 @@ pub(crate) fn record_provider_offer(proposals: usize, declines: usize) {
         census.proposals = census
             .proposals
             .saturating_add(u64::try_from(proposals).unwrap_or(u64::MAX));
-        census.admission_assessments = census
-            .admission_assessments
-            .saturating_add(u64::try_from(proposals).unwrap_or(u64::MAX));
         census.declines = census
             .declines
             .saturating_add(u64::try_from(declines).unwrap_or(u64::MAX));
+    });
+}
+
+/// Records entry into assessment of one emitted proposal.
+///
+/// Kept separate from [`record_provider_offer`] because a fatal malformed
+/// proposal stops enumeration: later proposals were emitted but never enter
+/// the assessment loop.
+pub(crate) fn record_proposal_assessment_started() {
+    PHYSICAL_PLANNING_CENSUS.with(|census| {
+        let mut census = census.borrow_mut();
+        census.proposal_assessments_started = census.proposal_assessments_started.saturating_add(1);
     });
 }
 

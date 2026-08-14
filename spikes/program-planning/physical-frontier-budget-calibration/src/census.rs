@@ -47,7 +47,7 @@ impl Check {
 pub enum Perturb {
     /// Do not perturb.
     None,
-    /// Count a fixture source that contains a second production impl.
+    /// Scan a valid fixture source containing a second impl declaration.
     ExtraProductionProvider,
     /// Compile the tiny pointwise program instead of the five-op program.
     TinyProgram,
@@ -117,11 +117,14 @@ impl Perturb {
     }
 }
 
-/// Production `PhysicalImplementationProvider` impls in `tiler-compiler`.
+/// Source-declared production `PhysicalImplementationProvider` impls.
 ///
-/// Test modules and the integration-test crate are stripped before the count,
-/// so a fixture in `frontier.rs`'s `#[cfg(test)]` module cannot satisfy this
-/// check. The expected value is one: `GovernedPhysicalProvider`.
+/// This is deliberately a textual source census, not a Rust type-system
+/// enumeration: it recognizes the exact ordinary impl spelling after excluding
+/// `tests.rs` and cutting inline `#[cfg(test)] mod` tails. The source reading
+/// establishes whether that bounded population is complete. The retained
+/// perturbation sends a valid Rust impl fragment through these same scanner
+/// functions, rather than manufacturing an extra result after scanning.
 #[must_use]
 pub fn production_provider_impls(crate_src: &Path, perturb: Perturb) -> (usize, Vec<String>) {
     let mut names = Vec::new();
@@ -148,10 +151,16 @@ pub fn production_provider_impls(crate_src: &Path, perturb: Perturb) -> (usize, 
             }
         }
     }
-    names.sort();
     if matches!(perturb, Perturb::ExtraProductionProvider) {
-        names.push("fixture::SyntheticSecondProvider".to_owned());
+        // Perturb the source consumed by the same scanner rather than its
+        // result vector. This valid Rust fragment remains outside the real
+        // crate and therefore changes only the census subject.
+        const FIXTURE: &str = "struct SyntheticSecondProvider;\nimpl PhysicalImplementationProvider for SyntheticSecondProvider {}\n";
+        for name in impl_names(production_source(FIXTURE)) {
+            names.push(format!("fixture.rs::{name}"));
+        }
     }
+    names.sort();
     (names.len(), names)
 }
 
@@ -168,7 +177,7 @@ pub fn run_checks(repo: &Path, perturb: Perturb) -> Vec<Check> {
     let declared = crate::profile::declared_workgroup_profile("test.calibrate-census.v1", 64);
 
     let mut checks = vec![Check::eq(
-        "compiler-owned-production-providers",
+        "source-declared-production-provider-impls",
         1_usize,
         production_count,
     )];
