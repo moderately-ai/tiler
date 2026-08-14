@@ -1,0 +1,49 @@
+---
+id: minimize-and-prove-the-atomic-subgroup-public-surface-before-acceptance
+title: Minimize and prove the atomic subgroup public surface before acceptance
+status: todo
+priority: p1
+dependencies: [admit-an-atomic-subgroup-realization-subject-to-target-profiles]
+related: [accept-the-atomic-subgroup-realization-surface]
+scopes: [implementation/ir, implementation/compiler, contracts/decisions]
+shared_scopes: [project/tickets]
+paths: []
+tags: [subgroup, public-boundary, identity, correctness]
+---
+## User-visible outcome
+
+Tom receives the exact, smallest atomic-subgroup Rust surface that the accepted model needs today, with live identity consumers proved and speculative decoder/error vocabulary deferred until a real codec owns it.
+
+## Exact-base Fact audit — 2026-08-13 at `4fb0427319b1504e1549e03ba023ac486343a743`
+
+Read in full: the acceptance and implementation tickets; ADRs 0074 and 0075; `schedule/subgroup.rs`; the `ResourceRequirements` definition and derivation; target-profile construction, checked facts, complete and checked descriptor encoders, lookup, and tests; frontier and kernel identity consumers; artifact resource encoding/decoding; and the landed diff `5cd61fbe^..5cd61fbe` plus follow-up `eecc4002`.
+
+1. **False — the acceptance ticket does not enumerate the landed public surface.** Its Included list omits `SubgroupTransfer::{tag, from_tag, key}`, the variants and `rule`/`Display`/`Error`/derived traits of `SubgroupRealizationError`, `SubgroupRealizationSubject::encode`, `SubgroupRealizationResolution`, `TargetProfile::subgroup_realization`, `TargetProfileBuildError::DuplicateSubgroupRealization`, and exact derived traits. Reproduce with `git diff 5cd61fbe^ 5cd61fbe -- '*.rs' | rg '^\+\s*pub'` and the symbol anchors in `schedule/subgroup.rs` and `target.rs`.
+2. **Verified — `tag`, `key`, and `encode` have current consumers.** Kernel identity, complete and checked target descriptors, and frontier identity call `subject.encode`; physical failure and explain construction call `transfer().key()`. Anchor commands: `rg -n 'subject\.encode|transfer\(\)\.key' crates/tiler-ir crates/tiler-compiler --glob '*.rs'`.
+3. **Verified — public `SubgroupTransfer::from_tag` has no production consumer.** The only call is the local `unknown_transfer_tag_is_undefined` test. `rg -n 'SubgroupTransfer::from_tag' crates --glob '*.rs'` names only `schedule/subgroup.rs`.
+4. **Verified — `SubgroupRealizationError::UndefinedTransfer` is unreachable from every public constructor.** `SubgroupWidth::new` returns only `ZeroWidth`; `SubgroupRealizationSubject::new` returns only `UnsupportedWidth`; `from_tag` returns `Option`, not the error. The variant appears only in its own docs, `rule` match, and the same test. Anchor: `UndefinedTransfer` in `schedule/subgroup.rs`.
+5. **Verified — a present artifact resource subject is explicitly deferred.** The artifact model destructures `subgroup: _` and decode constructs `subgroup: None`; the acceptance ticket excludes present-subject artifact encoding. There is therefore no governed decoder whose implementation currently needs `from_tag`.
+6. **Verified — the landed identity evidence is incomplete.** Target complete/checked descriptor tests perturb width and arithmetic, but no test constructs a kernel with `ResourceRequirements.subgroup = Some(_)`. `rg -n 'subgroup.*identity|identity.*subgroup|subgroup_requirement' crates/tiler-ir/src/kernel crates/tiler-compiler/src/target.rs` locates the encoder and target-only tests.
+7. **Imprecise — “perturb transfer independently” is not currently a realizable typed subject test.** `SubgroupTransfer` has exactly one variant. The unknown raw tag test proves an unrecognized tag is rejected by the speculative helper, not that whole-subject equality distinguishes two typed transfer values. Do not manufacture a test-only production variant or claim the raw-tag test as a subject perturbation.
+
+These repairs narrow the exact spelling presented for acceptance; they do not change the already accepted whole-subject model.
+
+## Required work
+
+- Remove `SubgroupTransfer::from_tag` and the unreachable `SubgroupRealizationError::UndefinedTransfer` from the public draft. Reintroduce a decoder only with the first schema that consumes it, where unknown-tag refusal and byte ownership can be tested end to end.
+- Preserve `tag`, `key`, and `SubgroupRealizationSubject::encode`: their current cross-crate identity and explanation consumers need one defining authority rather than locally reconstructed mappings.
+- Add a kernel-identity test with a real `Some(SubgroupRealizationSubject)`. Prove absent subjects preserve the existing pin and independently perturb every presently constructible dimension (width and arithmetic). Assert the transfer tag is encoded at its governed position without claiming that a second typed transfer exists.
+- Re-run the target complete/checked descriptor tests and subgroup feasibility tests. Record the transfer-perturbation evidence boundary explicitly for the later ticket that introduces a second transfer or the first artifact decoder.
+- Rewrite `accept-the-atomic-subgroup-realization-surface` against the repaired exact commit: enumerate every public type, variant, method, field, relevant trait implementation, observed identity consequence, and exclusion. Apply the complete decision-packet readiness gate rather than presenting the current abbreviated recommendation.
+- Perturb the source, not an assertion: remove or corrupt the subgroup requirement passed to the kernel identity encoder and show the new `Some` test's failure text; separately change a width/arithmetic subject and show the descriptor/identity distinction fires.
+
+## Option gate
+
+- **Status quo:** keep the speculative decoder and unreachable error. Correct but exposes more unowned public vocabulary and has no host/runtime benefit.
+- **Narrow now:** retain only currently consumed encoding/explanation helpers; remove the decoder/error reservation until a real schema owns it. Same correctness and runtime, smaller surface, clearer authority, and future decoder work gains an end-to-end negative. This dominates status quo.
+- **Remove all tag/key/encode helpers:** rejected. Cross-crate consumers would duplicate canonical mappings or require a larger public trait/identity redesign.
+- **Invent a second transfer only for perturbation:** rejected. It would widen the production vocabulary without an admitted semantic or backend realization and make the test prove a population the product does not support.
+
+## Closure
+
+Close when the dominated speculative surface is gone, present-subject kernel identity has a subject perturbation, targeted tests and package gates pass, and the dependent acceptance packet names the exact repaired surface and its honest evidence boundary.
