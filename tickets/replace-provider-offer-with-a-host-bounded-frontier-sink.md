@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [decide-whether-the-implementation-frontier-owes-a-retention-budget, calibrate-the-physical-frontier-provider-and-outcome-budgets]
 related: [accept-the-installed-physical-provider-public-surface, design-explicit-caller-selected-budget-exhaustion-policies]
-scopes: [implementation/compiler, contracts/optimizer, contracts/decisions, research/program-planning, research/extensions]
+scopes: [implementation/compiler, contracts/optimizer, contracts/decisions, research/program-planning, research/extensions, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [optimizer, budgets, backend-providers, public-boundary, identity]
@@ -49,7 +49,7 @@ Independent full-diff review found these blockers:
 2. **High — overflow precedence depends on provider installation order.** `enumerate_frontier_with_outcomes` emits and immediately verifies one provider before asking later providers. A malformed proposal first can return `InvalidCompilerOutput`; the same proposal after a flooding provider returns `BudgetExhausted`. Finish bounded emission for the complete provider population before verifying any accepted proposal so the same set/outputs has one result.
 3. **Medium — `u64::MAX` is not bounded.** `FrontierOutcomeBudget::charge` uses `saturating_add(1)`, so once both accepted and limit are `u64::MAX`, every further insertion is accepted. Narrow/reject that policy or represent excess separately and test the boundary.
 4. **Low — public documentation still counts four authorities.** `BudgetResource` documentation says `Four authorities`, `rather than four`, and `all three stop records` after adding the frontier authority. Repair the complete vocabulary prose.
-5. **Medium — retained provider spikes no longer compile.** All three path-dependent consumers still import `ProviderOffer` and implement the old one-argument `propose`: `spikes/program-planning/physical-frontier-budget-calibration`, `spikes/extensions/forkless-physical-provider`, and `spikes/program-planning/backend-provider-portfolio`. Each fails with unresolved import `ProviderOffer` and trait-arity `E0050`. The ticket now owns `research/program-planning` and `research/extensions`; migrate the retained spikes to the exact accepted sink API and run their documented checks before presentation.
+5. **Medium — retained provider spikes no longer compile.** All three path-dependent consumers still import `ProviderOffer` and implement the old one-argument `propose`: `spikes/program-planning/physical-frontier-budget-calibration`, `spikes/extensions/forkless-physical-provider`, and `spikes/runtime/backend-provider-portfolio`. Each fails with unresolved import `ProviderOffer` and trait-arity `E0050`. The ticket now owns `research/program-planning`, `research/extensions`, and `research/runtime`; migrate the retained spikes to the exact accepted sink API and run their documented checks before presentation.
 
 The existing order perturbation uses homogeneous decline floods and does not reach blocker 2. The existing overflow integration test uses one target and overflows immediately, so it does not reach blocker 1. Perturb the heterogeneous provider order and a request where an earlier target/candidate succeeds before the shared counter exhausts.
 
