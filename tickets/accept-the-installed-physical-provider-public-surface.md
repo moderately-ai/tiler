@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [drive-an-external-physical-implementation-provider-through-compilation]
 related: [accept-the-public-backend-provider-composition-boundary, disclose-offered-and-selected-physical-provider-sets-separately, publish-occurrence-bound-selected-physical-implementation-evidence]
-scopes: [contracts/decisions, contracts/optimizer, contracts/foundation, implementation/compiler, implementation/build]
+scopes: [contracts/decisions, contracts/optimizer, contracts/foundation, implementation/compiler, implementation/build, research/extensions]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [backend-providers, public-boundary, decision, needs-tom]
