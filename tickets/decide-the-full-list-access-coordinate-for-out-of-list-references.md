@@ -4,7 +4,7 @@ title: Decide the full-list access coordinate for out-of-list references
 status: awaiting-decision
 priority: p1
 dependencies: [decide-the-schedule-local-input-ordinal-model]
-related: [reconcile-input-ordinal-region-local-and-declared-input-semantics]
+related: [reconcile-input-ordinal-region-local-and-declared-input-semantics, scope-an-in-place-append-into-a-caller-retained-allocation]
 scopes: [contracts/foundation, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
@@ -33,6 +33,7 @@ leaf/access ordinal as a program-interface key.
 - **Verified — four live consumers currently search/default instead of resolving an exact coordinate.** `crates/tiler-ir/src/kernel/builder.rs`, anchor `scheduled_input_rank`, searches the first access with an equal role. `kernel/verify.rs`, anchor `find(|read| read.tensor == parameter.tensor)`, repeats that search. `crates/tiler-artifact/src/program/builder.rs`, anchor `maps that tensor through the stage access`, searches the first equal kernel role in the zipped buffer/access run. `kernel/lower.rs`, anchor `ReadAddressing::LiveRowMajor`, selects by axis alone. Fieldless roles make every one of those searches ambiguous; all must become direct checked indexing under either survivor.
 - **Verified — an opaque-call parameter name is not a tensor coordinate.** `crates/tiler-compiler/src/call_registry.rs`, anchor `bindings: Vec<(&'static str, TensorRole)>`, separately carries a governed ABI parameter name and the tensor role it binds. `crates/tiler-compiler/src/frontier.rs`, anchor `TensorRole::Input { ordinal } => request`, needs the role ordinal to resolve `WorkScaling::PerElementOf` to a declared tensor. Once the role is fieldless, the name still identifies the call parameter but says nothing about which region access supplies it.
 - **Verified — opaque-call binding validation currently proves ABI-name coverage but not boundary-access coverage.** `crates/tiler-compiler/src/call_abi.rs`, anchors `check_bindings` and `ParameterRole::reads`, requires every declared parameter exactly once and lets several parameters share one role when their storage agrees. It does not receive a region access list, so it cannot prove bounds, access mode, or that every boundary access is represented. `crates/tiler-compiler/src/frontier.rs`, anchor `derive_call_boundary_contract`, then deduplicates roles in provider binding order. That is incompatible with fieldless repeated inputs and with `BoundaryContract::subsumes`, anchor `Both are derived in the verified region's access order`, which pairs repeated facets positionally.
+- **Verified — generic ABI `InOut` is not evidence that the current region binding can represent mutation.** `crates/tiler-compiler/src/call_abi.rs`, anchors `Both read and written` and `ParameterLayout::Both`, deliberately keeps a generic in-place declaration. The frontier test `an_in_out_binding_yields_both_a_requirement_and_a_guarantee` calls `derive_call_boundary_contract` directly with one role; it supplies neither the checked regional read prefix nor the distinct owning-write access, so it is a lower-level declaration/derivation test rather than a regional-admission control. `crates/tiler-compiler/src/boundary.rs`, anchor `version-producing step there, together`, requires a value-version boundary dimension and the `KernelProgram` version-producing step to land together. Neither the current one-role binding row nor the proposed one-access row can name both `[read, owning write]`, and treating either position as both would silently conflate two accesses.
 - **Verified — compiler-private normalized records and two queries carry a different, declared-interface domain.** `crates/tiler-compiler/src/request.rs` retains declared ordinals as raw `u32` in `prologue_reads`, `contributor_input`, `NormalizedContractionRead`, and `BoundaryRead::Input`; anchors `NormalizedOutput::input_elements_at` and `NormalizedProgram::agreed_input_elements_at` additionally accept public `InputOrdinal` while indexing the declared program input set, not a region access list. Every retained compiler-private declared association and its queries must use a crate-private `DeclaredInputOrdinal`; renaming the query parameter to public `AccessOrdinal` would preserve the original conflation under a new spelling, while keeping raw `u32` would discard type-level authority for no runtime saving.
 - **Verified — no surviving public `InputOrdinal` consumer needs a distinct leaf-only domain.** The complete public-API definition census found only `TensorRole::Input.ordinal`, pointwise F32/BF16 leaf fields and builders, and `ReductionTopology::LiveContraction.live_input`; the compiler-private uses are inventoried separately above. The role payload is removed by the accepted dependency. Pointwise leaves are explicitly access-position paired, and live contraction already resolves the input access/buffer that supplies its bound. Density over a pointwise read prefix is an admission rule on this one coordinate, not evidence of a second coordinate domain.
 - **Verified — the compiler already retains the declared association authority.** `crates/tiler-compiler/src/physical.rs`, anchors `request_subject: VerifiedRequestSubject` and `verify_region_subject_binding`, stores the exact checked subject after proving each region against it. `crates/tiler-compiler/src/request.rs` retains subset, fold, contraction, epilogue, staged, and repeated-read associations in ordered normalized read records. The implementation may project from that authority; it must not add a second retained association vector.
@@ -47,6 +48,7 @@ rg -n 'Which of a region.s boundary input tensors|served by read|At most one rea
 rg -n 'scheduled_input_rank|find\(\|read\| read.tensor|maps that tensor through the stage access|ReadAddressing::LiveRowMajor' crates/tiler-ir/src/kernel/{builder,verify,lower}.rs crates/tiler-artifact/src/program/builder.rs
 rg -n 'bindings: Vec<\(&.static str, TensorRole\)>|TensorRole::Input \{ ordinal \} => request' crates/tiler-compiler/src/call_registry.rs crates/tiler-compiler/src/frontier.rs
 rg -n 'check_bindings|ParameterRole::reads|derive_call_boundary_contract|Both are derived in the verified region.s access order' crates/tiler-compiler/src/call_abi.rs crates/tiler-compiler/src/frontier.rs
+rg -n 'Both read and written|ParameterLayout::Both|an_in_out_binding_yields_both_a_requirement_and_a_guarantee|version-producing step there, together' crates/tiler-compiler/src/call_abi.rs crates/tiler-compiler/src/frontier.rs crates/tiler-compiler/src/boundary.rs
 rg -n 'input_elements_at|agreed_input_elements_at' crates/tiler-compiler/src/request.rs crates/tiler-compiler/src/frontier.rs
 rg -n 'request_subject: VerifiedRequestSubject|verify_region_subject_binding|prologue_reads|contributor_input|BoundaryRead|NormalizedContractionRead' crates/tiler-compiler/src/physical.rs crates/tiler-compiler/src/request.rs
 rg -n 'InputOrdinal' crates/tiler-ir/src/schedule/{handles,model,pointwise,pointwise_bf16}.rs
@@ -61,7 +63,7 @@ git log --oneline bbbf936ad3d8170ec601cd26eda5235cc2ac1d6b..4e10b98066f846ca50de
 - Ordered schedule accesses and corresponding kernel buffers have one exact full-list position. No filtered-input coordinate, role search, first match, axis-only match, or local-equals-declared coincidence is authority.
 - `InputKey` remains the program-interface authority. The compiler projects local positions from the already-retained checked `VerifiedRequestSubject`; program and artifact construction preserve the resulting exact stage-access order.
 - A live extent reference must be able to name, and then reject, an out-of-range position, an `Intermediate` read, and the final `Output` write. The axis check runs only after exact-position and input-role checks.
-- Opaque-call ABI parameter names and region tensor coordinates remain distinct. A call binding carries both; the host checks the parameter's direction against the named access mode, proves every boundary access is covered, and derives facets in access-list order. Provider binding order remains proposal identity order. `WorkScaling::PerElementOf` resolves through the named checked access, not through a fieldless role or ABI slot.
+- Opaque-call ABI parameter names and region tensor coordinates remain distinct. A call binding carries both; the host admits only `In` → `Read` and `Out` → `Write`, refuses generic ABI `InOut` at this regional binding boundary, proves every boundary access is covered, and derives facets in access-list order. Provider binding order remains proposal identity order. `WorkScaling::PerElementOf` resolves through the named checked access, not through a fieldless role or ABI slot.
 - No local coordinate appears in the artifact extent row. The artifact receives only the `InputKey` derived through the exact stage access.
 - Compiler-private normalized association records and queries over the declared program interface do not accept the public access coordinate or retain bare `u32`. They use one crate-private `DeclaredInputOrdinal` whose scope cannot leak into shared IR; conversion to `usize`/bytes occurs only at the owning lookup/encoder boundary.
 
@@ -120,6 +122,25 @@ same compact representation and runtime cost, but only the newtype makes it a
 type error to pass a local access position into a declared-interface query or
 normalized association record. It remains private, so it creates no shared-IR
 or public interface authority.
+
+### Give one `InOut` binding paired `{ read, write }` access coordinates
+
+Eliminated from this packet as a broader mutating-profile capability, not as a
+second way to spell the selected coordinate. A paired row could name both the
+read prefix member and the distinct owning write, but admitting it would assert
+that the output is a new authoritative version in storage whose prior version
+the call also reads. The current boundary vocabulary deliberately omits value
+version, and `crates/tiler-compiler/src/boundary.rs`, anchor `version-producing step there, together`, requires that dimension
+and the `KernelProgram` version-producing step to land together. Adding the
+carrier first would therefore make an unverified alias/mutation promise.
+
+[Q-PLAN-015](../docs/open-questions.md#q-plan-015--advanced-buffer-reuse-and-in-place-execution)
+already owns general in-place execution, and
+[`scope-an-in-place-append-into-a-caller-retained-allocation`](scope-an-in-place-append-into-a-caller-retained-allocation.md)
+tracks its existing deferred trigger and the required versioning/recovery
+obligations. No new follow-up is filed here. Until that owner opens and lands
+the coordinated boundary/program contract, regional opaque binding remains a
+single `(parameter, AccessOrdinal)` and rejects `InOut` explicitly.
 
 ### Defer
 
@@ -195,37 +216,54 @@ association authority. Every ABI parameter is still named exactly once, and
 every boundary access must be named by at least one compatible parameter.
 
 Validation is deterministic: retain the existing unknown, duplicate, and
-unbound-parameter checks; then check each proposed access for bounds and mode in
+unbound-parameter checks; then check each proposed access for bounds in proposal
+order; then refuse an `InOut` parameter before access-mode, complete-coverage,
+storage-agreement, or boundary-derivation checks; then check exact direction in
 proposal order; then check complete access coverage in access-list order; then
-check shared-access storage agreement. Direction compatibility is exact:
-`AccessMode::Read` requires `ParameterRole::reads()` and
-`AccessMode::Write` requires `ParameterRole::writes()`. Therefore `In` cannot
-bind a write, `Out` cannot bind a read, and `InOut` remains supported on either
-because its extra direction is retained rather than discarded. Distinct
-parameters may target one access. Their encoding and alignment must agree; all
-readers of that access must agree on the required layout and all writers must
-agree on the guaranteed layout. An `InOut` binding contributes both facets, so
-its previously tested read requirement is not lost.
+check shared-access storage agreement. Direction compatibility is exactly
+`ParameterRole::In` → `AccessMode::Read` and `ParameterRole::Out` →
+`AccessMode::Write`; neither the broader `reads()`/`writes()` predicates nor an
+extra direction authorizes a regional binding. Distinct ordinary parameters
+may target one access. Their encoding and alignment must agree; all `In`
+parameters sharing a read must agree on its required layout, and all `Out`
+parameters sharing a write must agree on its guaranteed layout.
+
+Generic ABI `ParameterRole::InOut`, `ParameterLayout::Both`, declaration
+coherence, and their direct lower-level tests remain. Delete the frontier test
+`an_in_out_binding_yields_both_a_requirement_and_a_guarantee`, because its
+unchecked direct derivation is not a regional admission. Retain
+`call_abi::roles_report_their_access` and
+`call_abi::a_layout_must_state_the_direction_its_role_has`, and add the
+call-declaration positive
+`an_in_place_parameter_with_may_alias_inputs_is_coherent` beside the existing
+`an_in_place_parameter_cannot_claim_distinct_results`. No positive regional
+`InOut` derivation remains.
 
 The compiler-private binding errors become
-`AccessOutOfRange { parameter, access }`, `AccessModeMismatch { parameter,
-access, parameter_role, access_mode }`, `UnboundAccess(AccessOrdinal)`, and
+`AccessOutOfRange { parameter, access }`,
+`InOutRegionUnsupported { parameter: &'static str, access: AccessOrdinal }`,
+`AccessModeMismatch { parameter, access, parameter_role, access_mode }`,
+`UnboundAccess(AccessOrdinal)`, and
 `AccessStorageDisagreement { access, first, second }`; the last completely
 replaces role-keyed `RoleStorageDisagreement`. Their stable explain reasons are
 respectively `opaque-call.binding.access-out-of-range`,
+`opaque-call.binding.inout-region-unsupported`,
 `opaque-call.binding.access-mode-mismatch`,
 `opaque-call.binding.unbound-access`, and
 `opaque-call.binding.access-storage-disagreement`. The enclosing
-`OpaqueCallRejectionCause::MalformedBinding` remains unchanged.
+`OpaqueCallRejectionCause::MalformedBinding` remains unchanged. The `InOut`
+fault retains the valid named access so the refusal is attributable without
+pretending that coordinate also names the missing opposite-direction access.
 
 Boundary derivation iterates the host access list, not the provider binding
-list: for each access, it emits at most one agreed requirement and one agreed
-guarantee, preserving access-list order separately in both facet runs. Binding
-order remains unchanged in proposal identity and explain. `WorkScaling::PerElementOf`
-finds its named parameter, reads that parameter's exact access, and resolves the
-element count through the host projection. Rebinding a parameter to another
-valid compatible access is a different valid proposal, not a subject-mismatch
-refusal.
+list: each read emits at most one agreed requirement derived only from its `In`
+parameters, and the owning write emits at most one agreed guarantee derived
+only from its `Out` parameters, preserving access-list order separately in both
+facet runs. Binding order remains unchanged in proposal identity and explain.
+`WorkScaling::PerElementOf` finds its named parameter, reads that parameter's
+exact access, and resolves the element count through the host projection.
+Rebinding a parameter to another valid compatible access is a different valid
+proposal, not a subject-mismatch refusal.
 
 **Verifier and error surface.** `declare_input_extent` indexes exactly once and
 checks in this order: new public unit variant
@@ -256,9 +294,10 @@ there are no external consumers or compatibility aliases in scope.
 **Identity/schema.** Schedule `v6`, kernel `v8`, compiler physical proposal
 `v3`, explain schema `v11`, and explain renderer `v9` move. The proposal step
 covers both fieldless boundary-role bytes and opaque binding records encoded as
-framed parameter name plus big-endian `AccessOrdinal`; the explain steps cover
-the existing opaque subject's canonical and rendered `input#N` → `access#N`
-change. Request subject `v6`, kernel program `v11`, artifact stage `v3`,
+framed parameter name plus big-endian `AccessOrdinal`; the explain-schema step
+also covers the new typed `InOutRegionUnsupported` refusal record, and the
+renderer step covers the existing opaque subject's rendered `input#N` →
+`access#N` change. Request subject `v6`, kernel program `v11`, artifact stage `v3`,
 artifact program `v17`, manifest schema 17.0, semantic/index identities, the
 compilation-explain wrapper `v1`, and the `(InputKey, Axis, AbiType)` extent row
 stay at their current domains/grammar. Their *values* and downstream goldens
@@ -300,9 +339,10 @@ compiler-private `DeclaredInputOrdinal` for retained declared associations and
 interface queries; add public
 `KernelBuildError::InputExtentAccessOutOfRange`; use typed public
 `ArtifactBuildError::ExtentOperandUnbound.access: AccessOrdinal`; migrate opaque
-bindings and boundary derivation exactly as specified; and step schedule,
-kernel, proposal, explain-schema, and explain-renderer domains — or defer
-implementation and keep the dependent ticket blocked? No second nondominated
+bindings and boundary derivation exactly as specified, including the regional
+`InOutRegionUnsupported` refusal while retaining generic ABI `InOut`; and step
+schedule, kernel, proposal, explain-schema, and explain-renderer domains — or
+defer implementation and keep the dependent ticket blocked? No second nondominated
 implementation model remains at this base.
 
 ## Required controls after acceptance
@@ -313,7 +353,8 @@ implementation model remains at this base.
 - **Independent request and wrapper negatives.** Pair a semantic program with a different verified request and quote existing `semantic-request-binding`. Separately pass a `VerifiedScheduledRegion` wrapper minted under request A to program verification under request B and quote existing `request-subject`. Do not label a separately verified valid request B a mismatch, and do not demand that a standalone public `KernelProgramBuilder` infer same-role intent its verified kernel does not carry.
 - **Independent input-extent negatives.** On epilogue `[Intermediate, input 2]`, access `0` fails `InputExtentNotInput`, access `1` reaches input `2`, the final write fails `InputExtentNotInput`, and an absent access fails `InputExtentAccessOutOfRange`. Swap only the axis on access `1` and quote `InputExtentWrongAxis`.
 - **Positive opaque rebinding.** Use two compatible read accesses with distinguishable element counts. Swap which valid access two named `In` parameters target while preserving complete coverage. Both registered proposals admit; schedule/kernel identity stays fixed, proposal identity and the exact opaque subject change, and `WorkScaling::PerElementOf` follows the newly named access. Drive the two exact subjects through the same typed opaque refusal separately and prove their canonical explain records, rendered `access#N` subjects, and trace identities differ. There is no valid-access subject-mismatch refusal.
-- **Opaque validation and ordering negatives.** Bind `In` to the write and `Out` to a read and quote `access-mode-mismatch` separately; name an absent coordinate and quote `access-out-of-range`; omit one otherwise valid boundary access and quote `unbound-access`. Bind two distinct compatible parameters to one access and prove admission plus one facet at that access; then perturb only one storage declaration and quote `access-storage-disagreement`. Reverse binding order while keeping access assignments and prove proposal identity changes but boundary facets remain in access-list order.
+- **Opaque regional profile controls.** Admit an ordinary two-parameter call over `[read, owning write]` with `In` bound to the read and `Out` bound to the write; assert complete coverage and access-ordered requirement/guarantee facets. Separately declare a coherent generic one-parameter `InOut` ABI with `ParameterLayout::Both` and `Aliasing::MayAliasInputs`, bind it to the valid read in that same two-access region, and quote `InOutRegionUnsupported { parameter: "buffer", access: 0 }` plus `opaque-call.binding.inout-region-unsupported`. Prove that this typed refusal is selected before the otherwise inevitable `UnboundAccess(1)` and before boundary derivation. The generic ABI declaration and its lower-level `reads()`/`writes()` and `Both` controls remain green; no regional positive uses that direct derivation test.
+- **Opaque validation and ordering negatives.** Bind `In` to the write and `Out` to a read and quote `access-mode-mismatch` separately; name an absent coordinate and quote `access-out-of-range`; omit one otherwise valid boundary access and quote `unbound-access`. Bind two distinct compatible `In` parameters to one read (and, independently, compatible `Out` parameters to the owning write) and prove admission plus one facet at that access; then perturb only one storage declaration and quote `access-storage-disagreement`. Reverse binding order while keeping access assignments and prove proposal identity changes but boundary facets remain in access-list order.
 - Perturb the schedule, kernel, physical-proposal, explain-schema, and explain-renderer spellings independently so each owning pin names its stale row/header. Prove artifact row bytes remain `(InputKey, Axis, AbiType)`, manifest schema remains 17.0, and all downstream values folding a moved identity are regenerated.
 
 ## Closes when
