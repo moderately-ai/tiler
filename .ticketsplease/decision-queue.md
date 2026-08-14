@@ -2,7 +2,7 @@
 
 Operational queue for the continuous-delivery coordinator. Ticket files remain the authority; this file records presentation order, holds, exact release triggers, and the current recommendation so a later cycle does not rediscover or prematurely present a packet.
 
-Updated 2026-08-14 after Tom accepted items 1 through 3; publication remains gated below.
+Updated 2026-08-14 after Tom accepted items 1 through 3 and the structured selected-capability surface became decision-ready; publication remains gated below.
 
 ## 1. Truthful public class for complete-explain capacity refusal — accepted; implementation and evidence queued
 
@@ -26,28 +26,36 @@ Updated 2026-08-14 after Tom accepted items 1 through 3; publication remains gat
 - Accepted 2026-08-14 by Tom in the live Codex conversation after reviewing the rationale: Option 3. `TensorRole::Input` becomes fieldless; ordered access/kernel-buffer position is the sole in-list local coordinate; explicit `InputOrdinal` remains for out-of-list references; compiler-owned checked projection retains declared association and `InputKey` authority.
 - Release trigger: `reconcile-input-ordinal-region-local-and-declared-input-semantics` lands the complete IR/compiler/artifact/Metal/build/conformance/runtime and identity/codec migration with its sparse-subset, reorder, and independent subject evidence. Source-bound live-row-major remains blocked until then.
 
-## 4. Source-bound live-row-major access — blocked before decision
+## 4. Structured selected-lowering capability Rust surface — awaiting decision
+
+- Tickets: `decide-the-selected-lowering-capability-subject-rust-surface` (`p1`, `awaiting-decision`) and blocked implementation carrier `replace-flat-selected-lowering-capability-keys-with-structured-subjects` (`p1`).
+- Packet evidence: exact ticket-only packet `9ea59fea72f8c4b7c13a13c276bf43070ba97dea`, independently reviewed with no findings. The current delimiter-composed text aliases legal `OpKey::new("a.b", "c", 1)` and `OpKey::new("a", "b.c", 1)` subjects after compiler selection; eight compiler-to-artifact adapters reconstruct that lossy spelling.
+- Recommendation: accept the sole nondominated surface. Both crates own a layer-specific `LoweringCapabilitySubject`; the compiler record is opaque and borrowed through `SelectedCapability::subject()`, the artifact record is caller-constructed from `CapabilityFamilyKey` plus exact `OpKey`, neither composite implements `Display`, and all eight adapters perform the same checked token projection. Decode retains `TypeIdentityError` internally and truthfully exposes the existing public `Malformed { detail }` class.
+- Strongest counterpoint: two crates expose same-named records whose family fields have deliberately different Rust types. The crate paths make that layer boundary explicit and fail loudly; retaining the old artifact `CapabilityKey` name offers only import compatibility that ADR 0075 deliberately discounts in this unpublished pre-alpha workspace.
+- Release trigger: Tom accepts the exact included and excluded surface. Then mark the decision done, unblock the implementation carrier, and run the full provider `v3` / artifact `v18` / manifest `18.0` migration with independent identity-sensitive review.
+
+## 5. Source-bound live-row-major access — blocked before decision
 
 - Tickets: `reconcile-input-ordinal-region-local-and-declared-input-semantics` (`p1`, `blocked`), then `decide-the-source-bound-live-row-major-access-surface` (`p1`, blocked by that dependency), then `admit-symbolic-extents-through-schedule-formation` (`p1`, `blocked`).
 - Hold evidence: the defining `InputOrdinal` docs call it dense, region-local, and not an interface key, while `TensorRole::Input`, intrinsic verification, and compiler construction give it sparse declared-input meaning. Artifact mapping instead follows the checked stage access to `InputKey`. Until that contradiction is resolved, no exact public source-field type is truthful.
 - Current recommendation: keep the schedule-stage `symbolic-extent` refusal. After the ordinal prerequisite lands, rerun the reviewed four-way frontier: complete per-access replacement, one region-level source binding, additive disjoint self/non-source-read spelling, or typed deferral.
 - Release trigger: the ordinal prerequisite aligns every IR/compiler/artifact/Metal/build/conformance/runtime consumer and identity; the topology packet replaces its placeholder with the exact type, repeats the Pareto gate, and receives independent review before presentation.
 
-## 5. Live-extent artifact envelope row — blocked before decision
+## 6. Live-extent artifact envelope row — blocked before decision
 
 - Ticket: `accept-the-live-extent-artifact-envelope-row` (`p1`, `blocked`).
 - Hold evidence: the draft row is currently attached to a fixed `[2,3]` semantic interface while tests execute bindings 14/15. It is unresolved whether `{ key, axis, value_type }` remains a complete row once the symbolic semantic source is carried.
 - Current recommendation: do not accept the row yet.
 - Release trigger: `associate-live-extent-operands-with-symbolic-semantic-interface-axes` produces an independently reviewed minimum complete schema/identity derivation and the packet is rewritten against that exact commit.
 
-## 6. Host-bounded physical-frontier sink — blocked before presentation
+## 7. Host-bounded physical-frontier sink — blocked before presentation
 
 - Tickets: `replace-provider-offer-with-a-host-bounded-frontier-sink` (`p1`, `blocked`); branch-local `accept-the-host-bounded-physical-frontier-sink` at preserved draft `54e272baa525027a6f6f9d982bd3bd7c387597fb`.
 - Hold evidence: the custodial idle-M3 request-wide census eliminated 256 and eliminated 16,384 as a standalone answer because complete explain capacity fires first. The raw value remains held on item 1 and on an explicit active-provider support policy. Review of preserved draft `54e272ba` also found request exhaustion downgraded to target/candidate outcomes, provider-order-dependent error precedence, a `u64::MAX` counter escape, stale authority-count documentation, uncompilable retained spikes, and incomplete calibration over admitted targets/candidates.
 - Current recommendation: accept a host-owned bounded emission surface in principle, but do not accept this exact packet/value yet.
 - Release trigger: item 1's accepted implementation/evidence lands; `calibrate-the-physical-frontier-provider-and-outcome-budgets` selects a full-request authority/value from an accepted support population; preserved branch `54e272ba` is returned for repair/rebase; every review finding and retained spike migration receives a subject perturbation; independent exact-commit review passes; packet is updated on main.
 
-## 7. Materialized producer in a serial-reduction contributor — held for carrier comparison
+## 8. Materialized producer in a serial-reduction contributor — held for carrier comparison
 
 - Ticket: `admit-a-materialized-producer-in-a-serial-reduction-contributor` (`p3`, `todo`).
 - Hold evidence: option 7 can enlarge every unboxed serial-sum value without forcing broad `NormalizedOutput` matches to classify the new state. A boxed produced-sum variant sharing a fold core may preserve old layout and improve exhaustiveness; a narrower bare-producer slice also trades support for smaller state. `pipeline/verify.rs` contains an uncensused `prologue.is_none()` numerical-proof exemption that would include a materialized arm unless repaired. The staged-family positive also stops first at missing governed elementary authority.
