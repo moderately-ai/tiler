@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [defect, public-boundary, schedule, identity, shapes]
-claimed_from: todo
-assignee: worker-reconcile-input-ordinal
-lease_expires_at: 1786730018
 ---
 ## User-visible outcome
 
