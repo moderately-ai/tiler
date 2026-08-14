@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, validation, extensions, implementation, public-boundary, artifact, schema]
-claimed_from: todo
-assignee: worker-structured-capability-subjects
-lease_expires_at: 1786730214
 ---
 ## User-visible outcome
 
