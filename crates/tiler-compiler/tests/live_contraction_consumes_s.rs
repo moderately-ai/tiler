@@ -275,7 +275,11 @@ fn live_input_loads(kernel: &tiler_ir::kernel::VerifiedKernel, bound: u64) -> u6
     let mut seed = 0;
     let mut body = 0;
     count_live_input_loads(kernel.body(), live, &mut seed, &mut body, false);
-    seed.saturating_add(bound.saturating_sub(1).saturating_mul(body))
+    let remaining = bound
+        .checked_sub(1)
+        .expect("preflight must refuse an empty strict contraction before execution");
+    seed.checked_add(remaining.checked_mul(body).unwrap())
+        .unwrap()
 }
 
 #[test]
@@ -302,8 +306,10 @@ fn neighbouring_s_values_move_the_load_oracle_and_leave_identity() {
         "the contributor bound must be the live operand"
     );
 
+    let loads_1 = live_input_loads(&kernel, 1);
     let loads_14 = live_input_loads(&kernel, 14);
     let loads_15 = live_input_loads(&kernel, 15);
+    assert_eq!(loads_1, 1);
     assert_eq!(loads_14, 14);
     assert_eq!(loads_15, 15);
     assert_ne!(loads_14, loads_15);

@@ -70,19 +70,19 @@ use std::collections::BTreeMap;
 use tiler_runtime::load::DTypeDispatch;
 
 use tiler_artifact::program::{
-    AbiExprId, ApproximationEnvelope, ArithmeticType, ArtifactExecutionPolicy,
-    ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey, BackendEntryRef,
-    BackendFeatureRequirement, BackendKey, BindingKind, BindingSpec, CANONICAL_DIMENSIONS,
-    CapabilityKey, CompilationEnvironment, DIMENSION_COUNT, DeferredPredicateSpec,
-    DeliveredRealizationBuilder, DimensionBehaviour, EntryRealization, EntrySpec,
-    ExceptionalValueAssumption, FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
-    HonouringMeans, LaunchSpec, MaterializationRounding, NumericalDimension,
-    NumericalObligationKey, NumericalPermission, PayloadContent, PayloadMetadata, PayloadPlatform,
-    PayloadProvenance, PolicyLocus, ProvenanceIdentity, RecordedArtifactProgramIdentity,
-    RepresentationKey, RouteFeatureKey, RouteRequirement, ScalarArithmeticSubject,
-    ScalarArithmeticSubjectIdentity, SchemaVersion, SelectedProvider, SemanticOccurrence,
-    SubnormalMode, TargetEvidenceDeclaration, TargetProfileDescriptorDigest, TargetProfileKey,
-    TargetProfileRef, TargetPropertyKey, ToolComponent, VariantSpec, overlapping_behaviour,
+    ApproximationEnvelope, ArithmeticType, ArtifactExecutionPolicy, ArtifactProgramBuilder,
+    AvailabilityPhase, BackendEntryKey, BackendEntryRef, BackendFeatureRequirement, BackendKey,
+    BindingKind, BindingSpec, CANONICAL_DIMENSIONS, CapabilityKey, CompilationEnvironment,
+    DIMENSION_COUNT, DeferredPredicateSpec, DeliveredRealizationBuilder, DimensionBehaviour,
+    EntryRealization, EntrySpec, ExceptionalValueAssumption, FactSourceProvenance,
+    FeasibilityRuleSetKey, FeasibilityRuleSetRef, HonouringMeans, LaunchSpec,
+    MaterializationRounding, NumericalDimension, NumericalObligationKey, NumericalPermission,
+    PayloadContent, PayloadMetadata, PayloadPlatform, PayloadProvenance, PolicyLocus,
+    ProvenanceIdentity, RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey,
+    RouteRequirement, ScalarArithmeticSubject, ScalarArithmeticSubjectIdentity, SchemaVersion,
+    SelectedProvider, SemanticOccurrence, SubnormalMode, TargetEvidenceDeclaration,
+    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, TargetPropertyKey,
+    ToolComponent, VariantSpec, overlapping_behaviour,
 };
 use tiler_ir::index::{
     DomainRole, FrozenIndexRealizationLawRegistry, FrozenScalarRegistry, IndexInteger,
@@ -108,11 +108,11 @@ use tiler_ir::program::{
 // paths, and naming them through the boundary a consumer at ADR 0081 item 2's
 // closure actually has is what keeps this file evidence that the closure suffices.
 use tiler_ir::schedule::{
-    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ExecutionBinding, F32NumericalContractKey, InputOrdinal, KernelSchedule, LaunchPlan,
-    LogicalAccess, NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
-    PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId,
-    ScalarProgram, ScheduledRegionBuilder, TailPolicy, TensorRole,
+    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContractionAxisSource,
+    ContributorOrder, ExecutionBinding, F32NumericalContractKey, InputOrdinal, KernelSchedule,
+    LaunchPlan, LogicalAccess, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology,
+    RegionId, ScalarProgram, ScheduledRegionBuilder, TailPolicy, TensorRole,
 };
 use tiler_ir::semantic::{
     Bf16, CanonicalField, CanonicalValue, F32, F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant,
@@ -149,6 +149,8 @@ pub const POINTWISE_SYMBOL: &str = "scalar_pointwise_scale_bias";
 pub const REDUCTION_SYMBOL: &str = "scalar_strict_serial_sum";
 /// The backend's own entry-point symbol for the live-extent direct variant.
 pub const LIVE_EXTENT_SYMBOL: &str = "live_row_major";
+/// Entry symbol of the live strict-contraction routing fixture.
+pub const LIVE_CONTRACTION_SYMBOL: &str = "live_contraction";
 /// The backend's own entry-point symbol for the live-extent aligned variant.
 pub const LIVE_EXTENT_ALIGNED_SYMBOL: &str = "live_row_major_aligned";
 
@@ -442,6 +444,8 @@ pub enum PackagedPlan {
     /// Ranked ahead of [`Self::LiveExtent`] so `StablePriority` selects it only
     /// when the bound extent is a multiple of 16, and falls through otherwise.
     LiveExtentAligned,
+    /// One strict unseeded contraction whose contributor extent is live.
+    LiveContraction,
 }
 
 impl PackagedPlan {
@@ -465,6 +469,7 @@ impl PackagedPlan {
             Self::LiveExtentAligned => {
                 b"live-row-major e0; N is not in this subject; aligned-mod-16".to_vec()
             }
+            Self::LiveContraction => b"live-contraction e0; S is not in this subject".to_vec(),
         }
     }
 }
@@ -654,6 +659,7 @@ impl FixtureSpec {
             PackagedPlan::Materialized => Self::materialized(),
             PackagedPlan::LiveExtent => Self::live_extent(),
             PackagedPlan::LiveExtentAligned => Self::live_extent_aligned(),
+            PackagedPlan::LiveContraction => Self::live_contraction(),
         }
     }
 
@@ -687,6 +693,28 @@ impl FixtureSpec {
                 key: entry_key(b"live-row-major-aligned"),
                 symbol: LIVE_EXTENT_ALIGNED_SYMBOL.to_owned(),
                 transports: vec![0, 1, 2],
+                arithmetic: ArithmeticType::F32,
+            }],
+            ..Self::default()
+        }
+    }
+
+    /// Returns the live strict-contraction member used for preflight routing.
+    #[must_use]
+    pub fn live_contraction() -> Self {
+        let mut image = live_extent_image(LIVE_CONTRACTION_SYMBOL);
+        image.entries[0].rows = 1;
+        image.entries[0].write_transport = 2;
+        Self {
+            code: encode(&image),
+            plan: PackagedPlan::LiveContraction,
+            route_requirements: Vec::new(),
+            deferred_predicates: Vec::new(),
+            entries: vec![FixtureEntry {
+                key: entry_key(b"live-contraction"),
+                symbol: LIVE_CONTRACTION_SYMBOL.to_owned(),
+                // Three buffers followed by the one live extent operand.
+                transports: vec![0, 1, 2, 3],
                 arithmetic: ArithmeticType::F32,
             }],
             ..Self::default()
@@ -967,32 +995,6 @@ fn subject_identity(arithmetic: ArithmeticType) -> ScalarArithmeticSubjectIdenti
     }
 }
 
-fn live_extent_preconditions(
-    draft: &mut ArtifactProgramBuilder,
-    plan: PackagedPlan,
-) -> Vec<AbiExprId> {
-    if !matches!(
-        plan,
-        PackagedPlan::LiveExtent | PackagedPlan::LiveExtentAligned
-    ) {
-        return Vec::new();
-    }
-    let one = draft
-        .push_root(AbiRoot::UnsignedLiteral(1))
-        .expect("the live-extent precondition one");
-    let n = draft
-        .push_root(AbiRoot::InputExtent {
-            key: input_key(),
-            axis: Axis::new(1),
-        })
-        .expect("the live-extent precondition N");
-    vec![
-        draft
-            .push_binary(AbiBinaryOp::LessOrEqual, one, n)
-            .expect("the live-extent launch precondition"),
-    ]
-}
-
 fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, spec: &FixtureSpec) {
     let program = match spec.plan {
         PackagedPlan::Fused => fused_program(semantic, FusedGuard::AlwaysHolds),
@@ -1003,6 +1005,7 @@ fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, s
         PackagedPlan::LiveExtentAligned => {
             live_extent_program(semantic, LiveExtentGuard::MultipleOfSixteen)
         }
+        PackagedPlan::LiveContraction => live_contraction_program(semantic),
     };
     let payload = draft
         .push_carried_payload(
@@ -1058,7 +1061,15 @@ fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, s
         )
         .expect("the fixture payload was accepted");
 
-    let preconditions = live_extent_preconditions(draft, spec.plan);
+    let buffer_bindings = match spec.plan {
+        PackagedPlan::LiveContraction => 3,
+        PackagedPlan::Fused
+        | PackagedPlan::FusedInapplicable
+        | PackagedPlan::FusedExtentGuarded
+        | PackagedPlan::Materialized
+        | PackagedPlan::LiveExtent
+        | PackagedPlan::LiveExtentAligned => 2,
+    };
     let variant = draft
         .push_variant(
             &program,
@@ -1074,19 +1085,15 @@ fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, s
                     .entries
                     .iter()
                     .map(|entry| EntrySpec {
-                        // Every kernel this fixture's profile verifies
-                        // destructures to one read buffer and one write buffer.
                         bindings: vec![
                             BindingSpec {
                                 kind: BindingKind::Buffer,
-                            },
-                            BindingSpec {
-                                kind: BindingKind::Buffer,
-                            },
+                            };
+                            buffer_bindings
                         ],
                         launch: LaunchSpec {
                             zero_work_skips_dispatch: true,
-                            preconditions: preconditions.clone(),
+                            preconditions: Vec::new(),
                         },
                         implementation: BackendEntryRef {
                             payloads: vec![payload],
@@ -1182,6 +1189,24 @@ pub fn semantic_program() -> SemanticProgram {
     draft
         .output(OutputKey::new("result").expect("a valid output key"), sum)
         .expect("the output binds");
+    draft.build().expect("the program verifies")
+}
+
+/// Builds the two-input graph bound by the live-contraction routing fixture.
+#[must_use]
+pub fn live_contraction_semantic_program() -> SemanticProgram {
+    let shape = Shape::from_dims([1, 1]);
+    let mut draft = SemanticProgramBuilder::try_standard().expect("the standard registry composes");
+    let left = draft
+        .input::<F32>(InputKey::new("left").expect("left key"), shape.clone())
+        .expect("left input");
+    let right = draft
+        .input::<F32>(InputKey::new("right").expect("right key"), shape)
+        .expect("right input");
+    let result = F32Add::apply(&mut draft, left, right).expect("fixture occurrence");
+    draft
+        .output(OutputKey::new("result").expect("output key"), result)
+        .expect("output");
     draft.build().expect("the program verifies")
 }
 
@@ -1790,6 +1815,222 @@ fn live_extent_program(semantic: &SemanticProgram, kind: LiveExtentGuard) -> Ver
     )
     .expect("the program output");
     plan.build().expect("the live-extent plan verifies")
+}
+
+fn live_contraction_kernel() -> VerifiedKernel {
+    let operand = Shape::from_dims([1]);
+    let output = Shape::from_dims([1, 1]);
+    let contracted = Shape::from_dims([]);
+    let owner = OwnershipWitnessId::new(0);
+    let mut region = ScheduledRegionBuilder::new(RegionId::new(41));
+    region
+        .iteration_shape(output.clone())
+        .expect("iteration shape");
+    for (ordinal, free) in [0_u32, 1].into_iter().enumerate() {
+        let witness = u32::try_from(ordinal).expect("two inputs");
+        let tensor = TensorRole::Input {
+            ordinal: InputOrdinal::new(witness),
+        };
+        region
+            .push_access(Access {
+                tensor,
+                component_role: None,
+                mode: AccessMode::Read,
+                map: LogicalAccess::ContractionOperand {
+                    operand_shape: operand.clone(),
+                    output_shape: output.clone(),
+                    contracted_shape: contracted.clone(),
+                    sources: vec![ContractionAxisSource::Output { position: free }],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                },
+                bounds: BoundsWitnessId::new(witness),
+                ownership: None,
+            })
+            .expect("operand access");
+        region
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(witness),
+                tensor,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange { element_count: 0 },
+            })
+            .expect("live bounds");
+    }
+    region
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(2),
+            ownership: Some(owner),
+        })
+        .expect("output access");
+    region
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(2),
+            tensor: TensorRole::Output,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange { element_count: 1 },
+        })
+        .expect("output bounds");
+    region
+        .ownership_proof(OwnershipProof {
+            id: owner,
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 1 },
+        })
+        .expect("ownership");
+    region
+        .scalar_program(ScalarProgram::StrictTensorContraction {
+            contracted_shape: contracted,
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: CANONICAL_NAN,
+        })
+        .expect("strict contraction");
+    region.numerical(strict()).expect("numerical");
+    region
+        .schedule(KernelSchedule {
+            binding: ExecutionBinding::GlobalLinearInvocation,
+            work_items: 1,
+            threads_per_workgroup: 1,
+            tail: TailPolicy::Exact,
+            output_owner: owner,
+            reduction: ReductionTopology::LiveContraction {
+                live_input: InputOrdinal::FIRST,
+                live_axis: Axis::new(1),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                permits_reassociation: false,
+                permits_permutation: false,
+            },
+            launch: LaunchPlan {
+                grid_threads: 1,
+                threads_per_workgroup: 1,
+                zero_work_skips_dispatch: true,
+            },
+        })
+        .expect("schedule");
+    lower_scheduled_region(&region.build().expect("region")).expect("kernel")
+}
+
+fn live_contraction_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
+    let kernel = live_contraction_kernel();
+    let mut plan = KernelProgramBuilder::new(semantic).expect("program");
+    let allocation = |ownership| AllocationSpec {
+        capacity_bytes: 4,
+        alignment: AlignmentGuarantee::natural_for(StorageScalar::F32),
+        memory_space: MemorySpace::Device,
+        ownership,
+    };
+    let left_allocation = plan
+        .push_allocation(allocation(AllocationOwnership::External))
+        .expect("left allocation");
+    let right_allocation = plan
+        .push_allocation(allocation(AllocationOwnership::External))
+        .expect("right allocation");
+    let output_allocation = plan
+        .push_allocation(allocation(AllocationOwnership::Program))
+        .expect("output allocation");
+    let value = |origin, role| MaterializedValueSpec {
+        origin,
+        role,
+        shape: Shape::from_dims([1, 1]),
+        storage_scalar: StorageScalar::F32,
+        element_type: KernelType::F32,
+        encoding: StorageEncoding::Unpacked,
+        alignment: AlignmentRequirement::natural_for(StorageScalar::F32),
+        memory_space: MemorySpace::Device,
+    };
+    let left = plan
+        .push_value(
+            value(
+                MaterializedOrigin::ProgramInput {
+                    key: InputKey::new("left").expect("left key"),
+                },
+                ValueRole::Input,
+            ),
+            left_allocation,
+        )
+        .expect("left");
+    let right = plan
+        .push_value(
+            value(
+                MaterializedOrigin::ProgramInput {
+                    key: InputKey::new("right").expect("right key"),
+                },
+                ValueRole::Input,
+            ),
+            right_allocation,
+        )
+        .expect("right");
+    let output = plan
+        .push_value(
+            value(MaterializedOrigin::Internal, ValueRole::Output),
+            output_allocation,
+        )
+        .expect("output");
+    let left_view = plan
+        .push_view(
+            left,
+            ByteWindow {
+                offset: 0,
+                length: 0,
+            },
+        )
+        .expect("left view");
+    let right_view = plan
+        .push_view(
+            right,
+            ByteWindow {
+                offset: 0,
+                length: 0,
+            },
+        )
+        .expect("right view");
+    let output_view = plan.push_whole_view(output).expect("output view");
+    let zero = plan
+        .push_abi_root(AbiRoot::UnsignedLiteral(0))
+        .expect("zero");
+    let four = plan
+        .push_abi_root(AbiRoot::UnsignedLiteral(4))
+        .expect("four");
+    let one = plan
+        .push_abi_root(AbiRoot::UnsignedLiteral(1))
+        .expect("one");
+    let guard = plan
+        .push_abi_root(AbiRoot::BooleanLiteral(true))
+        .expect("authored guard");
+    plan.applicability_guard(guard).expect("guard");
+    declare_routing_commit(&mut plan);
+    plan.push_stage(
+        &kernel,
+        &checked_coverage(semantic, 0..1),
+        &[
+            StageAccess {
+                view: left_view,
+                mode: StageAccessMode::Read,
+                accessible_bytes: zero,
+            },
+            StageAccess {
+                view: right_view,
+                mode: StageAccessMode::Read,
+                accessible_bytes: zero,
+            },
+            StageAccess {
+                view: output_view,
+                mode: StageAccessMode::Write,
+                accessible_bytes: four,
+            },
+        ],
+        StageLaunch {
+            grid_threads: one,
+            threads_per_workgroup: one,
+        },
+    )
+    .expect("stage");
+    plan.push_output(OutputKey::new("result").expect("key"), output)
+        .expect("output");
+    plan.build().expect("verified live contraction")
 }
 
 #[must_use]

@@ -1100,6 +1100,12 @@ pub struct VerifiedKernel {
     /// Derived from the refined region's scalar program; see
     /// [`VerifiedKernel::subnormal_freedom`] for why it is not in `data`.
     pub(super) subnormal_freedom: SubnormalFreedom,
+    /// Input extents that must be nonzero before this kernel may execute.
+    ///
+    /// This is derived from the verified schedule and excluded from kernel
+    /// identity for the same reason as `subnormal_freedom`: the schedule
+    /// identity already names its complete authority.
+    pub(crate) required_nonzero_input_extents: Vec<InputExtentParameter>,
 }
 
 impl PartialEq for VerifiedKernel {

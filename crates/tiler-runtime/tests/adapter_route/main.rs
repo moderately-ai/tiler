@@ -32,7 +32,7 @@ mod image;
 mod retained;
 
 use adapter::{DispatchFamily, Perturbation, ScalarHostAdapter, Stage};
-use fixture::{FixtureSpec, PackagedPlan, assemble, assemble_portfolio};
+use fixture::{FixtureSpec, PackagedPlan, assemble, assemble_portfolio, assemble_portfolio_over};
 use image::{ScalarEntry, ScalarImage, ScalarPayloadRefusal, encode};
 
 use tiler_artifact::program::{
@@ -2167,6 +2167,80 @@ fn one_live_extent_payload_and_pipeline_indexes_dense_f32_at_two_n() {
         observed[0], observed[1],
         "the two executed oracles must disagree",
     );
+}
+
+#[test]
+fn a_zero_live_row_major_extent_executes_no_elements_and_remains_routable() {
+    let built = assemble(&FixtureSpec::live_extent());
+    let (outcome, host) = route_live(&built, 0, &[]);
+    let completion = outcome.expect("an empty LiveRowMajor range is a legal no-work route");
+    assert_eq!(completion.result_bits, Vec::<u32>::new());
+    assert_eq!(
+        completion.executed,
+        fixture::ROWS,
+        "the static outer invocations run, while their inner element ranges are empty",
+    );
+    assert!(host.stages.contains(&Stage::Dispatch));
+}
+
+fn live_contraction_facts(bound: u64) -> AbiFacts {
+    let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
+    binder
+        .bind_input_extent(
+            tiler_ir::semantic::InputKey::new("left").expect("left key"),
+            tiler_ir::shape::Axis::new(1),
+            bound,
+        )
+        .expect("live contraction extent");
+    binder.build()
+}
+
+#[test]
+fn a_zero_live_contraction_refuses_before_payload_or_program_work() {
+    let semantic = fixture::live_contraction_semantic_program();
+    let built = assemble_portfolio_over(&[FixtureSpec::live_contraction()], &semantic);
+    let mut program = DecodedProgram::decode(&built.bytes, SOLE_DELIVERY)
+        .expect("the live contraction artifact decodes");
+    let mut host = ScalarHostAdapter::new(&[]);
+    let outcome = route_with_adapter(
+        &mut program,
+        &mut host,
+        &built.expected,
+        &live_contraction_facts(0),
+    );
+    let Err(AdapterRouteFailure::Load(LoadRejection::NoApplicableVariant { packaged, filtered })) =
+        outcome
+    else {
+        panic!("S=0 must fail applicability before routing commit");
+    };
+    assert_eq!(packaged, 1);
+    assert!(
+        filtered.is_empty(),
+        "the variant was eligible but inapplicable"
+    );
+    assert_eq!(host.stages, [Stage::Bind]);
+}
+
+#[test]
+fn positive_live_contraction_neighbours_reach_the_same_preflight_entry() {
+    let semantic = fixture::live_contraction_semantic_program();
+    let built = assemble_portfolio_over(&[FixtureSpec::live_contraction()], &semantic);
+    let mut selected = Vec::new();
+    for bound in [1_u64, 14, 15] {
+        let mut program = DecodedProgram::decode(&built.bytes, SOLE_DELIVERY)
+            .expect("the live contraction artifact decodes");
+        let preflight = program
+            .preflight(
+                &live_extent_environment(),
+                &built.expected,
+                &live_contraction_facts(bound),
+            )
+            .unwrap_or_else(|failure| panic!("S={bound} must pass preflight: {failure}"));
+        assert_eq!(preflight.entries().len(), 1);
+        assert_eq!(preflight.entries()[0].extent_parameters()[0].value(), bound);
+        selected.push(preflight.kernel_program_identity().to_vec());
+    }
+    assert!(selected.windows(2).all(|pair| pair[0] == pair[1]));
 }
 
 #[test]
