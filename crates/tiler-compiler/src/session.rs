@@ -1311,7 +1311,7 @@ impl<'a> SelectedCapability<'a> {
 /// ```compile_fail,E0423
 /// use tiler_compiler::session::SelectedImplementation;
 ///
-/// let _ = SelectedImplementation(std::todo!());
+/// let _ = SelectedImplementation(());
 /// ```
 #[derive(Clone, Copy, Debug)]
 pub struct SelectedImplementation<'a>(&'a crate::selection::RegionSelection);
