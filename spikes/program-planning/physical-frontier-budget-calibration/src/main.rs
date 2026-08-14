@@ -1,6 +1,7 @@
 //! Census and host-runtime calibration of physical-frontier provider and raw-outcome budgets.
 
 mod census;
+mod custody;
 mod measure;
 mod profile;
 mod program;
@@ -16,9 +17,13 @@ use tiler_compiler::target::TargetProfile;
 use tiler_ir::semantic::SemanticProgram;
 
 use census::{Perturb, repo_root, run_checks};
+use custody::{
+    CUSTODY_SCHEMA, annotate_record, export_raw_artifacts, verify_evidence, verify_record_path,
+    verify_record_text,
+};
 use measure::{
     Sample, child_measure, child_request_measure, measure_population, measure_request_population,
-    micros,
+    micros, nanos, verify_sample_custody,
 };
 use profile::{declared_workgroup_profile, governed, request_profiles};
 use program::{compile_request, five_op_program, tensor_add_chain};
@@ -28,9 +33,61 @@ fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         None | Some("record") => record(args.next(), false),
-        Some("--quick") => record(None, true),
+        Some("--quick") => record(args.next(), true),
         Some("census") => census_only(Perturb::None),
         Some("request-census") => request_census_only(),
+        Some("verify-record") => {
+            let Some(path) = args.next() else {
+                eprintln!("usage: physical-frontier-budget-calibration verify-record <path>");
+                return ExitCode::from(2);
+            };
+            match verify_record_path(&PathBuf::from(path)) {
+                Ok(summary) => {
+                    println!(
+                        "PASS custody samples={} timing_values={} rss_rows={}",
+                        summary.samples, summary.timing_values, summary.rss_rows
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("FAIL custody {error}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        Some("export-raw") => {
+            let paths = args.map(PathBuf::from).collect::<Vec<_>>();
+            if let [record, timing, rss] = paths.as_slice() {
+                report_custody_result(export_raw_artifacts(record, timing, rss))
+            } else {
+                eprintln!(
+                    "usage: physical-frontier-budget-calibration export-raw <record> <timing.tsv> <rss.jsonl>"
+                );
+                ExitCode::from(2)
+            }
+        }
+        Some("annotate-record") => {
+            let paths = args.map(PathBuf::from).collect::<Vec<_>>();
+            if let [generated, annotated, timing, rss] = paths.as_slice() {
+                report_custody_result(annotate_record(generated, annotated, timing, rss))
+            } else {
+                eprintln!(
+                    "usage: physical-frontier-budget-calibration annotate-record <generated.json> <annotated.json> <timing.tsv> <rss.jsonl>"
+                );
+                ExitCode::from(2)
+            }
+        }
+        Some("verify-evidence") => {
+            let paths = args.map(PathBuf::from).collect::<Vec<_>>();
+            if let [generated, annotated, timing, rss] = paths.as_slice() {
+                report_custody_result(verify_evidence(generated, annotated, timing, rss))
+            } else {
+                eprintln!(
+                    "usage: physical-frontier-budget-calibration verify-evidence <generated.json> <annotated.json> <timing.tsv> <rss.jsonl>"
+                );
+                ExitCode::from(2)
+            }
+        }
         Some("request-boundary") => {
             let maximum = args
                 .next()
@@ -89,13 +146,26 @@ fn main() -> ExitCode {
         }
         Some("help" | "--help") => {
             println!(
-                "physical-frontier-budget-calibration [record [path]|census|request-census|request-boundary [maximum-specialists]|perturb <name>|--quick]"
+                "physical-frontier-budget-calibration [record [path]|verify-record <path>|export-raw <record> <timing.tsv> <rss.jsonl>|annotate-record <generated> <annotated> <timing.tsv> <rss.jsonl>|verify-evidence <generated> <annotated> <timing.tsv> <rss.jsonl>|census|request-census|request-boundary [maximum-specialists]|perturb <name>|--quick [path]]"
             );
             ExitCode::SUCCESS
         }
         Some(other) => {
             eprintln!("unknown command {other}");
             ExitCode::from(2)
+        }
+    }
+}
+
+fn report_custody_result(result: Result<(), String>) -> ExitCode {
+    match result {
+        Ok(()) => {
+            println!("PASS custody evidence");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("FAIL custody evidence {error}");
+            ExitCode::from(1)
         }
     }
 }
@@ -290,6 +360,7 @@ fn census_only(perturb: Perturb) -> ExitCode {
 fn record(path: Option<String>, quick: bool) -> ExitCode {
     let repo = repo_root();
     let host = host_record(&repo);
+    let executable_evidence_commit = command_text_in(&repo, "git", &["rev-parse", "HEAD"]);
     println!("host {}", host.replace('\n', " | "));
 
     let populations = request_populations();
@@ -495,8 +566,34 @@ fn record(path: Option<String>, quick: bool) -> ExitCode {
         ));
     }
 
+    for sample in &samples {
+        if let Err(error) = verify_sample_custody(sample, collect_rss) {
+            eprintln!("FAIL in-memory custody {error}");
+            return ExitCode::from(1);
+        }
+    }
+
     let limits = recommend(&samples, &populations);
-    let json = render_record(&host, &checks, &populations, &samples, &limits, quick);
+    let json = render_record(
+        &host,
+        &executable_evidence_commit,
+        &checks,
+        &populations,
+        &samples,
+        &limits,
+        quick,
+    );
+    let custody = match verify_record_text(&json) {
+        Ok(summary) => summary,
+        Err(error) => {
+            eprintln!("FAIL rendered custody {error}");
+            return ExitCode::from(1);
+        }
+    };
+    println!(
+        "custody verified samples={} timing_values={} rss_rows={}",
+        custody.samples, custody.timing_values, custody.rss_rows
+    );
     match path {
         Some(path) => {
             let dest = PathBuf::from(path);
@@ -783,17 +880,43 @@ fn command_text_in(dir: &std::path::Path, program: &str, args: &[&str]) -> Strin
 
 fn render_record(
     host: &str,
+    executable_evidence_commit: &str,
     checks: &[census::Check],
     populations: &[RequestPopulation],
     samples: &[Sample],
     limits: &Limits,
     quick: bool,
 ) -> String {
+    let timing_values = samples
+        .iter()
+        .map(|sample| sample.timed_durations.len())
+        .sum::<usize>();
+    let rss_rows = samples.iter().filter(|sample| sample.rss.is_some()).count();
     let mut out = String::new();
     out.push_str("{\n");
     out.push_str("  \"experiment\": \"physical-frontier-budget-calibration\",\n");
+    out.push_str("  \"behavior_under_test_base\": \"4fb0427319b1504e1549e03ba023ac486343a743\",\n");
+    out.push_str(&format!(
+        "  \"executable_evidence_commit\": {},\n",
+        json_string(executable_evidence_commit)
+    ));
     out.push_str(&format!("  \"quick\": {quick},\n"));
     out.push_str(&format!("  \"host\": {},\n", json_string(host)));
+    out.push_str("  \"custody\": {\n");
+    out.push_str(&format!(
+        "    \"schema\": {},\n",
+        json_string(CUSTODY_SCHEMA)
+    ));
+    out.push_str("    \"timing_unit\": \"nanoseconds\",\n");
+    out.push_str("    \"timing_order\": \"execution-order\",\n");
+    out.push_str("    \"summary_algorithm\": \"sort a copy; min=0, median=n/2, p90=(9n-1)/10, max=n-1, mean=floor(sum/n); convert each result to integer microseconds by floor division\",\n");
+    out.push_str("    \"rss_source\": \"complete macOS /usr/bin/time -l stderr\",\n");
+    out.push_str(&format!("    \"verified_samples\": {},\n", samples.len()));
+    out.push_str(&format!(
+        "    \"verified_timing_values\": {timing_values},\n"
+    ));
+    out.push_str(&format!("    \"verified_rss_rows\": {rss_rows}\n"));
+    out.push_str("  },\n");
     out.push_str("  \"candidate_limits\": {\n");
     out.push_str(&format!(
         "    \"provider_count\": {},\n",
@@ -870,7 +993,20 @@ fn render_record(
     for (index, sample) in samples.iter().enumerate() {
         let comma = if index + 1 == samples.len() { "" } else { "," };
         out.push_str("    {\n");
+        out.push_str(&format!("      \"sample_index\": {index},\n"));
+        out.push_str(&format!(
+            "      \"series_key\": {},\n",
+            json_string(&series_key(index, sample))
+        ));
         out.push_str(&format!("      \"name\": {},\n", json_string(&sample.name)));
+        out.push_str(&format!(
+            "      \"program_kind\": {},\n",
+            json_string(sample.program_kind)
+        ));
+        out.push_str(&format!(
+            "      \"request_wide\": {},\n",
+            sample.request_wide
+        ));
         out.push_str(&format!("      \"targets\": {},\n", sample.targets));
         out.push_str(&format!(
             "      \"extra_providers\": {},\n",
@@ -907,6 +1043,10 @@ fn render_record(
         ));
         out.push_str(&format!("      \"warmup\": {},\n", sample.warmup));
         out.push_str(&format!("      \"repeats\": {},\n", sample.repeats));
+        out.push_str(&format!(
+            "      \"timed_durations_ns\": {},\n",
+            json_durations(&sample.timed_durations)
+        ));
         out.push_str(&format!("      \"min_us\": {},\n", micros(sample.min)));
         out.push_str(&format!(
             "      \"median_us\": {},\n",
@@ -916,11 +1056,40 @@ fn render_record(
         out.push_str(&format!("      \"max_us\": {},\n", micros(sample.max)));
         out.push_str(&format!("      \"mean_us\": {},\n", micros(sample.mean)));
         out.push_str(&format!(
-            "      \"peak_rss_bytes\": {}\n",
+            "      \"peak_rss_bytes\": {},\n",
             sample
                 .peak_rss_bytes
                 .map_or_else(|| "null".to_owned(), |value| value.to_string())
         ));
+        match &sample.rss {
+            Some(rss) => {
+                out.push_str("      \"rss\": {\n");
+                out.push_str(&format!(
+                    "        \"command\": {},\n",
+                    json_strings(&rss.command)
+                ));
+                out.push_str(&format!(
+                    "        \"child_exit_success\": {},\n",
+                    rss.child_exit_success
+                ));
+                out.push_str(&format!(
+                    "        \"child_exit_code\": {},\n",
+                    rss.child_exit_code
+                        .map_or_else(|| "null".to_owned(), |code| code.to_string())
+                ));
+                out.push_str(&format!(
+                    "        \"time_stderr\": {},\n",
+                    json_string(&rss.time_stderr)
+                ));
+                out.push_str(&format!(
+                    "        \"parsed_peak_rss_bytes\": {}\n",
+                    rss.parsed_peak_rss_bytes
+                        .map_or_else(|| "null".to_owned(), |value| value.to_string())
+                ));
+                out.push_str("      }\n");
+            }
+            None => out.push_str("      \"rss\": null\n"),
+        }
         out.push_str(&format!("    }}{comma}\n"));
     }
     out.push_str("  ],\n");
@@ -1054,6 +1223,26 @@ fn json_strings(values: &[String]) -> String {
             .map(|value| json_string(value))
             .collect::<Vec<_>>()
             .join(", ")
+    )
+}
+
+fn json_durations(values: &[std::time::Duration]) -> String {
+    format!(
+        "[{}]",
+        values
+            .iter()
+            .copied()
+            .map(nanos)
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn series_key(index: usize, sample: &Sample) -> String {
+    format!(
+        "{index}:{}:targets={}:providers={}:kind={}:program={}",
+        sample.name, sample.targets, sample.extra_providers, sample.kind, sample.program_kind
     )
 }
 
