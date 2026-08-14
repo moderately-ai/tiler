@@ -301,7 +301,7 @@ impl std::error::Error for CompileFailure {}
 pub struct Compilation {
     stated_contracts: Vec<StrictF32NumericalContract>,
     resolved_contract: StrictF32NumericalContract,
-    offered_providers: Arc<[ProviderIdentity]>,
+    offered_lowering_providers: Arc<[ProviderIdentity]>,
     offered_physical_providers: Arc<[ProviderIdentity]>,
     target_profile: TargetProfile,
     feasibility_rule_set: FeasibilityRuleSetIdentity,
@@ -959,16 +959,15 @@ impl Compilation {
     /// compiler actually offered. Returning the compiler-minted set prevents an
     /// assembler from reconstructing that environment from the selected subset.
     ///
-    /// **The lowering environment only, and the name is the one this accessor
-    /// has always had rather than the whole of what it reports.** A compilation
-    /// enumerates two provider environments against two different rules — one
-    /// lowering authority per occurrence, several physical implementations per
-    /// region — and the second is [`Self::offered_physical_providers`]. Reading
-    /// this set as *the* provider environment is what would make an installed
-    /// physical provider look as though it had never been offered.
+    /// A compilation enumerates two provider environments against two different
+    /// rules — one lowering authority per occurrence, several physical
+    /// implementations per region — and the second is
+    /// [`Self::offered_physical_providers`]. Reading this set as *the* provider
+    /// environment is what would make an installed physical provider look as
+    /// though it had never been offered.
     #[must_use]
-    pub fn offered_providers(&self) -> &[ProviderIdentity] {
-        &self.offered_providers
+    pub fn offered_lowering_providers(&self) -> &[ProviderIdentity] {
+        &self.offered_lowering_providers
     }
 
     /// Returns the complete frozen physical-provider environment this
@@ -998,8 +997,8 @@ impl Compilation {
     ///
     /// This is compilation-environment evidence and is deliberately *not* what
     /// reaches artifact provenance today: an artifact's compilation environment
-    /// is built from [`Self::offered_providers`] alone, and whether that subject
-    /// is lowering-only or whole-environment is a separate decision owned where
+    /// is built from [`Self::offered_lowering_providers`] alone. Whether a
+    /// physical-provider row belongs there is a separate decision owned where
     /// the artifact type is defined.
     ///
     /// [ADR 0090]: https://github.com/moderately-ai/tiler/blob/main/docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md
@@ -2541,7 +2540,7 @@ pub fn compile(request: CompileRequest<'_>) -> Result<CompilationBatch, CompileF
         .collect();
     let preference = NumericalContractPreference::ordered(stated)
         .map_err(|error| CompileFailure::from(CompileError::InvalidRequest(error)))?;
-    let offered_providers: Arc<[ProviderIdentity]> =
+    let offered_lowering_providers: Arc<[ProviderIdentity]> =
         Arc::from(capabilities.0.lowering().providers());
     // Minted from the same value the frontier is handed below, so the reported
     // environment cannot name a provider the enumeration was not given.
@@ -2555,7 +2554,7 @@ pub fn compile(request: CompileRequest<'_>) -> Result<CompilationBatch, CompileF
     into_compilation_batch(
         product,
         &expected_targets,
-        &offered_providers,
+        &offered_lowering_providers,
         &offered_physical_providers,
     )
     .map_err(CompileFailure::from)
@@ -2961,7 +2960,7 @@ fn public_honoured_behaviour(
 fn into_compilation_batch(
     product: CompilationProduct,
     expected_targets: &[TargetProfile],
-    offered_providers: &Arc<[ProviderIdentity]>,
+    offered_lowering_providers: &Arc<[ProviderIdentity]>,
     offered_physical_providers: &Arc<[ProviderIdentity]>,
 ) -> Result<CompilationBatch, CompileError> {
     if product.targets.len() != expected_targets.len() {
@@ -2996,7 +2995,7 @@ fn into_compilation_batch(
                 let compilation = Compilation {
                     stated_contracts: target.stated_contracts,
                     resolved_contract: target.resolved_contract,
-                    offered_providers: Arc::clone(offered_providers),
+                    offered_lowering_providers: Arc::clone(offered_lowering_providers),
                     offered_physical_providers: Arc::clone(offered_physical_providers),
                     target_profile: target.target_profile,
                     feasibility_rule_set: target.feasibility_rule_set,
@@ -3127,7 +3126,7 @@ mod tests {
             for selected in plan.selected_capabilities() {
                 assert!(
                     compilation
-                        .offered_providers()
+                        .offered_lowering_providers()
                         .contains(selected.provider()),
                     "a selected lowering provider must belong to the offered lowering environment",
                 );
@@ -3157,7 +3156,7 @@ mod tests {
         let compilation = compile_governed(&program, NumericalContract::STRICT_F32)
             .expect("the governed program compiles");
 
-        let lowering = compilation.offered_providers();
+        let lowering = compilation.offered_lowering_providers();
         let physical = compilation.offered_physical_providers();
         assert!(
             !lowering.is_empty(),

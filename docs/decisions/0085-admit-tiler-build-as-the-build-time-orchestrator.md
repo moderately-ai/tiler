@@ -48,7 +48,7 @@ ticket: "bind-the-cache-subject-to-the-carried-payload-provenance"
 - `tiler-cache` remains a storage and validation protocol rather than an interpreter for foreign subject encodings.
 - A cache hit cannot be accepted solely because its outer bundle, subject digest, and artifact envelope are internally valid. The orchestrator also proves the carried payload agrees with the prepared producer facts.
 - Tom separately accepted the initial exact Rust facade on 2026-07-28: borrowed `PreparedCompilation::{request, provenance}` accessors, `validate_prepared_metal_payload`, the exhaustive `MetalPayloadFact` classification, and opaque `MetalPayloadMismatch`. At that point, later orchestration facades still required their own exact-boundary review under ADR 0075.
-- Tom accepted the checked-plan facade on 2026-07-28: `PlanAlternative` retains its owning `Compilation`; `Compilation::offered_providers` exposes the complete compiler-minted environment; and `accept_or_publish_metal_plan` returns an opaque `AcceptedMetalPlanArtifact` only after the producer-side verified artifact and accepted decoded envelope agree.
+- Tom accepted the checked-plan facade on 2026-07-28: `PlanAlternative` retains its owning `Compilation`; `Compilation::offered_lowering_providers` exposes the complete compiler-minted lowering environment; and `accept_or_publish_metal_plan` returns an opaque `AcceptedMetalPlanArtifact` only after the producer-side verified artifact and accepted decoded envelope agree. Tom accepted the source-breaking qualification of that accessor's name on 2026-08-11 together with the separate physical-provider surface; no compatibility alias remains.
 
 ## Alternatives considered
 

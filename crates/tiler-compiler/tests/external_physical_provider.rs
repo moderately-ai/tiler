@@ -476,7 +476,7 @@ fn the_offered_physical_environment_always_names_the_governed_provider() {
     // physical one, so neither set may leak into the other.
     for identity in composed.offered_physical_providers() {
         assert!(
-            !composed.offered_providers().contains(identity),
+            !composed.offered_lowering_providers().contains(identity),
             "{identity} appears in both offered environments",
         );
     }

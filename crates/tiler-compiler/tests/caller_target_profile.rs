@@ -685,8 +685,8 @@ fn successful_batch_slots_share_the_frozen_provider_set() {
     ))
     .unwrap();
     let outcomes = batch.targets().collect::<Vec<_>>();
-    let first = outcomes[0].outcome().unwrap().offered_providers();
-    let second = outcomes[1].outcome().unwrap().offered_providers();
+    let first = outcomes[0].outcome().unwrap().offered_lowering_providers();
+    let second = outcomes[1].outcome().unwrap().offered_lowering_providers();
     assert_eq!(first, second);
     assert!(std::ptr::eq(first.as_ptr(), second.as_ptr()));
 }
