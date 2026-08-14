@@ -4,7 +4,7 @@ title: Admit subgroup coordinates and exact XOR register transfer into the struc
 status: blocked
 priority: p2
 dependencies: [admit-subgroup-bindings-into-the-schedule-vocabulary, accept-adr-0094-subgroup-execution-tier, admit-guarded-output-tails-for-cooperative-contraction]
-related: [design-the-subgroup-execution-tier, decide-the-subgroup-coordinate-binding-and-output-map, admit-shared-contributor-coverage-and-reduction-padding-identity, admit-an-atomic-subgroup-realization-subject-to-target-profiles, close-the-memory-and-execution-scope-vocabulary-with-an-ir-tripwire, admit-fixed-vector-ssa-and-unmasked-memory-into-kernel-ir]
+related: [design-the-subgroup-execution-tier, decide-the-subgroup-coordinate-binding-and-output-map, admit-shared-contributor-coverage-and-reduction-padding-identity, admit-an-atomic-subgroup-realization-subject-to-target-profiles, close-the-memory-and-execution-scope-vocabulary-with-an-ir-tripwire, admit-fixed-vector-ssa-and-unmasked-memory-into-kernel-ir, preserve-present-subgroup-requirements-in-the-artifact-resource-record]
 scopes: [implementation/ir, implementation/compiler, contracts/foundation, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
@@ -114,3 +114,7 @@ Structured KIR retains ordinary scalar SSA types and gains exactly the three gov
 No subgroup-shaped `KernelType`, arbitrary source-lane expression, opaque reduction collective, barrier, subgroup memory scope, local-linear decomposition, additional arithmetic type, backend inference, emission, or performance claim is accepted. Future transfer operations append only after their own schedule, activity, numerical, target, and real-consumer evidence exists.
 
 This ticket moves to dependency-blocked implementation state. Its implementation must consume the landed schedule and guarded-load authorities rather than reconstructing either in parallel.
+
+## Artifact correction — 2026-08-13 at `4fb0427319b1504e1549e03ba023ac486343a743`
+
+The source-first audit's Fact 8 and Implementation keys were incomplete when they said no artifact schema change is owed because artifacts carry canonical kernel identity. Artifact resource encoding separately drops `ResourceRequirements.subgroup` and decode reconstructs `None`; once the schedule derives `Some`, that decoded record would disagree with the verified kernel requirement despite the identity being correct. [`preserve-present-subgroup-requirements-in-the-artifact-resource-record`](preserve-present-subgroup-requirements-in-the-artifact-resource-record.md) now owns that carrier and is a dependency of the schedule ticket, so this KIR ticket is transitively blocked before a present requirement can become reachable. The accepted KIR operation/coordinate decision is unchanged.

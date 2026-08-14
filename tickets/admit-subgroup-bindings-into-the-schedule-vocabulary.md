@@ -3,7 +3,7 @@ id: admit-subgroup-bindings-into-the-schedule-vocabulary
 title: Admit subgroup bindings and their reduction topology into the schedule vocabulary
 status: blocked
 priority: p2
-dependencies: [accept-adr-0094-subgroup-execution-tier, admit-shared-contributor-coverage-and-reduction-padding-identity, decide-the-subgroup-coordinate-binding-and-output-map]
+dependencies: [accept-adr-0094-subgroup-execution-tier, admit-shared-contributor-coverage-and-reduction-padding-identity, decide-the-subgroup-coordinate-binding-and-output-map, preserve-present-subgroup-requirements-in-the-artifact-resource-record]
 related: [design-the-subgroup-execution-tier, admit-vector-lane-bindings-into-the-schedule-vocabulary, compose-the-two-level-subgroup-and-workgroup-reduction]
 scopes: [implementation/ir, implementation/compiler, contracts/decisions]
 shared_scopes: [project/tickets]

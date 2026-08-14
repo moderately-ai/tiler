@@ -25,22 +25,26 @@ Read in full: the acceptance and implementation tickets; ADRs 0074 and 0075; `sc
 5. **Verified — a present artifact resource subject is explicitly deferred.** The artifact model destructures `subgroup: _` and decode constructs `subgroup: None`; the acceptance ticket excludes present-subject artifact encoding. There is therefore no governed decoder whose implementation currently needs `from_tag`.
 6. **Verified — the landed identity evidence is incomplete.** Target complete/checked descriptor tests perturb width and arithmetic, but no test constructs a kernel with `ResourceRequirements.subgroup = Some(_)`. `rg -n 'subgroup.*identity|identity.*subgroup|subgroup_requirement' crates/tiler-ir/src/kernel crates/tiler-compiler/src/target.rs` locates the encoder and target-only tests.
 7. **Imprecise — “perturb transfer independently” is not currently a realizable typed subject test.** `SubgroupTransfer` has exactly one variant. The unknown raw tag test proves an unrecognized tag is rejected by the speculative helper, not that whole-subject equality distinguishes two typed transfer values. Do not manufacture a test-only production variant or claim the raw-tag test as a subject perturbation.
+8. **False — the draft public error does not conform to ADR 0074 convention 5a.** `SubgroupRealizationError` has no out-of-crate total recognizer and is an error/diagnostic vocabulary, yet it lacks `#[non_exhaustive]`. The accepted convention names errors as the ordinary 5a population. `ScalarArithmeticSubjectError` is the direct sibling precedent.
+9. **Imprecise — public `SubgroupTransfer::tag` is not needed cross-crate.** Every live cross-crate identity consumer calls `SubgroupRealizationSubject::encode`; the raw tag is used only inside `schedule/subgroup.rs`. `key` remains genuinely cross-crate through physical and explain consumers.
 
 These repairs narrow the exact spelling presented for acceptance; they do not change the already accepted whole-subject model.
 
 ## Required work
 
 - Remove `SubgroupTransfer::from_tag` and the unreachable `SubgroupRealizationError::UndefinedTransfer` from the public draft. Reintroduce a decoder only with the first schema that consumes it, where unknown-tag refusal and byte ownership can be tested end to end.
-- Preserve `tag`, `key`, and `SubgroupRealizationSubject::encode`: their current cross-crate identity and explanation consumers need one defining authority rather than locally reconstructed mappings.
+- Make `SubgroupTransfer::tag` private; preserve public `key` and `SubgroupRealizationSubject::encode`, whose current cross-crate explanation and identity consumers need one defining authority rather than locally reconstructed mappings.
+- Mark `SubgroupRealizationError` `#[non_exhaustive]` under ADR 0074 convention 5a. Keep its typed `ZeroWidth` and `UnsupportedWidth` variants, `rule`, `Display`, and `Error` surface.
 - Add a kernel-identity test with a real `Some(SubgroupRealizationSubject)`. Prove absent subjects preserve the existing pin and independently perturb every presently constructible dimension (width and arithmetic). Assert the transfer tag is encoded at its governed position without claiming that a second typed transfer exists.
 - Re-run the target complete/checked descriptor tests and subgroup feasibility tests. Record the transfer-perturbation evidence boundary explicitly for the later ticket that introduces a second transfer or the first artifact decoder.
+- Repair `xor_shuffle_rejects_width_one`: it currently compares `UnsupportedWidth.rule()` to itself rather than pinning the governed `"subgroup-width-unsupported"` token.
 - Rewrite `accept-the-atomic-subgroup-realization-surface` against the repaired exact commit: enumerate every public type, variant, method, field, relevant trait implementation, observed identity consequence, and exclusion. Apply the complete decision-packet readiness gate rather than presenting the current abbreviated recommendation.
 - Perturb the source, not an assertion: remove or corrupt the subgroup requirement passed to the kernel identity encoder and show the new `Some` test's failure text; separately change a width/arithmetic subject and show the descriptor/identity distinction fires.
 
 ## Option gate
 
 - **Status quo:** keep the speculative decoder and unreachable error. Correct but exposes more unowned public vocabulary and has no host/runtime benefit.
-- **Narrow now:** retain only currently consumed encoding/explanation helpers; remove the decoder/error reservation until a real schema owns it. Same correctness and runtime, smaller surface, clearer authority, and future decoder work gains an end-to-end negative. This dominates status quo.
+- **Narrow now:** retain only currently consumed encoding/explanation helpers; privatize the raw tag; remove the decoder/error reservation until a real schema owns it; make the growing error non-exhaustive. Same correctness and runtime, smaller conforming surface, clearer authority, and future decoder work gains an end-to-end negative. This dominates status quo.
 - **Remove all tag/key/encode helpers:** rejected. Cross-crate consumers would duplicate canonical mappings or require a larger public trait/identity redesign.
 - **Invent a second transfer only for perturbation:** rejected. It would widen the production vocabulary without an admitted semantic or backend realization and make the test prove a population the product does not support.
 

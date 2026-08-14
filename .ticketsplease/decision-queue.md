@@ -7,8 +7,8 @@ Updated 2026-08-13 at main `4fb04273` plus the pending atomic-surface repair del
 ## 1. Atomic subgroup realization surface — held for exact-surface repair
 
 - Tickets: `accept-the-atomic-subgroup-realization-surface` and `minimize-and-prove-the-atomic-subgroup-public-surface-before-acceptance` (`p1`).
-- Hold evidence: the packet omits public methods/types/traits; `SubgroupTransfer::from_tag` has no production consumer; `SubgroupRealizationError::UndefinedTransfer` is unreachable from every public constructor; and no test proves a present subgroup reaches kernel identity.
-- Current recommendation: remove the speculative decoder and unreachable error, retain the currently consumed tag/key/encode authorities, add the missing identity evidence, then rewrite the packet exactly.
+- Hold evidence: the packet omits public methods/types/traits; `SubgroupTransfer::from_tag` has no production consumer; `SubgroupRealizationError::UndefinedTransfer` is unreachable from every public constructor; the error violates ADR 0074's non-exhaustive convention; and no test proves a present subgroup reaches kernel identity.
+- Current recommendation: remove the speculative decoder and unreachable error, privatize the raw tag, retain the consumed key/subject encoder, conform the error, add the missing identity evidence, then rewrite the packet exactly. A separate artifact ticket now blocks subgroup schedule derivation until `Some` can round-trip.
 - Release trigger: the repair lands under independent exact-commit review and the acceptance packet is rebuilt through the complete option/readiness gate. Present it first only after that repair.
 
 ## 2. Live-extent artifact envelope row — held
