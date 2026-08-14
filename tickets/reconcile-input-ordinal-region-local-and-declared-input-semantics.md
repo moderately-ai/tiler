@@ -1,7 +1,7 @@
 ---
 id: reconcile-input-ordinal-region-local-and-declared-input-semantics
 title: Reconcile InputOrdinal region-local and declared-input semantics
-status: blocked
+status: todo
 priority: p1
 dependencies: [decide-the-schedule-local-input-ordinal-model]
 related: [decide-the-source-bound-live-row-major-access-surface, admit-symbolic-extents-through-schedule-formation, associate-live-extent-operands-with-symbolic-semantic-interface-axes]
@@ -36,9 +36,11 @@ rg -n 'AssemblyBinding::Input|input_ordinals_are_dense|SparseInputOrdinals|numbe
 rg -n 'tensor_role_comment|LiveRowMajor|InputOrdinal|TensorRole::Input' crates/tiler-metal/src crates/tiler-build/src crates/tiler-conformance/src crates/tiler-runtime/src
 ```
 
-## Decision stop
+## Accepted model — 2026-08-14
 
-No production edit is authorized while [`decide-the-schedule-local-input-ordinal-model`](decide-the-schedule-local-input-ordinal-model.md) is open. The current source assigns one public type two incompatible meanings and the compiler consumes the ambiguity at program binding. This ticket resumes only after Tom accepts an exact public meaning and identity consequence.
+Tom accepted the decision packet's Option 3 in the live Codex conversation, relayed by the coordinating agent. Replace `TensorRole::Input { ordinal: InputOrdinal }` completely with fieldless `TensorRole::Input`. Ordered schedule-access and kernel-buffer position is the sole coordinate for members already in those lists; `InputOrdinal` remains the explicit dense region-local handle for expression leaves and references outside a list. Replace `InputExtentParameter { tensor, axis }` with an exact local input-position reference and reject positions naming an intermediate or output.
+
+The compiler must project local-to-declared association from the already-retained checked `VerifiedRequestSubject`, make `CoverAssembly` consume that authority, and reach `InputKey` only through the exact stage access/materialized origin. No public declared-input ordinal, positional coincidence, search for a first input, or second retained association vector is accepted.
 
 ## Required work
 

@@ -1,13 +1,13 @@
 ---
 id: decide-the-schedule-local-input-ordinal-model
 title: Decide the schedule-local input ordinal model
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [reconcile-input-ordinal-region-local-and-declared-input-semantics]
 scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
-paths: []
+paths: [.ticketsplease/decision-queue.md]
 tags: [decision, needs-tom, public-boundary, schedule, identity]
 ---
 ## User-visible outcome
@@ -106,6 +106,12 @@ The current compiler's request-binding checks keep its own declared-role schedul
 Options 1 and 3 remain nondominated and both make the coordinate uniformly region-local. Option 1 preserves the accepted variant shape and dense-corpus bytes, but retains a redundant role ordinal and a verifier obligation to prove it agrees with access position. Option 3 makes that disagreement unrepresentable and removes encoded redundancy, but changes every input-role construction and identity plus the accepted live-extent parameter/codec surface; its Rust-layout benefit remains measurement-dependent. Both use the same already-retained request authority and add only the missing typed projection into assembly.
 
 The concrete question for Tom is: **preserve the explicit local ordinal on `TensorRole::Input` for narrower migration and dense-byte continuity (Option 1), or make the role fieldless and pay the complete pre-production identity/codec migration for one positional authority (Option 3)?** The recommendation is Option 3: the source census identifies an existing ordered, witnessed, handled, or named coordinate at every current carrier, and pre-production policy favors removing redundant invalid states over preserving internal bytes. Option 1 is the strongest counterpoint when dense-corpus identity continuity matters more than the permanent duplicate coordinate. Exact layout measurement remains reversal evidence about the size benefit, not a missing correctness prerequisite. Rejection keeps the reconciliation and symbolic schedule path blocked; it does not select declared schedule ordinals or validate the current mixed meaning.
+
+## Accepted by Tom — 2026-08-14
+
+Tom accepted Option 3 in the live Codex conversation after requesting and receiving the correctness, layering, identity, maintainability, migration, and host-cost rationale; the coordinating agent relayed the result here. `TensorRole::Input` becomes fieldless, ordered access/kernel-buffer position is the sole in-list local coordinate, and `InputOrdinal` remains the explicit region-local reference for expression leaves and other out-of-list references. Declared program-input association stays in the compiler-owned checked projection and reaches interface authority only through the exact stage access and `InputKey` binding.
+
+Acceptance includes the complete pre-production schedule/kernel/live-extent identity and codec migration and every negative named under Option 3. It does not authorize a source-bound live-row-major surface, symbolic schedule admission, artifact-envelope row, declared ordinal in shared IR, positional guessing, or a second retained association vector.
 
 ## Follow-up contract after acceptance — specifications only
 
