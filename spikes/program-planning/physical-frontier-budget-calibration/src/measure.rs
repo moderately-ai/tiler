@@ -3,11 +3,16 @@
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use tiler_compiler::physical_provider::PhysicalImplementationProvider;
+use tiler_compiler::physical_provider::{
+    InstalledPhysicalProviders, PhysicalImplementationProvider,
+};
+use tiler_compiler::session::NumericalContract;
 use tiler_compiler::target::TargetProfile;
 use tiler_ir::semantic::SemanticProgram;
 
-use crate::program::{Compiled, compile_governed_only, compile_installed};
+use crate::program::{
+    Compiled, compile_governed_only, compile_installed, compile_request,
+};
 use crate::providers::{Answer, as_dyn, flock, shared_tally};
 
 /// Timing and memory statistics for one workload.
@@ -15,6 +20,8 @@ use crate::providers::{Answer, as_dyn, flock, shared_tally};
 pub struct Sample {
     /// Workload name.
     pub name: String,
+    /// Target profiles in the one public request.
+    pub targets: usize,
     /// Installed extra providers (governed is always present).
     pub extra_providers: usize,
     /// Provider answer kind.
@@ -98,6 +105,7 @@ pub fn measure_population(
 
     Sample {
         name: name.to_owned(),
+        targets: 1,
         extra_providers: extra,
         kind,
         invocations: observed.invocations,
@@ -119,6 +127,100 @@ pub fn measure_population(
         mean: stats.mean,
         peak_rss_bytes,
     }
+}
+
+/// Measures a complete multi-target public request with the same warm-up,
+/// repetition, and child-RSS controls as [`measure_population`].
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the retained harness states every measurement control at its call site"
+)]
+pub fn measure_request_population(
+    name: &str,
+    program_kind: &'static str,
+    program: &SemanticProgram,
+    contracts: &[NumericalContract],
+    profiles: &[TargetProfile],
+    extra: usize,
+    answer: Answer,
+    warmup: u32,
+    repeats: u32,
+    collect_rss: bool,
+    self_exe: Option<&str>,
+) -> Sample {
+    let kind = kind_name(answer);
+    let census_tally = shared_tally();
+    let census_providers = flock(name, extra, answer, &census_tally);
+    let census_refs = as_dyn(&census_providers);
+    let compiled = compile_request_once(program, contracts, profiles, extra, &census_refs);
+    let observed = census_tally.borrow().clone();
+
+    let time_tally = shared_tally();
+    let time_providers = flock(&format!("{name}-time"), extra, answer, &time_tally);
+    let time_refs = as_dyn(&time_providers);
+    for _ in 0..warmup {
+        let _ = compile_request_once(program, contracts, profiles, extra, &time_refs);
+    }
+    let mut durations = Vec::with_capacity(repeats as usize);
+    for _ in 0..repeats {
+        let start = Instant::now();
+        let _ = compile_request_once(program, contracts, profiles, extra, &time_refs);
+        durations.push(start.elapsed());
+    }
+    let stats = summarize(&mut durations);
+    let peak_rss_bytes = if collect_rss {
+        self_exe.and_then(|exe| {
+            child_request_peak_rss(exe, name, profiles.len(), extra, kind, program_kind)
+        })
+    } else {
+        None
+    };
+
+    Sample {
+        name: name.to_owned(),
+        targets: profiles.len(),
+        extra_providers: extra,
+        kind,
+        invocations: observed.invocations,
+        proposals: observed.proposals,
+        declines: observed.declines,
+        subjects: observed.distinct_subjects(),
+        baseline_subjects: observed.baseline_subjects,
+        alternatives: compiled.alternatives,
+        offered: compiled.offered,
+        selected_providers: compiled.selected_providers,
+        explain_bytes: compiled.explain_bytes,
+        failure: compiled.failure.map(|class| format!("{class:?}")),
+        warmup,
+        repeats,
+        min: stats.min,
+        median: stats.median,
+        p90: stats.p90,
+        max: stats.max,
+        mean: stats.mean,
+        peak_rss_bytes,
+    }
+}
+
+fn compile_request_once(
+    program: &SemanticProgram,
+    contracts: &[NumericalContract],
+    profiles: &[TargetProfile],
+    extra: usize,
+    refs: &[&dyn PhysicalImplementationProvider],
+) -> Compiled {
+    let environment = if extra == 0 {
+        InstalledPhysicalProviders::governed()
+    } else {
+        InstalledPhysicalProviders::installed(refs.iter().copied())
+            .expect("the request measurement providers install")
+    };
+    compile_request(
+        program,
+        contracts.iter().copied(),
+        profiles.iter().cloned(),
+        &environment,
+    )
 }
 
 fn compile_once(
@@ -184,6 +286,33 @@ fn child_peak_rss(exe: &str, name: &str, extra: usize, kind: &str) -> Option<u64
     parse_time_l_rss(&String::from_utf8_lossy(&output.stderr))
 }
 
+fn child_request_peak_rss(
+    exe: &str,
+    name: &str,
+    targets: usize,
+    extra: usize,
+    kind: &str,
+    program_kind: &str,
+) -> Option<u64> {
+    let output = Command::new("/usr/bin/time")
+        .args([
+            "-l",
+            exe,
+            "child-request-measure",
+            name,
+            &targets.to_string(),
+            &extra.to_string(),
+            kind,
+            program_kind,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .ok()?;
+    parse_time_l_rss(&String::from_utf8_lossy(&output.stderr))
+}
+
 /// Parses macOS `/usr/bin/time -l` maximum resident set size.
 #[must_use]
 pub fn parse_time_l_rss(stderr: &str) -> Option<u64> {
@@ -212,6 +341,30 @@ pub fn child_measure(program: &SemanticProgram, profile: &TargetProfile, extra: 
         let _ = compile_once(program, profile, extra, &refs);
     }
     let _ = compile_once(program, profile, extra, &refs);
+}
+
+/// One warmed multi-target compile used as the `/usr/bin/time -l` subject.
+pub fn child_request_measure(
+    program: &SemanticProgram,
+    contracts: &[NumericalContract],
+    profiles: &[TargetProfile],
+    extra: usize,
+    kind: &str,
+) {
+    let answer = match kind {
+        "empty" => Answer::Empty,
+        "decline" => Answer::Decline,
+        "propose" => Answer::Specialize { threads: 32 },
+        "infeasible" => Answer::Infeasible { threads: 512 },
+        other => panic!("unknown child kind {other}"),
+    };
+    let tally = shared_tally();
+    let providers = flock("child-request", extra, answer, &tally);
+    let refs = as_dyn(&providers);
+    for _ in 0..2 {
+        let _ = compile_request_once(program, contracts, profiles, extra, &refs);
+    }
+    let _ = compile_request_once(program, contracts, profiles, extra, &refs);
 }
 
 /// Formats a duration as microseconds for JSON.

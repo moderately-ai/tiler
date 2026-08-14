@@ -3,7 +3,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use tiler_compiler::physical_provider::PhysicalImplementationProvider;
+use tiler_compiler::physical_provider::{
+    InstalledPhysicalProviders, PhysicalImplementationProvider,
+};
 use tiler_compiler::target::TargetProfile;
 use tiler_ir::semantic::SemanticProgram;
 
@@ -45,7 +47,7 @@ impl Check {
 pub enum Perturb {
     /// Do not perturb.
     None,
-    /// Count a fixture source that contains a second production impl.
+    /// Scan a syntactically valid fixture source containing a second impl declaration.
     ExtraProductionProvider,
     /// Compile the tiny pointwise program instead of the five-op program.
     TinyProgram,
@@ -59,6 +61,10 @@ pub enum Perturb {
     OneAdditiveSpecialist,
     /// An "infeasible" specialist that actually fits the profile.
     FeasibleInsteadOfInfeasible,
+    /// Recalculate from three installed specialists instead of two.
+    LimitRecommendationPopulation,
+    /// Recalculate the full provider-slot population from 29 specialists.
+    FullLimitPopulation,
 }
 
 impl Perturb {
@@ -74,6 +80,8 @@ impl Perturb {
             "decline-instead-of-propose" => Some(Self::DeclineInsteadOfPropose),
             "one-additive-specialist" => Some(Self::OneAdditiveSpecialist),
             "feasible-instead-of-infeasible" => Some(Self::FeasibleInsteadOfInfeasible),
+            "limit-recommendation-population" => Some(Self::LimitRecommendationPopulation),
+            "full-limit-population" => Some(Self::FullLimitPopulation),
             _ => None,
         }
     }
@@ -87,6 +95,8 @@ impl Perturb {
         Self::DeclineInsteadOfPropose,
         Self::OneAdditiveSpecialist,
         Self::FeasibleInsteadOfInfeasible,
+        Self::LimitRecommendationPopulation,
+        Self::FullLimitPopulation,
     ];
 
     /// Stable name used on the command line and in the record.
@@ -101,15 +111,20 @@ impl Perturb {
             Self::DeclineInsteadOfPropose => "decline-instead-of-propose",
             Self::OneAdditiveSpecialist => "one-additive-specialist",
             Self::FeasibleInsteadOfInfeasible => "feasible-instead-of-infeasible",
+            Self::LimitRecommendationPopulation => "limit-recommendation-population",
+            Self::FullLimitPopulation => "full-limit-population",
         }
     }
 }
 
-/// Production `PhysicalImplementationProvider` impls in `tiler-compiler`.
+/// Source-declared production `PhysicalImplementationProvider` impls.
 ///
-/// Test modules and the integration-test crate are stripped before the count,
-/// so a fixture in `frontier.rs`'s `#[cfg(test)]` module cannot satisfy this
-/// check. The expected value is one: `GovernedPhysicalProvider`.
+/// This is deliberately a textual source census, not a Rust type-system
+/// enumeration: it recognizes the exact ordinary impl spelling after excluding
+/// `tests.rs` and cutting inline `#[cfg(test)] mod` tails. The source reading
+/// establishes whether that bounded population is complete. The retained
+/// perturbation sends a syntactically valid Rust impl fragment through these same scanner
+/// functions, rather than manufacturing an extra result after scanning.
 #[must_use]
 pub fn production_provider_impls(crate_src: &Path, perturb: Perturb) -> (usize, Vec<String>) {
     let mut names = Vec::new();
@@ -136,10 +151,16 @@ pub fn production_provider_impls(crate_src: &Path, perturb: Perturb) -> (usize, 
             }
         }
     }
-    names.sort();
     if matches!(perturb, Perturb::ExtraProductionProvider) {
-        names.push("fixture::SyntheticSecondProvider".to_owned());
+        // Perturb the source consumed by the same scanner rather than its
+        // result vector. This syntactically valid fragment remains outside the real
+        // crate and therefore changes only the census subject.
+        const FIXTURE: &str = "struct SyntheticSecondProvider;\nimpl PhysicalImplementationProvider for SyntheticSecondProvider {}\n";
+        for name in impl_names(production_source(FIXTURE)) {
+            names.push(format!("fixture.rs::{name}"));
+        }
     }
+    names.sort();
     (names.len(), names)
 }
 
@@ -156,7 +177,7 @@ pub fn run_checks(repo: &Path, perturb: Perturb) -> Vec<Check> {
     let declared = crate::profile::declared_workgroup_profile("test.calibrate-census.v1", 64);
 
     let mut checks = vec![Check::eq(
-        "compiler-owned-production-providers",
+        "source-declared-production-provider-impls",
         1_usize,
         production_count,
     )];
@@ -169,7 +190,24 @@ pub fn run_checks(repo: &Path, perturb: Perturb) -> Vec<Check> {
     checks.extend(infeasible_checks(&program, &declared, perturb));
     checks.extend(empty_checks(&program, &profile));
     checks.extend(governed_only_checks(&program, &profile));
+    checks.extend(installation_checks());
     checks
+}
+
+fn installation_checks() -> Vec<Check> {
+    // This is a finite witness for the source reading: `installed` collects the
+    // entire iterator and validates identity, but carries no count branch. It is
+    // deliberately one above the old 128-outcome failure population so an
+    // unrelated explain bound cannot be misread as an installation bound.
+    let tally = shared_tally();
+    let providers = flock("installation", 129, Answer::Empty, &tally);
+    let environment = InstalledPhysicalProviders::installed(as_dyn(&providers))
+        .expect("the public installation type has no count refusal");
+    vec![Check::eq(
+        "type-admits-129-installed-providers",
+        129,
+        environment.identities().len(),
+    )]
 }
 
 fn observer_checks(

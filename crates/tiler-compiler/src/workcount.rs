@@ -21,7 +21,7 @@
 //! fail depending on which runner was used. A thread-local counts only the work
 //! the observing thread caused.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 /// One named counter.
 pub(crate) struct WorkCounter {
@@ -144,3 +144,114 @@ thread_local! {
 /// members are what each proposal's request-subject binding is checked against.
 pub(crate) static FRONTIER_ENUMERATIONS: WorkCounter =
     WorkCounter::new("frontier enumeration", &FRONTIER_ENUMERATION);
+
+/// Exact physical-frontier and plan-selection work caused by one test subject.
+///
+/// This is a test-only structural census, not a production metric. It records
+/// the independent populations a raw provider outcome can enter so calibration
+/// does not equate an emission with verification, retention, sorting, or a
+/// complete-plan combination.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PhysicalPlanningCensus {
+    pub(crate) provider_invocations: u64,
+    pub(crate) proposals: u64,
+    pub(crate) declines: u64,
+    pub(crate) proposal_assessments_started: u64,
+    pub(crate) schedule_verifications: u64,
+    pub(crate) admitted_implementations: u64,
+    pub(crate) retained_implementations: u64,
+    pub(crate) proposal_rejections: u64,
+    pub(crate) frontier_rejections: u64,
+    pub(crate) admitted_sort_items: u64,
+    pub(crate) rejection_sort_items: u64,
+    pub(crate) plan_combinations: u64,
+    pub(crate) accepted_plan_combinations: u64,
+    pub(crate) rejected_plan_combinations: u64,
+    pub(crate) retained_complete_plans: u64,
+    pub(crate) complete_plan_sort_items: u64,
+}
+
+thread_local! {
+    static PHYSICAL_PLANNING_CENSUS: RefCell<PhysicalPlanningCensus> =
+        RefCell::new(PhysicalPlanningCensus::default());
+}
+
+/// Runs `work` from an empty physical-planning census.
+pub(crate) fn observe_physical_planning<T>(
+    work: impl FnOnce() -> T,
+) -> (T, PhysicalPlanningCensus) {
+    PHYSICAL_PLANNING_CENSUS
+        .with(|census| *census.borrow_mut() = PhysicalPlanningCensus::default());
+    let value = work();
+    let census = PHYSICAL_PLANNING_CENSUS.with(|census| census.borrow().clone());
+    (value, census)
+}
+
+pub(crate) fn record_provider_offer(proposals: usize, declines: usize) {
+    PHYSICAL_PLANNING_CENSUS.with(|census| {
+        let mut census = census.borrow_mut();
+        census.provider_invocations = census.provider_invocations.saturating_add(1);
+        census.proposals = census
+            .proposals
+            .saturating_add(u64::try_from(proposals).unwrap_or(u64::MAX));
+        census.declines = census
+            .declines
+            .saturating_add(u64::try_from(declines).unwrap_or(u64::MAX));
+    });
+}
+
+/// Records entry into assessment of one emitted proposal.
+///
+/// Kept separate from [`record_provider_offer`] because a fatal malformed
+/// proposal stops enumeration: later proposals were emitted but never enter
+/// the assessment loop.
+pub(crate) fn record_proposal_assessment_started() {
+    PHYSICAL_PLANNING_CENSUS.with(|census| {
+        let mut census = census.borrow_mut();
+        census.proposal_assessments_started = census.proposal_assessments_started.saturating_add(1);
+    });
+}
+
+pub(crate) fn record_schedule_verification() {
+    PHYSICAL_PLANNING_CENSUS.with(|census| {
+        let mut census = census.borrow_mut();
+        census.schedule_verifications = census.schedule_verifications.saturating_add(1);
+    });
+}
+
+pub(crate) fn record_frontier_result(admitted: usize, rejections: usize, raw_declines: usize) {
+    PHYSICAL_PLANNING_CENSUS.with(|census| {
+        let mut census = census.borrow_mut();
+        let admitted = u64::try_from(admitted).unwrap_or(u64::MAX);
+        let rejections = u64::try_from(rejections).unwrap_or(u64::MAX);
+        census.admitted_implementations = census.admitted_implementations.saturating_add(admitted);
+        census.retained_implementations = census.retained_implementations.saturating_add(admitted);
+        census.proposal_rejections = census.proposal_rejections.saturating_add(
+            rejections.saturating_sub(u64::try_from(raw_declines).unwrap_or(u64::MAX)),
+        );
+        census.frontier_rejections = census.frontier_rejections.saturating_add(rejections);
+        census.admitted_sort_items = census.admitted_sort_items.saturating_add(admitted);
+        census.rejection_sort_items = census.rejection_sort_items.saturating_add(rejections);
+    });
+}
+
+pub(crate) fn record_plan_combination(accepted: bool) {
+    PHYSICAL_PLANNING_CENSUS.with(|census| {
+        let mut census = census.borrow_mut();
+        census.plan_combinations = census.plan_combinations.saturating_add(1);
+        if accepted {
+            census.accepted_plan_combinations = census.accepted_plan_combinations.saturating_add(1);
+        } else {
+            census.rejected_plan_combinations = census.rejected_plan_combinations.saturating_add(1);
+        }
+    });
+}
+
+pub(crate) fn record_complete_plan_retention(retained: usize) {
+    PHYSICAL_PLANNING_CENSUS.with(|census| {
+        let mut census = census.borrow_mut();
+        let retained = u64::try_from(retained).unwrap_or(u64::MAX);
+        census.retained_complete_plans = census.retained_complete_plans.saturating_add(retained);
+        census.complete_plan_sort_items = census.complete_plan_sort_items.saturating_add(retained);
+    });
+}

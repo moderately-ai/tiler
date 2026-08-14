@@ -1,0 +1,137 @@
+{
+  "experiment": "physical-frontier-request-population-census",
+  "behavior_under_test_base": "4fb0427319b1504e1549e03ba023ac486343a743",
+  "executable_evidence_commit": "bef9a39afaeb929eef99d7d43232bdc61c9b5e2a",
+  "record_lands_in_a_descendant_with_the_executable_harness_unchanged": true,
+  "timing_status": "held: available host was an active Apple M4 Max, not the required idle M3 Pro",
+  "public_installed_specialist": {
+    "five_op_strict": [
+      {"targets": 1, "invocations": 17, "proposals": 3, "declines": 14, "raw_outcomes": 17, "rendered_explain_bytes": 103137},
+      {"targets": 2, "invocations": 34, "proposals": 6, "declines": 28, "raw_outcomes": 34, "rendered_explain_bytes": 206274},
+      {"targets": 8, "invocations": 136, "proposals": 24, "declines": 112, "raw_outcomes": 136, "rendered_explain_bytes": 825096},
+      {"targets": 16, "invocations": 272, "proposals": 48, "declines": 224, "raw_outcomes": 272, "rendered_explain_bytes": 1651952}
+    ],
+    "add_chain_four_contract_groups": [
+      {"targets": 1, "invocations": 10, "proposals": 1, "declines": 9, "raw_outcomes": 10, "rendered_explain_bytes": 42545},
+      {"targets": 2, "invocations": 20, "proposals": 2, "declines": 18, "raw_outcomes": 20, "rendered_explain_bytes": 85170},
+      {"targets": 8, "invocations": 124, "proposals": 12, "declines": 112, "raw_outcomes": 124, "rendered_explain_bytes": 514744},
+      {"targets": 16, "invocations": 248, "proposals": 24, "declines": 224, "raw_outcomes": 248, "rendered_explain_bytes": 1030032}
+    ]
+  },
+  "reversed_add_chain_target_order": {
+    "raw_outcomes": 248,
+    "rendered_explain_bytes": 1029104,
+    "caller_order_preserved": true
+  },
+  "compiler_owned_sixteen_target_work": {
+    "five_op_governed": {
+      "provider_invocations": 272,
+      "proposals": 48,
+      "declines": 256,
+      "raw_outcomes": 304,
+      "proposal_assessments_started": 48,
+      "schedule_verifications": 48,
+      "admitted_implementations": 48,
+      "retained_implementations": 48,
+      "proposal_rejections": 0,
+      "frontier_rejections": 256,
+      "admitted_sort_items": 48,
+      "rejection_sort_items": 256,
+      "plan_combinations": 32,
+      "accepted_plan_combinations": 32,
+      "rejected_plan_combinations": 0,
+      "retained_complete_plans": 32,
+      "complete_plan_sort_items": 32
+    },
+    "five_op_governed_plus_one_specialist": {
+      "provider_invocations": 544,
+      "proposals": 96,
+      "declines": 480,
+      "raw_outcomes": 576,
+      "proposal_assessments_started": 96,
+      "schedule_verifications": 96,
+      "admitted_implementations": 96,
+      "retained_implementations": 96,
+      "proposal_rejections": 0,
+      "frontier_rejections": 480,
+      "admitted_sort_items": 96,
+      "rejection_sort_items": 480,
+      "plan_combinations": 96,
+      "accepted_plan_combinations": 96,
+      "rejected_plan_combinations": 0,
+      "retained_complete_plans": 96,
+      "complete_plan_sort_items": 96
+    },
+    "five_op_governed_plus_infeasible_specialist": {
+      "provider_invocations": 544,
+      "proposals": 96,
+      "declines": 480,
+      "raw_outcomes": 576,
+      "proposal_assessments_started": 96,
+      "schedule_verifications": 96,
+      "admitted_implementations": 48,
+      "retained_implementations": 48,
+      "proposal_rejections": 48,
+      "frontier_rejections": 528,
+      "admitted_sort_items": 48,
+      "rejection_sort_items": 528,
+      "plan_combinations": 32,
+      "accepted_plan_combinations": 32,
+      "rejected_plan_combinations": 0,
+      "retained_complete_plans": 32,
+      "complete_plan_sort_items": 32
+    },
+    "add_chain_four_contract_groups_governed": {
+      "provider_invocations": 248,
+      "proposals": 24,
+      "declines": 224,
+      "raw_outcomes": 248,
+      "proposal_assessments_started": 24,
+      "schedule_verifications": 24,
+      "admitted_implementations": 24,
+      "retained_implementations": 24,
+      "proposal_rejections": 0,
+      "frontier_rejections": 224,
+      "admitted_sort_items": 24,
+      "rejection_sort_items": 224,
+      "plan_combinations": 24,
+      "accepted_plan_combinations": 24,
+      "rejected_plan_combinations": 0,
+      "retained_complete_plans": 24,
+      "complete_plan_sort_items": 24
+    }
+  },
+  "candidate_arithmetic": {
+    "governed_only": 304,
+    "governed_plus_one_specialist": 576,
+    "governed_plus_two_specialists": 848,
+    "governed_plus_three_specialists": 1120,
+    "governed_plus_31_specialists": 8736,
+    "narrow_power_of_two": 1024,
+    "full_32_provider_power_of_two": 16384
+  },
+  "type_population": {
+    "finite_witness_installed_providers": 129,
+    "source_has_count_branch": false,
+    "portable_maximum_claimed": null
+  },
+  "production_provider_source_census": {
+    "source_declared_impls": 1,
+    "scanner_kind": "textual exact-impl-spelling census after named test-source exclusions",
+    "rust_type_system_enumeration_claimed": false,
+    "negative_input": "syntactically valid second impl fragment passed through the same source scanner"
+  },
+  "identity_consequence": {
+    "direct": ["compiler-internal canonical request/evidence subject", "explain request qualifier"],
+    "not_direct": ["plan identity", "artifact identity", "cache identity"],
+    "indirect_only_if": "the changed bound changes selected packaged content"
+  },
+  "preserved_draft_reproduction": {
+    "commit": "54e272baa525027a6f6f9d982bd3bd7c387597fb",
+    "limit": 256,
+    "reported": 257,
+    "compiled_target_indexes": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+    "refused_target_indexes": [13, 14, 15],
+    "failure_resource": "PhysicalFrontierOutcomes"
+  }
+}

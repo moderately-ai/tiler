@@ -5,7 +5,9 @@ use tiler_compiler::target::{
     ScalarSupport, TargetFactProducerIdentity, TargetFactSource, TargetNormativeReferenceIdentity,
     TargetProfile, TargetProfileBuilder, TargetProfileKey,
 };
-use tiler_ir::schedule::{ExceptionalValueAssumption, NumericalPermission, SubnormalMode};
+use tiler_ir::schedule::{
+    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
+};
 use tiler_ir::semantic::F32;
 
 /// The compiler-governed prototype target-neutral baseline profile.
@@ -22,6 +24,27 @@ pub fn governed() -> TargetProfile {
 /// rejection the infeasible-proposal workload needs to observe.
 #[must_use]
 pub fn declared_workgroup_profile(key: &str, max_threads_per_workgroup: u32) -> TargetProfile {
+    declared_numerical_profile(
+        key,
+        max_threads_per_workgroup,
+        SubnormalMode::Preserve,
+        NumericalPermission::Forbidden,
+    )
+}
+
+/// Builds one exact `f32` profile for a request-population census.
+///
+/// The two varied dimensions are enough to force all four named contract
+/// groups the public preference surface can state at once. Every other target
+/// fact is held identical, so a changed census is attributable to target count
+/// or numerical resolution rather than an unrelated capability.
+#[must_use]
+pub fn declared_numerical_profile(
+    key: &str,
+    max_threads_per_workgroup: u32,
+    subnormals: SubnormalMode,
+    reassociation: NumericalPermission,
+) -> TargetProfile {
     let source = TargetFactSource::external_guarantee(
         TargetFactProducerIdentity::new("test.calibrate-profile-producer.v1".to_owned(), 1)
             .expect("the producer identity is valid"),
@@ -55,7 +78,7 @@ pub fn declared_workgroup_profile(key: &str, max_threads_per_workgroup: u32) -> 
     builder
         .declare_input_subnormals(
             subject.clone(),
-            SubnormalMode::Preserve,
+            subnormals,
             ScalarSupport::Exact,
             source.clone(),
         )
@@ -63,7 +86,7 @@ pub fn declared_workgroup_profile(key: &str, max_threads_per_workgroup: u32) -> 
     builder
         .declare_result_subnormals(
             subject.clone(),
-            SubnormalMode::Preserve,
+            subnormals,
             ScalarSupport::Exact,
             source.clone(),
         )
@@ -79,7 +102,7 @@ pub fn declared_workgroup_profile(key: &str, max_threads_per_workgroup: u32) -> 
     builder
         .declare_reassociation(
             subject.clone(),
-            NumericalPermission::Forbidden,
+            reassociation,
             ScalarSupport::Exact,
             source.clone(),
         )
@@ -124,4 +147,31 @@ pub fn declared_workgroup_profile(key: &str, max_threads_per_workgroup: u32) -> 
         )
         .expect("dtype");
     builder.build().expect("the declared profile builds")
+}
+
+/// The sign-preserving flush behaviour used by the two flushing profiles.
+pub const SIGN_PRESERVING_FLUSH: SubnormalMode = SubnormalMode::FlushToZero {
+    zero_sign: FlushedZeroSign::PreservesSign,
+};
+
+/// Builds `count` unique profiles cycling through strict, flush-only,
+/// reassociate-only, and flush-plus-reassociate realizations.
+#[must_use]
+pub fn request_profiles(prefix: &str, count: usize) -> Vec<TargetProfile> {
+    (0..count)
+        .map(|index| {
+            let (subnormals, reassociation) = match index % 4 {
+                0 => (SubnormalMode::Preserve, NumericalPermission::Forbidden),
+                1 => (SIGN_PRESERVING_FLUSH, NumericalPermission::Forbidden),
+                2 => (SubnormalMode::Preserve, NumericalPermission::Permitted),
+                _ => (SIGN_PRESERVING_FLUSH, NumericalPermission::Permitted),
+            };
+            declared_numerical_profile(
+                &format!("{prefix}-{index}.v1"),
+                64,
+                subnormals,
+                reassociation,
+            )
+        })
+        .collect()
 }

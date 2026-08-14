@@ -79,6 +79,30 @@ pub fn tiny_pointwise_program() -> SemanticProgram {
     builder.build().expect("the program verifies")
 }
 
+/// A tensor add chain whose ordered regrouping creates a second semantic
+/// candidate only for targets resolving a reassociating contract.
+#[must_use]
+pub fn tensor_add_chain() -> SemanticProgram {
+    let mut builder =
+        SemanticProgramBuilder::try_standard().expect("the governed profile composes");
+    let input = builder
+        .input::<F32>(
+            InputKey::new("input").expect("a valid input key"),
+            Shape::from_dims([2, 2]),
+        )
+        .expect("the input binds");
+    let first =
+        F32Constant::apply(&mut builder, 1.0e20_f32.to_bits()).expect("the first constant applies");
+    let second = F32Constant::apply(&mut builder, (-1.0e20_f32).to_bits())
+        .expect("the second constant applies");
+    let left = F32Add::apply(&mut builder, input, first).expect("the first add applies");
+    let root = F32Add::apply(&mut builder, left, second).expect("the second add applies");
+    builder
+        .output(OutputKey::new("result").expect("a valid output key"), root)
+        .expect("the output binds");
+    builder.build().expect("the program verifies")
+}
+
 /// Outcome of one compile through the public session.
 #[derive(Debug)]
 pub struct Compiled {
@@ -92,6 +116,12 @@ pub struct Compiled {
     pub offered: usize,
     /// Distinct selected physical-provider explain subjects.
     pub selected_providers: usize,
+    /// Target slots returned in caller order.
+    pub target_keys: Vec<String>,
+    /// Successful target slots.
+    pub successes: usize,
+    /// Resolved numerical contract key for every successful slot.
+    pub resolved_contracts: Vec<String>,
 }
 
 /// Compiles `program` against `profile` and the stated physical environment.
@@ -100,38 +130,69 @@ pub fn compile_with(
     profile: &TargetProfile,
     providers: &InstalledPhysicalProviders<'_>,
 ) -> Compiled {
-    let request = CompileRequest::new(
-        program,
-        CONTRACT,
-        TargetRequest::new([profile.clone()]).expect("a singleton target request is valid"),
-    )
-    .with_physical_providers(providers.clone());
-    match compile(request) {
-        Ok(batch) => {
-            let mut targets = batch.into_targets();
-            let (_, outcome) = targets
-                .pop()
-                .expect("a singleton target request yields one target")
-                .into_parts();
-            match outcome {
-                Ok(compilation) => summarize_ok(&compilation),
-                Err(failure) => Compiled {
-                    failure: Some(failure.class()),
-                    explain_bytes: failure.explain().map_or(0, |report| report.render().len()),
-                    alternatives: 0,
-                    offered: 0,
-                    selected_providers: 0,
-                },
+    compile_request(program, [CONTRACT], [profile.clone()], providers)
+}
+
+/// Compiles one complete public request, preserving target order and resolving
+/// every stated numerical-contract group inside the same compiler call.
+pub fn compile_request(
+    program: &SemanticProgram,
+    contracts: impl IntoIterator<Item = NumericalContract>,
+    profiles: impl IntoIterator<Item = TargetProfile>,
+    providers: &InstalledPhysicalProviders<'_>,
+) -> Compiled {
+    let targets = TargetRequest::new(profiles).expect("the census target request is valid");
+    let request = match CompileRequest::preferring(program, contracts, targets) {
+        Ok(request) => request.with_physical_providers(providers.clone()),
+        Err(failure) => return summarize_request_failure(&failure),
+    };
+    let batch = match compile(request) {
+        Ok(batch) => batch,
+        Err(failure) => return summarize_request_failure(&failure),
+    };
+
+    let mut summary = Compiled {
+        failure: None,
+        explain_bytes: 0,
+        alternatives: 0,
+        offered: 0,
+        selected_providers: 0,
+        target_keys: Vec::new(),
+        successes: 0,
+        resolved_contracts: Vec::new(),
+    };
+    let mut selected = BTreeSet::new();
+    for slot in batch.into_targets() {
+        let (profile, outcome) = slot.into_parts();
+        summary
+            .target_keys
+            .push(profile.profile_key().as_str().to_owned());
+        match outcome {
+            Ok(compilation) => {
+                let one = summarize_ok(&compilation);
+                summary.successes += 1;
+                summary.explain_bytes += one.explain_bytes;
+                summary.alternatives += one.alternatives;
+                summary.offered = summary.offered.max(one.offered);
+                summary
+                    .resolved_contracts
+                    .push(compilation.resolved_numerical_contract_key().to_owned());
+                selected.extend(compilation.alternatives().flat_map(|alternative| {
+                    alternative
+                        .selected_physical_providers()
+                        .map(|provider| provider.provider_explain_subject().to_owned())
+                        .collect::<Vec<_>>()
+                }));
+            }
+            Err(failure) => {
+                summary.failure.get_or_insert(failure.class());
+                summary.explain_bytes +=
+                    failure.explain().map_or(0, |report| report.render().len());
             }
         }
-        Err(failure) => Compiled {
-            failure: Some(failure.class()),
-            explain_bytes: failure.explain().map_or(0, |report| report.render().len()),
-            alternatives: 0,
-            offered: 0,
-            selected_providers: 0,
-        },
     }
+    summary.selected_providers = selected.len();
+    summary
 }
 
 /// Compiles with only the governed physical provider.
@@ -170,5 +231,27 @@ fn summarize_ok(compilation: &Compilation) -> Compiled {
         alternatives,
         offered,
         selected_providers,
+        target_keys: vec![
+            compilation
+                .target_profile()
+                .profile_key()
+                .as_str()
+                .to_owned(),
+        ],
+        successes: 1,
+        resolved_contracts: vec![compilation.resolved_numerical_contract_key().to_owned()],
+    }
+}
+
+fn summarize_request_failure(failure: &tiler_compiler::session::CompileFailure) -> Compiled {
+    Compiled {
+        failure: Some(failure.class()),
+        explain_bytes: failure.explain().map_or(0, |report| report.render().len()),
+        alternatives: 0,
+        offered: 0,
+        selected_providers: 0,
+        target_keys: Vec::new(),
+        successes: 0,
+        resolved_contracts: Vec::new(),
     }
 }

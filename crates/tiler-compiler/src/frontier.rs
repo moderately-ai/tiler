@@ -2345,6 +2345,8 @@ pub(crate) fn enumerate_frontier(
     let applicable_key = target_profile_key.clone();
     let mut admitted = Vec::new();
     let mut rejections = Vec::new();
+    #[cfg(test)]
+    let mut raw_declines = 0_usize;
     // One context for the whole enumeration rather than one per provider, so the
     // baseline spelling it derives on demand is derived at most once however many
     // providers ask for it. Nothing in it is provider-specific: it carries the
@@ -2359,6 +2361,11 @@ pub(crate) fn enumerate_frontier(
             .provenance()
             .map_err(|source| FrontierError::UnrepresentableProviderProvenance { source })?;
         let offer = provider.propose(&context);
+        #[cfg(test)]
+        {
+            raw_declines = raw_declines.saturating_add(offer.declined.len());
+            crate::workcount::record_provider_offer(offer.proposals.len(), offer.declined.len());
+        }
         // A withheld strategy is recorded before the offered ones are assessed,
         // so a reader sees what the provider ruled out for this request beside
         // what it proposed for it rather than only in the proposals' absence.
@@ -2370,6 +2377,8 @@ pub(crate) fn enumerate_frontier(
             });
         }
         for proposal in offer.proposals {
+            #[cfg(test)]
+            crate::workcount::record_proposal_assessment_started();
             let kind = proposal.body.kind();
             if !proposal.applicability.applies_to(&applicable_key) {
                 match &proposal.body {
@@ -2549,6 +2558,8 @@ pub(crate) fn enumerate_frontier(
                     continue;
                 }
             };
+            #[cfg(test)]
+            crate::workcount::record_schedule_verification();
             match verify_schedule_with_feasibility(
                 region,
                 subject.semantic_members.clone(),
@@ -2621,6 +2632,8 @@ pub(crate) fn enumerate_frontier(
             }
         }
     }
+    #[cfg(test)]
+    crate::workcount::record_frontier_result(admitted.len(), rejections.len(), raw_declines);
     admitted.sort_by(|left, right| left.identity.as_bytes().cmp(right.identity.as_bytes()));
     rejections.sort_by_key(encode_rejection);
     Ok(ImplementationFrontier {
@@ -4665,6 +4678,124 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn a_fatal_proposal_leaves_later_emitted_proposals_unassessed() {
+        struct FatalThenValidProvider;
+        impl PhysicalImplementationProvider for FatalThenValidProvider {
+            fn provenance(
+                &self,
+            ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
+                PhysicalProviderProvenance::new(provider_identity("fatal-then-valid", 1))
+            }
+
+            fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
+                let region = fused_region(context.request());
+                let mut proposals = vec![
+                    ImplementationProposal::new(
+                        ProposalBody::ScheduledKernel(Box::new(region.clone())),
+                        governed_applicability(),
+                        PhysicalCostEstimate::new("tiler.cost.ungoverned.v9", 1, 2, 0),
+                    ),
+                    ImplementationProposal::new(
+                        ProposalBody::ScheduledKernel(Box::new(region)),
+                        governed_applicability(),
+                        PhysicalCostEstimate::structural(1, 2, 0),
+                    ),
+                ];
+                if std::env::var("TILER_FRONTIER_CENSUS_PERTURB").as_deref()
+                    == Ok("fatal-proposal-order")
+                {
+                    proposals.reverse();
+                }
+                ProviderOffer::proposing(proposals)
+            }
+        }
+
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
+        let subject = fused_subject(&request);
+        let provider = FatalThenValidProvider;
+        let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
+        let (result, census) = crate::workcount::observe_physical_planning(|| {
+            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new())
+        });
+
+        assert!(matches!(
+            result,
+            Err(FrontierError::MalformedCostProvenance { .. })
+        ));
+        assert_eq!(census.proposals, 2, "the provider emitted both proposals");
+        assert_eq!(
+            census.proposal_assessments_started, 1,
+            "the fatal first proposal must prevent the later proposal entering assessment",
+        );
+        assert_eq!(
+            census.schedule_verifications, 0,
+            "cost provenance fails before schedule verification",
+        );
+    }
+
+    #[test]
+    fn proposal_assessment_precedes_applicability_and_body_dispatch() {
+        struct MixedPathProvider;
+        impl PhysicalImplementationProvider for MixedPathProvider {
+            fn provenance(
+                &self,
+            ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
+                PhysicalProviderProvenance::new(provider_identity("mixed-assessment-paths", 1))
+            }
+
+            fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
+                let region = fused_region(context.request());
+                let mut proposals = vec![
+                    ImplementationProposal::new(
+                        ProposalBody::ScheduledKernel(Box::new(region.clone())),
+                        TargetApplicability::for_targets([TargetProfileKey::governed(
+                            "tiler.test.other-target.v1",
+                        )]),
+                        PhysicalCostEstimate::structural(1, 2, 0),
+                    ),
+                    ImplementationProposal::new(
+                        ProposalBody::View(ReservedProposalSeam::new("test.reserved-view")),
+                        governed_applicability(),
+                        PhysicalCostEstimate::structural(1, 2, 0),
+                    ),
+                    ImplementationProposal::new(
+                        ProposalBody::ScheduledKernel(Box::new(region)),
+                        governed_applicability(),
+                        PhysicalCostEstimate::structural(1, 2, 0),
+                    ),
+                ];
+                if std::env::var("TILER_FRONTIER_CENSUS_PERTURB").as_deref()
+                    == Ok("proposal-body-path")
+                {
+                    proposals.remove(1);
+                }
+                ProviderOffer::proposing(proposals)
+            }
+        }
+
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
+        let subject = fused_subject(&request);
+        let provider = MixedPathProvider;
+        let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
+        let (frontier, census) = crate::workcount::observe_physical_planning(|| {
+            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new())
+                .expect("the inapplicable and reserved paths are local rejections")
+        });
+
+        assert_eq!(
+            census.proposal_assessments_started, 3,
+            "each emitted proposal enters assessment before applicability and body dispatch",
+        );
+        assert_eq!(census.proposals, 3);
+        assert_eq!(
+            census.schedule_verifications, 1,
+            "only the applicable scheduled-kernel body reaches verification",
+        );
+        assert_eq!(frontier.admitted().len(), 1);
+        assert_eq!(frontier.rejections().len(), 2);
     }
 
     /// An analytical component cost cannot be admitted as a structural estimate.

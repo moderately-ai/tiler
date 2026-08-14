@@ -100,6 +100,7 @@ impl PhysicalImplementationProvider for CountingProvider {
         let key = {
             let mut tally = self.tally.borrow_mut();
             subject_key(
+                context.target_profile_key(),
                 subject.role(),
                 subject.covered_occurrences(),
                 baseline,
@@ -170,6 +171,7 @@ impl PhysicalImplementationProvider for CountingProvider {
 }
 
 fn subject_key(
+    target: &str,
     role: &str,
     covered: usize,
     baseline: Option<&tiler_compiler::physical_provider::BaselineImplementation>,
@@ -178,7 +180,7 @@ fn subject_key(
     if let Some(baseline) = baseline {
         let region = baseline.region();
         format!(
-            "{role}:{covered}:wg={}:grid={}:iters={:?}",
+            "{target}:{role}:{covered}:wg={}:grid={}:iters={:?}",
             region.schedule.threads_per_workgroup,
             region.schedule.launch.threads_per_workgroup,
             region.index.iteration_shape
@@ -186,7 +188,7 @@ fn subject_key(
     } else {
         let ordinal = *next_coverless;
         *next_coverless = next_coverless.saturating_add(1);
-        format!("{role}:{covered}:none:{ordinal}")
+        format!("{target}:{role}:{covered}:none:{ordinal}")
     }
 }
 
