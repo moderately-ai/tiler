@@ -1,0 +1,136 @@
+PERTURB target-count
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.02s
+     Running unittests src/lib.rs (/tmp/tiler-frontier-custody-d086fe99/compiler-target-nightly/debug/deps/tiler_compiler-bb92e80302cc4a84)
+
+running 1 test
+
+thread 'pipeline::tests::request_wide_physical_planning_population_is_pinned' (7445659) panicked at crates/tiler-compiler/src/pipeline/tests.rs:241:5:
+assertion `left == right` failed: the request-wide census must reach all sixteen admitted target slots
+  left: 15
+ right: 16
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test pipeline::tests::request_wide_physical_planning_population_is_pinned ... FAILED
+
+failures:
+
+failures:
+    pipeline::tests::request_wide_physical_planning_population_is_pinned
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 837 filtered out; finished in 0.07s
+
+error: test failed, to rerun pass `-p tiler-compiler --lib`
+exit=101
+PERTURB target-order
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.02s
+     Running unittests src/lib.rs (/tmp/tiler-frontier-custody-d086fe99/compiler-target-nightly/debug/deps/tiler_compiler-bb92e80302cc4a84)
+
+running 1 test
+
+thread 'pipeline::tests::request_wide_physical_planning_population_is_pinned' (7445680) panicked at crates/tiler-compiler/src/pipeline/tests.rs:254:5:
+assertion `left == right` failed: the compiler must preserve caller target order in the population under test
+  left: ["test.frontier-census-strict-15.v1", "test.frontier-census-strict-14.v1", "test.frontier-census-strict-13.v1", "test.frontier-census-strict-12.v1", "test.frontier-census-strict-11.v1", "test.frontier-census-strict-10.v1", "test.frontier-census-strict-9.v1", "test.frontier-census-strict-8.v1", "test.frontier-census-strict-7.v1", "test.frontier-census-strict-6.v1", "test.frontier-census-strict-5.v1", "test.frontier-census-strict-4.v1", "test.frontier-census-strict-3.v1", "test.frontier-census-strict-2.v1", "test.frontier-census-strict-1.v1", "test.frontier-census-strict-0.v1"]
+ right: ["test.frontier-census-strict-0.v1", "test.frontier-census-strict-1.v1", "test.frontier-census-strict-2.v1", "test.frontier-census-strict-3.v1", "test.frontier-census-strict-4.v1", "test.frontier-census-strict-5.v1", "test.frontier-census-strict-6.v1", "test.frontier-census-strict-7.v1", "test.frontier-census-strict-8.v1", "test.frontier-census-strict-9.v1", "test.frontier-census-strict-10.v1", "test.frontier-census-strict-11.v1", "test.frontier-census-strict-12.v1", "test.frontier-census-strict-13.v1", "test.frontier-census-strict-14.v1", "test.frontier-census-strict-15.v1"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test pipeline::tests::request_wide_physical_planning_population_is_pinned ... FAILED
+
+failures:
+
+failures:
+    pipeline::tests::request_wide_physical_planning_population_is_pinned
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 837 filtered out; finished in 0.07s
+
+error: test failed, to rerun pass `-p tiler-compiler --lib`
+exit=101
+PERTURB candidate-contract-population
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.02s
+     Running unittests src/lib.rs (/tmp/tiler-frontier-custody-d086fe99/compiler-target-nightly/debug/deps/tiler_compiler-bb92e80302cc4a84)
+
+running 1 test
+MEASURE request-wide strict governed census: PhysicalPlanningCensus { provider_invocations: 272, proposals: 48, declines: 256, proposal_assessments_started: 48, schedule_verifications: 48, admitted_implementations: 48, retained_implementations: 48, proposal_rejections: 0, frontier_rejections: 256, admitted_sort_items: 48, rejection_sort_items: 256, plan_combinations: 32, accepted_plan_combinations: 32, rejected_plan_combinations: 0, retained_complete_plans: 32, complete_plan_sort_items: 32 }
+MEASURE request-wide strict installed census: PhysicalPlanningCensus { provider_invocations: 544, proposals: 96, declines: 480, proposal_assessments_started: 96, schedule_verifications: 96, admitted_implementations: 96, retained_implementations: 96, proposal_rejections: 0, frontier_rejections: 480, admitted_sort_items: 96, rejection_sort_items: 480, plan_combinations: 96, accepted_plan_combinations: 96, rejected_plan_combinations: 0, retained_complete_plans: 96, complete_plan_sort_items: 96 }
+MEASURE request-wide strict infeasible census: PhysicalPlanningCensus { provider_invocations: 544, proposals: 96, declines: 480, proposal_assessments_started: 96, schedule_verifications: 96, admitted_implementations: 48, retained_implementations: 48, proposal_rejections: 48, frontier_rejections: 528, admitted_sort_items: 48, rejection_sort_items: 528, plan_combinations: 32, accepted_plan_combinations: 32, rejected_plan_combinations: 0, retained_complete_plans: 32, complete_plan_sort_items: 32 }
+
+thread 'pipeline::tests::request_wide_physical_planning_population_is_pinned' (7445702) panicked at crates/tiler-compiler/src/pipeline/tests.rs:416:5:
+assertion `left == right` failed: the four-contract semantic-candidate population changed
+  left: PhysicalPlanningCensus { provider_invocations: 224, proposals: 40, declines: 216, proposal_assessments_started: 40, schedule_verifications: 40, admitted_implementations: 40, retained_implementations: 40, proposal_rejections: 0, frontier_rejections: 216, admitted_sort_items: 40, rejection_sort_items: 216, plan_combinations: 24, accepted_plan_combinations: 24, rejected_plan_combinations: 0, retained_complete_plans: 24, complete_plan_sort_items: 24 }
+ right: PhysicalPlanningCensus { provider_invocations: 248, proposals: 24, declines: 224, proposal_assessments_started: 24, schedule_verifications: 24, admitted_implementations: 24, retained_implementations: 24, proposal_rejections: 0, frontier_rejections: 224, admitted_sort_items: 24, rejection_sort_items: 224, plan_combinations: 24, accepted_plan_combinations: 24, rejected_plan_combinations: 0, retained_complete_plans: 24, complete_plan_sort_items: 24 }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test pipeline::tests::request_wide_physical_planning_population_is_pinned ... FAILED
+
+failures:
+
+failures:
+    pipeline::tests::request_wide_physical_planning_population_is_pinned
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 837 filtered out; finished in 0.34s
+
+error: test failed, to rerun pass `-p tiler-compiler --lib`
+exit=101
+PERTURB governed-outcome-inclusion
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.02s
+     Running unittests src/lib.rs (/tmp/tiler-frontier-custody-d086fe99/compiler-target-nightly/debug/deps/tiler_compiler-bb92e80302cc4a84)
+
+running 1 test
+MEASURE request-wide strict governed census: PhysicalPlanningCensus { provider_invocations: 272, proposals: 48, declines: 256, proposal_assessments_started: 48, schedule_verifications: 48, admitted_implementations: 48, retained_implementations: 48, proposal_rejections: 0, frontier_rejections: 256, admitted_sort_items: 48, rejection_sort_items: 256, plan_combinations: 32, accepted_plan_combinations: 32, rejected_plan_combinations: 0, retained_complete_plans: 32, complete_plan_sort_items: 32 }
+
+thread 'pipeline::tests::request_wide_physical_planning_population_is_pinned' (7445725) panicked at crates/tiler-compiler/src/pipeline/tests.rs:309:5:
+assertion `left == right` failed: the raw-outcome authority must include governed and installed emissions
+  left: PhysicalPlanningCensus { provider_invocations: 272, proposals: 48, declines: 224, proposal_assessments_started: 48, schedule_verifications: 48, admitted_implementations: 48, retained_implementations: 48, proposal_rejections: 0, frontier_rejections: 224, admitted_sort_items: 48, rejection_sort_items: 224, plan_combinations: 32, accepted_plan_combinations: 32, rejected_plan_combinations: 0, retained_complete_plans: 32, complete_plan_sort_items: 32 }
+ right: PhysicalPlanningCensus { provider_invocations: 544, proposals: 96, declines: 480, proposal_assessments_started: 96, schedule_verifications: 96, admitted_implementations: 96, retained_implementations: 96, proposal_rejections: 0, frontier_rejections: 480, admitted_sort_items: 96, rejection_sort_items: 480, plan_combinations: 96, accepted_plan_combinations: 96, rejected_plan_combinations: 0, retained_complete_plans: 96, complete_plan_sort_items: 96 }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test pipeline::tests::request_wide_physical_planning_population_is_pinned ... FAILED
+
+failures:
+
+failures:
+    pipeline::tests::request_wide_physical_planning_population_is_pinned
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 837 filtered out; finished in 0.14s
+
+error: test failed, to rerun pass `-p tiler-compiler --lib`
+exit=101
+PERTURB fatal-proposal-order
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.02s
+     Running unittests src/lib.rs (/tmp/tiler-frontier-custody-d086fe99/compiler-target-nightly/debug/deps/tiler_compiler-bb92e80302cc4a84)
+
+running 1 test
+
+thread 'frontier::tests::a_fatal_proposal_leaves_later_emitted_proposals_unassessed' (7445746) panicked at crates/tiler-compiler/src/frontier.rs:4729:9:
+assertion `left == right` failed: the fatal first proposal must prevent the later proposal entering assessment
+  left: 2
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test frontier::tests::a_fatal_proposal_leaves_later_emitted_proposals_unassessed ... FAILED
+
+failures:
+
+failures:
+    frontier::tests::a_fatal_proposal_leaves_later_emitted_proposals_unassessed
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 837 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p tiler-compiler --lib`
+exit=101
+PERTURB proposal-body-path
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.02s
+     Running unittests src/lib.rs (/tmp/tiler-frontier-custody-d086fe99/compiler-target-nightly/debug/deps/tiler_compiler-bb92e80302cc4a84)
+
+running 1 test
+
+thread 'frontier::tests::proposal_assessment_precedes_applicability_and_body_dispatch' (7445768) panicked at crates/tiler-compiler/src/frontier.rs:4788:9:
+assertion `left == right` failed: each emitted proposal enters assessment before applicability and body dispatch
+  left: 2
+ right: 3
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test frontier::tests::proposal_assessment_precedes_applicability_and_body_dispatch ... FAILED
+
+failures:
+
+failures:
+    frontier::tests::proposal_assessment_precedes_applicability_and_body_dispatch
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 837 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p tiler-compiler --lib`
+exit=101

@@ -12,6 +12,8 @@ description = "Census and host-runtime calibration of physical-provider-count an
 [workspace]
 
 [dependencies]
+serde_json = "1.0.151"
+sha2 = "0.10.9"
 tiler-compiler = { path = "../../../crates/tiler-compiler" }
 tiler-ir = { path = "../../../crates/tiler-ir" }
 

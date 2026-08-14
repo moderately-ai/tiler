@@ -1,0 +1,7 @@
+specialists=1 successes=1 invocations=17 proposals=3 declines=14 raw=17 alternatives=6 explain_record_lines=346 explain_bytes=103053 failure=None failure_tail=None
+specialists=2 successes=1 invocations=34 proposals=6 declines=28 raw=34 alternatives=12 explain_record_lines=579 explain_bytes=168789 failure=None failure_tail=None
+specialists=3 successes=1 invocations=51 proposals=9 declines=42 raw=51 alternatives=20 explain_record_lines=890 explain_bytes=256109 failure=None failure_tail=None
+specialists=4 successes=1 invocations=68 proposals=12 declines=56 raw=68 alternatives=30 explain_record_lines=1279 explain_bytes=365533 failure=None failure_tail=None
+specialists=5 successes=1 invocations=85 proposals=15 declines=70 raw=85 alternatives=42 explain_record_lines=1746 explain_bytes=496946 failure=None failure_tail=None
+specialists=6 successes=1 invocations=102 proposals=18 declines=84 raw=102 alternatives=56 explain_record_lines=2291 explain_bytes=650099 failure=None failure_tail=None
+specialists=7 successes=0 invocations=119 proposals=21 declines=98 raw=119 alternatives=0 explain_record_lines=2258 explain_bytes=643313 failure=Some(InvalidCompilerOutput) failure_tail=Some("2257 target-feasibility compiler-failure rule=compile.failure@1 provider=compiler:tiler.compiler@1 subject=region:program-alternative:b489b9770d000255/region:0 event=compiler-failure:explain-detail-capacity causes=2256")

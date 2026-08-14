@@ -3,7 +3,7 @@ id: calibrate-the-physical-frontier-provider-and-outcome-budgets
 title: Calibrate the physical-frontier provider and raw-outcome budgets
 status: todo
 priority: p1
-dependencies: [decide-whether-the-implementation-frontier-owes-a-retention-budget, measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro]
+dependencies: [decide-whether-the-implementation-frontier-owes-a-retention-budget, measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro, decide-how-explain-capacity-bounds-active-physical-provider-populations]
 related: [replace-provider-offer-with-a-host-bounded-frontier-sink]
 scopes: [research/program-planning, implementation/compiler]
 shared_scopes: [project/tickets, contracts/navigation]
@@ -79,7 +79,7 @@ Until then, `256` remains a superseded single-target measurement and [`replace-p
 
 ## Request-wide census of behavior at `4fb0427319b1504e1549e03ba023ac486343a743`
 
-The executable evidence revision is `bef9a39afaeb929eef99d7d43232bdc61c9b5e2a`; the durable result is [`2026-08-13-request-population-census.json`](../spikes/program-planning/physical-frontier-budget-calibration/results/2026-08-13-request-population-census.json) in its descendant, with the executable harness unchanged. The public spike reports installed-provider emissions across 1, 2, 8, and 16 targets; the crate-private test `request_wide_physical_planning_population_is_pinned` counts governed emissions and compiler-owned downstream stages without adding a public seam. Exact detached-worktree rerun commands are in the spike README.
+The census evidence revision is `bef9a39afaeb929eef99d7d43232bdc61c9b5e2a`; the durable result is [`2026-08-13-request-population-census.json`](../spikes/program-planning/physical-frontier-budget-calibration/results/2026-08-13-request-population-census.json) in its descendant. Custodial measurement executable `d086fe9953a09a1a8a64dbd2353e9ded78ef18e6` restores the measured program/profile/provider blobs exactly and changes only custody on the record path; a separate boundary observer has no record or RSS-child caller. The public spike reports installed-provider emissions across 1, 2, 8, and 16 targets; the crate-private test `request_wide_physical_planning_population_is_pinned` counts governed emissions and compiler-owned downstream stages without adding a public seam. Exact detached-worktree rerun commands are in the spike README.
 
 | Sixteen-target subject | Emitted proposals / assessments started | Declines | Raw | Verified | Admitted / retained | Proposal / total rejections | Sort items | Plan combinations / retained plans |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -100,17 +100,23 @@ The assessment column is independently observed at proposal-loop entry. A provid
 
 **Nondominated — request-scoped 1,024.** It admits governed plus two active installed specialists: `304 + 2 × 272 = 848`, headroom 176. It bounds host work more strictly and intentionally refuses three specialists at 1,120. Strongest counterargument: no accepted policy says two is the maximum ordinary active population. Reversing evidence is a named three-specialist consumer or an accepted policy separating many installed identities from at most two active answerers.
 
-**Nondominated — request-scoped 16,384.** Under the separate 32-provider candidate, 31 installed specialists all answering every measured subject produce `304 + 31 × 272 = 8,736`, headroom 7,648. This keeps every provider slot usable for this measured shape. Strongest counterargument: it admits sixteen times the raw cardinality of 1,024 without valid idle-M3 request-wide runtime/RSS evidence. Reversing evidence is the held host measurement showing acceptable time and memory or a policy that does not require every provider slot to be active.
+**Eliminated under current authorities — request-scoped 16,384.** Under the separate 32-provider candidate, 31 installed specialists would arithmetically produce `304 + 31 × 272 = 8,736`, headroom 7,648. The exact idle-M3 public run does not reach that population: it refuses on the first target after 527 installed-provider outcomes. A fixed one-target control succeeds through six specialists and first fails at seven with `compiler-failure:explain-detail-capacity` at record ordinal 2,257. `ExplainWriter::push` has an independent one-MiB canonical detail-byte ceiling, so raw 16,384 alone cannot support its named population. Full-provider activity is unevaluable only as a composite option after [`decide-how-explain-capacity-bounds-active-physical-provider-populations`](decide-how-explain-capacity-bounds-active-physical-provider-populations.md) deliberately retains, widens, or compacts that complete-explain authority.
 
-**Not material yet — 2,048, 4,096, 8,192.** They cover at most 6, 13, and 29 installed specialists. No accepted contract, ticket outcome, or consumer names those support boundaries; choosing one would silently invent policy while still failing complete 32-provider activity. A named consumer population makes the corresponding point material and reopens this enumeration.
+**Not material yet — 2,048, 4,096, 8,192.** They cover at most 6, 13, and 29 installed specialists. Six is also the last successful active-specialist count for this exact one-target subject under the current explain byte ceiling, but an incidental implementation boundary is not an accepted support population. No contract, ticket outcome, or consumer names 6, 13, or 29; choosing one would still invent policy. A named consumer population makes the corresponding point material and reopens this enumeration.
 
 **Eliminated — per-target or per-candidate authority.** Either lets one request spend the ceiling repeatedly and changes retry and partial-product behaviour, reopening the accepted accounting authority rather than merely changing a value. A nested request total plus sublimits adds a fairness authority no evidence requires. Request scope is the surviving authority; exact value is held.
 
-Both survivors are top-tier on correctness and fail closed. `1,024` is superior on worst-case host work; `16,384` is superior on supported provider activity. Neither dominates without Tom choosing the support population. Whichever value is accepted directly changes the compiler-internal canonical request/evidence subject and explain request qualifier. Budget bytes do not directly enter plan, artifact, or cache identity; those move only indirectly if the changed bound changes selected packaged content. No public surface or schema is added by this census; the sink stays a labelled draft.
+The raw-budget frontier now has one conditional survivor: `1,024`, only if Tom explicitly chooses two active specialists as the supported population. The measurement supplies no such policy, so it is not accepted by this ticket. A future full-provider candidate is a composite decision, not `16,384` alone. Whichever value is accepted directly changes the compiler-internal canonical request/evidence subject and explain request qualifier. Budget bytes do not directly enter plan, artifact, or cache identity; those move only indirectly if the changed bound changes selected packaged content. No public surface or schema is added by this census; the sink stays a labelled draft.
 
-## External measurement hold
+## Idle-M3 request-wide measurement
 
-The full request timing/RSS harness is implemented, but the available host was an active Apple M4 Max, not the required idle M3 Pro: 36 GiB, 14 cores, load `{ 4.66 3.87 3.49 }`, iTerm 24.5%, WindowServer 14.1%. No contaminated M4 timing is published. [`measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro`](measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro.md) is now a hard dependency of this value decision, which keeps the sink transitively held.
+**Measurement, 2026-08-14.** Exact executable commit `d086fe9953a09a1a8a64dbd2353e9ded78ef18e6`, behavior base `4fb0427319b1504e1549e03ba023ac486343a743`; Apple M3 Pro, macOS 27.0 `26A5388g`, 11 logical CPUs, 18 GiB, pinned nightly, release warm-up 8 / repeats 50. Load moved `{ 2.18 2.23 2.24 }` → `{ 1.61 2.07 2.17 }`; free memory stayed 72 percent; AC power, no thermal/performance warning or swap I/O. Full rows and raw files are in the [spike](../spikes/program-planning/physical-frontier-budget-calibration/README.md#request-wide-m3-pro-timing-and-rss).
+
+The sixteen-target governed request measured min/median/p90/max/mean 63,414/63,483/63,532/63,557/63,487 µs and 165,855,232 peak RSS bytes. One specialist measured 108,880/109,014/109,138/110,925/109,061 µs and 310,018,048 bytes. Two specialists — 848 total raw outcomes, the population 1,024 would cover — measured 177,123/177,303/177,396/177,545/177,305 µs and 531,693,568 bytes. The 31-specialist row is early-refusal timing, 49,508/49,610/49,728/49,803/49,619 µs and 788,283,392 bytes; it is not 8,736-outcome evidence.
+
+The live record retains all 2,250 ordered durations and complete stderr/status for all 45 RSS children. Its verifier recomputes every summary, reparses RSS, checks raw artifact bytes, annotation equality, and SHA-256. The 2026-08-13 request-wide record is retained only as withdrawn non-custodial history. A precheck hold, a `981ddf7f…` source-equivalence rejection, and an overlapping post-snapshot attempt supply no measurements; the accepted record used a detached child and an atomic completion marker written after the post snapshot.
+
+The unchanged generated-record helper's `propose_per_outcome_ns=0` is invalid derived evidence because it mixes request-add and singleton rows. No value decision relies on it.
 
 ## Negative controls
 
@@ -124,5 +130,10 @@ Assertions stayed unchanged while each subject was perturbed:
 - full candidate calculation: `FAIL request-full-provider-limit-calculation expected=16384 observed=8192` after changing the population from 31 to 29 specialists.
 - fatal proposal order: `the fatal first proposal must prevent the later proposal entering assessment`, left 2 / right 1 after moving the valid proposal before the fatal one;
 - proposal body/applicability population: `each emitted proposal enters assessment before applicability and body dispatch`, left 2 / right 3 after removing the reserved-body proposal.
+- retained duration: `FAIL custody governed-only.min_us expected=0 observed=3197` after setting the first ordered duration to zero;
+- RSS output: `FAIL custody governed-only.rss.parsed_peak_rss_bytes expected=1 observed=25886720` after changing the retained maximum;
+- RSS subject: `FAIL custody governed-only RSS command subject mismatch` after changing `child-measure` to `child-request-measure`;
+- duplicate RSS output: `FAIL custody governed-only retained time stderr has 2 maximum RSS lines`;
+- raw/annotated custody: `raw timing artifact does not match generated record` and `annotated measurement fields differ from generated record`.
 
 The check reaches the request-wide subject: the target-count perturbation returns 15 target slots and fails before any arithmetic assertion can mask the omission.

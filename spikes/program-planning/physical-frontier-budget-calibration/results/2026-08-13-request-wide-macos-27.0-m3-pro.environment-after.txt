@@ -1,0 +1,72 @@
+measurement_phase=post
+utc=2026-08-14T03:29:10Z
+local=2026-08-13T23:29:10-0400
+{ 2.12 2.32 2.24 }
+23:29  up 12 days, 21:38, 1 user, load averages: 2.12 2.32 2.24
+Now drawing from 'AC Power'
+ -InternalBattery-0 (id=35651683)	100%; charged; 0:00 remaining present: true
+Note: No thermal warning level has been recorded
+Note: No performance warning level has been recorded
+Note: No CPU power status has been recorded
+The system has 19327352832 (1179648 pages with a page size of 16384).
+
+Stats:
+Pages free: 153826
+Pages purgeable: 2793
+Pages purged: 4049792
+
+Swap I/O:
+Swapins: 0
+Swapouts: 0
+
+Page Q counts:
+Pages active: 338401
+Pages inactive: 341718
+Pages speculative: 90
+Pages throttled: 0
+Pages wired down: 108075
+
+Compressor Stats:
+Pages used by compressor: 198154
+Pages decompressed: 857793
+Pages compressed: 1478818
+
+File I/O:
+Pageins: 10919913
+Pageouts: 5591
+
+System-wide memory free percentage: 72%
+Filesystem        Size    Used   Avail Capacity iused ifree %iused  Mounted on
+/dev/disk3s3s1   460Gi    16Gi   163Gi     9%    481k  1.7G    0%   /
+  PID  PPID  %CPU %MEM STAT     ELAPSED COMM
+33878     1  12.4  0.1 Ss         00:00 sshd-session: tsanterre [priv]
+ 1278     1   3.5  0.3 Ss   12-21:36:12 /Library/SystemExtensions/3CF902F3-0FAE-4A84-A4DD-C99D44817123/io.tailscale.ipn.macsys.network-extension.systemextension/Contents/MacOS/io.tailscale.ipn.macsys.network-extension
+  570     1   3.5  0.1 Ss   12-21:36:44 /usr/libexec/opendirectoryd
+  740     1   2.9  0.3 Ss   12-21:36:43 /System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/com.apple.DriverKit-AppleBCMWLAN
+  705     1   2.1  0.1 Ss   12-21:36:43 /usr/libexec/airportd
+    1     0   1.5  0.1 Ss   12-21:37:45 /sbin/launchd
+  684     1   1.1  0.1 Ss   12-21:36:43 /System/Library/PrivateFrameworks/CoreAnalytics.framework/Support/analyticsd
+  595     1   0.9  0.0 Ss   12-21:36:44 /usr/sbin/notifyd
+  529     1   0.7  0.3 Ss   12-21:36:44 /usr/libexec/logd
+  718     1   0.5  0.1 Ss   12-21:36:43 /usr/libexec/symptomsd
+  577     1   0.5  0.1 Ss   12-21:36:44 /usr/libexec/locationd
+  810     1   0.3  0.0 Ss   12-21:36:41 /usr/libexec/clocksyncd
+ 1221     1   0.3  0.2 S    12-21:36:14 /System/Library/CoreServices/ControlCenter.app/Contents/MacOS/ControlCenter
+  594     1   0.3  0.1 Ss   12-21:36:44 /usr/sbin/bluetoothd
+  823     1   0.2  0.1 Ss   12-21:36:41 /usr/libexec/searchpartyd
+32727     1   0.2  0.1 Ss      01:59:45 /usr/libexec/PerfPowerServices
+  638     1   0.1  0.0 Ss   12-21:36:44 /usr/sbin/cfprefsd
+10345     1   0.0  0.3 Ss   03-07:02:13 /System/Volumes/Update/MobileAsset/AssetsV2/com_apple_MobileAsset_MobileSoftwareUpdate_MacUpdateBrain/be99f10143f7fd9f45266da70db50d4eb4679112.asset/AssetData/com.apple.MobileSoftwareUpdate.UpdateBrainService.xpc/Contents/MacOS/com.apple.MobileSoftwareUpdate.UpdateBrainService
+10343     1   0.0  0.0 Ss   03-07:02:15 /System/Library/AssetsV2/com_apple_MobileAsset_RecoveryOSUpdateBrain/7a84bd1c89069f2e742ece792e84523266f36fdf.asset/AssetData/com.apple.NRD.UpdateBrainService.xpc/Contents/MacOS/com.apple.NRD.UpdateBrainService
+10340     1   0.0  0.0 S    03-07:02:16 /System/Library/Frameworks/MediaAccessibility.framework/Versions/A/XPCServices/com.apple.accessibility.mediaaccessibilityd.xpc/Contents/MacOS/com.apple.accessibility.mediaaccessibilityd
+10337     1   0.0  0.0 Ss   03-07:02:16 /usr/libexec/NRDUpdated
+10336     1   0.0  0.0 S    03-07:02:16 /System/Library/PrivateFrameworks/IASUtilities.framework/Versions/A/Resources/installerauthagent
+10335     1   0.0  0.2 Ss   03-07:02:16 /System/Library/PrivateFrameworks/UIFoundation.framework/Versions/A/XPCServices/nsattributedstringagent.xpc/Contents/MacOS/nsattributedstringagent
+10333     1   0.0  0.0 S    03-07:02:17 /System/Library/Frameworks/MediaAccessibility.framework/Versions/A/XPCServices/com.apple.accessibility.mediaaccessibilityd.xpc/Contents/MacOS/com.apple.accessibility.mediaaccessibilityd
+10330     1   0.0  0.2 Ss   03-07:02:17 /System/Library/PrivateFrameworks/UIFoundation.framework/Versions/A/XPCServices/nsattributedstringagent.xpc/Contents/MacOS/nsattributedstringagent
+10328     1   0.0  0.0 Ss   03-07:03:12 /System/Library/PrivateFrameworks/SoftwareUpdateCore.framework/Versions/A/XPCServices/SUCoreHelperService.xpc/Contents/MacOS/SUCoreHelperService
+ 9322     1   0.0  0.0 S    03-13:05:16 /System/Cryptexes/App/usr/libexec/com.apple.Safari.History
+ 2180     1   0.0  0.0 Ss   05-09:36:05 /System/Library/PrivateFrameworks/StreamingZip.framework/Versions/A/XPCServices/com.apple.StreamingUnzipService.privileged.xpc/Contents/MacOS/com.apple.StreamingUnzipService.privileged
+97632     1   0.0  0.0 S    06-09:23:39 /usr/libexec/spotlightknowledged.importer
+8823 npm exec t3@0.0.31 serve --host 127.0.0.1 --port 3773 --base-dir /Users/tsanterre/.t3 NVM_INC=/Users/tsanterre/.nvm/versions/node/v24.18.1/include/node NVM_CD_FLAGS= SHELL=/bin/zsh SSH_CLIENT=100.67.124.113 65001 22 TMPDIR=/var/folders/6r/sj1bfpw10fv840rm0w7xznl80000gn/T/ VOLTA_HOME=/Users/tsanterre/.volta USER=tsanterre NVM_DIR=/Users/tsanterre/.nvm PATH=/Users/tsanterre/.nvm/versions/node/v24.18.1/bin:/opt/homebrew/bin:/Users/tsanterre/bin:/Users/tsanterre/.local/bin:/Users/tsanterre/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin PWD=/Users/tsanterre
+33882 /bin/zsh -lc out=/tmp/tiler-frontier-m3-post.txt; { echo measurement_phase=post; date -u "+utc=%Y-%m-%dT%H:%M:%SZ"; date "+local=%Y-%m-%dT%H:%M:%S%z"; sysctl -n vm.loadavg; uptime; pmset -g batt; pmset -g therm; memory_pressure; df -h /; ps -Ao pid,ppid,%cpu,%mem,state,etime,comm -r | head -30; pgrep -alf "cargo|rustc|make|nextest|physical-frontier" || true; } > "$out"; sed -n "1,180p" "$out"; wc -c /tmp/2026-08-13-request-wide-macos-27.0-m3-pro.json /tmp/2026-08-13-request-wide-macos-27.0-m3-pro.raw.txt; /usr/bin/python3 -m json.tool /tmp/2026-08-13-request-wide-macos-27.0-m3-pro.json >/dev/null; echo json_valid=$?
