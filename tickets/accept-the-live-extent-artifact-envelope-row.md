@@ -1,7 +1,7 @@
 ---
 id: accept-the-live-extent-artifact-envelope-row
 title: Accept the live-extent artifact envelope row
-status: awaiting-decision
+status: blocked
 priority: p1
 dependencies: [associate-live-extent-operands-with-symbolic-semantic-interface-axes]
 related: [carry-live-extent-operands-through-the-artifact-envelope, bind-frozen-live-extent-bytes-at-declared-backend-transports]

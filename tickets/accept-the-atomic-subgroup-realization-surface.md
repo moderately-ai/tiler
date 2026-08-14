@@ -1,7 +1,7 @@
 ---
 id: accept-the-atomic-subgroup-realization-surface
 title: Accept the atomic subgroup realization surface
-status: todo
+status: awaiting-decision
 priority: p1
 dependencies: [minimize-and-prove-the-atomic-subgroup-public-surface-before-acceptance]
 related: [admit-an-atomic-subgroup-realization-subject-to-target-profiles]

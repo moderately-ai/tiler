@@ -1,7 +1,7 @@
 ---
 id: replace-provider-offer-with-a-host-bounded-frontier-sink
 title: Replace ProviderOffer vectors with a host-bounded frontier sink
-status: in-progress
+status: blocked
 priority: p1
 dependencies: [decide-whether-the-implementation-frontier-owes-a-retention-budget, calibrate-the-physical-frontier-provider-and-outcome-budgets]
 related: [accept-the-installed-physical-provider-public-surface, design-explicit-caller-selected-budget-exhaustion-policies]
