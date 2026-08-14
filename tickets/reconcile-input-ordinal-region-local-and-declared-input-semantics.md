@@ -1,7 +1,7 @@
 ---
 id: reconcile-input-ordinal-region-local-and-declared-input-semantics
 title: Reconcile InputOrdinal region-local and declared-input semantics
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [decide-the-source-bound-live-row-major-access-surface, admit-symbolic-extents-through-schedule-formation, associate-live-extent-operands-with-symbolic-semantic-interface-axes]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [defect, public-boundary, schedule, identity, shapes]
+claimed_from: todo
+assignee: root-input-ordinal-reconciliation
+lease_expires_at: 1786721334
 ---
 ## User-visible outcome
 
