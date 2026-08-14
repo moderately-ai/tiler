@@ -1,9 +1,9 @@
 ---
 id: admit-live-extent-operands-to-payload-indexing
 title: Admit live extent operands to payload indexing
-status: done
+status: todo
 priority: p1
-dependencies: [admit-symbolic-extents-at-the-compiler-request-boundary]
+dependencies: [admit-symbolic-extents-at-the-compiler-request-boundary, prove-one-live-extent-artifact-payload-and-pipeline-at-two-n]
 related: [deliver-an-artifact-family-from-a-symbolic-region, bind-repeated-invocations-over-caller-retained-tensors, accept-the-live-extent-operand-public-surface, carry-live-extent-operands-through-the-artifact-envelope, prove-one-live-extent-artifact-payload-and-pipeline-at-two-n, prove-a-schedule-verified-live-contraction-consumes-s, admit-symbolic-extents-through-compiler-region-formation]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/metal, implementation/runtime, implementation/build, contracts/artifacts]
 shared_scopes: [project/tickets]
@@ -70,3 +70,14 @@ Do not merge `9a8f53c9` as done. Do not release the deliver or bind-repeated dep
 ## Outcome — 2026-08-13
 
 The accepted spelling is on `main` through the remainder tickets, not by merging `9a8f53c9` unchanged. Tom accepted the kernel/schedule/Metal/`RoutedExtentParameter` surface. Carry integrated that spelling plus the envelope row (`0a4edff9`). Two-N execution and schedule-verified `LiveContraction` both landed. Region-formation remainders were already `done`. [`deliver-an-artifact-family-from-a-symbolic-region`](deliver-an-artifact-family-from-a-symbolic-region.md) and [`bind-repeated-invocations-over-caller-retained-tensors`](bind-repeated-invocations-over-caller-retained-tensors.md) can consume `AbiRoot::InputExtent` / `RoutedExtentParameter` without a second scalar list. The envelope view `DecodedExtentOperand` remains a labelled draft on [`accept-the-live-extent-artifact-envelope-row`](accept-the-live-extent-artifact-envelope-row.md).
+
+## Reopened correction — 2026-08-13 exact-base audit
+
+The preceding Outcome is retained as the record that caused closure, but its integration claim is false and no longer authoritative. Exact-base review at `f3e1efd3b3b4f896976b326e6a3d993147206cd3` verified that the accepted types and split-port code are present and that no unique behavior from `9a8f53c9` was lost. It also found that the required cross-layer evidence was not discharged:
+
+- the two-N artifact's semantic program is fixed `[2,3]`, so bindings 14/15 execute outside its semantic coverage/identity;
+- the artifact publishes a zero accessible range and the scalar adapter reconstructs reach from a second dimension authority;
+- no backend consumes `RoutedExtentParameter::parameter_bytes()` at its declared transport; and
+- live contraction accepts `S = 0` while lowering performs one seeded product.
+
+The parent is reopened and depends on the reopened [`prove-one-live-extent-artifact-payload-and-pipeline-at-two-n`](prove-one-live-extent-artifact-payload-and-pipeline-at-two-n.md) evidence umbrella. The accepted public spellings are not rescinded, and the obsolete `9a8f53c9` branch still must not be transplanted. Re-close only when the symbolic semantic axis, ABI-derived routed range, backend scalar binding, and zero-domain refusal are independently proven with no second authority.

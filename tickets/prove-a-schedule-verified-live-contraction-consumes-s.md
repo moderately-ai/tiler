@@ -1,9 +1,9 @@
 ---
 id: prove-a-schedule-verified-live-contraction-consumes-s
 title: Prove a schedule-verified live contraction consumes S
-status: done
+status: todo
 priority: p1
-dependencies: [accept-the-live-extent-operand-public-surface]
+dependencies: [accept-the-live-extent-operand-public-surface, refuse-empty-live-domains-before-routing-commit]
 related: [admit-live-extent-operands-to-payload-indexing]
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
@@ -80,3 +80,9 @@ Each new check was removed and its negative failed:
 - `tkt lint`, `git diff --check`, `tkt guard tkt/prove-a-schedule-verified-live-contraction-consumes-s --format json`, `make full`
 
 Parent `admit-live-extent-operands-to-payload-indexing` stays `review`. Not merged.
+
+## Reopened — zero is inside the admitted extent type 2026-08-13
+
+The positive 14/15 evidence and identity checks remain valid, but `performs exactly S loads` is false at `S = 0`. `Extent(0)` is a valid empty axis, generic fact binding accepts it, and `emit_contraction` performs the seed product before looping from 1 to `S`. The former `saturating_sub(1)` oracle masks this as one load while the strict semantic contraction refuses an empty unseeded fold.
+
+This ticket now depends on [`refuse-empty-live-domains-before-routing-commit`](refuse-empty-live-domains-before-routing-commit.md). Re-close after zero refuses before program work, one performs exactly one product, positive neighbours retain their moving oracle, and removing the derived nonzero precondition fails the unchanged zero negative.

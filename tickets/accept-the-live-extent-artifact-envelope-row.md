@@ -3,8 +3,8 @@ id: accept-the-live-extent-artifact-envelope-row
 title: Accept the live-extent artifact envelope row
 status: awaiting-decision
 priority: p1
-dependencies: []
-related: [carry-live-extent-operands-through-the-artifact-envelope]
+dependencies: [associate-live-extent-operands-with-symbolic-semantic-interface-axes]
+related: [carry-live-extent-operands-through-the-artifact-envelope, bind-frozen-live-extent-bytes-at-declared-backend-transports]
 scopes: [contracts/artifacts, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
@@ -45,3 +45,9 @@ Inventing a second caller-supplied scalar list, baking the live value into artif
 ## Closes when
 
 Tom accepts, accepts with named exclusions, or revises.
+
+## Decision hold — semantic source unresolved 2026-08-13
+
+Do not answer the three questions above yet. Exact-base review found that the draft row is derived while artifact construction still rejects symbolic semantic interfaces, and the passing two-N fixture attaches the row to a fixed `[2,3]` semantic axis before executing extents 14 and 15. `{ key, axis, value_type }` may remain sufficient once the semantic source is carried, or the row/schema may need to name additional source identity; that is not yet established.
+
+This packet now depends on [`associate-live-extent-operands-with-symbolic-semantic-interface-axes`](associate-live-extent-operands-with-symbolic-semantic-interface-axes.md). Its release trigger is that ticket's independent derivation of the minimum complete row, including coverage, identity, schema, and unsupported-population consequences. Re-run the decision-packet readiness gate and replace this hold with the exact reviewed surface before presenting it to Tom.

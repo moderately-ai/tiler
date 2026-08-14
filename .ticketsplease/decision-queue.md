@@ -1,0 +1,35 @@
+# Tom decision queue
+
+Operational queue for the continuous-delivery coordinator. Ticket files remain the authority; this file records presentation order, holds, exact release triggers, and the current recommendation so a later cycle does not rediscover or prematurely present a packet.
+
+Updated 2026-08-13 at main `8b402fdd` plus the pending ticket-repair delta.
+
+## 1. Atomic subgroup realization surface — ready for exact-base re-audit
+
+- Ticket: `accept-the-atomic-subgroup-realization-surface` (`p1`, `awaiting-decision`).
+- Evidence: labelled draft landed at `5cd61fbe` / rebased `eecc4002`; packet includes the exact Rust surface and exclusions.
+- Recommendation: accept as drafted. It follows the already accepted model and keeps silent profiles byte-stable.
+- Strongest counterpoint: adding `subgroup` to public `ResourceRequirements` breaks struct-literal construction even when callers use `None`.
+- Release trigger: coordinator independently re-reads the exact current construction, validation, consumption, identity, codec-exclusion, and negative-control paths, then confirms the packet remains Pareto-complete. Present this one first when Tom is asked a decision.
+
+## 2. Live-extent artifact envelope row — held
+
+- Ticket: `accept-the-live-extent-artifact-envelope-row` (`p1`, `awaiting-decision`).
+- Hold evidence: the draft row is currently attached to a fixed `[2,3]` semantic interface while tests execute bindings 14/15. It is unresolved whether `{ key, axis, value_type }` remains a complete row once the symbolic semantic source is carried.
+- Current recommendation: do not accept the row yet.
+- Release trigger: `associate-live-extent-operands-with-symbolic-semantic-interface-axes` produces an independently reviewed minimum complete schema/identity derivation and the packet is rewritten against that exact commit.
+
+## 3. Host-bounded physical-frontier sink — held before presentation
+
+- Tickets: `replace-provider-offer-with-a-host-bounded-frontier-sink`; branch-local `accept-the-host-bounded-physical-frontier-sink` at preserved draft `54e272baa525027a6f6f9d982bd3bd7c387597fb`.
+- Hold evidence: request-wide limit 256 was calibrated on one target; the admitted request holds up to 16. Review also found request exhaustion downgraded to target/candidate outcomes, provider-order-dependent error precedence, a `u64::MAX` counter escape, and stale authority-count documentation.
+- Current recommendation: accept a host-owned bounded emission surface in principle, but do not accept this exact packet/value yet.
+- Release trigger: `calibrate-the-physical-frontier-provider-and-outcome-budgets` supplies a full-request authority/value; the preserved branch is rebased and all four review findings receive subject perturbations; independent exact-commit review passes; packet is updated on main.
+
+## 4. Materialized producer in a serial-reduction contributor — ready, lower priority
+
+- Ticket: `admit-a-materialized-producer-in-a-serial-reduction-contributor` (`p3`, `awaiting-decision`).
+- Evidence: construction/consumption census and Pareto gate select an exhaustive contributor-source arm on `NormalizedSerialSum`, bounded by `OneEdge` / `NoEdge`; it retains producer identity and the numerical materialization boundary without widening KIR/artifact schema.
+- Recommendation: accept option 7 with the sides-rule bound.
+- Strongest counterpoint: the bound still refuses deeper well-formed produced-sum trees; admitting those requires the separately scoped iterative producer-walk work.
+- Release trigger: no graph prerequisite remains. Re-audit the exact base after higher-priority correctness repairs and present only after the earlier ready packet has been resolved or deliberately deferred by Tom.

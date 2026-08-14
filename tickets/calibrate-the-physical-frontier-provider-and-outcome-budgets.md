@@ -1,7 +1,7 @@
 ---
 id: calibrate-the-physical-frontier-provider-and-outcome-budgets
 title: Calibrate the physical-frontier provider and raw-outcome budgets
-status: done
+status: todo
 priority: p1
 dependencies: [decide-whether-the-implementation-frontier-owes-a-retention-budget]
 related: [replace-provider-offer-with-a-host-bounded-frontier-sink]
@@ -50,3 +50,23 @@ Proposal construction did not need a new public builder (`ImplementationProposal
 The limits do not bound arbitrary native provider computation or allocation before an emission.
 
 Each load-bearing population check was perturbed with the assertion unchanged. Quoted failures are in the spike README. `census` is green after restore.
+
+## Reopened — request-population omission found 2026-08-13
+
+The `256` raw-outcome value is not yet a valid request-scoped calibration input. The experiment measured one target profile per compile, while `MAX_TARGET_PROFILES_PER_REQUEST` admits 16 and the proposed implementation shares one raw-outcome counter across the whole request.
+
+- **Verified at `f3e1efd3b3b4f896976b326e6a3d993147206cd3`.** `MAX_TARGET_PROFILES_PER_REQUEST` is 16. The retained experiment's `Measurement boundary` names one program and separate governed/declared-capacity profiles; it does not census a multi-target request.
+- **Verified on draft `54e272baa525027a6f6f9d982bd3bd7c387597fb`.** `PhysicalAuthorities::outcomes` is one request-scoped counter reused while the pipeline compiles target profiles and semantic candidates.
+- **Inference requiring the rerun.** The governed five-operation census has 17 nonempty region subjects per target and `GovernedPhysicalProvider` answers every placed region with at least one proposal or decline. Sixteen equivalent-capability target slots would therefore reach at least 272 governed outcomes before any external provider. The harness must construct the admitted population and measure it; this arithmetic is a stop signal, not a substitute for the run.
+
+**Measurement on preserved draft `54e272ba`, 2026-08-13.** A temporary out-of-tree public harness used the ordinary five-operation program, governed providers only, and 16 distinct valid target profiles. It returned a partial `Compilation`: targets 0 through 12 were `compiled`; targets 13 through 15 reported `BudgetExhausted { PhysicalFrontierOutcomes, 256, 257 }`. This confirms both the omitted calibration population and the draft's non-atomic propagation. The temporary `/tmp` harness is not durable evidence; reproduce the subject in the retained spike and record its input/output before replacing this paragraph with a rerunnable result.
+
+Before this ticket can return to `done`:
+
+- census raw outcomes across 1, 2, 8, and 16 admitted target profiles, across alternative numerical-contract candidates that the request may evaluate, and across the widest ordinary request population;
+- separate a deliberate request-wide refusal from a limit that accidentally makes an admitted ordinary request impossible;
+- compare request-wide, per-target, and any nested per-candidate authority that survives the decision gate. Eliminate any scope that permits retry or a partial product after exhaustion;
+- rerun identical host-time/RSS sweeps for the nondominated candidate limit(s), update the spike and research record, and perturb the multi-target subject with the assertion unchanged; and
+- state the full unsupported population and identity consequence before an exact value is encoded in `DeterministicBudgets`.
+
+Until then, `256` remains a single-target measurement and [`replace-provider-offer-with-a-host-bounded-frontier-sink`](replace-provider-offer-with-a-host-bounded-frontier-sink.md) is held. The release trigger is a reviewed, reproducible full-request calibration with one surviving authority/value pair.

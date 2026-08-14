@@ -3,7 +3,7 @@ id: admit-symbolic-extents-through-schedule-formation
 title: Admit symbolic extents through schedule formation
 status: todo
 priority: p1
-dependencies: [admit-symbolic-extents-through-compiler-region-formation, admit-live-extent-operands-to-payload-indexing]
+dependencies: [admit-symbolic-extents-through-compiler-region-formation, accept-the-live-extent-operand-public-surface]
 related: [deliver-an-artifact-family-from-a-symbolic-region, carry-live-extent-operands-through-the-artifact-envelope]
 scopes: [implementation/ir, implementation/compiler, contracts/foundation]
 shared_scopes: [project/tickets]
@@ -43,3 +43,7 @@ Lifting the frontend refuse again (already gone). Artifact-envelope rows. `N = 1
 ## Closes when
 
 `compile()` of the admitted same-shape symbolic elementwise population returns a scheduled region that names its symbols, or a narrower typed decline than `symbolic-extent` at schedule, without specializing on a bound value.
+
+## Dependency correction — 2026-08-13
+
+The former dependency on [`admit-live-extent-operands-to-payload-indexing`](admit-live-extent-operands-to-payload-indexing.md) was too broad. This schedule ticket needs the already-accepted `LiveRowMajor` / kernel live-operand spelling, not the later artifact/backend proof that has now been reopened. It therefore depends directly on [`accept-the-live-extent-operand-public-surface`](accept-the-live-extent-operand-public-surface.md). This avoids a false cycle: [`associate-live-extent-operands-with-symbolic-semantic-interface-axes`](associate-live-extent-operands-with-symbolic-semantic-interface-axes.md) must consume the schedule carrier produced here before a symbolic artifact interface can be validated.

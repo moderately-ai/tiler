@@ -4,7 +4,7 @@ title: Carry live extent operands through the artifact envelope
 status: done
 priority: p1
 dependencies: [accept-the-live-extent-operand-public-surface]
-related: [admit-live-extent-operands-to-payload-indexing, deliver-an-artifact-family-from-a-symbolic-region]
+related: [admit-live-extent-operands-to-payload-indexing, deliver-an-artifact-family-from-a-symbolic-region, bind-frozen-live-extent-bytes-at-declared-backend-transports, associate-live-extent-operands-with-symbolic-semantic-interface-axes]
 scopes: [implementation/artifact, contracts/artifacts, implementation/runtime, implementation/ir, implementation/compiler, implementation/metal, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
@@ -60,3 +60,9 @@ The accepted kernel/runtime spelling is integrated on this branch, and the envel
 ## Closes when
 
 The accepted operand exists on the envelope end to end, every named negative is fail-capable, identity consequences are recorded, and no second scalar authority was introduced.
+
+## Scope correction — backend proof split 2026-08-13
+
+The completed construction/codec/decode/validation and routed-row work remains valid, but the Outcome overstated the backend half. `RoutedExtentParameter::parameter_bytes` has no consumer in `crates/**`, the scalar fixture reads `.value()` directly, and the Metal tests compile a signature without binding or dispatching `eN`. `ExtentOperandTransport` proves envelope placement consistency; it is not a backend-misbound execution negative.
+
+The missing frozen-byte/declared-transport proof is now [`bind-frozen-live-extent-bytes-at-declared-backend-transports`](bind-frozen-live-extent-bytes-at-declared-backend-transports.md). The semantic source association is [`associate-live-extent-operands-with-symbolic-semantic-interface-axes`](associate-live-extent-operands-with-symbolic-semantic-interface-axes.md). This ticket remains `done` only for the narrower envelope-and-route carrier; neither missing outcome is implied by its terminal status.

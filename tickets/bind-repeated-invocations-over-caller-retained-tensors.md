@@ -1,9 +1,9 @@
 ---
 id: bind-repeated-invocations-over-caller-retained-tensors
 title: Bind repeated invocations over caller-retained tensors from one artifact identity
-status: done
+status: todo
 priority: p1
-dependencies: [admit-live-extent-operands-to-payload-indexing, establish-a-dynamic-kv-physical-layout-authority, reclassify-language-model-work-as-a-conformance-track, supersede-the-runtime-owned-kv-state-design]
+dependencies: [admit-live-extent-operands-to-payload-indexing, establish-a-dynamic-kv-physical-layout-authority, reclassify-language-model-work-as-a-conformance-track, supersede-the-runtime-owned-kv-state-design, prove-one-live-extent-artifact-payload-and-pipeline-at-two-n]
 related: [admit-the-sequence-extension-concatenate-family, design-autoregressive-state-and-kv-cache, assemble-the-causal-self-attention-block-program, expose-the-dispatch-record-on-a-decoded-artifact, evaluate-retained-shape-relations-before-routing-commit]
 scopes: [implementation/artifact, implementation/runtime, implementation/build]
 shared_scopes: [project/tickets]
@@ -163,3 +163,9 @@ A program whose launch or accessible-range formula names `AbiRoot::InputExtent` 
 A 73,728-byte caller pool bound at live `S = 14` and `S = 15` dispatches on the adapter path (`reach ≤ storage`). Head 1 is bytes 7,168 and 7,680 and the live spans are 57,344 and 61,440, derived from the bound extent. Deriving the sequence from the allocation length yields capacity 18 and byte 9,216, which fails the retained oracle. No capacity stride, second physical-layout root, KV-named type, or artifact-schema identity step was added. `tiler.artifact-program.v16` does not step.
 
 **Identity.** Artifact identity is `encode_identity(&ArtifactEnvelope)` and excludes the bound value. Payload, library, and pipeline subjects of the live-extent unit are unchanged across nine prepares and unequal to a baked `[2, 14]` / `[2, 15]` neighbour. The live MSL still contains `constant ulong& e0 [[buffer(2)]]` and neither `14ul` nor `15ul`.
+
+## Reopened — inherited live-extent evidence was example-shaped 2026-08-13
+
+The nine-invocation guard/identity and retained-allocation arithmetic remain useful worked evidence, but the claimed consumer path inherits the same three gaps as the two-N fixture: a fixed semantic interface can acquire a different live shape, the scalar adapter reconstructs reach instead of consuming the routed accessible range, and no backend binds the frozen scalar bytes at the declared transport. The wrong-stride helper calculation does not perturb the routed range itself.
+
+This ticket now depends on the reopened [`prove-one-live-extent-artifact-payload-and-pipeline-at-two-n`](prove-one-live-extent-artifact-payload-and-pipeline-at-two-n.md) umbrella. Re-close only after the nine-invocation retained-storage oracle is rerun through its symbolic semantic authority, nonzero ABI-derived range, and declared backend scalar transport, with capacity-for-live-range substitution failing the unchanged execution assertion.

@@ -1,9 +1,9 @@
 ---
 id: prove-one-live-extent-artifact-payload-and-pipeline-at-two-n
 title: Prove one live-extent artifact payload and pipeline at two N
-status: done
+status: todo
 priority: p1
-dependencies: [carry-live-extent-operands-through-the-artifact-envelope]
+dependencies: [carry-live-extent-operands-through-the-artifact-envelope, associate-live-extent-operands-with-symbolic-semantic-interface-axes, replace-zero-live-bounds-sentinels-with-abi-derived-accessible-ranges, bind-frozen-live-extent-bytes-at-declared-backend-transports, refuse-empty-live-domains-before-routing-commit]
 related: [admit-live-extent-operands-to-payload-indexing, deliver-an-artifact-family-from-a-symbolic-region]
 scopes: [implementation/artifact, implementation/build, implementation/metal, implementation/runtime]
 shared_scopes: [project/tickets]
@@ -70,3 +70,16 @@ Quoted: `assert_eq!(addresses, [56, 60], "semantic (row = 1, column = 0) at N=14
 ## Closes when
 
 Both `N` values run from one identity, the two byte addresses are observed, and specialization is a failing identity check rather than a description.
+
+## Reopened — the worked example proved the wrong subject 2026-08-13
+
+The prior Outcome is withdrawn as completion evidence. It executed a fixed semantic `[2,3]` program at live bindings 14 and 15; the artifact published a zero accessible range; the scalar adapter reconstructed reach from private dimensions; and no backend bound `parameter_bytes()` at `transport_slot()`. The quoted address values are fixture observations, not proof that one symbolic semantic meaning reached the backend.
+
+This ticket is now the replacement evidence umbrella and depends on:
+
+- [`associate-live-extent-operands-with-symbolic-semantic-interface-axes`](associate-live-extent-operands-with-symbolic-semantic-interface-axes.md),
+- [`replace-zero-live-bounds-sentinels-with-abi-derived-accessible-ranges`](replace-zero-live-bounds-sentinels-with-abi-derived-accessible-ranges.md),
+- [`bind-frozen-live-extent-bytes-at-declared-backend-transports`](bind-frozen-live-extent-bytes-at-declared-backend-transports.md), and
+- [`refuse-empty-live-domains-before-routing-commit`](refuse-empty-live-domains-before-routing-commit.md).
+
+Re-close only after the original evidence is rerun over a true semantic `[2,N]`, the routed range is nonzero and ABI-derived, the backend reads the declared scalar transport, zero refuses where the kernel requires a nonempty axis, and each authority is independently perturbed.
