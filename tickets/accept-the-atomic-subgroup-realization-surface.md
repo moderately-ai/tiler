@@ -54,7 +54,7 @@ There is no additional public trait, namespace, field getter, conversion, defaul
 
 **Fact.** Construction rejects width zero and rejects every XOR-shuffle width that is not a power of two at least two. Every currently recognized `ArithmeticType` is constructible at a valid width. Whole-subject equality, not component composition, is the only positive target match.
 
-**Fact.** Complete and checked target descriptors encode width, arithmetic, transfer, support verdict, phase, authority, validity, and source at their owning layers. Width and arithmetic neighbours move both descriptors; independently true neighbours compose into no permission; exact duplicates and contradictions refuse before insertion.
+**Fact.** Complete and checked target descriptors both encode width, arithmetic, transfer, support verdict, phase, authority, and validity. The complete declaration additionally encodes the structured source through its canonical source table; the checked descriptor deliberately excludes source identity, so a source-revision change moves only the complete declaration. Width and arithmetic neighbours move both descriptors; independently true neighbours compose into no permission; exact duplicates and contradictions refuse before insertion.
 
 **Fact.** Silent target profiles write no subgroup section, so `COMPLETE_PROFILE_DESCRIPTOR_DOMAIN` stays `tiler.target-profile.declaration.v11` and `PROFILE_DESCRIPTOR_DOMAIN` stays `tiler.target-profile.descriptor.v10`. The already-landed feasibility rule-set step to `v6` remains the only identity-domain step: assessment now decides a predicate `v5` could not state.
 
