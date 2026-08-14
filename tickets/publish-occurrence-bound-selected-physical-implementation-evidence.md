@@ -1,7 +1,7 @@
 ---
 id: publish-occurrence-bound-selected-physical-implementation-evidence
 title: Publish occurrence-bound selected physical implementation evidence
-status: in-progress
+status: done
 priority: p1
 dependencies: [disclose-the-physical-provider-environment-a-compilation-was-offered, accept-the-installed-physical-provider-public-surface]
 related: [accept-the-installed-physical-provider-public-surface, disclose-offered-and-selected-physical-provider-sets-separately, carry-complete-access-alignment-requirements-on-physical-proposals]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [backend-providers, provenance, identity, public-boundary]
-claimed_from: todo
-assignee: worker-selected-physical-evidence
-lease_expires_at: 1786723107
 ---
 ## User-visible outcome
 
