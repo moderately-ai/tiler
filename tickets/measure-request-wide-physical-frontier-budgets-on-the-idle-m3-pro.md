@@ -1,7 +1,7 @@
 ---
 id: measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro
 title: Measure request-wide physical-frontier budgets on the idle M3 Pro
-status: in-progress
+status: todo
 priority: p1
 dependencies: [decide-how-explain-capacity-bounds-active-physical-provider-populations]
 related: [calibrate-the-physical-frontier-provider-and-outcome-budgets]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [optimizer, budgets, measurement, host-performance]
-claimed_from: todo
-assignee: worker-m3-frontier
-lease_expires_at: 1786681121
 ---
 ## Outcome
 
@@ -51,7 +48,7 @@ No false premise changed this ticket's purpose, so measurement proceeded.
 - **Verified.** The 45-row manifest, per-row warm-up 8/repeats 50, child two-warm-up/one-compile protocol, and compiler behavior base remained the intended subjects. The repair had to retain those subjects unchanged while adding custody outside the timed workload.
 - **Verified.** Exact reconstruction requires integer nanoseconds in sample execution order, upper median index `n/2`, p90 index `(9n−1)/10`, floor-truncated microseconds, complete child stderr/status, and refusal of absent or duplicate maximum-RSS lines.
 - **Verified.** The annotation must identify behavior base and executable evidence commit separately, retain SHA-256 for generated and raw artifacts, and compare annotated measurement fields semantically with generated output.
-- **Verified.** The active explain-capacity dependency, the absence of authority for a two-specialist policy, and the prohibition on choosing a production budget or public seam were unchanged. The ticket therefore remains `in-progress` after the fresh custodial measurement.
+- **Verified.** The active explain-capacity dependency, the absence of authority for a two-specialist policy, and the prohibition on choosing a production budget or public seam were unchanged. The ticket therefore remains unfinished and returns to `todo` behind that dependency after the fresh custodial measurement.
 
 ## Custody repair and 2026-08-14 idle precheck
 
