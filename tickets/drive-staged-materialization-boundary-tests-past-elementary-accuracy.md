@@ -1,7 +1,7 @@
 ---
 id: drive-staged-materialization-boundary-tests-past-elementary-accuracy
 title: Drive staged materialization boundary tests past elementary accuracy
-status: in-progress
+status: done
 priority: p1
 dependencies: [declare-elementary-realizations-on-a-target-profile]
 related: [account-for-a-staged-realization-stage-in-the-kernel-program, admit-a-scheduled-region-for-a-staged-elementary-family, admit-a-staged-family-that-reads-a-materialized-intermediate, admit-a-materialized-producer-in-a-serial-reduction-contributor, admit-a-scheduled-region-that-reads-two-materialization-edges, admit-a-recognized-chain-more-than-one-materialization-boundary-deep]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [correctness, numerics, testing, compiler]
-claimed_from: todo
-assignee: worker-staged-accuracy
-lease_expires_at: 1786681542
 ---
 ## User-visible outcome
 
