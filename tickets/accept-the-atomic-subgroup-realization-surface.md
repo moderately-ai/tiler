@@ -20,7 +20,7 @@ Tom accepts or revises the labelled-draft Rust spelling of the atomic subgroup r
 
 ## Ready decision packet — 2026-08-13
 
-The minimizing dependency re-audited the surface at exact base `b2ab50f278616a1ad8f171184a16d60ae7e608ff`, removed the unconsumed decoder and unreachable error, privatized the raw transfer tag, marked both growing enums non-exhaustive, and added a verified `Some(subgroup)` kernel-identity subject. The exact repaired source commit is `595ddea1f47b167a9cb6d017f4ce5d10e0c1413a`. This packet is ready for Tom only at that named commit.
+The minimizing dependency re-audited the surface at exact base `b2ab50f278616a1ad8f171184a16d60ae7e608ff`, removed the unconsumed decoder and unreachable error, privatized the raw transfer tag, marked both growing enums non-exhaustive, and added a verified `Some(subgroup)` kernel-identity subject. The exact repaired source and test-evidence commit is `efa83d9d8ac01de35091fd2dd2b47064dd89c524`. This packet is ready for Tom only at that named commit.
 
 ## Exact included surface
 
@@ -62,7 +62,7 @@ There is no additional public trait, namespace, field getter, conversion, defaul
 
 **Fact.** Corrupting the production kernel encoder to omit the subject fails its encoder/reservation equality backstop (`left: 825`, `right: 831`). Corrupting production width encoding makes the compiler consumer fail with `the width dimension does not reach the complete descriptor`; corrupting arithmetic encoding gives the corresponding arithmetic failure; changing the private transfer tag makes the kernel suffix pin report final byte `255` instead of `1`. These perturb the producer, not the assertions.
 
-**Fact.** An out-of-crate API fixture constructs `InRangeXorShuffle` and partially classifies it with the wildcard required by `#[non_exhaustive]`. Removing the production attribute makes that wildcard an `unreachable_patterns` error. Independently adding a temporary transfer makes all three same-crate total authorities — `tag`, `key`, and `transfer_defines_width` — fail to compile until the new semantics are defined.
+**Fact.** An ordinary out-of-crate API fixture constructs `InRangeXorShuffle` and partially classifies it with the wildcard required by `#[non_exhaustive]`. A separate byte-pinned `trybuild` fixture proves an exhaustive external match fails with `E0004`; removing the production attribute makes that compile-fail subject unexpectedly succeed. This preserves the workspace prohibition on custom lint attributes. Independently adding a temporary transfer makes all three same-crate total authorities — `tag`, `key`, and `transfer_defines_width` — fail to compile until the new semantics are defined.
 
 **Inference.** The public `encode` and `key` helpers are the narrowest maintainable shared authorities: kernel/target/frontier identities consume `encode`, while physical errors and explanations consume `key`. Removing either would duplicate governed mappings across crates. The raw tag and inverse have no such consumer and are correctly absent.
 
@@ -83,8 +83,8 @@ Adding `ResourceRequirements.subgroup` was the original implementation's source-
 
 ## Recommendation
 
-**Proposal — accept the exact narrowed surface at `595ddea1f47b167a9cb6d017f4ce5d10e0c1413a`.** Strongest counterargument: because no admitted schedule yet derives `Some`, acceptance precedes the first executable subgroup consumer and the first artifact round trip; either could expose pressure on the subject spelling. `SubgroupTransfer` being non-exhaustive also prevents downstream exhaustive matches over today's sole variant, but no such total recognizer exists and ADR 0074 deliberately reserves that pattern for a closed vocabulary. Evidence that would reverse the recommendation is a concrete second transfer or schema whose correct construction cannot use the private-tag/public-subject-encode split without duplication or ambiguity. The recorded triggers ensure that evidence reopens the exact boundary instead of being silently absorbed.
+**Proposal — accept the exact narrowed surface at `efa83d9d8ac01de35091fd2dd2b47064dd89c524`.** Strongest counterargument: because no admitted schedule yet derives `Some`, acceptance precedes the first executable subgroup consumer and the first artifact round trip; either could expose pressure on the subject spelling. `SubgroupTransfer` being non-exhaustive also prevents downstream exhaustive matches over today's sole variant, but no such total recognizer exists and ADR 0074 deliberately reserves that pattern for a closed vocabulary. Evidence that would reverse the recommendation is a concrete second transfer or schema whose correct construction cannot use the private-tag/public-subject-encode split without duplication or ambiguity. The recorded triggers ensure that evidence reopens the exact boundary instead of being silently absorbed.
 
 ## Closes when
 
-Tom accepts the exact `595ddea1f47b167a9cb6d017f4ce5d10e0c1413a` surface, accepts it with named exclusions, or requests a named revision. Only Tom closes this ticket.
+Tom accepts the exact `efa83d9d8ac01de35091fd2dd2b47064dd89c524` surface, accepts it with named exclusions, or requests a named revision. Only Tom closes this ticket.
