@@ -1,7 +1,7 @@
 ---
 id: calibrate-the-physical-frontier-provider-and-outcome-budgets
 title: Calibrate the physical-frontier provider and raw-outcome budgets
-status: in-progress
+status: todo
 priority: p1
 dependencies: [decide-whether-the-implementation-frontier-owes-a-retention-budget, measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro]
 related: [replace-provider-offer-with-a-host-bounded-frontier-sink]
@@ -9,9 +9,6 @@ scopes: [research/program-planning, implementation/compiler]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [optimizer, budgets, measurement, host-performance]
-claimed_from: todo
-assignee: worker-frontier-recalibration
-lease_expires_at: 1786679676
 ---
 ## User-visible outcome
 

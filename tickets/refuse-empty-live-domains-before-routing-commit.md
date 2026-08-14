@@ -1,7 +1,7 @@
 ---
 id: refuse-empty-live-domains-before-routing-commit
 title: Refuse empty live domains before routing commit
-status: in-progress
+status: done
 priority: p0
 dependencies: [accept-the-live-extent-operand-public-surface]
 related: [prove-a-schedule-verified-live-contraction-consumes-s, prove-one-live-extent-artifact-payload-and-pipeline-at-two-n]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/artifact, implementation/build, imple
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, extents, correctness]
-claimed_from: todo
-assignee: worker-empty-live-domain
-lease_expires_at: 1786679676
 ---
 ## User-visible outcome
 
