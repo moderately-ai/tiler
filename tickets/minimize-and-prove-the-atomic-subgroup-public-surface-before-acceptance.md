@@ -1,7 +1,7 @@
 ---
 id: minimize-and-prove-the-atomic-subgroup-public-surface-before-acceptance
 title: Minimize and prove the atomic subgroup public surface before acceptance
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-an-atomic-subgroup-realization-subject-to-target-profiles]
 related: [accept-the-atomic-subgroup-realization-surface]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [subgroup, public-boundary, identity, correctness]
+claimed_from: todo
+assignee: worker-atomic-surface
+lease_expires_at: 1786681121
 ---
 ## User-visible outcome
 

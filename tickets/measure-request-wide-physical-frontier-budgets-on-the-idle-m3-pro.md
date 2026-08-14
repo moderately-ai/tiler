@@ -1,7 +1,7 @@
 ---
 id: measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro
 title: Measure request-wide physical-frontier budgets on the idle M3 Pro
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [calibrate-the-physical-frontier-provider-and-outcome-budgets]
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [optimizer, budgets, measurement, host-performance]
+claimed_from: todo
+assignee: worker-m3-frontier
+lease_expires_at: 1786681121
 ---
 ## Outcome
 
