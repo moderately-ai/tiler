@@ -1,7 +1,7 @@
 ---
 id: prove-a-schedule-verified-live-contraction-consumes-s
 title: Prove a schedule-verified live contraction consumes S
-status: todo
+status: in-progress
 priority: p1
 dependencies: [accept-the-live-extent-operand-public-surface, refuse-empty-live-domains-before-routing-commit]
 related: [admit-live-extent-operands-to-payload-indexing]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, contraction, extents, identity]
+claimed_from: todo
+assignee: root-live-contraction-closure
+lease_expires_at: 1786720572
 ---
 ## User-visible outcome
 
