@@ -51,11 +51,11 @@ impl SubgroupWidth {
 /// The register-transfer operation one subgroup realization performs.
 ///
 /// `#[non_exhaustive]` under ADR 0074 convention 5a: no out-of-crate consumer
-/// maps or recognizes this vocabulary totally. The identity tag and the
-/// subject's width rule are exhaustive same-crate matches, where the attribute
-/// has no effect, so widening still stops both authorities until they define
-/// the new transfer. Out-of-crate consumers construct or partially classify a
-/// transfer and must leave growth additive.
+/// maps or recognizes this vocabulary totally. The identity tag, explanation
+/// key, and subject width rule are exhaustive same-crate matches, where the
+/// attribute has no effect, so widening still stops all three authorities
+/// until they define the new transfer. Out-of-crate consumers construct or
+/// partially classify a transfer and must leave growth additive.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum SubgroupTransfer {
