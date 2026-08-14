@@ -3,7 +3,7 @@ id: decide-how-explain-capacity-bounds-active-physical-provider-populations
 title: Decide how explain capacity bounds active physical-provider populations
 status: in-progress
 priority: p1
-dependencies: []
+dependencies: [decide-the-truthful-public-class-for-complete-explain-capacity-refusals]
 related: [calibrate-the-physical-frontier-provider-and-outcome-budgets, measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro]
 scopes: [research/program-planning]
 shared_scopes: [project/tickets]
@@ -41,6 +41,8 @@ The ticket's purpose survives the audit. Each source file named below was read i
 
 The custody control is independently green at this base: `verify-evidence` reparsed all 2,250 ordered nanosecond values and all 45 RSS JSONL rows and returned `PASS custody evidence`. The retained SHA-256 values recompute to `ec3abc4ef90acb0d0e3e8a53f355f86a172ac2c2fce5a442310172b80b376c41`, `ebfb9015623fef7da7e9cfc7c6420cf3f5cd8faa245761e2e28d7f500d2b44ce`, and `8d8146bed7f0fa6e3d6a1feaed1cd2b4e5e9fea16721bd7ef50a44c26eb9cf78`. `git ls-tree` also confirms that the exact measured `program.rs`, `profile.rs`, and `providers.rs` blobs at `d086fe9953a09a1a8a64dbd2353e9ded78ef18e6` equal `bef9a39afaeb929eef99d7d43232bdc61c9b5e2a`, while the production explain, request, pipeline, trace, and session blobs equal behavior base `4fb0427319b1504e1549e03ba023ac486343a743`.
 
+**New correctness Fact exposed by the audit.** `crates/tiler-compiler/src/session.rs`, anchor `InvalidCompilerOutput — **unreachable by construction from a valid call, deliberately.**`, says public reachability means shipping a Tiler defect; the enum variant separately says it is always a defect rather than a caller-program refusal. The seven-specialist public request is valid and reaches that class. Complete-or-refused protects trace integrity, but it does not make the public classification truthful. [`never-truncate-the-governed-explain-trace`](never-truncate-the-governed-explain-trace.md) retained the hard ceiling as a refusal against combinatorial growth, while [`refuse-nothing-legal-on-the-explain-detail-ceiling`](refuse-nothing-legal-on-the-explain-detail-ceiling.md) established that an in-budget valid request must not surface `InvalidCompilerOutput` and rejected a bare rename where exact source aggregation could remove the earlier wall. This does not change the capacity ticket's purpose, but it adds a mandatory public-boundary prerequisite before any retained ceiling can be called an acceptable support policy.
+
 ## Decision gate
 
 Compare at least:
@@ -69,29 +71,37 @@ Eliminate any option that drops records, silently truncates the trace, invents a
 
 **Inference.** Six is an observed boundary for one subject, not a supported active-provider population. Neither six, two, nor 31 is an installed policy authority. Under the observed formula's continuation to 31 specialists, one target would retain 1,056 alternatives and 41,266 ordinal record lines. A successful trace has exactly one terminal selection record per retained alternative, so that projection separates into 1,056 terminal selections and **40,210 nonterminal details** (`41,266 - 1,056`), above 4,096. This does not turn the six-row fit into a universal law; it shows that the byte-only candidate's own continuation premise also requires the record ceiling to move. The source supplies a consistent lower-level mechanism: every retained alternative produces multiple nonterminal layer, analytical-cost, and structural-cost records before its terminal selection.
 
-**Support statement.** At the current build there is **no numeric active-provider support guarantee**. Full activity across the proposed 32 total slots (governed plus 31 installed) is unsupported. The six-success row is finite evidence only. Retaining the present ceilings therefore means intentionally declining to promise full-provider activity, not silently redefining “supported” as six.
+**Current support statement.** At the current build there is **no numeric active-provider support guarantee**. Six is finite evidence only, and neither full 32-slot activity nor any smaller maximum has an accepted supported/unsupported authority. Calling 31 “unsupported” now would invent the policy this ticket is meant to decide. The only current mechanical condition is that complete trace construction must fit; because its public failure class falsely says Tiler emitted invalid output, that condition is a live defect rather than an acceptable support contract.
 
 ### Option audit
 
-#### 1. Status quo recast honestly: retain both ceilings and defer wider activity — survivor
+#### 1. Unchanged status quo: retain both ceilings and the current public class — eliminated
 
-- **Correctness / strictness.** Complete-or-refused remains intact; no trace is truncated and no reason is dropped. Full-provider activity remains unsupported. The present public class is an acknowledged defect-shaped result (`InvalidCompilerOutput`), not a typed active-provider policy.
+- **Correctness / strictness.** Complete-or-refused remains intact; no trace is truncated and no reason is dropped. But a valid public call reaches a class whose contract says this is always Tiler's defect and is unreachable from a valid call. That is a direct contract violation, not a counterargument that can be traded against cost.
 - **Maintainability / compatibility.** No new authority, field, schema, or public type. Existing behavior and all identities remain unchanged.
 - **Host runtime / RSS.** Adds no cost. The strongest adverse evidence is already large: the first-target 31-specialist refusal peaks at 788,283,392 bytes.
 - **Identity / schema / public surface.** None move. The ceiling is not in `DeterministicBudgets` or `canonical_explain_subject_bytes`; explain identity, request/evidence subject, plan, artifact, and cache identities stay as they are.
-- **Unsupported population.** No numeric active-provider promise; 31 installed specialists active on this exact subject is unsupported.
-- **Strongest counterargument.** A caller can legally install providers and reach a class documented as a Tiler defect despite satisfying every declared request budget. Deferral preserves that mismatch and keeps the raw-budget calibration held.
-- **Reversal evidence / perturbation.** A named consumer requirement for more than the finite boundary, or a bounded full-demand probe showing complete traces affordable on the M3, reverses deferral. A regression control must keep the exact seven-specialist terminal cause and fail if the trace is silently shortened.
+- **Disposition.** Eliminated from the correctness frontier. Deferral may preserve this state temporarily while its dependency is decided, but cannot endorse or close over it.
 
-#### 2. Narrow fail-closed active-provider support — eliminated
+#### 2. Retain both ceilings with a truthful typed capacity refusal — blocked candidate, mandatory public decision
+
+This can preserve the hard ceiling without inventing a numeric active-provider maximum: the support condition would be “the complete trace fits,” and the class would truthfully name which build capacity stopped construction. It is independently required even if full 32-slot activity is never promised. But the exact surface is not derivable here:
+
+- Extending `BudgetExhausted` requires one or two new `BudgetResource` variants plus truthful `limit` and `reported` fields. `BudgetRefusal` currently distinguishes exact completed demand, a planning upper bound, and a search lower bound; `ExplainError::DetailCapacity` carries neither the firing dimension nor quantities. Calling the stopped next record an exact total would be false, while calling explain emission a search without revising that provenance contract would also be false.
+- A dedicated explain-capacity class can avoid claiming this is a request budget, invalid request, unsupported capability, infeasible plan, or compiler defect, but it is a consequential new public boundary and must give a caller an action rather than merely rename the wall.
+- Turning the limits into `DeterministicBudgets` fields would move every request/evidence subject and explain qualifier. A dedicated class need not. Neither directly moves plan/artifact/cache identity; those move only if newly admitted packaged content changes.
+
+The exact Pareto gate and perturbations are now owned by the P1 dependency [`decide-the-truthful-public-class-for-complete-explain-capacity-refusals`](decide-the-truthful-public-class-for-complete-explain-capacity-refusals.md). Its accepted implementation must preserve a real verifier-produced defect as `InvalidCompilerOutput`, proving classification was narrowed rather than erased.
+
+#### 3. Narrow fail-closed active-provider support — eliminated
 
 No accepted consumer or request authority says two, six, or another specialist count is the supported maximum. Counting installed providers would reject idle capability; counting providers after their first emission is too late to pre-price native provider work and still does not bound plan or explain growth. A raw-outcome limit cannot stand in for this count because one outcome is not a uniform explain-work unit. Implementing this option would invent policy and would require a new governed/public refusal vocabulary and identity treatment. The evidence that could revive it is a named consumer population plus an independently derived preflight or accounting rule that guarantees the complete trace for every admitted request. Perturbations would need same-active-count/different-outcome and same-outcome/different-plan populations; the current evidence includes neither guarantee.
 
-#### 3. Widen only the one-MiB byte ceiling — eliminated
+#### 4. Widen only the one-MiB byte ceiling — eliminated
 
 It addresses the arm that fires first at seven but not the independent 4,096-detail ceiling projected to fail for the named full population. It therefore cannot deliver its claimed outcome. Raising an arbitrary byte value now would also choose a budget without measuring the complete 31-specialist demand.
 
-#### 4. Widen both detail ceilings to the complete 31-specialist demand — not implementation-ready
+#### 5. Widen both detail ceilings to the complete 31-specialist demand — not implementation-ready
 
 - **Correctness / strictness.** Completeness can survive if both limits are sized from a completed trace rather than extrapolated and refusal remains atomic. No silent truncation is admissible.
 - **Maintainability.** Mechanically simple after sizing, but a fixed constant can drift behind governed populations again, as the earlier `refuse-nothing-legal-on-the-explain-detail-ceiling` defect demonstrated.
@@ -101,7 +111,7 @@ It addresses the arm that fires first at seven but not the independent 4,096-det
 - **Strongest counterargument.** It pays memory for repeated attribution without asking whether the same complete information has a smaller representation, and it may create an unusable host envelope.
 - **Reversal evidence / perturbation.** A diagnostic-only run must first lift both bounds, retain exact required detail count and bytes through all 31 specialists, and then measure 1/2/8/16 target runtime and RSS on the unchanged idle M3. Independently lowering each lifted limit by one must reproduce record-capacity and byte-capacity refusals separately; no implementation ticket is justified before those results.
 
-#### 5. Complete compaction or deduplication — not implementation-ready
+#### 6. Complete compaction or deduplication — not implementation-ready
 
 Two materially different changes hide under this label and must not be conflated.
 
@@ -110,17 +120,21 @@ Two materially different changes hide under this label and must not be conflated
 
 No retained artifact classifies the 31-specialist trace's exact repeated tuples or cause graph because construction stops at seven. Aggregating merely similar records would drop reasons or associations; dictionary encoding without an in-memory result may not solve the host problem. The strongest counterargument is implementation complexity across causal identity for an unrequested population. Reversal evidence is an exact structural census showing a large, losslessly aggregable or dictionary-compressible share, with expansion equality and subject perturbations that distinguish provider, region, strategy, plan, evidence, and cause. An unchanged renderer compared byte-for-byte after lossless source aggregation is a useful negative control but cannot alone prove canonical or causal equivalence.
 
-#### 6. Further bounded research — survivor only if full activity becomes a named requirement
+#### 7. Further bounded research — survivor only if full activity becomes a named requirement
 
 This is the only path that can make options 4 or 5 decision-ready without choosing a budget. It must use a diagnostic-only capacity override, never production constants, and must record exact detail/terminal counts, canonical bytes, rendered bytes, per-rule/event/subject populations, causal edges, lossless grouping candidates, and the first independent bound at each contour. The idle-M3 phase follows only after a one-target stop condition shows the full subject fits safely; host/toolchain configuration remains unchanged. The exact conditional follow-up is `measure-complete-explain-demand-and-lossless-compaction-for-full-physical-provider-activity`; it depends on this decision ticket, so it cannot dispatch before Tom answers the support-requirement question.
 
 ### Pareto frontier and recommendation
 
-Only two choices survive today:
+The current public behavior does not survive correctness review. Before the support choice, one independent action is mandatory:
 
-1. **Retain/defer:** lowest runtime, RSS, identity, schema, and maintenance cost; full 32-slot activity is intentionally unsupported and no numeric active-provider count is invented. Its cost is preserving an `InvalidCompilerOutput` wall and leaving the raw calibration held.
-2. **Authorize bounded research:** preserves correctness and makes widening versus lossless compaction measurable, but spends engineering and M3 time for a population no consumer has named and creates no immediate production support.
+1. **Decide and implement a truthful capacity refusal, or prove the capacity refusal unreachable.** The exact public surface is not ready in this ticket. Until the P1 boundary decision lands, this ticket and the raw calibration remain held.
+
+After that prerequisite, two support choices are nondominated:
+
+1. **Retain the ceilings with no cardinality guarantee:** complete trace construction must fit, and the accepted public class truthfully names a capacity stop. This has the lowest runtime/RSS and no invented `<=2` or `<=6` policy, but retains a wall that accepted history prefers removing when lossless source aggregation exists.
+2. **Name full 32-slot activity as a requirement and authorize bounded research:** preserves correctness and makes widening versus lossless compaction measurable, but spends engineering and M3 time for a population no consumer currently names and creates no immediate production support.
 
 Widening and compaction are research hypotheses, not surviving production changes, so no implementation or post-implementation M3 ticket is created yet. If research makes one production candidate survive and Tom accepts it, the graph must be `implement-<accepted-explain-capacity-change>` → `remeasure-accepted-explain-capacity-change-on-the-idle-m3-pro`, and the calibration must depend on the remeasurement before choosing or landing a raw-outcome value.
 
-**Recommendation.** Retain the current ceilings and explicitly leave full 32-slot activity unsupported until a consumer names that requirement. Tom's consequential choice is one question: **should full activity across governed plus all 31 installed slots become a named support requirement now, authorizing the bounded research ticket, or remain intentionally unsupported?** No 1,024/16,384 raw budget follows from this packet alone.
+**Recommendation.** First resolve the mandatory truthful-classification dependency; the present wall is not acceptable status quo. Then retain the ceilings with **no active-provider cardinality guarantee** unless a consumer names full activity as a requirement. Tom's support question remains: **should full activity across governed plus all 31 installed slots become a named requirement now, authorizing the bounded research ticket, or should support remain conditional only on complete trace fit under the accepted truthful class?** No 1,024/16,384 raw budget follows from this packet alone, and the calibration now depends on the public-boundary decision.
