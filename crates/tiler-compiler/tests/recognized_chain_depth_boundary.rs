@@ -87,6 +87,10 @@ use tiler_ir::semantic::{
 };
 use tiler_ir::shape::{Axis, Shape};
 
+#[path = "support/staged_rms_profile.rs"]
+mod staged_rms_profile;
+use staged_rms_profile::{RmsRealizationFixture, staged_rms_profile};
+
 /// Every numerical contract a caller can state.
 ///
 /// Stated exhaustively rather than sampled, for the reason
@@ -183,12 +187,13 @@ fn one_boundary_chain() -> SemanticProgram {
     builder.build().unwrap()
 }
 
-/// Compiles one program under one contract against the governed profile.
+/// Compiles one program under one contract against one exact profile.
 fn compile_under(
     program: &SemanticProgram,
     contract: NumericalContract,
+    profile: &TargetProfile,
 ) -> Result<(), CompileFailureClass> {
-    let targets = TargetRequest::new([TargetProfile::governed()]).unwrap();
+    let targets = TargetRequest::new([profile.clone()]).unwrap();
     match compile(CompileRequest::new(program, contract, targets)) {
         Ok(batch) => {
             let outcome = batch.targets().next().expect("one requested profile");
@@ -222,17 +227,19 @@ fn compile_under(
 #[test]
 fn a_chain_two_materialization_boundaries_deep_refuses_at_recognition_by_name() {
     let program = two_boundary_chain();
+    let profile = staged_rms_profile(RmsRealizationFixture::Discharging);
+    let mut refused = 0;
     for contract in CONTRACTS {
         assert_eq!(
-            compile_under(&program, contract),
+            compile_under(&program, contract, &profile),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "accuracy.elementary.no-installed-realization",
+                rule: "staged-operand-depth",
             }),
-            "the chain contains rms_norm and fails closed for a missing \
-             elementary realization before the depth rule is asked, \
-             and {contract:?} is not what would change that",
+            "{contract:?} did not reach the recognized chain-depth rule",
         );
+        refused += 1;
     }
+    assert_eq!(refused, CONTRACTS.len());
 }
 
 /// The same chain one boundary shallower compiles under the same request.
@@ -245,8 +252,8 @@ fn a_chain_two_materialization_boundaries_deep_refuses_at_recognition_by_name() 
 ///
 /// Watched failing under a deliberate perturbation of the subject, and of this
 /// property alone: replacing `physical::spell_output`'s epilogue arm with
-/// `Err(RegionVocabularyWall::PartialCoverage)` reports *at least one contract
-/// must compile the one-boundary chain, or the refusal above is evidence about
+/// `Err(RegionVocabularyWall::PartialCoverage)` reports *every contract must
+/// compile the one-boundary chain, or the refusal above is evidence about
 /// the session boundary rather than about chain depth*, while the depth
 /// assertion above stays green. The two perturbations are separate because
 /// either alone leaves the other's claim standing, which is what says each
@@ -254,13 +261,15 @@ fn a_chain_two_materialization_boundaries_deep_refuses_at_recognition_by_name() 
 #[test]
 fn a_chain_one_materialization_boundary_deep_compiles_under_the_same_request() {
     let control = one_boundary_chain();
+    let profile = TargetProfile::governed();
     let compiled = CONTRACTS
         .into_iter()
-        .filter(|contract| compile_under(&control, *contract).is_ok())
+        .filter(|contract| compile_under(&control, *contract, &profile).is_ok())
         .count();
-    assert!(
-        compiled > 0,
-        "at least one contract must compile the one-boundary chain, or the refusal above is \
-         evidence about the session boundary rather than about chain depth",
+    assert_eq!(
+        compiled,
+        CONTRACTS.len(),
+        "every contract must compile the one-boundary chain, or the refusal above is evidence \
+         about the session boundary rather than about chain depth",
     );
 }

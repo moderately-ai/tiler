@@ -36,6 +36,10 @@ use tiler_ir::semantic::{
 };
 use tiler_ir::shape::{Axis, Shape};
 
+#[path = "support/staged_rms_profile.rs"]
+mod staged_rms_profile;
+use staged_rms_profile::{RmsRealizationFixture, staged_rms_profile};
+
 /// Every numerical contract a caller can state.
 ///
 /// Stated exhaustively rather than sampled. The two strict-order contracts
@@ -115,12 +119,13 @@ fn staged_over_declared_inputs() -> SemanticProgram {
     builder.build().unwrap()
 }
 
-/// Compiles one program under one contract against the governed profile.
+/// Compiles one program under one contract against one exact caller profile.
 fn compile_under(
     program: &SemanticProgram,
     contract: NumericalContract,
+    profile: &TargetProfile,
 ) -> Result<(), CompileFailureClass> {
-    let targets = TargetRequest::new([TargetProfile::governed()]).unwrap();
+    let targets = TargetRequest::new([profile.clone()]).unwrap();
     match compile(CompileRequest::new(program, contract, targets)) {
         Ok(batch) => {
             let outcome = batch.targets().next().expect("one requested profile");
@@ -150,17 +155,25 @@ fn compile_under(
 #[test]
 fn a_staged_family_over_an_edge_is_recognized_and_stops_at_the_region_vocabulary() {
     let program = staged_over_an_edge();
+    let profile = staged_rms_profile(RmsRealizationFixture::Discharging);
+    let mut strict_walls = 0;
+    let mut mixed_walls = 0;
     for contract in CONTRACTS {
-        assert_eq!(
-            compile_under(&program, contract),
+        let expected = if matches!(
+            contract,
+            NumericalContract::STRICT_F32 | NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32
+        ) {
+            strict_walls += 1;
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "accuracy.elementary.no-installed-realization",
-            }),
-            "the chain contains rms_norm and fails closed for a missing \
-             elementary realization before the region vocabulary is asked, \
-             and {contract:?} is not what would change that"
-        );
+                rule: "region-vocabulary",
+            })
+        } else {
+            mixed_walls += 1;
+            Err(CompileFailureClass::NoFeasiblePlan)
+        };
+        assert_eq!(compile_under(&program, contract, &profile), expected);
     }
+    assert_eq!((strict_walls, mixed_walls), (2, 3));
 }
 
 /// The control compiles under the same request, so the refusal is the region
@@ -168,14 +181,49 @@ fn a_staged_family_over_an_edge_is_recognized_and_stops_at_the_region_vocabulary
 #[test]
 fn the_same_normalization_over_declared_inputs_compiles_under_the_same_request() {
     let control = staged_over_declared_inputs();
+    let profile = staged_rms_profile(RmsRealizationFixture::Discharging);
+    let mut compiled = 0;
     for contract in CONTRACTS {
+        compile_under(&control, contract, &profile).unwrap_or_else(|failure| {
+            panic!("{contract:?} refused the declared-input control as {failure:?}")
+        });
+        compiled += 1;
+    }
+    assert_eq!(compiled, CONTRACTS.len());
+}
+
+/// Request accuracy and the structural wall refuse independently.
+#[test]
+fn elementary_accuracy_is_assessed_before_the_region_vocabulary() {
+    let control = staged_over_declared_inputs();
+    for (fixture, rule) in [
+        (
+            RmsRealizationFixture::Absent,
+            "accuracy.elementary.no-installed-realization",
+        ),
+        (
+            RmsRealizationFixture::Unrefined,
+            "accuracy.elementary.unrefined-realization",
+        ),
+    ] {
         assert_eq!(
-            compile_under(&control, contract),
-            Err(CompileFailureClass::UnsupportedCapability {
-                rule: "accuracy.elementary.no-installed-realization",
-            }),
-            "{contract:?} did not refuse the declared-input normalization for \
-             a missing elementary realization",
+            compile_under(
+                &control,
+                NumericalContract::STRICT_F32,
+                &staged_rms_profile(fixture),
+            ),
+            Err(CompileFailureClass::UnsupportedCapability { rule }),
         );
     }
+    assert_eq!(
+        compile_under(
+            &control,
+            NumericalContract::STRICT_F32,
+            &TargetProfile::governed(),
+        ),
+        Err(CompileFailureClass::UnsupportedCapability {
+            rule: "accuracy.elementary.no-installed-realization",
+        }),
+        "the governed profile remains independently silent",
+    );
 }

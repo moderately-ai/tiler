@@ -2851,6 +2851,206 @@ fn every_cover_region_receives_a_proposal_or_a_typed_decline() {
     );
 }
 
+/// Caller-declared profile for staged RMS tests.
+///
+/// Its capability values and silences mirror the governed profile. The only
+/// added authority is a synthetic, fully discharging RMS realization, so these
+/// tests exercise the staged compiler without turning the fixture into a Metal
+/// capability claim.
+fn staged_rms_target_profile() -> TargetProfile {
+    use crate::target::{
+        DTypeDispatchability, ElementaryRealization, IndexArithmeticSupport, ScalarArithmetic,
+        ScalarSupport, TargetFactProducerIdentity, TargetFactSource,
+        TargetNormativeReferenceIdentity, TargetProfileBuilder, TargetProfileKey,
+    };
+    use tiler_ir::program::abi::{
+        TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
+    };
+    use tiler_ir::schedule::{
+        ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
+    };
+    use tiler_ir::semantic::accuracy::{ConformanceEvidence, ConformanceEvidenceClass};
+    use tiler_ir::semantic::{
+        builtin_scalar_value_type_facts, rms_norm_f32_rsqrt_accuracy_contract,
+    };
+
+    let source = TargetFactSource::external_guarantee(
+        TargetFactProducerIdentity::new("test.staged-rms-profile.v1".to_owned(), 1).unwrap(),
+        TargetNormativeReferenceIdentity::new("test.staged-rms-fixture.v1".to_owned(), 1).unwrap(),
+    );
+    let mut builder = TargetProfileBuilder::new(
+        TargetProfileKey::new("test.staged-rms-discharging.v1".to_owned()).unwrap(),
+    );
+    builder
+        .declare_max_threads_per_grid_axis(4, source.clone())
+        .unwrap();
+    builder
+        .declare_max_threads_per_workgroup_query(
+            TargetPropertyQuery::new(
+                TargetPropertyKey::new("tiler.target.prepared-entry.max-threads-per-workgroup.v1")
+                    .unwrap(),
+                AvailabilityPhase::PreparedKernelPreflight,
+                TargetPropertyProviderIdentity::new("tiler", "prepared-entry-properties", 1)
+                    .unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    builder
+        .declare_max_buffer_bindings_per_entry(4, source.clone())
+        .unwrap();
+    builder
+        .declare_index_arithmetic(IndexArithmeticSupport::CompleteU64, source.clone())
+        .unwrap();
+    builder.declare_device_memory(true, source.clone()).unwrap();
+    builder
+        .declare_local_memory_bytes(0, source.clone())
+        .unwrap();
+
+    let subject = ScalarArithmetic::f32();
+    for behaviour in [
+        SubnormalMode::Preserve,
+        SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::PreservesSign,
+        },
+    ] {
+        builder
+            .declare_input_subnormals(
+                subject.clone(),
+                behaviour,
+                ScalarSupport::Exact,
+                source.clone(),
+            )
+            .unwrap();
+        builder
+            .declare_result_subnormals(
+                subject.clone(),
+                behaviour,
+                ScalarSupport::Exact,
+                source.clone(),
+            )
+            .unwrap();
+    }
+    for permission in [
+        NumericalPermission::Forbidden,
+        NumericalPermission::Permitted,
+    ] {
+        builder
+            .declare_contraction(
+                subject.clone(),
+                permission,
+                ScalarSupport::Exact,
+                source.clone(),
+            )
+            .unwrap();
+        builder
+            .declare_reassociation(
+                subject.clone(),
+                permission,
+                ScalarSupport::Exact,
+                source.clone(),
+            )
+            .unwrap();
+    }
+    builder
+        .declare_permutation(
+            subject.clone(),
+            NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_signed_zero(
+            subject.clone(),
+            NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_nan_assumptions(
+            subject.clone(),
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_infinity_assumptions(
+            subject,
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_dtype_dispatchability(
+            F32::resolved_type(),
+            DTypeDispatchability::Dispatchable,
+            source.clone(),
+        )
+        .unwrap();
+
+    let contract = rms_norm_f32_rsqrt_accuracy_contract();
+    let facts = builtin_scalar_value_type_facts(contract.result_type()).unwrap();
+    let verified = contract.verify(&facts).unwrap();
+    let evidence = |scope: &str, digest: &[u8]| {
+        let reference = |text: &str| tiler_ir::semantic::NormativeDefinitionRef::new(text).unwrap();
+        ConformanceEvidence::new(
+            ConformanceEvidenceClass::NormativeGuarantee,
+            reference(scope),
+            reference("synthetic staged RMS fixture, not a target or Metal specification claim"),
+            reference("fixture.staged-rms.caller-declaration"),
+            reference("tiler test fixture, not a toolchain row"),
+            None,
+            None,
+            None,
+            digest,
+        )
+        .unwrap()
+    };
+    builder
+        .declare_elementary_realization(
+            ElementaryRealization::new(
+                &verified,
+                evidence(
+                    "caller bound half for tiler::rms-norm-f32@1",
+                    b"fixture:staged-rms-bound-v1",
+                ),
+                evidence(
+                    "caller exceptional half for tiler::rms-norm-f32@1",
+                    b"fixture:staged-rms-exceptional-v1",
+                ),
+                &source,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    builder.build().unwrap()
+}
+
+fn staged_rms_request(program: &SemanticProgram) -> CompilationRequest<'_> {
+    let mut request = CompilationRequest::governed(program);
+    request.target_profiles = vec![staged_rms_target_profile()];
+    request
+}
+
+fn verified_staged_rms_request(
+    program: &SemanticProgram,
+) -> crate::request::VerifiedCompilationRequest {
+    match crate::request::verify_request(staged_rms_request(program)).unwrap() {
+        crate::request::VerifiedRequest::Planned(request) => *request,
+        crate::request::VerifiedRequest::Refused(slots) => panic!(
+            "the staged RMS fixture was refused during request verification: {:?}",
+            slots
+                .iter()
+                .map(crate::request::VerifiedTargetSlot::resolution)
+                .collect::<Vec<_>>()
+        ),
+    }
+}
+
 /// A registered staged family compiles end to end and computes the right value.
 ///
 /// **The program is `rms_norm(value, weight) * value`**: a registered elementary
@@ -2900,20 +3100,168 @@ fn every_cover_region_receives_a_proposal_or_a_typed_decline() {
 #[test]
 fn a_staged_family_program_compiles_and_computes_the_normalization_bit_for_bit() {
     let semantic = staged_family_program();
-    let product = compile(CompilationRequest::governed(&semantic)).unwrap();
+    let product = compile(staged_rms_request(&semantic)).expect("the staged program compiles");
+    let outcome = &product.targets[0];
+    let target = outcome.compiled().unwrap_or_else(|| {
+        panic!(
+            "the caller-declared target compiles, but failed as {:?}",
+            outcome.failure()
+        )
+    });
+    let explain = &target.explain;
+    let selected = target
+        .portfolio
+        .alternatives
+        .iter()
+        .find(|alternative| {
+            alternative.stable_id == target.portfolio.selection.selected_alternative_id
+        })
+        .expect("the portfolio's selection names one of its alternatives");
+    let core = selected.program.core();
+
+    assert_eq!(core.stages().len(), 3);
+    let declarations: Vec<_> = core.staged_realizations().collect();
+    assert_eq!(declarations.len(), 1);
+    let realization = declarations[0];
+    assert_eq!(realization.handed().shape(), &Shape::from_dims([2]));
+    assert_eq!(realization.handed().role(), ValueRole::Temporary);
     assert_eq!(
-        product.targets[0].failure(),
-        Some(&CompileError::UnsupportedCapability(
-            RequestError::UnrealizedElementaryAccuracy {
-                operation: tiler_ir::semantic::rms_norm_f32_op(),
-                target_profile: TargetProfile::governed().profile_key().clone(),
-                reason: "accuracy.elementary.no-installed-realization",
-                undischarged_half: None,
-                undischarged_class: None,
-                candidates: Box::new([]),
-            }
-        )),
+        Some(realization.producer()),
+        realization.handed().definition()
     );
+    assert_ne!(realization.producer(), realization.consumer());
+    assert_eq!(
+        realization
+            .producer()
+            .coverage()
+            .iter()
+            .map(tiler_ir::program::CoveredOccurrence::occurrence)
+            .collect::<Vec<_>>(),
+        vec![realization.occurrence()],
+    );
+    assert!(realization.consumer().coverage().is_empty());
+
+    let stages = explain
+        .records()
+        .iter()
+        .filter_map(|record| {
+            let ExplainEvent::Check { assessment, .. } = record.event() else {
+                return None;
+            };
+            if assessment.predicate().as_str() != "kernel.index-region-refines-occurrence" {
+                return None;
+            }
+            assessment
+                .facts()
+                .iter()
+                .find(|fact| fact.key().as_str() == "realization-stages")
+                .map(ExplainFact::value)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(stages, [&FactValue::Count(2)]);
+
+    let attributions = region_attributions(explain);
+    let mut answered: Vec<&str> = attributions
+        .values()
+        .filter(|attribution| attribution.admitted > 0)
+        .map(|attribution| attribution.role.as_str())
+        .collect();
+    answered.sort_unstable();
+    assert_eq!(answered, ["epilogue", "staged-family", "staged-family"]);
+    let walls: BTreeMap<&str, usize> = attributions
+        .values()
+        .filter_map(|attribution| attribution.declined_baseline.as_deref())
+        .fold(BTreeMap::new(), |mut counts, reason| {
+            *counts.entry(reason).or_insert(0) += 1;
+            counts
+        });
+    assert_eq!(
+        walls,
+        BTreeMap::from([
+            ("region-staged-family-unspellable", 1),
+            ("region-partial-coverage", 2),
+        ]),
+    );
+    assert_eq!(
+        attributions
+            .values()
+            .filter(|attribution| attribution.role == "staged-family")
+            .count(),
+        3,
+    );
+
+    let shape = Shape::from_dims([2, 2]);
+    let value: Vec<f32> = vec![1.0, 3.0, 7.0, 0.5];
+    let weight: Vec<f32> = vec![0.25, 11.0, 0.125, 5.0];
+    let published = interpret_program(core, &[("value", &value), ("weight", &weight)]);
+    assert_eq!(published.len(), 1);
+    let value_key = InputKey::new("value").unwrap();
+    let weight_key = InputKey::new("weight").unwrap();
+    let expected = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(
+            &semantic,
+            &[
+                InputBinding::new(&value_key, &f32_tensor(shape.clone(), &value)),
+                InputBinding::new(&weight_key, &f32_tensor(shape, &weight)),
+            ],
+        )
+        .unwrap();
+    assert_eq!(bits_of(&published[0]), tensor_bits(&expected[0]));
+}
+
+/// Interprets one verified program in its declared execution order.
+fn interpret_program(
+    program: &tiler_ir::program::VerifiedKernelProgram,
+    bound: &[(&str, &[f32])],
+) -> Vec<Vec<f32>> {
+    use tiler_ir::program::{MaterializedOrigin, StageAccessMode};
+
+    let values: Vec<_> = program.values().collect();
+    let position = |target: tiler_ir::program::MaterializedValueRef<'_>| {
+        values
+            .iter()
+            .position(|value| *value == target)
+            .expect("every access addresses a value the program declares")
+    };
+    let mut contents: Vec<Option<Vec<f32>>> = vec![None; values.len()];
+    for (slot, value) in values.iter().enumerate() {
+        if let MaterializedOrigin::ProgramInput { key } = value.origin() {
+            let payload = bound
+                .iter()
+                .find(|(name, _)| *name == key.as_str())
+                .unwrap_or_else(|| panic!("no payload bound for program input {key:?}"));
+            contents[slot] = Some(payload.1.to_vec());
+        }
+    }
+    for stage in program.execution_order() {
+        let mut reads = Vec::new();
+        let mut written = None;
+        for access in stage.accesses() {
+            let slot = position(access.view().value());
+            match access.mode() {
+                StageAccessMode::Read => reads.push(
+                    contents[slot]
+                        .clone()
+                        .expect("a stage reads a value an earlier stage wrote"),
+                ),
+                StageAccessMode::Write => {
+                    assert!(written.replace(slot).is_none());
+                }
+            }
+        }
+        let payloads: Vec<&[f32]> = reads.iter().map(Vec::as_slice).collect();
+        let produced = interpret_fused_inputs(stage.kernel(), &payloads);
+        contents[written.expect("a verified stage declares its owning write")] = Some(produced);
+    }
+    program
+        .outputs()
+        .map(|output| {
+            contents[position(output.value())]
+                .clone()
+                .expect("a published output is written by some stage")
+        })
+        .collect()
 }
 
 /// The two staged regions compute the normalization, bit for bit.
@@ -2953,7 +3301,58 @@ fn a_staged_family_program_compiles_and_computes_the_normalization_bit_for_bit()
 /// in binary32, and the bit comparison fails on this fixture.
 #[test]
 fn the_staged_regions_compute_the_normalization_bit_for_bit() {
+    let shape = Shape::from_dims([2, 2]);
+    let value: Vec<f32> = vec![1.0, 3.0, 7.0, 0.5];
+    let weight: Vec<f32> = vec![0.25, 11.0, 0.125, 5.0];
+
     let semantic = staged_norm_only_program();
+    let verified = verified_staged_rms_request(&semantic);
+    let request = verified.for_target(0).unwrap();
+    let staged = request
+        .sole_output()
+        .staged()
+        .expect("the declared output is the normalization occurrence");
+    let (fold, fold_members) = crate::physical::staged_fold_region(
+        &request,
+        staged,
+        crate::physical::RegionWrite::Materialized,
+    );
+    let fold = crate::physical::verify_schedule(fold, fold_members, &request)
+        .expect("the producing stage passes the checked verification path");
+    let (pass, pass_members) = crate::physical::staged_pass_region(
+        &request,
+        staged,
+        crate::physical::RegionWrite::ProgramOutput,
+    );
+    let pass = crate::physical::verify_schedule(pass, pass_members, &request)
+        .expect("the consuming stage passes the checked verification path");
+    assert_eq!(fold.region().schedule.work_items, 2);
+    assert_eq!(pass.region().schedule.work_items, 4);
+
+    let fold_kernel = lower_structured_kernel(&fold).expect("the producing stage lowers");
+    let pass_kernel = lower_structured_kernel(&pass).expect("the consuming stage lowers");
+    let root = interpret_fused_inputs(&fold_kernel, &[&value]);
+    let actual = interpret_fused_inputs(&pass_kernel, &[&value, &weight, &root]);
+
+    let value_key = InputKey::new("value").unwrap();
+    let weight_key = InputKey::new("weight").unwrap();
+    let expected = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(
+            &semantic,
+            &[
+                InputBinding::new(&value_key, &f32_tensor(shape.clone(), &value)),
+                InputBinding::new(&weight_key, &f32_tensor(shape, &weight)),
+            ],
+        )
+        .unwrap();
+    assert_eq!(bits_of(&actual), tensor_bits(&expected[0]));
+}
+
+/// The governed profile remains silent, independently of the positive fixture.
+#[test]
+fn the_governed_profile_still_refuses_staged_rms_before_planning() {
+    let semantic = staged_family_program();
     let product = compile(CompilationRequest::governed(&semantic)).unwrap();
     assert_eq!(
         product.targets[0].failure(),

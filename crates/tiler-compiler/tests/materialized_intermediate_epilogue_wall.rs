@@ -375,14 +375,15 @@ fn an_elementwise_epilogue_over_a_reduction_compiles_as_a_chain() {
     }
 }
 
-/// `refolded = sum(contract(a, b) * 2.0, axis 0)` — one boundary too deep.
+/// `refolded = sum(contract(a, b) * 2.0, axis 0)` — one missing producer carrier.
 ///
-/// The admission is one materialization boundary wide, because
-/// `TensorRole::Intermediate` carries no ordinal: a region reading two staged
-/// values has nothing to attribute the second to. This program needs exactly
-/// that — a fold whose contributors are an epilogue over a contraction — so it
-/// refuses, which is what makes the admission above a bounded statement rather
-/// than an open one.
+/// This is not the two-intermediate-read width wall. Recognition discovers one
+/// materialized contraction producer and the elementwise continuation, but the
+/// serial reduction contributor has no producer relation on which to retain
+/// that chain. `ElementwiseRefusal::Folded` is therefore flattened to
+/// `reduction-contributor-materialization`. The separate carrier decision owns
+/// admitting it; this fixture keeps the current refusal bounded beside the
+/// admitted contraction epilogue.
 fn nested_contraction_chain() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let a = builder
