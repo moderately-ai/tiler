@@ -17,12 +17,13 @@
 //!
 //! **A ceiling stated only in prose drifts in both directions**, which is why
 //! the refusal is asserted with a control beside it: without a program that
-//! compiles under the identical request, "the chain refuses" is consistent with
-//! a broken session boundary and this file would prove nothing. The control is
-//! the same normalization over two *declared* inputs, which compiles end to end
-//! and is bit-compared elsewhere
+//! compiles under the same five numerical-contract/profile pairs, "the chain
+//! refuses" is consistent with a broken session boundary and this file would
+//! prove nothing. The control is the same normalization over two *declared*
+//! inputs, which compiles end to end and is bit-compared elsewhere
 //! (`pipeline::tests::a_staged_family_program_compiles_and_computes_the_normalization_bit_for_bit`),
-//! so the two programs differ by exactly where the first operand comes from.
+//! so their program structures distinguish where the first operand comes from
+//! while their numerical contracts and target profile stay fixed.
 //!
 //! [`admit-a-scheduled-region-that-reads-two-materialization-edges`]: ../../../tickets/admit-a-scheduled-region-that-reads-two-materialization-edges.md
 
@@ -178,10 +179,10 @@ fn a_staged_family_over_an_edge_is_recognized_and_stops_at_the_region_vocabulary
     assert_eq!((strict_walls, mixed_walls), (2, 3));
 }
 
-/// The control compiles under the same request, so the refusal is the region
-/// vocabulary's and not the session boundary's.
+/// The control compiles under the same contract/profile pairs, so the refusal is
+/// the region vocabulary's and not the session boundary's.
 #[test]
-fn the_same_normalization_over_declared_inputs_compiles_under_the_same_request() {
+fn the_declared_input_normalization_compiles_under_the_same_contract_and_profile_points() {
     let control = staged_over_declared_inputs();
     let profile = staged_rms_profile(RmsRealizationFixture::Discharging);
     let mut compiled = 0;

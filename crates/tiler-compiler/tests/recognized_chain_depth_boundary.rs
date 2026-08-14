@@ -172,12 +172,14 @@ fn two_boundary_chain() -> SemanticProgram {
 
 /// `matmul(a, b) * w`: the same chain one boundary shallower.
 ///
-/// The neighbour that makes the refusal above attributable, and it is written to
-/// differ by *one* thing. Same declared inputs, same contraction, same trailing
-/// multiply against the same independent weight input; the only edit is that the
-/// normalization between them is gone, taking the second materialization
-/// boundary with it. So a caller can see the depth being refused rather than the
-/// epilogue, the contraction, the operand, or the request.
+/// This builder is the program-structure neighbour that makes the refusal above
+/// attributable. Relative to [`two_boundary_chain`], it keeps the declared
+/// inputs, contraction, and trailing multiply against the same independent
+/// weight and removes the normalization between them, taking the second
+/// materialization boundary with it. Target-profile authority is deliberately
+/// outside this builder comparison: the test documentation below records why
+/// the RMS subject uses the synthetic profile while this RMS-free control uses
+/// the governed profile.
 fn one_boundary_chain() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let (left, right, weight) = inputs(&mut builder);
