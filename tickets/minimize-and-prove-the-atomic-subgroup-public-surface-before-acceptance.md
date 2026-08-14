@@ -51,4 +51,6 @@ These repairs narrow the exact spelling presented for acceptance; they do not ch
 ## Closure
 
 Close when the dominated speculative surface is gone, present-subject kernel identity has a subject perturbation, targeted tests and package gates pass, and the dependent acceptance packet names the exact repaired surface and its honest evidence boundary.
-## Scope correction — 2026-08-13\n\nThe exact work census touches production/test source only in `tiler-ir` plus the decision ticket. `tiler-compiler` is a read-and-test consumer, not an edit owner, so its exclusive scope was removed before claim. If implementation proves a compiler edit necessary, stop and add the scope before touching it.
+## Scope correction — 2026-08-13
+
+The exact work census touches production/test source only in `tiler-ir` plus the decision ticket. `tiler-compiler` is a read-and-test consumer, not an edit owner, so its exclusive scope was removed before claim. If implementation proves a compiler edit necessary, stop and add the scope before touching it.
