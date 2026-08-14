@@ -1,6 +1,8 @@
 {
   "experiment": "physical-frontier-request-population-census",
-  "source_base": "4fb0427319b1504e1549e03ba023ac486343a743",
+  "behavior_under_test_base": "4fb0427319b1504e1549e03ba023ac486343a743",
+  "executable_evidence_commit": "bef9a39afaeb929eef99d7d43232bdc61c9b5e2a",
+  "record_lands_in_a_descendant_with_the_executable_harness_unchanged": true,
   "timing_status": "held: available host was an active Apple M4 Max, not the required idle M3 Pro",
   "public_installed_specialist": {
     "five_op_strict": [
@@ -27,7 +29,7 @@
       "proposals": 48,
       "declines": 256,
       "raw_outcomes": 304,
-      "admission_assessments": 48,
+      "proposal_assessments_started": 48,
       "schedule_verifications": 48,
       "admitted_implementations": 48,
       "retained_implementations": 48,
@@ -46,7 +48,7 @@
       "proposals": 96,
       "declines": 480,
       "raw_outcomes": 576,
-      "admission_assessments": 96,
+      "proposal_assessments_started": 96,
       "schedule_verifications": 96,
       "admitted_implementations": 96,
       "retained_implementations": 96,
@@ -65,7 +67,7 @@
       "proposals": 96,
       "declines": 480,
       "raw_outcomes": 576,
-      "admission_assessments": 96,
+      "proposal_assessments_started": 96,
       "schedule_verifications": 96,
       "admitted_implementations": 48,
       "retained_implementations": 48,
@@ -84,7 +86,7 @@
       "proposals": 24,
       "declines": 224,
       "raw_outcomes": 248,
-      "admission_assessments": 24,
+      "proposal_assessments_started": 24,
       "schedule_verifications": 24,
       "admitted_implementations": 24,
       "retained_implementations": 24,
@@ -112,6 +114,17 @@
     "finite_witness_installed_providers": 129,
     "source_has_count_branch": false,
     "portable_maximum_claimed": null
+  },
+  "production_provider_source_census": {
+    "source_declared_impls": 1,
+    "scanner_kind": "textual exact-impl-spelling census after named test-source exclusions",
+    "rust_type_system_enumeration_claimed": false,
+    "negative_input": "syntactically valid second impl fragment passed through the same source scanner"
+  },
+  "identity_consequence": {
+    "direct": ["compiler-internal canonical request/evidence subject", "explain request qualifier"],
+    "not_direct": ["plan identity", "artifact identity", "cache identity"],
+    "indirect_only_if": "the changed bound changes selected packaged content"
   },
   "preserved_draft_reproduction": {
     "commit": "54e272baa525027a6f6f9d982bd3bd7c387597fb",

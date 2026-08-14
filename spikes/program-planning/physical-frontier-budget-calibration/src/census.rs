@@ -47,7 +47,7 @@ impl Check {
 pub enum Perturb {
     /// Do not perturb.
     None,
-    /// Scan a valid fixture source containing a second impl declaration.
+    /// Scan a syntactically valid fixture source containing a second impl declaration.
     ExtraProductionProvider,
     /// Compile the tiny pointwise program instead of the five-op program.
     TinyProgram,
@@ -123,7 +123,7 @@ impl Perturb {
 /// enumeration: it recognizes the exact ordinary impl spelling after excluding
 /// `tests.rs` and cutting inline `#[cfg(test)] mod` tails. The source reading
 /// establishes whether that bounded population is complete. The retained
-/// perturbation sends a valid Rust impl fragment through these same scanner
+/// perturbation sends a syntactically valid Rust impl fragment through these same scanner
 /// functions, rather than manufacturing an extra result after scanning.
 #[must_use]
 pub fn production_provider_impls(crate_src: &Path, perturb: Perturb) -> (usize, Vec<String>) {
@@ -153,7 +153,7 @@ pub fn production_provider_impls(crate_src: &Path, perturb: Perturb) -> (usize, 
     }
     if matches!(perturb, Perturb::ExtraProductionProvider) {
         // Perturb the source consumed by the same scanner rather than its
-        // result vector. This valid Rust fragment remains outside the real
+        // result vector. This syntactically valid fragment remains outside the real
         // crate and therefore changes only the census subject.
         const FIXTURE: &str = "struct SyntheticSecondProvider;\nimpl PhysicalImplementationProvider for SyntheticSecondProvider {}\n";
         for name in impl_names(production_source(FIXTURE)) {

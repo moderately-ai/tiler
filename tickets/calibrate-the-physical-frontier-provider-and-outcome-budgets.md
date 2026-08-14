@@ -32,7 +32,7 @@ Stop and split the work if proposal construction itself needs a bounded public b
 ## Fact audit at exact reopened base `4fb0427319b1504e1549e03ba023ac486343a743`
 
 - **Verified.** The historical value eight exists only as retired folklore. Search `8 nondominated implementations per region` in `docs/compiler/optimizer.md`; `ImplementationFrontier::non_dominated` remains an unbounded borrowed Pareto view.
-- **Verified.** Production `PhysicalImplementationProvider` impls, after the retained source census cuts `#[cfg(test)]` modules and `tests.rs`, are exactly one: `GovernedPhysicalProvider`. Run the spike `census`; the assertion is `compiler-owned-production-providers`.
+- **Verified by source reading.** Production `PhysicalImplementationProvider` impls are exactly one: `GovernedPhysicalProvider`. The retained `source-declared-production-provider-impls` check is narrower than that Fact: it textually scans the exact ordinary impl spelling after excluding `tests.rs` and inline `#[cfg(test)] mod` tails, not the Rust type system. Its negative sends a syntactically valid second impl fragment through the same scanner instead of appending a fake result.
 - **Verified.** `one_compile_enumerates_each_distinct_region_subject_once` and the independent installed observer both report 17 distinct subjects for `hot_path.rs`'s five-operation program. The specialist emits 3 proposals and 14 declines.
 - **Verified.** Search `physical_plan_combinations: 4_096` in `crates/tiler-compiler/src/request.rs`; `DeterministicBudgets` still has no provider-count or raw-outcome field.
 - **False, repaired before measurement.** The former outcome and spike comment said 256 was above 272. `256 < 272`; the old sweep was singleton-target and cannot calibrate a request-scoped counter.
@@ -80,11 +80,11 @@ Before this ticket can return to `done`:
 
 Until then, `256` remains a superseded single-target measurement and [`replace-provider-offer-with-a-host-bounded-frontier-sink`](replace-provider-offer-with-a-host-bounded-frontier-sink.md) is held. The release trigger is a reviewed, reproducible full-request calibration with one surviving authority/value pair.
 
-## Request-wide census at `4fb0427319b1504e1549e03ba023ac486343a743`
+## Request-wide census of behavior at `4fb0427319b1504e1549e03ba023ac486343a743`
 
-The durable result is [`2026-08-13-request-population-census.json`](../spikes/program-planning/physical-frontier-budget-calibration/results/2026-08-13-request-population-census.json). The public spike reports installed-provider emissions across 1, 2, 8, and 16 targets; the crate-private test `request_wide_physical_planning_population_is_pinned` counts governed emissions and compiler-owned downstream stages without adding a public seam.
+The executable evidence revision is `bef9a39afaeb929eef99d7d43232bdc61c9b5e2a`; the durable result is [`2026-08-13-request-population-census.json`](../spikes/program-planning/physical-frontier-budget-calibration/results/2026-08-13-request-population-census.json) in its descendant, with the executable harness unchanged. The public spike reports installed-provider emissions across 1, 2, 8, and 16 targets; the crate-private test `request_wide_physical_planning_population_is_pinned` counts governed emissions and compiler-owned downstream stages without adding a public seam. Exact detached-worktree rerun commands are in the spike README.
 
-| Sixteen-target subject | Proposals / admission assessments | Declines | Raw | Verified | Admitted / retained | Proposal / total rejections | Sort items | Plan combinations / retained plans |
+| Sixteen-target subject | Emitted proposals / assessments started | Declines | Raw | Verified | Admitted / retained | Proposal / total rejections | Sort items | Plan combinations / retained plans |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | five-op, governed | 48 / 48 | 256 | **304** | 48 | 48 / 48 | 0 / 256 | 48 admitted / 256 rejected | 32 / 32 |
 | five-op, governed + feasible specialist | 96 / 96 | 480 | **576** | 96 | 96 / 96 | 0 / 480 | 96 admitted / 480 rejected | 96 / 96 |
@@ -92,6 +92,8 @@ The durable result is [`2026-08-13-request-population-census.json`](../spikes/pr
 | add chain, four contract groups, governed | 24 / 24 | 224 | **248** | 24 | 24 / 24 | 0 / 224 | 24 admitted / 224 rejected | 24 / 24 |
 
 The installed specialist alone emits 17, 34, 136, and 272 outcomes at 1, 2, 8, and 16 strict targets, with 103,137, 206,274, 825,096, and 1,651,952 summed rendered explanation bytes. Four-contract add-chain rows emit 10, 20, 124, and 248 outcomes with 42,545, 85,170, 514,744, and 1,030,032 rendered bytes. These `Compilation::explain().render()` lengths are separate from work counts and process RSS. Eight of the sixteen grouped targets evaluate one semantic candidate and eight evaluate two. Reversing all sixteen targets preserves work totals and output order.
+
+The assessment column is independently observed at proposal-loop entry. A provider emitting a fatal malformed-cost proposal followed by a valid proposal reports two emissions and one assessment start; reversing that subject fails left 2 / right 1. The applicability/body negative covers an inapplicable scheduled proposal, an applicable reserved `View`, and an applicable scheduled kernel; removing the reserved-body subject fails left 2 / right 3. Equal emitted/start counts in the table mean none of those measured proposals aborted enumeration, not that one number was copied from the other.
 
 ## Decision gate
 
@@ -105,9 +107,9 @@ The installed specialist alone emits 17, 34, 136, and 272 outcomes at 1, 2, 8, a
 
 **Not material yet — 2,048, 4,096, 8,192.** They cover at most 6, 13, and 29 installed specialists. No accepted contract, ticket outcome, or consumer names those support boundaries; choosing one would silently invent policy while still failing complete 32-provider activity. A named consumer population makes the corresponding point material and reopens this enumeration.
 
-**Eliminated — per-target or per-candidate authority.** Either lets one request spend the ceiling repeatedly, changes retry and partial-product behaviour, and reopens the accepted request identity. A nested request total plus sublimits adds a fairness authority no evidence requires. Request scope is the surviving authority; exact value is held.
+**Eliminated — per-target or per-candidate authority.** Either lets one request spend the ceiling repeatedly and changes retry and partial-product behaviour, reopening the accepted accounting authority rather than merely changing a value. A nested request total plus sublimits adds a fairness authority no evidence requires. Request scope is the surviving authority; exact value is held.
 
-Both survivors are top-tier on correctness and fail closed. `1,024` is superior on worst-case host work; `16,384` is superior on supported provider activity. Neither dominates without Tom choosing the support population. Whichever value is accepted becomes part of deterministic request identity and therefore changes downstream plan/artifact identities. No public surface or schema is added by this census; the sink stays a labelled draft.
+Both survivors are top-tier on correctness and fail closed. `1,024` is superior on worst-case host work; `16,384` is superior on supported provider activity. Neither dominates without Tom choosing the support population. Whichever value is accepted directly changes the compiler-internal canonical request/evidence subject and explain request qualifier. Budget bytes do not directly enter plan, artifact, or cache identity; those move only indirectly if the changed bound changes selected packaged content. No public surface or schema is added by this census; the sink stays a labelled draft.
 
 ## External measurement hold
 
@@ -123,5 +125,7 @@ Assertions stayed unchanged while each subject was perturbed:
 - governed inclusion: `the raw-outcome authority must include governed and installed emissions`, left 272 raw outcomes / right 576;
 - narrow candidate calculation: `FAIL request-narrow-limit-calculation expected=1024 observed=2048` after changing the population from two to three specialists.
 - full candidate calculation: `FAIL request-full-provider-limit-calculation expected=16384 observed=8192` after changing the population from 31 to 29 specialists.
+- fatal proposal order: `the fatal first proposal must prevent the later proposal entering assessment`, left 2 / right 1 after moving the valid proposal before the fatal one;
+- proposal body/applicability population: `each emitted proposal enters assessment before applicability and body dispatch`, left 2 / right 3 after removing the reserved-body proposal.
 
 The check reaches the request-wide subject: the target-count perturbation returns 15 target slots and fails before any arithmetic assertion can mask the omission.

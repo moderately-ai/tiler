@@ -18,7 +18,7 @@ ticket: "calibrate-the-physical-frontier-provider-and-outcome-budgets"
 - **Status:** request census complete; exact raw value held on one support-policy choice and one external host measurement. The first experiment measured one target per request. The retained harness now reaches all sixteen target slots and the compiler-owned work stages, but the available host was an active Apple M4 Max rather than the required idle M3 Pro. Neither budget is yet a `DeterministicBudgets` field.
 - **Ticket:** [`calibrate-the-physical-frontier-provider-and-outcome-budgets`](../../../tickets/calibrate-the-physical-frontier-provider-and-outcome-budgets.md).
 - **Experiment:** [Physical-frontier provider-count and raw-outcome budget calibration](../../../spikes/program-planning/physical-frontier-budget-calibration/README.md).
-- **Evidence date:** 2026-08-13. The historical single-target timing is Apple M3 Pro; the request-wide result is a finite census at source base `4fb0427319b1504e1549e03ba023ac486343a743`, not a new timing record.
+- **Evidence date:** 2026-08-13. The historical single-target timing is Apple M3 Pro. The request-wide result is a finite census of compiler behavior at exact base `4fb0427319b1504e1549e03ba023ac486343a743`, executed with the retained harness and corrected independent proposal-assessment counter at `bef9a39afaeb929eef99d7d43232bdc61c9b5e2a`; this record lands in a descendant that leaves that executable evidence unchanged. It is not a new timing record.
 
 ## Request-wide census
 
@@ -33,7 +33,7 @@ ticket: "calibrate-the-physical-frontier-provider-and-outcome-budgets"
 
 **Measurement.** The crate-private structural census includes the governed provider and separates the stages that a raw outcome can enter:
 
-| Sixteen-target population | Proposals / admission assessments | Declines | Raw | Verified | Admitted / retained implementations | Proposal / total frontier rejections | Sort items (admitted / rejected) | Plan combinations / retained plans |
+| Sixteen-target population | Emitted proposals / assessments started | Declines | Raw | Verified | Admitted / retained implementations | Proposal / total frontier rejections | Sort items (admitted / rejected) | Plan combinations / retained plans |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Five-op, governed | 48 / 48 | 256 | **304** | 48 | 48 / 48 | 0 / 256 | 48 / 256 | 32 / 32 |
 | Five-op, governed + one feasible specialist | 96 / 96 | 480 | **576** | 96 | 96 / 96 | 0 / 480 | 96 / 480 | 96 / 96 |
@@ -42,11 +42,13 @@ ticket: "calibrate-the-physical-frontier-provider-and-outcome-budgets"
 
 The installed-specialist request retains 103,137, 206,274, 825,096, and 1,651,952 summed rendered explanation bytes at 1, 2, 8, and 16 strict targets. The four-contract add-chain rows retain 42,545, 85,170, 514,744, and 1,030,032 rendered bytes. These `Compilation::explain().render()` lengths are recorded separately from work counts and process RSS. The add-chain request cycles strict, flush-only, reassociate-only, and flush-plus-reassociate profiles. Eight targets evaluate one semantic candidate and eight evaluate two. Reversing all sixteen target slots preserves the `248` work total and returns results in the reversed caller order.
 
+`proposal_assessments_started` is an independent loop-entry count, not a restatement of emitted proposals. A retained fatal-first provider emits two proposals but starts one assessment because malformed cost provenance aborts before the later proposal; moving the valid proposal first fails the unchanged assertion at left 2 / right 1. A second retained negative spans an inapplicable scheduled proposal, an applicable reserved `View`, and an applicable scheduled kernel; removing the reserved-body path fails the three-start assertion at left 2 / right 3. The ordinary census happens to have equal emitted/start counts because none of its proposals is fatal.
+
 The machine-readable record is [`2026-08-13-request-population-census.json`](../../../spikes/program-planning/physical-frontier-budget-calibration/results/2026-08-13-request-population-census.json). The compiler test `request_wide_physical_planning_population_is_pinned` is the governed-outcome authority; the public spike is the installed-provider, numerical-group, target-count, and target-order authority.
 
 ## Provider count and raw outcomes are different dimensions
 
-**Fact.** The compiler-owned production provider population is one: `GovernedPhysicalProvider`. `InstalledPhysicalProviders::installed` collects the caller's complete iterator and has no count branch. The harness installs 129 distinct providers successfully; this is a finite witness for the source reading, not a claim of a portable maximum. The historical `InvalidCompilerOutput` at 128 all-decline providers is a later explain-capacity wall, not an installation limit.
+**Fact from source reading.** The compiler-owned production provider population is one: `GovernedPhysicalProvider`. The retained mechanical check is only a textual source-declaration census over the exact ordinary impl spelling after named test-source exclusions; it is not a Rust type-system enumeration. Its negative passes a syntactically valid second impl fragment through those same scanner functions rather than appending a fake result. Separately, `InstalledPhysicalProviders::installed` collects the caller's complete iterator and has no count branch. The harness installs 129 distinct providers successfully; this is a finite witness for the source reading, not a claim of a portable maximum. The historical `InvalidCompilerOutput` at 128 all-decline providers is a later explain-capacity wall, not an installation limit.
 
 **Proposal.** The earlier provider-count candidate remains 32, governed included. It bounds invocation/provenance overhead. It does not promise that all 31 installed providers may each emit an outcome for every subject: raw outcomes are an independent bound precisely so many active providers can be refused before downstream work becomes unbounded.
 
@@ -72,9 +74,9 @@ The intermediate powers 2,048, 4,096, and 8,192 admit at most 6, 13, and 29 inst
 
 ## Authority and identity
 
-**Inference from accepted architecture.** One request-scoped raw-outcome counter remains the only survivor. Per-target or per-candidate counters permit the same caller request to spend the limit repeatedly, change retry/partial-product semantics, and reopen the accepted request identity. A nested request total plus sublimits adds authority and schema without evidence of a distinct fairness requirement. These scopes are not implementation defaults.
+**Inference from accepted architecture.** One request-scoped raw-outcome counter remains the only survivor. Per-target or per-candidate counters permit the same caller request to spend the limit repeatedly and change retry/partial-product semantics, reopening the accepted accounting authority rather than merely changing a value. A nested request total plus sublimits adds authority and schema without evidence of a distinct fairness requirement. These scopes are not implementation defaults.
 
-Whichever exact value Tom accepts belongs in the deterministic request budget subject. Changing it changes verified-request identity and every downstream plan/artifact identity derived from that subject. The census adds no public surface and no schema row; the preserved sink remains a labelled draft.
+Whichever exact value Tom accepts belongs in the deterministic request budget subject. Changing it directly changes the compiler-internal canonical request/evidence subject and the explain request qualifier for every compilation. Consistent with the accepted optimizer contract's `Budget bytes bind the compiler-internal request/evidence subject` anchor, budget bytes do not directly enter plan, artifact, or cache identity; those identities move only indirectly when the changed bound changes selected packaged content. The census adds no public surface and no schema row; the preserved sink remains a labelled draft.
 
 ## Host measurement hold
 
