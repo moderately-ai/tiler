@@ -2,7 +2,7 @@
 
 Operational queue for the continuous-delivery coordinator. Ticket files remain the authority; this file records presentation order, holds, exact release triggers, and the current recommendation so a later cycle does not rediscover or prematurely present a packet.
 
-Updated 2026-08-14 after Tom accepted items 1 through 3 and the structured selected-capability surface became decision-ready; publication remains gated below.
+Updated 2026-08-14 after Tom accepted items 1 through 4; publication remains gated below.
 
 ## 1. Truthful public class for complete-explain capacity refusal — accepted; implementation and evidence queued
 
@@ -26,13 +26,14 @@ Updated 2026-08-14 after Tom accepted items 1 through 3 and the structured selec
 - Accepted 2026-08-14 by Tom in the live Codex conversation after reviewing the rationale: Option 3. `TensorRole::Input` becomes fieldless; ordered access/kernel-buffer position is the sole in-list local coordinate; explicit `InputOrdinal` remains for out-of-list references; compiler-owned checked projection retains declared association and `InputKey` authority.
 - Release trigger: `reconcile-input-ordinal-region-local-and-declared-input-semantics` lands the complete IR/compiler/artifact/Metal/build/conformance/runtime and identity/codec migration with its sparse-subset, reorder, and independent subject evidence. Source-bound live-row-major remains blocked until then.
 
-## 4. Structured selected-lowering capability Rust surface — awaiting decision
+## 4. Structured selected-lowering capability Rust surface — accepted; implementation ready
 
-- Tickets: `decide-the-selected-lowering-capability-subject-rust-surface` (`p1`, `awaiting-decision`) and blocked implementation carrier `replace-flat-selected-lowering-capability-keys-with-structured-subjects` (`p1`).
+- Tickets: `decide-the-selected-lowering-capability-subject-rust-surface` (`p1`, decision) and implementation carrier `replace-flat-selected-lowering-capability-keys-with-structured-subjects` (`p1`).
 - Packet evidence: exact ticket-only packet `9ea59fea72f8c4b7c13a13c276bf43070ba97dea`, independently reviewed with no findings. The current delimiter-composed text aliases legal `OpKey::new("a.b", "c", 1)` and `OpKey::new("a", "b.c", 1)` subjects after compiler selection; eight compiler-to-artifact adapters reconstruct that lossy spelling.
 - Recommendation: accept the sole nondominated surface. Both crates own a layer-specific `LoweringCapabilitySubject`; the compiler record is opaque and borrowed through `SelectedCapability::subject()`, the artifact record is caller-constructed from `CapabilityFamilyKey` plus exact `OpKey`, neither composite implements `Display`, and all eight adapters perform the same checked token projection. Decode retains `TypeIdentityError` internally and truthfully exposes the existing public `Malformed { detail }` class.
 - Strongest counterpoint: two crates expose same-named records whose family fields have deliberately different Rust types. The crate paths make that layer boundary explicit and fail loudly; retaining the old artifact `CapabilityKey` name offers only import compatibility that ADR 0075 deliberately discounts in this unpublished pre-alpha workspace.
-- Release trigger: Tom accepts the exact included and excluded surface. Then mark the decision done, unblock the implementation carrier, and run the full provider `v3` / artifact `v18` / manifest `18.0` migration with independent identity-sensitive review.
+- Accepted 2026-08-14 by Tom in the live Codex conversation: the exact included and excluded surface above, without amendment.
+- Release trigger: the implementation carrier lands the full provider `v3` / artifact `v18` / manifest `18.0` migration with independent identity-sensitive review.
 
 ## 5. Source-bound live-row-major access — blocked before decision
 

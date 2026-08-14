@@ -1,7 +1,7 @@
 ---
 id: decide-the-selected-lowering-capability-subject-rust-surface
 title: Decide the selected lowering capability subject Rust surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [reconcile-the-operation-identity-and-governed-key-grammars]
 related: [replace-flat-selected-lowering-capability-keys-with-structured-subjects]
@@ -139,12 +139,12 @@ The implementation ticket must perturb the subject, never its assertions:
 
 [`replace-flat-selected-lowering-capability-keys-with-structured-subjects`](replace-flat-selected-lowering-capability-keys-with-structured-subjects.md) is the complete implementation follow-up. It owns `LoweringCapabilitySubject`, the `v3`/`v18`/`18.0` steps, codecs, contracts, fixtures, all eight adapter migrations, typed internal error propagation and truthful public classification, derived pins, perturbations, and exact-base gates. No additional work is implicit.
 
-## Question for Tom
+## Accepted answer — 2026-08-14
 
-**Accept the sole nondominated exact Rust surface under “Exact recommended surface”: layer-owned compiler and artifact `LoweringCapabilitySubject` records, no composite `Display`, the checked eight-adapter projection, owned `OpKey` decode, existing public `Malformed { detail }` classification, and all explicit exclusions?**
+**Accepted by Tom in the live Codex conversation, relayed by the coordinating agent:** the sole nondominated exact Rust surface under “Exact recommended surface” — layer-owned compiler and artifact `LoweringCapabilitySubject` records, no composite `Display`, the checked eight-adapter projection, owned `OpKey` decode, existing public `Malformed { detail }` classification, and all explicit exclusions.
 
 Recommendation: **accept**. It gives one accepted semantic subject one name, keeps its different layer representations explicit in the type paths, and adds no compatibility, display, dependency, or public-error surface without authority.
 
 ## Outcome
 
-Awaiting Tom. No acceptance is claimed by this packet.
+The exact public surface is accepted. [`replace-flat-selected-lowering-capability-keys-with-structured-subjects`](replace-flat-selected-lowering-capability-keys-with-structured-subjects.md) owns the complete implementation, identity/schema migration, adapter conversion, typed internal failure, truthful public classification, and evidence population.

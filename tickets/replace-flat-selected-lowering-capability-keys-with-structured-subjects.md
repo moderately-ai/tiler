@@ -1,7 +1,7 @@
 ---
 id: replace-flat-selected-lowering-capability-keys-with-structured-subjects
 title: Replace flat selected lowering capability keys with structured subjects
-status: blocked
+status: todo
 priority: p1
 dependencies: [reconcile-the-operation-identity-and-governed-key-grammars, decide-the-selected-lowering-capability-subject-rust-surface]
 related: [reconcile-the-two-target-profile-key-grammars, package-selected-physical-implementation-provenance-in-artifact-identity, frame-provider-identities-before-using-them-as-explain-keys]
