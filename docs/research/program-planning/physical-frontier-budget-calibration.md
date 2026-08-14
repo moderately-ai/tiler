@@ -88,7 +88,7 @@ The intermediate powers 2,048, 4,096, and 8,192 admit at most 6, 13, and 29 inst
 
 After that prerequisite, the nondominated support choices are:
 
-1. retain both explain ceilings with no active-provider cardinality guarantee, making “the complete trace fits” the condition named by the accepted truthful class; or
+1. retain both explain ceilings with no active-provider cardinality guarantee, making “the complete trace fits” the capacity-admission condition named by the accepted truthful class, without implying compilation success; or
 2. make full activity a named requirement and authorize bounded research that completes the 31-specialist trace under diagnostic-only overrides before comparing a two-dimensional widening with lossless source or encoding compaction.
 
 The recommendation is the first until a consumer names the requirement, **after** the public class is repaired; unchanged status quo is eliminated. A `BudgetExhausted` extension is not an automatic answer: `BudgetRefusal`'s three provenances do not currently describe a stopped explain construction, and `ExplainError::DetailCapacity` carries neither the firing dimension nor truthful `limit`/`reported` fields. A dedicated class is also a consequential public boundary. The conditional full-demand research is fully specified in [`measure-complete-explain-demand-and-lossless-compaction-for-full-physical-provider-activity`](../../../tickets/measure-complete-explain-demand-and-lossless-compaction-for-full-physical-provider-activity.md); its dispatch condition is Tom accepting the full-activity requirement. Neither production widening nor compaction is implementation-ready, so no implementation or post-change M3 dependency exists yet.
