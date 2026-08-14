@@ -74,6 +74,11 @@ Each perturbation changed production code temporarily, ran the named unmodified 
 
 - `cargo test -p tiler-ir --lib -- subgroup`: 7 passed, including the verified present-kernel subject and all construction/equality tests.
 - `cargo test -p tiler-compiler --lib -- subgroup`: 22 passed, covering public target construction/lookup, complete and checked descriptor identity, feasibility admission/refusal/unknown, and neighbour non-composition without editing compiler source.
+- `cargo nextest run -p tiler-ir`: 1,145 passed across 9 binaries.
+- `cargo check -p tiler-ir --all-targets`, `cargo clippy -p tiler-ir --all-targets -- -D warnings`, `RUSTDOCFLAGS='-D warnings' cargo doc -p tiler-ir --no-deps`, and `cargo test -p tiler-ir --doc`: passed; doctests ran 9 ordinary passes, 1 ignored example, and 9 compile-fail passes.
+- `cargo fmt --all -- --check`, `tkt lint`, `make citations`, and `git diff --check`: passed. Citations resolved 1,178 pinned citations and 6,527 local links.
+- `tkt guard tkt/minimize-and-prove-the-atomic-subgroup-public-surface-before-acceptance --base b2ab50f278616a1ad8f171184a16d60ae7e608ff --ticket minimize-and-prove-the-atomic-subgroup-public-surface-before-acceptance --explain`: `WARN` only for declared/live claim overlap; no scope under-declaration. The direct files map to `implementation/ir` and `project/tickets`, with reverse dependencies reported transitively. The accepted-surface packet is within declared `contracts/decisions`.
+- Worktree-local `target/` occupied 2.2 GB with 82 GB free when the package gates completed.
 ## Scope correction — 2026-08-13
 
 The exact work census touches production/test source only in `tiler-ir` plus the decision ticket. `tiler-compiler` is a read-and-test consumer, not an edit owner, so its exclusive scope was removed before claim. If implementation proves a compiler edit necessary, stop and add the scope before touching it.
