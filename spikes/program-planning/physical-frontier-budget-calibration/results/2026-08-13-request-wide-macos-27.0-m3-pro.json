@@ -1,5 +1,8 @@
 {
   "experiment": "physical-frontier-budget-calibration",
+  "evidence_status": "withdrawn-non-custodial-history",
+  "withdrawal_reason": "The record omits the fifty ordered durations, complete time -l stderr, and RSS child status needed to recompute its summaries independently.",
+  "replaced_by": "2026-08-14-request-wide-macos-27.0-m3-pro.json",
   "measurement_scope": "request-wide public compilation",
   "behavior_under_test_base": "4fb0427319b1504e1549e03ba023ac486343a743",
   "executable_evidence_commit": "bef9a39afaeb929eef99d7d43232bdc61c9b5e2a",

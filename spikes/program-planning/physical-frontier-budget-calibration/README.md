@@ -9,7 +9,7 @@ implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement", "exhaustive-finite"]
 supports: ["tiler.research.program-planning.physical-frontier-budget-calibration"]
 entrypoints: ["spikes/program-planning/physical-frontier-budget-calibration/src/main.rs"]
-last_verified: "2026-08-13"
+last_verified: "2026-08-14"
 ticket: "calibrate-the-physical-frontier-provider-and-outcome-budgets"
 ---
 
@@ -27,23 +27,29 @@ CARGO_TARGET_DIR=./target cargo build --release
 ./target/release/physical-frontier-budget-calibration request-boundary 31
 ./target/release/physical-frontier-budget-calibration perturb extra-production-provider
 ./target/release/physical-frontier-budget-calibration record /tmp/physical-frontier-request-wide-rerun.json
+./target/release/physical-frontier-budget-calibration export-raw /tmp/physical-frontier-request-wide-rerun.json /tmp/physical-frontier-request-wide-rerun.timings.tsv /tmp/physical-frontier-request-wide-rerun.rss.jsonl
+./target/release/physical-frontier-budget-calibration annotate-record /tmp/physical-frontier-request-wide-rerun.json /tmp/physical-frontier-request-wide-rerun.annotated.json /tmp/physical-frontier-request-wide-rerun.timings.tsv /tmp/physical-frontier-request-wide-rerun.rss.jsonl
+./target/release/physical-frontier-budget-calibration verify-evidence /tmp/physical-frontier-request-wide-rerun.json /tmp/physical-frontier-request-wide-rerun.annotated.json /tmp/physical-frontier-request-wide-rerun.timings.tsv /tmp/physical-frontier-request-wide-rerun.rss.jsonl
 ```
 
-The last command is reserved for the idle M3 Pro. It now measures request-wide 1, 2, 8, and 16-target governed/specialist rows, the four-contract add chain, the governed-plus-two-specialist population, and the full 31-installed-specialist population with the same warm-up 8, repeats 50, and child-RSS protocol. `--quick` shortens warmup, repeats, and sweep points and skips `/usr/bin/time -l`. Spikes gate nothing.
+The `record` command is reserved for the idle M3 Pro. It measures request-wide 1, 2, 8, and 16-target governed/specialist rows, the four-contract add chain, the governed-plus-two-specialist population, and the full 31-installed-specialist population with the same warm-up 8, repeats 50, and child-RSS protocol. `--quick` shortens warmup, repeats, and sweep points and skips `/usr/bin/time -l`. Spikes gate nothing.
 
-The compiler behavior under test is exact base `4fb0427319b1504e1549e03ba023ac486343a743`. The request measurement harness and corrected independent proposal-assessment census are executable at `bef9a39afaeb929eef99d7d43232bdc61c9b5e2a`. The request-wide record below was run from that exact detached commit. This descendant adds only the public-spike `request-boundary` diagnostic and rendered-record observation used after measurement to locate an independent explain-capacity refusal; it is not the executable measurement revision. To rerun the exact evidence revision without depending on the current checkout:
+The compiler behavior under test is exact base `4fb0427319b1504e1549e03ba023ac486343a743`. The retained workload and corrected independent proposal-assessment census are exact at `bef9a39afaeb929eef99d7d43232bdc61c9b5e2a`; exact executable evidence commit `d086fe9953a09a1a8a64dbd2353e9ded78ef18e6` adds raw custody while restoring `program.rs`, `profile.rs`, and `providers.rs` to the exact prior blobs. Its separate `boundary.rs` observer has one production call under `request_boundary`; the retained unit check refuses a diagnostic call from record or RSS-child paths. To rerun the exact evidence revision without depending on the current checkout:
 
 ```sh
 evidence_worktree=$(mktemp -d /tmp/tiler-frontier-evidence.XXXXXX)
-git worktree add --detach "$evidence_worktree" bef9a39afaeb929eef99d7d43232bdc61c9b5e2a
+git worktree add --detach "$evidence_worktree" d086fe9953a09a1a8a64dbd2353e9ded78ef18e6
 CARGO_TARGET_DIR="$evidence_worktree/target" cargo test --manifest-path "$evidence_worktree/Cargo.toml" -p tiler-compiler --lib request_wide_physical_planning_population_is_pinned -- --nocapture
 CARGO_TARGET_DIR="$evidence_worktree/spike-target" cargo run --quiet --manifest-path "$evidence_worktree/spikes/program-planning/physical-frontier-budget-calibration/Cargo.toml" -- census
 CARGO_TARGET_DIR="$evidence_worktree/spike-target" cargo build --release --manifest-path "$evidence_worktree/spikes/program-planning/physical-frontier-budget-calibration/Cargo.toml"
 "$evidence_worktree/spike-target/release/physical-frontier-budget-calibration" record /tmp/physical-frontier-request-wide-rerun.json
+"$evidence_worktree/spike-target/release/physical-frontier-budget-calibration" export-raw /tmp/physical-frontier-request-wide-rerun.json /tmp/physical-frontier-request-wide-rerun.timings.tsv /tmp/physical-frontier-request-wide-rerun.rss.jsonl
+"$evidence_worktree/spike-target/release/physical-frontier-budget-calibration" annotate-record /tmp/physical-frontier-request-wide-rerun.json /tmp/physical-frontier-request-wide-rerun.annotated.json /tmp/physical-frontier-request-wide-rerun.timings.tsv /tmp/physical-frontier-request-wide-rerun.rss.jsonl
+"$evidence_worktree/spike-target/release/physical-frontier-budget-calibration" verify-evidence /tmp/physical-frontier-request-wide-rerun.json /tmp/physical-frontier-request-wide-rerun.annotated.json /tmp/physical-frontier-request-wide-rerun.timings.tsv /tmp/physical-frontier-request-wide-rerun.rss.jsonl
 git worktree remove --force "$evidence_worktree"
 ```
 
-Run the release `record` line only after the idle/noise precheck. The retained snapshots used `sw_vers`, `uname -a`, `sysctl -n machdep.cpu.brand_string`, `sysctl -n hw.ncpu`, `sysctl -n hw.memsize`, `sysctl -n vm.loadavg`, `uptime`, `pmset -g batt`, `pmset -g therm`, `memory_pressure`, `df -h /`, and `ps -Ao pid,ppid,%cpu,%mem,state,etime,comm -r`; the same load, power, thermal, memory, filesystem, and process checks ran immediately after the record. The [pre-run](results/2026-08-13-request-wide-macos-27.0-m3-pro.environment-before.txt) and [post-run](results/2026-08-13-request-wide-macos-27.0-m3-pro.environment-after.txt) artifacts retain those outputs with only `memory_pressure`'s trailing spaces normalized.
+Run the release `record` line only after the idle/noise precheck. The retained snapshots used `sw_vers`, `uname -a`, `sysctl -n machdep.cpu.brand_string`, `sysctl -n hw.ncpu`, `sysctl -n hw.memsize`, `sysctl -n vm.loadavg`, `uptime`, `pmset -g batt`, `pmset -g therm`, `memory_pressure`, `df -h /`, and `ps -Ao pid,ppid,%cpu,%mem,state,etime,comm -r`; the same load, power, thermal, memory, filesystem, and process checks ran immediately after the record. The [pre-run](results/2026-08-14-request-wide-macos-27.0-m3-pro.environment-before.txt) and [post-run](results/2026-08-14-request-wide-macos-27.0-m3-pro.environment-after.txt) artifacts retain those outputs with only `memory_pressure`'s trailing spaces normalized.
 
 The compiler-owned governed census is a targeted crate test because the old `ProviderOffer` public surface cannot expose raw governed emissions:
 
@@ -130,30 +136,34 @@ The retained result is [`results/2026-08-13-macos-27.0-m3-pro.json`](results/202
 
 ### Request-wide M3 Pro timing and RSS
 
-**Measurement**, 2026-08-13 local / 2026-08-14 UTC, exact executable commit `bef9a39afaeb929eef99d7d43232bdc61c9b5e2a`, behavior base `4fb0427319b1504e1549e03ba023ac486343a743`. Apple M3 Pro, macOS 27.0 build `26A5388g`, Darwin 27.0.0, 11 logical CPUs, 18 GiB, `rustc 1.99.0-nightly (eff8269f7 2026-07-18)`, release profile. Runtime rows discard eight warm-ups and summarize fifty in-process compiles. RSS is macOS `/usr/bin/time -l` maximum resident set size for a child that warms twice and compiles once.
+**Measurement**, 2026-08-14, exact executable commit `d086fe9953a09a1a8a64dbd2353e9ded78ef18e6`, behavior base `4fb0427319b1504e1549e03ba023ac486343a743`. Apple M3 Pro, macOS 27.0 build `26A5388g`, Darwin 27.0.0, 11 logical CPUs, 18 GiB, `rustc 1.99.0-nightly (eff8269f7 2026-07-18)`, release profile. Every runtime row retains all fifty integer-nanosecond observations after eight discarded warm-ups; published microseconds are independently recomputed with upper median `n/2`, p90 `(9n−1)/10`, and floor truncation. Every RSS row retains the complete stderr and exit status from one macOS `/usr/bin/time -l` child that warms twice and compiles once.
 
-The machine was on AC power at 100 percent battery, reported no thermal or performance warning, and had no swap I/O. Load moved from `{ 2.17 2.39 2.26 }` before the run to `{ 2.12 2.32 2.24 }` after it; the harness's intervening embedded snapshot was `{ 2.22 2.39 2.26 }`. Free-memory percentage was 73 then 72. No Cargo, rustc, make, nextest, or measurement binary appears in the process-name snapshot; the retained `pgrep` lines are the snapshot shell and a long-lived Node process whose argv or environment contains a search token, not competing builds. Apart from the observing SSH session, the highest pre-run process was `opendirectoryd` at 4.9 percent CPU; the highest post-run processes were Tailscale and `opendirectoryd` at 3.5 percent. The earlier build was allowed to settle before these snapshots.
+The machine was on AC power at 100 percent battery, reported no thermal or performance warning, and had no swap I/O. Three immediately preceding controls were clean. Formal load moved from `{ 2.18 2.23 2.24 }` to `{ 1.61 2.07 2.17 }`; free-memory percentage stayed 72. Apart from the observing SSH session, the highest pre-run process was `opendirectoryd` at 5.0 percent CPU and the highest post-run process was `launchd` at 4.5 percent. No Cargo, rustc, make, nextest, Chrome renderer, or competing measurement process appears in either snapshot.
 
 | Row | Targets | Installed outcomes | Alternatives / failure | Min / median / p90 / max / mean µs | Peak RSS bytes |
 | --- | ---: | ---: | --- | --- | ---: |
-| five-op, governed | 1 | 0 | 2 | 3,857 / 3,869 / 3,878 / 3,901 / 3,870 | 29,687,808 |
-| five-op, one specialist | 1 | 17 | 6 | 6,577 / 6,597 / 6,617 / 6,627 / 6,599 | 40,779,776 |
-| add chain, four groups | 1 | 10 | 2 | 3,041 / 3,050 / 3,057 / 3,060 / 3,050 | 25,690,112 |
-| five-op, governed | 2 | 0 | 4 | 7,747 / 7,763 / 7,787 / 7,808 / 7,766 | 39,813,120 |
-| five-op, one specialist | 2 | 34 | 12 | 13,244 / 13,276 / 13,298 / 13,309 / 13,278 | 59,080,704 |
-| add chain, four groups | 2 | 20 | 4 | 6,103 / 6,120 / 6,134 / 6,142 / 6,121 | 30,425,088 |
-| five-op, governed | 8 | 0 | 16 | 31,486 / 31,537 / 31,581 / 32,266 / 31,555 | 93,716,480 |
-| five-op, one specialist | 8 | 136 | 48 | 54,048 / 54,100 / 54,172 / 54,215 / 54,112 | 166,674,432 |
-| add chain, four groups | 8 | 124 | 24 | 35,017 / 35,056 / 35,085 / 35,185 / 35,065 | 88,195,072 |
-| five-op, governed | 16 | 0 | 32 | 63,418 / 63,483 / 63,555 / 64,080 / 63,502 | 165,855,232 |
-| five-op, one specialist | 16 | 272 | 96 | 108,601 / 108,698 / 108,853 / 110,835 / 108,767 | 309,837,824 |
-| five-op, two specialists | 16 | 544 | 192 | 177,748 / 178,847 / 179,403 / 185,961 / 179,058 | 531,202,048 |
-| five-op, 31 specialists | 16 requested | 527 reached | `InvalidCompilerOutput` on target 1 | 49,507 / 49,621 / 49,761 / 51,084 / 49,665 | 788,185,088 |
-| add chain, four groups | 16 | 248 | 48 | 70,420 / 70,496 / 70,558 / 70,688 / 70,505 | 156,270,592 |
+| five-op, governed | 1 | 0 | 2 | 3,853 / 3,866 / 3,876 / 3,883 / 3,866 | 29,671,424 |
+| five-op, one specialist | 1 | 17 | 6 | 6,579 / 6,599 / 6,609 / 6,620 / 6,599 | 41,009,152 |
+| add chain, four groups | 1 | 10 | 2 | 3,042 / 3,052 / 3,058 / 3,077 / 3,052 | 25,755,648 |
+| five-op, governed | 2 | 0 | 4 | 7,750 / 7,766 / 7,779 / 7,798 / 7,766 | 39,862,272 |
+| five-op, one specialist | 2 | 34 | 12 | 13,274 / 13,303 / 13,323 / 13,364 / 13,304 | 59,277,312 |
+| add chain, four groups | 2 | 20 | 4 | 6,101 / 6,117 / 6,127 / 6,137 / 6,117 | 30,490,624 |
+| five-op, governed | 8 | 0 | 16 | 31,508 / 31,547 / 31,597 / 31,720 / 31,557 | 93,847,552 |
+| five-op, one specialist | 8 | 136 | 48 | 54,158 / 54,375 / 55,783 / 61,352 / 54,737 | 166,821,888 |
+| add chain, four groups | 8 | 124 | 24 | 34,998 / 35,046 / 35,074 / 35,077 / 35,045 | 88,326,144 |
+| five-op, governed | 16 | 0 | 32 | 63,414 / 63,483 / 63,532 / 63,557 / 63,487 | 165,855,232 |
+| five-op, one specialist | 16 | 272 | 96 | 108,880 / 109,014 / 109,138 / 110,925 / 109,061 | 310,018,048 |
+| five-op, two specialists | 16 | 544 | 192 | 177,123 / 177,303 / 177,396 / 177,545 / 177,305 | 531,693,568 |
+| five-op, 31 specialists | 16 requested | 527 reached | `InvalidCompilerOutput` on target 1 | 49,508 / 49,610 / 49,728 / 49,803 / 49,619 | 788,283,392 |
+| add chain, four groups | 16 | 248 | 48 | 70,540 / 70,614 / 70,716 / 71,045 / 70,645 | 156,467,200 |
 
-“Installed outcomes” excludes governed emissions because the public provider tally observes only caller-installed providers; the independent compiler census gives 304 governed outcomes and therefore 848 total raw outcomes for the successful two-specialist request. The 31-specialist row is refusal timing and RSS, not a measurement of the named 8,736-outcome population. It reached one target's 527 installed outcomes (93 proposals and 434 declines) before complete explain construction refused.
+“Installed outcomes” excludes governed emissions because the public provider tally observes only caller-installed providers; the independent compiler census gives 304 governed outcomes and therefore 848 total raw outcomes for the successful two-specialist request. The 31-specialist row remains refusal timing and RSS, not a measurement of the named 8,736-outcome population: it reached one target's 527 installed outcomes (93 proposals and 434 declines) before complete explain construction refused. The 8-target specialist row's 61,352 µs maximum is retained rather than discarded; its median is 54,375 µs, so readers can see the isolated upper-tail disturbance without mistaking the minimum envelope for a complete distribution.
 
-The annotated record is [`results/2026-08-13-request-wide-macos-27.0-m3-pro.json`](results/2026-08-13-request-wide-macos-27.0-m3-pro.json); the harness-generated JSON is retained byte-for-byte in [`results/2026-08-13-request-wide-macos-27.0-m3-pro.generated.json`](results/2026-08-13-request-wide-macos-27.0-m3-pro.generated.json). Retained raw files are [stdout](results/2026-08-13-request-wide-macos-27.0-m3-pro.stdout.txt), [pre-run environment](results/2026-08-13-request-wide-macos-27.0-m3-pro.environment-before.txt), [post-run environment](results/2026-08-13-request-wide-macos-27.0-m3-pro.environment-after.txt), [green baselines](results/2026-08-13-request-wide-macos-27.0-m3-pro.baselines.txt), [compiler perturbations](results/2026-08-13-request-wide-macos-27.0-m3-pro.compiler-negatives.txt), and [candidate-calculation perturbations](results/2026-08-13-request-wide-macos-27.0-m3-pro.spike-negatives.txt). The generated rationale's `propose_per_outcome_ns=0` is not evidence: the unchanged helper selects a request-add minimum below the singleton governed floor and saturates that mixed-population subtraction to zero.
+The live [annotated record](results/2026-08-14-request-wide-macos-27.0-m3-pro.json) is an exact semantic copy of the [generated JSON](results/2026-08-14-request-wide-macos-27.0-m3-pro.generated.json) plus its evidence annotation. Its SHA-256 values are `ec3abc4e…76c41` for generated JSON, `ebfb9015…44ce` for the ordered [timing TSV](results/2026-08-14-request-wide-macos-27.0-m3-pro.timings.tsv), and `8d8146be…cf78` for the complete [RSS JSONL](results/2026-08-14-request-wide-macos-27.0-m3-pro.rss.jsonl). The deterministic verifier recomputes all 2250 timings and reparses all 45 RSS rows. Retained supporting artifacts are [stdout](results/2026-08-14-request-wide-macos-27.0-m3-pro.stdout.txt), [stderr](results/2026-08-14-request-wide-macos-27.0-m3-pro.stderr.txt), [numeric exit status](results/2026-08-14-request-wide-macos-27.0-m3-pro.exit-status.txt), [pre-run environment](results/2026-08-14-request-wide-macos-27.0-m3-pro.environment-before.txt), [post-run environment](results/2026-08-14-request-wide-macos-27.0-m3-pro.environment-after.txt), [subject equivalence](results/2026-08-14-request-wide-macos-27.0-m3-pro.subject-equivalence.txt), [green baselines](results/2026-08-14-request-wide-macos-27.0-m3-pro.baselines.txt), [compiler perturbations](results/2026-08-14-request-wide-macos-27.0-m3-pro.compiler-negatives.txt), [spike perturbations](results/2026-08-14-request-wide-macos-27.0-m3-pro.spike-negatives.txt), and [custody perturbations](results/2026-08-14-request-wide-macos-27.0-m3-pro.custody-negatives.txt).
+
+The [2026-08-13 annotated record](results/2026-08-13-request-wide-macos-27.0-m3-pro.json) and byte-for-byte generated JSON remain as withdrawn, non-custodial history: they omit the ordered timings and full RSS child records. A 00:50 idle precheck was held before launching because Chrome used 82 percent CPU. A later `981ddf7f…` run was rejected because exact diffing found a pre-existing explain-line observer inside its timed summarization path. The first `d086fe99…` launch completed, but its controlling SSH session reported completion eight seconds early and caused the nominal post snapshot to overlap the measurement. None of those attempts supplies live numbers. The final record used a detached process, an atomic exit-status marker written after its post snapshot, and read-only polling.
+
+The generated rationale's `propose_per_outcome_ns=0` is not evidence: the unchanged helper selects a request-add minimum below the singleton governed floor and saturates that mixed-population subtraction to zero.
 
 ### Explain-capacity boundary control
 
@@ -198,7 +208,7 @@ Run the scanner and assessment negatives at the exact executable evidence revisi
 
 ```sh
 negative_worktree=$(mktemp -d /tmp/tiler-frontier-negatives.XXXXXX)
-git worktree add --detach "$negative_worktree" bef9a39afaeb929eef99d7d43232bdc61c9b5e2a
+git worktree add --detach "$negative_worktree" d086fe9953a09a1a8a64dbd2353e9ded78ef18e6
 CARGO_TARGET_DIR="$negative_worktree/spike-target" cargo run --quiet --manifest-path "$negative_worktree/spikes/program-planning/physical-frontier-budget-calibration/Cargo.toml" -- perturb extra-production-provider
 TILER_FRONTIER_CENSUS_PERTURB=fatal-proposal-order CARGO_TARGET_DIR="$negative_worktree/target" cargo test --manifest-path "$negative_worktree/Cargo.toml" -p tiler-compiler --lib a_fatal_proposal_leaves_later_emitted_proposals_unassessed -- --nocapture
 TILER_FRONTIER_CENSUS_PERTURB=proposal-body-path CARGO_TARGET_DIR="$negative_worktree/target" cargo test --manifest-path "$negative_worktree/Cargo.toml" -p tiler-compiler --lib proposal_assessment_precedes_applicability_and_body_dispatch -- --nocapture
@@ -215,6 +225,17 @@ The request-wide compiler test also accepts a subject perturbation through `TILE
 | `governed-outcome-inclusion` | `the raw-outcome authority must include governed and installed emissions` — left 272 raw outcomes against 576 |
 
 The idle-M3 rerun retained the exact green compiler/spike baselines and all six closing-condition negatives in the linked raw files above. The four compiler perturbations exit 101 at their unchanged assertions; the two calculation perturbations exit 1 after the other 41 census checks remain green.
+
+Custody checks perturb the retained subjects while leaving the verifier unchanged:
+
+| Perturb | Failure quoted |
+| --- | --- |
+| first ordered duration set to zero | `FAIL custody governed-only.min_us expected=0 observed=3197` |
+| complete RSS stderr maximum changed | `FAIL custody governed-only.rss.parsed_peak_rss_bytes expected=1 observed=25886720` |
+| RSS child subcommand changed | `FAIL custody governed-only RSS command subject mismatch: expected=["child-measure", "governed-only", "0", "empty"] observed=["child-request-measure", "governed-only", "0", "empty"]` |
+| duplicate maximum-RSS line | `FAIL custody governed-only retained time stderr has 2 maximum RSS lines` |
+| one raw TSV duration changed | `FAIL custody evidence raw timing artifact does not match generated record` |
+| one annotated measurement field changed | `FAIL custody evidence annotated measurement fields differ from generated record` |
 
 ## Measurement boundary
 

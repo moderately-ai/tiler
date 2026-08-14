@@ -1,0 +1,14 @@
+behavior_base=4fb0427319b1504e1549e03ba023ac486343a743
+prior_executable=bef9a39afaeb929eef99d7d43232bdc61c9b5e2a
+custody_executable=d086fe9953a09a1a8a64dbd2353e9ded78ef18e6
+program.rs old_blob=33a6eb52e9b6c4c4d66617ff0ab85584ea8969f6 new_blob=33a6eb52e9b6c4c4d66617ff0ab85584ea8969f6 equal=yes
+profile.rs old_blob=243ee5969c5a146bc70f42bb312228832159e271 new_blob=243ee5969c5a146bc70f42bb312228832159e271 equal=yes
+providers.rs old_blob=833c409a586a3e1d09d260ebb89129ec4d008ad7 new_blob=833c409a586a3e1d09d260ebb89129ec4d008ad7 equal=yes
+subject_manifest_equal=yes
+subject_rows=45
+timing_values=2250
+repeats=[50]
+warmup=[8]
+main_diagnostic_call_sites=1
+measure_diagnostic_mentions=0
+191:        let diagnostic = compile_request_diagnostic(

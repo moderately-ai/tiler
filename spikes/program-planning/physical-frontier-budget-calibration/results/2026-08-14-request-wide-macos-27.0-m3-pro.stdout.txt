@@ -1,0 +1,94 @@
+host commit=d086fe9953a09a1a8a64dbd2353e9ded78ef18e6 | rustc=rustc 1.99.0-nightly (eff8269f7 2026-07-18) / binary: rustc / commit-hash: eff8269f797067c30555e77f160ec84c0ed15cd9 / commit-date: 2026-07-18 / host: aarch64-apple-darwin / release: 1.99.0-nightly / LLVM version: 22.1.8 | uname=Darwin Mac 27.0.0 Darwin Kernel Version 27.0.0: Tue Jul 14 21:38:48 PDT 2026; root:xnu-13432.0.94.501.4~1/RELEASE_ARM64_T6030 arm64 | brand=Apple M3 Pro | ncpu=11 | memsize=19327352832 | loadavg={ 2.18 2.23 2.24 } | uptime=1:11  up 12 days, 23:20, 1 user, load averages: 2.18 2.23 2.24
+census 42 checks passed
+measure governed-only extra=0 kind=Empty
+  subjects=0 invocations=0 proposals=0 declines=0 alternatives=1 min_us=3197 fail=None
+measure external-vertical extra=1 kind=Specialize { threads: 32 }
+  subjects=17 invocations=17 proposals=3 declines=14 alternatives=2 min_us=3903 fail=None
+measure request-five-governed targets=1 extra=0 kind=Empty
+  targets=1 subjects=0 invocations=0 proposals=0 declines=0 alternatives=2 min_us=3853 fail=None
+measure request-five-specialist targets=1 extra=1 kind=Specialize { threads: 32 }
+  targets=1 subjects=17 invocations=17 proposals=3 declines=14 alternatives=6 min_us=6579 fail=None
+measure request-add-four-groups targets=1 extra=1 kind=Specialize { threads: 32 }
+  targets=1 subjects=10 invocations=10 proposals=1 declines=9 alternatives=2 min_us=3042 fail=None
+measure request-five-governed targets=2 extra=0 kind=Empty
+  targets=2 subjects=0 invocations=0 proposals=0 declines=0 alternatives=4 min_us=7750 fail=None
+measure request-five-specialist targets=2 extra=1 kind=Specialize { threads: 32 }
+  targets=2 subjects=34 invocations=34 proposals=6 declines=28 alternatives=12 min_us=13274 fail=None
+measure request-add-four-groups targets=2 extra=1 kind=Specialize { threads: 32 }
+  targets=2 subjects=20 invocations=20 proposals=2 declines=18 alternatives=4 min_us=6101 fail=None
+measure request-five-governed targets=8 extra=0 kind=Empty
+  targets=8 subjects=0 invocations=0 proposals=0 declines=0 alternatives=16 min_us=31508 fail=None
+measure request-five-specialist targets=8 extra=1 kind=Specialize { threads: 32 }
+  targets=8 subjects=136 invocations=136 proposals=24 declines=112 alternatives=48 min_us=54158 fail=None
+measure request-add-four-groups targets=8 extra=1 kind=Specialize { threads: 32 }
+  targets=8 subjects=120 invocations=124 proposals=12 declines=112 alternatives=24 min_us=34998 fail=None
+measure request-five-governed targets=16 extra=0 kind=Empty
+  targets=16 subjects=0 invocations=0 proposals=0 declines=0 alternatives=32 min_us=63414 fail=None
+measure request-five-specialist targets=16 extra=1 kind=Specialize { threads: 32 }
+  targets=16 subjects=272 invocations=272 proposals=48 declines=224 alternatives=96 min_us=108880 fail=None
+measure request-five-two-specialists targets=16 extra=2 kind=Specialize { threads: 32 }
+  targets=16 subjects=496 invocations=544 proposals=96 declines=448 alternatives=192 min_us=177123 fail=None
+measure request-five-full-32-provider-population targets=16 extra=31 kind=Specialize { threads: 32 }
+  targets=16 subjects=437 invocations=527 proposals=93 declines=434 alternatives=0 min_us=49508 fail=Some("InvalidCompilerOutput")
+measure request-add-four-groups targets=16 extra=1 kind=Specialize { threads: 32 }
+  targets=16 subjects=240 invocations=248 proposals=24 declines=224 alternatives=48 min_us=70540 fail=None
+measure two-additive extra=2 kind=Specialize { threads: 32 }
+  subjects=31 invocations=34 proposals=6 declines=28 alternatives=3 min_us=4581 fail=None
+measure sweep-empty extra=1 kind=Empty
+  subjects=17 invocations=17 proposals=0 declines=0 alternatives=1 min_us=3192 fail=None
+measure sweep-empty extra=2 kind=Empty
+  subjects=31 invocations=34 proposals=0 declines=0 alternatives=1 min_us=3198 fail=None
+measure sweep-empty extra=4 kind=Empty
+  subjects=59 invocations=68 proposals=0 declines=0 alternatives=1 min_us=3216 fail=None
+measure sweep-empty extra=8 kind=Empty
+  subjects=115 invocations=136 proposals=0 declines=0 alternatives=1 min_us=3239 fail=None
+measure sweep-empty extra=16 kind=Empty
+  subjects=227 invocations=272 proposals=0 declines=0 alternatives=1 min_us=3293 fail=None
+measure sweep-empty extra=32 kind=Empty
+  subjects=451 invocations=544 proposals=0 declines=0 alternatives=1 min_us=3397 fail=None
+measure sweep-empty extra=64 kind=Empty
+  subjects=899 invocations=1088 proposals=0 declines=0 alternatives=1 min_us=3602 fail=None
+measure sweep-decline extra=1 kind=Decline
+  subjects=17 invocations=17 proposals=0 declines=17 alternatives=1 min_us=3233 fail=None
+measure sweep-decline extra=2 kind=Decline
+  subjects=31 invocations=34 proposals=0 declines=34 alternatives=1 min_us=3257 fail=None
+measure sweep-decline extra=4 kind=Decline
+  subjects=59 invocations=68 proposals=0 declines=68 alternatives=1 min_us=3326 fail=None
+measure sweep-decline extra=8 kind=Decline
+  subjects=115 invocations=136 proposals=0 declines=136 alternatives=1 min_us=3446 fail=None
+measure sweep-decline extra=16 kind=Decline
+  subjects=227 invocations=272 proposals=0 declines=272 alternatives=1 min_us=3703 fail=None
+measure sweep-decline extra=32 kind=Decline
+  subjects=451 invocations=544 proposals=0 declines=544 alternatives=1 min_us=4265 fail=None
+measure sweep-decline extra=64 kind=Decline
+  subjects=899 invocations=1088 proposals=0 declines=1088 alternatives=1 min_us=5691 fail=None
+measure sweep-decline extra=128 kind=Decline
+  subjects=1539 invocations=1920 proposals=0 declines=1920 alternatives=0 min_us=5335 fail=Some("InvalidCompilerOutput")
+measure sweep-propose extra=1 kind=Specialize { threads: 32 }
+  subjects=17 invocations=17 proposals=3 declines=14 alternatives=2 min_us=3891 fail=None
+measure sweep-propose extra=2 kind=Specialize { threads: 32 }
+  subjects=31 invocations=34 proposals=6 declines=28 alternatives=3 min_us=4597 fail=None
+measure sweep-propose extra=3 kind=Specialize { threads: 32 }
+  subjects=45 invocations=51 proposals=9 declines=42 alternatives=4 min_us=5291 fail=None
+measure sweep-propose extra=4 kind=Specialize { threads: 32 }
+  subjects=59 invocations=68 proposals=12 declines=56 alternatives=5 min_us=6036 fail=None
+measure sweep-propose extra=8 kind=Specialize { threads: 32 }
+  subjects=115 invocations=136 proposals=24 declines=112 alternatives=9 min_us=9108 fail=None
+measure sweep-propose extra=12 kind=Specialize { threads: 32 }
+  subjects=171 invocations=204 proposals=36 declines=168 alternatives=13 min_us=12284 fail=None
+measure sweep-propose extra=16 kind=Specialize { threads: 32 }
+  subjects=227 invocations=272 proposals=48 declines=224 alternatives=17 min_us=15040 fail=None
+measure sweep-infeasible extra=1 kind=Infeasible { threads: 512 }
+  subjects=17 invocations=17 proposals=3 declines=14 alternatives=2 min_us=4003 fail=None
+measure sweep-infeasible extra=2 kind=Infeasible { threads: 512 }
+  subjects=31 invocations=34 proposals=6 declines=28 alternatives=2 min_us=4109 fail=None
+measure sweep-infeasible extra=4 kind=Infeasible { threads: 512 }
+  subjects=59 invocations=68 proposals=12 declines=56 alternatives=2 min_us=4318 fail=None
+measure sweep-infeasible extra=8 kind=Infeasible { threads: 512 }
+  subjects=115 invocations=136 proposals=24 declines=112 alternatives=2 min_us=4744 fail=None
+measure sweep-infeasible extra=16 kind=Infeasible { threads: 512 }
+  subjects=227 invocations=272 proposals=48 declines=224 alternatives=2 min_us=5656 fail=None
+measure sweep-infeasible extra=32 kind=Infeasible { threads: 512 }
+  subjects=451 invocations=544 proposals=96 declines=448 alternatives=2 min_us=7448 fail=None
+custody verified samples=45 timing_values=2250 rss_rows=45
+wrote /tmp/tiler-frontier-custody-d086fe99-final/2026-08-14-request-wide-macos-27.0-m3-pro.generated.json
