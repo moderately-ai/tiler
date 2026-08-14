@@ -496,6 +496,7 @@ mod keys;
 mod model;
 mod realization;
 mod requirement;
+mod retained;
 #[cfg(test)]
 mod tag_injectivity;
 mod verify;
@@ -630,6 +631,7 @@ pub use requirement::{
     RouteRequirementError, RouteRequirementSubject, RouteResourceDimension,
     RouteResourceRequirement,
 };
+pub use retained::{RetainedShapeRelationFailure, RetainedShapeRelationFailureClass};
 // The one shared scalar-arithmetic policy vocabulary, named by re-export rather
 // than restated. `tiler-compiler` names the same types the same way, so the
 // dimension set, the behaviour spaces, the means, the locus, and the structured

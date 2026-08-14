@@ -594,7 +594,9 @@ impl AbiFacts {
             .map(|(_, _, extent)| *extent)
     }
 
-    fn target_property(&self, key: &TargetPropertyKey) -> Option<u64> {
+    /// Returns the bound unsigned value of one governed target property, if present.
+    #[must_use]
+    pub fn target_property(&self, key: &TargetPropertyKey) -> Option<u64> {
         self.target_properties
             .iter()
             .find(|(bound, _)| bound == key)

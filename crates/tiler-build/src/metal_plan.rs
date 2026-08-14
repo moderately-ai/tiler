@@ -1662,9 +1662,9 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "ef27d36a6062e8641406a29217946d32e40a74cad12e4002b1f50af790b25cbb";
+            "ba5452388f78b29ebd15b8da23e5bcab329a0dee530e82b86b593c00c1e4ecdf";
         const CACHE_SUBJECT: &str =
-            "8ac665905a28891135c45659184b3e01eb4913d4a536495b88c47f46da5b2e5c";
+            "c9cb502f569664931d51e7dfc23e3691cb7ebc68b28459be571c7ef81e7fa52c";
         // **Hex step after the feasibility rule-set key v5 → v6.** Descriptor
         // length and fixed content stay at the workgroup-tree-width-policy
         // values: silent profiles write no subgroup section, and the key
@@ -1674,7 +1674,10 @@ mod tests {
         // The policy section is 70 bytes; the envelope delta is 770, which is
         // `11 * 70` rather than the historical seven raw-descriptor embeddings
         // alone. Domain tags are unchanged.
-        const FIXED_CONTENT_BYTES: usize = 77_061;
+        // **77,112 after the retained shape environment.** The empty
+        // environment's identity is 43 bytes; the manifest frames it as 51.
+        // 77,061 + 51 = 77,112. Domain tag length is unchanged at v17.
+        const FIXED_CONTENT_BYTES: usize = 77_112;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
@@ -1748,9 +1751,9 @@ mod tests {
     #[test]
     fn the_authority_ledger_mirrors_the_live_standard_metal_pins() {
         const ARTIFACT_IDENTITY: &str =
-            "ef27d36a6062e8641406a29217946d32e40a74cad12e4002b1f50af790b25cbb";
+            "ba5452388f78b29ebd15b8da23e5bcab329a0dee530e82b86b593c00c1e4ecdf";
         const CACHE_SUBJECT: &str =
-            "8ac665905a28891135c45659184b3e01eb4913d4a536495b88c47f46da5b2e5c";
+            "c9cb502f569664931d51e7dfc23e3691cb7ebc68b28459be571c7ef81e7fa52c";
         let ledger = include_str!(
             "../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md"
         );
@@ -1768,7 +1771,7 @@ mod tests {
             "the live pin paragraph does not name CACHE_SUBJECT",
         );
         assert!(
-            today.contains("fixed content is 77,061 bytes"),
+            today.contains("fixed content is 77,112 bytes"),
             "the live pin paragraph does not name FIXED_CONTENT_BYTES",
         );
         assert!(

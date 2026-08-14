@@ -187,6 +187,9 @@ pub use route::{
     RoutedDispatch, RoutedEntry, RoutedExtentParameter, RoutedLaunch, SharedAllocation,
     TargetPropertyRequest,
 };
+pub use tiler_artifact::program::{
+    RetainedShapeRelationFailure, RetainedShapeRelationFailureClass,
+};
 
 use route::RouteRequirementRefusal;
 use tiler_artifact::program::{
@@ -438,6 +441,9 @@ impl DecodedProgram {
         expected: &RecordedArtifactProgramIdentity,
         facts: &AbiFacts,
     ) -> Result<Preflight<'_>, LoadRejection> {
+        self.decoded
+            .evaluate_retained_shape_relations(facts)
+            .map_err(LoadRejection::RetainedShapeRelation)?;
         let (identity, variant) = self.select_route(environment, expected, facts)?;
 
         // The earlier phase first. Both are unanswerable here, and a host that
@@ -479,6 +485,9 @@ impl DecodedProgram {
         expected: &RecordedArtifactProgramIdentity,
         facts: &AbiFacts,
     ) -> Result<LiveDeviceQualification<'_>, LoadRejection> {
+        self.decoded
+            .evaluate_retained_shape_relations(facts)
+            .map_err(LoadRejection::RetainedShapeRelation)?;
         let (identity, variant) = self.select_route(environment, expected, facts)?;
         let requirements = route_requirements(variant, environment)?;
         let ordered: Vec<_> = variant.execution_order().collect();
@@ -1745,6 +1754,13 @@ pub enum LoadRejection {
         /// Axis of that input.
         axis: u32,
     },
+    /// A retained semantic shape relation does not hold for the bound facts.
+    ///
+    /// Evaluated before variant selection, route qualification, and the one-way
+    /// routing commit. The failure names the relation, every participating
+    /// symbol and authoritative source, and every observed value available at
+    /// the refusal. There is no post-commit retry or fallback.
+    RetainedShapeRelation(RetainedShapeRelationFailure),
     /// A data dependency's shared storage could not be paired to two slots.
     ///
     /// An internal binding carries no name, so a loader that allocated per
@@ -1905,6 +1921,9 @@ impl fmt::Display for LoadRejection {
                 "runtime.unpairable-shared-allocation: variant {variant} declares a data \
                  dependency whose shared storage is not determined: {detail}",
             ),
+            Self::RetainedShapeRelation(failure) => {
+                write!(formatter, "runtime.retained-shape-relation: {failure}")
+            }
         }
     }
 }
@@ -1914,6 +1933,7 @@ impl Error for LoadRejection {
         match self {
             Self::Artifact(failure) => Some(failure),
             Self::AbiEvaluation { error, .. } => Some(error),
+            Self::RetainedShapeRelation(failure) => Some(failure),
             Self::ProgramMismatch { .. }
             | Self::NoEligibleVariant { .. }
             | Self::NoApplicableVariant { .. }

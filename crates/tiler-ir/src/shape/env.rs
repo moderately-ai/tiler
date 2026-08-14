@@ -69,12 +69,13 @@ use core::fmt;
 use std::error::Error;
 
 use super::{Axis, Extent};
-use crate::identity::{push_len, push_slice};
+use crate::identity::push_slice;
 use crate::program::abi::{AvailabilityPhase, TargetPropertyKey};
 use crate::semantic::InputKey;
 
 pub(crate) mod census;
 pub(crate) mod constraint;
+pub(crate) mod subject;
 
 // Flat re-export rather than a published `constraint` module: the constraint
 // vocabulary is part of the accepted `ShapeEnv` surface, while the decision
@@ -353,7 +354,7 @@ impl BindingSource {
         }
     }
 
-    fn encode(&self, bytes: &mut Vec<u8>) {
+    pub(super) fn encode(&self, bytes: &mut Vec<u8>) {
         bytes.push(self.tag());
         match self {
             Self::Static(extent) => bytes.extend_from_slice(&extent.get().to_be_bytes()),
@@ -386,11 +387,20 @@ pub enum FactProvenance {
 
 impl FactProvenance {
     /// Returns the governed tag of this provenance, exhaustively.
-    const fn tag(self) -> u8 {
+    pub(super) const fn tag(self) -> u8 {
         match self {
             Self::StaticallyProven => 0x01,
             Self::FrontendRequired => 0x02,
             Self::RuntimeValidated => 0x03,
+        }
+    }
+
+    pub(super) const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0x01 => Some(Self::StaticallyProven),
+            0x02 => Some(Self::FrontendRequired),
+            0x03 => Some(Self::RuntimeValidated),
+            _ => None,
         }
     }
 }
@@ -450,7 +460,7 @@ impl RootBinding {
         self.provenance
     }
 
-    fn encode(&self, bytes: &mut Vec<u8>) {
+    pub(super) fn encode(&self, bytes: &mut Vec<u8>) {
         self.source.encode(bytes);
         bytes.push(self.phase.tag());
         bytes.push(self.provenance.tag());
@@ -784,7 +794,7 @@ impl ShapeEnvBuilder {
             }
         }
 
-        let identity = ShapeEnvIdentity(encode_environment(&bound, &constraints));
+        let identity = ShapeEnvIdentity(subject::encode_environment(&bound, &constraints));
         Ok(ShapeEnv {
             entries: bound,
             constraints,
@@ -1139,30 +1149,6 @@ pub(crate) fn empty_environment_identity() -> &'static ShapeEnvIdentity {
             .clone()
     });
     &EMPTY
-}
-
-/// Encodes one bound environment canonically.
-///
-/// Domain-separated and length-prefixed per ADR 0074, over the entries and
-/// constraints in the canonical order `build` established, so the bytes are a
-/// function of the environment rather than of authoring order. Guards are not
-/// encoded; the retained proof summary is not an identity component.
-fn encode_environment(
-    entries: &[(ShapeSymbol, RootBinding)],
-    constraints: &[SemanticInputConstraint],
-) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    push_slice(&mut bytes, SHAPE_ENV_DOMAIN);
-    push_len(&mut bytes, entries.len());
-    for (symbol, binding) in entries {
-        symbol.encode(&mut bytes);
-        binding.encode(&mut bytes);
-    }
-    push_len(&mut bytes, constraints.len());
-    for constraint in constraints {
-        constraint.encode(&mut bytes);
-    }
-    bytes
 }
 
 #[cfg(test)]

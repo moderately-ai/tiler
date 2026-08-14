@@ -793,14 +793,27 @@ pub fn assemble_portfolio(members: &[FixtureSpec]) -> Fixture {
         !members.is_empty(),
         "a portfolio packages at least one variant",
     );
-    let semantic = semantic_program();
+    assemble_portfolio_over(members, &semantic_program())
+}
+
+/// Assembles one portfolio over a caller-supplied semantic program.
+///
+/// The ordinary fixture graph is enough for route tests. Retained-shape
+/// preflight needs a program that carries a non-empty environment with a
+/// fixed interface, which this path admits without changing every other case.
+#[must_use]
+pub fn assemble_portfolio_over(members: &[FixtureSpec], semantic: &SemanticProgram) -> Fixture {
+    assert!(
+        !members.is_empty(),
+        "a portfolio packages at least one variant",
+    );
     // One provider offering one capability, realized by any packaged plan. The
     // capability is what the semantic graph asks for; how many stages implement
     // it, and which backend emits them, are physical choices below it.
     let provider =
         ProviderIdentity::new("tiler-test", "scalar-host-serial-sum", 1).expect("a provider");
     let environment = CompilationEnvironment::new([provider.clone()]).expect("an environment");
-    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).expect("an artifact draft");
+    let mut draft = ArtifactProgramBuilder::new(semantic, environment).expect("an artifact draft");
     draft
         .select_provider(SelectedProvider {
             provider,
@@ -811,7 +824,7 @@ pub fn assemble_portfolio(members: &[FixtureSpec]) -> Fixture {
         .expect("the selected provider was offered");
 
     for spec in members {
-        push_member(&mut draft, &semantic, spec);
+        push_member(&mut draft, semantic, spec);
     }
 
     declare_realization(&mut draft, members);

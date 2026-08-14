@@ -80,6 +80,7 @@ use super::super::model::{
 };
 use super::super::realization::DeliveredRealizationRecord;
 use super::super::requirement::RouteRequirement;
+use super::super::retained::RetainedShapeRelationFailure;
 use super::error::ArtifactCodecError;
 use super::model::{ArtifactEnvelope, EntryRow, NumericalFacts, SectionKind, VariantRow, position};
 use super::payload::{PayloadEntryMapping, PayloadMetadata, decode_metadata};
@@ -333,6 +334,27 @@ impl DecodedArtifact {
     /// governed envelope bound.
     pub fn re_encode(&self) -> Result<Vec<u8>, ArtifactCodecFailure> {
         encode(&self.envelope).map_err(ArtifactCodecFailure::from)
+    }
+
+    /// Evaluates every retained semantic shape relation against bound facts.
+    ///
+    /// The carried bytes are the authority: this view is the decode of those
+    /// bytes, not a second table. Invocation values do not enter artifact
+    /// identity, so one decoded artifact stays valid as live extents change.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RetainedShapeRelationFailure`] when a required binding is
+    /// missing, names a domain this artifact does not declare, does not hold,
+    /// or overflows unsigned 64-bit arithmetic.
+    pub fn evaluate_retained_shape_relations(
+        &self,
+        facts: &AbiFacts,
+    ) -> Result<(), RetainedShapeRelationFailure> {
+        self.envelope
+            .semantic()
+            .retained_shape
+            .evaluate(facts, self.envelope.inputs())
     }
 }
 
@@ -1312,6 +1334,31 @@ impl From<ArtifactCodecError> for ArtifactCodecFailure {
             // invalid numerical realization, which is what `Invalid` names.
             | ArtifactCodecError::DeliveredRealization { .. }
             | ArtifactCodecError::BindingAccessTypeMismatch => Self::Invalid { detail },
+
+            ArtifactCodecError::RetainedShapeEnvironment { ref cause } => match cause.as_ref() {
+                tiler_ir::shape::ShapeEnvSubjectError::UnknownRelation { .. }
+                | tiler_ir::shape::ShapeEnvSubjectError::UnknownBindingSource { .. }
+                | tiler_ir::shape::ShapeEnvSubjectError::UnknownTerm { .. }
+                | tiler_ir::shape::ShapeEnvSubjectError::UnknownPhase { .. }
+                | tiler_ir::shape::ShapeEnvSubjectError::UnknownProvenance { .. }
+                | tiler_ir::shape::ShapeEnvSubjectError::UnsupportedBindingSource { .. } => {
+                    Self::Unsupported { detail }
+                }
+                tiler_ir::shape::ShapeEnvSubjectError::Limit { .. } => Self::Limit { detail },
+                tiler_ir::shape::ShapeEnvSubjectError::Truncated
+                | tiler_ir::shape::ShapeEnvSubjectError::BadDomain
+                | tiler_ir::shape::ShapeEnvSubjectError::InvalidText => Self::Malformed { detail },
+                tiler_ir::shape::ShapeEnvSubjectError::TrailingBytes
+                | tiler_ir::shape::ShapeEnvSubjectError::Malformed { .. }
+                | tiler_ir::shape::ShapeEnvSubjectError::ZeroDivisor
+                | tiler_ir::shape::ShapeEnvSubjectError::UnorderedBindings
+                | tiler_ir::shape::ShapeEnvSubjectError::UnorderedConstraints
+                | tiler_ir::shape::ShapeEnvSubjectError::ConstraintOnUndeclaredSymbol { .. }
+                | tiler_ir::shape::ShapeEnvSubjectError::EncodingMismatch => {
+                    Self::Invalid { detail }
+                }
+                _ => Self::Unsupported { detail },
+            },
         }
     }
 }
