@@ -1,7 +1,7 @@
 ---
 id: admit-symbolic-extents-through-schedule-formation
 title: Admit symbolic extents through schedule formation
-status: in-progress
+status: blocked
 priority: p1
 dependencies: [admit-symbolic-extents-through-compiler-region-formation, accept-the-live-extent-operand-public-surface]
 related: [deliver-an-artifact-family-from-a-symbolic-region, carry-live-extent-operands-through-the-artifact-envelope]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, ir, shapes, public-boundary]
-claimed_from: todo
-assignee: worker-symbolic-schedule
-lease_expires_at: 1786716570
 ---
 ## User-visible outcome
 
