@@ -9,7 +9,7 @@ implementation_status: "spike-only"
 evidence_classes: ["exhaustive-finite", "executable-model"]
 supports: ["tiler.research.cache.hot-path-efficiency"]
 entrypoints: ["spikes/cache/envelope-digest-coverage/harness/src/main.rs", "spikes/cache/envelope-digest-coverage/harness/src/envelope.rs"]
-last_verified: "2026-08-05"
+last_verified: "2026-08-16"
 ticket: "decide-whether-the-bundle-envelope-section-digest-is-redundant"
 ---
 
@@ -23,7 +23,14 @@ cargo build --release
 ./target/release/cache-envelope-digest-coverage --record macos-27.0-2026-08-05
 ```
 
-Nothing runs it automatically; no `make` target reaches `spikes/`. Run it from this directory, which is where `--record` resolves `results/` from. `--quick` strides the sweep for development and produces a result nobody should record. The whole run takes about ten seconds, almost all of it the 226,606 real decodes of the sweep.
+Nothing runs it automatically; no `make` target reaches `spikes/`. Run it from this directory, which is where `--record` resolves `results/` from. `--quick` strides the sweep for development and produces a result nobody should record. The exhaustive form performs two real artifact decodes per envelope byte and reports its exact census in the sweep row.
+
+The non-recording verification forms are:
+
+```sh
+cargo run --release -- --quick
+cargo run --release
+```
 
 ## What it does
 
@@ -40,7 +47,7 @@ Two things are corrupted, and the difference matters. A **class** names the exac
 
 Recorded in [the 2026-08-05 result](results/envelope-digest-coverage-macos-27.0-2026-08-05.tsv), reproduced byte for byte in [its reproduction](results/envelope-digest-coverage-macos-27.0-2026-08-05-reproduction.tsv), and taken again against a neutered build in [the neutered result](results/envelope-digest-coverage-macos-27.0-2026-08-05-neutered.tsv).
 
-**Every single-byte corruption is caught by both.** All 35 classes and all 226,606 sweep decodes are refused by `decode_artifact` on its own, each by a named boundary: the framing header by its own field checks, the whole manifest by `ManifestDigestMismatch`, each framed section by its identifier, length, or content digest, and — behind a re-sealed manifest digest, which is what it takes to reach them — the canonical identity and the named canonicity checks.
+**Every single-byte corruption in the retained schema-12 result is caught by both.** All 35 classes and all 226,606 sweep decodes are refused by `decode_artifact` on its own, each by a named boundary: the framing header by its own field checks, the whole manifest by `ManifestDigestMismatch`, each framed section by its identifier, length, or content digest, and — behind a re-sealed manifest digest, which is what it takes to reach them — the identity declaration and the named canonicity checks. The retained TSVs predate manifest schema 15's replacement of the identity preimage with its digest; their offsets and `manifest-carried-identity` labels are historical evidence, not the current locator's vocabulary.
 
 **The set only the bundle digest catches is non-empty, and every member of it is a whole-run substitution.** Replace the envelope span with a *different valid envelope* and `decode_artifact` accepts it, because it is a valid envelope; the bundle digest is the only thing that refuses. Both the equal-length and the different-length substitution are recorded, and the harness asserts that both substitutes carry a canonical artifact identity that differs from the published one, so what would be returned is a different artifact and not a respelling of the same one.
 
@@ -56,7 +63,21 @@ Each control names the population it covers and is a check that can fail.
 
 **The reduction is confirmed row by row rather than argued.** In the neutered result every class's shipped column equals its neutered column, for all 35 classes, and the sweep's sampled public verdicts move from 257/257 refused-by-the-digest to 0/257. That is the reduction "with the digest gone, the next check over these bytes is `decode_artifact`" observed, not assumed.
 
-**Both frame restatements are checked against the bytes.** This harness cannot call `bundle::decode`, the bundle digest, or the envelope's own decoder internals — all crate-private — so it restates their framing constants. Each restatement is then *required to hold*: the derived bundle span must contain the exact published envelope and must end the file; the envelope's magic, declared total length, manifest domain, and manifest digest must all reproduce; the framed section stream must close the run exactly; the manifest's trailing canonical identity must sit where the decoder's own `identity()` says it does, under its own length prefix; and each manifest descriptor must declare the length the stream framed. A framing change in either crate therefore fails this spike loudly instead of aiming a perturbation at the wrong bytes.
+**Both frame restatements are checked against the bytes.** This harness cannot call `bundle::decode`, the bundle digest, or the envelope's own decoder internals — all crate-private — so it restates their framing constants. Each restatement is then *required to hold*: the derived bundle span must contain the exact published envelope and must end the file; the envelope's magic, declared total length, manifest domain, current schema, and manifest digest must all reproduce; the framed section stream must close the run exactly; the manifest's trailing fixed-width identity digest must equal the digest of the decoder's own `identity()` under the restated identity-digest domain; the counted descriptor table must end immediately before that digest; and each descriptor must declare the identifier and length the section stream framed. A framing change in either crate therefore fails this spike loudly instead of aiming a perturbation at the wrong bytes.
+
+**Every corruption class carries an executable boundary map.** The harness checks the map before it records a row, so reaching the wrong refusal is a failure rather than another green rejection:
+
+| Classes | Exact perturbed subject | Required artifact-decoder boundary |
+| --- | --- | --- |
+| the ten `header-*` classes | each fixed header field | that field's named format, algorithm, length, count, or manifest-digest refusal |
+| the six `manifest-*` classes | domain, schema, component schemas, an interior byte, one descriptor, and the trailing identity digest | `ManifestDigestMismatch` |
+| three classes per framed section | identifier, framed length, and content | `NonCanonicalSectionId`, `SectionLengthMismatch`, and `SectionDigestMismatch` |
+| `resealed-manifest-identity-digest` | the trailing digest, with the outer manifest digest repaired | `ArtifactIdentityMismatch` |
+| the three re-sealed descriptor classes | descriptor identifier, length, and content digest | `NonCanonicalSectionId`, `SectionLengthMismatch`, and `SectionDigestMismatch` |
+| the four truncation, extension, trailing-byte, and transposition classes | whole-run framing or section content | `TotalLengthMismatch`, `TrailingBytes`, or `SectionDigestMismatch`, as named by the class |
+| the two substitution classes | a different valid whole envelope | accepted by the artifact decoder; only the bundle digest refuses |
+
+The class census is asserted as 26 fixed classes plus three per framed section: 35 for the current three-section fixture. The report's `corruption-boundary-map` control is emitted only after every class has met its required boundary.
 
 **The fixtures are proven to be what the classes need.** Both substitutes decode on their own, both carry an identity that differs from the published one, and the equal-length substitute is asserted equal in length and unequal in bytes. Without those, "the decoder accepted it" would be a claim about malformed bytes rather than about a different artifact.
 

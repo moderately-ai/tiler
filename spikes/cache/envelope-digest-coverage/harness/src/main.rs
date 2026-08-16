@@ -54,7 +54,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tiler_artifact::program::{ArtifactCodecFailure, DigestAlgorithm, decode_artifact};
+use tiler_artifact::program::{
+    ArtifactCodecFailure, DIGEST_BYTES, DigestAlgorithm, decode_artifact,
+};
 use tiler_cache::expansion::{
     BundleRejection, BundleSection, CacheKey, ComposedSubject, EntryRejection, ExpansionCache,
     Lookup, MissReason, Resolution, SubjectFacets,
@@ -101,6 +103,10 @@ const ENVELOPE_MANIFEST_DIGEST_AT: usize = 37;
 const MANIFEST_DIGEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest-digest.v1\0";
 /// Versioned domain tag opening the canonical manifest bytes.
 const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";
+/// Schema of the canonical manifest this locator restates.
+const MANIFEST_SCHEMA: (u16, u16) = (18, 0);
+/// Domain separator of the manifest's trailing derived-identity digest.
+const IDENTITY_DIGEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.identity-digest.v1\0";
 /// One manifest section descriptor: id, purpose, disposition, schema, length,
 /// digest.
 const MANIFEST_DESCRIPTOR_BYTES: usize = 4 + 1 + 1 + 2 + 2 + 8 + 32;
@@ -286,13 +292,13 @@ fn run(options: &Options) -> ExitCode {
         "envelope-frame-restatement",
         format!(
             "manifest {}..{} digests to the header value; {} framed sections close the run; the \
-             carried identity is {} bytes at {}..{}",
+             carried identity digest is {} bytes at {}..{} and matches the decoded identity",
             envelope_frame.manifest.0,
             envelope_frame.manifest.1,
             envelope_frame.sections.len(),
-            envelope_frame.identity.1 - envelope_frame.identity.0,
-            envelope_frame.identity.0,
-            envelope_frame.identity.1,
+            envelope_frame.identity_digest.1 - envelope_frame.identity_digest.0,
+            envelope_frame.identity_digest.0,
+            envelope_frame.identity_digest.1,
         ),
     ));
     rows.push(Row::control(
@@ -334,10 +340,17 @@ fn run(options: &Options) -> ExitCode {
     // -- the class table ---------------------------------------------------
 
     let classes = classes(&envelope_frame, &substitute, &longer_substitute);
+    let expected_class_count = 26 + 3 * envelope_frame.sections.len();
+    assert_eq!(
+        classes.len(),
+        expected_class_count,
+        "the corruption-class census is 26 fixed classes plus three per framed section",
+    );
     let mut stop_conditions = 0_u32;
     for class in &classes {
         let perturbed = (class.perturb)(&published);
         let neutered = verdict_of(decode_artifact(&perturbed).map(|_| ()));
+        class.assert_neutered_boundary(&neutered);
         let shipped = shipped_verdict(&cache, &subject, &entry, &stored, &bundle_frame, &perturbed);
         let attribution = attribute(&shipped, &neutered);
         if attribution == Attribution::Neither && options.mode == Mode::Shipped {
@@ -345,6 +358,15 @@ fn run(options: &Options) -> ExitCode {
         }
         rows.push(Row::class(class, &shipped, &neutered, attribution));
     }
+    rows.push(Row::control(
+        "corruption-boundary-map",
+        format!(
+            "all {} corruption classes reached their declared artifact-decoder boundary (26 \
+             fixed classes plus three for each of {} framed sections)",
+            classes.len(),
+            envelope_frame.sections.len(),
+        ),
+    ));
 
     // -- the exhaustive single-byte sweep ----------------------------------
 
@@ -406,7 +428,59 @@ struct Class {
     bytes: String,
     /// Produces the corrupted envelope run from the published one.
     perturb: Perturb,
+    /// Artifact-decoder boundary this exact perturbation must reach.
+    expected_neutered: ExpectedVerdict,
 }
+
+impl Class {
+    /// Proves this class still reaches the decoder boundary its name describes.
+    fn assert_neutered_boundary(&self, observed: &Verdict) {
+        assert_eq!(
+            observed.boundary, self.expected_neutered.boundary,
+            "corruption class `{}` expected the named boundary `{}` but reached `{}`: {}",
+            self.id, self.expected_neutered.boundary, observed.boundary, observed.detail,
+        );
+        if self.expected_neutered.detail.is_empty() {
+            assert!(
+                observed.detail.is_empty(),
+                "corruption class `{}` expected no refusal detail but reached `{}`",
+                self.id,
+                observed.detail,
+            );
+        } else {
+            assert!(
+                observed.detail.contains(self.expected_neutered.detail),
+                "corruption class `{}` expected the named artifact boundary `{}` but reached `{}`",
+                self.id,
+                self.expected_neutered.detail,
+                observed.detail,
+            );
+        }
+    }
+}
+
+/// Expected public decoder verdict for one corruption class.
+#[derive(Clone, Copy)]
+struct ExpectedVerdict {
+    /// Public boundary class, or `accepted` for a valid substitution.
+    boundary: &'static str,
+    /// Stable internal boundary name required in the diagnostic.
+    detail: &'static str,
+}
+
+/// One named artifact-codec refusal.
+const fn artifact_refusal(detail: &'static str) -> ExpectedVerdict {
+    ExpectedVerdict {
+        boundary: "artifact-codec",
+        detail,
+    }
+}
+
+/// A valid whole-envelope substitution the artifact decoder must accept.
+const ACCEPTED: ExpectedVerdict = ExpectedVerdict {
+    boundary: "accepted",
+    detail: "",
+};
 
 /// Flips the low bit of one byte.
 fn flip(at: usize) -> Perturb {
@@ -429,7 +503,7 @@ fn flip(at: usize) -> Perturb {
 )]
 fn classes(frame: &EnvelopeFrame, substitute: &[u8], longer_substitute: &[u8]) -> Vec<Class> {
     let (manifest_start, manifest_end) = frame.manifest;
-    let identity_at = frame.identity.0;
+    let identity_digest_at = frame.identity_digest.0;
     let first_descriptor = frame.descriptor_table + 8;
     let substitute = substitute.to_vec();
     let longer = longer_substitute.to_vec();
@@ -440,60 +514,70 @@ fn classes(frame: &EnvelopeFrame, substitute: &[u8], longer_substitute: &[u8]) -
             region: "framing header",
             bytes: "0..8".to_owned(),
             perturb: flip(0),
+            expected_neutered: artifact_refusal("BadMagic"),
         },
         Class {
             id: "header-envelope-format-major",
             region: "framing header",
             bytes: "8..10".to_owned(),
             perturb: flip(9),
+            expected_neutered: artifact_refusal("UnsupportedEnvelopeFormat"),
         },
         Class {
             id: "header-envelope-format-minor",
             region: "framing header",
             bytes: "10..12".to_owned(),
             perturb: flip(11),
+            expected_neutered: artifact_refusal("UnsupportedEnvelopeFormat"),
         },
         Class {
             id: "header-canonical-encoding-major",
             region: "framing header",
             bytes: "12..14".to_owned(),
             perturb: flip(13),
+            expected_neutered: artifact_refusal("UnsupportedCanonicalEncoding"),
         },
         Class {
             id: "header-canonical-encoding-minor",
             region: "framing header",
             bytes: "14..16".to_owned(),
             perturb: flip(15),
+            expected_neutered: artifact_refusal("UnsupportedCanonicalEncoding"),
         },
         Class {
             id: "header-digest-algorithm-tag",
             region: "framing header",
             bytes: "16".to_owned(),
             perturb: flip(16),
+            expected_neutered: artifact_refusal("UnsupportedDigestAlgorithm"),
         },
         Class {
             id: "header-total-length",
             region: "framing header",
             bytes: "17..25".to_owned(),
             perturb: flip(ENVELOPE_TOTAL_LENGTH_AT + 7),
+            expected_neutered: artifact_refusal("TotalLengthMismatch"),
         },
         Class {
             id: "header-manifest-length",
             region: "framing header",
             bytes: "25..33".to_owned(),
             perturb: flip(ENVELOPE_MANIFEST_LENGTH_AT + 7),
+            expected_neutered: artifact_refusal("ManifestDigestMismatch"),
         },
         Class {
             id: "header-section-count",
             region: "framing header",
             bytes: "33..37".to_owned(),
             perturb: flip(ENVELOPE_SECTION_COUNT_AT + 3),
+            expected_neutered: artifact_refusal("SectionCountMismatch"),
         },
         Class {
             id: "header-manifest-digest",
             region: "framing header",
             bytes: "37..69".to_owned(),
             perturb: flip(ENVELOPE_MANIFEST_DIGEST_AT),
+            expected_neutered: artifact_refusal("ManifestDigestMismatch"),
         },
         Class {
             id: "manifest-domain-tag",
@@ -503,6 +587,7 @@ fn classes(frame: &EnvelopeFrame, substitute: &[u8], longer_substitute: &[u8]) -
                 manifest_start + MANIFEST_DOMAIN.len()
             ),
             perturb: flip(manifest_start),
+            expected_neutered: artifact_refusal("ManifestDigestMismatch"),
         },
         Class {
             id: "manifest-schema-version",
@@ -513,6 +598,7 @@ fn classes(frame: &EnvelopeFrame, substitute: &[u8], longer_substitute: &[u8]) -
                 manifest_start + MANIFEST_DOMAIN.len() + 4
             ),
             perturb: flip(manifest_start + MANIFEST_DOMAIN.len() + 1),
+            expected_neutered: artifact_refusal("ManifestDigestMismatch"),
         },
         Class {
             id: "manifest-component-schema-versions",
@@ -523,12 +609,14 @@ fn classes(frame: &EnvelopeFrame, substitute: &[u8], longer_substitute: &[u8]) -
                 manifest_start + MANIFEST_DOMAIN.len() + 20
             ),
             perturb: flip(manifest_start + MANIFEST_DOMAIN.len() + 5),
+            expected_neutered: artifact_refusal("ManifestDigestMismatch"),
         },
         Class {
             id: "manifest-interior-byte",
             region: "manifest",
             bytes: format!("{}", usize::midpoint(manifest_start, manifest_end)),
             perturb: flip(usize::midpoint(manifest_start, manifest_end)),
+            expected_neutered: artifact_refusal("ManifestDigestMismatch"),
         },
         Class {
             id: "manifest-section-descriptor",
@@ -538,12 +626,14 @@ fn classes(frame: &EnvelopeFrame, substitute: &[u8], longer_substitute: &[u8]) -
                 first_descriptor + MANIFEST_DESCRIPTOR_BYTES
             ),
             perturb: flip(first_descriptor),
+            expected_neutered: artifact_refusal("ManifestDigestMismatch"),
         },
         Class {
-            id: "manifest-carried-identity",
+            id: "manifest-identity-digest",
             region: "manifest",
-            bytes: format!("{identity_at}..{}", frame.identity.1),
-            perturb: flip(identity_at),
+            bytes: format!("{identity_digest_at}..{}", frame.identity_digest.1),
+            perturb: flip(identity_digest_at),
+            expected_neutered: artifact_refusal("ManifestDigestMismatch"),
         },
     ];
 
@@ -554,18 +644,21 @@ fn classes(frame: &EnvelopeFrame, substitute: &[u8], longer_substitute: &[u8]) -
             region: "section stream",
             bytes: format!("{}..{}", section.id_at, section.id_at + 4),
             perturb: flip(section.id_at + 3),
+            expected_neutered: artifact_refusal("NonCanonicalSectionId"),
         });
         classes.push(Class {
             id: leak(format!("section-{index}-framed-length")),
             region: "section stream",
             bytes: format!("{}..{}", section.id_at + 4, section.id_at + 12),
             perturb: flip(section.id_at + 11),
+            expected_neutered: artifact_refusal("SectionLengthMismatch"),
         });
         classes.push(Class {
             id: leak(format!("section-{index}-content")),
             region: "section stream",
             bytes: format!("{}..{}", section.content.0, section.content.1),
             perturb: flip(section.content.0 + (section.content.1 - section.content.0) / 2),
+            expected_neutered: artifact_refusal("SectionDigestMismatch"),
         });
     }
 
@@ -576,16 +669,26 @@ fn classes(frame: &EnvelopeFrame, substitute: &[u8], longer_substitute: &[u8]) -
     // manifest digest over its own edit, which is the forger's move rather than
     // damage, and is what puts the named canonicity checks, the section
     // digests, and the identity comparison on the record.
-    for (id, at) in [
-        ("resealed-manifest-carried-identity", identity_at),
-        ("resealed-manifest-descriptor-id", first_descriptor + 3),
+    for (id, at, expected) in [
+        (
+            "resealed-manifest-identity-digest",
+            identity_digest_at,
+            "ArtifactIdentityMismatch",
+        ),
+        (
+            "resealed-manifest-descriptor-id",
+            first_descriptor + 3,
+            "NonCanonicalSectionId",
+        ),
         (
             "resealed-manifest-descriptor-length",
             first_descriptor + 4 + 1 + 1 + 2 + 2 + 7,
+            "SectionLengthMismatch",
         ),
         (
             "resealed-manifest-descriptor-digest",
             first_descriptor + 4 + 1 + 1 + 2 + 2 + 8,
+            "SectionDigestMismatch",
         ),
     ] {
         classes.push(Class {
@@ -598,6 +701,7 @@ fn classes(frame: &EnvelopeFrame, substitute: &[u8], longer_substitute: &[u8]) -
                 reseal_manifest(&mut copy);
                 copy
             }),
+            expected_neutered: artifact_refusal(expected),
         });
     }
 
@@ -607,6 +711,7 @@ fn classes(frame: &EnvelopeFrame, substitute: &[u8], longer_substitute: &[u8]) -
         region: "structural",
         bytes: "the final byte of the run is removed".to_owned(),
         perturb: Box::new(|bytes: &[u8]| bytes[..bytes.len() - 1].to_vec()),
+        expected_neutered: artifact_refusal("TotalLengthMismatch"),
     });
     classes.push(Class {
         id: "structural-extended-by-one",
@@ -617,6 +722,7 @@ fn classes(frame: &EnvelopeFrame, substitute: &[u8], longer_substitute: &[u8]) -
             copy.push(0x00);
             copy
         }),
+        expected_neutered: artifact_refusal("TotalLengthMismatch"),
     });
     classes.push(Class {
         id: "structural-trailing-byte-inside-declared-length",
@@ -630,6 +736,7 @@ fn classes(frame: &EnvelopeFrame, substitute: &[u8], longer_substitute: &[u8]) -
                 .copy_from_slice(&total.to_be_bytes());
             copy
         }),
+        expected_neutered: artifact_refusal("TrailingBytes"),
     });
     classes.push(Class {
         id: "structural-two-bytes-transposed",
@@ -644,18 +751,21 @@ fn classes(frame: &EnvelopeFrame, substitute: &[u8], longer_substitute: &[u8]) -
                 copy
             }
         }),
+        expected_neutered: artifact_refusal("SectionDigestMismatch"),
     });
     classes.push(Class {
         id: "structural-substituted-equal-length-envelope",
         region: "structural",
         bytes: "the whole run becomes a different valid envelope of the same length".to_owned(),
         perturb: Box::new(move |_: &[u8]| substitute.clone()),
+        expected_neutered: ACCEPTED,
     });
     classes.push(Class {
         id: "structural-substituted-longer-envelope",
         region: "structural",
         bytes: "the whole run becomes a different valid envelope of a different length".to_owned(),
         perturb: Box::new(move |_: &[u8]| longer.clone()),
+        expected_neutered: ACCEPTED,
     });
     classes
 }
@@ -979,8 +1089,8 @@ struct FramedSection {
 struct EnvelopeFrame {
     manifest: (usize, usize),
     sections: Vec<FramedSection>,
-    /// Span of the manifest's trailing canonical artifact identity.
-    identity: (usize, usize),
+    /// Span of the manifest's trailing canonical artifact-identity digest.
+    identity_digest: (usize, usize),
     /// Offset of the manifest's section descriptor table, at its own count.
     descriptor_table: usize,
 }
@@ -988,19 +1098,19 @@ struct EnvelopeFrame {
 impl EnvelopeFrame {
     /// Walks the envelope's own frame and checks every restatement against it.
     ///
-    /// The trailing canonical identity is *variable* width — it is a canonical
-    /// byte run, not a digest — so its span is taken from the decoder's own
-    /// [`DecodedArtifact::identity`] and then required to sit at the manifest's
-    /// tail under its own length prefix, rather than assumed to be some fixed
-    /// number of bytes. Everything behind it, the descriptor table included, is
-    /// located from there.
+    /// The trailing identity declaration is the governed fixed-width digest of
+    /// the decoder's own `DecodedArtifact::identity`. Its span is therefore
+    /// taken from the manifest tail using [`DIGEST_BYTES`], and its bytes are
+    /// re-derived under [`IDENTITY_DIGEST_DOMAIN`] before the descriptor table
+    /// immediately ahead of it is located from its declared count and fixed row
+    /// width.
     ///
     /// # Panics
     ///
     /// Panics when the magic, the declared total length, the manifest domain,
     /// the manifest digest, the declared section count, the closure of the
-    /// section stream, the identity's placement, or the descriptor table's
-    /// restated width disagrees with the bytes — that is, whenever
+    /// section stream, manifest schema, identity digest, or descriptor table's
+    /// restated framing disagrees with the bytes — that is, whenever
     /// `encode.rs`'s layout has moved and this file has not.
     fn locate(envelope: &[u8], identity: &[u8]) -> Self {
         assert_eq!(
@@ -1023,6 +1133,15 @@ impl EnvelopeFrame {
             &envelope[manifest.0..manifest.0 + MANIFEST_DOMAIN.len()],
             MANIFEST_DOMAIN,
             "the manifest opens with the restated domain",
+        );
+        let manifest_schema_at = manifest.0 + MANIFEST_DOMAIN.len();
+        assert_eq!(
+            (
+                read_u16(envelope, manifest_schema_at),
+                read_u16(envelope, manifest_schema_at + 2),
+            ),
+            MANIFEST_SCHEMA,
+            "the manifest schema is the one this restatement maps",
         );
         assert_eq!(
             DigestAlgorithm::GOVERNED
@@ -1058,50 +1177,79 @@ impl EnvelopeFrame {
             envelope.len(),
             "the framed section stream closes the envelope exactly",
         );
-        // The identity closes the manifest under its own length prefix, and the
-        // descriptor table is the run immediately before it. Both are checked
-        // against the bytes, or the re-sealed classes would aim at the wrong
-        // field of the wrong row.
-        let identity_span = (manifest.1 - identity.len(), manifest.1);
+        // The fixed-width identity digest closes the manifest, and the
+        // descriptor table is the counted run immediately before it. Both are
+        // checked against the bytes, or the re-sealed classes would aim at the
+        // wrong field of the wrong row.
+        let identity_digest_start = manifest
+            .1
+            .checked_sub(DIGEST_BYTES)
+            .expect("the fixture manifest contains its fixed-width identity digest");
+        let identity_digest = (identity_digest_start, manifest.1);
         assert_eq!(
-            &envelope[identity_span.0..identity_span.1],
-            identity,
-            "the decoder's canonical identity closes the manifest",
+            &envelope[identity_digest.0..identity_digest.1],
+            DigestAlgorithm::GOVERNED
+                .digest(IDENTITY_DIGEST_DOMAIN, identity)
+                .as_bytes(),
+            "the restated identity-digest domain reproduces the manifest's declaration",
         );
-        assert_eq!(
-            usize::try_from(read_u64(envelope, identity_span.0 - 8))
-                .expect("a fixture identity length fits this host"),
-            identity.len(),
-            "the manifest's trailing identity carries its own length prefix",
-        );
-        let descriptor_table = identity_span.0 - 8 - (8 + MANIFEST_DESCRIPTOR_BYTES * declared);
-        assert_eq!(
-            usize::try_from(read_u64(envelope, descriptor_table))
-                .expect("a fixture section count fits this host"),
-            declared,
-            "the restated descriptor table starts at its own count",
-        );
-        for (index, section) in sections.iter().enumerate() {
-            let row = descriptor_table + 8 + MANIFEST_DESCRIPTOR_BYTES * index;
-            assert_eq!(
-                usize::try_from(read_u32(envelope, row)).expect("a u32 fits this host"),
-                index,
-                "a manifest descriptor identifier is its position",
-            );
-            assert_eq!(
-                usize::try_from(read_u64(envelope, row + 4 + 1 + 1 + 2 + 2))
-                    .expect("a fixture section length fits this host"),
-                section.content.1 - section.content.0,
-                "a manifest descriptor declares the length the stream framed",
-            );
-        }
+        let descriptor_table =
+            locate_descriptor_table(envelope, manifest, identity_digest.0, declared, &sections);
         Self {
             manifest,
             sections,
-            identity: identity_span,
+            identity_digest,
             descriptor_table,
         }
     }
+}
+
+/// Locates the counted descriptor table immediately before the identity digest.
+fn locate_descriptor_table(
+    envelope: &[u8],
+    manifest: (usize, usize),
+    identity_digest_start: usize,
+    declared: usize,
+    sections: &[FramedSection],
+) -> usize {
+    let descriptor_rows = MANIFEST_DESCRIPTOR_BYTES
+        .checked_mul(declared)
+        .expect("the bounded descriptor table fits this host");
+    let descriptor_table_bytes = 8_usize
+        .checked_add(descriptor_rows)
+        .expect("the bounded descriptor table and its count fit this host");
+    let descriptor_table = identity_digest_start
+        .checked_sub(descriptor_table_bytes)
+        .expect("the fixture manifest contains its counted descriptor table");
+    assert!(
+        descriptor_table >= manifest.0,
+        "the counted descriptor table lies inside the manifest",
+    );
+    assert_eq!(
+        usize::try_from(read_u64(envelope, descriptor_table))
+            .expect("a fixture section count fits this host"),
+        declared,
+        "the restated descriptor table starts at its own count",
+    );
+    for (index, section) in sections.iter().enumerate() {
+        let row = descriptor_table + 8 + MANIFEST_DESCRIPTOR_BYTES * index;
+        assert_eq!(
+            usize::try_from(read_u32(envelope, row)).expect("a u32 fits this host"),
+            index,
+            "a manifest descriptor identifier is its position",
+        );
+        assert_eq!(
+            usize::try_from(read_u64(envelope, row + 4 + 1 + 1 + 2 + 2))
+                .expect("a fixture section length fits this host"),
+            section.content.1 - section.content.0,
+            "a manifest descriptor declares the length the stream framed",
+        );
+    }
+    descriptor_table
+}
+
+fn read_u16(bytes: &[u8], at: usize) -> u16 {
+    u16::from_be_bytes(bytes[at..at + 2].try_into().expect("a fixed-width field"))
 }
 
 fn read_u64(bytes: &[u8], at: usize) -> u64 {
