@@ -798,10 +798,11 @@ impl CoverAssembly {
             let region = &regions[*position];
             let (first, last) = span[*position];
             // Which edge this region reads across, and which it writes across.
-            // A region reading or producing several is refused: `TensorRole`
-            // separates reads of *declared inputs* by ordinal and carries none
-            // for an intermediate, so two of either leave nothing to say which
-            // access binds which edge.
+            // A region reading several is refused because fieldless
+            // `TensorRole::Intermediate` carries no edge identity, so nothing
+            // pairs each exact access position with one of several consumed
+            // edges. A region producing several is refused because a stage has
+            // one owning write. Neither association may be guessed from order.
             let consumed: Vec<usize> = cover
                 .materializations()
                 .iter()

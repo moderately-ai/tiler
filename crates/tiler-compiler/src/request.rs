@@ -1814,9 +1814,11 @@ pub(crate) struct NormalizedContraction {
 /// an earlier region staged plus whichever declared inputs its expression names,
 /// so the *position* of a read — the leaf it serves — and the *tensor* it binds
 /// are independent. `tiler_ir::schedule`'s `reads_bind_boundary_tensors_in_order`
-/// states the same separation from the schedule side, and
-/// `crate::program::CoverAssembly::from_plan` is what resolves the role against
-/// the program's declared interface.
+/// checks only each fieldless boundary category; it has no declared-interface
+/// association to resolve. `crate::program::CoverAssembly::from_plan` constructs
+/// the exact [`AccessOrdinal`] from the read position and projects it through
+/// [`crate::physical::VerifiedScheduledRegion::declared_input_at`]'s retained,
+/// checked request subject.
 ///
 /// **Two recognized shapes carry it, and the separation is the same fact in
 /// both.** An epilogue's read list names the tensor each expression leaf binds;
@@ -6179,22 +6181,22 @@ fn resolve_elementwise(
 /// region binds.
 ///
 /// **Declared inputs in declaration order, and each input's reads dense-first.**
-/// The group order is the ABI's. The order *within* a group is the canonical
-/// spelling `tiler_ir::schedule`'s `reads_bind_boundary_tensors_in_order`
-/// admits, and it has to be decided here rather than left to the walk: the two
+/// The group order is the ABI's, and the order *within* a group is this
+/// compiler normalization's canonical spelling. It has to be decided here
+/// rather than left to the walk: the two
 /// reads of `a` in `a * permute(a)` are popped in whichever order the operands
 /// happened to be visited, and a read list in walk order would give one program
-/// two spellings — and one of them would be refused by the region verifier for
-/// no property of the program.
+/// two spellings. The fieldless region verifier checks boundary categories, not
+/// declared-input grouping, so it cannot supply this order later.
 ///
 /// **A declared input this walk never reads contributes no read, and the
 /// ordinals stay the program's.** An output whose expression names two of three
 /// declared inputs binds those two, carrying the ordinals the program declared
-/// them at rather than a region-local renumbering — which is what
-/// `crate::program::CoverAssembly::from_plan` resolves against the declared
-/// interface and what `reads_bind_boundary_tensors_in_order` admits, its rule
-/// being that declared input ordinals ascend strictly with a gap allowed. This
-/// walk therefore skips an unread group instead of refusing it: the obligation
+/// them at rather than a region-local renumbering. The physical region itself
+/// carries only the ordered accesses; program assembly projects each exact
+/// [`AccessOrdinal`] through the retained checked request subject to recover
+/// these declared ordinals. This walk therefore skips an unread group instead
+/// of refusing it: the obligation
 /// that no declared input goes unread by *every* output is a program-scoped
 /// property and lives in [`check_output_cover`], where the other program-scoped
 /// obligations moved when several ordered outputs became statable.
@@ -6256,11 +6258,12 @@ fn declared_ordinal(
 /// Records one leaf read at its first sighting, or refuses a second read of one
 /// tensor that nothing could attribute.
 ///
-/// **Two reads of one tensor are admitted exactly when a region can tell them
-/// apart and order them.** A dense read and a mapped read of one declared input
-/// are two different tensors as far as the expression is concerned, and
-/// `tiler_ir::schedule`'s `reads_bind_boundary_tensors_in_order` binds the pair
-/// in one canonical order — dense first — so the region has one spelling.
+/// **Two reads of one tensor are admitted exactly when the compiler can tell
+/// them apart and order them.** A dense read and a mapped read of one declared
+/// input are two different tensors as far as the expression is concerned, and
+/// [`canonical_input_reads`] binds the pair in one canonical order — dense first
+/// — before exact access positions carry that spelling into the region. The
+/// intrinsic schedule verifier sees only their fieldless boundary categories.
 ///
 /// The two refusals are that admission's own boundary rather than separate
 /// rules. A *staged* value read twice would need two `TensorRole::Intermediate`
@@ -6578,9 +6581,9 @@ impl PointwiseMintSink for Bf16Mint {
 ///
 /// `order` is the read list the region will bind, in access order: leaf `i` of
 /// the built expression is served by read `i`, which is the correspondence
-/// `emit_pointwise` relies on and the one
-/// `tiler_ir::schedule::reads_bind_boundary_tensors_in_order` states the
-/// boundary-role rules against.
+/// `emit_pointwise` relies on. Intrinsic region verification checks that this
+/// same ordered access has a permissible fieldless boundary category; the
+/// compiler's retained request subject supplies any declared-input association.
 ///
 /// # Errors
 ///
@@ -8930,8 +8933,8 @@ mod tests {
     /// **The two numbers coincide unless a read widens, so most rows carry a
     /// widening one.** A `[2]` weight broadcast into a `[2, 2]` region iterates
     /// four points and holds two elements; an arm answering `4` would scale an
-    /// opaque call by the iteration space rather than by the buffer
-    /// [`TensorRole::Input`] binds at that ordinal, which is the confidently
+    /// opaque call by the iteration space rather than by the buffer whose exact
+    /// access projects to that declared ordinal, which is the confidently
     /// wrong work count [`crate::call_declaration::WorkScaling`] exists to
     /// prevent. Each row therefore states the domain beside the counts and
     /// refuses to run if they are equal, so a row that had no widening to get
