@@ -3,7 +3,7 @@ id: admit-symbolic-extents-through-schedule-formation
 title: Admit symbolic extents through schedule formation
 status: blocked
 priority: p1
-dependencies: [admit-symbolic-extents-through-compiler-region-formation, accept-the-live-extent-operand-public-surface, decide-the-source-bound-live-row-major-access-surface]
+dependencies: [admit-symbolic-extents-through-compiler-region-formation, accept-the-live-extent-operand-public-surface, decide-the-source-bound-live-row-major-access-surface, refuse-mixed-pointwise-live-row-major-access-relations-before-lowering]
 related: [deliver-an-artifact-family-from-a-symbolic-region, carry-live-extent-operands-through-the-artifact-envelope]
 scopes: [implementation/ir, implementation/compiler, contracts/foundation]
 shared_scopes: [project/tickets]
@@ -12,7 +12,12 @@ tags: [implementation, compiler, ir, shapes, public-boundary]
 ---
 ## User-visible outcome
 
-`compile()` of a recognized same-shape symbolic elementwise program produces a scheduled region that still names its symbols — typically a `LiveRowMajor` plan over the declared `[n]` — or declines with a typed reason that is not the current schedule-geometry refuse. Specializing the plan on a representative literal extent remains forbidden.
+`compile()` of a recognized same-shape symbolic elementwise program produces a
+verified source-bound live schedule whose retained compiler request still names
+the authored symbols, or declines with a typed reason that is not the current
+schedule-geometry refuse. Shared schedule IR names the exact source access and
+runtime input-axis operand, not `ShapeSymbol` or `ShapeEnv`. Specializing the
+plan on a representative literal extent remains forbidden.
 
 ## Why this exists
 
@@ -44,27 +49,118 @@ rg -n 'fn symbolic_three_input_elementwise|fn a_symbolic_elementwise_neighbour_r
 
 ## Public-boundary stop — 2026-08-14
 
-The exact source/equality relation is a consequential public schedule boundary. [`decide-the-source-bound-live-row-major-access-surface`](decide-the-source-bound-live-row-major-access-surface.md) is the Pareto-complete topology packet and a hard dependency; its exact Rust field type remains blocked by [`reconcile-input-ordinal-region-local-and-declared-input-semantics`](reconcile-input-ordinal-region-local-and-declared-input-semantics.md). Until that defect lands and Tom accepts an exact surface, this ticket authorizes no production change. The existing typed schedule refusal remains the correct fail-closed result.
+**Historical stop, partially cleared at the 2026-08-16 base.** The exact
+source/equality relation remains a consequential public schedule boundary and
+[`decide-the-source-bound-live-row-major-access-surface`](decide-the-source-bound-live-row-major-access-surface.md)
+remains this ticket's hard dependency. The ordinal prerequisite is no longer a
+blocker: [`reconcile-input-ordinal-region-local-and-declared-input-semantics`](reconcile-input-ordinal-region-local-and-declared-input-semantics.md)
+landed fieldless `TensorRole::Input`, public full-list `AccessOrdinal`, and the
+compiler-private checked projection. Production remains stopped only until Tom
+chooses or rejects the source-bound surface. The existing typed schedule refusal
+remains the correct fail-closed result meanwhile.
 
 ## Exact-current-base re-audit — 2026-08-14, `a660ed618446ade55234993b835e75e26d44921c`
+
+**Historical audit.** Its ordinal stop described that base and is superseded by
+the current-base correction below; it must not be used as live authority.
 
 - **Verified — production evidence is unchanged.** `git diff --quiet 67fc9cac2a53f65fdba7619b9516c6e5e7324f20 a660ed618446ade55234993b835e75e26d44921c -- crates/tiler-ir/src/schedule/model.rs crates/tiler-ir/src/schedule/handles.rs crates/tiler-ir/src/kernel/model.rs crates/tiler-ir/src/kernel/lower.rs crates/tiler-ir/src/kernel/verify.rs crates/tiler-ir/src/program/builder.rs crates/tiler-compiler/src/physical.rs crates/tiler-compiler/src/pipeline.rs crates/tiler-compiler/src/request.rs crates/tiler-artifact/src/program/builder.rs` exits zero. Facts 1–3 and 5–8 above therefore still describe the executable boundary.
 - **Verified — ticket custody changed.** Main commit `0ebb6879`, anchor `tickets: park symbolic schedule implementation`, changed this ticket to `status: blocked` and removed its assignee and lease. The rebase preserves that state; this ticket remains stopped behind public decisions.
 - **Imprecise — Fact 4 needs an authority split.** `InputExtentParameter` does name a scheduled input axis, but `InputOrdinal`'s defining docs say it is dense, region-local, positional, and not an interface key. `TensorRole::Input` docs and physical compiler construction instead call the same value a declared program-input ordinal. Artifact construction follows the former model in practice: kernel buffer and stage-access position resolve the parameter to `MaterializedOrigin::ProgramInput { key }`. [`reconcile-input-ordinal-region-local-and-declared-input-semantics`](reconcile-input-ordinal-region-local-and-declared-input-semantics.md) is the blocking P1 defect; no new live-source field may assign either authority until it resolves the contradiction.
 - **False — the first packet's sole-dominance claim is withdrawn.** An additive explicit source variant overlaps existing implicit-self `LiveRowMajor` unless verification makes their populations disjoint. Complete replacement and a region-level binding are materially distinct options and must be compared. The repaired decision packet does so; the implementation purpose is unchanged, but no exact production spelling is authorized yet.
 
+## Current-base correction — 2026-08-16, `98669e8ea9cafc91b3a9139ff821781560c526bd`
+
+- **False now — production evidence is not unchanged.** The AccessOrdinal
+  reconciliation changed the schedule, kernel, compiler, program, and artifact
+  paths named above. `AccessOrdinal` is the complete access-list coordinate;
+  `InputExtentParameter { access, axis }` direct-indexes it; public
+  `InputOrdinal` is gone; `VerifiedScheduledRegion::declared_input_at` projects
+  to compiler-private `DeclaredInputOrdinal`; artifact construction follows the
+  exact stage access to `MaterializedOrigin::ProgramInput { key }`.
+- **Verified and more exact — the fixture's semantic source is not an arbitrary
+  equal input.** All three inputs have exact structural `[program/0::n]`, and
+  the decoded subject of retained `SemanticIdentity::shape_environment` binds `n` specifically to
+  `BindingSource::InputDimension { input: InputKey("a"), axis: Axis(0) }`.
+  Schedule construction must represent the access that projects to that root;
+  it may not default to the first access or choose `b`/`c` merely because the
+  shapes compare equal.
+- **False current outcome wording repaired above — schedule IR does not name
+  `n`.** The checked compiler wrapper retains the exact normalized request and
+  `SemanticIdentity`, not the authored `ShapeEnv`/`ExtentSources` object. The
+  compiler revalidates the identity's canonical environment bytes through
+  public `decode_shape_env_subject`. Shared schedule IR carries only the source relation and the
+  runtime input-axis operand, preserving ADR 0070's boundary and keeping the
+  live value out of identity.
+- **Verified current stop.** The decision dependency now contains three
+  nondominated exact surfaces and awaits Tom. No missing ordinal or interface
+  authority remains a prerequisite; this implementation stays blocked on that
+  public choice and the independent current-correctness repair below.
+- **False former omission — current mixed pointwise maps are unsound.** The
+  schedule verifier admits `LinearIdentity` and `LiveRowMajor` independently,
+  while kernel lowering selects the live loop if any read is live and loads and
+  stores every buffer at that live offset. The P0
+  [`refuse-mixed-pointwise-live-row-major-access-relations-before-lowering`](refuse-mixed-pointwise-live-row-major-access-relations-before-lowering.md)
+  is therefore a hard dependency: this ticket cannot treat its new source
+  relation as sufficient while leaving another access in the same pointwise
+  loop static.
+
+Reproduce:
+
+```sh
+rg -n 'pub struct AccessOrdinal|pub enum TensorRole|pub struct InputExtentParameter|fn live_input_extents' crates/tiler-ir/src/schedule crates/tiler-ir/src/kernel
+rg -n 'fn declared_input_at|fn derive_extent_operands|MaterializedOrigin::ProgramInput' crates/tiler-compiler/src/physical.rs crates/tiler-artifact/src/program/builder.rs
+rg -n 'fn request_environment|draft.bind\(&declared|fn symbolic_three_input_elementwise' crates/tiler-compiler/src/request.rs
+rg -n 'pub fn decode_shape_env_subject|enum ShapeEnvSubjectError|fn shape_environment' crates/tiler-ir/src/shape/env/subject.rs crates/tiler-ir/src/semantic/identity.rs
+```
+
 ## Required work
 
 - Re-audit `IndexRegion`, `ScheduledRegionBuilder`, `LiveRowMajor`, `pipeline.rs` `first_symbolic_extent` / `carries_parametric_broadcast`, and the frontend compile path at the exact base before editing.
-- Form a scheduled region whose launch geometry names the program's symbols. Do not fold `ExtentSources::determined` into the logical plan and do not bake a bound value into plan or artifact identity.
+- Form a scheduled region with a static empty outer geometry and the accepted
+  exact source relation. The verified compiler wrapper, not schedule geometry,
+  retains the exact normalized symbolic shape and the environment's canonical
+  identity bytes. Decode and revalidate those bytes to prove the root; do not
+  retain or reconstruct an `ExtentSources` object, fold
+  `ExtentSources::determined` into the logical plan, or bake a bound value into
+  plan or artifact identity.
 - Do not change production until [`decide-the-source-bound-live-row-major-access-surface`](decide-the-source-bound-live-row-major-access-surface.md) is accepted. If accepted, implement only its source-bound rank-one live-inner slice; if rejected, retain the typed schedule refusal and defer.
+- Implement the selected packet's exact public
+  `ScheduledRegionDiagnostic::LiveRowMajorSource` and
+  `LiveRowMajorSourceRule` population: five rules for the marker or seven for
+  total-local and the explicit-source/referenced-consumer hybrid. For the
+  hybrid, retire old `0x09`, use fresh `0x0A` for
+  `LiveRowMajorSource { inner_axis }` and fresh `0x0B` for
+  `LiveRowMajor { inner_axis, source_access }`, and apply consumer-reference
+  range, marker count, marker role/mode, complete access relation, unique-marker
+  reference, then axis precedence. Once one selected live relation appears,
+  every pointwise read and the final write must carry that relation. The first
+  access that does not is
+  `ConsumerMissingRelation { access }` with stable rule
+  `live-row-major-source-consumer-missing-relation`. Missing, multiple,
+  out-of-range, inconsistent, and missing-consumer source relations do not
+  collapse into `AccessContract` or `NumericalOrAccessRefinement`; semantic
+  decode/root/shape mismatch remains compiler `request-binding`.
 - `IndexRegion.iteration_shape: Shape` need not change for that slice: the live inner dimension is outside the static outer domain. Any later sourced-geometry replacement is a separate broad public decision, not an implementation fallback here.
 - Keep reductions, contractions, staged families, and structural maps refused by name until each has its own admitted geometry. Do not silently reuse the elementwise path.
 - Leave Metal emission and the `deliver` identity-across-extents hash to [`deliver-an-artifact-family-from-a-symbolic-region`](deliver-an-artifact-family-from-a-symbolic-region.md).
 
 ## Required evidence
 
-- The existing `sym n` `(a * b) + c` fixture that today declines at schedule now yields a scheduled region that still names `n`, and its literal neighbour still compiles with unchanged identity bytes.
+- The existing `sym n` `(a * b) + c` fixture that today declines at schedule now
+  yields a verified source-bound schedule whose retained request still names
+  `n`; decoding `semantic_identity.shape_environment().as_bytes()` proves its
+  root is input `a`, axis 0, the schedule source projects there, and the literal
+  neighbour still compiles with unchanged identity bytes.
+- Truncated and bad-domain identity-subject bytes exercise the production decode
+  mapping and fail as existing compiler `request-binding`, without a panic,
+  empty-environment default, or fallback source.
+- Perturb every selected intrinsic source rule independently and quote its exact
+  `live-row-major-source-*` identifier and coordinate payload.
+- With a valid source fixed, independently change one read and then the final
+  write to `LinearIdentity`; both fail intrinsically as exact
+  `ConsumerMissingRelation` coordinates before kernel lowering. Preserve an
+  all-static neighbour and prove its exact identity bytes remain unchanged.
 - Removing the new path restores `UnsupportedSymbolicExtent { phase: "schedule", rule: "symbolic-extent" }`. Quote that failure text.
 - A rewrite or formation step that would mint a launch over a determined representative extent fails as invalid compiler output.
 - Perturb the new geometry independently of the parametric-broadcast exception so a missing broadcast cannot be the only way a symbol reaches a plan.
@@ -76,7 +172,10 @@ Lifting the frontend refuse again (already gone). Artifact-envelope rows. `N = 1
 
 ## Closes when
 
-`compile()` of the admitted same-shape symbolic elementwise population returns a scheduled region that names its symbols, or a narrower typed decline than `symbolic-extent` at schedule, without specializing on a bound value.
+`compile()` of the admitted same-shape symbolic elementwise population returns a
+verified source-bound schedule attached to the exact symbolic request, or a
+narrower typed decline than `symbolic-extent` at schedule, without specializing
+on a bound value or copying semantic symbols into shared schedule IR.
 
 ## Dependency correction — 2026-08-13
 
