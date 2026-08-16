@@ -45,6 +45,17 @@ const SYMBOL_DOMAIN: &[u8] = b"tiler.cpu.scalar.symbol.v1\0";
 const PAYLOAD_SCHEMA: SchemaVersion = SchemaVersion::new(1, 0);
 /// Byte width of one `f32`.
 const F32_BYTES: u64 = 4;
+/// Exact prepared-entry property this adapter owns.
+const MAX_THREADS_PER_WORKGROUP_PROPERTY: &str =
+    "tiler.target.prepared-entry.max-threads-per-workgroup.v1";
+/// Exact provider namespace for the prepared-entry property this adapter owns.
+const PREPARED_ENTRY_PROVIDER_NAMESPACE: &str = "tiler";
+/// Exact provider name for the prepared-entry property this adapter owns.
+const PREPARED_ENTRY_PROVIDER_NAME: &str = "prepared-entry-properties";
+/// Exact provider revision for the prepared-entry property this adapter owns.
+const PREPARED_ENTRY_PROVIDER_REVISION: u32 = 1;
+/// Bounded workgroup capacity this scalar adapter enforces for each prepared entry.
+const MAX_THREADS_PER_WORKGROUP: u64 = 1_024;
 /// The one delivery position this spike's artifacts declare.
 pub const SOLE_DELIVERY: usize = 0;
 
@@ -1050,12 +1061,18 @@ pub struct CpuAdapter {
     profile: TargetProfileRef,
     dtype_dispatch: BTreeMap<ArithmeticType, DTypeDispatch>,
     input: Vec<u8>,
-    prepared: Vec<ScalarEntry>,
+    prepared: Vec<PreparedScalarEntry>,
     allocations: Vec<Vec<u8>>,
     placements: Vec<Vec<(usize, u64, u64)>>,
     readback: Option<(usize, u64, usize)>,
     /// Bits read back from the committed dispatch.
     pub result_bits: Vec<u32>,
+}
+
+/// One decoded scalar entry with the exact prepared-entry capacity this adapter enforces.
+struct PreparedScalarEntry {
+    entry: ScalarEntry,
+    max_threads_per_workgroup: u64,
 }
 
 impl CpuAdapter {
@@ -1107,7 +1124,10 @@ impl RuntimeAdapter for CpuAdapter {
             .entry_for(entry.entry_symbol())
             .cloned()
             .ok_or_else(|| CpuError::UnmappedSymbol(entry.entry_symbol().to_owned()))?;
-        self.prepared.push(prepared);
+        self.prepared.push(PreparedScalarEntry {
+            entry: prepared,
+            max_threads_per_workgroup: MAX_THREADS_PER_WORKGROUP,
+        });
         Ok(())
     }
 
@@ -1135,11 +1155,22 @@ impl RuntimeAdapter for CpuAdapter {
     fn observe_prepared_entry(
         &mut self,
         _context: &LiveExecutionContext,
-        _request: TargetPropertyRequest<'_>,
+        request: TargetPropertyRequest<'_>,
     ) -> PreparedEntryObservation {
-        // This scalar host owns no prepared-entry property. Returning a number
-        // large enough for the launch would let an unknown key compare equal.
-        PreparedEntryObservation::Unrecognized
+        let query = request.requirement().query();
+        let provider = query.provider();
+        if query.key().as_str() != MAX_THREADS_PER_WORKGROUP_PROPERTY
+            || provider.namespace() != PREPARED_ENTRY_PROVIDER_NAMESPACE
+            || provider.name() != PREPARED_ENTRY_PROVIDER_NAME
+            || provider.revision() != PREPARED_ENTRY_PROVIDER_REVISION
+        {
+            return PreparedEntryObservation::Unrecognized;
+        }
+        self.prepared
+            .get(request.entry())
+            .map_or(PreparedEntryObservation::Unrecognized, |prepared| {
+                PreparedEntryObservation::Quantity(prepared.max_threads_per_workgroup)
+            })
     }
 
     fn plan_dispatch(
@@ -1148,6 +1179,16 @@ impl RuntimeAdapter for CpuAdapter {
         preflight: &Preflight<'_>,
     ) -> Result<(), Self::Refusal> {
         for (position, entry) in preflight.entries().iter().enumerate() {
+            let prepared = self.prepared.get(position).ok_or_else(|| {
+                CpuError::Adapter(format!("entry {position} has no prepared scalar image"))
+            })?;
+            if entry.launch().threads_per_workgroup() > prepared.max_threads_per_workgroup {
+                return Err(CpuError::Adapter(format!(
+                    "entry {position} launches {} threads per workgroup and this prepared scalar entry admits {}",
+                    entry.launch().threads_per_workgroup(),
+                    prepared.max_threads_per_workgroup,
+                )));
+            }
             for binding in entry.bindings() {
                 if matches!(binding.binding().target(), BindingTarget::ProgramInput(_))
                     && u64::try_from(self.input.len()).expect("input length fits u64")
@@ -1223,7 +1264,7 @@ impl RuntimeAdapter for CpuAdapter {
         routed: &RoutedDispatch<'_>,
     ) -> Result<Self::Completion, Self::Failure> {
         for (position, entry) in routed.entries().iter().enumerate() {
-            let prepared = &self.prepared[position];
+            let prepared = &self.prepared[position].entry;
             let launch = entry.launch();
             if launch.grid_threads() == 0 && launch.zero_work_skips_dispatch() {
                 continue;
@@ -1308,6 +1349,32 @@ pub fn route_and_compare(
         }
     }
     Ok(bits)
+}
+
+/// Routes one deliberately perturbed artifact and returns the loader's refusal.
+pub fn route_refusal(
+    bytes: &[u8],
+    expected_identity: &RecordedArtifactProgramIdentity,
+    environment_profile: TargetProfileRef,
+    dtype_dispatch: BTreeMap<ArithmeticType, DTypeDispatch>,
+) -> Result<LoadRejection, CpuError> {
+    let mut program = DecodedProgram::decode(bytes, SOLE_DELIVERY)
+        .map_err(|rejection| CpuError::Load(rejection.to_string()))?;
+    let facts = bind_facts(&program);
+    let mut adapter = CpuAdapter::new(
+        environment_profile,
+        dtype_dispatch,
+        &crate::semantic::OPERANDS,
+    );
+    match route_with_adapter(&mut program, &mut adapter, expected_identity, &facts) {
+        Err(tiler_runtime::adapter::AdapterRouteFailure::Load(rejection)) => Ok(rejection),
+        Err(other) => Err(CpuError::Adapter(format!(
+            "the perturbed request failed outside the loader: {other:?}"
+        ))),
+        Ok(_) => Err(CpuError::Load(
+            "the perturbed prepared-entry request routed successfully".into(),
+        )),
+    }
 }
 
 /// Preflights one artifact under a stated environment and reports the refusal.

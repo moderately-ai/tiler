@@ -19,7 +19,22 @@ The backend-provider portfolio again completes its documented CPU route through 
 
 ## Exact-base evidence
 
-At exact base `98669e8ea9cafc91b3a9139ff821781560c526bd`, the spike README says the CPU attempt "answers that query with 1,024" (anchor: `The CPU attempt uses route_with_adapter / prepare`), but `CpuAdapter::observe_prepared_entry` returns `PreparedEntryObservation::Unrecognized` for every request (anchor: `This scalar host owns no prepared-entry property`). The related structured-capability branch changes `spikes/runtime/backend-provider-portfolio/src/portfolio.rs` only to project the selected compiler subject into the artifact-owned subject; it does not change the runtime adapter or its property authority.
+**Fact audit repaired at implementation base `e2522345d571d5088ce47039e4399b7247e7bc47`.** The earlier subject base `98669e8ea9cafc91b3a9139ff821781560c526bd` is an ancestor, not the exact implementation base. The failure remains reproducible on the implementation base.
+
+- **Verified.** The complete spike README says the CPU attempt "answers that query with 1,024" (source anchor: `The CPU attempt uses route_with_adapter / prepare`), but `CpuAdapter::observe_prepared_entry` returns `PreparedEntryObservation::Unrecognized` for every request (source anchor: `This scalar host owns no prepared-entry property`).
+- **Verified.** `portfolio::push_plan_variant` forwards each compiler-minted `prepared_entry_target_requirements` record with its entry into `DeferredPredicateSpec`; `DecodedProgram::prepare` constructs `TargetPropertyRequest` from the decoded requirement; and `RoutePreparation::resolve_target_properties` maps `Unrecognized` to `UnownedPreparedEntryProperty` while retaining the comparison itself.
+- **Imprecise, repaired.** The related structured-capability commit `b23f0722` changes 41 files overall. Within this spike it changes only `spikes/runtime/backend-provider-portfolio/src/portfolio.rs`, projecting the selected compiler subject into the artifact-owned subject; it does not change the runtime adapter or its property authority.
+
+Reproduce the audit from the repository root:
+
+```sh
+git rev-parse HEAD
+git merge-base --is-ancestor 98669e8ea9cafc91b3a9139ff821781560c526bd HEAD
+git show --name-only --format= b23f0722 -- spikes/runtime/backend-provider-portfolio
+rg -n -F 'answers that query with 1,024' spikes/runtime/backend-provider-portfolio/README.md
+rg -n -F 'This scalar host owns no prepared-entry property' spikes/runtime/backend-provider-portfolio/src/cpu.rs
+rg -n 'prepared_entry_target_requirements|TargetPropertyRequest \{|resolve_target_properties' spikes/runtime/backend-provider-portfolio/src/portfolio.rs crates/tiler-runtime/src/load.rs crates/tiler-runtime/src/load/route.rs
+```
 
 Reproduce from the repository root:
 

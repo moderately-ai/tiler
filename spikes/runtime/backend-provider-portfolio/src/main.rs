@@ -18,6 +18,7 @@ use crate::compile::{
     offered_custom, physical_provenance, selected_custom, selected_governed, selected_plan,
 };
 use crate::cpu::SOLE_DELIVERY;
+use crate::portfolio::PreparedEntryProbe;
 
 fn main() -> ExitCode {
     match run(std::env::args().nth(1).map(PathBuf::from)) {
@@ -114,6 +115,21 @@ fn run(record: Option<PathBuf>) -> Result<(), String> {
         .target_profile_ref()
         .map_err(|error| error.to_string())?;
     let dtype = metal::dtype_dispatch(&compiled.declaration);
+    let cpu_only_expected =
+        RecordedArtifactProgramIdentity::from_bytes(cpu.artifact.canonical_identity().as_bytes())
+            .map_err(|error| error.to_string())?;
+    let cpu_only_bits = cpu::route_and_compare(
+        &cpu.bytes,
+        &cpu_only_expected,
+        shared.clone(),
+        dtype.clone(),
+        &reference,
+    )
+    .map_err(|error| error.to_string())?;
+    println!(
+        "cpu_only.route_with_adapter\t{} elements agree with tiler-reference",
+        cpu_only_bits.len()
+    );
     let metal_content = metal_payload
         .as_ref()
         .map_or_else(|| cpu.content.clone(), |produced| produced.content.clone());
@@ -133,7 +149,7 @@ fn run(record: Option<PathBuf>) -> Result<(), String> {
     println!("portfolio.mixed_target\tTargetProfileMismatch");
 
     let mut metal_run = MetalRun::Unavailable("not packaged".into());
-    let cpu_bits;
+    let mut cpu_bits = Some(cpu_only_bits);
     let mut portfolio_bytes = 0;
     let mut cross_family = Vec::new();
 
@@ -173,10 +189,6 @@ fn run(record: Option<PathBuf>) -> Result<(), String> {
         let metal_under_cpu =
             metal::preflight_refusal(&produced.bytes, &produced.expected, &cpu_env)
                 .map_err(|error| error.to_string())?;
-        let cpu_only_expected = RecordedArtifactProgramIdentity::from_bytes(
-            cpu.artifact.canonical_identity().as_bytes(),
-        )
-        .map_err(|error| error.to_string())?;
         let cpu_under_metal = cpu::preflight_refusal(&cpu.bytes, &cpu_only_expected, &metal_env)
             .map_err(|error| error.to_string())?;
         if !matches_unsupported(&metal_under_cpu) {
@@ -230,27 +242,44 @@ fn run(record: Option<PathBuf>) -> Result<(), String> {
             Err(error) => return Err(error.to_string()),
         };
 
+        probe_prepared_entry_requests(
+            |probe| {
+                portfolio::assemble_shared_property_probe(
+                    &program,
+                    &compiled.with_custom,
+                    metal_plan,
+                    &compiled.without_custom,
+                    cpu_plan,
+                    cpu_env.target_profile.clone(),
+                    &produced.content,
+                    &cpu,
+                    probe,
+                )
+            },
+            &cpu_env,
+        )?;
         probe_fail_closed(&packaged.bytes, &packaged.expected, &cpu_env)?;
     } else {
-        let bits = cpu::route_and_compare(
-            &cpu.bytes,
-            &RecordedArtifactProgramIdentity::from_bytes(
-                cpu.artifact.canonical_identity().as_bytes(),
-            )
-            .map_err(|error| error.to_string())?,
-            compiled
-                .declaration
-                .target_profile_ref()
-                .map_err(|error| error.to_string())?,
-            dtype,
-            &reference,
-        )
-        .map_err(|error| error.to_string())?;
-        println!(
-            "cpu.route_with_adapter\t{} elements agree with tiler-reference (CPU-only artifact; Metal payload unavailable)",
-            bits.len()
-        );
-        cpu_bits = Some(bits);
+        let cpu_env = ExecutionEnvironment {
+            target_profile: shared,
+            backend: cpu::backend(),
+            representation: cpu::representation(),
+            dtype_dispatch: dtype,
+        };
+        println!("metal.unavailable\tCPU-only artifact remains the completed route");
+        probe_prepared_entry_requests(
+            |probe| {
+                portfolio::assemble_cpu_property_probe(
+                    &program,
+                    &compiled.without_custom,
+                    cpu_plan,
+                    cpu_env.target_profile.clone(),
+                    &cpu,
+                    probe,
+                )
+            },
+            &cpu_env,
+        )?;
     }
 
     let _ = std::fs::remove_dir_all(&cache_root);
@@ -279,6 +308,55 @@ enum MetalRun {
 
 fn matches_unsupported(rejection: &LoadRejection) -> bool {
     metal::is_unsupported_representation(rejection)
+}
+
+fn probe_prepared_entry_requests(
+    mut assemble: impl FnMut(
+        PreparedEntryProbe,
+    ) -> Result<portfolio::PackagedPortfolio, portfolio::PortfolioError>,
+    cpu_env: &ExecutionEnvironment,
+) -> Result<(), String> {
+    for (probe, label) in [
+        (PreparedEntryProbe::UnknownProvider, "unknown_provider"),
+        (PreparedEntryProbe::UnknownProperty, "unknown_property"),
+        (
+            PreparedEntryProbe::RequiredAboveObserved,
+            "required_above_observed",
+        ),
+    ] {
+        let artifact = assemble(probe).map_err(|error| error.to_string())?;
+        let refusal = cpu::route_refusal(
+            &artifact.bytes,
+            &artifact.expected,
+            cpu_env.target_profile.clone(),
+            cpu_env.dtype_dispatch.clone(),
+        )
+        .map_err(|error| error.to_string())?;
+        let expected = match (&probe, &refusal) {
+            (
+                PreparedEntryProbe::UnknownProvider,
+                LoadRejection::UnownedPreparedEntryProperty { subject, .. },
+            ) => subject.provider_namespace == "acme",
+            (
+                PreparedEntryProbe::UnknownProperty,
+                LoadRejection::UnownedPreparedEntryProperty { subject, .. },
+            ) => subject.key == "tiler.target.prepared-entry.unknown-property.v1",
+            (
+                PreparedEntryProbe::RequiredAboveObserved,
+                LoadRejection::UnsatisfiedDeferredPredicate {
+                    subject, observed, ..
+                },
+            ) => subject.required == 1_025 && *observed == 1_024,
+            _ => false,
+        };
+        if !expected {
+            return Err(format!(
+                "prepared-entry {probe:?} probe refused as {refusal}, not its exact fail-closed class"
+            ));
+        }
+        println!("probe.prepared_entry_{label}\t{refusal}");
+    }
+    Ok(())
 }
 
 fn probe_fail_closed(
