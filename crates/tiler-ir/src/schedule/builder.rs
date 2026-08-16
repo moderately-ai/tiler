@@ -1016,7 +1016,7 @@ fn verify_pointwise_bf16(
 
 /// The access contract every pointwise region satisfies, at any width.
 ///
-/// Two obligations make an N-input region safe, and they are about different
+/// Three obligations make an N-input region safe, and they are about different
 /// things. **The count**: there must be exactly as many reads as the expression
 /// has input leaves, or an expression could read a position no access binds — a
 /// load through a buffer the signature never declares. The expression's own
@@ -1025,6 +1025,11 @@ fn verify_pointwise_bf16(
 /// **The binding category**: each read must name an input or the sole attributed
 /// materialized intermediate. Exact declared-input association is absent here
 /// and is projected later from the compiler's checked request subject.
+/// **The addressing regime**: every access is static, or every access is
+/// `LiveRowMajor` on the same inner axis. Canonical lowering has one body-wide
+/// live loop and one offset for every boundary effect, so admitting one live map
+/// beside a static or differently live map would execute an access relation the
+/// region did not prove.
 ///
 /// Shared by the two width-specific verifiers above rather than written twice:
 /// the obligation is about *accesses*, and nothing in it reads an element type.
@@ -1063,10 +1068,42 @@ fn verify_pointwise_region(
         || !reads
             .iter()
             .all(|read| pointwise_read_map_is_admissible(&read.map, &region.index.iteration_shape))
+        || !pointwise_accesses_choose_one_addressing_regime(reads, write)
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
     Ok(())
+}
+
+/// Returns whether all pointwise boundary effects use one emitted topology.
+///
+/// Static reads may each keep their own admitted coordinate relation: canonical
+/// lowering derives their offsets independently inside the ordinary invocation
+/// guard. A live row-major region is different. It has one body-wide loop bound,
+/// stride, and element offset, so every read and the owning write must state the
+/// same live axis. No access becomes authority for a sibling here; disagreement
+/// is refused before a verified region or canonical identity exists.
+fn pointwise_accesses_choose_one_addressing_regime(reads: &[Access], write: &Access) -> bool {
+    match &write.map {
+        LogicalAccess::LinearIdentity => reads
+            .iter()
+            .all(|read| !matches!(read.map, LogicalAccess::LiveRowMajor { .. })),
+        LogicalAccess::LiveRowMajor { inner_axis } => reads.iter().all(|read| {
+            matches!(
+                &read.map,
+                LogicalAccess::LiveRowMajor {
+                    inner_axis: read_axis
+                } if read_axis == inner_axis
+            )
+        }),
+        LogicalAccess::ScalarBroadcast
+        | LogicalAccess::PackedU4LsbZeroTail { .. }
+        | LogicalAccess::ReductionContributor { .. }
+        | LogicalAccess::ContractionOperand { .. }
+        | LogicalAccess::ReindexBijection { .. }
+        | LogicalAccess::BroadcastReplication { .. }
+        | LogicalAccess::ParametricBroadcast { .. } => false,
+    }
 }
 
 /// Returns whether one pointwise region's reads use admissible boundary categories.
@@ -1107,7 +1144,7 @@ fn reads_bind_boundary_tensors_in_order(reads: &[Access]) -> bool {
 /// A pointwise region evaluates one scalar program per output position, so a
 /// read may address its operand however it likes *provided* the addressing is
 /// a total function of the iteration coordinate with a discharged bounds
-/// obligation. Three maps satisfy that and no others do:
+/// obligation. Five maps satisfy that and no others do:
 ///
 /// - [`LogicalAccess::LinearIdentity`], the dense one-to-one read.
 /// - [`LogicalAccess::ReindexBijection`], whose decodes are required to tile the
@@ -1117,6 +1154,8 @@ fn reads_bind_boundary_tensors_in_order(reads: &[Access]) -> bool {
 /// - [`LogicalAccess::ParametricBroadcast`], the accepted sourced carrier.
 ///   Structural rank agreement is checked here; the environment proof is
 ///   [`super::parametric::interpret_parametric_broadcast`].
+/// - [`LogicalAccess::LiveRowMajor`], provided the region-wide regime check
+///   above proves every access names the same live inner axis.
 ///
 /// Both structural maps must state the region's own iteration shape as their
 /// result shape. That is what stops a region from carrying an access relation
