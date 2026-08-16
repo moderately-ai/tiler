@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [decide-the-schedule-local-input-ordinal-model, decide-the-full-list-access-coordinate-for-out-of-list-references]
 related: [decide-the-source-bound-live-row-major-access-surface, admit-symbolic-extents-through-schedule-formation, associate-live-extent-operands-with-symbolic-semantic-interface-axes, scope-an-in-place-append-into-a-caller-retained-allocation]
-scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/metal, implementation/build, implementation/conformance, implementation/runtime, contracts/foundation, contracts/artifacts]
+scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/metal, implementation/build, implementation/conformance, implementation/runtime, contracts/foundation, contracts/artifacts, research/verification, research/target-profiles, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [defect, public-boundary, schedule, identity, shapes]
@@ -59,7 +59,7 @@ rg -n 'Both read and written|ParameterLayout::Both|an_in_out_binding_yields_both
 rg -n 'tensor_role_comment|LiveRowMajor|InputOrdinal|TensorRole::Input' crates/tiler-metal/src crates/tiler-build/src crates/tiler-conformance/src crates/tiler-runtime/src
 ```
 
-## Accepted portion and stop condition — 2026-08-14
+## Accepted boundary — 2026-08-14
 
 Tom accepted the dependency packet's Option 3 in the live Codex conversation,
 relayed by the coordinating agent. Replace
@@ -72,12 +72,13 @@ local-to-declared association from the already-retained checked
 No public declared-input ordinal, positional coincidence, search for a first
 input, or second retained association vector is accepted.
 
-Production is blocked because the dependency also retained input-only
-`InputOrdinal` for out-of-list references while requiring an input extent to
-name and reject intermediate/output positions in the full access list. That
-public coordinate and error surface are not implementable without choosing a
-new meaning or type. The exact Pareto-gated replacement is awaiting Tom in
-[`decide-the-full-list-access-coordinate-for-out-of-list-references`](decide-the-full-list-access-coordinate-for-out-of-list-references.md); this ticket must not implement ahead of it.
+Tom then accepted the exact complete-replacement surface in
+[`decide-the-full-list-access-coordinate-for-out-of-list-references`](decide-the-full-list-access-coordinate-for-out-of-list-references.md)
+in the live Codex conversation on 2026-08-14, relayed by the coordinating
+agent. That acceptance removes the stop condition: public `InputOrdinal` is
+retired in favour of full-list `AccessOrdinal`, declared-interface association
+stays compiler-private, and the exact diagnostics, opaque-call rules, and
+identity steps in this ticket are authorized together.
 
 ## Required work
 
@@ -96,6 +97,80 @@ new meaning or type. The exact Pareto-gated replacement is awaiting Tom in
 - For epilogue `[Intermediate, input 2]`, prove extent access `0` fails `InputExtentNotInput`, access `1` reaches input `2`, the final write fails `InputExtentNotInput`, and an absent access fails `InputExtentAccessOutOfRange`. Swap only the axis separately and quote `InputExtentWrongAxis`.
 - For opaque calls, swap two named `In` parameters across two valid compatible read accesses with distinguishable element counts. Both registered proposals admit; proposal identity and the exact opaque subject change, binding order stays identity-bearing, and `WorkScaling::PerElementOf` follows the parameter's newly named exact access. Drive both exact subjects through the same typed refusal separately and prove their canonical explain records, rendered `access#N` subjects, and trace identities differ. Admit the ordinary `[read, owning write]` control with one `In` and one `Out`, proving complete coverage plus access-ordered requirement/guarantee facets. Then declare a coherent one-parameter generic `InOut`/`Both` ABI with `Aliasing::MayAliasInputs` over the same two-access region, bind it to the valid read, and quote `InOutRegionUnsupported { parameter: "buffer", access: 0 }` and `opaque-call.binding.inout-region-unsupported`; prove this fires before `UnboundAccess(1)` and boundary derivation while the lower-level generic ABI tests stay green. Separately perturb `In` onto the write and `Out` onto a read (`access-mode-mismatch`), an absent coordinate (`access-out-of-range`), and complete coverage (`unbound-access`). Bind two distinct compatible `In` parameters to one read and, independently, compatible `Out` parameters to the owning write; prove one access-ordered facet in each case, then perturb only storage and quote `access-storage-disagreement`. No valid-access subject-mismatch diagnostic exists.
 - Perturb schedule, kernel, physical-proposal, explain-schema, and explain-renderer domain spellings independently and quote each owning pin/header failure. Prove unchanged artifact extent-row bytes, manifest schema 17.0, and unchanged-domain grammar, then regenerate every downstream value that folds a moved nested identity or changed interface binding.
+
+## Implementation record — 2026-08-16
+
+- The public replacement is complete: `AccessOrdinal` is the only shared local
+  coordinate, `TensorRole::Input` is fieldless, and no live Rust source under
+  `crates/`, `prototypes/`, or `spikes/` retains `InputOrdinal`. Pointwise
+  leaves, live contraction, live extent operands, kernel buffers, artifact
+  derivation, and opaque calls all use the exact ordered access position.
+- `VerifiedScheduledRegion::declared_input_at` projects an exact local access
+  through its retained checked `VerifiedRequestSubject` to private
+  `DeclaredInputOrdinal`. `CoverAssembly` consumes that projection; artifact
+  construction then reaches `InputKey` only through the exact stage access and
+  `MaterializedOrigin::ProgramInput`. The existing conformance populations for
+  subset `[0, 2]`, later fold `[1]`, two-of-three contraction, staged epilogue,
+  and repeated mapped reads all pass with the intended values.
+- Live extent declaration directly indexes the full access list. The mixed
+  epilogue control proves staged access `0` and the final write refuse as
+  `InputExtentNotInput`, access `1` succeeds, access `3` refuses as
+  `InputExtentAccessOutOfRange`, and the wrong axis refuses independently as
+  `InputExtentWrongAxis`. The artifact envelope remains `(InputKey, Axis,
+  AbiType)` and its codec/schema population remains unchanged.
+- Opaque-call proposals retain ordered `(parameter, AccessOrdinal)` bindings.
+  Admission checks bounds, rejects regional `InOut`, checks exact direction,
+  complete access coverage, and shared-access storage, then derives one facet
+  per access in access-list order. Swapping two compatible reads changes both
+  proposal identity and `PerElementOf` work resolution. The lower-level generic
+  `InOut`/`Both` ABI stays constructible, while regional admission refuses it
+  before the missing-write coverage error; Q-PLAN-015 remains the owner of a
+  future versioned mutating boundary.
+- Identity moved coherently to schedule v6, kernel v8, physical proposal v3,
+  explain schema v11, and renderer v9. Kernel-program v11, artifact-stage v3,
+  artifact-program v17, manifest 17.0, request-subject v6, and compilation-
+  explain wrapper v1 remain unchanged. The regenerated standard Metal artifact
+  identity is `3e113510c0eeb090968a8b7adb445f6bd64ed4c66b4b3ad440f032716e147be5`,
+  its cache subject is
+  `5ffb36be5c5714e9982153717d2af2adaef440afc4bf6144c81b3859757771a7`,
+  and fixed content is 77,062 bytes.
+- Live path-dependent spikes were migrated too. The scalar CPU vertical checks
+  against the current crates. The Kani encoder shim reports 29 copied items in
+  sync and `cargo kani --harness push_tensor_role_injective` verifies the whole
+  three-role fieldless population with 0 of 322 checks failed (six unreachable
+  checks, 0.667 s verification on the recorded host).
+
+## Verification — 2026-08-16
+
+Positive gates completed on the implementation worktree:
+
+```sh
+cargo fmt --all -- --check
+cargo nextest run -p tiler-ir -p tiler-compiler -p tiler-artifact -p tiler-metal -p tiler-build -p tiler-conformance -p tiler-runtime
+# 2,778 passed; 3 skipped
+cargo test -p tiler-ir -p tiler-compiler -p tiler-artifact -p tiler-metal -p tiler-build -p tiler-conformance -p tiler-runtime --doc
+RUSTDOCFLAGS='-D warnings' cargo doc --no-deps -p tiler-ir -p tiler-compiler -p tiler-artifact -p tiler-metal -p tiler-build -p tiler-conformance -p tiler-runtime
+cd spikes/target-profiles/scalar-cpu-vertical && cargo check
+cd spikes/verification/kani-encoder-injectivity && ./guard.sh
+cd spikes/verification/kani-encoder-injectivity && cargo check
+cd spikes/verification/kani-encoder-injectivity && cargo kani --harness push_tensor_role_injective
+```
+
+Subject perturbations were applied one at a time and restored:
+
+- forcing every compiler access projection to `AccessOrdinal::FIRST` made the
+  sparse association control fail as
+  `InvalidCompilerOutput(Program(CoreVerification(UnusedValue)))`;
+- replacing each opaque-call access in proposal identity with zero made
+  `swapped_opaque_read_bindings_remain_distinct_and_resolve_exact_work` fail
+  `assertion left != right failed` because the two
+  `ImplementationProposalIdentity` values collided;
+- forcing live extent declaration to inspect access zero made
+  `an_extent_operand_names_one_exact_epilogue_access` fail at `access 1 is the
+  exact declared-input read`;
+- reverting only the schedule encoder to `tiler.schedule.v5` made
+  `every_tiler_spelled_literal_is_pinned_or_classified` refuse that literal as
+  absent from `PINNED_IDENTITY_DOMAINS`.
 
 ## Closes when
 

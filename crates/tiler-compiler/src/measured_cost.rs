@@ -337,9 +337,10 @@ const fn exact_ratio(input: u64, output: u64) -> Option<u64> {
 mod tests {
     use super::*;
     use tiler_ir::schedule::{
-        AccessMode, ArithmeticType, BoundsWitnessId, ContributorArrival, ContributorCoverage,
-        ContributorOrder, ContributorPartition, CooperativeTile, ExecutionBinding, InputOrdinal,
-        LaunchPlan, OwnershipWitnessId, TailPolicy, TensorRole, workgroup_tree_tile,
+        AccessMode, AccessOrdinal, ArithmeticType, BoundsWitnessId, ContributorArrival,
+        ContributorCoverage, ContributorOrder, ContributorPartition, CooperativeTile,
+        ExecutionBinding, LaunchPlan, OwnershipWitnessId, TailPolicy, TensorRole,
+        workgroup_tree_tile,
     };
     use tiler_ir::shape::{Axis, Shape};
 
@@ -465,7 +466,7 @@ mod tests {
     #[test]
     fn a_live_contraction_work_span_declines_rather_than_baking_s() {
         let live = ReductionTopology::LiveContraction {
-            live_input: InputOrdinal::FIRST,
+            live_access: AccessOrdinal::FIRST,
             live_axis: Axis::new(1),
             order: ContributorOrder::OriginalAxisLexicographic,
             permits_reassociation: false,

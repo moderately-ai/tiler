@@ -75,6 +75,8 @@ Recorded quantities from that run: profile descriptor 865 bytes, payload 265 byt
 
 **Inference.** No claim [ADR 0090](../../../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md) cites from this spike depends on the moved numbers — it cites the bit-for-bit agreement, the named exceptional values, the `CanonicalizeF32Nan` perturbation, and that no physical provider was installed, all of which reproduced. The moved numbers were recorded here and in the fixture only, so this table is the correction rather than an amendment to an accepted record.
 
+**Compatibility correction 2026-08-14.** The public role became fieldless again under [`reconcile-input-ordinal-region-local-and-declared-input-semantics`](../../../tickets/reconcile-input-ordinal-region-local-and-declared-input-semantics.md); exact local coordinates now use `AccessOrdinal` only where a relation needs one. This spike's translator probes only the role category, so its construction moved back to `TensorRole::Input` without inventing a coordinate. The dated measurements above remain historical observations of their named commits.
+
 ### Two more quantities moved between `63f9259` and `e2da98f`
 
 **Measurement.** The re-run recorded above was taken at `e2da98f` on 2026-08-01, after the loader's compatibility refusals were retired (next section). Recorded against the previous run at `63f9259`:

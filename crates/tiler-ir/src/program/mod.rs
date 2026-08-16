@@ -184,7 +184,7 @@
 //! };
 //! use tiler_ir::schedule::{
 //!     Access, AccessMode, ApproximationEnvelope, BoundsProof, BoundsProofKind, BoundsWitnessId,
-//!     ExceptionalValueAssumption, ExecutionBinding, F32NumericalContractKey, InputOrdinal,
+//!     ExceptionalValueAssumption, ExecutionBinding, F32NumericalContractKey, AccessOrdinal,
 //!     KernelSchedule, LaunchPlan, LogicalAccess, MaterializationRounding, NumericalPermission,
 //!     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
 //!     PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
@@ -279,14 +279,14 @@
 //!         }
 //!     };
 //!
-//! // The physical schedule, lowered to its verified structured kernel. Read
-//! // access `i` binds input ordinal `i`, which is what lets a consumer bind
-//! // buffers positionally.
+//! // The physical schedule, lowered to its verified structured kernel. The
+//! // ordered access list is the local coordinate space that lets a consumer
+//! // bind buffers positionally.
 //! let mut schedule = ScheduledRegionBuilder::new(RegionId::new(0));
 //! schedule.iteration_shape(Shape::from_dims([2, 3]))?;
 //! for ordinal in [0, 1] {
 //!     schedule.push_access(Access {
-//!         tensor: TensorRole::Input { ordinal: InputOrdinal::new(ordinal) },
+//!         tensor: TensorRole::Input,
 //!         component_role: None,
 //!         mode: AccessMode::Read,
 //!         map: LogicalAccess::LinearIdentity,
@@ -295,7 +295,7 @@
 //!     })?;
 //!     schedule.push_bounds_proof(BoundsProof {
 //!         id: BoundsWitnessId::new(ordinal),
-//!         tensor: TensorRole::Input { ordinal: InputOrdinal::new(ordinal) },
+//!         tensor: TensorRole::Input,
 //!         component_role: None,
 //!         kind: BoundsProofKind::LinearRange { element_count: 6 },
 //!     })?;
@@ -320,8 +320,8 @@
 //!     kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 6 },
 //! })?;
 //! let mut expression = PointwiseF32ExpressionBuilder::new();
-//! let first = expression.input(InputOrdinal::new(0))?;
-//! let second = expression.input(InputOrdinal::new(1))?;
+//! let first = expression.input(AccessOrdinal::new(0))?;
+//! let second = expression.input(AccessOrdinal::new(1))?;
 //! let root = expression.multiply(first, second)?;
 //! schedule.scalar_program(ScalarProgram::PointwiseF32(expression.build(root)?))?;
 //! schedule.numerical(NumericalRealization::new(

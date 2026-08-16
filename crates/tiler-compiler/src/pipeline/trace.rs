@@ -16,6 +16,7 @@ one parent whose contents are visible in the same directory"
 //! reader is told and never what the compiler chose.
 
 use super::*;
+use crate::physical::{AccessMode, AccessOrdinal};
 
 /// Records the bounded cover enumeration, what it pruned, its budget stops, and
 /// its infeasibility.
@@ -989,16 +990,52 @@ fn binding_assessment(
         crate::call_abi::BindingError::ParameterBoundTwice(parameter) => {
             binding_parameter_assessment("opaque-call.binding.parameter-bound-twice", parameter)
         }
-        crate::call_abi::BindingError::RoleStorageDisagreement { first, second } => {
-            PredicateAssessment::disproved(
-                "opaque-call.binding-valid",
-                ReasonCode::new("opaque-call.binding.role-storage-disagreement")?,
-                EvidenceBasis::CheckedInvariant,
-            )?
-            .with_fact(parameter_fact("first-parameter", first)?)?
-            .with_fact(parameter_fact("second-parameter", second)?)
+        crate::call_abi::BindingError::AccessOutOfRange { parameter, access } => {
+            binding_parameter_assessment("opaque-call.binding.access-out-of-range", parameter)?
+                .with_fact(access_fact(access)?)
         }
+        crate::call_abi::BindingError::InOutRegionUnsupported { parameter, access } => {
+            binding_parameter_assessment("opaque-call.binding.inout-region-unsupported", parameter)?
+                .with_fact(access_fact(access)?)
+        }
+        crate::call_abi::BindingError::AccessModeMismatch {
+            parameter,
+            access,
+            parameter_role,
+            access_mode,
+        } => binding_parameter_assessment("opaque-call.binding.access-mode-mismatch", parameter)?
+            .with_fact(access_fact(access)?)?
+            .with_fact(parameter_fact("parameter-role", parameter_role.key())?)?
+            .with_fact(parameter_fact(
+                "access-mode",
+                match access_mode {
+                    AccessMode::Read => "read",
+                    AccessMode::Write => "write",
+                },
+            )?),
+        crate::call_abi::BindingError::UnboundAccess(access) => PredicateAssessment::disproved(
+            "opaque-call.binding-valid",
+            ReasonCode::new("opaque-call.binding.unbound-access")?,
+            EvidenceBasis::CheckedInvariant,
+        )?
+        .with_fact(access_fact(access)?),
+        crate::call_abi::BindingError::AccessStorageDisagreement {
+            access,
+            first,
+            second,
+        } => PredicateAssessment::disproved(
+            "opaque-call.binding-valid",
+            ReasonCode::new("opaque-call.binding.access-storage-disagreement")?,
+            EvidenceBasis::CheckedInvariant,
+        )?
+        .with_fact(access_fact(access)?)?
+        .with_fact(parameter_fact("first-parameter", first)?)?
+        .with_fact(parameter_fact("second-parameter", second)?),
     }
+}
+
+fn access_fact(access: AccessOrdinal) -> Result<ExplainFact, ExplainError> {
+    ExplainFact::new("access", FactValue::Count(u64::from(access.get())))
 }
 
 fn binding_parameter_assessment(
@@ -1922,7 +1959,7 @@ mod tests {
     };
     use crate::explain::{ExplainDisposition, ExplainError};
     use crate::frontier::{OpaqueCallRejectionCause, WorkResolutionError};
-    use crate::physical::PhysicalError;
+    use crate::physical::{AccessOrdinal, PhysicalError};
     use crate::pipeline::{CompileError, NoFeasiblePlanError};
     use crate::request::{StrictF32NumericalContract, TargetProfile};
     use tiler_ir::semantic::{
@@ -2154,7 +2191,8 @@ mod tests {
             ),
             (
                 OpaqueCallRejectionCause::MalformedBinding(
-                    crate::call_abi::BindingError::RoleStorageDisagreement {
+                    crate::call_abi::BindingError::AccessStorageDisagreement {
+                        access: AccessOrdinal::FIRST,
                         first: "x",
                         second: "y",
                     },
@@ -2213,7 +2251,8 @@ mod tests {
     #[test]
     fn binding_and_work_fault_payloads_are_typed_facts() {
         let (_, event) = opaque_call_rejection_event(&OpaqueCallRejectionCause::MalformedBinding(
-            crate::call_abi::BindingError::RoleStorageDisagreement {
+            crate::call_abi::BindingError::AccessStorageDisagreement {
+                access: AccessOrdinal::FIRST,
                 first: "left",
                 second: "right",
             },
@@ -2223,15 +2262,15 @@ mod tests {
         };
         assert_eq!(
             assessment.reason().map(crate::explain::ReasonCode::as_str),
-            Some("opaque-call.binding.role-storage-disagreement")
+            Some("opaque-call.binding.access-storage-disagreement")
         );
-        assert_eq!(assessment.facts().len(), 2);
+        assert_eq!(assessment.facts().len(), 3);
         assert!(matches!(
-            assessment.facts()[0].value(),
+            assessment.facts()[1].value(),
             FactValue::Identity(value) if value.as_str() == "left"
         ));
         assert!(matches!(
-            assessment.facts()[1].value(),
+            assessment.facts()[2].value(),
             FactValue::Identity(value) if value.as_str() == "right"
         ));
 

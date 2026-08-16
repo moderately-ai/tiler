@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
-use super::handles::InputOrdinal;
+use super::handles::AccessOrdinal;
 
 /// Maximum nodes admitted by one physical `f32` pointwise expression.
 pub const MAX_POINTWISE_F32_EXPRESSION_NODES: usize = 4_096;
@@ -48,7 +48,7 @@ pub struct PointwiseF32Value {
 /// map at compile time until the new physical meaning is encoded and lowered:
 ///
 /// ```
-/// use tiler_ir::schedule::{InputOrdinal, PointwiseF32ExpressionBuilder, PointwiseF32Node};
+/// use tiler_ir::schedule::{AccessOrdinal, PointwiseF32ExpressionBuilder, PointwiseF32Node};
 ///
 /// fn spelling(node: &PointwiseF32Node) -> &'static str {
 ///     match node {
@@ -64,7 +64,7 @@ pub struct PointwiseF32Value {
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut builder = PointwiseF32ExpressionBuilder::new();
-/// let input = builder.input(InputOrdinal::FIRST)?;
+/// let input = builder.input(AccessOrdinal::FIRST)?;
 /// let expression = builder.build(input)?;
 /// assert_eq!(spelling(&expression.nodes()[0]), "input");
 /// # Ok(())
@@ -75,12 +75,12 @@ pub enum PointwiseF32Node {
     /// The `f32` element one named boundary input contributes to this
     /// invocation.
     ///
-    /// The ordinal says *which* of the region's input tensors is read, so two
+    /// The access says *which* of the region's ordered reads is used, so two
     /// leaves reading two different tensors are two different nodes. A verified
     /// expression uses every ordinal in `0..input_count` exactly once.
     Input {
-        /// Region-local ordinal of the input tensor this leaf reads.
-        ordinal: InputOrdinal,
+        /// Region-local access this leaf reads.
+        access: AccessOrdinal,
     },
     /// An exact IEEE-754 binary32 constant.
     Constant {
@@ -142,7 +142,7 @@ pub enum PointwiseF32Node {
 /// An opaque, verified physical `f32` pointwise expression.
 ///
 /// The retained nodes are in a deterministic root-first-derived topological
-/// order, preserve operand order and DAG sharing, read every input ordinal in
+/// order, preserve operand order and DAG sharing, read every access ordinal in
 /// `0..input_count` exactly once, contain no unreachable nodes, and remain
 /// within [`MAX_POINTWISE_F32_EXPRESSION_NODES`]. Construction is available only
 /// through [`PointwiseF32ExpressionBuilder`].
@@ -185,7 +185,7 @@ impl PointwiseF32Expression {
         let mut ordinals = Vec::new();
         for (index, node) in self.nodes.iter().enumerate() {
             match node {
-                PointwiseF32Node::Input { ordinal } => ordinals.push(ordinal.get()),
+                PointwiseF32Node::Input { access } => ordinals.push(access.get()),
                 PointwiseF32Node::Constant { .. } => {}
                 PointwiseF32Node::Add { lhs, rhs }
                 | PointwiseF32Node::Multiply { lhs, rhs }
@@ -211,7 +211,7 @@ impl PointwiseF32Expression {
             return false;
         };
         !ordinals.is_empty()
-            && input_ordinals_are_dense(&mut ordinals)
+            && access_ordinals_are_dense(&mut ordinals)
             && root < self.nodes.len()
             && reachable_nodes(&self.nodes, self.root)
                 .iter()
@@ -226,18 +226,18 @@ impl PointwiseF32Expression {
 /// expression never reads and a repeat would leave one access unaddressed. It is
 /// checked over the whole retained set at once rather than per insertion,
 /// because a builder is free to author its leaves in any order.
-fn input_ordinals_are_dense(ordinals: &mut [u32]) -> bool {
+fn access_ordinals_are_dense(ordinals: &mut [u32]) -> bool {
     ordinals.sort_unstable();
     ordinals
         .iter()
         .enumerate()
-        .all(|(position, ordinal)| u32::try_from(position) == Ok(*ordinal))
+        .all(|(position, access)| u32::try_from(position) == Ok(*access))
 }
 
 #[derive(Clone, Debug)]
 enum DraftNode {
     Input {
-        ordinal: InputOrdinal,
+        access: AccessOrdinal,
     },
     Constant {
         bits: u32,
@@ -273,7 +273,7 @@ pub struct PointwiseF32ExpressionBuilder {
     /// optimization: two `Input` nodes naming one ordinal would be two distinct
     /// canonical nodes for one read, so an expression reading the same tensor
     /// twice would encode differently depending on how the author spelled it.
-    inputs: Vec<(InputOrdinal, u32)>,
+    inputs: Vec<(AccessOrdinal, u32)>,
 }
 
 impl PointwiseF32ExpressionBuilder {
@@ -301,16 +301,16 @@ impl PointwiseF32ExpressionBuilder {
     /// new leaf would exceed the governed node limit.
     pub fn input(
         &mut self,
-        ordinal: InputOrdinal,
+        access: AccessOrdinal,
     ) -> Result<PointwiseF32Value, PointwiseF32ExpressionAdmissionError> {
-        if let Some((_, index)) = self.inputs.iter().find(|(minted, _)| *minted == ordinal) {
+        if let Some((_, index)) = self.inputs.iter().find(|(minted, _)| *minted == access) {
             return Ok(PointwiseF32Value {
                 owner: Arc::clone(&self.owner),
                 index: *index,
             });
         }
-        let value = self.push(DraftNode::Input { ordinal })?;
-        self.inputs.push((ordinal, value.index));
+        let value = self.push(DraftNode::Input { access })?;
+        self.inputs.push((access, value.index));
         Ok(value)
     }
 
@@ -423,7 +423,7 @@ impl PointwiseF32ExpressionBuilder {
     ///
     /// Rejects an empty expression, a missing input, a root not minted by this
     /// builder, any draft node not reachable from the explicit root, or a
-    /// reachable input ordinal set that is not the dense `0..n`.
+    /// reachable access ordinal set that is not the dense `0..n`.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "consuming the builder also consumes its builder-owned root value"
@@ -469,7 +469,7 @@ impl PointwiseF32ExpressionBuilder {
         let mut ordinals: Vec<u32> = nodes
             .iter()
             .filter_map(|node| match node {
-                PointwiseF32Node::Input { ordinal } => Some(ordinal.get()),
+                PointwiseF32Node::Input { access } => Some(access.get()),
                 PointwiseF32Node::Constant { .. }
                 | PointwiseF32Node::Add { .. }
                 | PointwiseF32Node::Multiply { .. }
@@ -478,17 +478,19 @@ impl PointwiseF32ExpressionBuilder {
                 | PointwiseF32Node::Rsqrt { .. } => None,
             })
             .collect();
-        if !input_ordinals_are_dense(&mut ordinals) {
+        if !access_ordinals_are_dense(&mut ordinals) {
             let missing = ordinals
                 .iter()
                 .enumerate()
-                .find(|(position, ordinal)| u32::try_from(*position) != Ok(**ordinal))
+                .find(|(position, access)| u32::try_from(*position) != Ok(**access))
                 .map_or(0, |(position, _)| {
                     u32::try_from(position).unwrap_or(u32::MAX)
                 });
             return Err(PointwiseF32ExpressionBuildError::new(
                 self,
-                PointwiseF32ExpressionDiagnostic::SparseInputOrdinals { missing },
+                PointwiseF32ExpressionDiagnostic::SparseAccessOrdinals {
+                    missing: AccessOrdinal::new(missing),
+                },
             ));
         }
         let root = usize::try_from(root.index)
@@ -583,7 +585,7 @@ fn canonicalize_nodes(
                 .expect("operands are canonicalized before their user")
         };
         let node = match &draft[draft_index] {
-            DraftNode::Input { ordinal } => PointwiseF32Node::Input { ordinal: *ordinal },
+            DraftNode::Input { access } => PointwiseF32Node::Input { access: *access },
             DraftNode::Constant { bits } => PointwiseF32Node::Constant { bits: *bits },
             DraftNode::Add { lhs, rhs } => PointwiseF32Node::Add {
                 lhs: resolve(lhs),
@@ -692,15 +694,15 @@ pub enum PointwiseF32ExpressionDiagnostic {
         /// Draft ordinal of the first unreachable node.
         index: usize,
     },
-    /// The reachable input ordinals are not the dense set `0..n`.
+    /// The reachable input accesses are not the dense set `0..n`.
     ///
     /// A region binds one read access per ordinal, in order, so an expression
     /// that skips an ordinal names a binding position nothing reads. Rejecting
     /// it here keeps that from becoming a region the schedule verifier has to
     /// discover cannot be bound.
-    SparseInputOrdinals {
-        /// Smallest ordinal below the largest one the expression never reads.
-        missing: u32,
+    SparseAccessOrdinals {
+        /// Smallest access below the largest one the expression never reads.
+        missing: AccessOrdinal,
     },
 }
 
@@ -713,7 +715,7 @@ impl PointwiseF32ExpressionDiagnostic {
             Self::MissingInput => "pointwise-f32-missing-input",
             Self::InvalidRoot => "pointwise-f32-invalid-root",
             Self::UnreachableNode { .. } => "pointwise-f32-unreachable-node",
-            Self::SparseInputOrdinals { .. } => "pointwise-f32-sparse-input-ordinals",
+            Self::SparseAccessOrdinals { .. } => "pointwise-f32-sparse-access-ordinals",
         }
     }
 }
@@ -789,7 +791,7 @@ mod tests {
     #[test]
     fn checked_builder_retains_exact_topological_tree() {
         let mut builder = PointwiseF32ExpressionBuilder::new();
-        let input = builder.input(InputOrdinal::FIRST).unwrap();
+        let input = builder.input(AccessOrdinal::FIRST).unwrap();
         let two = builder.constant(2.0_f32.to_bits()).unwrap();
         let product = builder.multiply(input, two).unwrap();
         let one = builder.constant(1.0_f32.to_bits()).unwrap();
@@ -801,7 +803,7 @@ mod tests {
             expression.nodes(),
             [
                 PointwiseF32Node::Input {
-                    ordinal: InputOrdinal::FIRST
+                    access: AccessOrdinal::FIRST
                 },
                 PointwiseF32Node::Constant {
                     bits: 2.0_f32.to_bits()
@@ -825,7 +827,7 @@ mod tests {
     fn independent_ready_node_insertion_order_canonicalizes_identically() {
         fn first() -> PointwiseF32Expression {
             let mut builder = PointwiseF32ExpressionBuilder::new();
-            let input = builder.input(InputOrdinal::FIRST).unwrap();
+            let input = builder.input(AccessOrdinal::FIRST).unwrap();
             let two = builder.constant(2.0_f32.to_bits()).unwrap();
             let three = builder.constant(3.0_f32.to_bits()).unwrap();
             let add = builder.add(input.clone(), two).unwrap();
@@ -835,7 +837,7 @@ mod tests {
         }
         fn second() -> PointwiseF32Expression {
             let mut builder = PointwiseF32ExpressionBuilder::new();
-            let input = builder.input(InputOrdinal::FIRST).unwrap();
+            let input = builder.input(AccessOrdinal::FIRST).unwrap();
             let three = builder.constant(3.0_f32.to_bits()).unwrap();
             let two = builder.constant(2.0_f32.to_bits()).unwrap();
             let multiply = builder.multiply(input.clone(), three).unwrap();
@@ -849,7 +851,7 @@ mod tests {
     #[test]
     fn canonicalization_preserves_dag_sharing() {
         let mut builder = PointwiseF32ExpressionBuilder::new();
-        let input = builder.input(InputOrdinal::FIRST).unwrap();
+        let input = builder.input(AccessOrdinal::FIRST).unwrap();
         let two = builder.constant(2.0_f32.to_bits()).unwrap();
         let shared = builder.multiply(input, two).unwrap();
         let root = builder.add(shared.clone(), shared).unwrap();
@@ -872,8 +874,8 @@ mod tests {
     #[test]
     fn repeated_ordinals_share_a_leaf_and_distinct_ordinals_do_not() {
         let mut shared = PointwiseF32ExpressionBuilder::new();
-        let first = shared.input(InputOrdinal::FIRST).unwrap();
-        let again = shared.input(InputOrdinal::FIRST).unwrap();
+        let first = shared.input(AccessOrdinal::FIRST).unwrap();
+        let again = shared.input(AccessOrdinal::FIRST).unwrap();
         let root = shared.multiply(first, again).unwrap();
         let expression = shared.build(root).unwrap();
         assert_eq!(expression.input_count(), 1);
@@ -881,7 +883,7 @@ mod tests {
             expression.nodes(),
             [
                 PointwiseF32Node::Input {
-                    ordinal: InputOrdinal::FIRST
+                    access: AccessOrdinal::FIRST
                 },
                 PointwiseF32Node::Multiply {
                     lhs: PointwiseF32NodeId(0),
@@ -891,9 +893,9 @@ mod tests {
         );
 
         let mut distinct = PointwiseF32ExpressionBuilder::new();
-        let a = distinct.input(InputOrdinal::new(0)).unwrap();
-        let b = distinct.input(InputOrdinal::new(1)).unwrap();
-        let c = distinct.input(InputOrdinal::new(2)).unwrap();
+        let a = distinct.input(AccessOrdinal::new(0)).unwrap();
+        let b = distinct.input(AccessOrdinal::new(1)).unwrap();
+        let c = distinct.input(AccessOrdinal::new(2)).unwrap();
         let product = distinct.multiply(a, b).unwrap();
         let root = distinct.add(product, c).unwrap();
         let expression = distinct.build(root).unwrap();
@@ -903,17 +905,17 @@ mod tests {
             expression.nodes(),
             [
                 PointwiseF32Node::Input {
-                    ordinal: InputOrdinal::new(0)
+                    access: AccessOrdinal::new(0)
                 },
                 PointwiseF32Node::Input {
-                    ordinal: InputOrdinal::new(1)
+                    access: AccessOrdinal::new(1)
                 },
                 PointwiseF32Node::Multiply {
                     lhs: PointwiseF32NodeId(0),
                     rhs: PointwiseF32NodeId(1),
                 },
                 PointwiseF32Node::Input {
-                    ordinal: InputOrdinal::new(2)
+                    access: AccessOrdinal::new(2)
                 },
                 PointwiseF32Node::Add {
                     lhs: PointwiseF32NodeId(2),
@@ -927,19 +929,21 @@ mod tests {
     #[test]
     fn a_sparse_input_ordinal_set_is_refused_with_the_missing_ordinal() {
         let mut sparse = PointwiseF32ExpressionBuilder::new();
-        let first = sparse.input(InputOrdinal::new(0)).unwrap();
-        let third = sparse.input(InputOrdinal::new(2)).unwrap();
+        let first = sparse.input(AccessOrdinal::new(0)).unwrap();
+        let third = sparse.input(AccessOrdinal::new(2)).unwrap();
         let root = sparse.add(first, third).unwrap();
         let retained_root = root.clone();
         let error = sparse.build(root).unwrap_err();
         assert_eq!(
             error.diagnostic(),
-            PointwiseF32ExpressionDiagnostic::SparseInputOrdinals { missing: 1 }
+            PointwiseF32ExpressionDiagnostic::SparseAccessOrdinals {
+                missing: AccessOrdinal::new(1)
+            }
         );
         // Amending the recovered builder to read the skipped ordinal is
         // admitted, so the refusal is of the gap and not of the second input.
         let (mut recovered, _) = error.into_parts();
-        let second = recovered.input(InputOrdinal::new(1)).unwrap();
+        let second = recovered.input(AccessOrdinal::new(1)).unwrap();
         let repaired_root = recovered.add(retained_root, second).unwrap();
         let expression = recovered.build(repaired_root).unwrap();
         assert_eq!(expression.input_count(), 3);
@@ -957,7 +961,7 @@ mod tests {
         );
         let (mut recovered, diagnostic) = error.into_parts();
         assert_eq!(diagnostic, PointwiseF32ExpressionDiagnostic::MissingInput);
-        let input = recovered.input(InputOrdinal::FIRST).unwrap();
+        let input = recovered.input(AccessOrdinal::FIRST).unwrap();
         let repaired_root = recovered.add(input, retained_root).unwrap();
         assert!(recovered.build(repaired_root).is_ok());
     }
@@ -965,9 +969,9 @@ mod tests {
     #[test]
     fn foreign_forward_and_invalid_root_values_are_typed_errors() {
         let mut first = PointwiseF32ExpressionBuilder::new();
-        let input = first.input(InputOrdinal::FIRST).unwrap();
+        let input = first.input(AccessOrdinal::FIRST).unwrap();
         let mut second = PointwiseF32ExpressionBuilder::new();
-        let foreign = second.input(InputOrdinal::FIRST).unwrap();
+        let foreign = second.input(AccessOrdinal::FIRST).unwrap();
         assert!(matches!(
             first.add(input.clone(), foreign),
             Err(PointwiseF32ExpressionAdmissionError::ForeignValue)
@@ -1000,7 +1004,7 @@ mod tests {
         );
 
         let mut unreachable = PointwiseF32ExpressionBuilder::new();
-        let input = unreachable.input(InputOrdinal::FIRST).unwrap();
+        let input = unreachable.input(AccessOrdinal::FIRST).unwrap();
         let root = unreachable.constant(0).unwrap();
         let retained_root = root.clone();
         let error = unreachable.build(root).unwrap_err();

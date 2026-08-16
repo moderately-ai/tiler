@@ -14,10 +14,10 @@ use tiler_ir::shape::{Axis, Shape};
 // importers continue to resolve.
 pub(crate) use tiler_ir::kernel::VerifiedKernel;
 pub(crate) use tiler_ir::schedule::{
-    Access, AccessMode, AxisDecode, BoundsProof, BoundsProofKind, BoundsWitnessId,
+    Access, AccessMode, AccessOrdinal, AxisDecode, BoundsProof, BoundsProofKind, BoundsWitnessId,
     ContractionAxisSource, ContributorCoverage, ContributorOrder, ContributorPartition,
-    ExecutionBinding, IndexArithmetic, IndexRegion, InputOrdinal, KernelSchedule, LaunchPlan,
-    LogicalAccess, NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
+    ExecutionBinding, IndexArithmetic, IndexRegion, KernelSchedule, LaunchPlan, LogicalAccess,
+    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
     PointwiseF32Expression, PointwiseF32Node, ReductionTopology, RegionId, ResourceRequirements,
     ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
 };
@@ -27,10 +27,10 @@ use tiler_ir::schedule::{
 
 use crate::region::SemanticStage;
 use crate::request::{
-    BoundaryRead, NormalizedContraction, NormalizedContractionRead, NormalizedEpilogue,
-    NormalizedOutput, NormalizedOutputSubject, NormalizedSerialSum, NormalizedStaged,
-    NumericalPermission, RecognizedPointwise, StrictF32NumericalContract, TargetProfile,
-    VerifiedRequestSubject, VerifiedTargetRequest,
+    BoundaryRead, DeclaredInputOrdinal, NormalizedContraction, NormalizedContractionRead,
+    NormalizedEpilogue, NormalizedOutput, NormalizedOutputSubject, NormalizedSerialSum,
+    NormalizedStaged, NumericalPermission, RecognizedPointwise, StrictF32NumericalContract,
+    TargetProfile, VerifiedRequestSubject, VerifiedTargetRequest,
 };
 use crate::target::feasibility::UnrealizableSynchronization;
 use crate::target::feasibility::{
@@ -63,11 +63,11 @@ use crate::target::honourability::{
 /// The split's *final* pass deliberately does not ask: it folds partials its own
 /// partial pass staged, so its read is the intermediate whatever the fold's
 /// contributor domain is.
-const fn declared_contributor_tensor(contributor_input: Option<u32>) -> TensorRole {
+const fn declared_contributor_tensor(
+    contributor_input: Option<DeclaredInputOrdinal>,
+) -> TensorRole {
     match contributor_input {
-        Some(ordinal) => TensorRole::Input {
-            ordinal: InputOrdinal::new(ordinal),
-        },
+        Some(_) => TensorRole::Input,
         None => TensorRole::Intermediate,
     }
 }
@@ -100,13 +100,13 @@ const fn contributor_tensor(serial: &NormalizedSerialSum) -> TensorRole {
 /// structural one. `sum(permute(a) * 2.0 + 1.0)` would otherwise fold `a` where
 /// the program said `permute(a)`.
 ///
-fn fused_contributor_tensor(prologue_reads: &[(u32, LogicalAccess)]) -> Option<TensorRole> {
-    let [(ordinal, LogicalAccess::LinearIdentity)] = prologue_reads else {
+fn fused_contributor_tensor(
+    prologue_reads: &[(DeclaredInputOrdinal, LogicalAccess)],
+) -> Option<TensorRole> {
+    let [(_, LogicalAccess::LinearIdentity)] = prologue_reads else {
         return None;
     };
-    Some(TensorRole::Input {
-        ordinal: InputOrdinal::new(*ordinal),
-    })
+    Some(TensorRole::Input)
 }
 
 /// Recovers the scale and bias a fused serial sum's scalar program can spell.
@@ -158,7 +158,7 @@ pub(crate) fn fused_prologue_constants(output: &NormalizedOutput) -> Option<(u32
 fn affine_prologue(expression: &PointwiseF32Expression) -> Option<(u32, u32)> {
     let [
         PointwiseF32Node::Input {
-            ordinal: InputOrdinal::FIRST,
+            access: AccessOrdinal::FIRST,
         },
         PointwiseF32Node::Constant { bits: scale },
         PointwiseF32Node::Multiply {
@@ -208,6 +208,7 @@ pub(crate) struct StagedPlan {
     axes: Vec<Axis>,
     /// Boundary tensor the producing stage folds.
     contributor: TensorRole,
+    contributor_input: DeclaredInputOrdinal,
     /// Shape of the operand that stage folds.
     input_shape: Shape,
     /// Shape of the value the producing stage hands on: the folded operand's
@@ -220,6 +221,7 @@ pub(crate) struct StagedPlan {
     fold_epilogue: PointwiseF32Expression,
     /// The consuming stage's reads, in access order.
     pass_reads: Vec<(TensorRole, LogicalAccess)>,
+    pass_inputs: Vec<Option<DeclaredInputOrdinal>>,
     /// The consuming stage's per-point expression.
     pass_expression: PointwiseF32Expression,
 }
@@ -320,7 +322,7 @@ fn root_mean_square_scale_plan(
     let extent_bits = folded_extent_bits(value_shape, &axes)?;
 
     let mut fold = tiler_ir::schedule::PointwiseF32ExpressionBuilder::new();
-    let total = fold.input(InputOrdinal::FIRST).ok()?;
+    let total = fold.input(AccessOrdinal::FIRST).ok()?;
     let extent = fold.constant(extent_bits).ok()?;
     let mean = fold.divide(total, extent).ok()?;
     let bias = fold.constant(eps_bits).ok()?;
@@ -347,48 +349,55 @@ fn root_mean_square_scale_plan(
             axes: kept_axis_decodes(&normalized.output_shape, &axes)?,
         }
     };
-    let input_read = |ordinal: u32| {
-        (
-            TensorRole::Input {
-                ordinal: InputOrdinal::new(ordinal),
-            },
-            LogicalAccess::LinearIdentity,
-        )
-    };
+    let input_read = |_| (TensorRole::Input, LogicalAccess::LinearIdentity);
     let pass_reads = vec![
         input_read(if value_leads {
-            *value_input
+            value_input.get()
         } else {
-            *weight_input
+            weight_input.get()
         }),
         input_read(if value_leads {
-            *weight_input
+            weight_input.get()
         } else {
-            *value_input
+            value_input.get()
         }),
         (TensorRole::Intermediate, handed_map),
     ];
 
     let mut pass = tiler_ir::schedule::PointwiseF32ExpressionBuilder::new();
     let value_leaf = pass
-        .input(InputOrdinal::new(u32::from(!value_leads)))
+        .input(AccessOrdinal::new(u32::from(!value_leads)))
         .ok()?;
-    let weight_leaf = pass.input(InputOrdinal::new(u32::from(value_leads))).ok()?;
-    let root_leaf = pass.input(InputOrdinal::new(2)).ok()?;
+    let weight_leaf = pass
+        .input(AccessOrdinal::new(u32::from(value_leads)))
+        .ok()?;
+    let root_leaf = pass.input(AccessOrdinal::new(2)).ok()?;
     let scaled = pass.multiply(value_leaf, root_leaf).ok()?;
     let weighted = pass.multiply(weight_leaf, scaled).ok()?;
     let pass_expression = pass.build(weighted).ok()?;
 
     Some(StagedPlan {
         axes,
-        contributor: TensorRole::Input {
-            ordinal: InputOrdinal::new(*value_input),
-        },
+        contributor: TensorRole::Input,
+        contributor_input: *value_input,
         input_shape: value_shape.clone(),
         handed_shape,
         handed_elements,
         fold_epilogue,
         pass_reads,
+        pass_inputs: vec![
+            Some(if value_leads {
+                *value_input
+            } else {
+                *weight_input
+            }),
+            Some(if value_leads {
+                *weight_input
+            } else {
+                *value_input
+            }),
+            None,
+        ],
         pass_expression,
     })
 }
@@ -1032,9 +1041,115 @@ impl VerifiedScheduledRegion {
         self.request_subject == *request.subject()
     }
 
+    /// Projects one local input access back to the declared program interface.
+    ///
+    /// The association is read from the retained, already-verified request
+    /// subject. It is deliberately not stored as a second vector beside the
+    /// region: doing so would give schedule construction and program assembly
+    /// two authorities that could drift while remaining individually typed.
+    pub(crate) fn declared_input_at(&self, access: AccessOrdinal) -> Option<DeclaredInputOrdinal> {
+        declared_input_for_region_access(
+            self.region(),
+            &self.semantic_members,
+            &self.request_subject,
+            access,
+        )
+    }
+
     /// Returns the complete hard-feasibility admission for this exact region.
     pub(crate) const fn admission(&self) -> &AdmissionEvidence {
         &self.admission
+    }
+}
+
+pub(crate) fn declared_input_for_region_access(
+    region: &ScheduledRegion,
+    semantic_members: &[SemanticStage],
+    subject: &VerifiedRequestSubject,
+    access: AccessOrdinal,
+) -> Option<DeclaredInputOrdinal> {
+    let position = usize::try_from(access.get()).ok()?;
+    let regional_access = region.index.accesses.get(position)?;
+    if regional_access.tensor != TensorRole::Input {
+        return None;
+    }
+    let normalized = subject.normalized().outputs().iter().find(|normalized| {
+        verify_region_output_binding(region, semantic_members, normalized, subject).is_ok()
+    })?;
+    declared_input_for_verified_access(region, semantic_members, normalized, position)
+}
+
+pub(crate) fn output_elements_for_region(
+    region: &ScheduledRegion,
+    semantic_members: &[SemanticStage],
+    subject: &VerifiedRequestSubject,
+) -> Option<u64> {
+    let normalized = subject.normalized().outputs().iter().find(|normalized| {
+        verify_region_output_binding(region, semantic_members, normalized, subject).is_ok()
+    })?;
+    tiler_ir::schedule::element_count(published_shape(normalized)).ok()
+}
+
+fn declared_input_for_verified_access(
+    region: &ScheduledRegion,
+    semantic_members: &[SemanticStage],
+    normalized: &NormalizedOutputSubject,
+    position: usize,
+) -> Option<DeclaredInputOrdinal> {
+    match normalized {
+        NormalizedOutputSubject::Pointwise(pointwise) => {
+            pointwise.reads.get(position).map(|(ordinal, _)| *ordinal)
+        }
+        NormalizedOutputSubject::Contraction(contraction) => contraction
+            .reads
+            .get(position)
+            .map(|read| read.input_ordinal),
+        NormalizedOutputSubject::Epilogue(epilogue) => {
+            if semantic_members == epilogue.members()
+                && matches!(region.index.scalar_program, ScalarProgram::PointwiseF32(_))
+            {
+                epilogue
+                    .reads()
+                    .get(position)
+                    .and_then(|(read, _)| read.declared_ordinal())
+            } else {
+                declared_input_for_verified_access(
+                    region,
+                    semantic_members,
+                    epilogue.producer(),
+                    position,
+                )
+            }
+        }
+        NormalizedOutputSubject::Staged(staged) => {
+            let occurrence = staged.occurrence();
+            let fold = SemanticStage::first(occurrence.member);
+            if semantic_members == [fold] {
+                staged_plan(occurrence)
+                    .and_then(|plan| (position == 0).then_some(plan.contributor_input))
+            } else if semantic_members == [fold.next_stage()] {
+                staged_plan(occurrence)
+                    .and_then(|plan| plan.pass_inputs.get(position).copied().flatten())
+            } else {
+                staged.producer().and_then(|producer| {
+                    declared_input_for_verified_access(region, semantic_members, producer, position)
+                })
+            }
+        }
+        NormalizedOutputSubject::SerialSum(serial) => match &region.index.scalar_program {
+            ScalarProgram::PointwiseF32(_) => serial
+                .prologue_reads()
+                .get(position)
+                .map(|(ordinal, _)| *ordinal),
+            ScalarProgram::FusedMultiplyAddSerialSum { .. } => serial
+                .prologue_reads()
+                .get(position)
+                .map(|(ordinal, _)| *ordinal),
+            ScalarProgram::StrictSerialSum { .. } => (position == 0)
+                .then(|| serial.contributor_input())
+                .flatten(),
+            _ => None,
+        },
     }
 }
 
@@ -1340,14 +1455,7 @@ pub(crate) fn pointwise_region(
     // and the interface width are different numbers.
     let reads: Vec<(TensorRole, LogicalAccess)> = recognized_reads
         .iter()
-        .map(|(ordinal, map)| {
-            (
-                TensorRole::Input {
-                    ordinal: InputOrdinal::new(*ordinal),
-                },
-                map.clone(),
-            )
-        })
+        .map(|(_, map)| (TensorRole::Input, map.clone()))
         .collect();
     let region = elementwise_region(
         request,
@@ -1685,7 +1793,7 @@ pub(crate) const PUBLISHING_COPY_REGION: RegionId = RegionId::new(6);
 fn identity_expression() -> PointwiseF32Expression {
     let mut builder = tiler_ir::schedule::PointwiseF32ExpressionBuilder::new();
     let leaf = builder
-        .input(InputOrdinal::FIRST)
+        .input(AccessOrdinal::FIRST)
         .expect("a single leaf is inside the governed expression limit");
     builder
         .build(leaf)
@@ -1805,9 +1913,7 @@ pub(crate) fn contraction_region(
     let mut bounds_proofs = Vec::with_capacity(3);
     for (position, read) in normalized.reads.iter().enumerate() {
         let witness = u32::try_from(position).unwrap_or(u32::MAX);
-        let tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(read.input_ordinal),
-        };
+        let tensor = TensorRole::Input;
         accesses.push(Access {
             tensor,
             component_role: None,
@@ -3643,7 +3749,10 @@ fn verify_region_output_binding(
 /// tensor over the same buffers while every other fact in this arm agreed. The
 /// intrinsic verifier sees only the region and cannot notice, which is the same
 /// argument the contraction and epilogue arms make for their own access checks.
-fn elementwise_reads_match(accesses: &[Access], recognized: &[(u32, LogicalAccess)]) -> bool {
+fn elementwise_reads_match(
+    accesses: &[Access],
+    recognized: &[(DeclaredInputOrdinal, LogicalAccess)],
+) -> bool {
     let Some((_, reads)) = accesses.split_last() else {
         return false;
     };
@@ -3651,13 +3760,7 @@ fn elementwise_reads_match(accesses: &[Access], recognized: &[(u32, LogicalAcces
         && reads
             .iter()
             .zip(recognized)
-            .all(|(access, (ordinal, map))| {
-                access.tensor
-                    == TensorRole::Input {
-                        ordinal: InputOrdinal::new(*ordinal),
-                    }
-                    && access.map == *map
-            })
+            .all(|(access, (_, map))| access.tensor == TensorRole::Input && access.map == *map)
 }
 
 /// Returns whether one staged fold's contributor read is the plan's.
@@ -3835,10 +3938,7 @@ fn contraction_accesses_match(accesses: &[Access], normalized: &NormalizedContra
         .iter()
         .zip(&normalized.reads)
         .all(|(access, normalized_read)| {
-            access.tensor
-                == TensorRole::Input {
-                    ordinal: InputOrdinal::new(normalized_read.input_ordinal),
-                }
+            access.tensor == TensorRole::Input
                 && access.map
                     == LogicalAccess::ContractionOperand {
                         operand_shape: normalized_read.shape.clone(),
@@ -4593,10 +4693,8 @@ mod tests {
         );
         for ordinal in [0_u32, 1, 7] {
             assert_eq!(
-                super::declared_contributor_tensor(Some(ordinal)),
-                TensorRole::Input {
-                    ordinal: InputOrdinal::new(ordinal),
-                },
+                super::declared_contributor_tensor(Some(DeclaredInputOrdinal::new(ordinal))),
+                TensorRole::Input,
             );
         }
     }
@@ -4609,20 +4707,23 @@ mod tests {
     /// region that addresses its input through a reduction relation.
     #[test]
     fn the_fused_fold_reads_its_prologues_own_dense_input() {
-        let dense = |ordinal| (ordinal, LogicalAccess::LinearIdentity);
+        let dense = |ordinal| {
+            (
+                DeclaredInputOrdinal::new(ordinal),
+                LogicalAccess::LinearIdentity,
+            )
+        };
         for ordinal in [0_u32, 1, 7] {
             assert_eq!(
                 super::fused_contributor_tensor(&[dense(ordinal)]),
-                Some(TensorRole::Input {
-                    ordinal: InputOrdinal::new(ordinal),
-                }),
+                Some(TensorRole::Input),
             );
         }
         assert_eq!(super::fused_contributor_tensor(&[]), None);
         assert_eq!(super::fused_contributor_tensor(&[dense(0), dense(1)]), None);
         assert_eq!(
             super::fused_contributor_tensor(&[(
-                0,
+                DeclaredInputOrdinal::new(0),
                 LogicalAccess::ReindexBijection {
                     operand_shape: Shape::from_dims([2, 2]),
                     result_shape: Shape::from_dims([2, 2]),
@@ -4643,7 +4744,7 @@ mod tests {
     /// used could not be substituted for one of them here.
     fn test_affine_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
         let mut expression = tiler_ir::schedule::PointwiseF32ExpressionBuilder::new();
-        let input = expression.input(InputOrdinal::FIRST).unwrap();
+        let input = expression.input(AccessOrdinal::FIRST).unwrap();
         let scale = expression.constant(scale_bits).unwrap();
         let product = expression.multiply(input, scale).unwrap();
         let bias = expression.constant(bias_bits).unwrap();
@@ -5063,21 +5164,22 @@ mod tests {
         request.for_target(0).unwrap()
     }
 
-    /// Serial, split, and cooperative spellings bind the same recognized
-    /// nonzero contributor ordinal. A different or out-of-range ordinal stays
-    /// intrinsically well formed and is refused by exact request binding.
+    /// Serial, split, and cooperative spellings project the same recognized
+    /// later declared input through their first local access.
     #[test]
     fn every_fold_topology_binds_the_same_later_declared_input() {
         let request = later_input_fold_request();
-        let expected = TensorRole::Input {
-            ordinal: InputOrdinal::new(1),
-        };
+        let expected = TensorRole::Input;
         let folded = &request.normalized().outputs()[0];
 
         let (serial, serial_members) =
             reduction_region(&request, folded, RegionWrite::ProgramOutput);
         assert_eq!(serial.index.accesses[0].tensor, expected);
-        verify_schedule(serial, serial_members, &request).unwrap();
+        let serial = verify_schedule(serial, serial_members, &request).unwrap();
+        assert_eq!(
+            serial.declared_input_at(AccessOrdinal::FIRST),
+            Some(DeclaredInputOrdinal::new(1))
+        );
 
         let split = split_reduction_regions(&request, folded, RegionWrite::ProgramOutput)
             .expect("the relaxed four-contributor fold admits a split");
@@ -5085,32 +5187,22 @@ mod tests {
             <[_; 2]>::try_from(split.stages).unwrap();
         assert_eq!(partial.index.accesses[0].tensor, expected);
         assert_eq!(combine.index.accesses[0].tensor, TensorRole::Intermediate);
-        verify_schedule(partial.clone(), partial_members.clone(), &request).unwrap();
+        let partial = verify_schedule(partial, partial_members, &request).unwrap();
+        assert_eq!(
+            partial.declared_input_at(AccessOrdinal::FIRST),
+            Some(DeclaredInputOrdinal::new(1))
+        );
         verify_schedule(combine, combine_members, &request).unwrap();
 
         let (tree, tree_members) =
             single_workgroup_tree_region(&request, folded, RegionWrite::ProgramOutput)
                 .expect("the relaxed four-contributor fold admits a tree");
         assert_eq!(tree.index.accesses[0].tensor, expected);
-        verify_region_subject_binding(&tree, &tree_members, request.subject()).unwrap();
-
-        for (mut forged, members, ordinal) in [
-            (partial, partial_members, 0_u32),
-            (tree, tree_members, 7_u32),
-        ] {
-            let tensor = TensorRole::Input {
-                ordinal: InputOrdinal::new(ordinal),
-            };
-            forged.index.accesses[0].tensor = tensor;
-            forged.index.bounds_proofs[0].tensor = tensor;
-            assert_eq!(
-                verify_region_subject_binding(&forged, &members, request.subject()),
-                Err(PhysicalError::Intrinsic {
-                    rule: "request-binding",
-                    region: forged.index.id,
-                }),
-            );
-        }
+        let tree = verify_schedule(tree, tree_members, &request).unwrap();
+        assert_eq!(
+            tree.declared_input_at(AccessOrdinal::FIRST),
+            Some(DeclaredInputOrdinal::new(1))
+        );
     }
 
     /// A split's two passes are told apart by the stage, not by the member set.

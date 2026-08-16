@@ -36,10 +36,10 @@ use tiler_ir::program::{
     ViewId,
 };
 use tiler_ir::schedule::{
-    Access, AccessMode, ApproximationEnvelope, ArithmeticType, Bf16NumericalContractKey,
-    BoundsProof, BoundsProofKind, BoundsWitnessId, ContractionAxisSource, ContributorOrder,
-    ExceptionalValueAssumption, ExecutionBinding, F32NumericalContractKey, FencedSpaces,
-    FlushedZeroSign, InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess,
+    Access, AccessMode, AccessOrdinal, ApproximationEnvelope, ArithmeticType,
+    Bf16NumericalContractKey, BoundsProof, BoundsProofKind, BoundsWitnessId, ContractionAxisSource,
+    ContributorOrder, ExceptionalValueAssumption, ExecutionBinding, F32NumericalContractKey,
+    FencedSpaces, FlushedZeroSign, KernelSchedule, LaunchPlan, LogicalAccess,
     MaterializationRounding, MemoryOrdering, NumericalPermission, NumericalRealization,
     OwnershipProof, OwnershipProofKind, OwnershipWitnessId, PointwiseBf16ExpressionBuilder,
     PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
@@ -721,9 +721,7 @@ pub(super) fn fused_kernel(scale_bits: u32) -> VerifiedKernel {
     region.iteration_shape(output_shape()).unwrap();
     region
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::ReductionContributor {
@@ -749,9 +747,7 @@ pub(super) fn fused_kernel(scale_bits: u32) -> VerifiedKernel {
     region
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(0),
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             kind: BoundsProofKind::ReductionDomain {
                 input_shape: input_shape(),
@@ -937,9 +933,7 @@ fn pointwise_kernel() -> VerifiedKernel {
     region.iteration_shape(input_shape()).unwrap();
     region
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
@@ -957,15 +951,7 @@ fn pointwise_kernel() -> VerifiedKernel {
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .unwrap();
-    for (witness, tensor) in [
-        (
-            0,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-        ),
-        (1, TensorRole::Intermediate),
-    ] {
+    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Intermediate)] {
         region
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
@@ -987,7 +973,7 @@ fn pointwise_kernel() -> VerifiedKernel {
         })
         .unwrap();
     let mut expression = PointwiseF32ExpressionBuilder::new();
-    let input = expression.input(InputOrdinal::FIRST).unwrap();
+    let input = expression.input(AccessOrdinal::FIRST).unwrap();
     let scale = expression.constant(SCALE_BITS).unwrap();
     let product = expression.multiply(input, scale).unwrap();
     let bias = expression.constant(BIAS_BITS).unwrap();
@@ -1489,9 +1475,7 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
         .expect("iteration shape");
     for access in [
         Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: Some(STRICT_AFFINE_CODES_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::PackedU4LsbZeroTail { logical_elements },
@@ -1499,9 +1483,7 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
             ownership: None,
         },
         Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: Some(STRICT_AFFINE_SCALE_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::ScalarBroadcast,
@@ -1509,9 +1491,7 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
             ownership: None,
         },
         Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: Some(STRICT_AFFINE_ZERO_POINT_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::ScalarBroadcast,
@@ -1532,28 +1512,12 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
     for (id, tensor, component_role, element_count) in [
         (
             0,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            TensorRole::Input,
             Some(STRICT_AFFINE_CODES_ROLE),
             logical_elements.div_ceil(2),
         ),
-        (
-            1,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-            Some(STRICT_AFFINE_SCALE_ROLE),
-            1,
-        ),
-        (
-            2,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-            Some(STRICT_AFFINE_ZERO_POINT_ROLE),
-            1,
-        ),
+        (1, TensorRole::Input, Some(STRICT_AFFINE_SCALE_ROLE), 1),
+        (2, TensorRole::Input, Some(STRICT_AFFINE_ZERO_POINT_ROLE), 1),
         (3, TensorRole::Output, None, logical_elements),
     ] {
         region
@@ -2129,9 +2093,7 @@ fn live_extent_kernel() -> VerifiedKernel {
     let inner = Axis::new(1);
     region
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LiveRowMajor { inner_axis: inner },
@@ -2149,15 +2111,7 @@ fn live_extent_kernel() -> VerifiedKernel {
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .unwrap();
-    for (witness, tensor) in [
-        (
-            0,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-        ),
-        (1, TensorRole::Output),
-    ] {
+    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Output)] {
         region
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
@@ -2198,7 +2152,7 @@ fn live_extent_kernel() -> VerifiedKernel {
 
 fn scale_bias_expression() -> tiler_ir::schedule::PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
-    let input = expression.input(InputOrdinal::FIRST).unwrap();
+    let input = expression.input(AccessOrdinal::FIRST).unwrap();
     let scale = expression.constant(SCALE_BITS).unwrap();
     let product = expression.multiply(input, scale).unwrap();
     let bias = expression.constant(BIAS_BITS).unwrap();
@@ -2397,9 +2351,7 @@ fn live_contraction_kernel() -> VerifiedKernel {
     region.iteration_shape(output.clone()).unwrap();
     for (ordinal, (operand, free)) in [(&left, 0_u32), (&right, 1)].into_iter().enumerate() {
         let witness = u32::try_from(ordinal).unwrap();
-        let tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(witness),
-        };
+        let tensor = TensorRole::Input;
         region
             .push_access(Access {
                 tensor,
@@ -2466,7 +2418,7 @@ fn live_contraction_kernel() -> VerifiedKernel {
             tail: TailPolicy::Exact,
             output_owner: owner,
             reduction: ReductionTopology::LiveContraction {
-                live_input: InputOrdinal::FIRST,
+                live_access: AccessOrdinal::FIRST,
                 live_axis: Axis::new(1),
                 order: ContributorOrder::OriginalAxisLexicographic,
                 permits_reassociation: false,
@@ -2836,7 +2788,7 @@ impl PointwiseWidth {
         match self {
             Self::F32 => {
                 let mut expression = PointwiseF32ExpressionBuilder::new();
-                let leaf = expression.input(InputOrdinal::FIRST).expect("input");
+                let leaf = expression.input(AccessOrdinal::FIRST).expect("input");
                 let scale = expression.constant(SCALE_BITS).expect("scale");
                 let product = expression.multiply(leaf, scale).expect("product");
                 let bias = expression.constant(BIAS_BITS).expect("bias");
@@ -2847,7 +2799,7 @@ impl PointwiseWidth {
             }
             Self::Bf16 => {
                 let mut expression = PointwiseBf16ExpressionBuilder::new();
-                let leaf = expression.input(InputOrdinal::FIRST).expect("input");
+                let leaf = expression.input(AccessOrdinal::FIRST).expect("input");
                 let scale = expression.constant(BF16_SCALE_BITS).expect("scale");
                 let product = expression.multiply(leaf, scale).expect("product");
                 let bias = expression.constant(BF16_BIAS_BITS).expect("bias");
@@ -2869,9 +2821,7 @@ impl PointwiseWidth {
             .expect("iteration shape");
         for (tensor, mode, bounds, ownership) in [
             (
-                TensorRole::Input {
-                    ordinal: InputOrdinal::FIRST,
-                },
+                TensorRole::Input,
                 AccessMode::Read,
                 BoundsWitnessId::new(0),
                 None,
@@ -5611,9 +5561,7 @@ fn baked_dense_kernel(columns: u64) -> VerifiedKernel {
         .unwrap();
     region
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
@@ -5631,15 +5579,7 @@ fn baked_dense_kernel(columns: u64) -> VerifiedKernel {
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .unwrap();
-    for (witness, tensor) in [
-        (
-            0,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-        ),
-        (1, TensorRole::Output),
-    ] {
+    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Output)] {
         region
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),

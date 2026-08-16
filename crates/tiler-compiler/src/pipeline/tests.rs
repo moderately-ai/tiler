@@ -30,7 +30,7 @@ fn test_root(explain: &mut ExplainWriter) -> ExplainRecordId {
 }
 use crate::explain::ExplainDisposition;
 use crate::frontier::{PhysicalImplementationProvider, PhysicalProposalKind};
-use crate::physical::{InputOrdinal, RegionId, TensorRole};
+use crate::physical::{AccessOrdinal, RegionId, TensorRole};
 use crate::request::{
     CompilerCapabilitySnapshot, NumericalContractPreference, StrictF32NumericalContract,
     TargetProfile,
@@ -1322,9 +1322,7 @@ fn a_reduction_over_a_declared_input_matches_the_reference_evaluator() {
     assert_eq!(fused.scheduled_regions.len(), 1);
     assert_eq!(
         fused.scheduled_regions[0].region().index.accesses[0].tensor,
-        TensorRole::Input {
-            ordinal: InputOrdinal::FIRST
-        },
+        TensorRole::Input,
     );
     assert!(fused.plan.cover().materializations().is_empty());
     let actual = interpret_fused(&fused.kernels[0], &values);
@@ -2374,9 +2372,7 @@ fn one_input_read_densely_and_through_a_permutation_matches_the_reference_evalua
     // that bound one read could not spell this program at all.
     let accesses = &fused.scheduled_regions[0].region().index.accesses;
     assert_eq!(accesses.len(), 3);
-    let first_input = TensorRole::Input {
-        ordinal: InputOrdinal::FIRST,
-    };
+    let first_input = TensorRole::Input;
     assert_eq!(accesses[0].tensor, first_input);
     assert_eq!(
         accesses[0].map,
@@ -2586,7 +2582,7 @@ fn product_is_deterministic_and_preserves_the_materialized_boundary() {
     }
     let target = &first.targets[0];
     let rendered = target.explain.render();
-    assert!(rendered.starts_with("tiler-explain-v8 request="));
+    assert!(rendered.starts_with("tiler-explain-v9 request="));
     assert!(rendered.contains("feasibility:threads-per-workgroup:deferred"));
     assert!(rendered.contains("feasibility:buffer-bindings:admitted"));
     assert!(rendered.contains("event=selection:tiler.selection.structural-pareto.v1:selected"));
@@ -3917,7 +3913,7 @@ fn every_wired_authority_emits_its_typed_explain_records() {
         .find(|record| record.rule().key().as_str() == "fusion.legality.v1")
         .expect("a fusion-legality record");
     assert_eq!(legality.event().disposition(), ExplainDisposition::Admitted);
-    assert!(trace.render().starts_with("tiler-explain-v8 request="));
+    assert!(trace.render().starts_with("tiler-explain-v9 request="));
 }
 
 /// Asserts the honourability half of the end-to-end explain conformance.
@@ -4147,7 +4143,7 @@ fn normalization_converges_duplicated_and_shared_constants_on_one_portfolio() {
     let rendered = from_duplicated.targets[0].compilation_explain.render();
     let request_headers = rendered
         .lines()
-        .filter(|line| line.starts_with("tiler-explain-v8 request="))
+        .filter(|line| line.starts_with("tiler-explain-v9 request="))
         .collect::<Vec<_>>();
     assert_eq!(request_headers.len(), 2);
     assert_ne!(
@@ -4547,15 +4543,15 @@ fn bf16_semantic_program(key: &InputKey, elements: u64) -> SemanticProgram {
 /// physical-carrier vocabularies admit and verify this region.
 fn bf16_scheduled_region(elements: u64) -> tiler_ir::schedule::VerifiedScheduledRegion {
     use tiler_ir::schedule::{
-        Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId,
-        ExceptionalValueAssumption, ExecutionBinding, InputOrdinal, KernelSchedule, LaunchPlan,
-        LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
-        OwnershipProofKind, OwnershipWitnessId, PointwiseBf16ExpressionBuilder, ReductionTopology,
-        ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+        Access, AccessMode, AccessOrdinal, BoundsProof, BoundsProofKind, BoundsWitnessId,
+        ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
+        NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+        OwnershipWitnessId, PointwiseBf16ExpressionBuilder, ReductionTopology, ScalarProgram,
+        ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
     };
 
     let mut expression = PointwiseBf16ExpressionBuilder::new();
-    let input = expression.input(InputOrdinal::FIRST).unwrap();
+    let input = expression.input(AccessOrdinal::FIRST).unwrap();
     let scale = expression.constant(bf16_bits::THREE).unwrap();
     let product = expression.multiply(input, scale).unwrap();
     let bias = expression.constant(bf16_bits::NEGATIVE_ZERO).unwrap();
@@ -4568,9 +4564,7 @@ fn bf16_scheduled_region(elements: u64) -> tiler_ir::schedule::VerifiedScheduled
         .unwrap();
     builder
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
@@ -4588,15 +4582,7 @@ fn bf16_scheduled_region(elements: u64) -> tiler_ir::schedule::VerifiedScheduled
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .unwrap();
-    for (witness, tensor) in [
-        (
-            0,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-        ),
-        (1, TensorRole::Output),
-    ] {
+    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Output)] {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
@@ -6298,8 +6284,8 @@ fn retaining_the_candidate_does_not_move_canonical_identities() {
     assert_eq!(
         labels,
         [
-            "program-alternative:db1a4cbc46771083",
-            "program-alternative:eeaa29a40b81091d",
+            "program-alternative:a4f1d97d9fd825d5",
+            "program-alternative:45c9b66d6c622c7d",
         ],
         "successful plan identities must not move when retention is added"
     );
@@ -6626,7 +6612,7 @@ fn intrinsic_physical_failures_are_invalid_output_not_empty_frontiers() {
 struct UnregisteredOpaqueProvider {
     identity: tiler_ir::semantic::ProviderIdentity,
     call: crate::call_registry::OpaqueCallIdentity,
-    bindings: Vec<(&'static str, TensorRole)>,
+    bindings: Vec<(&'static str, AccessOrdinal)>,
 }
 
 impl PhysicalImplementationProvider for UnregisteredOpaqueProvider {
@@ -6686,23 +6672,13 @@ fn mixed_frontier_trace(
             .unwrap(),
         bindings: if reverse_bindings {
             vec![
-                ("output", TensorRole::Output),
-                (
-                    "input",
-                    TensorRole::Input {
-                        ordinal: InputOrdinal::FIRST,
-                    },
-                ),
+                ("output", AccessOrdinal::new(1)),
+                ("input", AccessOrdinal::FIRST),
             ]
         } else {
             vec![
-                (
-                    "input",
-                    TensorRole::Input {
-                        ordinal: InputOrdinal::FIRST,
-                    },
-                ),
-                ("output", TensorRole::Output),
+                ("input", AccessOrdinal::FIRST),
+                ("output", AccessOrdinal::new(1)),
             ]
         },
     };
@@ -6770,7 +6746,7 @@ fn mixed_frontier_records_exact_opaque_call_rejection_detail() {
         [
             (
                 SubjectKind::OpaqueCall,
-                "call-owner/mystery@3[input=input#0,output=output]",
+                "call-owner/mystery@3[input=access#0,output=access#1]",
             ),
             (SubjectKind::Provider, "tiler.test.physical::opaque@7"),
         ]
@@ -6783,8 +6759,8 @@ fn mixed_frontier_records_exact_opaque_call_rejection_detail() {
         "a local rejection is never cost evidence"
     );
     let rendered = trace.render();
-    assert!(rendered.starts_with("tiler-explain-v8 "));
-    assert!(rendered.contains("opaque-call:call-owner/mystery@3[input=input#0,output=output]"));
+    assert!(rendered.starts_with("tiler-explain-v9 "));
+    assert!(rendered.contains("opaque-call:call-owner/mystery@3[input=access#0,output=access#1]"));
     assert!(rendered.contains("provider:tiler.test.physical::opaque@7"));
     assert!(rendered.contains("admitted-count:count=1"));
     assert!(rendered.contains("rejected-count:count=1"));
@@ -6831,16 +6807,8 @@ impl WholeProgramCallProvider {
     /// Stated by the provider and never inferred: the ABI says a parameter is
     /// read or written and never which tensor it reads, so the claim is the
     /// provider's and the frontier checks it against the declaration.
-    fn bindings() -> Vec<(&'static str, TensorRole)> {
-        vec![
-            (
-                "x",
-                TensorRole::Input {
-                    ordinal: InputOrdinal::FIRST,
-                },
-            ),
-            ("y", TensorRole::Output),
-        ]
+    fn bindings() -> Vec<(&'static str, AccessOrdinal)> {
+        vec![("x", AccessOrdinal::FIRST), ("y", AccessOrdinal::new(1))]
     }
 }
 
@@ -7085,7 +7053,7 @@ fn an_unregistered_opaque_call_named_on_the_compile_path_is_refused_by_name() {
         [
             (
                 SubjectKind::OpaqueCall,
-                "test-owner/whole-program-call@1[x=input#0,y=output]",
+                "test-owner/whole-program-call@1[x=access#0,y=access#1]",
             ),
             (
                 SubjectKind::Provider,

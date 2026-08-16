@@ -198,7 +198,7 @@ impl ElementaryPointSink for PointwiseExpressionSink<'_> {
 mod tests {
     use super::{PointwiseExpressionSink, silu_point_body};
     use tiler_ir::schedule::{
-        InputOrdinal, PointwiseF32Expression, PointwiseF32ExpressionBuilder, PointwiseF32Node,
+        AccessOrdinal, PointwiseF32Expression, PointwiseF32ExpressionBuilder, PointwiseF32Node,
         PointwiseF32NodeId,
     };
 
@@ -213,7 +213,7 @@ mod tests {
         let index = usize::try_from(node.index()).expect("a dense node ordinal");
         let operand = |id| render(expression, id);
         match expression.nodes()[index] {
-            PointwiseF32Node::Input { ordinal } => format!("input({})", ordinal.get()),
+            PointwiseF32Node::Input { access } => format!("input({})", access.get()),
             PointwiseF32Node::Constant { bits } => format!("constant(0x{bits:08x})"),
             PointwiseF32Node::Add { lhs, rhs } => {
                 format!("add({}, {})", operand(lhs), operand(rhs))
@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn the_activation_body_projects_to_the_pinned_expression() {
         let mut builder = PointwiseF32ExpressionBuilder::new();
-        let argument = builder.input(InputOrdinal::FIRST).expect("one input leaf");
+        let argument = builder.input(AccessOrdinal::FIRST).expect("one input leaf");
         let root = {
             let mut sink = PointwiseExpressionSink::new(&mut builder);
             silu_point_body(&mut sink, &argument).expect("the activation body is admitted")

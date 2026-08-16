@@ -23,7 +23,7 @@
 
 use crate::call_declaration::OpaqueCallDeclaration;
 use core::fmt;
-use tiler_ir::schedule::TensorRole;
+use tiler_ir::schedule::AccessOrdinal;
 
 /// Maximum bytes in the exact textual subject of one opaque call.
 ///
@@ -259,19 +259,19 @@ impl OpaqueCallRegistry {
 
 /// What a provider proposes when it offers an opaque call for a region.
 ///
-/// The identity names *which* registered call, and the bindings say which of the
-/// region's tensor roles each of the call's parameters is bound to. Both are the
+/// The identity names *which* registered call, and the bindings say which exact
+/// regional access each of the call's parameters is bound to. Both are the
 /// provider's claim, and both are validated at admission — the identity against
 /// the registry, the bindings against the call's own ABI.
 ///
-/// The bindings cannot be inferred. A boundary contract is keyed by tensor role
-/// and an ABI names parameters, and a parameter's `ParameterRole` says whether it
-/// is read or written, never *which* tensor it reads. Inferring would reintroduce
-/// exactly what `crate::call_abi`'s named parameters exist to prevent.
+/// The bindings cannot be inferred. An ABI parameter says whether it is read or
+/// written, never which position in the region's ordered access list it names.
+/// Inferring would reintroduce exactly what `crate::call_abi`'s named parameters
+/// exist to prevent.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct OpaqueCallProposal {
     call: OpaqueCallIdentity,
-    bindings: Vec<(&'static str, TensorRole)>,
+    bindings: Vec<(&'static str, AccessOrdinal)>,
 }
 
 /// Why an opaque-call proposal could not be represented exactly in explain.
@@ -306,7 +306,7 @@ impl OpaqueCallProposal {
     /// would require truncation or hashing.
     pub(crate) fn new(
         call: OpaqueCallIdentity,
-        bindings: Vec<(&'static str, TensorRole)>,
+        bindings: Vec<(&'static str, AccessOrdinal)>,
     ) -> Result<Self, OpaqueCallProposalError> {
         let actual = proposal_subject_len(call, &bindings);
         if actual > MAX_OPAQUE_CALL_SUBJECT_BYTES {
@@ -328,8 +328,8 @@ impl OpaqueCallProposal {
         self.call
     }
 
-    /// Which tensor role each parameter binds.
-    pub(crate) fn bindings(&self) -> &[(&'static str, TensorRole)] {
+    /// Which exact regional access each parameter binds.
+    pub(crate) fn bindings(&self) -> &[(&'static str, AccessOrdinal)] {
         &self.bindings
     }
 
@@ -341,13 +341,13 @@ impl OpaqueCallProposal {
     pub(crate) fn subject(&self) -> String {
         let mut subject = self.call.subject();
         subject.push('[');
-        for (index, (name, role)) in self.bindings.iter().enumerate() {
+        for (index, (name, access)) in self.bindings.iter().enumerate() {
             if index != 0 {
                 subject.push(',');
             }
             subject.push_str(name);
             subject.push('=');
-            push_tensor_role_name(&mut subject, *role);
+            push_access_name(&mut subject, *access);
         }
         subject.push(']');
         debug_assert_eq!(
@@ -358,62 +358,49 @@ impl OpaqueCallProposal {
     }
 }
 
-fn proposal_subject_len(call: OpaqueCallIdentity, bindings: &[(&str, TensorRole)]) -> usize {
+fn proposal_subject_len(call: OpaqueCallIdentity, bindings: &[(&str, AccessOrdinal)]) -> usize {
     call_subject_len(call.provider, call.call, call.revision)
         + 2
         + bindings
             .iter()
             .enumerate()
-            .map(|(index, (name, role))| {
-                name.len() + 1 + tensor_role_name_len(*role) + usize::from(index != 0)
+            .map(|(index, (name, access))| {
+                name.len() + 1 + access_name_len(*access) + usize::from(index != 0)
             })
             .sum::<usize>()
 }
 
-/// Renders one bound tensor role into an exact opaque-call subject.
+/// Renders one bound regional access into an exact opaque-call subject.
 ///
-/// An input renders its ordinal too. Two parameters bound to two different
-/// input tensors are two different proposals, and a subject spelling both
-/// `input` would give one name to two things — which is exactly what a subject
-/// exists to prevent.
-fn push_tensor_role_name(subject: &mut String, role: TensorRole) {
-    match role {
-        TensorRole::Input { ordinal } => {
-            subject.push_str(INPUT_ROLE_PREFIX);
-            subject.push_str(&ordinal.get().to_string());
-        }
-        TensorRole::Intermediate => subject.push_str("intermediate"),
-        TensorRole::Output => subject.push_str("output"),
-    }
+/// Two parameters bound to two different positions are two different proposals,
+/// even when both positions carry the same fieldless tensor role. Omitting the
+/// access ordinal would give one name to two things.
+fn push_access_name(subject: &mut String, access: AccessOrdinal) {
+    subject.push_str(ACCESS_PREFIX);
+    subject.push_str(&access.get().to_string());
 }
 
-/// Mirrors [`push_tensor_role_name`] so the precomputed bound stays exact.
+/// Mirrors [`push_access_name`] so the precomputed bound stays exact.
 ///
 /// Computed rather than formatted: this runs once per binding inside the
 /// admission check that `subject` later debug-asserts against, so it must agree
 /// with the renderer without allocating a string to find out.
-const fn tensor_role_name_len(role: TensorRole) -> usize {
-    match role {
-        TensorRole::Input { ordinal } => {
-            let digits = match ordinal.get().checked_ilog10() {
-                Some(log) => log as usize + 1,
-                None => 1,
-            };
-            INPUT_ROLE_PREFIX.len() + digits
-        }
-        TensorRole::Intermediate => "intermediate".len(),
-        TensorRole::Output => "output".len(),
-    }
+const fn access_name_len(access: AccessOrdinal) -> usize {
+    let digits = match access.get().checked_ilog10() {
+        Some(log) => log as usize + 1,
+        None => 1,
+    };
+    ACCESS_PREFIX.len() + digits
 }
 
-/// Opens the rendering of an input role, ahead of its decimal ordinal.
-const INPUT_ROLE_PREFIX: &str = "input#";
+/// Opens the rendering of an access coordinate, ahead of its decimal ordinal.
+const ACCESS_PREFIX: &str = "access#";
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::call_declaration::WorkScaling;
-    use tiler_ir::schedule::InputOrdinal;
+    use tiler_ir::schedule::AccessOrdinal;
     use tiler_ir::schedule::{
         ExceptionalValueAssumption, NumericalPermission, ResourceRequirements, SubnormalMode,
     };
@@ -514,28 +501,12 @@ mod tests {
         let call = identity("c");
         let proposal = OpaqueCallProposal::new(
             call,
-            vec![
-                (
-                    "x",
-                    TensorRole::Input {
-                        ordinal: InputOrdinal::FIRST,
-                    },
-                ),
-                ("y", TensorRole::Output),
-            ],
+            vec![("x", AccessOrdinal::FIRST), ("y", AccessOrdinal::new(1))],
         )
         .expect("bounded");
-        assert_eq!(proposal.subject(), "p/c@1[x=input#0,y=output]");
+        assert_eq!(proposal.subject(), "p/c@1[x=access#0,y=access#1]");
         assert_eq!(
-            OpaqueCallProposal::new(
-                call,
-                vec![(
-                    "x/y",
-                    TensorRole::Input {
-                        ordinal: InputOrdinal::FIRST
-                    }
-                )]
-            ),
+            OpaqueCallProposal::new(call, vec![("x/y", AccessOrdinal::FIRST)]),
             Err(OpaqueCallProposalError::InvalidBindingName {
                 index: 0,
                 name: "x/y",
@@ -543,9 +514,9 @@ mod tests {
         );
 
         let long = Box::leak("x".repeat(250).into_boxed_str());
-        let actual = "p/c@1[]".len() + long.len() + "=output".len();
+        let actual = "p/c@1[]".len() + long.len() + "=access#0".len();
         assert_eq!(
-            OpaqueCallProposal::new(call, vec![(long, TensorRole::Output)]),
+            OpaqueCallProposal::new(call, vec![(long, AccessOrdinal::FIRST)]),
             Err(OpaqueCallProposalError::SubjectTooLong {
                 actual,
                 maximum: MAX_OPAQUE_CALL_SUBJECT_BYTES,

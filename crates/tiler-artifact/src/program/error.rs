@@ -19,6 +19,7 @@ use std::error::Error;
 use std::fmt;
 
 use tiler_ir::program::ValueRole;
+use tiler_ir::schedule::AccessOrdinal;
 use tiler_ir::semantic::ProviderIdentity;
 
 use super::ArtifactProgramBuilder;
@@ -436,8 +437,8 @@ pub enum ArtifactBuildError {
     ExtentOperandUnbound {
         /// Ordered entry position.
         entry: usize,
-        /// Region-local input ordinal the kernel named.
-        ordinal: u32,
+        /// Region-local access position the kernel named.
+        access: AccessOrdinal,
         /// Axis the kernel named.
         axis: u32,
     },

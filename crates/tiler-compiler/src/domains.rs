@@ -118,7 +118,7 @@ const PINNED_IDENTITY_DOMAINS: &[PinnedDomain] = &[
     PinnedDomain::new(b"tiler.compiler.index-refinement-occurrence.v2\0", 1, 1),
     PinnedDomain::new(b"tiler.compiler.lowering-capability-registry.v2\0", 1, 0),
     PinnedDomain::new(
-        b"tiler.compiler.physical-implementation-proposal.v2\0",
+        b"tiler.compiler.physical-implementation-proposal.v3\0",
         1,
         0,
     ),

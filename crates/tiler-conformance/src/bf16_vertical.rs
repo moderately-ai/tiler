@@ -224,11 +224,11 @@ use tiler_compiler::session::NumericalContract;
 use tiler_ir::kernel::{VerifiedKernel, lower_scheduled_region};
 use tiler_ir::program::StorageScalar;
 use tiler_ir::schedule::{
-    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ExecutionBinding,
-    InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess, NumericalRealization, OwnershipProof,
-    OwnershipProofKind, OwnershipWitnessId, PointwiseBf16ExpressionBuilder, RealizationWitness,
-    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, TailPolicy, TensorRole,
-    VerifiedScheduledRegion,
+    Access, AccessMode, AccessOrdinal, BoundsProof, BoundsProofKind, BoundsWitnessId,
+    ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess, NumericalRealization,
+    OwnershipProof, OwnershipProofKind, OwnershipWitnessId, PointwiseBf16ExpressionBuilder,
+    RealizationWitness, ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder,
+    TailPolicy, TensorRole, VerifiedScheduledRegion,
 };
 use tiler_ir::semantic::{
     Bf16, Bf16Add, Bf16Constant, Bf16Multiply, CANONICAL_BF16_ARITHMETIC_NAN_BITS, InputKey,
@@ -612,7 +612,7 @@ pub(crate) fn region_under(
 ) -> VerifiedScheduledRegion {
     let mut expression = PointwiseBf16ExpressionBuilder::new();
     let input = expression
-        .input(InputOrdinal::FIRST)
+        .input(AccessOrdinal::FIRST)
         .expect("the region reads its first input");
     let scale = expression
         .constant(SCALE_BITS)
@@ -632,9 +632,7 @@ pub(crate) fn region_under(
         .expect("a one-dimensional iteration shape is admitted");
     builder
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
@@ -652,15 +650,7 @@ pub(crate) fn region_under(
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .expect("the write access is admitted");
-    for (witness, tensor) in [
-        (
-            0,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-        ),
-        (1, TensorRole::Output),
-    ] {
+    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Output)] {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
@@ -922,7 +912,7 @@ pub(crate) fn emit_vertical(elements: u64) -> Result<EmittedVertical, EmitFailur
         // read input and one written output, and a materialized intermediate
         // would mean a second dispatch this run does not encode.
         match parameter.tensor {
-            TensorRole::Input { .. } => operand_index = Some(u64::from(binding.index())),
+            TensorRole::Input => operand_index = Some(u64::from(binding.index())),
             TensorRole::Output => result_index = Some(u64::from(binding.index())),
             TensorRole::Intermediate => {
                 return Err(EmitFailure::UnexpectedSignature(

@@ -114,7 +114,7 @@
 //! # };
 //! # use tiler_ir::schedule::{
 //! #     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ExecutionBinding,
-//! #     F32NumericalContractKey, InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess,
+//! #     F32NumericalContractKey, AccessOrdinal, KernelSchedule, LaunchPlan, LogicalAccess,
 //! #     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
 //! #     PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
 //! #     ScheduledRegionBuilder, TailPolicy, TensorRole,
@@ -201,7 +201,7 @@
 //! # schedule.iteration_shape(Shape::from_dims([2, 3]))?;
 //! # for ordinal in [0, 1] {
 //! #     schedule.push_access(Access {
-//! #         tensor: TensorRole::Input { ordinal: InputOrdinal::new(ordinal) },
+//! #         tensor: TensorRole::Input,
 //! #         component_role: None,
 //! #         mode: AccessMode::Read,
 //! #         map: LogicalAccess::LinearIdentity,
@@ -210,7 +210,7 @@
 //! #     })?;
 //! #     schedule.push_bounds_proof(BoundsProof {
 //! #         id: BoundsWitnessId::new(ordinal),
-//! #         tensor: TensorRole::Input { ordinal: InputOrdinal::new(ordinal) },
+//! #         tensor: TensorRole::Input,
 //! #         component_role: None,
 //! #         kind: BoundsProofKind::LinearRange { element_count: 6 },
 //! #     })?;
@@ -235,8 +235,8 @@
 //! #     kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 6 },
 //! # })?;
 //! # let mut expression = PointwiseF32ExpressionBuilder::new();
-//! # let first = expression.input(InputOrdinal::new(0))?;
-//! # let second = expression.input(InputOrdinal::new(1))?;
+//! # let first = expression.input(AccessOrdinal::new(0))?;
+//! # let second = expression.input(AccessOrdinal::new(1))?;
 //! # let root = expression.multiply(first, second)?;
 //! # schedule.scalar_program(ScalarProgram::PointwiseF32(expression.build(root)?))?;
 //! # schedule.numerical(NumericalRealization::new(

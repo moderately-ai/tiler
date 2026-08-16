@@ -471,6 +471,30 @@ mod tests {
         assert!(faults.contains(&IncoherentDeclaration::InPlaceParameterDeclaredDistinct));
     }
 
+    /// The generic call ABI remains capable of stating a coherent in-place
+    /// parameter even though regional opaque-call binding currently refuses it.
+    #[test]
+    fn an_in_place_parameter_with_may_alias_inputs_is_coherent() {
+        let declaration = OpaqueCallDeclaration::check(
+            abi([("buffer", ParameterRole::InOut)]),
+            CallEffects::declared(
+                Elimination::Required,
+                Motion::Ordered,
+                Aliasing::MayAliasInputs,
+            ),
+            placement(),
+            resources(1),
+            WorkScaling::Fixed(1),
+        );
+        assert_eq!(
+            declaration
+                .as_ref()
+                .map(|declaration| declaration.abi().parameters().len()),
+            Ok(1),
+            "the lower-level ABI must not inherit the regional refusal: {declaration:?}",
+        );
+    }
+
     /// A call writing through a parameter cannot be removable.
     #[test]
     fn a_call_that_writes_a_parameter_cannot_be_removable() {

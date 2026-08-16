@@ -12,10 +12,10 @@ use std::fmt::Write as _;
 
 use super::*;
 use crate::schedule::{
-    Access, AccessMode, ArithmeticType, BoundsProof, BoundsProofKind, BoundsWitnessId,
-    ContractionAxisSource, ContributorCoverage, ContributorOrder, ContributorPartition,
-    ConvergenceEvidence, CooperativePhase, CooperativeTile, ExceptionalValueAssumption,
-    ExecutionBinding, FencedSpaces, InputOrdinal, KernelSchedule, LaunchPlan,
+    Access, AccessMode, AccessOrdinal, ArithmeticType, BoundsProof, BoundsProofKind,
+    BoundsWitnessId, ContractionAxisSource, ContributorCoverage, ContributorOrder,
+    ContributorPartition, ConvergenceEvidence, CooperativePhase, CooperativeTile,
+    ExceptionalValueAssumption, ExecutionBinding, FencedSpaces, KernelSchedule, LaunchPlan,
     LocalCoordinateSource, LocalCoordinates, LogicalAccess, MemoryOrdering, NumericalPermission,
     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId, ParticipantRange,
     ParticipantSpace, PhaseId, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
@@ -34,7 +34,7 @@ use crate::shape::{Axis, Shape};
 const NAN_BITS: u32 = 0x7fc0_0000;
 const SCALE_BITS: u32 = 0x4000_0000;
 const BIAS_BITS: u32 = 0x3f80_0000;
-const ABSENT_SUBGROUP_KERNEL_IDENTITY_HEX: &str = "74696c65722e6b65726e656c2e763700000000000000018a74696c65722e7363686564756c652e7635000000000000000002000000000000000200000000000000030000000000000002010000000000010100000000000200020100000001010000000000000000000000020000000001000000000011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc00000010101010101010101000000000000000600000001010000000031000000000000000600000001010000000000000002010000000000030101000000000000000602000301020000000000000006000000000000000101000000000000001574696c65722e746573742e7374726963742d6633327fc000000101010101010101000000020000000100000000000000000101000101010101010101000000000000000a020201030303030303030000000000000000000000000000000411010000000000000001000000001202000000000000000600000000000000010000000114010000000000000001000000000000000100000002180000000200000000000000000000000000000008160000000000000000000000000000000000000001000000031203400000000000000000000001000000041306000000030000000400000000000000010000000515010000000500000000000000010000000612033f8000000000000000000001000000071305000000060000000700000000000000010000000815010000000800000000000000010000000917000000010000000000000009000000010000000000000000000000000000000000000000";
+const ABSENT_SUBGROUP_KERNEL_IDENTITY_HEX: &str = "74696c65722e6b65726e656c2e763800000000000000018274696c65722e7363686564756c652e763600000000000000000200000000000000020000000000000003000000000000000201000101000000000002000201000000010100000000000000000000000200000000010011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc000000101010101010101010000000000000006000000010100000000310000000000000006000000010100000000000000020100030101000000000000000602000301020000000000000006000000000000000101000000000000001574696c65722e746573742e7374726963742d6633327fc000000101010101010101000000020000000100000000000000000101000101010101010101000000000000000a020201030303030303030000000000000000000000000000000411010000000000000001000000001202000000000000000600000000000000010000000114010000000000000001000000000000000100000002180000000200000000000000000000000000000008160000000000000000000000000000000000000001000000031203400000000000000000000001000000041306000000030000000400000000000000010000000515010000000500000000000000010000000612033f8000000000000000000001000000071305000000060000000700000000000000010000000815010000000800000000000000010000000917000000010000000000000009000000010000000000000000000000000000000000000000";
 
 fn numerical() -> NumericalRealization {
     NumericalRealization::new(
@@ -75,9 +75,7 @@ fn strict_affine_u4_dequantize_region() -> VerifiedScheduledRegion {
         .unwrap();
     for access in [
         Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: Some(STRICT_AFFINE_CODES_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::PackedU4LsbZeroTail { logical_elements },
@@ -85,9 +83,7 @@ fn strict_affine_u4_dequantize_region() -> VerifiedScheduledRegion {
             ownership: None,
         },
         Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: Some(STRICT_AFFINE_SCALE_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::ScalarBroadcast,
@@ -95,9 +91,7 @@ fn strict_affine_u4_dequantize_region() -> VerifiedScheduledRegion {
             ownership: None,
         },
         Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: Some(STRICT_AFFINE_ZERO_POINT_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::ScalarBroadcast,
@@ -131,9 +125,7 @@ fn strict_affine_u4_dequantize_region() -> VerifiedScheduledRegion {
                 tensor: if id == 3 {
                     TensorRole::Output
                 } else {
-                    TensorRole::Input {
-                        ordinal: InputOrdinal::FIRST,
-                    }
+                    TensorRole::Input
                 },
                 component_role: role,
                 kind: BoundsProofKind::LinearRange {
@@ -286,7 +278,7 @@ fn strict_affine_dequantization_rejects_exceptional_value_absence_assumptions() 
 
 fn scale_bias_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
-    let input = expression.input(InputOrdinal::FIRST).unwrap();
+    let input = expression.input(AccessOrdinal::FIRST).unwrap();
     let scale = expression.constant(scale_bits).unwrap();
     let product = expression.multiply(input, scale).unwrap();
     let bias = expression.constant(bias_bits).unwrap();
@@ -309,9 +301,7 @@ fn pointwise_expression_region(
     builder.iteration_shape(shape.clone()).unwrap();
     builder
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
@@ -329,15 +319,7 @@ fn pointwise_expression_region(
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .unwrap();
-    for (witness, tensor) in [
-        (
-            0,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-        ),
-        (1, TensorRole::Intermediate),
-    ] {
+    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Intermediate)] {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
@@ -371,9 +353,9 @@ fn pointwise_expression_region(
 /// The approved `(a * b) + c` region over three distinct input tensors.
 fn three_input_region(elements: u64) -> VerifiedScheduledRegion {
     let mut expression = PointwiseF32ExpressionBuilder::new();
-    let a = expression.input(InputOrdinal::new(0)).unwrap();
-    let b = expression.input(InputOrdinal::new(1)).unwrap();
-    let c = expression.input(InputOrdinal::new(2)).unwrap();
+    let a = expression.input(AccessOrdinal::new(0)).unwrap();
+    let b = expression.input(AccessOrdinal::new(1)).unwrap();
+    let c = expression.input(AccessOrdinal::new(2)).unwrap();
     let product = expression.multiply(a, b).unwrap();
     let root = expression.add(product, c).unwrap();
     let expression = expression.build(root).unwrap();
@@ -385,9 +367,7 @@ fn three_input_region(elements: u64) -> VerifiedScheduledRegion {
     for ordinal in 0..3 {
         builder
             .push_access(Access {
-                tensor: TensorRole::Input {
-                    ordinal: InputOrdinal::new(ordinal),
-                },
+                tensor: TensorRole::Input,
                 component_role: None,
                 mode: AccessMode::Read,
                 map: LogicalAccess::LinearIdentity,
@@ -398,9 +378,7 @@ fn three_input_region(elements: u64) -> VerifiedScheduledRegion {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(ordinal),
-                tensor: TensorRole::Input {
-                    ordinal: InputOrdinal::new(ordinal),
-                },
+                tensor: TensorRole::Input,
                 component_role: None,
                 kind: BoundsProofKind::LinearRange {
                     element_count: elements,
@@ -447,6 +425,69 @@ fn three_input_region(elements: u64) -> VerifiedScheduledRegion {
     builder.build().unwrap()
 }
 
+/// An epilogue-shaped access list: one staged read, one declared-input read,
+/// then the owning output write.
+fn mixed_epilogue_region(elements: u64) -> VerifiedScheduledRegion {
+    let mut expression = PointwiseF32ExpressionBuilder::new();
+    let staged = expression.input(AccessOrdinal::FIRST).unwrap();
+    let input = expression.input(AccessOrdinal::new(1)).unwrap();
+    let root = expression.add(staged, input).unwrap();
+    let expression = expression.build(root).unwrap();
+
+    let mut builder = ScheduledRegionBuilder::new(RegionId::new(0));
+    builder
+        .iteration_shape(Shape::from_dims([elements]))
+        .unwrap();
+    for (position, tensor, mode, ownership) in [
+        (0, TensorRole::Intermediate, AccessMode::Read, None),
+        (1, TensorRole::Input, AccessMode::Read, None),
+        (
+            2,
+            TensorRole::Output,
+            AccessMode::Write,
+            Some(OwnershipWitnessId::new(0)),
+        ),
+    ] {
+        builder
+            .push_access(Access {
+                tensor,
+                component_role: None,
+                mode,
+                map: LogicalAccess::LinearIdentity,
+                bounds: BoundsWitnessId::new(position),
+                ownership,
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(position),
+                tensor,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: elements,
+                },
+            })
+            .unwrap();
+    }
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: elements,
+            },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::PointwiseF32(expression))
+        .unwrap();
+    builder.numerical(numerical()).unwrap();
+    builder
+        .schedule(linear_schedule(elements, OwnershipWitnessId::new(0)))
+        .unwrap();
+    builder.build().unwrap()
+}
+
 /// A three-input region lowers to a four-buffer kernel that loads each input.
 ///
 /// The loads are checked against the *buffers they address*, not merely counted:
@@ -459,14 +500,8 @@ fn a_three_input_pointwise_region_lowers_to_one_buffer_and_load_per_input() {
 
     let declared: Vec<_> = kernel.declared_buffers().collect();
     assert_eq!(declared.len(), 4);
-    for (position, (_, parameter)) in declared.iter().take(3).enumerate() {
-        let ordinal = u32::try_from(position).unwrap();
-        assert_eq!(
-            parameter.tensor,
-            TensorRole::Input {
-                ordinal: InputOrdinal::new(ordinal)
-            }
-        );
+    for (_, parameter) in declared.iter().take(3) {
+        assert_eq!(parameter.tensor, TensorRole::Input);
         assert_eq!(parameter.access, BufferAccess::Read);
         assert_eq!(parameter.element_type, KernelType::F32);
     }
@@ -515,7 +550,7 @@ fn pointwise_lowering_preserves_left_and_right_operands_and_canonicalizes_each_o
     let expressions = [
         {
             let mut expression = PointwiseF32ExpressionBuilder::new();
-            let input = expression.input(InputOrdinal::FIRST).unwrap();
+            let input = expression.input(AccessOrdinal::FIRST).unwrap();
             let two = expression.constant(2.0_f32.to_bits()).unwrap();
             let sum = expression.add(input, two).unwrap();
             let three = expression.constant(3.0_f32.to_bits()).unwrap();
@@ -524,7 +559,7 @@ fn pointwise_lowering_preserves_left_and_right_operands_and_canonicalizes_each_o
         },
         {
             let mut expression = PointwiseF32ExpressionBuilder::new();
-            let input = expression.input(InputOrdinal::FIRST).unwrap();
+            let input = expression.input(AccessOrdinal::FIRST).unwrap();
             let two = expression.constant(2.0_f32.to_bits()).unwrap();
             let sum = expression.add(two, input).unwrap();
             let three = expression.constant(3.0_f32.to_bits()).unwrap();
@@ -696,9 +731,7 @@ fn pointwise_signature(
 ) -> (KernelBufferId, KernelBufferId) {
     let read = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -792,9 +825,7 @@ fn pointwise_with_subgroup_requirement(
     .unwrap();
     let read = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -859,9 +890,7 @@ fn canonical_lowering_produces_a_verified_backend_consumable_kernel() {
         buffers,
         [
             BufferParameter {
-                tensor: TensorRole::Input {
-                    ordinal: InputOrdinal::FIRST,
-                },
+                tensor: TensorRole::Input,
                 component_role: None,
                 element_type: KernelType::F32,
                 address_space: AddressSpace::Device,
@@ -1289,9 +1318,7 @@ fn buffer_contract_rejects_a_signature_that_misstates_the_scheduled_access() {
     let mut builder = KernelBuilder::new(&scheduled).unwrap();
     let read = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -1337,9 +1364,7 @@ fn address_space_contract_rejects_a_space_the_schedule_does_not_provide() {
     let mut builder = KernelBuilder::new(&scheduled).unwrap();
     let read = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Workgroup,
@@ -1388,9 +1413,7 @@ fn builtin_contract_rejects_a_kernel_that_never_admits_the_execution_binding() {
     let mut builder = KernelBuilder::new(&scheduled).unwrap();
     let read = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -1438,9 +1461,7 @@ fn numerical_and_resource_declarations_must_equal_the_schedule() {
     let mut drifted = KernelBuilder::new(&scheduled).unwrap();
     let read = drifted
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -1487,9 +1508,7 @@ fn numerical_and_resource_declarations_must_equal_the_schedule() {
     let mut inflated = KernelBuilder::new(&scheduled).unwrap();
     let read = inflated
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -4013,12 +4032,10 @@ fn squared_fold_region(id: RegionId, epilogue: bool) -> VerifiedScheduledRegion 
     let axes = [Axis::new(1)];
     let output = input.without_axes(&axes);
     let output_elements = crate::schedule::element_count(&output).expect("bounded fixture shape");
-    let tensor = TensorRole::Input {
-        ordinal: InputOrdinal::FIRST,
-    };
+    let tensor = TensorRole::Input;
     let scalar = if epilogue {
         let mut chain = crate::schedule::PointwiseF32ExpressionBuilder::new();
-        let total = chain.input(InputOrdinal::FIRST).unwrap();
+        let total = chain.input(AccessOrdinal::FIRST).unwrap();
         let extent = chain.constant(3.0_f32.to_bits()).unwrap();
         let mean = chain.divide(total, extent).unwrap();
         let bias = chain.constant(1.0e-6_f32.to_bits()).unwrap();
@@ -4193,9 +4210,7 @@ fn maximum_reduction_region(id: RegionId) -> VerifiedScheduledRegion {
     let axes = [Axis::new(1)];
     let output = input.without_axes(&axes);
     let output_elements = crate::schedule::element_count(&output).expect("bounded fixture shape");
-    let tensor = TensorRole::Input {
-        ordinal: InputOrdinal::FIRST,
-    };
+    let tensor = TensorRole::Input;
     let mut builder = ScheduledRegionBuilder::new(id);
     builder.iteration_shape(output.clone()).unwrap();
     builder
@@ -4295,9 +4310,7 @@ fn maximum_partial_pass_region() -> VerifiedScheduledRegion {
         .expect("a rank-two partial shape is within the governed bound");
     let partial_elements =
         crate::schedule::element_count(&iteration).expect("bounded fixture shape");
-    let tensor = TensorRole::Input {
-        ordinal: InputOrdinal::FIRST,
-    };
+    let tensor = TensorRole::Input;
     let mut builder = ScheduledRegionBuilder::new(RegionId::new(33));
     builder.iteration_shape(iteration).unwrap();
     builder
@@ -4416,9 +4429,7 @@ fn a_padded_split_is_representable_and_not_lowered() {
 /// two contributors into their own slot, all three reading the staged set back,
 /// one committing.
 fn cooperative_maximum_region() -> VerifiedScheduledRegion {
-    let tensor = TensorRole::Input {
-        ordinal: InputOrdinal::FIRST,
-    };
+    let tensor = TensorRole::Input;
     let mut builder = ScheduledRegionBuilder::new(RegionId::new(34));
     builder.iteration_shape(Shape::from_dims([2, 3])).unwrap();
     builder
@@ -4711,7 +4722,7 @@ fn bf16_numerical() -> NumericalRealization {
 /// `(x * 2.0) + 1.0` in `bf16`, the direct sibling of [`scale_bias_expression`].
 fn bf16_scale_bias_expression() -> crate::schedule::PointwiseBf16Expression {
     let mut expression = crate::schedule::PointwiseBf16ExpressionBuilder::new();
-    let input = expression.input(InputOrdinal::FIRST).unwrap();
+    let input = expression.input(AccessOrdinal::FIRST).unwrap();
     let scale = expression.constant(BF16_SCALE_BITS).unwrap();
     let product = expression.multiply(input, scale).unwrap();
     let bias = expression.constant(BF16_BIAS_BITS).unwrap();
@@ -4730,9 +4741,7 @@ fn bf16_pointwise_builder(id: RegionId, shape: &Shape) -> ScheduledRegionBuilder
     builder.iteration_shape(shape.clone()).unwrap();
     builder
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
@@ -4750,15 +4759,7 @@ fn bf16_pointwise_builder(id: RegionId, shape: &Shape) -> ScheduledRegionBuilder
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .unwrap();
-    for (witness, tensor) in [
-        (
-            0,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-        ),
-        (1, TensorRole::Intermediate),
-    ] {
+    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Intermediate)] {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
@@ -4804,9 +4805,7 @@ fn a_bf16_pointwise_region_lowers_to_a_kernel_that_is_bf16_at_every_position() {
         kernel.buffers().collect::<Vec<_>>(),
         [
             BufferParameter {
-                tensor: TensorRole::Input {
-                    ordinal: InputOrdinal::FIRST,
-                },
+                tensor: TensorRole::Input,
                 component_role: None,
                 element_type: KernelType::Bf16,
                 address_space: AddressSpace::Device,
@@ -4912,9 +4911,7 @@ fn bf16_pointwise_signature(
 ) -> (KernelBufferId, KernelBufferId) {
     let read = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             element_type,
             address_space: AddressSpace::Device,
@@ -5078,7 +5075,7 @@ fn a_bf16_kernel_and_its_f32_sibling_do_not_share_identity() {
     // inside the fixed resource-requirement record -- which is why this names
     // the current domain while the comment above still describes the widening
     // this test is about.
-    let domain = b"tiler.kernel.v7\0";
+    let domain = b"tiler.kernel.v8\0";
     assert!(bf16.canonical_identity().as_bytes().starts_with(domain));
     assert!(f32.canonical_identity().as_bytes().starts_with(domain));
 }
@@ -5116,9 +5113,7 @@ fn contraction_region(id: RegionId, m: u64, n: u64, k: u64) -> VerifiedScheduled
     builder.iteration_shape(output.clone()).unwrap();
     for (ordinal, (operand, free)) in [(&left, 0_u32), (&right, 1)].into_iter().enumerate() {
         let witness = u32::try_from(ordinal).unwrap();
-        let tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(witness),
-        };
+        let tensor = TensorRole::Input;
         builder
             .push_access(Access {
                 tensor,
@@ -5269,9 +5264,7 @@ fn a_positive_zero_seeded_contraction_loop_is_reduction_contract() {
     let mut builder = KernelBuilder::new(&scheduled).unwrap();
     let left = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::new(0),
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -5281,9 +5274,7 @@ fn a_positive_zero_seeded_contraction_loop_is_reduction_contract() {
         .unwrap();
     let right = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::new(1),
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -5359,9 +5350,7 @@ fn live_row_major_region(rows: u64) -> VerifiedScheduledRegion {
     let inner = Axis::new(1);
     builder
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LiveRowMajor { inner_axis: inner },
@@ -5379,15 +5368,7 @@ fn live_row_major_region(rows: u64) -> VerifiedScheduledRegion {
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .unwrap();
-    for (witness, tensor) in [
-        (
-            0,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-        ),
-        (1, TensorRole::Intermediate),
-    ] {
+    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Intermediate)] {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
@@ -5424,12 +5405,7 @@ fn a_live_row_major_kernel_reads_the_declared_extent_and_does_not_bake_it() {
     let kernel = lower_scheduled_region(&scheduled).unwrap();
     let extents: Vec<_> = kernel.input_extents().collect();
     assert_eq!(extents.len(), 1);
-    assert_eq!(
-        extents[0].tensor,
-        TensorRole::Input {
-            ordinal: InputOrdinal::FIRST,
-        }
-    );
+    assert_eq!(extents[0].access, AccessOrdinal::FIRST);
     assert_eq!(extents[0].axis, Axis::new(1));
     let baked_14 = lower_scheduled_region(&pointwise_region(
         RegionId::new(0),
@@ -5514,11 +5490,45 @@ fn declaring_a_non_input_extent_is_refused() {
     let mut builder = KernelBuilder::new(&scheduled).unwrap();
     let error = builder
         .declare_input_extent(InputExtentParameter {
-            tensor: TensorRole::Intermediate,
+            access: AccessOrdinal::new(1),
             axis: Axis::new(1),
         })
         .unwrap_err();
     assert_eq!(error, KernelBuildError::InputExtentNotInput);
+}
+
+/// Live-extent operands use the complete access list without filtering inputs.
+#[test]
+fn an_extent_operand_names_one_exact_epilogue_access() {
+    let scheduled = mixed_epilogue_region(4);
+    let declare = |access, axis| {
+        KernelBuilder::new(&scheduled)
+            .unwrap()
+            .declare_input_extent(InputExtentParameter { access, axis })
+    };
+
+    assert_eq!(
+        declare(AccessOrdinal::FIRST, Axis::new(0)),
+        Err(KernelBuildError::InputExtentNotInput),
+        "the staged read at access 0 is not silently skipped",
+    );
+    assert!(
+        declare(AccessOrdinal::new(1), Axis::new(0)).is_ok(),
+        "access 1 is the exact declared-input read",
+    );
+    assert_eq!(
+        declare(AccessOrdinal::new(2), Axis::new(0)),
+        Err(KernelBuildError::InputExtentNotInput),
+        "the final owning write is nameable and refused as non-input",
+    );
+    assert_eq!(
+        declare(AccessOrdinal::new(3), Axis::new(0)),
+        Err(KernelBuildError::InputExtentAccessOutOfRange),
+    );
+    assert_eq!(
+        declare(AccessOrdinal::new(1), Axis::new(1)),
+        Err(KernelBuildError::InputExtentWrongAxis),
+    );
 }
 
 #[test]
@@ -5526,9 +5536,7 @@ fn declaring_the_same_input_extent_twice_is_refused() {
     let scheduled = live_row_major_region(2);
     let mut builder = KernelBuilder::new(&scheduled).unwrap();
     let parameter = InputExtentParameter {
-        tensor: TensorRole::Input {
-            ordinal: InputOrdinal::FIRST,
-        },
+        access: AccessOrdinal::FIRST,
         axis: Axis::new(1),
     };
     builder.declare_input_extent(parameter).unwrap();
@@ -5543,9 +5551,7 @@ fn an_unused_live_extent_is_refused_at_verification() {
     pointwise_signature(&mut builder, &scheduled, 0);
     builder
         .declare_input_extent(InputExtentParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            access: AccessOrdinal::FIRST,
             axis: Axis::new(1),
         })
         .unwrap();
@@ -5570,9 +5576,7 @@ fn live_contraction_region(id: RegionId) -> VerifiedScheduledRegion {
     builder.iteration_shape(output.clone()).unwrap();
     for (ordinal, (operand, free)) in [(&left, 0_u32), (&right, 1)].into_iter().enumerate() {
         let witness = u32::try_from(ordinal).unwrap();
-        let tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(witness),
-        };
+        let tensor = TensorRole::Input;
         builder
             .push_access(Access {
                 tensor,
@@ -5638,7 +5642,7 @@ fn live_contraction_region(id: RegionId) -> VerifiedScheduledRegion {
     builder
         .schedule(KernelSchedule {
             reduction: ReductionTopology::LiveContraction {
-                live_input: InputOrdinal::FIRST,
+                live_access: AccessOrdinal::FIRST,
                 live_axis: Axis::new(1),
                 order: ContributorOrder::OriginalAxisLexicographic,
                 permits_reassociation: false,
@@ -5698,13 +5702,7 @@ fn count_live_input_loads(
 fn live_input_load_sites(kernel: &VerifiedKernel) -> (u64, u64) {
     let live_buffer = kernel
         .declared_buffers()
-        .find_map(|(id, buffer)| {
-            (buffer.tensor
-                == TensorRole::Input {
-                    ordinal: InputOrdinal::FIRST,
-                })
-            .then_some(id)
-        })
+        .find_map(|(id, buffer)| (buffer.tensor == TensorRole::Input).then_some(id))
         .expect("the named live input is a buffer");
     let mut seed = 0;
     let mut body = 0;
@@ -5728,12 +5726,7 @@ fn a_live_contraction_consumes_s_as_the_contributor_bound_without_baking_it() {
     let kernel = lower_scheduled_region(&scheduled).expect("the live contraction lowers");
     let extents: Vec<_> = kernel.input_extents().collect();
     assert_eq!(extents.len(), 1);
-    assert_eq!(
-        extents[0].tensor,
-        TensorRole::Input {
-            ordinal: InputOrdinal::FIRST,
-        }
-    );
+    assert_eq!(extents[0].access, AccessOrdinal::FIRST);
     assert_eq!(extents[0].axis, Axis::new(1));
 
     let reduction = live_contraction_loop(&kernel);
@@ -5799,7 +5792,7 @@ fn a_live_contraction_consumes_s_as_the_contributor_bound_without_baking_it() {
         kernel
             .canonical_identity()
             .as_bytes()
-            .starts_with(b"tiler.kernel.v7\0"),
+            .starts_with(b"tiler.kernel.v8\0"),
         "the live contraction stays on the current kernel domain"
     );
 }
@@ -5811,9 +5804,7 @@ fn an_omitted_live_contraction_extent_is_input_extent_contract() {
     let mut builder = KernelBuilder::new(&scheduled).unwrap();
     let left = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::new(0),
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -5823,9 +5814,7 @@ fn an_omitted_live_contraction_extent_is_input_extent_contract() {
         .unwrap();
     let right = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::new(1),
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -5882,9 +5871,7 @@ fn an_unused_live_contraction_extent_is_unused_input_extent() {
     let mut builder = KernelBuilder::new(&scheduled).unwrap();
     let _left = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::new(0),
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -5894,9 +5881,7 @@ fn an_unused_live_contraction_extent_is_unused_input_extent() {
         .unwrap();
     let _right = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::new(1),
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -5921,9 +5906,7 @@ fn an_unused_live_contraction_extent_is_unused_input_extent() {
     builder.requirements(scheduled.requirements()).unwrap();
     builder
         .declare_input_extent(InputExtentParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            access: AccessOrdinal::FIRST,
             axis: Axis::new(1),
         })
         .unwrap();
@@ -5947,9 +5930,7 @@ fn a_wrong_axis_live_contraction_extent_is_refused_at_declaration() {
     let mut builder = KernelBuilder::new(&scheduled).unwrap();
     let error = builder
         .declare_input_extent(InputExtentParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            access: AccessOrdinal::FIRST,
             axis: Axis::new(5),
         })
         .expect_err("axis 5 is outside the live input's rank");
@@ -5965,9 +5946,7 @@ fn a_late_phase_live_contraction_extent_is_input_extent_contract() {
     let mut builder = KernelBuilder::new(&scheduled).unwrap();
     let left = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::new(0),
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -5977,9 +5956,7 @@ fn a_late_phase_live_contraction_extent_is_input_extent_contract() {
         .unwrap();
     let right = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::new(1),
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -6004,9 +5981,7 @@ fn a_late_phase_live_contraction_extent_is_input_extent_contract() {
     builder.requirements(scheduled.requirements()).unwrap();
     let extent = builder
         .declare_input_extent(InputExtentParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            access: AccessOrdinal::FIRST,
             axis: Axis::new(1),
         })
         .unwrap();
@@ -6192,15 +6167,13 @@ fn cooperative_contraction_region(
     };
     let mut builder = ScheduledRegionBuilder::new(RegionId::new(21));
     builder.iteration_shape(output.clone()).unwrap();
-    for (witness, ordinal, extent, map) in [
+    for (witness, extent, map) in [
         (
-            0,
             0,
             output_m * contracted,
             operand_map(0, Shape::from_dims([output_m, contracted])),
         ),
         (
-            1,
             1,
             output_n * contracted,
             operand_map(1, Shape::from_dims([output_n, contracted])),
@@ -6208,9 +6181,7 @@ fn cooperative_contraction_region(
     ] {
         builder
             .push_access(Access {
-                tensor: TensorRole::Input {
-                    ordinal: InputOrdinal::new(ordinal),
-                },
+                tensor: TensorRole::Input,
                 component_role: None,
                 mode: AccessMode::Read,
                 map,
@@ -6221,9 +6192,7 @@ fn cooperative_contraction_region(
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
-                tensor: TensorRole::Input {
-                    ordinal: InputOrdinal::new(ordinal),
-                },
+                tensor: TensorRole::Input,
                 component_role: None,
                 kind: BoundsProofKind::LinearRange {
                     element_count: extent,

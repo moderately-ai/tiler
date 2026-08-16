@@ -29,7 +29,7 @@
 //! different ways: named `&[u8]` constants (`INDEX_REGION_DOMAIN`), named
 //! constants that are not called `_DOMAIN` at all (`RECEIPT_IDENTITY_TAG`,
 //! `EXHAUSTIVE_DERIVATION`), and **inline literals with no constant behind
-//! them** — `tiler.schedule.v5` is written directly into
+//! them** — `tiler.schedule.v6` is written directly into
 //! `schedule::model::encode_identity`, and `tiler.resolved-value-type.v3`
 //! appears at three separate sites. Fifteen of the sixty spellings pinned below
 //! are of that third kind, so an enum could name at most forty-five of them
@@ -157,7 +157,7 @@ const PINNED_IDENTITY_DOMAINS: &[&[u8]] = &[
     b"tiler.kernel-program.v9\0",
     b"tiler.kernel-program.value.v1\0",
     b"tiler.kernel-program.view.v1\0",
-    b"tiler.kernel.v7\0",
+    b"tiler.kernel.v8\0",
     b"tiler.prepared-entry-target-requirement.v1\0",
     b"tiler.reindex-form.v1\0",
     b"tiler.resolved-value-type.v3\0",
@@ -165,7 +165,7 @@ const PINNED_IDENTITY_DOMAINS: &[&[u8]] = &[
     b"tiler.scalar-admission-provenance.v1\0",
     b"tiler.scalar-definition-projection.v2\0",
     b"tiler.scalar-registry-snapshot.v1\0",
-    b"tiler.schedule.v5\0",
+    b"tiler.schedule.v6\0",
     b"tiler.semantic-admission-provenance.v1\0",
     b"tiler.semantic-definition-projection.v6\0",
     b"tiler.semantic-graph.v3\0",

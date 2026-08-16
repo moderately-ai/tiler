@@ -58,8 +58,8 @@ use tiler_compiler::target::{
 };
 use tiler_ir::kernel::{KernelType, lower_scheduled_region};
 use tiler_ir::schedule::{
-    Access, AccessMode, ArithmeticType, BoundsProof, BoundsProofKind, BoundsWitnessId,
-    ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign, InputOrdinal, KernelSchedule,
+    Access, AccessMode, AccessOrdinal, ArithmeticType, BoundsProof, BoundsProofKind,
+    BoundsWitnessId, ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign, KernelSchedule,
     LaunchPlan, LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
     OwnershipProofKind, OwnershipWitnessId, PointwiseBf16ExpressionBuilder, ReductionTopology,
     RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode, TailPolicy,
@@ -807,7 +807,7 @@ fn the_accepted_bf16_contract_schedules_and_lowers_a_region_the_request_now_reac
 fn bf16_region_under(contract: NumericalContract) -> VerifiedScheduledRegion {
     const ELEMENTS: u64 = 4;
     let mut expression = PointwiseBf16ExpressionBuilder::new();
-    let input = expression.input(InputOrdinal::FIRST).unwrap();
+    let input = expression.input(AccessOrdinal::FIRST).unwrap();
     let scale = expression.constant(0x4040).unwrap();
     let product = expression.multiply(input, scale).unwrap();
     let bias = expression.constant(0x8000).unwrap();
@@ -820,9 +820,7 @@ fn bf16_region_under(contract: NumericalContract) -> VerifiedScheduledRegion {
         .unwrap();
     builder
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
@@ -840,15 +838,7 @@ fn bf16_region_under(contract: NumericalContract) -> VerifiedScheduledRegion {
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .unwrap();
-    for (witness, tensor) in [
-        (
-            0,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-        ),
-        (1, TensorRole::Output),
-    ] {
+    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Output)] {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),

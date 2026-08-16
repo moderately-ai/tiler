@@ -74,7 +74,8 @@ use std::fmt;
 
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::schedule::{
-    AccessMode, ResourceRequirements, ScalarProgram, ScheduledRegion, TensorRole,
+    Access, AccessMode, AccessOrdinal, ResourceRequirements, ScalarProgram, ScheduledRegion,
+    TensorRole,
 };
 use tiler_ir::semantic::ProviderIdentity;
 
@@ -107,7 +108,7 @@ use crate::target::honourability::UnhonouredDimension;
 /// a spelling a provider can read.
 pub(crate) const COST_MODEL_KEY: &str = "tiler.cost.structural.v1";
 /// Canonical domain-separation tag for a physical implementation proposal.
-const PROPOSAL_IDENTITY_TAG: &[u8] = b"tiler.compiler.physical-implementation-proposal.v2\0";
+const PROPOSAL_IDENTITY_TAG: &[u8] = b"tiler.compiler.physical-implementation-proposal.v3\0";
 
 /// Which additive proposal-body variant a physical provider offered.
 ///
@@ -2433,9 +2434,32 @@ pub(crate) fn enumerate_frontier(
                         });
                         continue;
                     }
+                    let Some(baseline) = context.baseline() else {
+                        rejections.push(FrontierRejection::OpaqueCall {
+                            provider: provenance.clone(),
+                            proposal: (**proposed).clone(),
+                            cause: OpaqueCallRejectionCause::MalformedBinding(
+                                crate::call_abi::BindingError::UnboundAccess(AccessOrdinal::FIRST),
+                            ),
+                        });
+                        continue;
+                    };
+                    if let Err(fault) = validate_opaque_access_bindings(
+                        registered.declaration().abi(),
+                        proposed.bindings(),
+                        &baseline.region().index.accesses,
+                    ) {
+                        rejections.push(FrontierRejection::OpaqueCall {
+                            provider: provenance.clone(),
+                            proposal: (**proposed).clone(),
+                            cause: OpaqueCallRejectionCause::MalformedBinding(fault),
+                        });
+                        continue;
+                    }
                     let boundary = match derive_call_boundary_contract(
                         registered.declaration(),
                         proposed.bindings(),
+                        &baseline.region().index.accesses,
                     ) {
                         Ok(boundary) => boundary,
                         Err(fault) => {
@@ -2477,6 +2501,7 @@ pub(crate) fn enumerate_frontier(
                     let work_items = match resolve_work_items(
                         registered.declaration().work(),
                         proposed.bindings(),
+                        baseline.region(),
                         subject,
                         request,
                     ) {
@@ -2698,13 +2723,10 @@ fn classify_opaque_resource_verdict(
 /// struct literals private to this module, and giving them constructors to move
 /// this out would widen a type's surface to serve one caller.
 ///
-/// # Why picking "any" bound parameter per role is well defined
-///
-/// A contract states one answer per tensor role, and several parameters may bind
-/// one role. `call_abi::check_bindings` already refuses a binding whose
-/// same-role parameters disagree about layout, encoding, or alignment, so by the
-/// time this runs they provably agree and the first is as good as any. Without
-/// that rule this would be picking arbitrarily and calling it a derivation.
+/// Admission has already proved complete access coverage, direction
+/// compatibility, and storage agreement for parameters sharing one access.
+/// Walking the verified access list therefore produces one deterministic
+/// requirement or guarantee per position without searching by fieldless role.
 ///
 /// # Errors
 ///
@@ -2712,59 +2734,46 @@ fn classify_opaque_resource_verdict(
 /// guarantee — an ambiguous write domain, in practice.
 fn derive_call_boundary_contract(
     declaration: &OpaqueCallDeclaration,
-    bindings: &[(&'static str, TensorRole)],
+    bindings: &[(&'static str, AccessOrdinal)],
+    accesses: &[Access],
 ) -> Result<BoundaryContract, GuaranteeError> {
     let mut requirements = Vec::new();
     let mut guarantees = Vec::new();
-    let mut seen: Vec<TensorRole> = Vec::new();
 
-    for (_, role) in bindings {
-        if seen.contains(role) {
-            continue;
-        }
-        seen.push(*role);
-
-        // Selected by what the parameter *does*, not by the negation of the
-        // other direction. An `InOut` both reads and writes, so selecting the
-        // read side with `!writes()` silently dropped its read requirement —
-        // the contract then guaranteed a role the call also reads, with no
-        // requirement at all, and a producer of that tensor was never asked to
-        // satisfy anything.
-        let bound = |selects: fn(crate::call_abi::ParameterRole) -> bool| {
-            bindings
-                .iter()
-                .filter(|(_, bound_role)| bound_role == role)
-                .find_map(|(name, _)| {
-                    let parameter = declaration.abi().parameter(name)?;
-                    selects(parameter.role()).then_some(parameter)
-                })
-        };
-
-        if let Some(parameter) = bound(crate::call_abi::ParameterRole::reads)
-            && let Some(properties) =
-                crate::call_declaration::required_properties_for(parameter, declaration.placement())
-        {
-            requirements.push(BoundaryRequirement {
-                tensor: *role,
-                access: AccessMode::Read,
-                properties,
-            });
-        }
-        if let Some(parameter) = bound(crate::call_abi::ParameterRole::writes) {
-            let properties = crate::call_declaration::guaranteed_properties_for(
-                parameter,
-                declaration.effects(),
-                declaration.placement(),
-            )?;
-            guarantees.push(BoundaryGuarantee {
-                tensor: *role,
-                // A call that writes a tensor owns that write completely; a
-                // partial or racing write is not something this vocabulary can
-                // express, so admitting one would be claiming more than the
-                // declaration says.
-                ownership: BoundaryOwnership::TotalRaceFreeWrite,
-                properties,
-            });
+    for (position, access) in accesses.iter().enumerate() {
+        let access_ordinal = AccessOrdinal::new(
+            u32::try_from(position).expect("verified regional access population fits u32"),
+        );
+        let parameter = bindings
+            .iter()
+            .find(|(_, bound)| *bound == access_ordinal)
+            .and_then(|(name, _)| declaration.abi().parameter(name))
+            .expect("validated complete access coverage");
+        match access.mode {
+            AccessMode::Read => {
+                if let Some(properties) = crate::call_declaration::required_properties_for(
+                    parameter,
+                    declaration.placement(),
+                ) {
+                    requirements.push(BoundaryRequirement {
+                        tensor: access.tensor,
+                        access: AccessMode::Read,
+                        properties,
+                    });
+                }
+            }
+            AccessMode::Write => {
+                let properties = crate::call_declaration::guaranteed_properties_for(
+                    parameter,
+                    declaration.effects(),
+                    declaration.placement(),
+                )?;
+                guarantees.push(BoundaryGuarantee {
+                    tensor: access.tensor,
+                    ownership: BoundaryOwnership::TotalRaceFreeWrite,
+                    properties,
+                });
+            }
         }
     }
 
@@ -2774,12 +2783,90 @@ fn derive_call_boundary_contract(
     })
 }
 
+fn validate_opaque_access_bindings(
+    abi: &crate::call_abi::CallAbi,
+    bindings: &[(&'static str, AccessOrdinal)],
+    accesses: &[Access],
+) -> Result<(), crate::call_abi::BindingError> {
+    use crate::call_abi::{BindingError, ParameterRole};
+
+    for (parameter, access) in bindings {
+        let Some(regional) = usize::try_from(access.get())
+            .ok()
+            .and_then(|position| accesses.get(position))
+        else {
+            return Err(BindingError::AccessOutOfRange {
+                parameter,
+                access: *access,
+            });
+        };
+        let role = abi
+            .parameter(parameter)
+            .expect("parameter names were validated first")
+            .role();
+        if role == ParameterRole::InOut {
+            return Err(BindingError::InOutRegionUnsupported {
+                parameter,
+                access: *access,
+            });
+        }
+        let compatible = match regional.mode {
+            AccessMode::Read => role.reads() && !role.writes(),
+            AccessMode::Write => role.writes() && !role.reads(),
+        };
+        if !compatible {
+            return Err(BindingError::AccessModeMismatch {
+                parameter,
+                access: *access,
+                parameter_role: role,
+                access_mode: regional.mode,
+            });
+        }
+    }
+
+    for position in 0..accesses.len() {
+        let access = AccessOrdinal::new(
+            u32::try_from(position).expect("verified regional access population fits u32"),
+        );
+        if !bindings.iter().any(|(_, bound)| *bound == access) {
+            return Err(BindingError::UnboundAccess(access));
+        }
+    }
+
+    for (position, (name, access)) in bindings.iter().enumerate() {
+        let first = abi
+            .parameter(name)
+            .expect("parameter names were validated first")
+            .spec();
+        for (other_name, other_access) in &bindings[(position + 1)..] {
+            if other_access != access {
+                continue;
+            }
+            let other = abi
+                .parameter(other_name)
+                .expect("parameter names were validated first")
+                .spec();
+            if first.layout != other.layout
+                || first.encoding != other.encoding
+                || first.alignment != other.alignment
+            {
+                return Err(BindingError::AccessStorageDisagreement {
+                    access: *access,
+                    first: name,
+                    second: other_name,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The canonical bytes an opaque call proposal is identified over.
 ///
 /// The analogue of a scheduled region's `CanonicalScheduledRegionIdentity`, and
 /// it must include the **bindings**, not only the call. The same registered call
-/// bound to different tensor roles is a different implementation — it computes a
-/// different thing — so two such proposals must not share an identity. Omitting
+/// bound to different regional accesses is a different implementation — it
+/// computes a different thing — so two such proposals must not share an identity. Omitting
 /// the bindings would make them collide, and the collision would surface as one
 /// silently shadowing the other in the admitted set.
 ///
@@ -2793,9 +2880,9 @@ fn encode_call_subject(proposed: &OpaqueCallProposal) -> Vec<u8> {
     push_slice(&mut bytes, call.provider().as_bytes());
     push_slice(&mut bytes, call.call().as_bytes());
     bytes.extend_from_slice(&call.revision().to_be_bytes());
-    for (name, role) in proposed.bindings() {
+    for (name, access) in proposed.bindings() {
         push_slice(&mut bytes, name.as_bytes());
-        push_tensor_role(&mut bytes, *role);
+        bytes.extend_from_slice(&access.get().to_be_bytes());
     }
     bytes
 }
@@ -2806,9 +2893,9 @@ fn encode_opaque_call_proposal(output: &mut Vec<u8>, proposal: &OpaqueCallPropos
     push_slice(output, call.call().as_bytes());
     output.extend_from_slice(&call.revision().to_be_bytes());
     push_len(output, proposal.bindings().len());
-    for (name, role) in proposal.bindings() {
+    for (name, access) in proposal.bindings() {
         push_slice(output, name.as_bytes());
-        push_tensor_role(output, *role);
+        output.extend_from_slice(&access.get().to_be_bytes());
     }
 }
 
@@ -2871,8 +2958,39 @@ fn encode_binding_error(output: &mut Vec<u8>, fault: crate::call_abi::BindingErr
             output.push(0x03);
             push_slice(output, parameter.as_bytes());
         }
-        crate::call_abi::BindingError::RoleStorageDisagreement { first, second } => {
+        crate::call_abi::BindingError::AccessOutOfRange { parameter, access } => {
             output.push(0x04);
+            push_slice(output, parameter.as_bytes());
+            output.extend_from_slice(&access.get().to_be_bytes());
+        }
+        crate::call_abi::BindingError::InOutRegionUnsupported { parameter, access } => {
+            output.push(0x05);
+            push_slice(output, parameter.as_bytes());
+            output.extend_from_slice(&access.get().to_be_bytes());
+        }
+        crate::call_abi::BindingError::AccessModeMismatch {
+            parameter,
+            access,
+            parameter_role,
+            access_mode,
+        } => {
+            output.push(0x06);
+            push_slice(output, parameter.as_bytes());
+            output.extend_from_slice(&access.get().to_be_bytes());
+            output.push(parameter_role_tag(parameter_role));
+            output.push(access_mode_tag(access_mode));
+        }
+        crate::call_abi::BindingError::UnboundAccess(access) => {
+            output.push(0x07);
+            output.extend_from_slice(&access.get().to_be_bytes());
+        }
+        crate::call_abi::BindingError::AccessStorageDisagreement {
+            access,
+            first,
+            second,
+        } => {
+            output.push(0x08);
+            output.extend_from_slice(&access.get().to_be_bytes());
             push_slice(output, first.as_bytes());
             push_slice(output, second.as_bytes());
         }
@@ -2899,10 +3017,11 @@ pub(crate) enum WorkResolutionError {
 /// from its schedule. An opaque call declares how its work scales
 /// ([`WorkScaling`]) and this resolves that against the bound tensors.
 ///
-/// `Fixed` resolves directly. `PerElementOf` resolves through the tensor role
-/// the parameter is bound to: the bounded profile's normalized request states
-/// `input_elements` and `output_elements`, which is exactly the count a call
-/// over that tensor performs work proportional to.
+/// `Fixed` resolves directly. `PerElementOf` resolves through the exact regional
+/// access the parameter is bound to. For a declared input, the checked request
+/// subject projects that position to the declared tensor whose element count is
+/// authoritative; output and intermediate positions use their own retained
+/// authorities.
 ///
 /// # How `Intermediate` resolves, and when it still declines
 ///
@@ -2929,35 +3048,36 @@ pub(crate) enum WorkResolutionError {
 /// tensor that happens to be in scope.
 fn resolve_work_items(
     work: WorkScaling,
-    bindings: &[(&'static str, TensorRole)],
+    bindings: &[(&'static str, AccessOrdinal)],
+    region: &ScheduledRegion,
     subject: &FrontierRegionSubject,
     request: &VerifiedTargetRequest,
 ) -> Result<u64, WorkResolutionError> {
     match work {
         WorkScaling::Fixed(count) => Ok(count),
         WorkScaling::PerElementOf(name) => {
-            let (_, role) = bindings
+            let (_, access) = bindings
                 .iter()
                 .find(|(bound, _)| *bound == name)
                 .ok_or(WorkResolutionError::UnknownParameter(name))?;
-            match role {
-                // Resolved per ordinal, because the contraction strategy admits
-                // two inputs of different extents: `td,od->to` binds `[M, K]` to
-                // ordinal 0 and `[N, K]` to ordinal 1, and answering with either
-                // one for both would size a call against the wrong tensor. An
-                // ordinal no declared input occupies is a refusal rather than
-                // another tensor's size.
+            let regional = usize::try_from(access.get())
+                .ok()
+                .and_then(|position| region.index.accesses.get(position))
+                .ok_or(WorkResolutionError::UnknownParameter(name))?;
+            match regional.tensor {
+                // Resolved per exact access, because the contraction strategy
+                // admits two inputs of different extents: `td,od->to` binds
+                // `[M, K]` and `[N, K]` at distinct local positions, and
+                // answering with either one for both would size a call against
+                // the wrong tensor. The checked request subject projects that
+                // position to its private declared-input association.
                 //
-                // Both roles are additionally resolved only when every recognized
-                // output *agrees* on the count, and the reason is that an opaque
-                // call's binding names the tensor role rather than a particular
-                // tensor. `TensorRole::Output` carries no ordinal at all, so with
-                // several declared outputs nothing on the binding says which
-                // published tensor it means. Answering from one claimant would
-                // size a call against a tensor the caller did not name, which is
-                // the confidently-wrong verdict `WorkScaling` exists to prevent,
-                // so a disagreement refuses by the same route an unoccupied
-                // ordinal does.
+                // Both roles are additionally resolved only when the checked
+                // subject can attribute the exact access. For an output, that
+                // means the region's own publishing occurrence; for an input,
+                // it means the declared operand's own shape. Answering from a
+                // different claimant would be the confidently-wrong verdict
+                // `WorkScaling` exists to prevent.
                 //
                 // The two agreements are not in the same state. Several declared
                 // outputs of different extents are ordinary, so the output fold
@@ -2965,14 +3085,20 @@ fn resolve_work_items(
                 // `NormalizedOutput::input_elements_at` began answering the
                 // declared tensor's own count on every arm, which
                 // `NormalizedProgram::agreed_input_elements_at` states in full.
-                TensorRole::Input { ordinal } => request
-                    .normalized()
-                    .agreed_input_elements_at(*ordinal)
-                    .ok_or(WorkResolutionError::UnknownParameter(name)),
-                TensorRole::Output => request
-                    .normalized()
-                    .agreed_output_elements()
-                    .ok_or(WorkResolutionError::UnknownParameter(name)),
+                TensorRole::Input => crate::physical::declared_input_for_region_access(
+                    region,
+                    subject.semantic_members(),
+                    request.subject(),
+                    *access,
+                )
+                .and_then(|ordinal| request.normalized().agreed_input_elements_at(ordinal))
+                .ok_or(WorkResolutionError::UnknownParameter(name)),
+                TensorRole::Output => crate::physical::output_elements_for_region(
+                    region,
+                    subject.semantic_members(),
+                    request.subject(),
+                )
+                .ok_or(WorkResolutionError::UnknownParameter(name)),
                 TensorRole::Intermediate => subject
                     .intermediate_elements()
                     .ok_or(WorkResolutionError::IntermediateShapeUnavailable { parameter: name }),
@@ -3879,22 +4005,18 @@ fn encode_rejection(rejection: &FrontierRejection) -> Vec<u8> {
     bytes
 }
 
-/// Appends one boundary tensor role to a canonical encoding.
+/// Appends one fieldless boundary tensor-role category to a canonical encoding.
 ///
-/// An input writes its ordinal after its tag. Two boundary facets over two
-/// different input tensors are different facets, and a one-byte role would give
-/// them one encoding — so a plan reading `a * b` and one reading `a * a` would
-/// share a receipt identity.
+/// Exact position is carried by the containing ordered sequence or an explicit
+/// access coordinate. This encoder must not recover or invent declared-interface
+/// authority from the role category.
 ///
 /// Written as an exhaustive match rather than read from the discriminant, so
 /// adding or reordering a role is a build error here instead of a silent change
 /// to every identity ever encoded (ADR 0074 convention 5b).
 fn push_tensor_role(output: &mut Vec<u8>, role: TensorRole) {
     match role {
-        TensorRole::Input { ordinal } => {
-            output.push(1);
-            output.extend_from_slice(&ordinal.get().to_be_bytes());
-        }
+        TensorRole::Input => output.push(1),
         TensorRole::Intermediate => output.push(2),
         TensorRole::Output => output.push(3),
     }
@@ -3913,6 +4035,14 @@ const fn access_mode_tag(mode: AccessMode) -> u8 {
     }
 }
 
+const fn parameter_role_tag(role: crate::call_abi::ParameterRole) -> u8 {
+    match role {
+        crate::call_abi::ParameterRole::In => 1,
+        crate::call_abi::ParameterRole::Out => 2,
+        crate::call_abi::ParameterRole::InOut => 3,
+    }
+}
+
 fn encode_provider(output: &mut Vec<u8>, provider: &ProviderIdentity) {
     push_slice(output, provider.namespace().as_bytes());
     push_slice(output, provider.name().as_bytes());
@@ -3928,20 +4058,23 @@ mod tests {
         PhysicalCostEstimate, PhysicalImplementationProvider, PhysicalProposalKind,
         PhysicalProviderProvenance, PhysicalProviderProvenanceError, ProposalBody, ProviderOffer,
         ReservedProposalSeam, SubprogramStage, TargetApplicability, boundary_carrier,
-        bounded_guarantees, bounded_requirements, enumerate_frontier,
+        bounded_guarantees, bounded_requirements, enumerate_frontier, resolve_work_items,
+        validate_opaque_access_bindings,
     };
     use crate::boundary::{
         AlignmentGuarantee, AlignmentRequirement, BoundaryProperty, GuaranteedProperty,
         LayoutRequirement, MaterializationForm, MemoryDomainClass, RequiredProperties,
         RequiredProperty, StorageScalar,
     };
+    use crate::call_abi::BindingError;
+    use crate::call_declaration::WorkScaling;
     use crate::call_registry::{OpaqueCallIdentity, OpaqueCallProposal, OpaqueCallRegistry};
     use crate::physical::{build_fused_scheduled_region, pointwise_region};
     use crate::request::{
         CompilationRequest, TargetProfileKey, VerifiedTargetRequest, verify_planned_request,
     };
     use tiler_ir::schedule::{
-        AccessMode, ContributorOrder, ExceptionalValueAssumption, InputOrdinal,
+        AccessMode, AccessOrdinal, ContributorOrder, ExceptionalValueAssumption,
         NumericalPermission, ScalarProgram, ScheduledRegion, SubnormalMode, TensorRole,
     };
     use tiler_ir::semantic::EncodedComponentRole;
@@ -4131,12 +4264,7 @@ mod tests {
         // The fused region reads an Input boundary and produces the Output boundary.
         let requirements = admitted.boundary().requirements();
         assert_eq!(requirements.len(), 1);
-        assert_eq!(
-            requirements[0].tensor(),
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST
-            }
-        );
+        assert_eq!(requirements[0].tensor(), TensorRole::Input);
         assert_eq!(requirements[0].access(), AccessMode::Read);
         let guarantees = admitted.boundary().guarantees();
         assert_eq!(guarantees.len(), 1);
@@ -4266,9 +4394,9 @@ mod tests {
 
     /// The `(x * 3.0) + (-0.0)` BF16 pointwise program.
     fn bf16_pointwise_program() -> ScalarProgram {
-        use tiler_ir::schedule::{InputOrdinal, PointwiseBf16ExpressionBuilder};
+        use tiler_ir::schedule::{AccessOrdinal, PointwiseBf16ExpressionBuilder};
         let mut expression = PointwiseBf16ExpressionBuilder::new();
-        let input = expression.input(InputOrdinal::FIRST).unwrap();
+        let input = expression.input(AccessOrdinal::FIRST).unwrap();
         let scale = expression.constant(0x4040).unwrap();
         let product = expression.multiply(input, scale).unwrap();
         let bias = expression.constant(0x8000).unwrap();
@@ -4925,52 +5053,170 @@ mod tests {
             WorkScaling::Fixed(1),
         )
         .expect("coherent");
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
+        let baseline = crate::physical::build_fused_scheduled_region(&request)
+            .expect("the fused region builds");
 
         let contract = derive_call_boundary_contract(
             &declaration,
-            &[
-                (
-                    "x",
-                    TensorRole::Input {
-                        ordinal: InputOrdinal::FIRST,
-                    },
-                ),
-                ("y", TensorRole::Output),
-            ],
+            &[("x", AccessOrdinal::FIRST), ("y", AccessOrdinal::new(1))],
+            &baseline.region().index.accesses,
         )
         .expect("a single admitted domain gives a guarantee");
 
         assert_eq!(contract.requirements.len(), 1);
-        assert_eq!(
-            contract.requirements[0].tensor(),
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST
-            }
-        );
+        assert_eq!(contract.requirements[0].tensor(), TensorRole::Input);
         assert_eq!(contract.guarantees.len(), 1);
         assert_eq!(contract.guarantees[0].tensor(), TensorRole::Output);
 
-        // Binding the *same* parameters to swapped roles moves the contract with
-        // them: the derivation reads the binding, not the parameter order.
-        let swapped = derive_call_boundary_contract(
-            &declaration,
-            &[
-                ("x", TensorRole::Output),
-                (
-                    "y",
-                    TensorRole::Input {
-                        ordinal: InputOrdinal::FIRST,
-                    },
-                ),
-            ],
-        )
-        .expect("still one domain");
-        assert_eq!(swapped.requirements[0].tensor(), TensorRole::Output);
         assert_eq!(
-            swapped.guarantees[0].tensor(),
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST
-            }
+            validate_opaque_access_bindings(
+                declaration.abi(),
+                &[("x", AccessOrdinal::new(1)), ("y", AccessOrdinal::FIRST),],
+                &baseline.region().index.accesses,
+            ),
+            Err(BindingError::AccessModeMismatch {
+                parameter: "x",
+                access: AccessOrdinal::new(1),
+                parameter_role: ParameterRole::In,
+                access_mode: AccessMode::Write,
+            }),
+        );
+        assert_eq!(
+            validate_opaque_access_bindings(
+                declaration.abi(),
+                &[("x", AccessOrdinal::FIRST), ("y", AccessOrdinal::FIRST),],
+                &baseline.region().index.accesses,
+            ),
+            Err(BindingError::AccessModeMismatch {
+                parameter: "y",
+                access: AccessOrdinal::FIRST,
+                parameter_role: ParameterRole::Out,
+                access_mode: AccessMode::Read,
+            }),
+        );
+        assert_eq!(
+            validate_opaque_access_bindings(
+                declaration.abi(),
+                &[("x", AccessOrdinal::new(2)), ("y", AccessOrdinal::new(1)),],
+                &baseline.region().index.accesses,
+            ),
+            Err(BindingError::AccessOutOfRange {
+                parameter: "x",
+                access: AccessOrdinal::new(2),
+            }),
+        );
+        assert_eq!(
+            validate_opaque_access_bindings(
+                declaration.abi(),
+                &[("x", AccessOrdinal::FIRST), ("y", AccessOrdinal::new(2))],
+                &[
+                    baseline.region().index.accesses[0].clone(),
+                    baseline.region().index.accesses[0].clone(),
+                    baseline.region().index.accesses[1].clone(),
+                ],
+            ),
+            Err(BindingError::UnboundAccess(AccessOrdinal::new(1))),
+        );
+    }
+
+    /// Compatible parameters may share one exact access, but storage may not
+    /// silently disagree and each access contributes at most one contract facet.
+    #[test]
+    fn shared_opaque_accesses_are_checked_and_folded_once() {
+        use super::{derive_call_boundary_contract, validate_opaque_access_bindings};
+        use crate::boundary::{
+            AdmittedMemoryDomains, ByteAlignment, ExecutionAffinity, LayoutGuarantee,
+            LayoutRequirement, MemoryDomainClass, StorageEncoding,
+        };
+        use crate::call_abi::{CallAbi, ParameterLayout, ParameterRole, ParameterSpec};
+        use crate::call_declaration::{OpaqueCallDeclaration, WorkScaling};
+        use crate::call_placement::CallPlacement;
+        use crate::effects::{Aliasing, CallEffects, Elimination, Motion};
+
+        let spec = |name, role, alignment| ParameterSpec {
+            name,
+            role,
+            layout: match role {
+                ParameterRole::In => ParameterLayout::Required(LayoutRequirement::DenseRowMajor),
+                ParameterRole::Out => ParameterLayout::Guaranteed(LayoutGuarantee::DenseRowMajor),
+                ParameterRole::InOut => unreachable!("regional InOut is tested separately"),
+            },
+            encoding: StorageEncoding::Unpacked,
+            alignment,
+        };
+        let f32 = ByteAlignment::natural_for(StorageScalar::F32);
+        let mut resources = strict_call_resources();
+        resources.buffer_bindings = 4;
+        let declaration = OpaqueCallDeclaration::check(
+            CallAbi::declare([
+                spec("x", ParameterRole::In, f32),
+                spec("x2", ParameterRole::In, f32),
+                spec("y", ParameterRole::Out, f32),
+                spec("y2", ParameterRole::Out, f32),
+            ])
+            .unwrap(),
+            CallEffects::declared(Elimination::Required, Motion::Ordered, Aliasing::Distinct),
+            CallPlacement::declare(
+                ExecutionAffinity::PRIMARY,
+                AdmittedMemoryDomains::new([MemoryDomainClass::Device]).unwrap(),
+                &[MemoryDomainClass::Device],
+            )
+            .unwrap(),
+            resources,
+            WorkScaling::Fixed(1),
+        )
+        .unwrap();
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
+        let baseline = crate::physical::build_fused_scheduled_region(&request).unwrap();
+        let bindings = [
+            ("x", AccessOrdinal::FIRST),
+            ("x2", AccessOrdinal::FIRST),
+            ("y", AccessOrdinal::new(1)),
+            ("y2", AccessOrdinal::new(1)),
+        ];
+        assert_eq!(
+            validate_opaque_access_bindings(
+                declaration.abi(),
+                &bindings,
+                &baseline.region().index.accesses,
+            ),
+            Ok(())
+        );
+        let contract = derive_call_boundary_contract(
+            &declaration,
+            &bindings,
+            &baseline.region().index.accesses,
+        )
+        .unwrap();
+        assert_eq!(contract.requirements().len(), 1);
+        assert_eq!(contract.guarantees().len(), 1);
+
+        let disagreeing = CallAbi::declare([
+            spec("x", ParameterRole::In, f32),
+            spec(
+                "x2",
+                ParameterRole::In,
+                ByteAlignment::natural_for(StorageScalar::U8),
+            ),
+            spec("y", ParameterRole::Out, f32),
+        ])
+        .unwrap();
+        assert_eq!(
+            validate_opaque_access_bindings(
+                &disagreeing,
+                &[
+                    ("x", AccessOrdinal::FIRST),
+                    ("x2", AccessOrdinal::FIRST),
+                    ("y", AccessOrdinal::new(1)),
+                ],
+                &baseline.region().index.accesses,
+            ),
+            Err(BindingError::AccessStorageDisagreement {
+                access: AccessOrdinal::FIRST,
+                first: "x",
+                second: "x2",
+            })
         );
     }
 
@@ -4985,25 +5231,21 @@ mod tests {
 
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let normalized = request.serial_sum();
+        let baseline = crate::physical::build_fused_scheduled_region(&request)
+            .expect("the fused region builds");
         assert_ne!(
             normalized.input_elements, normalized.output_elements,
             "the fixture cannot distinguish the two roles"
         );
 
-        let bindings = [
-            (
-                "x",
-                TensorRole::Input {
-                    ordinal: InputOrdinal::FIRST,
-                },
-            ),
-            ("y", TensorRole::Output),
-        ];
+        let bindings = [("x", AccessOrdinal::FIRST), ("y", AccessOrdinal::new(1))];
+        let subject = fused_subject(&request);
         assert_eq!(
             resolve_work_items(
                 WorkScaling::PerElementOf("x"),
                 &bindings,
-                &coverless_subject(),
+                baseline.region(),
+                &subject,
                 &request
             ),
             Ok(normalized.input_elements)
@@ -5012,7 +5254,8 @@ mod tests {
             resolve_work_items(
                 WorkScaling::PerElementOf("y"),
                 &bindings,
-                &coverless_subject(),
+                baseline.region(),
+                &subject,
                 &request
             ),
             Ok(normalized.output_elements)
@@ -5021,11 +5264,136 @@ mod tests {
             resolve_work_items(
                 WorkScaling::Fixed(7),
                 &bindings,
+                baseline.region(),
                 &coverless_subject(),
                 &request
             ),
             Ok(7),
             "a fixed scaling was not taken directly"
+        );
+    }
+
+    /// Rebinding two compatible reads is another valid proposal, and every
+    /// consumer follows the parameter's exact access rather than the first input.
+    #[test]
+    fn swapped_opaque_read_bindings_remain_distinct_and_resolve_exact_work() {
+        use super::encode_rejection;
+        use crate::boundary::{
+            AdmittedMemoryDomains, ByteAlignment, ExecutionAffinity, LayoutGuarantee,
+            LayoutRequirement, MemoryDomainClass, StorageEncoding,
+        };
+        use crate::call_abi::{CallAbi, ParameterLayout, ParameterRole, ParameterSpec};
+        use crate::call_declaration::{OpaqueCallDeclaration, WorkScaling};
+        use crate::call_placement::CallPlacement;
+        use crate::effects::{Aliasing, CallEffects, Elimination, Motion};
+        use crate::physical::{RegionWrite, contraction_region, verify_schedule};
+
+        let request = asymmetric_contraction_request();
+        let subject = FrontierRegionSubject::new(
+            "whole-program",
+            request.contraction().unwrap().members.clone(),
+            RegionWrite::ProgramOutput,
+        );
+        let (region, members) =
+            contraction_region(&request, request.sole_output(), RegionWrite::ProgramOutput);
+        let baseline = verify_schedule(region, members, &request).unwrap();
+        let parameter = |name, role| ParameterSpec {
+            name,
+            role,
+            layout: match role {
+                ParameterRole::In => ParameterLayout::Required(LayoutRequirement::DenseRowMajor),
+                ParameterRole::Out => ParameterLayout::Guaranteed(LayoutGuarantee::DenseRowMajor),
+                ParameterRole::InOut => unreachable!("regional InOut is tested separately"),
+            },
+            encoding: StorageEncoding::Unpacked,
+            alignment: ByteAlignment::natural_for(StorageScalar::F32),
+        };
+        let declaration = OpaqueCallDeclaration::check(
+            CallAbi::declare([
+                parameter("x", ParameterRole::In),
+                parameter("y", ParameterRole::In),
+                parameter("out", ParameterRole::Out),
+            ])
+            .unwrap(),
+            CallEffects::declared(Elimination::Required, Motion::Ordered, Aliasing::Distinct),
+            CallPlacement::declare(
+                ExecutionAffinity::PRIMARY,
+                AdmittedMemoryDomains::new([MemoryDomainClass::Device]).unwrap(),
+                &[MemoryDomainClass::Device],
+            )
+            .unwrap(),
+            baseline.requirements(),
+            WorkScaling::PerElementOf("x"),
+        )
+        .unwrap();
+        let identity = OpaqueCallIdentity::new("test", "swapped-reads", 1).unwrap();
+        let forward = vec![
+            ("x", AccessOrdinal::FIRST),
+            ("y", AccessOrdinal::new(1)),
+            ("out", AccessOrdinal::new(2)),
+        ];
+        let swapped = vec![
+            ("x", AccessOrdinal::new(1)),
+            ("y", AccessOrdinal::FIRST),
+            ("out", AccessOrdinal::new(2)),
+        ];
+        let mut registry = OpaqueCallRegistry::new();
+        registry.register(identity, declaration).unwrap();
+
+        let admitted = |bindings: Vec<(&'static str, AccessOrdinal)>| {
+            let provider = CallProvider(identity, bindings);
+            let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
+            let frontier = enumerate_frontier(&request, &subject, &providers, &registry).unwrap();
+            assert_eq!(frontier.rejections(), []);
+            assert_eq!(frontier.admitted().len(), 1);
+            frontier.admitted()[0].clone()
+        };
+        let forward_admitted = admitted(forward.clone());
+        let swapped_admitted = admitted(swapped.clone());
+        assert_ne!(forward_admitted.identity(), swapped_admitted.identity());
+
+        let forward_proposal = OpaqueCallProposal::new(identity, forward.clone()).unwrap();
+        let swapped_proposal = OpaqueCallProposal::new(identity, swapped.clone()).unwrap();
+        let provider = PhysicalProviderProvenance::new(provider_identity("opaque", 1)).unwrap();
+        assert_eq!(
+            forward_proposal.subject(),
+            "test/swapped-reads@1[x=access#0,y=access#1,out=access#2]"
+        );
+        assert_eq!(
+            swapped_proposal.subject(),
+            "test/swapped-reads@1[x=access#1,y=access#0,out=access#2]"
+        );
+        assert_ne!(
+            encode_rejection(&FrontierRejection::OpaqueCall {
+                provider: provider.clone(),
+                proposal: forward_proposal,
+                cause: OpaqueCallRejectionCause::Unregistered,
+            }),
+            encode_rejection(&FrontierRejection::OpaqueCall {
+                provider,
+                proposal: swapped_proposal,
+                cause: OpaqueCallRejectionCause::Unregistered,
+            }),
+        );
+        assert_eq!(
+            resolve_work_items(
+                WorkScaling::PerElementOf("x"),
+                &forward,
+                baseline.region(),
+                &subject,
+                &request,
+            ),
+            Ok(2)
+        );
+        assert_eq!(
+            resolve_work_items(
+                WorkScaling::PerElementOf("x"),
+                &swapped,
+                baseline.region(),
+                &subject,
+                &request,
+            ),
+            Ok(4)
         );
     }
 
@@ -5038,21 +5406,19 @@ mod tests {
         use super::{WorkResolutionError, WorkScaling, resolve_work_items};
 
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
-        let bindings = [
-            (
-                "x",
-                TensorRole::Input {
-                    ordinal: InputOrdinal::FIRST,
-                },
-            ),
-            ("z", TensorRole::Intermediate),
-        ];
+        let baseline = crate::physical::build_fused_scheduled_region(&request)
+            .expect("the fused region builds");
+        let subject = fused_subject(&request);
+        let mut intermediate_region = baseline.region().clone();
+        intermediate_region.index.accesses[0].tensor = TensorRole::Intermediate;
+        let bindings = [("x", AccessOrdinal::FIRST), ("z", AccessOrdinal::FIRST)];
 
         assert_eq!(
             resolve_work_items(
                 WorkScaling::PerElementOf("absent"),
                 &bindings,
-                &coverless_subject(),
+                baseline.region(),
+                &subject,
                 &request
             ),
             Err(WorkResolutionError::UnknownParameter("absent")),
@@ -5067,6 +5433,7 @@ mod tests {
             resolve_work_items(
                 WorkScaling::PerElementOf("z"),
                 &bindings,
+                &intermediate_region,
                 &coverless_subject(),
                 &request
             ),
@@ -5082,6 +5449,7 @@ mod tests {
             resolve_work_items(
                 WorkScaling::PerElementOf("z"),
                 &bindings,
+                &intermediate_region,
                 &FrontierRegionSubject::reading_intermediates(
                     "region",
                     Vec::new(),
@@ -5101,6 +5469,7 @@ mod tests {
             resolve_work_items(
                 WorkScaling::PerElementOf("z"),
                 &bindings,
+                &intermediate_region,
                 &FrontierRegionSubject::reading_intermediates(
                     "region",
                     Vec::new(),
@@ -5114,286 +5483,28 @@ mod tests {
         );
     }
 
-    /// Two ordered named outputs over disjoint declared inputs of different
-    /// extents.
+    /// A bound access resolves through the checked request subject.
     ///
-    /// `doubled = a + a` over `[2, 3]` and `halved = b + b` over `[4]`. Neither
-    /// walk reaches the other's declared input, and the two element counts
-    /// differ, so a resolution that answered from the wrong output — or from
-    /// either output indiscriminately — cannot pass here by coincidence.
-    fn disjoint_two_output_request() -> VerifiedTargetRequest {
-        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-        let first = builder
-            .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 3]))
-            .unwrap();
-        let second = builder
-            .input::<F32>(InputKey::new("b").unwrap(), Shape::from_dims([4]))
-            .unwrap();
-        let doubled = F32Add::apply(&mut builder, first, first).unwrap();
-        let halved = F32Add::apply(&mut builder, second, second).unwrap();
-        builder
-            .output(OutputKey::new("doubled").unwrap(), doubled)
-            .unwrap();
-        builder
-            .output(OutputKey::new("halved").unwrap(), halved)
-            .unwrap();
-        let program = builder.build().unwrap();
-        verify_planned_request(CompilationRequest::governed(&program))
-            .unwrap()
-            .for_target(0)
-            .unwrap()
-    }
-
-    /// One output whose epilogue reads a declared input its producer never
-    /// folds.
-    ///
-    /// `scaled = sum(a, axis 1) * b` over `a: [2, 3]` and `b: [2]`. The fold
-    /// iterates the contributor domain of six elements and reads only `a`; the
-    /// epilogue iterates the published domain of two and reads only `b` beside
-    /// the staged value. Ordinal `1` therefore has exactly one reading region,
-    /// and it is inside a single recognized output — so the disagreement a
-    /// volunteering producer half causes is not one the program-scoped fold
-    /// could filter out.
-    fn epilogue_reading_an_unfolded_input_request() -> VerifiedTargetRequest {
-        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-        let folded = builder
-            .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 3]))
-            .unwrap();
-        let scale = builder
-            .input::<F32>(InputKey::new("b").unwrap(), Shape::from_dims([2]))
-            .unwrap();
-        let reduced = StrictSerialF32Sum::apply(&mut builder, folded, [Axis::new(1)]).unwrap();
-        let scaled = F32Multiply::apply(&mut builder, reduced, scale).unwrap();
-        builder
-            .output(OutputKey::new("scaled").unwrap(), scaled)
-            .unwrap();
-        let program = builder.build().unwrap();
-        verify_planned_request(CompilationRequest::governed(&program))
-            .unwrap()
-            .for_target(0)
-            .unwrap()
-    }
-
-    /// Two ordered named outputs reading one declared input at two domains.
-    ///
-    /// `doubled = w + w` iterates `[2]` and `scaled = a * broadcast(w)`
-    /// iterates `[2, 2]`, so declared input `0` is read by two regions that
-    /// iterate different domains while declared input `1` is read only by the
-    /// widening one. A binding names the tensor *role*, so nothing on it says
-    /// which of the two regions a call over ordinal `0` means — and the two
-    /// must therefore answer one count for it without being told which region
-    /// the caller had in mind.
-    ///
-    /// The widening read is what makes the two domains differ at all: a dense
-    /// read binds its region's domain to the tensor's own shape, so two outputs
-    /// reading one input densely have nothing to differ about.
-    ///
-    /// This is the widest divergence the recognized program space presents, and
-    /// it is now an *admission* rather than a refusal: both regions size ordinal
-    /// `0` by the two elements `w` holds, which is what
-    /// `NormalizedOutput::input_elements_at` answers on every arm. The fixture
-    /// stays because it is the one program where an arm reading a domain would
-    /// still be caught — see
-    /// `a_bound_ordinal_resolves_from_the_output_that_reads_it`.
-    fn shared_input_two_domain_request() -> VerifiedTargetRequest {
-        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-        let weight = builder
-            .input::<F32>(InputKey::new("w").unwrap(), Shape::from_dims([2]))
-            .unwrap();
-        let activations = builder
-            .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 2]))
-            .unwrap();
-        let doubled = F32Add::apply(&mut builder, weight, weight).unwrap();
-        let mapping = tiler_ir::semantic::BroadcastAxisMapping::new(
-            [
-                tiler_ir::shape::Extent::new(2),
-                tiler_ir::shape::Extent::new(2),
-            ],
-            [
-                tiler_ir::semantic::BroadcastAxisSource::Replicate,
-                tiler_ir::semantic::BroadcastAxisSource::FromOperand(Axis::new(0)),
-            ],
-        )
-        .expect("one replicated axis over a rank-one operand is an admitted relation");
-        let widened = tiler_ir::semantic::F32Broadcast::apply(&mut builder, &mapping, weight)
-            .expect("the standard registry admits the broadcast family");
-        let scaled = F32Multiply::apply(&mut builder, activations, widened).unwrap();
-        builder
-            .output(OutputKey::new("doubled").unwrap(), doubled)
-            .unwrap();
-        builder
-            .output(OutputKey::new("scaled").unwrap(), scaled)
-            .unwrap();
-        let program = builder.build().unwrap();
-        verify_planned_request(CompilationRequest::governed(&program))
-            .unwrap()
-            .for_target(0)
-            .unwrap()
-    }
-
-    /// A bound ordinal resolves from the output that reads it, not from a
-    /// sibling that never loads it.
-    ///
-    /// **The false negative this closes.** `NormalizedOutput::input_elements_at`
-    /// answered for every ordinal below the *program's* declared arity in its
-    /// serial-sum and pointwise arms, because `input_keys` is the whole
-    /// program's declaration list. An output iterating one domain therefore
-    /// volunteered its own count for an ordinal only its sibling loads, the
-    /// agreement fold saw two unequal counts, and a scaling the reading output
-    /// sizes exactly was refused as `UnknownParameter`.
-    ///
-    /// **Three perturbations: two authorities carry the admission and one
-    /// carries the refusal.** Watched failing once each before the restoration,
-    /// and re-watched on the current subject:
-    ///
-    /// - Dropping the chain arm's `chain.producer.reads_declared_input(ordinal)`
-    ///   gate from `NormalizedOutput::input_elements_at`, so the producer is
-    ///   asked about an ordinal it never folds, made the epilogue fixture's
-    ///   ordinal `1` report `Err(UnknownParameter("y"))` instead of `Ok(2)`: the
-    ///   fold half's `None` is a value the arm's agreement compares rather than
-    ///   an abstention. The disjoint fixture is deliberately *not* what observes
-    ///   this, and that is the point of having both — the program-scoped filter
-    ///   below already excludes a non-reading output there, so nothing asks the
-    ///   arm. The same gate lives on each half of each arm, which is why the
-    ///   perturbation names one rather than the shape they share.
-    /// - Dropping the `reads_declared_input` filter from
-    ///   `NormalizedProgram::agreed_input_elements_at` made the disjoint
-    ///   fixture's first assertion report `Err(UnknownParameter("x"))` instead
-    ///   of `Ok(6)`: the same conflation of silence with disagreement, one level
-    ///   up.
-    /// - Restoring the pointwise arm of `NormalizedOutput::input_elements_at`
-    ///   to `normalized.elements` — the reading region's domain — made the
-    ///   shared fixture's widening output answer `Some(4)` for ordinal `0`
-    ///   instead of `Some(2)`, which the per-output assertion below reports.
-    ///   Suppressing that assertion and rerunning showed the consequence it
-    ///   guards: `resolve("x", &shared)` reported `Err(UnknownParameter("x"))`
-    ///   instead of `Ok(2)`, because the program-scoped fold read the
-    ///   volunteered domain against its sibling's `2` as a disagreement. That
-    ///   second run is the live evidence that the agreement fold still
-    ///   discriminates.
-    ///
-    /// **The last fixture used to refuse and now admits, and the change is the
-    /// finding rather than a relaxation.** Ordinal `0` is read by two regions
-    /// at two domains, `2` and `4`, and `w` holds two elements in both;
-    /// answering `4` scaled an opaque call by an iteration space instead of by
-    /// the buffer `TensorRole::Input { ordinal: 0 }` binds. Every arm now
-    /// derives from a declared operand's own shape, so the count is a function
-    /// of the ordinal alone and no recognizable program makes the reading
-    /// outputs disagree — the last perturbation above is what still observes
-    /// the fold refusing, and `NormalizedProgram::agreed_input_elements_at`
-    /// records why it stays. The refusal a *live* program still reaches is the
-    /// unoccupied ordinal asserted on the disjoint fixture.
-    ///
-    /// The per-output counts are asserted beside the resolution because the
-    /// program-scoped fold would report one number for two arms that agreed on
-    /// the wrong one, and the two domains are asserted beside them so the row
-    /// cannot pass by the widening having quietly disappeared.
+    /// The schedule carries only the access-local coordinate. The verified
+    /// request subject supplies the declared-input association and its exact
+    /// element count; treating access zero as declared input zero by coincidence
+    /// would make the later-input and swapped-binding controls fail.
     #[test]
-    fn a_bound_ordinal_resolves_from_the_output_that_reads_it() {
-        use super::{WorkResolutionError, WorkScaling, resolve_work_items};
-
-        let bindings = [
-            (
-                "x",
-                TensorRole::Input {
-                    ordinal: InputOrdinal::FIRST,
-                },
-            ),
-            (
-                "y",
-                TensorRole::Input {
-                    ordinal: InputOrdinal::new(1),
-                },
-            ),
-            (
-                "z",
-                TensorRole::Input {
-                    ordinal: InputOrdinal::new(2),
-                },
-            ),
-        ];
-        let resolve = |name, request: &VerifiedTargetRequest| {
+    fn a_bound_access_resolves_through_the_checked_request_subject() {
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
+        let subject = fused_subject(&request);
+        let baseline = crate::physical::build_fused_scheduled_region(&request)
+            .expect("the fused region builds");
+        let bindings = [("x", AccessOrdinal::FIRST), ("y", AccessOrdinal::new(1))];
+        assert_eq!(
             resolve_work_items(
-                WorkScaling::PerElementOf(name),
+                WorkScaling::PerElementOf("x"),
                 &bindings,
-                &coverless_subject(),
-                request,
-            )
-        };
-
-        let disjoint = disjoint_two_output_request();
-        assert_eq!(
-            disjoint.normalized().outputs().len(),
-            2,
-            "the disjoint fixture must present two recognized outputs to disagree",
-        );
-        assert_eq!(
-            resolve("x", &disjoint),
-            Ok(6),
-            "the only output reading ordinal 0 sizes it",
-        );
-        assert_eq!(
-            resolve("y", &disjoint),
-            Ok(4),
-            "the only output reading ordinal 1 sizes it",
-        );
-        // An ordinal no declared input occupies still refuses, so the widening
-        // is to *read* ordinals rather than to every ordinal.
-        assert_eq!(
-            resolve("z", &disjoint),
-            Err(WorkResolutionError::UnknownParameter("z")),
-            "an ordinal no declared input occupies produced a count",
-        );
-
-        // One recognized output, two regions, and one ordinal each reads. The
-        // producer's own contributor domain is six and the epilogue's published
-        // domain is two, so a producer half answering for an ordinal it never
-        // folds contradicts the half that does read it.
-        let chained = epilogue_reading_an_unfolded_input_request();
-        assert_eq!(
-            chained.normalized().outputs().len(),
-            1,
-            "the epilogue fixture must present one recognized output, so nothing is filtered",
-        );
-        assert_eq!(
-            resolve("x", &chained),
-            Ok(6),
-            "the fold reads ordinal 0, which holds six elements",
-        );
-        assert_eq!(
-            resolve("y", &chained),
-            Ok(2),
-            "the epilogue reads ordinal 1, which holds two elements",
-        );
-
-        let shared = shared_input_two_domain_request();
-        let [dense, widening] = shared.normalized().outputs() else {
-            panic!("the shared fixture must present two recognized outputs to differ")
-        };
-        // The two domains, so the widening is asserted to still be present: the
-        // dense reader iterates the two elements `w` holds and the widening one
-        // iterates four points over the same tensor.
-        assert_eq!(
-            (dense.output_elements(), widening.output_elements()),
-            (2, 4),
-            "the fixture's two regions no longer iterate different domains",
-        );
-        for output in [dense, widening] {
-            assert_eq!(
-                output.input_elements_at(InputOrdinal::FIRST),
-                Some(2),
-                "both regions size ordinal 0 by the two elements `w` holds",
-            );
-        }
-        assert_eq!(
-            resolve("x", &shared),
-            Ok(2),
-            "one declared input read at two domains resolves to its own count",
-        );
-        assert_eq!(
-            resolve("y", &shared),
-            Ok(4),
-            "the input only the widening output reads still resolves",
+                baseline.region(),
+                &subject,
+                &request,
+            ),
+            Ok(request.serial_sum().input_elements),
         );
     }
 
@@ -5467,7 +5578,7 @@ mod tests {
 
     struct CallProvider(
         crate::call_registry::OpaqueCallIdentity,
-        Vec<(&'static str, TensorRole)>,
+        Vec<(&'static str, AccessOrdinal)>,
     );
 
     impl PhysicalImplementationProvider for CallProvider {
@@ -5502,15 +5613,7 @@ mod tests {
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let identity = OpaqueCallIdentity::new("test", "both", 1).expect("named");
-        let bindings = vec![
-            (
-                "x",
-                TensorRole::Input {
-                    ordinal: InputOrdinal::FIRST,
-                },
-            ),
-            ("y", TensorRole::Output),
-        ];
+        let bindings = vec![("x", AccessOrdinal::FIRST), ("y", AccessOrdinal::new(1))];
 
         let mut registry = OpaqueCallRegistry::new();
         registry
@@ -5559,7 +5662,7 @@ mod tests {
     /// `MayAliasInputs` because an in-place parameter beside `Distinct` is
     /// refused by the coherence check.
     #[test]
-    fn an_in_out_binding_yields_both_a_requirement_and_a_guarantee() {
+    fn an_in_out_binding_is_refused_before_regional_coverage() {
         use crate::boundary::{
             AdmittedMemoryDomains, ByteAlignment, ExecutionAffinity, LayoutGuarantee,
             LayoutRequirement, MemoryDomainClass, StorageEncoding,
@@ -5614,38 +5717,20 @@ mod tests {
         )
         .expect("coherent");
 
-        let contract = super::derive_call_boundary_contract(
-            &declaration,
-            &[(
-                "buffer",
-                TensorRole::Input {
-                    ordinal: InputOrdinal::FIRST,
-                },
-            )],
-        )
-        .expect("one admitted domain");
-
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
+        let baseline = crate::physical::build_fused_scheduled_region(&request)
+            .expect("the fused region builds");
         assert_eq!(
-            contract.requirements.len(),
-            1,
-            "the in-out parameter's read requirement was dropped"
-        );
-        assert_eq!(
-            contract.requirements[0].tensor(),
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST
-            }
-        );
-        assert_eq!(
-            contract.guarantees.len(),
-            1,
-            "the in-out parameter's write guarantee was dropped"
-        );
-        assert_eq!(
-            contract.guarantees[0].tensor(),
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST
-            }
+            super::validate_opaque_access_bindings(
+                declaration.abi(),
+                &[("buffer", AccessOrdinal::FIRST)],
+                &baseline.region().index.accesses,
+            ),
+            Err(BindingError::InOutRegionUnsupported {
+                parameter: "buffer",
+                access: AccessOrdinal::FIRST,
+            }),
+            "regional InOut must refuse before the otherwise-unbound write access",
         );
     }
 
@@ -5765,15 +5850,7 @@ mod tests {
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let identity = OpaqueCallIdentity::new("test", "loose", 1).expect("named");
-        let bindings = vec![
-            (
-                "x",
-                TensorRole::Input {
-                    ordinal: InputOrdinal::FIRST,
-                },
-            ),
-            ("y", TensorRole::Output),
-        ];
+        let bindings = vec![("x", AccessOrdinal::FIRST), ("y", AccessOrdinal::new(1))];
 
         // Permitting contraction where the governed contract forbids it.
         let mut resources = strict_call_resources();
@@ -5862,15 +5939,7 @@ mod tests {
         .expect("coherent");
 
         let identity = OpaqueCallIdentity::new("test", "sum", 1).expect("named");
-        let bindings = vec![
-            (
-                "x",
-                TensorRole::Input {
-                    ordinal: InputOrdinal::FIRST,
-                },
-            ),
-            ("y", TensorRole::Output),
-        ];
+        let bindings = vec![("x", AccessOrdinal::FIRST), ("y", AccessOrdinal::new(1))];
         let mut registry = OpaqueCallRegistry::new();
         registry
             .register(identity, declaration.clone())
@@ -5903,7 +5972,14 @@ mod tests {
         // The contract is the one the declaration derives, and the work count is
         // the one the binding resolves — asserted against the same functions the
         // admission used, so a wired-up-but-wrong admission fails here.
-        let expected = derive_call_boundary_contract(&declaration, &bindings).expect("derivable");
+        let baseline = crate::physical::build_fused_scheduled_region(&request)
+            .expect("the fused region builds");
+        let expected = derive_call_boundary_contract(
+            &declaration,
+            &bindings,
+            &baseline.region().index.accesses,
+        )
+        .expect("derivable");
         assert_eq!(
             admitted.boundary().requirements().len(),
             expected.requirements().len()
@@ -5912,7 +5988,8 @@ mod tests {
             resolve_work_items(
                 WorkScaling::PerElementOf("x"),
                 &bindings,
-                &coverless_subject(),
+                baseline.region(),
+                &subject,
                 &request
             ),
             Ok(request.serial_sum().input_elements)
@@ -5940,15 +6017,7 @@ mod tests {
         let call = OpaqueCallIdentity::new("owner", "call", 9).expect("canonical");
         let proposal = OpaqueCallProposal::new(
             call,
-            vec![
-                (
-                    "x",
-                    TensorRole::Input {
-                        ordinal: InputOrdinal::FIRST,
-                    },
-                ),
-                ("y", TensorRole::Output),
-            ],
+            vec![("x", AccessOrdinal::FIRST), ("y", AccessOrdinal::new(1))],
         )
         .expect("fixture proposal is exactly reportable");
 
@@ -6034,28 +6103,12 @@ mod tests {
             .expect("fixture proposal is exactly reportable"),
             OpaqueCallProposal::new(
                 call,
-                vec![
-                    ("y", TensorRole::Output),
-                    (
-                        "x",
-                        TensorRole::Input {
-                            ordinal: InputOrdinal::FIRST,
-                        },
-                    ),
-                ],
+                vec![("y", AccessOrdinal::new(1)), ("x", AccessOrdinal::FIRST)],
             )
             .expect("fixture proposal is exactly reportable"),
             OpaqueCallProposal::new(
                 call,
-                vec![
-                    ("x", TensorRole::Output),
-                    (
-                        "y",
-                        TensorRole::Input {
-                            ordinal: InputOrdinal::FIRST,
-                        },
-                    ),
-                ],
+                vec![("x", AccessOrdinal::new(1)), ("y", AccessOrdinal::FIRST)],
             )
             .expect("fixture proposal is exactly reportable"),
         ];
@@ -6080,7 +6133,8 @@ mod tests {
             BindingError::UnboundParameter("x"),
             BindingError::UnknownParameter("x"),
             BindingError::ParameterBoundTwice("x"),
-            BindingError::RoleStorageDisagreement {
+            BindingError::AccessStorageDisagreement {
+                access: AccessOrdinal::FIRST,
                 first: "x",
                 second: "y",
             },
@@ -6219,16 +6273,8 @@ mod tests {
         let provider = PhysicalProviderProvenance::new(provider_identity("refusal-carry", 3))
             .expect("fixture provider is exactly reportable");
         let call = OpaqueCallIdentity::new("owner", "call", 9).expect("canonical");
-        let proposal = OpaqueCallProposal::new(
-            call,
-            vec![(
-                "x",
-                TensorRole::Input {
-                    ordinal: InputOrdinal::FIRST,
-                },
-            )],
-        )
-        .expect("fixture proposal is exactly reportable");
+        let proposal = OpaqueCallProposal::new(call, vec![("x", AccessOrdinal::FIRST)])
+            .expect("fixture proposal is exactly reportable");
 
         let cause = refusal(
             "test.refusal-carry.v1",
@@ -6462,6 +6508,39 @@ mod tests {
         request.for_target(0).unwrap()
     }
 
+    /// An `ab,bc->ac` request whose two input buffers have distinguishable
+    /// element counts, used to prove exact opaque access binding.
+    fn asymmetric_contraction_request() -> VerifiedTargetRequest {
+        use tiler_ir::semantic::{
+            ContractionIndex, ContractionIndexStructure, F32TensorContraction,
+        };
+
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let left = builder
+            .input::<F32>(InputKey::new("left").unwrap(), Shape::from_dims([1, 2]))
+            .unwrap();
+        let right = builder
+            .input::<F32>(InputKey::new("right").unwrap(), Shape::from_dims([2, 2]))
+            .unwrap();
+        let structure = ContractionIndexStructure::new(
+            [
+                vec![ContractionIndex::new(0), ContractionIndex::new(1)],
+                vec![ContractionIndex::new(1), ContractionIndex::new(2)],
+            ],
+            [ContractionIndex::new(0), ContractionIndex::new(2)],
+        )
+        .unwrap();
+        let product = F32TensorContraction::apply(&mut builder, &structure, left, right).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), product)
+            .unwrap();
+        let program = builder.build().unwrap();
+        verify_planned_request(CompilationRequest::governed(&program))
+            .unwrap()
+            .for_target(0)
+            .unwrap()
+    }
+
     /// Every region subject the governed provider spells, reported as one line
     /// per admitted implementation: role, kind, the three structural cost
     /// dimensions, and the canonical proposal identity in hex.
@@ -6565,11 +6644,11 @@ mod tests {
 
     /// The recorded proposals of [`the_recognized_region_subjects_keep_their_exact_proposals`].
     const GOVERNED_PROPOSALS: [&str; 5] = [
-        "pointwise|scheduled-kernel|1|4|16|74696c65722e636f6d70696c65722e706879736963616c2d696d706c656d656e746174696f6e2d70726f706f73616c2e76320000000000000001d774696c65722e7363686564756c652e7635000000000000000002000000000000000200000000000000020000000000000002010000000000010100000000000200020100000001010000000000000000000000020000000001000000000011000000000000000400000001020011000000000000000400000000020000000000000004240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000006274696c65722e636f6e74726163742e6633322e76322e303337666330303030303031303130313032303130313033303230313034303230313035303230313036303230313037303230313038303330313039303430313061303430313062303530317fc0000001010101010101010100000000000000040000000101000000003100000000000000040000000101000000000000000574696c6572000000000000001d70726f746f747970652d73657269616c2d73756d2d706879736963616c00000001010000000000000001000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e763100000000000000010100000000010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790600000000000000010107010801000000000000000102010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790601070108010100000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000000100000000000000ce74696c65722e70726570617265642d656e7472792d7461726765742d726571756972656d656e742e763100000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f7065727469657300000001000000000000000101",
-        "reduction|scheduled-kernel|1|2|0|74696c65722e636f6d70696c65722e706879736963616c2d696d706c656d656e746174696f6e2d70726f706f73616c2e763200000000000000019074696c65722e7363686564756c652e76350000000000000000010000000000000002000000000000000202000102000000000000000200000000000000020000000000000002000000000000000100000000000000020000000000000001000000010100000002000300020100000003010000000100000000000000020000000202001200000000000000020000000000000002000000000000000200000000000000010000000000000002000000000000000100000001010000000303001100000000000000020000000103000000000000000222000000000000000100000001017fc0000000000000000000000000006274696c65722e636f6e74726163742e6633322e76322e303337666330303030303031303130313032303130313033303230313034303230313035303230313036303230313037303230313038303330313039303430313061303430313062303530317fc0000001010101010101010100000000000000020000000101000000013200000000000000010000000101000000000000000000020000000101000000000000000574696c6572000000000000001d70726f746f747970652d73657269616c2d73756d2d706879736963616c00000001010000000000000001000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000000102010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790600000000000000010107010801000000000000000103010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790601070108010100000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000000100000000000000ce74696c65722e70726570617265642d656e7472792d7461726765742d726571756972656d656e742e763100000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f7065727469657300000001000000000000000101",
-        "fused|scheduled-kernel|1|2|0|74696c65722e636f6d70696c65722e706879736963616c2d696d706c656d656e746174696f6e2d70726f706f73616c2e76320000000000000001a174696c65722e7363686564756c652e763500000000000000000100000000000000020000000000000002010000000000010200000000000000020000000000000002000000000000000200000000000000010000000000000002000000000000000100000001010000000000030002010000000101000000000000000000000002000000000100000000001200000000000000020000000000000002000000000000000200000000000000010000000000000002000000000000000100000001010000000103001100000000000000020000000003000000000000000223400000003f800000000000000000000100000001017fc000000000000000000000000000006274696c65722e636f6e74726163742e6633322e76322e303337666330303030303031303130313032303130313033303230313034303230313035303230313036303230313037303230313038303330313039303430313061303430313062303530317fc0000001010101010101010100000000000000020000000101000000003200000000000000010000000101000000000000000000020000000101000000000000000574696c6572000000000000001d70726f746f747970652d73657269616c2d73756d2d706879736963616c00000001010000000000000001000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e763100000000000000010100000000010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790600000000000000010107010801000000000000000103010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790601070108010100000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000000100000000000000ce74696c65722e70726570617265642d656e7472792d7461726765742d726571756972656d656e742e763100000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f7065727469657300000001000000000000000101",
-        "whole-program|scheduled-kernel|1|4|0|74696c65722e636f6d70696c65722e706879736963616c2d696d706c656d656e746174696f6e2d70726f706f73616c2e76320000000000000001d774696c65722e7363686564756c652e7635000000000000000002000000000000000200000000000000020000000000000002010000000000010100000000000300020100000001010000000000000000000000020000000001000000000011000000000000000400000001030011000000000000000400000000030000000000000004240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000006274696c65722e636f6e74726163742e6633322e76322e303337666330303030303031303130313032303130313033303230313034303230313035303230313036303230313037303230313038303330313039303430313061303430313062303530317fc0000001010101010101010100000000000000040000000101000000003100000000000000040000000101000000000000000574696c6572000000000000001d70726f746f747970652d73657269616c2d73756d2d706879736963616c00000001010000000000000001000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e763100000000000000010100000000010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790600000000000000010107010801000000000000000103010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790601070108010100000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000000100000000000000ce74696c65722e70726570617265642d656e7472792d7461726765742d726571756972656d656e742e763100000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f7065727469657300000001000000000000000101",
-        "whole-program|scheduled-kernel|1|4|0|74696c65722e636f6d70696c65722e706879736963616c2d696d706c656d656e746174696f6e2d70726f706f73616c2e763200000000000000020874696c65722e7363686564756c652e76350000000000000000020000000000000002000000000000000200000000000000030100000000000105000000000000000200000000000000020000000000000002000000000000000200000000000000020000000000000002000000000000000100000000000000020000000000000002010000000002000000000100000000000100000001000105000000000000000200000000000000020000000000000002000000000000000200000000000000020000000000000002000000000000000100000000000000020000000000000002020000000001000000010100000001000300020100000002010000000000000000000000030000000001000000000011000000000000000400000001010000000100110000000000000004000000020300110000000000000004000000000300000000000000042700000000000000010000000000000002017fc00000000000000000006274696c65722e636f6e74726163742e6633322e76322e303337666330303030303031303130313032303130313033303230313034303230313035303230313036303230313037303230313038303330313039303430313061303430313062303530317fc000000101010101010101010000000000000004000000010100000000340000000000000001000000000000000201000000000000000000040000000101000000000000000574696c6572000000000000001d70726f746f747970652d73657269616c2d73756d2d706879736963616c00000001010000000000000001000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e763100000000000000020100000000010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d61727906000000000000000101070108010100000001010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790600000000000000010107010801000000000000000103010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790601070108010100000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000000100000000000000ce74696c65722e70726570617265642d656e7472792d7461726765742d726571756972656d656e742e763100000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f7065727469657300000001000000000000000101",
+        "pointwise|scheduled-kernel|1|4|16|74696c65722e636f6d70696c65722e706879736963616c2d696d706c656d656e746174696f6e2d70726f706f73616c2e76330000000000000001cf74696c65722e7363686564756c652e763600000000000000000200000000000000020000000000000002000000000000000201000101000000000002000201000000010100000000000000000000000200000000010011000000000000000400000001020011000000000000000400000000020000000000000004240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000006274696c65722e636f6e74726163742e6633322e76322e303337666330303030303031303130313032303130313033303230313034303230313035303230313036303230313037303230313038303330313039303430313061303430313062303530317fc0000001010101010101010100000000000000040000000101000000003100000000000000040000000101000000000000000574696c6572000000000000001d70726f746f747970652d73657269616c2d73756d2d706879736963616c00000001010000000000000001000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000000101010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790600000000000000010107010801000000000000000102010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790601070108010100000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000000100000000000000ce74696c65722e70726570617265642d656e7472792d7461726765742d726571756972656d656e742e763100000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f7065727469657300000001000000000000000101",
+        "reduction|scheduled-kernel|1|2|0|74696c65722e636f6d70696c65722e706879736963616c2d696d706c656d656e746174696f6e2d70726f706f73616c2e763300000000000000019074696c65722e7363686564756c652e76360000000000000000010000000000000002000000000000000202000102000000000000000200000000000000020000000000000002000000000000000100000000000000020000000000000001000000010100000002000300020100000003010000000100000000000000020000000202001200000000000000020000000000000002000000000000000200000000000000010000000000000002000000000000000100000001010000000303001100000000000000020000000103000000000000000222000000000000000100000001017fc0000000000000000000000000006274696c65722e636f6e74726163742e6633322e76322e303337666330303030303031303130313032303130313033303230313034303230313035303230313036303230313037303230313038303330313039303430313061303430313062303530317fc0000001010101010101010100000000000000020000000101000000013200000000000000010000000101000000000000000000020000000101000000000000000574696c6572000000000000001d70726f746f747970652d73657269616c2d73756d2d706879736963616c00000001010000000000000001000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000000102010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790600000000000000010107010801000000000000000103010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790601070108010100000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000000100000000000000ce74696c65722e70726570617265642d656e7472792d7461726765742d726571756972656d656e742e763100000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f7065727469657300000001000000000000000101",
+        "fused|scheduled-kernel|1|2|0|74696c65722e636f6d70696c65722e706879736963616c2d696d706c656d656e746174696f6e2d70726f706f73616c2e763300000000000000019974696c65722e7363686564756c652e76360000000000000000010000000000000002000000000000000201000102000000000000000200000000000000020000000000000002000000000000000100000000000000020000000000000001000000010100000000000300020100000001010000000000000000000000020000000001001200000000000000020000000000000002000000000000000200000000000000010000000000000002000000000000000100000001010000000103001100000000000000020000000003000000000000000223400000003f800000000000000000000100000001017fc000000000000000000000000000006274696c65722e636f6e74726163742e6633322e76322e303337666330303030303031303130313032303130313033303230313034303230313035303230313036303230313037303230313038303330313039303430313061303430313062303530317fc0000001010101010101010100000000000000020000000101000000003200000000000000010000000101000000000000000000020000000101000000000000000574696c6572000000000000001d70726f746f747970652d73657269616c2d73756d2d706879736963616c00000001010000000000000001000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000000101010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790600000000000000010107010801000000000000000103010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790601070108010100000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000000100000000000000ce74696c65722e70726570617265642d656e7472792d7461726765742d726571756972656d656e742e763100000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f7065727469657300000001000000000000000101",
+        "whole-program|scheduled-kernel|1|4|0|74696c65722e636f6d70696c65722e706879736963616c2d696d706c656d656e746174696f6e2d70726f706f73616c2e76330000000000000001cf74696c65722e7363686564756c652e763600000000000000000200000000000000020000000000000002000000000000000201000101000000000003000201000000010100000000000000000000000200000000010011000000000000000400000001030011000000000000000400000000030000000000000004240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000006274696c65722e636f6e74726163742e6633322e76322e303337666330303030303031303130313032303130313033303230313034303230313035303230313036303230313037303230313038303330313039303430313061303430313062303530317fc0000001010101010101010100000000000000040000000101000000003100000000000000040000000101000000000000000574696c6572000000000000001d70726f746f747970652d73657269616c2d73756d2d706879736963616c00000001010000000000000001000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000000101010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790600000000000000010107010801000000000000000103010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790601070108010100000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000000100000000000000ce74696c65722e70726570617265642d656e7472792d7461726765742d726571756972656d656e742e763100000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f7065727469657300000001000000000000000101",
+        "whole-program|scheduled-kernel|1|4|0|74696c65722e636f6d70696c65722e706879736963616c2d696d706c656d656e746174696f6e2d70726f706f73616c2e76330000000000000001f874696c65722e7363686564756c652e763600000000000000000200000000000000020000000000000002000000000000000301000105000000000000000200000000000000020000000000000002000000000000000200000000000000020000000000000002000000000000000100000000000000020000000000000002010000000002000000000100000000000100010500000000000000020000000000000002000000000000000200000000000000020000000000000002000000000000000200000000000000010000000000000002000000000000000202000000000100000001010000000100030002010000000201000000000000000000000003000000000100110000000000000004000000010100110000000000000004000000020300110000000000000004000000000300000000000000042700000000000000010000000000000002017fc00000000000000000006274696c65722e636f6e74726163742e6633322e76322e303337666330303030303031303130313032303130313033303230313034303230313035303230313036303230313037303230313038303330313039303430313061303430313062303530317fc000000101010101010101010000000000000004000000010100000000340000000000000001000000000000000201000000000000000000040000000101000000000000000574696c6572000000000000001d70726f746f747970652d73657269616c2d73756d2d706879736963616c00000001010000000000000001000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000000201010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d617279060000000000000001010701080101010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790600000000000000010107010801000000000000000103010000000000000008010102010300000004040105000000000000001674696c65722e616666696e6974792e7072696d6172790601070108010100000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000000100000000000000ce74696c65722e70726570617265642d656e7472792d7461726765742d726571756972656d656e742e763100000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f7065727469657300000001000000000000000101",
     ];
 
     #[test]

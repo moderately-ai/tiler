@@ -22,6 +22,7 @@
 
 use crate::boundary::{ByteAlignment, LayoutGuarantee, LayoutRequirement, StorageEncoding};
 use core::fmt;
+use tiler_ir::schedule::{AccessMode, AccessOrdinal};
 
 /// Maximum bytes in one exactly reportable ABI parameter name.
 pub(crate) const MAX_PARAMETER_NAME_BYTES: usize = 255;
@@ -399,17 +400,24 @@ pub(crate) enum BindingError {
     UnknownParameter(&'static str),
     /// A parameter is bound more than once.
     ParameterBoundTwice(&'static str),
-    /// Two parameters bound to one tensor role disagree about its storage.
-    ///
-    /// A boundary contract states **one** answer per role, so two parameters
-    /// sharing a role must agree on layout, encoding, and alignment. Two inputs
-    /// wanting different layouts is a coherent thing for a call to want and an
-    /// incoherent thing for one contract to say, so it is refused here rather
-    /// than silently resolved by whichever parameter was seen first.
-    RoleStorageDisagreement {
-        /// The first parameter bound to the role.
+    AccessOutOfRange {
+        parameter: &'static str,
+        access: AccessOrdinal,
+    },
+    InOutRegionUnsupported {
+        parameter: &'static str,
+        access: AccessOrdinal,
+    },
+    AccessModeMismatch {
+        parameter: &'static str,
+        access: AccessOrdinal,
+        parameter_role: ParameterRole,
+        access_mode: AccessMode,
+    },
+    UnboundAccess(AccessOrdinal),
+    AccessStorageDisagreement {
+        access: AccessOrdinal,
         first: &'static str,
-        /// The parameter that disagreed with it.
         second: &'static str,
     },
 }
@@ -432,10 +440,40 @@ impl fmt::Display for BindingError {
                     "binding.bound-twice: {name} is bound more than once"
                 )
             }
-            Self::RoleStorageDisagreement { first, second } => write!(
+            Self::AccessOutOfRange { parameter, access } => write!(
                 formatter,
-                "binding.role-storage-disagreement: {first} and {second} share a role \
-                 but declare different storage"
+                "binding.access-out-of-range: {parameter} names access {} outside the region",
+                access.get()
+            ),
+            Self::InOutRegionUnsupported { parameter, access } => write!(
+                formatter,
+                "binding.inout-region-unsupported: {parameter} names regional access {}",
+                access.get()
+            ),
+            Self::AccessModeMismatch {
+                parameter,
+                access,
+                parameter_role,
+                access_mode,
+            } => write!(
+                formatter,
+                "binding.access-mode-mismatch: {parameter} ({parameter_role:?}) cannot bind access {} ({access_mode:?})",
+                access.get()
+            ),
+            Self::UnboundAccess(access) => write!(
+                formatter,
+                "binding.unbound-access: access {} is not bound",
+                access.get()
+            ),
+            Self::AccessStorageDisagreement {
+                access,
+                first,
+                second,
+            } => write!(
+                formatter,
+                "binding.access-storage-disagreement: {first} and {second} share access {} \
+                 but declare different storage",
+                access.get()
             ),
         }
     }
@@ -471,28 +509,6 @@ pub(crate) fn check_bindings<Role: Copy + Eq>(
         }
     }
 
-    // One contract answer per role, so parameters sharing a role must agree on
-    // storage. Compared against the first parameter seen for the role, and the
-    // *first* is named in the error so the report is stable rather than
-    // dependent on iteration order.
-    let mut by_role: Vec<(Role, &'static str, ParameterSpec)> = Vec::new();
-    for (name, role) in bindings {
-        let spec = *abi.parameter(name).expect("checked above").spec();
-        match by_role.iter().find(|(seen_role, _, _)| *seen_role == *role) {
-            Some((_, first, first_spec)) => {
-                if first_spec.layout != spec.layout
-                    || first_spec.encoding != spec.encoding
-                    || first_spec.alignment != spec.alignment
-                {
-                    return Err(BindingError::RoleStorageDisagreement {
-                        first,
-                        second: name,
-                    });
-                }
-            }
-            None => by_role.push((*role, name, spec)),
-        }
-    }
     Ok(())
 }
 
@@ -661,44 +677,6 @@ mod tests {
         assert_eq!(
             check_bindings(&abi, &[("a", Role::In), ("a", Role::Out), ("b", Role::Out)]),
             Err(BindingError::ParameterBoundTwice("a"))
-        );
-    }
-
-    /// Two parameters on one role must agree about storage.
-    ///
-    /// A boundary contract states one answer per role. Two inputs wanting
-    /// different layouts is coherent for a call and incoherent for one contract,
-    /// so it is refused rather than resolved by whichever was seen first.
-    #[test]
-    fn parameters_sharing_a_role_must_agree_about_storage() {
-        let abi = CallAbi::declare([
-            spec("a", ParameterRole::In),
-            ParameterSpec {
-                name: "b",
-                role: ParameterRole::In,
-                layout: layout_for(ParameterRole::In),
-                encoding: StorageEncoding::Unpacked,
-                alignment: ByteAlignment::new(16).expect("a power of two"),
-            },
-            spec("c", ParameterRole::Out),
-        ])
-        .expect("well formed");
-
-        assert_eq!(
-            check_bindings(&abi, &[("a", Role::In), ("b", Role::In), ("c", Role::Out)]),
-            Err(BindingError::RoleStorageDisagreement {
-                first: "a",
-                second: "b",
-            })
-        );
-        // The same two parameters on *different* roles are fine: the contract
-        // states one answer per role, not one answer overall.
-        assert_eq!(
-            check_bindings(&abi, &[("a", Role::In), ("b", Role::Out), ("c", Role::Out)]),
-            Err(BindingError::RoleStorageDisagreement {
-                first: "b",
-                second: "c",
-            })
         );
     }
 

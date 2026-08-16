@@ -28,37 +28,37 @@ impl RegionId {
     }
 }
 
-/// Which of a region's boundary input tensors one access or scalar leaf names.
+/// Which member of a region's ordered boundary-access list a reference names.
 ///
-/// The ordinal is *region-local and positional*: `0` is the first input tensor
-/// the region reads, `1` the second, and a region reading `n` inputs uses every
-/// ordinal in `0..n` exactly once. It is deliberately not an interface key and
-/// not a semantic value — a caller that renames its inputs must not change the
-/// kernel a region compiles to, and a scheduled region carries no semantic
-/// correlation at all (ADR 0070). Binding an ordinal to a named program input is
-/// the program layer's job, positionally, through its stage accesses.
+/// The ordinal is *region-local and positional*: `0` is the first access in
+/// [`super::ScheduledRegion::index`], and the final ordinal may name the owning
+/// write. It is deliberately not an interface key and not a semantic value — a
+/// caller that renames its inputs must not change the kernel a region compiles
+/// to, and a scheduled region carries no semantic correlation at all (ADR
+/// 0070). Binding an access to a named program input is the program layer's job,
+/// positionally, through its stage accesses.
 ///
-/// One tensor's *components* share an ordinal and are separated by
-/// [`crate::semantic::EncodedComponentRole`]: a component is schema data of one
-/// tensor, never an independent operand position.
+/// Each ordinal names one complete access entry, including its optional
+/// [`crate::semantic::EncodedComponentRole`]. Two component accesses therefore
+/// occupy two positions even when their fieldless tensor-role categories agree;
+/// the component role remains schema data rather than an interface key.
 ///
-/// Unlike [`RegionId`], this ordinal *is* part of canonical identity: it says
-/// which tensor a read addresses, and two regions that read their inputs in
-/// different orders compute different things.
+/// Unlike [`RegionId`], this ordinal *is* part of canonical identity when a
+/// relation retains it: it says which exact access the relation addresses.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct InputOrdinal(u32);
+pub struct AccessOrdinal(u32);
 
-impl InputOrdinal {
-    /// The first input tensor a region reads.
+impl AccessOrdinal {
+    /// The first access in the owning region.
     pub const FIRST: Self = Self(0);
 
-    /// Wraps a region-local input ordinal.
+    /// Wraps a region-local access ordinal.
     #[must_use]
     pub const fn new(ordinal: u32) -> Self {
         Self(ordinal)
     }
 
-    /// Returns the region-local input ordinal.
+    /// Returns the region-local access ordinal.
     #[must_use]
     pub const fn get(self) -> u32 {
         self.0

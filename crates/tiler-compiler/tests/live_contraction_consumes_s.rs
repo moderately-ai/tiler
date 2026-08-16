@@ -6,12 +6,12 @@
 
 use tiler_ir::kernel::{LoopBound, OperationView, VerifiedBufferId, lower_scheduled_region};
 use tiler_ir::schedule::{
-    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContractionAxisSource,
-    ContributorOrder, ExceptionalValueAssumption, ExecutionBinding, InputOrdinal, KernelSchedule,
-    LaunchPlan, LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
-    OwnershipProofKind, OwnershipWitnessId, ReductionTopology, RegionId, ScalarProgram,
-    ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole, VerifiedScheduledRegion,
-    element_count,
+    Access, AccessMode, AccessOrdinal, BoundsProof, BoundsProofKind, BoundsWitnessId,
+    ContractionAxisSource, ContributorOrder, ExceptionalValueAssumption, ExecutionBinding,
+    KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission, NumericalRealization,
+    OwnershipProof, OwnershipProofKind, OwnershipWitnessId, ReductionTopology, RegionId,
+    ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+    VerifiedScheduledRegion, element_count,
 };
 use tiler_ir::shape::{Axis, Shape};
 
@@ -59,9 +59,7 @@ fn live_contraction_region() -> VerifiedScheduledRegion {
     builder.iteration_shape(output.clone()).unwrap();
     for (ordinal, (operand, free)) in [(&left, 0_u32), (&right, 1)].into_iter().enumerate() {
         let witness = u32::try_from(ordinal).unwrap();
-        let tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(witness),
-        };
+        let tensor = TensorRole::Input;
         builder
             .push_access(Access {
                 tensor,
@@ -127,7 +125,7 @@ fn live_contraction_region() -> VerifiedScheduledRegion {
     builder
         .schedule(KernelSchedule {
             reduction: ReductionTopology::LiveContraction {
-                live_input: InputOrdinal::FIRST,
+                live_access: AccessOrdinal::FIRST,
                 live_axis: Axis::new(1),
                 order: ContributorOrder::OriginalAxisLexicographic,
                 permits_reassociation: false,
@@ -150,9 +148,7 @@ fn baked_contraction_region(k: u64) -> VerifiedScheduledRegion {
     builder.iteration_shape(output.clone()).unwrap();
     for (ordinal, (operand, free)) in [(&left, 0_u32), (&right, 1)].into_iter().enumerate() {
         let witness = u32::try_from(ordinal).unwrap();
-        let tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(witness),
-        };
+        let tensor = TensorRole::Input;
         builder
             .push_access(Access {
                 tensor,
@@ -264,13 +260,7 @@ fn count_live_input_loads(
 fn live_input_loads(kernel: &tiler_ir::kernel::VerifiedKernel, bound: u64) -> u64 {
     let live = kernel
         .declared_buffers()
-        .find_map(|(id, buffer)| {
-            (buffer.tensor
-                == TensorRole::Input {
-                    ordinal: InputOrdinal::FIRST,
-                })
-            .then_some(id)
-        })
+        .find_map(|(id, buffer)| (buffer.tensor == TensorRole::Input).then_some(id))
         .expect("the named live input is a buffer");
     let mut seed = 0;
     let mut body = 0;

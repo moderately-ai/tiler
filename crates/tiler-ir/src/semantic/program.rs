@@ -3722,11 +3722,11 @@ mod tests {
             .input::<F32>(input_key("dead"), Shape::from_dims([4]))
             .unwrap();
         let _dead_result = sum(&mut builder, dead_input, [Axis::new(0)]).unwrap();
-        let live_input = builder
+        let live_access = builder
             .input::<F32>(input_key("live"), Shape::from_dims([2]))
             .unwrap();
         let scale = constant(&mut builder, 3.0).unwrap();
-        let result = multiply(&mut builder, live_input, scale).unwrap();
+        let result = multiply(&mut builder, live_access, scale).unwrap();
         let selector = builder.output(output_key("result"), result).unwrap();
 
         let program = builder.build().unwrap();

@@ -135,18 +135,6 @@ pub struct SynchronizationSubject {
     pub ordering: MemoryOrdering,
 }
 
-/// @source: crates/tiler-ir/src/schedule/handles.rs :: InputOrdinal
-#[cfg_attr(kani, derive(kani::Arbitrary))]
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct InputOrdinal(u32);
-
-impl InputOrdinal {
-    #[must_use]
-    pub const fn get(self) -> u32 {
-        self.0
-    }
-}
-
 /// @source: crates/tiler-ir/src/semantic/types.rs :: EncodedComponentRole
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -163,7 +151,7 @@ impl EncodedComponentRole {
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum TensorRole {
-    Input { ordinal: InputOrdinal },
+    Input,
     Intermediate,
     Output,
 }
@@ -173,6 +161,36 @@ pub enum TensorRole {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum IndexArithmetic {
     CompleteU64,
+}
+
+// Support vocabulary copied only so the guarded `ResourceRequirements` shape
+// remains constructible. `push_resources` deliberately ignores this reserved
+// field, so these are not encoder proof subjects and carry no `@source` marker.
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ArithmeticType {
+    F16,
+    Bf16,
+    F32,
+    F64,
+}
+
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SubgroupWidth(u32);
+
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum SubgroupTransfer {
+    InRangeXorShuffle,
+}
+
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SubgroupRealizationSubject {
+    width: SubgroupWidth,
+    arithmetic: ArithmeticType,
+    transfer: SubgroupTransfer,
 }
 
 /// @source: crates/tiler-ir/src/schedule/model.rs :: ResourceRequirements
@@ -185,6 +203,7 @@ pub struct ResourceRequirements {
     pub requires_device_memory: bool,
     pub index_arithmetic: IndexArithmetic,
     pub synchronization: Option<SynchronizationSubject>,
+    pub subgroup: Option<SubgroupRealizationSubject>,
     pub input_subnormals: SubnormalMode,
     pub result_subnormals: SubnormalMode,
     pub contraction: NumericalPermission,
@@ -241,10 +260,7 @@ pub fn push_slice(bytes: &mut Vec<u8>, value: &[u8]) {
 /// @source: crates/tiler-ir/src/schedule/model.rs :: push_tensor_role
 pub fn push_tensor_role(bytes: &mut Vec<u8>, role: TensorRole) {
     match role {
-        TensorRole::Input { ordinal } => {
-            bytes.push(0x01);
-            bytes.extend_from_slice(&ordinal.get().to_be_bytes());
-        }
+        TensorRole::Input => bytes.push(0x01),
         TensorRole::Intermediate => bytes.push(0x02),
         TensorRole::Output => bytes.push(0x03),
     }
@@ -360,6 +376,7 @@ pub fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirements) {
         requires_device_memory,
         index_arithmetic,
         synchronization,
+        subgroup: _,
         input_subnormals,
         result_subnormals,
         contraction,
@@ -448,23 +465,17 @@ mod proofs {
         }
     }
 
-    /// Injective over the whole `TensorRole` domain: 2^32 + 2 values, all pairs.
+    /// Injective over the whole three-value `TensorRole` domain, all pairs.
     ///
     /// **The input domain is not what needs bounding.** `TensorRole` is
-    /// finite-width and `push_tensor_role` has no loop, so CBMC quantifies over
-    /// the `u32` symbolically rather than walking it — that is exactly the reach
-    /// an enumerated test does not have. The unwind bound below is about the
-    /// *output*: comparing two `Vec<u8>` lowers to `memcmp` over a length CBMC
-    /// only knows symbolically, and without a bound it unwinds that loop forever
-    /// (measured: still climbing past 7 370 iterations after ten minutes).
+    /// finite and `push_tensor_role` has no loop. The unwind bound below is about
+    /// the *output*: comparing two `Vec<u8>` lowers to `memcmp`.
     ///
-    /// **6 is complete, not a compromise.** The encoder writes at most five bytes
-    /// — one tag plus a four-byte ordinal — so no execution can reach a sixth
-    /// `memcmp` iteration. Kani's unwinding assertion is what turns that from a
-    /// claim into a check: it fails if any path needed more, and it is reported
-    /// as a `SUCCESS` line below. Nothing lies outside this proof.
+    /// **2 is complete, not a compromise.** The encoder writes exactly one tag
+    /// byte, so no execution can reach a second `memcmp` iteration. Kani's
+    /// unwinding assertion turns that from a claim into a check.
     #[kani::proof]
-    #[kani::unwind(6)]
+    #[kani::unwind(2)]
     fn push_tensor_role_injective() {
         let a: TensorRole = kani::any();
         let b: TensorRole = kani::any();

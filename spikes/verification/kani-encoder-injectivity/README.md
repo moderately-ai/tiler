@@ -119,6 +119,10 @@ The first proof remains complete over its whole type-derived input domain. The s
 
 The re-synced guard was also perturbed at its subject: changing the copied `IndexArithmetic::CompleteU64` tag from `0x01` to `0x02` made it exit 1 with `DRIFT: index_arithmetic_tag` and `1 of 30 copied items have drifted from their sources.` The source copy was then restored and the guard returned `30 copied items match their sources.`
 
+## Tensor-role re-sync after fieldless access roles
+
+**Fact, 2026-08-14.** [`reconcile-input-ordinal-region-local-and-declared-input-semantics`](../../../tickets/reconcile-input-ordinal-region-local-and-declared-input-semantics.md) removed the copied `InputOrdinal` and made `TensorRole::Input` fieldless. The role encoder now writes exactly one tag for each of three values. The shim and harness moved with it, and the guard population falls from 30 to 29 because one copied source type disappeared. The same maintenance also incorporated the already-landed reserved `ResourceRequirements.subgroup` field that `push_resources` deliberately ignores; that restores the full guard rather than hiding its two pre-existing drift reports. `./guard.sh` reports `29 copied items match their sources`, and ordinary `cargo check` is green. A fresh `cargo kani --harness push_tensor_role_injective` proves the complete three-value domain at unwind 2: 0 of 322 checks failed, 6 were unreachable, and verification completed in 0.667 s on the coordination host. The dated measurements below remain evidence for the exact encoders they name rather than being rewritten.
+
 ## Re-probe condition
 
 The spike is unblocked when Kani bundles a nightly that compiles `crates/tiler-ir`. Measured bracket, both reproducible on this host:

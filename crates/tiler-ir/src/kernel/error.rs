@@ -144,6 +144,8 @@ pub enum KernelBuildError {
     UndeclaredInputExtent,
     /// The same input axis was declared as a live extent more than once.
     DuplicateInputExtent,
+    /// A live extent named no access in the scheduled region.
+    InputExtentAccessOutOfRange,
     /// A live extent named a tensor that is not a scheduled input.
     InputExtentNotInput,
     /// A live extent named an axis the scheduled input does not have.

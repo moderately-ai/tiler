@@ -13,7 +13,7 @@ use crate::schedule::cooperative::{
     WorkgroupStaging,
 };
 use crate::schedule::handles::{
-    BoundsWitnessId, InputOrdinal, OwnershipWitnessId, PhaseId, RegionId, StagingId, SyncPointId,
+    AccessOrdinal, BoundsWitnessId, OwnershipWitnessId, PhaseId, RegionId, StagingId, SyncPointId,
 };
 use crate::schedule::model::{
     Access, AccessMode, BoundsProof, BoundsProofKind, ContractionAxisSource, ContributorCoverage,
@@ -83,7 +83,7 @@ fn strict_bf16_numerical() -> NumericalRealization {
 /// `x * 2.0 + 1.0`: one input, and one multiply an addition consumes.
 fn scale_bias_expression() -> PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
-    let input = expression.input(InputOrdinal::FIRST).unwrap();
+    let input = expression.input(AccessOrdinal::FIRST).unwrap();
     let scale = expression.constant(2.0_f32.to_bits()).unwrap();
     let product = expression.multiply(input, scale).unwrap();
     let bias = expression.constant(1.0_f32.to_bits()).unwrap();
@@ -94,7 +94,7 @@ fn scale_bias_expression() -> PointwiseF32Expression {
 /// `x + 1.0`: one input, and no multiply anywhere.
 fn bias_only_expression() -> PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
-    let input = expression.input(InputOrdinal::FIRST).unwrap();
+    let input = expression.input(AccessOrdinal::FIRST).unwrap();
     let bias = expression.constant(1.0_f32.to_bits()).unwrap();
     let root = expression.add(input, bias).unwrap();
     expression.build(root).unwrap()
@@ -102,7 +102,7 @@ fn bias_only_expression() -> PointwiseF32Expression {
 
 fn bf16_scale_bias_expression() -> PointwiseBf16Expression {
     let mut expression = PointwiseBf16ExpressionBuilder::new();
-    let input = expression.input(InputOrdinal::FIRST).unwrap();
+    let input = expression.input(AccessOrdinal::FIRST).unwrap();
     let scale = expression.constant(0x4000).unwrap();
     let product = expression.multiply(input, scale).unwrap();
     let bias = expression.constant(0x3f80).unwrap();
@@ -120,9 +120,7 @@ fn pointwise_region(
     builder.iteration_shape(Shape::from_dims([2, 3])).unwrap();
     builder
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
@@ -140,15 +138,7 @@ fn pointwise_region(
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .unwrap();
-    for (witness, tensor) in [
-        (
-            0,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-        ),
-        (1, TensorRole::Intermediate),
-    ] {
+    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Intermediate)] {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
@@ -210,9 +200,7 @@ fn serial_region(
     builder.iteration_shape(output.clone()).unwrap();
     builder
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::ReductionContributor {
@@ -238,9 +226,7 @@ fn serial_region(
     builder
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(0),
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             kind: BoundsProofKind::ReductionDomain {
                 input_shape: input,
@@ -316,7 +302,7 @@ fn scale_bias_sum() -> ScalarProgram {
 /// `Rsqrt(a / 6 + 1e-6)` over the folded value, the shipped epilogue's shape.
 fn scale_epilogue() -> PointwiseF32Expression {
     let mut builder = PointwiseF32ExpressionBuilder::new();
-    let total = builder.input(InputOrdinal::FIRST).unwrap();
+    let total = builder.input(AccessOrdinal::FIRST).unwrap();
     let extent = builder.constant(6.0_f32.to_bits()).unwrap();
     let mean = builder.divide(total, extent).unwrap();
     let bias = builder.constant(1.0e-6_f32.to_bits()).unwrap();
@@ -707,9 +693,8 @@ fn contraction_region(numerical: NumericalRealization) -> ScheduledRegionBuilder
     let right = Shape::from_dims([4, 3]);
     let mut builder = ScheduledRegionBuilder::new(RegionId::new(5));
     builder.iteration_shape(output.clone()).unwrap();
-    for (ordinal, operand, sources, witness) in [
+    for (operand, sources, witness) in [
         (
-            0_u32,
             left.clone(),
             vec![
                 ContractionAxisSource::Output { position: 0 },
@@ -718,7 +703,6 @@ fn contraction_region(numerical: NumericalRealization) -> ScheduledRegionBuilder
             0_u32,
         ),
         (
-            1,
             right.clone(),
             vec![
                 ContractionAxisSource::Contracted { position: 0 },
@@ -729,9 +713,7 @@ fn contraction_region(numerical: NumericalRealization) -> ScheduledRegionBuilder
     ] {
         builder
             .push_access(Access {
-                tensor: TensorRole::Input {
-                    ordinal: InputOrdinal::new(ordinal),
-                },
+                tensor: TensorRole::Input,
                 component_role: None,
                 mode: AccessMode::Read,
                 map: LogicalAccess::ContractionOperand {
@@ -756,13 +738,11 @@ fn contraction_region(numerical: NumericalRealization) -> ScheduledRegionBuilder
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .unwrap();
-    for (witness, ordinal, elements) in [(0_u32, 0_u32, 8_u64), (1, 1, 12)] {
+    for (witness, elements) in [(0_u32, 8_u64), (1, 12)] {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
-                tensor: TensorRole::Input {
-                    ordinal: InputOrdinal::new(ordinal),
-                },
+                tensor: TensorRole::Input,
                 component_role: None,
                 kind: BoundsProofKind::LinearRange {
                     element_count: elements,
@@ -1164,7 +1144,7 @@ fn the_first_named_site_is_the_one_that_is_about_this_region() {
 /// The two mitigations the record names do hold, at the whole-region level.
 ///
 /// [The freedom-sites record](../../../../../docs/research/reference/plan-freedom-sites.md)
-/// Part 5 states that one leaf per input ordinal, shared on repeat request, plus
+/// Part 5 states that one leaf per access ordinal, shared on repeat request, plus
 /// a deterministic root-first-derived topological order, make the canonical form
 /// a function of the program rather than of the spelling — and states the claim
 /// **untested**. This tests it at the extent those two mitigations cover: two
@@ -1175,7 +1155,7 @@ fn the_first_named_site_is_the_one_that_is_about_this_region() {
 fn the_two_named_canonicalization_mitigations_hold() {
     fn spelled_left() -> PointwiseF32Expression {
         let mut builder = PointwiseF32ExpressionBuilder::new();
-        let input = builder.input(InputOrdinal::FIRST).unwrap();
+        let input = builder.input(AccessOrdinal::FIRST).unwrap();
         let two = builder.constant(2.0_f32.to_bits()).unwrap();
         let three = builder.constant(3.0_f32.to_bits()).unwrap();
         let scaled = builder.multiply(input.clone(), two).unwrap();
@@ -1188,10 +1168,10 @@ fn the_two_named_canonicalization_mitigations_hold() {
         // The independent subtrees are minted in the other order, and the input
         // leaf is asked for once per use rather than cloned.
         let three = builder.constant(3.0_f32.to_bits()).unwrap();
-        let first = builder.input(InputOrdinal::FIRST).unwrap();
+        let first = builder.input(AccessOrdinal::FIRST).unwrap();
         let biased = builder.add(first, three).unwrap();
         let two = builder.constant(2.0_f32.to_bits()).unwrap();
-        let again = builder.input(InputOrdinal::FIRST).unwrap();
+        let again = builder.input(AccessOrdinal::FIRST).unwrap();
         let scaled = builder.multiply(again, two).unwrap();
         let root = builder.add(scaled, biased).unwrap();
         builder.build(root).unwrap()
@@ -1233,7 +1213,7 @@ fn the_two_named_canonicalization_mitigations_hold() {
 fn a_duplicated_constant_is_a_spelling_the_canonical_form_does_not_collapse() {
     fn shared_constant() -> PointwiseF32Expression {
         let mut builder = PointwiseF32ExpressionBuilder::new();
-        let input = builder.input(InputOrdinal::FIRST).unwrap();
+        let input = builder.input(AccessOrdinal::FIRST).unwrap();
         let two = builder.constant(2.0_f32.to_bits()).unwrap();
         let scaled = builder.multiply(input, two.clone()).unwrap();
         let root = builder.add(scaled, two).unwrap();
@@ -1241,7 +1221,7 @@ fn a_duplicated_constant_is_a_spelling_the_canonical_form_does_not_collapse() {
     }
     fn repeated_constant() -> PointwiseF32Expression {
         let mut builder = PointwiseF32ExpressionBuilder::new();
-        let input = builder.input(InputOrdinal::FIRST).unwrap();
+        let input = builder.input(AccessOrdinal::FIRST).unwrap();
         let two = builder.constant(2.0_f32.to_bits()).unwrap();
         let scaled = builder.multiply(input, two).unwrap();
         let two_again = builder.constant(2.0_f32.to_bits()).unwrap();

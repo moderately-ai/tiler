@@ -37,7 +37,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
-use super::handles::InputOrdinal;
+use super::handles::AccessOrdinal;
 
 /// Maximum nodes admitted by one physical `bf16` pointwise expression.
 pub const MAX_POINTWISE_BF16_EXPRESSION_NODES: usize = 4_096;
@@ -91,7 +91,7 @@ pub struct PointwiseBf16Value {
 /// map at compile time until the new physical meaning is encoded and lowered:
 ///
 /// ```
-/// use tiler_ir::schedule::{InputOrdinal, PointwiseBf16ExpressionBuilder, PointwiseBf16Node};
+/// use tiler_ir::schedule::{AccessOrdinal, PointwiseBf16ExpressionBuilder, PointwiseBf16Node};
 ///
 /// fn spelling(node: &PointwiseBf16Node) -> &'static str {
 ///     match node {
@@ -104,7 +104,7 @@ pub struct PointwiseBf16Value {
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut builder = PointwiseBf16ExpressionBuilder::new();
-/// let input = builder.input(InputOrdinal::FIRST)?;
+/// let input = builder.input(AccessOrdinal::FIRST)?;
 /// let expression = builder.build(input)?;
 /// assert_eq!(spelling(&expression.nodes()[0]), "input");
 /// # Ok(())
@@ -115,12 +115,12 @@ pub enum PointwiseBf16Node {
     /// The `bf16` element one named boundary input contributes to this
     /// invocation.
     ///
-    /// The ordinal says *which* of the region's input tensors is read, so two
+    /// The access says *which* of the region's ordered reads is used, so two
     /// leaves reading two different tensors are two different nodes. A verified
     /// expression uses every ordinal in `0..input_count` exactly once.
     Input {
-        /// Region-local ordinal of the input tensor this leaf reads.
-        ordinal: InputOrdinal,
+        /// Region-local access this leaf reads.
+        access: AccessOrdinal,
     },
     /// An exact `bf16` constant.
     ///
@@ -170,7 +170,7 @@ pub enum PointwiseBf16Node {
 /// An opaque, verified physical `bf16` pointwise expression.
 ///
 /// The retained nodes are in a deterministic root-first-derived topological
-/// order, preserve operand order and DAG sharing, read every input ordinal in
+/// order, preserve operand order and DAG sharing, read every access ordinal in
 /// `0..input_count` exactly once, contain no unreachable nodes, and remain
 /// within [`MAX_POINTWISE_BF16_EXPRESSION_NODES`]. Construction is available
 /// only through [`PointwiseBf16ExpressionBuilder`].
@@ -213,7 +213,7 @@ impl PointwiseBf16Expression {
         let mut ordinals = Vec::new();
         for (index, node) in self.nodes.iter().enumerate() {
             match node {
-                PointwiseBf16Node::Input { ordinal } => ordinals.push(ordinal.get()),
+                PointwiseBf16Node::Input { access } => ordinals.push(access.get()),
                 PointwiseBf16Node::Constant { .. } => {}
                 PointwiseBf16Node::Add { lhs, rhs } | PointwiseBf16Node::Multiply { lhs, rhs } => {
                     let Ok(index) = u32::try_from(index) else {
@@ -229,7 +229,7 @@ impl PointwiseBf16Expression {
             return false;
         };
         !ordinals.is_empty()
-            && input_ordinals_are_dense(&mut ordinals)
+            && access_ordinals_are_dense(&mut ordinals)
             && root < self.nodes.len()
             && reachable_nodes(&self.nodes, self.root)
                 .iter()
@@ -242,18 +242,18 @@ impl PointwiseBf16Expression {
 /// Density is the invariant that makes an ordinal a *position*: a region binds
 /// one read access per ordinal in order, so a gap would name a buffer the
 /// expression never reads and a repeat would leave one access unaddressed.
-fn input_ordinals_are_dense(ordinals: &mut [u32]) -> bool {
+fn access_ordinals_are_dense(ordinals: &mut [u32]) -> bool {
     ordinals.sort_unstable();
     ordinals
         .iter()
         .enumerate()
-        .all(|(position, ordinal)| u32::try_from(position) == Ok(*ordinal))
+        .all(|(position, access)| u32::try_from(position) == Ok(*access))
 }
 
 #[derive(Clone, Debug)]
 enum DraftNode {
     Input {
-        ordinal: InputOrdinal,
+        access: AccessOrdinal,
     },
     Constant {
         bits: u16,
@@ -279,7 +279,7 @@ pub struct PointwiseBf16ExpressionBuilder {
     /// optimization: two `Input` nodes naming one ordinal would be two distinct
     /// canonical nodes for one read, so an expression reading the same tensor
     /// twice would encode differently depending on how the author spelled it.
-    inputs: Vec<(InputOrdinal, u32)>,
+    inputs: Vec<(AccessOrdinal, u32)>,
 }
 
 impl PointwiseBf16ExpressionBuilder {
@@ -305,16 +305,16 @@ impl PointwiseBf16ExpressionBuilder {
     /// new leaf would exceed the governed node limit.
     pub fn input(
         &mut self,
-        ordinal: InputOrdinal,
+        access: AccessOrdinal,
     ) -> Result<PointwiseBf16Value, PointwiseBf16ExpressionAdmissionError> {
-        if let Some((_, index)) = self.inputs.iter().find(|(minted, _)| *minted == ordinal) {
+        if let Some((_, index)) = self.inputs.iter().find(|(minted, _)| *minted == access) {
             return Ok(PointwiseBf16Value {
                 owner: Arc::clone(&self.owner),
                 index: *index,
             });
         }
-        let value = self.push(DraftNode::Input { ordinal })?;
-        self.inputs.push((ordinal, value.index));
+        let value = self.push(DraftNode::Input { access })?;
+        self.inputs.push((access, value.index));
         Ok(value)
     }
 
@@ -368,7 +368,7 @@ impl PointwiseBf16ExpressionBuilder {
     ///
     /// Rejects an empty expression, a missing input, a root not minted by this
     /// builder, any draft node not reachable from the explicit root, or a
-    /// reachable input ordinal set that is not the dense `0..n`.
+    /// reachable access ordinal set that is not the dense `0..n`.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "consuming the builder also consumes its builder-owned root value"
@@ -414,23 +414,25 @@ impl PointwiseBf16ExpressionBuilder {
         let mut ordinals: Vec<u32> = nodes
             .iter()
             .filter_map(|node| match node {
-                PointwiseBf16Node::Input { ordinal } => Some(ordinal.get()),
+                PointwiseBf16Node::Input { access } => Some(access.get()),
                 PointwiseBf16Node::Constant { .. }
                 | PointwiseBf16Node::Add { .. }
                 | PointwiseBf16Node::Multiply { .. } => None,
             })
             .collect();
-        if !input_ordinals_are_dense(&mut ordinals) {
+        if !access_ordinals_are_dense(&mut ordinals) {
             let missing = ordinals
                 .iter()
                 .enumerate()
-                .find(|(position, ordinal)| u32::try_from(*position) != Ok(**ordinal))
+                .find(|(position, access)| u32::try_from(*position) != Ok(**access))
                 .map_or(0, |(position, _)| {
                     u32::try_from(position).unwrap_or(u32::MAX)
                 });
             return Err(PointwiseBf16ExpressionBuildError::new(
                 self,
-                PointwiseBf16ExpressionDiagnostic::SparseInputOrdinals { missing },
+                PointwiseBf16ExpressionDiagnostic::SparseAccessOrdinals {
+                    missing: AccessOrdinal::new(missing),
+                },
             ));
         }
         let root = usize::try_from(root.index)
@@ -520,7 +522,7 @@ fn canonicalize_nodes(
                 .expect("operands are canonicalized before their user")
         };
         let node = match &draft[draft_index] {
-            DraftNode::Input { ordinal } => PointwiseBf16Node::Input { ordinal: *ordinal },
+            DraftNode::Input { access } => PointwiseBf16Node::Input { access: *access },
             DraftNode::Constant { bits } => PointwiseBf16Node::Constant { bits: *bits },
             DraftNode::Add { lhs, rhs } => PointwiseBf16Node::Add {
                 lhs: resolve(lhs),
@@ -614,10 +616,10 @@ pub enum PointwiseBf16ExpressionDiagnostic {
         /// Draft ordinal of the first unreachable node.
         index: usize,
     },
-    /// The reachable input ordinals are not the dense set `0..n`.
-    SparseInputOrdinals {
-        /// Smallest ordinal below the largest one the expression never reads.
-        missing: u32,
+    /// The reachable access ordinals are not the dense set `0..n`.
+    SparseAccessOrdinals {
+        /// Smallest access below the largest one the expression never reads.
+        missing: AccessOrdinal,
     },
 }
 
@@ -630,7 +632,7 @@ impl PointwiseBf16ExpressionDiagnostic {
             Self::MissingInput => "pointwise-bf16-missing-input",
             Self::InvalidRoot => "pointwise-bf16-invalid-root",
             Self::UnreachableNode { .. } => "pointwise-bf16-unreachable-node",
-            Self::SparseInputOrdinals { .. } => "pointwise-bf16-sparse-input-ordinals",
+            Self::SparseAccessOrdinals { .. } => "pointwise-bf16-sparse-access-ordinals",
         }
     }
 }
@@ -711,7 +713,7 @@ mod tests {
     #[test]
     fn checked_builder_retains_exact_topological_tree() {
         let mut builder = PointwiseBf16ExpressionBuilder::new();
-        let input = builder.input(InputOrdinal::FIRST).unwrap();
+        let input = builder.input(AccessOrdinal::FIRST).unwrap();
         let two = builder.constant(TWO).unwrap();
         let product = builder.multiply(input, two).unwrap();
         let one = builder.constant(ONE).unwrap();
@@ -723,7 +725,7 @@ mod tests {
             expression.nodes(),
             [
                 PointwiseBf16Node::Input {
-                    ordinal: InputOrdinal::FIRST
+                    access: AccessOrdinal::FIRST
                 },
                 PointwiseBf16Node::Constant { bits: TWO },
                 PointwiseBf16Node::Multiply {
@@ -743,7 +745,7 @@ mod tests {
     fn independent_ready_node_insertion_order_canonicalizes_identically() {
         fn first() -> PointwiseBf16Expression {
             let mut builder = PointwiseBf16ExpressionBuilder::new();
-            let input = builder.input(InputOrdinal::FIRST).unwrap();
+            let input = builder.input(AccessOrdinal::FIRST).unwrap();
             let two = builder.constant(TWO).unwrap();
             let three = builder.constant(THREE).unwrap();
             let add = builder.add(input.clone(), two).unwrap();
@@ -753,7 +755,7 @@ mod tests {
         }
         fn second() -> PointwiseBf16Expression {
             let mut builder = PointwiseBf16ExpressionBuilder::new();
-            let input = builder.input(InputOrdinal::FIRST).unwrap();
+            let input = builder.input(AccessOrdinal::FIRST).unwrap();
             let three = builder.constant(THREE).unwrap();
             let two = builder.constant(TWO).unwrap();
             let multiply = builder.multiply(input.clone(), three).unwrap();
@@ -767,7 +769,7 @@ mod tests {
     #[test]
     fn canonicalization_preserves_dag_sharing() {
         let mut builder = PointwiseBf16ExpressionBuilder::new();
-        let input = builder.input(InputOrdinal::FIRST).unwrap();
+        let input = builder.input(AccessOrdinal::FIRST).unwrap();
         let two = builder.constant(TWO).unwrap();
         let shared = builder.multiply(input, two).unwrap();
         let root = builder.add(shared.clone(), shared).unwrap();
@@ -786,15 +788,15 @@ mod tests {
     #[test]
     fn repeated_ordinals_share_a_leaf_and_distinct_ordinals_do_not() {
         let mut shared = PointwiseBf16ExpressionBuilder::new();
-        let first = shared.input(InputOrdinal::FIRST).unwrap();
-        let again = shared.input(InputOrdinal::FIRST).unwrap();
+        let first = shared.input(AccessOrdinal::FIRST).unwrap();
+        let again = shared.input(AccessOrdinal::FIRST).unwrap();
         let root = shared.multiply(first, again).unwrap();
         let expression = shared.build(root).unwrap();
         assert_eq!(expression.input_count(), 1);
 
         let mut distinct = PointwiseBf16ExpressionBuilder::new();
-        let a = distinct.input(InputOrdinal::new(0)).unwrap();
-        let b = distinct.input(InputOrdinal::new(1)).unwrap();
+        let a = distinct.input(AccessOrdinal::new(0)).unwrap();
+        let b = distinct.input(AccessOrdinal::new(1)).unwrap();
         let root = distinct.add(a, b).unwrap();
         let expression = distinct.build(root).unwrap();
         assert!(expression.is_valid());
@@ -805,19 +807,21 @@ mod tests {
     #[test]
     fn a_sparse_input_ordinal_set_is_refused_with_the_missing_ordinal() {
         let mut sparse = PointwiseBf16ExpressionBuilder::new();
-        let first = sparse.input(InputOrdinal::new(0)).unwrap();
-        let third = sparse.input(InputOrdinal::new(2)).unwrap();
+        let first = sparse.input(AccessOrdinal::new(0)).unwrap();
+        let third = sparse.input(AccessOrdinal::new(2)).unwrap();
         let root = sparse.add(first, third).unwrap();
         let retained_root = root.clone();
         let error = sparse.build(root).unwrap_err();
         assert_eq!(
             error.diagnostic(),
-            PointwiseBf16ExpressionDiagnostic::SparseInputOrdinals { missing: 1 }
+            PointwiseBf16ExpressionDiagnostic::SparseAccessOrdinals {
+                missing: AccessOrdinal::new(1)
+            }
         );
         // Amending the recovered builder to read the skipped ordinal is
         // admitted, so the refusal is of the gap and not of the second input.
         let (mut recovered, _) = error.into_parts();
-        let second = recovered.input(InputOrdinal::new(1)).unwrap();
+        let second = recovered.input(AccessOrdinal::new(1)).unwrap();
         let repaired_root = recovered.add(retained_root, second).unwrap();
         let expression = recovered.build(repaired_root).unwrap();
         assert_eq!(expression.input_count(), 3);
@@ -835,7 +839,7 @@ mod tests {
         );
         let (mut recovered, diagnostic) = error.into_parts();
         assert_eq!(diagnostic, PointwiseBf16ExpressionDiagnostic::MissingInput);
-        let input = recovered.input(InputOrdinal::FIRST).unwrap();
+        let input = recovered.input(AccessOrdinal::FIRST).unwrap();
         let repaired_root = recovered.add(input, retained_root).unwrap();
         assert!(recovered.build(repaired_root).is_ok());
     }
@@ -843,9 +847,9 @@ mod tests {
     #[test]
     fn foreign_forward_and_invalid_root_values_are_typed_errors() {
         let mut first = PointwiseBf16ExpressionBuilder::new();
-        let input = first.input(InputOrdinal::FIRST).unwrap();
+        let input = first.input(AccessOrdinal::FIRST).unwrap();
         let mut second = PointwiseBf16ExpressionBuilder::new();
-        let foreign = second.input(InputOrdinal::FIRST).unwrap();
+        let foreign = second.input(AccessOrdinal::FIRST).unwrap();
         assert!(matches!(
             first.add(input.clone(), foreign),
             Err(PointwiseBf16ExpressionAdmissionError::ForeignValue)
@@ -878,7 +882,7 @@ mod tests {
         );
 
         let mut unreachable = PointwiseBf16ExpressionBuilder::new();
-        let input = unreachable.input(InputOrdinal::FIRST).unwrap();
+        let input = unreachable.input(AccessOrdinal::FIRST).unwrap();
         let root = unreachable.constant(0).unwrap();
         let retained_root = root.clone();
         let error = unreachable.build(root).unwrap_err();

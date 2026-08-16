@@ -9,7 +9,7 @@ use tiler_ir::index::{
 };
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::schedule::{
-    AxisDecode, InputOrdinal, LogicalAccess, PointwiseBf16Expression,
+    AccessOrdinal, AxisDecode, LogicalAccess, PointwiseBf16Expression,
     PointwiseBf16ExpressionBuilder, PointwiseBf16Value, PointwiseF32Expression,
     PointwiseF32ExpressionBuilder, PointwiseF32Node, PointwiseF32Value, TensorRole,
     interpret_parametric_broadcast, mapping_names_a_symbol,
@@ -52,6 +52,36 @@ use crate::target::honourability::{
 pub(crate) use crate::target::{TargetProfile, TargetProfileKey};
 
 const REQUEST_SCHEMA_VERSION: u32 = 2;
+
+/// One tensor's position in the declared program-input interface.
+///
+/// This coordinate is compiler-private because it belongs to the checked
+/// semantic request, not to a schedule access list. Keeping it distinct from
+/// [`AccessOrdinal`] prevents a local read position from being reused as an ABI
+/// binding when a region reads a sparse subset or repeats one declared input.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct DeclaredInputOrdinal(u32);
+
+impl DeclaredInputOrdinal {
+    pub(crate) const fn new(ordinal: u32) -> Self {
+        Self(ordinal)
+    }
+
+    pub(crate) const fn get(self) -> u32 {
+        self.0
+    }
+
+    const fn to_be_bytes(self) -> [u8; 4] {
+        self.0.to_be_bytes()
+    }
+}
+
+#[cfg(test)]
+impl PartialEq<u32> for DeclaredInputOrdinal {
+    fn eq(&self, other: &u32) -> bool {
+        self.get() == *other
+    }
+}
 
 /// Maximum distinct numerical contracts admitted in one preference.
 ///
@@ -1599,7 +1629,7 @@ pub(crate) struct NormalizedSerialSum {
     /// `None`: a fold over a declared input has no prologue region, so there is
     /// no read list to state and an inhabited one would describe a region no
     /// cover places.
-    pub(crate) prologue_reads: Vec<(u32, LogicalAccess)>,
+    pub(crate) prologue_reads: Vec<(DeclaredInputOrdinal, LogicalAccess)>,
     /// The declared input ordinal the fold reads directly, or `None` when a
     /// prologue region materializes its contributors.
     ///
@@ -1612,7 +1642,7 @@ pub(crate) struct NormalizedSerialSum {
     /// elementwise walk read every declared input, because such a program
     /// declared exactly one; `sum(b)` beside an independent `a * a` declares two
     /// and folds the second.
-    pub(crate) contributor_input: Option<u32>,
+    pub(crate) contributor_input: Option<DeclaredInputOrdinal>,
     pub(crate) members: RecognizedSerialSumMembers,
     pub(crate) inputs: Vec<ValueId>,
     pub(crate) pointwise_result: ValueId,
@@ -1725,7 +1755,7 @@ pub(crate) struct NormalizedPointwise {
     /// descend and one may appear twice — once densely and once through a
     /// relation — which is how `a * permute(a)` is spelled: two leaves meaning
     /// two different tensors derived from one declared input.
-    pub(crate) reads: Vec<(u32, LogicalAccess)>,
+    pub(crate) reads: Vec<(DeclaredInputOrdinal, LogicalAccess)>,
 }
 
 /// One declared-input read of a verified binary tensor contraction.
@@ -1737,7 +1767,7 @@ pub(crate) struct NormalizedPointwise {
 /// structure operand reads.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NormalizedContractionRead {
-    pub(crate) input_ordinal: u32,
+    pub(crate) input_ordinal: DeclaredInputOrdinal,
     pub(crate) shape: Shape,
     pub(crate) elements: u64,
     pub(crate) value: ValueId,
@@ -1813,7 +1843,7 @@ pub(crate) enum BoundaryRead {
     /// unordinalled role sufficient and a second staged read inadmissible.
     Staged,
     /// The declared program input at this ordinal.
-    Input(u32),
+    Input(DeclaredInputOrdinal),
 }
 
 impl BoundaryRead {
@@ -1821,15 +1851,13 @@ impl BoundaryRead {
     pub(crate) const fn tensor(self) -> TensorRole {
         match self {
             Self::Staged => TensorRole::Intermediate,
-            Self::Input(ordinal) => TensorRole::Input {
-                ordinal: InputOrdinal::new(ordinal),
-            },
+            Self::Input(_) => TensorRole::Input,
         }
     }
 
     /// Returns the declared input ordinal this read binds, or `None` for the
     /// staged one.
-    pub(crate) const fn declared_ordinal(self) -> Option<u32> {
+    pub(crate) const fn declared_ordinal(self) -> Option<DeclaredInputOrdinal> {
         match self {
             Self::Staged => None,
             Self::Input(ordinal) => Some(ordinal),
@@ -2018,7 +2046,7 @@ impl NormalizedStaged {
     /// The staged operand is skipped rather than reported at some ordinal: its
     /// element count sizes a materialization edge, not a declared buffer, and a
     /// caller scaling work over a declared input must not receive it.
-    fn declared_operands(&self) -> impl Iterator<Item = (u32, u64)> + '_ {
+    fn declared_operands(&self) -> impl Iterator<Item = (DeclaredInputOrdinal, u64)> + '_ {
         self.operand_reads
             .iter()
             .zip(&self.operand_elements)
@@ -2178,10 +2206,11 @@ impl NormalizedOutput {
     /// another tensor's size.
     ///
     /// **The count is the declared tensor's own, never the iteration domain of
-    /// a region that reads it.** Its consumer binds
-    /// `TensorRole::Input { ordinal }`, which names the buffer the ABI binds at
-    /// that ordinal, so a count taken from the reading region would scale a call
-    /// by an iteration space rather than by the tensor the caller passed. The
+    /// a region that reads it.** Its consumer binds an exact [`AccessOrdinal`]
+    /// and projects that access through the retained checked request subject to
+    /// this private declared ordinal. A count taken from the reading region
+    /// would scale a call by an iteration space rather than by the tensor the
+    /// caller passed. The
     /// two coincide for a dense read — [`plan_elementwise`] refuses a leaf at
     /// any shape but the region's — and diverge exactly for a widening
     /// structural read: `a * broadcast(w)` over a `[2]` weight iterates `[2, 2]`
@@ -2222,8 +2251,7 @@ impl NormalizedOutput {
     /// proof about relations not yet spelled, which is why the fold stays.
     /// `every_arm_answers_the_declared_tensors_own_count` is what says so, and
     /// says no when an arm reintroduces a domain.
-    pub(crate) fn input_elements_at(&self, ordinal: InputOrdinal) -> Option<u64> {
-        let ordinal = ordinal.get();
+    pub(crate) fn input_elements_at(&self, ordinal: DeclaredInputOrdinal) -> Option<u64> {
         match self {
             // A prologue region's reads address declared tensors from the
             // contributor domain; a prologue-less fold's own contributor read
@@ -2270,7 +2298,7 @@ impl NormalizedOutput {
                 chain
                     .producer
                     .reads_declared_input(ordinal)
-                    .then(|| chain.producer.input_elements_at(InputOrdinal::new(ordinal)))
+                    .then(|| chain.producer.input_elements_at(ordinal))
                     .into_iter()
                     .chain(
                         chain
@@ -2311,7 +2339,7 @@ impl NormalizedOutput {
                             .producer
                             .as_deref()
                             .filter(|producer| producer.reads_declared_input(ordinal))
-                            .map(|producer| producer.input_elements_at(InputOrdinal::new(ordinal))),
+                            .map(|producer| producer.input_elements_at(ordinal)),
                     ),
             )
             .flatten(),
@@ -2329,7 +2357,7 @@ impl NormalizedOutput {
     /// elementwise region in its read list, a fold in its prologue's read list
     /// *or* its own contributor ordinal, a contraction in its operand count, and
     /// a chain in both halves of the chain.
-    fn reads_declared_input(&self, ordinal: u32) -> bool {
+    fn reads_declared_input(&self, ordinal: DeclaredInputOrdinal) -> bool {
         match self {
             Self::Pointwise(normalized) => {
                 normalized.reads.iter().any(|(read, _)| *read == ordinal)
@@ -2645,7 +2673,7 @@ impl NormalizedProgram {
     /// property it enforces is one an added arm or access relation could break,
     /// and a wrong work count is not a failure a later stage catches.
     /// `every_arm_answers_the_declared_tensors_own_count` records the reasoning
-    /// and `a_bound_ordinal_resolves_from_the_output_that_reads_it` records the
+    /// and `a_bound_access_resolves_through_the_checked_request_subject` records the
     /// perturbation that makes this fold refuse again.
     ///
     /// **The fold ranges over the reading outputs, and it has to.** An output
@@ -2667,23 +2695,14 @@ impl NormalizedProgram {
     /// The two `None`s are flattened deliberately: "the reading outputs
     /// disagree" and "no output reads that ordinal" are different findings, and
     /// this accessor's caller acts identically on both — it refuses.
-    pub(crate) fn agreed_input_elements_at(&self, ordinal: InputOrdinal) -> Option<u64> {
+    pub(crate) fn agreed_input_elements_at(&self, ordinal: DeclaredInputOrdinal) -> Option<u64> {
         agreed(
             self.outputs
                 .iter()
-                .filter(|output| output.reads_declared_input(ordinal.get()))
+                .filter(|output| output.reads_declared_input(ordinal))
                 .map(|output| output.input_elements_at(ordinal)),
         )
         .flatten()
-    }
-
-    /// Returns the published element count, when every recognized output agrees.
-    ///
-    /// Agreement for the reason [`Self::agreed_input_elements_at`] states: this
-    /// count sizes work, and two outputs of different extents have no single
-    /// answer to give.
-    pub(crate) fn agreed_output_elements(&self) -> Option<u64> {
-        agreed(self.outputs.iter().map(NormalizedOutput::output_elements))
     }
 
     /// Returns the largest declared input element count over every output.
@@ -2934,8 +2953,8 @@ pub(crate) struct NormalizedSerialSumSubject {
     output_shape: Shape,
     reduction_axes: Vec<Axis>,
     prologue: Option<PointwiseF32Expression>,
-    prologue_reads: Vec<(u32, LogicalAccess)>,
-    contributor_input: Option<u32>,
+    prologue_reads: Vec<(DeclaredInputOrdinal, LogicalAccess)>,
+    contributor_input: Option<DeclaredInputOrdinal>,
     members: RecognizedSerialSumMembers,
     input_elements: u64,
     output_elements: u64,
@@ -3719,9 +3738,9 @@ fn encode_pointwise_expression(bytes: &mut Vec<u8>, expression: &PointwiseF32Exp
     push_len(bytes, expression.nodes().len());
     for node in expression.nodes() {
         match node {
-            PointwiseF32Node::Input { ordinal } => {
+            PointwiseF32Node::Input { access } => {
                 bytes.push(0x01);
-                bytes.extend_from_slice(&ordinal.get().to_be_bytes());
+                bytes.extend_from_slice(&access.get().to_be_bytes());
             }
             PointwiseF32Node::Constant { bits } => {
                 bytes.push(0x02);
@@ -3761,9 +3780,9 @@ fn encode_pointwise_bf16_expression(bytes: &mut Vec<u8>, expression: &PointwiseB
     push_len(bytes, expression.nodes().len());
     for node in expression.nodes() {
         match node {
-            tiler_ir::schedule::PointwiseBf16Node::Input { ordinal } => {
+            tiler_ir::schedule::PointwiseBf16Node::Input { access } => {
                 bytes.push(0x01);
-                bytes.extend_from_slice(&ordinal.get().to_be_bytes());
+                bytes.extend_from_slice(&access.get().to_be_bytes());
             }
             tiler_ir::schedule::PointwiseBf16Node::Constant { bits } => {
                 bytes.push(0x02);
@@ -3863,7 +3882,11 @@ const PARAMETRIC_BROADCAST_ACCESS_TAG: u8 = 0x05;
 /// [`u32::MAX`] rather than truncating, which no request reaches:
 /// [`check_program_budgets`] bounds a program's declared inputs far below it, so
 /// the saturation is unreachable rather than a collision this encoder tolerates.
-fn encode_elementwise_reads(output: &mut Vec<u8>, declared: usize, reads: &[(u32, LogicalAccess)]) {
+fn encode_elementwise_reads(
+    output: &mut Vec<u8>,
+    declared: usize,
+    reads: &[(DeclaredInputOrdinal, LogicalAccess)],
+) {
     let written = || {
         reads
             .iter()
@@ -3877,7 +3900,8 @@ fn encode_elementwise_reads(output: &mut Vec<u8>, declared: usize, reads: &[(u32
             })
     };
     let declared = u32::try_from(declared).unwrap_or(u32::MAX);
-    let unread = || (0..declared).filter(|ordinal| !reads.iter().any(|(seen, _)| seen == ordinal));
+    let unread =
+        || (0..declared).filter(|ordinal| !reads.iter().any(|(seen, _)| seen.get() == *ordinal));
     push_len(output, written().count() + unread().count());
     for (_, (ordinal, map)) in written() {
         output.extend_from_slice(&ordinal.to_be_bytes());
@@ -4016,12 +4040,12 @@ impl NormalizedSerialSumSubject {
     }
     /// The prologue region's reads, in access order; empty when there is no
     /// prologue.
-    pub(crate) fn prologue_reads(&self) -> &[(u32, LogicalAccess)] {
+    pub(crate) fn prologue_reads(&self) -> &[(DeclaredInputOrdinal, LogicalAccess)] {
         &self.prologue_reads
     }
     /// The declared input ordinal a prologue-less fold reads directly, or
     /// `None` when a prologue region materializes its contributors.
-    pub(crate) const fn contributor_input(&self) -> Option<u32> {
+    pub(crate) const fn contributor_input(&self) -> Option<DeclaredInputOrdinal> {
         self.contributor_input
     }
     pub(crate) const fn members(&self) -> &RecognizedSerialSumMembers {
@@ -5311,13 +5335,15 @@ fn resolve_numerical_contract(
 ///   per-region role to the conclusion that nothing in `tiler-ir` forbade the
 ///   chain. The role is indeed per-region; what forbade the chain was the
 ///   *access contract* each scalar-program family declares around it.
-///   `verify_pointwise_region` required read access `i` to be
-///   `TensorRole::Input { ordinal: i }` at every position, so no
+///   At that step `verify_pointwise_region` required read access `i` to be an
+///   input carrying declared ordinal `i` at every position, so no
 ///   `ScalarProgram::PointwiseF32` region could read an intermediate at all —
 ///   `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
-///   separated the access position from the declared input the role names, and a
-///   pointwise region may now read one materialized intermediate alongside
-///   non-descending declared inputs. `verify_access_and_semantics` then
+///   separated the access position from the declared input the role named. The
+///   role is fieldless now; the compiler projects each exact access through the
+///   retained checked request subject, and a pointwise region may read one
+///   materialized intermediate alongside declared inputs.
+///   `verify_access_and_semantics` then
 ///   admitted a fold only when its owning write targeted `TensorRole::Output`,
 ///   and `admit-a-strict-serial-fold-that-writes-a-materialized-intermediate`
 ///   replaced that with a cover-assigned obligation at every committing pass. A
@@ -5725,7 +5751,7 @@ fn check_output_cover(
         };
         if !outputs
             .iter()
-            .any(|output| output.reads_declared_input(ordinal))
+            .any(|output| output.reads_declared_input(DeclaredInputOrdinal::new(ordinal)))
         {
             return mismatch("input-set");
         }
@@ -5829,7 +5855,7 @@ struct RecognizedElementwise {
     /// names the declared input ordinal it binds and the relation it addresses
     /// that tensor with. An ordinal appears twice when one declared input is
     /// read both densely and through a relation.
-    reads: Vec<(u32, LogicalAccess)>,
+    reads: Vec<(DeclaredInputOrdinal, LogicalAccess)>,
 }
 
 /// Which values one elementwise walk *reads* rather than computes.
@@ -6214,17 +6240,22 @@ fn canonical_input_reads(
 /// Returns [`RequestError::UnsupportedCapability`] under `elementwise-reads` for
 /// a value the declaration does not name and `input-ordinal` for a declaration
 /// position no expression ordinal can hold.
-fn declared_ordinal(declared: &[ValueId], value: ValueId) -> Result<u32, RequestError> {
+fn declared_ordinal(
+    declared: &[ValueId],
+    value: ValueId,
+) -> Result<DeclaredInputOrdinal, RequestError> {
     let position = declared.iter().position(|input| *input == value).ok_or(
         RequestError::UnsupportedCapability {
             phase: "strategy",
             rule: "elementwise-reads",
         },
     )?;
-    u32::try_from(position).map_err(|_| RequestError::UnsupportedCapability {
-        phase: "strategy",
-        rule: "input-ordinal",
-    })
+    u32::try_from(position)
+        .map(DeclaredInputOrdinal::new)
+        .map_err(|_| RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "input-ordinal",
+        })
 }
 
 /// Records one leaf read at its first sighting, or refuses a second read of one
@@ -6443,7 +6474,7 @@ trait PointwiseMintSink {
     type Expression;
 
     /// Mints a read of the expression input at one dense leaf ordinal.
-    fn input(&mut self, ordinal: InputOrdinal) -> Result<Self::Value, &'static str>;
+    fn input(&mut self, ordinal: AccessOrdinal) -> Result<Self::Value, &'static str>;
     /// Mints an exact constant leaf from its canonical bit pattern.
     fn constant(&mut self, bits: u32) -> Result<Self::Value, &'static str>;
     /// Mints one ordered addition.
@@ -6464,7 +6495,7 @@ impl PointwiseMintSink for F32Mint {
     type Value = PointwiseF32Value;
     type Expression = PointwiseF32Expression;
 
-    fn input(&mut self, ordinal: InputOrdinal) -> Result<Self::Value, &'static str> {
+    fn input(&mut self, ordinal: AccessOrdinal) -> Result<Self::Value, &'static str> {
         self.0.input(ordinal).map_err(|_| "elementwise-node-limit")
     }
 
@@ -6505,7 +6536,7 @@ impl PointwiseMintSink for Bf16Mint {
     type Value = PointwiseBf16Value;
     type Expression = PointwiseBf16Expression;
 
-    fn input(&mut self, ordinal: InputOrdinal) -> Result<Self::Value, &'static str> {
+    fn input(&mut self, ordinal: AccessOrdinal) -> Result<Self::Value, &'static str> {
         self.0.input(ordinal).map_err(|_| "elementwise-node-limit")
     }
 
@@ -6586,7 +6617,7 @@ fn mint_into<S: PointwiseMintSink>(
                         phase: "strategy",
                         rule: "input-ordinal",
                     })?;
-                sink.input(InputOrdinal::new(ordinal))
+                sink.input(AccessOrdinal::new(ordinal))
             }
             ElementwiseMint::Constant(bits) => sink.constant(*bits),
             ElementwiseMint::Node(family, operands) => {
@@ -7665,8 +7696,9 @@ fn normalize_contraction(
         let Some(declaration) = declared.iter().position(|declared| *declared == operand) else {
             return mismatch("contraction-operands");
         };
-        let input_ordinal =
-            u32::try_from(declaration).map_err(|_| RequestError::UnsupportedCapability {
+        let input_ordinal = u32::try_from(declaration)
+            .map(DeclaredInputOrdinal::new)
+            .map_err(|_| RequestError::UnsupportedCapability {
                 phase: "strategy",
                 rule: "input-ordinal",
             })?;
@@ -8625,7 +8657,10 @@ mod tests {
         assert_eq!(staged.member, SemanticMemberId(0));
         assert_eq!(
             staged.operand_reads,
-            [BoundaryRead::Input(0), BoundaryRead::Input(1)]
+            [
+                BoundaryRead::Input(DeclaredInputOrdinal::new(0)),
+                BoundaryRead::Input(DeclaredInputOrdinal::new(1))
+            ]
         );
         assert_eq!(staged.producer, None);
         assert_eq!(staged.output_shape, Shape::from_dims([2, 2]));
@@ -8802,7 +8837,10 @@ mod tests {
         // the edge and operand one is the independent third declared input.
         assert_eq!(
             staged.operand_reads,
-            [BoundaryRead::Staged, BoundaryRead::Input(2)]
+            [
+                BoundaryRead::Staged,
+                BoundaryRead::Input(DeclaredInputOrdinal::new(2))
+            ]
         );
         assert_eq!(staged.member, SemanticMemberId(1));
         // The producer, recognized as the shape a standalone contraction output
@@ -8843,13 +8881,13 @@ mod tests {
         // the two agree at `[2, 2]`, so the accessor answers rather than
         // refusing.
         for ordinal in [0, 1, 2] {
-            assert!(recognized.reads_declared_input(ordinal));
+            assert!(recognized.reads_declared_input(DeclaredInputOrdinal::new(ordinal)));
             assert_eq!(
-                recognized.input_elements_at(InputOrdinal::new(ordinal)),
+                recognized.input_elements_at(DeclaredInputOrdinal::new(ordinal)),
                 Some(4),
             );
         }
-        assert!(!recognized.reads_declared_input(3));
+        assert!(!recognized.reads_declared_input(DeclaredInputOrdinal::new(3)));
         assert_eq!(recognized.max_input_elements(), 4);
 
         // **The boundary this widening does not move, asserted rather than
@@ -9127,12 +9165,12 @@ mod tests {
             for (ordinal, expected) in counts.iter().enumerate() {
                 let ordinal = u32::try_from(ordinal).expect("the fixtures declare few inputs");
                 assert_eq!(
-                    output.input_elements_at(InputOrdinal::new(ordinal)),
+                    output.input_elements_at(DeclaredInputOrdinal::new(ordinal)),
                     *expected,
                     "{label}: ordinal {ordinal} is not the declared tensor's own count",
                 );
                 assert_eq!(
-                    output.reads_declared_input(ordinal),
+                    output.reads_declared_input(DeclaredInputOrdinal::new(ordinal)),
                     expected.is_some(),
                     "{label}: ordinal {ordinal} — the predicate and the count disagree about what \
                      this walk reads",
@@ -9140,7 +9178,7 @@ mod tests {
             }
             let past = u32::try_from(counts.len()).expect("the fixtures declare few inputs");
             assert_eq!(
-                output.input_elements_at(InputOrdinal::new(past)),
+                output.input_elements_at(DeclaredInputOrdinal::new(past)),
                 None,
                 "{label}: an ordinal past the declaration produced a count",
             );
@@ -9240,7 +9278,9 @@ mod tests {
         };
         assert_ne!(
             encoded(recognized),
-            forge(|staged| staged.operand_reads[0] = BoundaryRead::Input(0)),
+            forge(|staged| {
+                staged.operand_reads[0] = BoundaryRead::Input(DeclaredInputOrdinal::new(0));
+            }),
             "the operand's boundary role is part of what the occurrence reads",
         );
         assert_ne!(
@@ -9280,7 +9320,7 @@ mod tests {
     /// Builds the five-node `input * scale + bias` expression a forgery swaps in.
     fn affine_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
         let mut expression = PointwiseF32ExpressionBuilder::new();
-        let input = expression.input(InputOrdinal::FIRST).unwrap();
+        let input = expression.input(AccessOrdinal::FIRST).unwrap();
         let scale = expression.constant(scale_bits).unwrap();
         let product = expression.multiply(input, scale).unwrap();
         let bias = expression.constant(bias_bits).unwrap();
@@ -9938,7 +9978,7 @@ mod tests {
         );
         assert_eq!(
             recognized.reads,
-            vec![(0, LogicalAccess::LinearIdentity)],
+            vec![(DeclaredInputOrdinal::new(0), LogicalAccess::LinearIdentity)],
             "one dense read of the one declared input",
         );
     }
@@ -10275,7 +10315,7 @@ mod tests {
         assert_eq!(
             recognized.reads,
             vec![(
-                0,
+                DeclaredInputOrdinal::new(0),
                 LogicalAccess::ReindexBijection {
                     operand_shape: Shape::from_dims([2, 3]),
                     result_shape: Shape::from_dims([3, 2]),
@@ -10366,9 +10406,9 @@ mod tests {
         assert_eq!(
             recognized.reads,
             vec![
-                (0, LogicalAccess::LinearIdentity),
+                (DeclaredInputOrdinal::new(0), LogicalAccess::LinearIdentity),
                 (
-                    0,
+                    DeclaredInputOrdinal::new(0),
                     LogicalAccess::ReindexBijection {
                         operand_shape: Shape::from_dims([2, 2]),
                         result_shape: Shape::from_dims([2, 2]),
@@ -10909,14 +10949,23 @@ mod tests {
             assert_eq!(
                 product.reads,
                 vec![
-                    (0, LogicalAccess::LinearIdentity),
-                    (expected, LogicalAccess::LinearIdentity),
+                    (DeclaredInputOrdinal::new(0), LogicalAccess::LinearIdentity),
+                    (
+                        DeclaredInputOrdinal::new(expected),
+                        LogicalAccess::LinearIdentity
+                    ),
                 ],
             );
             assert_eq!(product.expression.f32().input_count(), 2);
             // The other output reads the remaining input at one leaf, twice.
             let other = if outer { 1 } else { 2 };
-            assert_eq!(doubled.reads, vec![(other, LogicalAccess::LinearIdentity)]);
+            assert_eq!(
+                doubled.reads,
+                vec![(
+                    DeclaredInputOrdinal::new(other),
+                    LogicalAccess::LinearIdentity
+                )]
+            );
             assert_eq!(doubled.expression.f32().input_count(), 1);
         }
     }
@@ -10995,7 +11044,7 @@ mod tests {
             assert_eq!(fold.prologue, None);
             assert_eq!(
                 fold.contributor_input,
-                Some(u32::try_from(ordinal).unwrap())
+                Some(DeclaredInputOrdinal::new(u32::try_from(ordinal).unwrap()))
             );
 
             let mut bytes = Vec::new();
@@ -11016,8 +11065,13 @@ mod tests {
     /// programs.
     #[test]
     fn the_read_run_marks_unread_declared_inputs_and_leaves_a_complete_list_empty() {
-        let dense = |ordinal| (ordinal, LogicalAccess::LinearIdentity);
-        let run = |reads: &[(u32, LogicalAccess)]| {
+        let dense = |ordinal| {
+            (
+                DeclaredInputOrdinal::new(ordinal),
+                LogicalAccess::LinearIdentity,
+            )
+        };
+        let run = |reads: &[(DeclaredInputOrdinal, LogicalAccess)]| {
             let mut bytes = Vec::new();
             encode_elementwise_reads(&mut bytes, 3, reads);
             bytes
@@ -11337,15 +11391,20 @@ mod tests {
             );
             let skipped = (0..3).find(|ordinal| !pair.contains(ordinal)).unwrap();
             for ordinal in pair {
-                assert!(recognized.outputs()[0].reads_declared_input(ordinal));
+                assert!(
+                    recognized.outputs()[0]
+                        .reads_declared_input(DeclaredInputOrdinal::new(ordinal))
+                );
                 assert_eq!(
-                    recognized.outputs()[0].input_elements_at(InputOrdinal::new(ordinal)),
+                    recognized.outputs()[0].input_elements_at(DeclaredInputOrdinal::new(ordinal)),
                     Some(4),
                 );
             }
-            assert!(!recognized.outputs()[0].reads_declared_input(skipped));
+            assert!(
+                !recognized.outputs()[0].reads_declared_input(DeclaredInputOrdinal::new(skipped))
+            );
             assert_eq!(
-                recognized.outputs()[0].input_elements_at(InputOrdinal::new(skipped)),
+                recognized.outputs()[0].input_elements_at(DeclaredInputOrdinal::new(skipped)),
                 None,
             );
 

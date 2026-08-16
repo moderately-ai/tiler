@@ -14,7 +14,7 @@ use super::cooperative::{
     ParticipantSpace, StagedRead, StagedSpan, StagedWrite, WorkgroupStaging,
 };
 use super::error::{ContributorError, ElementCountOverflow};
-use super::handles::{BoundsWitnessId, InputOrdinal, OwnershipWitnessId, RegionId};
+use super::handles::{AccessOrdinal, BoundsWitnessId, OwnershipWitnessId, RegionId};
 use super::numerics::{
     ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
     NumericalRealization, SubnormalFreedom, SubnormalMode, ValueDomainProvenance,
@@ -28,39 +28,23 @@ use super::synchronization::{
 
 /// The role a boundary tensor plays for one scheduled region.
 ///
-/// A region may read several distinct input tensors, so `Input` names *which*
-/// one. The ordinal lives on the role rather than beside it because the role is
-/// what travels: a buffer parameter, a bounds proof, a boundary requirement, and
-/// an opaque call binding each carry a `TensorRole` and nothing else that could
-/// separate two reads, and two facts that must always travel together are one
-/// value. The sibling [`crate::index`] region reaches the same separation by
-/// computing a positional ordinal among same-role tensors when it encodes
-/// identity; this states it instead of deriving it.
+/// This role classifies an access as input, intermediate, or output. Identity
+/// among several accesses with the same role belongs to their ordered position
+/// or an explicit [`AccessOrdinal`], not to the category itself.
 ///
 /// **Do not add `#[non_exhaustive]`.** This is an ADR 0074 convention 5b type
 /// for the same reason [`AccessMode`] is: `push_tensor_role` in
-/// `tiler-compiler`'s `selection.rs` and `frontier.rs`, and
-/// `push_tensor_role_name` and `tensor_role_name_len` in its `call_registry.rs`,
-/// map it *totally* onto identity tags and subject strings from outside this
-/// crate with no wildcard arm. A wildcard there would have to
+/// `tiler-compiler`'s `selection.rs` and `frontier.rs` maps it *totally* onto
+/// identity tags from outside this crate with no wildcard arm. A wildcard there would have to
 /// invent a tag the variant alone determines, so a variant added later would
 /// encode under some other variant's bytes instead of failing the build.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum TensorRole {
-    /// One named program input consumed by the region.
-    Input {
-        /// Which declared input tensor this access binds.
-        ///
-        /// The *declared* one, not the position of the access carrying it: a
-        /// region reading a materialized intermediate and the program's third
-        /// input binds that input at its own access position while still naming
-        /// ordinal `2`, because a consumer resolves the ordinal against the
-        /// program's declared interface and the position against the region's
-        /// own buffer list. The two coincide for a region that reads a dense
-        /// prefix of the declared inputs, which is every region the current
-        /// compiler builds, and they are different facts.
-        ordinal: InputOrdinal,
-    },
+    /// An input boundary consumed by the region.
+    ///
+    /// Association with a named program input belongs to the compiler's checked
+    /// request subject and the program stage, not to this category.
+    Input,
     /// A materialized intermediate produced or consumed by the region.
     Intermediate,
     /// A program output produced by the region.
@@ -1042,7 +1026,7 @@ pub enum ReductionTopology {
     /// extent is live.
     LiveContraction {
         /// Input whose axis supplies the contracted trip count.
-        live_input: crate::schedule::InputOrdinal,
+        live_access: AccessOrdinal,
         /// Axis of that input whose live extent is the contracted bound.
         live_axis: Axis,
         /// Contributor combination order within the contracted space.
@@ -1410,37 +1394,32 @@ pub struct ScheduledRegion {
 ///
 /// Derived from the region's own access maps and reduction topology rather
 /// than stored beside them, so a region that names no live extent stays the
-/// same subject it was. Canonical order is `(input ordinal, axis)`.
+/// same subject it was. Canonical order is `(access ordinal, axis)`.
+///
+/// # Panics
+///
+/// Panics only if a directly constructed, unverified region contains more than
+/// `u32::MAX` accesses. Verified regions are bounded far below that population.
 #[must_use]
-pub fn live_input_extents(schedule: &ScheduledRegion) -> Vec<(TensorRole, Axis)> {
+pub fn live_input_extents(schedule: &ScheduledRegion) -> Vec<(AccessOrdinal, Axis)> {
     let mut extents = Vec::new();
-    for access in &schedule.index.accesses {
+    for (position, access) in schedule.index.accesses.iter().enumerate() {
         if let LogicalAccess::LiveRowMajor { inner_axis } = &access.map
-            && matches!(access.tensor, TensorRole::Input { .. })
+            && matches!(access.tensor, TensorRole::Input)
         {
-            extents.push((access.tensor, *inner_axis));
+            let position = u32::try_from(position).expect("verified access count is bounded");
+            extents.push((AccessOrdinal::new(position), *inner_axis));
         }
     }
     if let ReductionTopology::LiveContraction {
-        live_input,
+        live_access,
         live_axis,
         ..
     } = &schedule.schedule.reduction
     {
-        extents.push((
-            TensorRole::Input {
-                ordinal: *live_input,
-            },
-            *live_axis,
-        ));
+        extents.push((*live_access, *live_axis));
     }
-    extents.sort_by_key(|(role, axis)| {
-        let ordinal = match *role {
-            TensorRole::Input { ordinal } => ordinal.get(),
-            TensorRole::Intermediate | TensorRole::Output => u32::MAX,
-        };
-        (ordinal, axis.get())
-    });
+    extents.sort_by_key(|(access, axis)| (access.get(), axis.get()));
     extents.dedup();
     extents
 }
@@ -2260,17 +2239,11 @@ fn push_order(bytes: &mut Vec<u8>, order: ContributorOrder) {
 
 /// Encodes one boundary tensor role.
 ///
-/// The input ordinal follows its tag rather than being folded into it, so the
-/// role tags stay a three-value table and the ordinal keeps its own fixed width.
-/// Two reads of two different input tensors therefore differ in these bytes,
-/// which is the whole point: a region reading `a * b` and one reading `a * a`
-/// are different computations and must not share identity.
+/// Access identity is carried by the owning ordered access list and explicit
+/// access references. This encoder records only the role category.
 fn push_tensor_role(bytes: &mut Vec<u8>, role: TensorRole) {
     match role {
-        TensorRole::Input { ordinal } => {
-            bytes.push(0x01);
-            bytes.extend_from_slice(&ordinal.get().to_be_bytes());
-        }
+        TensorRole::Input => bytes.push(0x01),
         TensorRole::Intermediate => bytes.push(0x02),
         TensorRole::Output => bytes.push(0x03),
     }
@@ -2602,7 +2575,7 @@ fn push_pointwise_f32_node(bytes: &mut Vec<u8>, node: &PointwiseF32Node) {
 
     let encoded_len = match node {
         // A tag plus one `u32` covers every node with a single field, whatever
-        // that field means: an input ordinal, a constant payload, or one
+        // that field means: an access ordinal, a constant payload, or one
         // elementary function's argument. Grouped because the *encoded width* is
         // the only thing this function decides; the tags that distinguish them
         // are pushed below.
@@ -2617,9 +2590,9 @@ fn push_pointwise_f32_node(bytes: &mut Vec<u8>, node: &PointwiseF32Node) {
     push_len(bytes, encoded_len);
     let start = bytes.len();
     match node {
-        PointwiseF32Node::Input { ordinal } => {
+        PointwiseF32Node::Input { access } => {
             push_slice(bytes, &[0x01]);
-            push_slice(bytes, &ordinal.get().to_be_bytes());
+            push_slice(bytes, &access.get().to_be_bytes());
         }
         PointwiseF32Node::Constant { bits } => {
             push_slice(bytes, &[0x02]);
@@ -2688,9 +2661,9 @@ fn push_pointwise_bf16_node(bytes: &mut Vec<u8>, node: &PointwiseBf16Node) {
     push_len(bytes, encoded_len);
     let start = bytes.len();
     match node {
-        PointwiseBf16Node::Input { ordinal } => {
+        PointwiseBf16Node::Input { access } => {
             push_slice(bytes, &[0x01]);
-            push_slice(bytes, &ordinal.get().to_be_bytes());
+            push_slice(bytes, &access.get().to_be_bytes());
         }
         PointwiseBf16Node::Constant { bits } => {
             push_slice(bytes, &[0x02]);
@@ -3039,14 +3012,14 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
             bytes.push(u8::from(*permits_permutation));
         }
         ReductionTopology::LiveContraction {
-            live_input,
+            live_access,
             live_axis,
             order,
             permits_reassociation,
             permits_permutation,
         } => {
             bytes.push(TAG_REDUCTION_LIVE_CONTRACTION);
-            bytes.extend_from_slice(&live_input.get().to_be_bytes());
+            bytes.extend_from_slice(&live_access.get().to_be_bytes());
             bytes.extend_from_slice(&live_axis.get().to_be_bytes());
             push_order(bytes, *order);
             bytes.push(u8::from(*permits_reassociation));
@@ -3176,7 +3149,7 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
 /// the domain.
 pub(super) fn encode_identity(region: &ScheduledRegion) -> CanonicalScheduledRegionIdentity {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"tiler.schedule.v5\0");
+    bytes.extend_from_slice(b"tiler.schedule.v6\0");
     push_shape(&mut bytes, &region.index.iteration_shape);
     push_len(&mut bytes, region.index.accesses.len());
     for access in &region.index.accesses {

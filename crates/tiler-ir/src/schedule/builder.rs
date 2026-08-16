@@ -22,7 +22,9 @@ use super::error::{
     BlockedWorkgroupRule, ContributorCoverageRule, CooperativeTileRule, ScheduleBuildError,
     ScheduleComponent, ScheduleLimitKind, ScheduledRegionBuildError, ScheduledRegionDiagnostic,
 };
-use super::handles::{InputOrdinal, RegionId, StagingId};
+#[cfg(test)]
+use super::handles::AccessOrdinal;
+use super::handles::{RegionId, StagingId};
 use super::model::{
     Access, AccessMode, BoundsProof, BoundsProofKind, CanonicalScheduledRegionIdentity,
     ContractionAxisSource, ContributorCoverage, ContributorOrder, ContributorPartition,
@@ -297,17 +299,6 @@ const fn incomplete(component: ScheduleComponent) -> ScheduledRegionDiagnostic {
     ScheduledRegionDiagnostic::IncompleteRegion { component }
 }
 
-/// The boundary role of a region that reads exactly one program input tensor.
-///
-/// Named once rather than spelled at each site because these families are
-/// *defined* by reading a single tensor: the strict-affine dequantize reads three
-/// components of one encoded tensor, and the reduction families read one
-/// contributor domain. A second input tensor in either is a different scalar
-/// program, not a wider spelling of these.
-const FIRST_INPUT: TensorRole = TensorRole::Input {
-    ordinal: InputOrdinal::FIRST,
-};
-
 /// Which boundary tensor one fold's contributor read is required to bind.
 ///
 /// Two obligations rather than one role, because two different facts decide it.
@@ -329,7 +320,7 @@ const FIRST_INPUT: TensorRole = TensorRole::Input {
 enum ContributorTensor {
     /// This boundary tensor and no other.
     Exactly(TensorRole),
-    /// Any declared input, with its program ordinal retained by the role.
+    /// Any input access; declared-interface association belongs to the compiler.
     DeclaredInput,
     /// The fold's declared contributor domain, wherever the plan placed it: the
     /// input tensor the program folds directly, or a materialized intermediate
@@ -342,7 +333,7 @@ impl ContributorTensor {
     fn admits(self, tensor: TensorRole) -> bool {
         match self {
             Self::Exactly(required) => tensor == required,
-            Self::DeclaredInput => matches!(tensor, TensorRole::Input { .. }),
+            Self::DeclaredInput => matches!(tensor, TensorRole::Input),
             Self::DeclaredDomain => {
                 tensor == TensorRole::Intermediate || Self::DeclaredInput.admits(tensor)
             }
@@ -597,26 +588,10 @@ fn verify_contraction(
     {
         return Err(ScheduledRegionDiagnostic::AccessContract);
     }
-    // The operands bind two distinct program inputs in canonical declaration
-    // order. They need not be the first two: a contraction may read a subset of
-    // a wider declared interface. Strict ascent separately refuses a repeated
-    // tensor and a descending spelling of the same pair, so every admitted
-    // region has one access order and keeps the program's ABI ordinals.
-    let (
-        TensorRole::Input {
-            ordinal: left_ordinal,
-        },
-        TensorRole::Input {
-            ordinal: right_ordinal,
-        },
-    ) = (left.tensor, right.tensor)
-    else {
+    if !matches!(left.tensor, TensorRole::Input) || !matches!(right.tensor, TensorRole::Input) {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
-    };
-    if left_ordinal.get() >= right_ordinal.get()
-        || left.component_role.is_some()
-        || right.component_role.is_some()
-    {
+    }
+    if left.component_role.is_some() || right.component_role.is_some() {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
     verify_proof_records(region, &[left, right], write)?;
@@ -705,7 +680,7 @@ fn verify_live_contraction(
     write: &Access,
 ) -> Result<(), ScheduledRegionDiagnostic> {
     let ReductionTopology::LiveContraction {
-        live_input,
+        live_access,
         live_axis,
         order: scheduled_order,
         permits_reassociation,
@@ -742,21 +717,10 @@ fn verify_live_contraction(
     {
         return Err(ScheduledRegionDiagnostic::AccessContract);
     }
-    let (
-        TensorRole::Input {
-            ordinal: left_ordinal,
-        },
-        TensorRole::Input {
-            ordinal: right_ordinal,
-        },
-    ) = (left.tensor, right.tensor)
-    else {
+    if !matches!(left.tensor, TensorRole::Input) || !matches!(right.tensor, TensorRole::Input) {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
-    };
-    if left_ordinal.get() >= right_ordinal.get()
-        || left.component_role.is_some()
-        || right.component_role.is_some()
-    {
+    }
+    if left.component_role.is_some() || right.component_role.is_some() {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
     verify_proof_records(region, &[left, right], write)?;
@@ -814,20 +778,15 @@ fn verify_live_contraction(
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
 
-    let named = if left.tensor
-        == (TensorRole::Input {
-            ordinal: *live_input,
-        }) {
-        left
-    } else if right.tensor
-        == (TensorRole::Input {
-            ordinal: *live_input,
-        })
-    {
-        right
-    } else {
+    let Some(named) = usize::try_from(live_access.get())
+        .ok()
+        .and_then(|position| region.index.accesses.get(position))
+    else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
+    if named.mode != AccessMode::Read || !matches!(named.tensor, TensorRole::Input) {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
     let LogicalAccess::ContractionOperand { operand_shape, .. } = &named.map else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
@@ -899,21 +858,10 @@ fn verify_cooperative_contraction(
     {
         return Err(ScheduledRegionDiagnostic::AccessContract);
     }
-    let (
-        TensorRole::Input {
-            ordinal: left_ordinal,
-        },
-        TensorRole::Input {
-            ordinal: right_ordinal,
-        },
-    ) = (left.tensor, right.tensor)
-    else {
+    if !matches!(left.tensor, TensorRole::Input) || !matches!(right.tensor, TensorRole::Input) {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
-    };
-    if left_ordinal.get() >= right_ordinal.get()
-        || left.component_role.is_some()
-        || right.component_role.is_some()
-    {
+    }
+    if left.component_role.is_some() || right.component_role.is_some() {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
     verify_proof_records(region, &[left, right], write)?;
@@ -1070,15 +1018,13 @@ fn verify_pointwise_bf16(
 ///
 /// Two obligations make an N-input region safe, and they are about different
 /// things. **The count**: there must be exactly as many reads as the expression
-/// has input leaves, or an expression could read an ordinal no access binds — a
+/// has input leaves, or an expression could read a position no access binds — a
 /// load through a buffer the signature never declares. The expression's own
-/// verifier already proved its ordinals are the dense `0..n`, so leaf `i` is
+/// verifier already proved its access coordinates are the dense `0..n`, so leaf `i` is
 /// served by read `i` and the pairing is exhaustive rather than a sample.
-/// **The binding**: each read must name a boundary tensor in the canonical order
-/// [`reads_bind_boundary_tensors_in_order`] states, or a consumer that binds
-/// buffers positionally would bind the wrong one without noticing. Two reads may
-/// name one declared input when they address it differently, which that rule
-/// states and bounds.
+/// **The binding category**: each read must name an input or the sole attributed
+/// materialized intermediate. Exact declared-input association is absent here
+/// and is projected later from the compiler's checked request subject.
 ///
 /// Shared by the two width-specific verifiers above rather than written twice:
 /// the obligation is about *accesses*, and nothing in it reads an element type.
@@ -1123,37 +1069,14 @@ fn verify_pointwise_region(
     Ok(())
 }
 
-/// Returns whether one pointwise region's reads bind boundary tensors in the
-/// canonical order.
+/// Returns whether one pointwise region's reads use admissible boundary categories.
 ///
-/// **A read's position and its boundary role are separate facts.** A read's
-/// *position* is the expression leaf it serves: `crate::kernel`'s
-/// `emit_pointwise` looks a leaf's ordinal up among the values loaded in access
-/// order, so position is what pairs a leaf with a buffer. A read's *tensor role*
-/// is which boundary tensor that buffer binds, and [`TensorRole::Input`]'s
-/// ordinal names one declared program input rather than the access position —
-/// `CoverAssembly::from_plan` in `tiler-compiler` binds it against the program's
-/// declared interface. Requiring the two to be equal made an elementwise
-/// epilogue inexpressible: a region reading a materialized intermediate and the
-/// program's third input has leaves `0` and `1`, and its second read must still
-/// say `Input { ordinal: 2 }` or name the wrong tensor.
+/// A read's access position is the expression leaf it serves. `TensorRole::Input`
+/// is intentionally fieldless; the compiler binds each exact position against
+/// its already-verified request subject. Two local rules remain intrinsic:
 ///
-/// What that separation protects survives as three rules:
-///
-/// - **Declared input ordinals never descend, and a repeat is a dense read
-///   followed by a mapped one.** A descending pair would be a second spelling of
-///   one computation — one region with two identities. A repeat is admitted
-///   because one expression may read one tensor through two different relations:
-///   `a * permute(a)` needs a dense read *and* a reindexed read of declared
-///   input `0`, and binding one access to both leaves is what once made that
-///   program compile as `permute(a) * permute(a)`. The pair carries its own
-///   canonical order rather than needing one imposed: the dense read leads, so
-///   the two encodings of the pair are not both admissible and the region keeps
-///   one spelling. Two *structural* relations on one ordinal stay refused for
-///   the same reason the order exists — nothing ranks two relations against each
-///   other, so the pair would have two spellings and no canonical one.
-/// - **At most one read binds the materialized intermediate.** The role carries
-///   no ordinal, so a second read leaves nothing to say which materialization
+/// - **At most one read binds the materialized intermediate.** A second read
+///   leaves nothing to say which materialization
 ///   edge it binds — which is exactly why the repeated-read admission above
 ///   cannot extend to it. `CoverAssembly::from_plan` refuses that a layer up
 ///   under `cover-intermediate-read-attribution`; stating it here is what stops
@@ -1163,31 +1086,10 @@ fn verify_pointwise_region(
 ///   wildcard, so a role added to the vocabulary later is a build error here
 ///   instead of silently inheriting an admission nobody checked it for.
 fn reads_bind_boundary_tensors_in_order(reads: &[Access]) -> bool {
-    let mut previous_input: Option<(u32, &LogicalAccess)> = None;
     let mut intermediate_reads = 0_usize;
     for read in reads {
         match read.tensor {
-            TensorRole::Input { ordinal } => {
-                let ordinal = ordinal.get();
-                if let Some((previous_ordinal, previous_map)) = previous_input {
-                    if ordinal < previous_ordinal {
-                        return false;
-                    }
-                    // The repeat's canonical spelling, and the whole of what
-                    // separates two admissible reads of one tensor from one read
-                    // written twice: the dense read leads and the mapped one
-                    // follows. Two dense reads address identically and so serve
-                    // interchangeable leaves, and a mapped read ahead of a dense
-                    // one is the same pair reversed.
-                    if ordinal == previous_ordinal
-                        && (*previous_map != LogicalAccess::LinearIdentity
-                            || read.map == LogicalAccess::LinearIdentity)
-                    {
-                        return false;
-                    }
-                }
-                previous_input = Some((ordinal, &read.map));
-            }
+            TensorRole::Input => {}
             TensorRole::Intermediate => {
                 intermediate_reads += 1;
                 if intermediate_reads > 1 {
@@ -1285,7 +1187,7 @@ fn verify_strict_affine_u4_dequantize(
     if *codes_role != STRICT_AFFINE_CODES_ROLE
         || *scale_role != STRICT_AFFINE_SCALE_ROLE
         || *zero_point_role != STRICT_AFFINE_ZERO_POINT_ROLE
-        || codes.tensor != FIRST_INPUT
+        || codes.tensor != TensorRole::Input
         || codes.component_role != Some(*codes_role)
         || codes.mode != AccessMode::Read
         || codes.ownership.is_some()
@@ -1293,12 +1195,12 @@ fn verify_strict_affine_u4_dequantize(
             != (LogicalAccess::PackedU4LsbZeroTail {
                 logical_elements: region.schedule.work_items,
             })
-        || scale.tensor != FIRST_INPUT
+        || scale.tensor != TensorRole::Input
         || scale.component_role != Some(*scale_role)
         || scale.mode != AccessMode::Read
         || scale.ownership.is_some()
         || scale.map != LogicalAccess::ScalarBroadcast
-        || zero_point.tensor != FIRST_INPUT
+        || zero_point.tensor != TensorRole::Input
         || zero_point.component_role != Some(*zero_point_role)
         || zero_point.mode != AccessMode::Read
         || zero_point.ownership.is_some()
@@ -1656,7 +1558,7 @@ fn split_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
                 bits: *empty_identity_bits,
             },
             consumes_reassociation: true,
-            contributor_tensor: ContributorTensor::Exactly(FIRST_INPUT),
+            contributor_tensor: ContributorTensor::DeclaredInput,
             parallel: ParallelFamily::Split { final_pass: false },
         }),
         ScalarProgram::SquaredSerialSumThenEpilogue {
@@ -1671,7 +1573,7 @@ fn split_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
                 bits: *empty_identity_bits,
             },
             consumes_reassociation: true,
-            contributor_tensor: ContributorTensor::Exactly(FIRST_INPUT),
+            contributor_tensor: ContributorTensor::DeclaredInput,
             parallel: ParallelFamily::SerialOnly,
         }),
         ScalarProgram::StrictSerialMaximum { axes, order, .. } => Some(SplitFamily {
@@ -1679,7 +1581,7 @@ fn split_family(program: &ScalarProgram) -> Option<SplitFamily<'_>> {
             order,
             empty_domain: EmptyDomainContract::NoIdentity,
             consumes_reassociation: false,
-            contributor_tensor: ContributorTensor::Exactly(FIRST_INPUT),
+            contributor_tensor: ContributorTensor::DeclaredInput,
             parallel: ParallelFamily::Split { final_pass: true },
         }),
         // No pointwise or decode program folds anything, and the contraction
@@ -3148,12 +3050,8 @@ mod tests {
     /// The pointwise program is encoded as a typed, framed topological graph,
     /// so its exact operand order, constants, root, and physical `f32` family are all pinned.
     ///
-    /// Rebaselined deliberately at the `tiler.schedule.v5` step, which widened
-    /// the cooperative staging relation to two dimensions: this region stages
-    /// nothing, so its *payload* is untouched and only the separator moved — a
-    /// claim `the_staging_relation_step_moves_only_the_domain_separator` proves
-    /// rather than asserts, by comparing the two constants byte for byte past
-    /// the tag.
+    /// Rebaselined deliberately at the `tiler.schedule.v6` step, which removed
+    /// the declared-input ordinal payload from fieldless input roles.
     ///
     /// Earlier rebaselines recorded the `tiler.schedule.v4` step, which gave
     /// [`CooperativeTile`] its round count; the `v3` step, which gave
@@ -3162,15 +3060,15 @@ mod tests {
     /// input leaf's framed length grew from nine to twenty-one; and before that,
     /// the old `ScalarProgram::MultiplyThenAdd` tag (`0x21`) becoming the exact
     /// `ScalarProgram::PointwiseF32` expression encoding (`0x24`).
-    const STRICT_F32_REGION_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e7635000000000000000002000000000000000200000000000000030000000000000002010000000000010100000000000200020100000001010000000000000000000000020000000001000000000011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
+    const STRICT_F32_REGION_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e763600000000000000000200000000000000020000000000000003000000000000000201000101000000000002000201000000010100000000000000000000000200000000010011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
     /// Canonical identity of the one-committer `[2, 6] -> [2]` cooperative fixture.
     ///
     /// Captured against the bytes this tree encodes for that fixture so a
     /// later payload move fails this pin rather than only the domain-separator
     /// check. The new topology and binding tags must not appear here.
-    const ONE_COMMITTER_COOPERATIVE_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e763500000000000000000200000000000000020000000000000003000000000000000202000102000000000000000200000000000000020000000000000006000000000000000100000000000000020000000000000001000000010100000000000300020100000001010000000000000000000000020000000002001200000000000000020000000000000002000000000000000600000000000000010000000000000002000000000000000100000001010000000103001100000000000000020000000003000000000000000222000000000000000100000001017fc0000000000000000000000000001574696c65722e746573742e7374726963742d6633327fc00000010101020101010101000000000000000600000003010000000035000000000000000300000000000000020100000000000000010000000000000003000000000000000100000000000000010000000001000000000000000300000000000000010000000000000002000000000000000000000000000000000000000300000000000000010000000000000000000000010000000000000001000000000000000000000000000000010000000000000000000000010000000000000000000000000000000300000000000000000000000000000001000000000000000000000001000000000000000000000000000000000000000000000003000000000000000100000000010202010002010000000000000001000000000000000000000000000000030100000000000000000000000000000001000000000000000100000001010301000100000000000000060000000301";
+    const ONE_COMMITTER_COOPERATIVE_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e763600000000000000000200000000000000020000000000000003000000000000000202000102000000000000000200000000000000020000000000000006000000000000000100000000000000020000000000000001000000010100000000000300020100000001010000000000000000000000020000000002001200000000000000020000000000000002000000000000000600000000000000010000000000000002000000000000000100000001010000000103001100000000000000020000000003000000000000000222000000000000000100000001017fc0000000000000000000000000001574696c65722e746573742e7374726963742d6633327fc00000010101020101010101000000000000000600000003010000000035000000000000000300000000000000020100000000000000010000000000000003000000000000000100000000000000010000000001000000000000000300000000000000010000000000000002000000000000000000000000000000000000000300000000000000010000000000000000000000010000000000000001000000000000000000000000000000010000000000000000000000010000000000000000000000000000000300000000000000000000000000000001000000000000000000000001000000000000000000000000000000000000000000000003000000000000000100000000010202010002010000000000000001000000000000000000000000000000030100000000000000000000000000000001000000000000000100000001010301000100000000000000060000000301";
 
-    /// The same region's identity under `tiler.schedule.v4`.
+    /// The same region's identity under `tiler.schedule.v5`.
     ///
     /// Retained rather than deleted, because it is what makes the `v5` step's
     /// blast radius a measured fact instead of an assurance: everything after
@@ -3186,7 +3084,7 @@ mod tests {
     /// proving exactly one step. That discards the `v3` datum deliberately; its
     /// whole content was the `v3` to `v4` claim, which the commit that made it
     /// already carries.
-    const STRICT_F32_REGION_IDENTITY_HEX_V4: &str = "74696c65722e7363686564756c652e7634000000000000000002000000000000000200000000000000030000000000000002010000000000010100000000000200020100000001010000000000000000000000020000000001000000000011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
+    const STRICT_F32_REGION_IDENTITY_HEX_V5: &str = "74696c65722e7363686564756c652e7635000000000000000002000000000000000200000000000000030000000000000002010000000000010100000000000200020100000001010000000000000000000000020000000001000000000011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
 
     fn strict_numerical() -> NumericalRealization {
         NumericalRealization::new(
@@ -3208,7 +3106,7 @@ mod tests {
         bias_bits: u32,
     ) -> super::super::PointwiseF32Expression {
         let mut expression = PointwiseF32ExpressionBuilder::new();
-        let input = expression.input(InputOrdinal::FIRST).unwrap();
+        let input = expression.input(AccessOrdinal::FIRST).unwrap();
         let scale = expression.constant(scale_bits).unwrap();
         let product = expression.multiply(input, scale).unwrap();
         let bias = expression.constant(bias_bits).unwrap();
@@ -3221,9 +3119,7 @@ mod tests {
         builder.iteration_shape(shape).unwrap();
         builder
             .push_access(Access {
-                tensor: TensorRole::Input {
-                    ordinal: InputOrdinal::FIRST,
-                },
+                tensor: TensorRole::Input,
                 component_role: None,
                 mode: AccessMode::Read,
                 map: LogicalAccess::LinearIdentity,
@@ -3244,9 +3140,7 @@ mod tests {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(0),
-                tensor: TensorRole::Input {
-                    ordinal: InputOrdinal::FIRST,
-                },
+                tensor: TensorRole::Input,
                 component_role: None,
                 kind: BoundsProofKind::LinearRange {
                     element_count: elements,
@@ -3363,15 +3257,9 @@ mod tests {
         assert!(builder.build().is_ok());
 
         let mut rejected = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6);
-        rejected.accesses[1].tensor = TensorRole::Input {
-            ordinal: InputOrdinal::FIRST,
-        };
-        rejected.bounds_proofs[1].tensor = TensorRole::Input {
-            ordinal: InputOrdinal::FIRST,
-        };
-        rejected.ownership_proof.as_mut().unwrap().tensor = TensorRole::Input {
-            ordinal: InputOrdinal::FIRST,
-        };
+        rejected.accesses[1].tensor = TensorRole::Input;
+        rejected.bounds_proofs[1].tensor = TensorRole::Input;
+        rejected.ownership_proof.as_mut().unwrap().tensor = TensorRole::Input;
         assert_eq!(
             rejected.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
@@ -3384,9 +3272,9 @@ mod tests {
     /// bounds proof each, and a write of the program output.
     fn three_input_builder(elements: u64) -> ScheduledRegionBuilder {
         let mut expression = PointwiseF32ExpressionBuilder::new();
-        let a = expression.input(InputOrdinal::new(0)).unwrap();
-        let b = expression.input(InputOrdinal::new(1)).unwrap();
-        let c = expression.input(InputOrdinal::new(2)).unwrap();
+        let a = expression.input(AccessOrdinal::new(0)).unwrap();
+        let b = expression.input(AccessOrdinal::new(1)).unwrap();
+        let c = expression.input(AccessOrdinal::new(2)).unwrap();
         let product = expression.multiply(a, b).unwrap();
         let root = expression.add(product, c).unwrap();
         let expression = expression.build(root).unwrap();
@@ -3398,9 +3286,7 @@ mod tests {
         for ordinal in 0..3 {
             builder
                 .push_access(Access {
-                    tensor: TensorRole::Input {
-                        ordinal: InputOrdinal::new(ordinal),
-                    },
+                    tensor: TensorRole::Input,
                     component_role: None,
                     mode: AccessMode::Read,
                     map: LogicalAccess::LinearIdentity,
@@ -3423,9 +3309,7 @@ mod tests {
             builder
                 .push_bounds_proof(BoundsProof {
                     id: BoundsWitnessId::new(ordinal),
-                    tensor: TensorRole::Input {
-                        ordinal: InputOrdinal::new(ordinal),
-                    },
+                    tensor: TensorRole::Input,
                     component_role: None,
                     kind: BoundsProofKind::LinearRange {
                         element_count: elements,
@@ -3469,54 +3353,23 @@ mod tests {
         assert_eq!(verified.region().index.accesses.len(), 4);
     }
 
-    /// The reads must name non-descending declared inputs, and two dense reads
-    /// of one input are an ambiguous binding rather than a program.
+    /// Input roles do not carry program-interface association.
     ///
-    /// Each perturbation leaves every other fact — access count, modes, proofs,
-    /// expression — intact, so this isolates the binding rule from the arity
-    /// rule below.
-    ///
-    /// **The ordinals need not be the dense prefix `0..n`, and the third case
-    /// pins that deliberately.** The ordinal names the declared input tensor the
-    /// read binds, not the access position, so a region reading inputs `0`, `1`,
-    /// and `7` of a wider interface is well formed — and it has to be, because an
-    /// elementwise epilogue reading a materialized intermediate alongside the
-    /// program's later inputs cannot name a prefix at all.
+    /// Reordering otherwise identical input accesses remains intrinsically
+    /// well-formed. The compiler owns the checked association between each
+    /// exact local access and the declared program input it serves.
     #[test]
-    fn read_accesses_must_name_non_descending_declared_inputs() {
+    fn input_access_roles_are_fieldless_and_positioned_by_the_access_list() {
         let mut permuted = three_input_builder(4);
         permuted.accesses.swap(0, 1);
         permuted.bounds_proofs.swap(0, 1);
-        assert_eq!(
-            permuted.build().unwrap_err().diagnostics(),
-            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        assert!(permuted.build().is_ok());
+        let verified = three_input_builder(4).build().unwrap();
+        assert!(
+            verified.region().index.accesses[..3]
+                .iter()
+                .all(|access| access.tensor == TensorRole::Input)
         );
-
-        // A repeated ordinal whose two reads address identically: both are
-        // `LinearIdentity`, so nothing distinguishes the leaves they serve and
-        // one input is left unbound. Refused, and it is the neighbour of the
-        // admitted pair below rather than a different rule.
-        let mut repeated = three_input_builder(4);
-        repeated.accesses[2].tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(1),
-        };
-        repeated.bounds_proofs[2].tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(1),
-        };
-        assert_eq!(
-            repeated.build().unwrap_err().diagnostics(),
-            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
-        );
-
-        // Ascending with a gap: the third leaf binds the eighth declared input.
-        let mut sparse = three_input_builder(4);
-        sparse.accesses[2].tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(7),
-        };
-        sparse.bounds_proofs[2].tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(7),
-        };
-        assert!(sparse.build().is_ok());
     }
 
     /// A rank-one reindex over the whole extent, mirrored or not.
@@ -3538,8 +3391,7 @@ mod tests {
         }
     }
 
-    /// One declared input may be read twice when the two reads address it
-    /// differently, and the pair has exactly one canonical spelling.
+    /// One input may be read twice when the two reads address it differently.
     ///
     /// This is the region behind `a * permute(a)`: two expression leaves mean
     /// two different tensors derived from one declared input, so they need two
@@ -3547,11 +3399,8 @@ mod tests {
     /// that program compile as `permute(a) * permute(a)` and return a wrong
     /// tensor, so the admission and its bound are the same rule.
     ///
-    /// The three refusals are what the widening must not lose. **Reversed**: the
-    /// mapped read ahead of the dense one is the same pair written the other way
-    /// round, and admitting both would give one region two identities. **Two
-    /// relations**: nothing ranks two structural relations against each other,
-    /// so that pair has no canonical order at all. **A repeated intermediate**:
+    /// Local access order is identity-bearing and the compiler binds that order
+    /// to its checked request subject. A repeated intermediate remains refused:
     /// the role carries no ordinal, so the attribution that makes the input pair
     /// unambiguous is exactly what it lacks.
     #[test]
@@ -3559,13 +3408,9 @@ mod tests {
         let control = three_input_builder(4).build().unwrap();
 
         let mut paired = three_input_builder(4);
-        paired.accesses[1].tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(0),
-        };
+        paired.accesses[1].tensor = TensorRole::Input;
         paired.accesses[1].map = whole_extent_reindex(4, true);
-        paired.bounds_proofs[1].tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(0),
-        };
+        paired.bounds_proofs[1].tensor = TensorRole::Input;
         let verified = paired.build().unwrap();
         // Three reads and a write still bind four buffers: a second read of one
         // declared input is a second binding, not a shared one.
@@ -3580,30 +3425,17 @@ mod tests {
 
         let mut reversed = three_input_builder(4);
         reversed.accesses[0].map = whole_extent_reindex(4, true);
-        reversed.accesses[1].tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(0),
-        };
-        reversed.bounds_proofs[1].tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(0),
-        };
-        assert_eq!(
-            reversed.build().unwrap_err().diagnostics(),
-            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
-        );
+        reversed.accesses[1].tensor = TensorRole::Input;
+        reversed.bounds_proofs[1].tensor = TensorRole::Input;
+        let reversed = reversed.build().unwrap();
+        assert_ne!(reversed.canonical_identity(), verified.canonical_identity());
 
         let mut two_relations = three_input_builder(4);
         two_relations.accesses[0].map = whole_extent_reindex(4, false);
-        two_relations.accesses[1].tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(0),
-        };
+        two_relations.accesses[1].tensor = TensorRole::Input;
         two_relations.accesses[1].map = whole_extent_reindex(4, true);
-        two_relations.bounds_proofs[1].tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(0),
-        };
-        assert_eq!(
-            two_relations.build().unwrap_err().diagnostics(),
-            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
-        );
+        two_relations.bounds_proofs[1].tensor = TensorRole::Input;
+        assert!(two_relations.build().is_ok());
 
         let mut two_intermediates = three_input_builder(4);
         for position in 0..2 {
@@ -3689,9 +3521,7 @@ mod tests {
         long.accesses.insert(
             3,
             Access {
-                tensor: TensorRole::Input {
-                    ordinal: InputOrdinal::new(3),
-                },
+                tensor: TensorRole::Input,
                 component_role: None,
                 mode: AccessMode::Read,
                 map: LogicalAccess::LinearIdentity,
@@ -3703,9 +3533,7 @@ mod tests {
             3,
             BoundsProof {
                 id: BoundsWitnessId::new(4),
-                tensor: TensorRole::Input {
-                    ordinal: InputOrdinal::new(3),
-                },
+                tensor: TensorRole::Input,
                 component_role: None,
                 kind: BoundsProofKind::LinearRange { element_count: 4 },
             },
@@ -3725,8 +3553,8 @@ mod tests {
         let three = three_input_builder(4).build().unwrap();
 
         let mut expression = PointwiseF32ExpressionBuilder::new();
-        let a = expression.input(InputOrdinal::new(0)).unwrap();
-        let b = expression.input(InputOrdinal::new(1)).unwrap();
+        let a = expression.input(AccessOrdinal::new(0)).unwrap();
+        let b = expression.input(AccessOrdinal::new(1)).unwrap();
         // The same shape of program, but the product squares its first input.
         let product = expression.multiply(a.clone(), a).unwrap();
         let root = expression.add(product, b).unwrap();
@@ -3769,7 +3597,7 @@ mod tests {
     fn the_reciprocal_square_root_node_separates_identity_from_the_exponential() {
         fn elementary(reciprocal_square_root: bool) -> super::super::PointwiseF32Expression {
             let mut builder = PointwiseF32ExpressionBuilder::new();
-            let input = builder.input(InputOrdinal::FIRST).unwrap();
+            let input = builder.input(AccessOrdinal::FIRST).unwrap();
             let root = if reciprocal_square_root {
                 builder.rsqrt(input).unwrap()
             } else {
@@ -3787,7 +3615,7 @@ mod tests {
     fn pointwise_identity_canonicalizes_ready_order_and_separates_semantics() {
         fn ready_order(reverse: bool) -> super::super::PointwiseF32Expression {
             let mut builder = PointwiseF32ExpressionBuilder::new();
-            let input = builder.input(InputOrdinal::FIRST).unwrap();
+            let input = builder.input(AccessOrdinal::FIRST).unwrap();
             let (two, three) = if reverse {
                 let three = builder.constant(3.0_f32.to_bits()).unwrap();
                 let two = builder.constant(2.0_f32.to_bits()).unwrap();
@@ -3818,7 +3646,7 @@ mod tests {
 
         let association = {
             let mut builder = PointwiseF32ExpressionBuilder::new();
-            let input = builder.input(InputOrdinal::FIRST).unwrap();
+            let input = builder.input(AccessOrdinal::FIRST).unwrap();
             let two = builder.constant(2.0_f32.to_bits()).unwrap();
             let three = builder.constant(3.0_f32.to_bits()).unwrap();
             let inner = builder.add(two, three).unwrap();
@@ -3829,7 +3657,7 @@ mod tests {
 
         let operand_order = {
             let mut builder = PointwiseF32ExpressionBuilder::new();
-            let input = builder.input(InputOrdinal::FIRST).unwrap();
+            let input = builder.input(AccessOrdinal::FIRST).unwrap();
             let two = builder.constant(2.0_f32.to_bits()).unwrap();
             let three = builder.constant(3.0_f32.to_bits()).unwrap();
             let add = builder.add(two, input.clone()).unwrap();
@@ -3841,7 +3669,7 @@ mod tests {
 
         let constant_bits = {
             let mut builder = PointwiseF32ExpressionBuilder::new();
-            let input = builder.input(InputOrdinal::FIRST).unwrap();
+            let input = builder.input(AccessOrdinal::FIRST).unwrap();
             let two = builder.constant((-2.0_f32).to_bits()).unwrap();
             let three = builder.constant(3.0_f32.to_bits()).unwrap();
             let add = builder.add(input.clone(), two).unwrap();
@@ -3856,7 +3684,7 @@ mod tests {
     fn pointwise_identity_separates_signed_zero_and_nan_payload_bits() {
         fn literal_identity(bits: u32) -> Vec<u8> {
             let mut builder = PointwiseF32ExpressionBuilder::new();
-            let input = builder.input(InputOrdinal::FIRST).unwrap();
+            let input = builder.input(AccessOrdinal::FIRST).unwrap();
             let constant = builder.constant(bits).unwrap();
             let root = builder.add(input, constant).unwrap();
             identity_with_pointwise_expression(builder.build(root).unwrap())
@@ -4221,7 +4049,7 @@ mod tests {
         builder.iteration_shape(output.clone()).unwrap();
         builder
             .push_access(Access {
-                tensor: FIRST_INPUT,
+                tensor: TensorRole::Input,
                 component_role: None,
                 mode: AccessMode::Read,
                 map: LogicalAccess::ReductionContributor {
@@ -4247,7 +4075,7 @@ mod tests {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(0),
-                tensor: FIRST_INPUT,
+                tensor: TensorRole::Input,
                 component_role: None,
                 kind: BoundsProofKind::ReductionDomain {
                     input_shape: input,
@@ -4289,16 +4117,12 @@ mod tests {
     }
 
     /// Builds a valid `mk,nk->mn` contraction over the named program inputs.
-    fn contraction_builder(left_ordinal: u32, right_ordinal: u32) -> ScheduledRegionBuilder {
+    fn contraction_builder() -> ScheduledRegionBuilder {
         let operand = Shape::from_dims([2, 3]);
         let output = Shape::from_dims([2, 2]);
         let contracted = Shape::from_dims([3]);
-        let left = TensorRole::Input {
-            ordinal: InputOrdinal::new(left_ordinal),
-        };
-        let right = TensorRole::Input {
-            ordinal: InputOrdinal::new(right_ordinal),
-        };
+        let left = TensorRole::Input;
+        let right = TensorRole::Input;
         let operand_map = |free_position| LogicalAccess::ContractionOperand {
             operand_shape: operand.clone(),
             output_shape: output.clone(),
@@ -4380,42 +4204,22 @@ mod tests {
         builder
     }
 
-    /// Contraction reads retain program ordinals and require strict ascent.
-    ///
-    /// Repeat and descent are perturbed independently, with their proof tensor
-    /// changed beside the access so each malformed fixture fails only the
-    /// canonical-ordinal rule rather than proof/reference agreement.
+    /// Contraction inputs are distinguished by exact access position, not role payload.
     #[test]
-    fn contraction_input_ordinals_may_skip_but_may_not_repeat_or_descend() {
-        let skipped = contraction_builder(0, 2)
-            .build()
-            .expect("two distinct ascending program ordinals need not be dense");
-        let dense = contraction_builder(0, 1)
-            .build()
-            .expect("the dense control verifies");
-        assert_ne!(
-            skipped.canonical_identity(),
-            dense.canonical_identity(),
-            "the program input ordinals participate in schedule identity",
-        );
-
-        let repeated = contraction_builder(0, 0).build().unwrap_err();
+    fn contraction_inputs_are_distinguished_by_access_position() {
+        let verified = contraction_builder().build().unwrap();
         assert_eq!(
-            repeated.diagnostics(),
-            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
-            "a contraction read the same declared input twice",
+            verified.region().index.accesses[0].tensor,
+            TensorRole::Input
         );
-
-        let descending = contraction_builder(2, 0).build().unwrap_err();
         assert_eq!(
-            descending.diagnostics(),
-            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
-            "a contraction encoded one input pair in descending order",
+            verified.region().index.accesses[1].tensor,
+            TensorRole::Input
         );
     }
 
     fn live_contraction_builder(
-        live_input: u32,
+        live_access: u32,
         live_axis: u32,
         output: [u64; 2],
     ) -> ScheduledRegionBuilder {
@@ -4423,12 +4227,8 @@ mod tests {
         let right_shape = Shape::from_dims([output[1]]);
         let output_shape = Shape::from_dims(output);
         let contracted = Shape::from_dims([]);
-        let left = TensorRole::Input {
-            ordinal: InputOrdinal::new(0),
-        };
-        let right = TensorRole::Input {
-            ordinal: InputOrdinal::new(1),
-        };
+        let left = TensorRole::Input;
+        let right = TensorRole::Input;
         let owner = OwnershipWitnessId::new(0);
         let output_elements = element_count(&output_shape).unwrap_or(0);
         let mut builder = ScheduledRegionBuilder::new(RegionId::new(42));
@@ -4501,7 +4301,7 @@ mod tests {
         builder
             .schedule(KernelSchedule {
                 reduction: ReductionTopology::LiveContraction {
-                    live_input: InputOrdinal::new(live_input),
+                    live_access: AccessOrdinal::new(live_access),
                     live_axis: Axis::new(live_axis),
                     order: ContributorOrder::OriginalAxisLexicographic,
                     permits_reassociation: false,
@@ -4575,14 +4375,14 @@ mod tests {
 
     /// The scale a root-mean-square normalization's producing stage computes.
     ///
-    /// `Rsqrt(a / N + eps)` over the fold's value, which is input ordinal zero.
+    /// `Rsqrt(a / N + eps)` over the fold's value, which is local access zero.
     /// The shipped instance of a fold epilogue, spelled here from the physical
     /// vocabulary rather than from any law: what this module verifies is the
     /// *schedule*, and it has no opinion on which semantic operation the chain
     /// realizes.
     fn scale_epilogue() -> PointwiseF32Expression {
         let mut builder = PointwiseF32ExpressionBuilder::new();
-        let total = builder.input(InputOrdinal::FIRST).unwrap();
+        let total = builder.input(AccessOrdinal::FIRST).unwrap();
         let extent = builder.constant(6.0_f32.to_bits()).unwrap();
         let mean = builder.divide(total, extent).unwrap();
         let bias = builder.constant(1.0e-6_f32.to_bits()).unwrap();
@@ -4633,7 +4433,7 @@ mod tests {
     #[test]
     fn a_fold_epilogue_that_computes_nothing_is_refused() {
         let mut builder = PointwiseF32ExpressionBuilder::new();
-        let leaf = builder.input(InputOrdinal::FIRST).unwrap();
+        let leaf = builder.input(AccessOrdinal::FIRST).unwrap();
         let identity = builder.build(leaf).unwrap();
         assert_eq!(
             serial_reduction_builder(squared_sum_with_epilogue(identity))
@@ -4654,8 +4454,8 @@ mod tests {
     #[test]
     fn a_fold_epilogue_reading_a_second_input_is_refused() {
         let mut builder = PointwiseF32ExpressionBuilder::new();
-        let total = builder.input(InputOrdinal::FIRST).unwrap();
-        let other = builder.input(InputOrdinal::new(1)).unwrap();
+        let total = builder.input(AccessOrdinal::FIRST).unwrap();
+        let other = builder.input(AccessOrdinal::new(1)).unwrap();
         let sum = builder.add(total, other).unwrap();
         let two_leaves = builder.build(sum).unwrap();
         assert_eq!(two_leaves.input_count(), 2);
@@ -4698,7 +4498,7 @@ mod tests {
         );
 
         let mut other = PointwiseF32ExpressionBuilder::new();
-        let total = other.input(InputOrdinal::FIRST).unwrap();
+        let total = other.input(AccessOrdinal::FIRST).unwrap();
         let extent = other.constant(7.0_f32.to_bits()).unwrap();
         let mean = other.divide(total, extent).unwrap();
         let bias = other.constant(1.0e-6_f32.to_bits()).unwrap();
@@ -4926,7 +4726,7 @@ mod tests {
     /// The partial pass of an extrema split: fold the scores, stage one maximum.
     fn extrema_partial_builder(partition: ContributorPartition) -> ScheduledRegionBuilder {
         let mut builder = partial_pass_builder(partition);
-        into_extrema_split(&mut builder, vec![Axis::new(1)], FIRST_INPUT);
+        into_extrema_split(&mut builder, vec![Axis::new(1)], TensorRole::Input);
         builder
     }
 
@@ -4967,8 +4767,8 @@ mod tests {
             },
             strict_numerical(),
         );
-        builder.accesses[0].tensor = FIRST_INPUT;
-        builder.bounds_proofs[0].tensor = FIRST_INPUT;
+        builder.accesses[0].tensor = TensorRole::Input;
+        builder.bounds_proofs[0].tensor = TensorRole::Input;
         builder.scalar_program = Some(maximum_scalar());
         builder
     }
@@ -5483,11 +5283,6 @@ mod tests {
         builder.bounds_proofs[0].tensor = tensor;
     }
 
-    /// A nonzero declared input tensor used to prove ordinals are retained.
-    const SECOND_INPUT: TensorRole = TensorRole::Input {
-        ordinal: InputOrdinal::new(1),
-    };
-
     /// One inhabitant of every [`ScalarProgram`] variant and its expected
     /// reduction-family classification.
     ///
@@ -5504,7 +5299,7 @@ mod tests {
     fn scalar_program_family_population()
     -> [ScalarProgramFamilyCase; variant_count::<ScalarProgram>()] {
         let mut bf16 = PointwiseBf16ExpressionBuilder::new();
-        let bf16_input = bf16.input(InputOrdinal::FIRST).unwrap();
+        let bf16_input = bf16.input(AccessOrdinal::FIRST).unwrap();
         let bf16 = bf16.build(bf16_input).unwrap();
         [
             ScalarProgramFamilyCase {
@@ -5666,17 +5461,15 @@ mod tests {
     /// Every family shared by the three topologies admits the same boundary
     /// contributor tensors.
     ///
-    /// Four representative roles cover the complete predicate vocabulary:
-    /// first and nonzero declared inputs, the materialized intermediate, and the
-    /// refused output. The expected answer comes from the family derivation and
+    /// Three roles cover the complete fieldless predicate vocabulary: an input,
+    /// the materialized intermediate, and the refused output. The expected answer comes from the family derivation and
     /// is checked independently through each production admission, so changing
     /// only the serial gate's read predicate makes this test fail even though the
     /// family table and both parallel gates still agree.
     #[test]
     fn shared_families_admit_the_same_contributor_tensors_in_every_topology() {
         let tensors = [
-            FIRST_INPUT,
-            SECOND_INPUT,
+            TensorRole::Input,
             TensorRole::Intermediate,
             TensorRole::Output,
         ];
@@ -5740,12 +5533,12 @@ mod tests {
                 .is_err()
         );
         assert!(
-            partial_family_builder(contracted.clone(), FIRST_INPUT)
+            partial_family_builder(contracted.clone(), TensorRole::Input)
                 .build()
                 .is_err()
         );
         assert!(
-            cooperative_family_builder(contracted, FIRST_INPUT)
+            cooperative_family_builder(contracted, TensorRole::Input)
                 .build()
                 .is_err()
         );
@@ -5917,7 +5710,7 @@ mod tests {
         );
     }
 
-    /// A bare serial sum folds a declared input or a materialized domain.
+    /// A bare serial sum folds an input access or a materialized domain.
     ///
     /// **The widening, and its exact width.** `ScalarProgram::StrictSerialSum`
     /// carries no prologue, so it says how contributors combine and nothing about
@@ -5942,20 +5735,10 @@ mod tests {
             "the prologue-carrying plan still folds the intermediate it staged",
         );
 
-        let mut second = serial_reduction_builder(bare_sum(vec![Axis::new(1)]));
-        read_from(&mut second, SECOND_INPUT);
-        let second = second
-            .build()
-            .expect("the fold retains a nonzero input ordinal");
-
-        let first = serial_reduction_builder(bare_sum(vec![Axis::new(1)]))
+        let input = serial_reduction_builder(bare_sum(vec![Axis::new(1)]))
             .build()
             .unwrap();
-        assert_ne!(
-            first.canonical_identity().as_bytes(),
-            second.canonical_identity().as_bytes(),
-            "the input ordinal is part of scheduled-region identity",
-        );
+        assert_eq!(input.region().index.accesses[0].tensor, TensorRole::Input);
 
         let mut output = serial_reduction_builder(bare_sum(vec![Axis::new(1)]));
         read_from(&mut output, TensorRole::Output);
@@ -6087,7 +5870,7 @@ mod tests {
             );
 
             let mut into_input = serial_reduction_builder(scalar);
-            write_to(&mut into_input, FIRST_INPUT);
+            write_to(&mut into_input, TensorRole::Input);
             assert_eq!(
                 into_input.build().unwrap_err().diagnostics(),
                 [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
@@ -6143,7 +5926,7 @@ mod tests {
         );
 
         let mut into_input = final_pass_builder(SPLIT);
-        write_to(&mut into_input, FIRST_INPUT);
+        write_to(&mut into_input, TensorRole::Input);
         assert_eq!(
             into_input.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
@@ -6175,14 +5958,14 @@ mod tests {
         assert!(final_pass_builder(SPLIT).build().is_ok());
 
         let mut partial = partial_pass_builder(SPLIT);
-        read_from(&mut partial, SECOND_INPUT);
+        read_from(&mut partial, TensorRole::Input);
         assert!(
             partial.build().is_ok(),
-            "a prologue-less fold's partial pass retains the input ordinal it folds",
+            "a prologue-less fold's partial pass retains the declared input it folds",
         );
 
         let mut combine = final_pass_builder(SPLIT);
-        read_from(&mut combine, FIRST_INPUT);
+        read_from(&mut combine, TensorRole::Input);
         assert_eq!(
             combine.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
@@ -6206,12 +5989,11 @@ mod tests {
         );
 
         let mut input = cooperative_builder(cooperative_tile_fixture());
-        read_from(&mut input, SECOND_INPUT);
+        read_from(&mut input, TensorRole::Input);
         assert!(input.build().is_ok());
     }
 
-    /// A fused affine fold retains a nonzero declared-input ordinal in every
-    /// topology that can spell the family.
+    /// A fused affine fold reads an input access in every supported topology.
     #[test]
     fn an_affine_fold_reads_any_declared_input_in_serial_and_parallel_forms() {
         let affine = ScalarProgram::FusedMultiplyAddSerialSum {
@@ -6225,21 +6007,21 @@ mod tests {
         };
 
         let mut serial = serial_reduction_builder(affine.clone());
-        read_from(&mut serial, SECOND_INPUT);
+        read_from(&mut serial, TensorRole::Input);
         serial
             .build()
             .expect("the serial affine fold reads input one");
 
         let mut partial = partial_pass_builder(SPLIT);
         partial.scalar_program = Some(affine.clone());
-        read_from(&mut partial, SECOND_INPUT);
+        read_from(&mut partial, TensorRole::Input);
         partial
             .build()
             .expect("the affine partial pass reads input one");
 
         let mut cooperative = cooperative_builder(cooperative_tile_fixture());
         cooperative.scalar_program = Some(affine);
-        read_from(&mut cooperative, SECOND_INPUT);
+        read_from(&mut cooperative, TensorRole::Input);
         cooperative
             .build()
             .expect("the affine cooperative tile reads input one");
@@ -6280,10 +6062,9 @@ mod tests {
         );
     }
 
-    /// Family-specific first-input rules remain exact when the generic fold
-    /// contributor domain widens.
+    /// Family-specific input-role rules remain exact across serial families.
     #[test]
-    fn squared_and_maximum_folds_still_require_the_first_input() {
+    fn squared_and_maximum_folds_require_an_input_access() {
         for scalar in [
             ScalarProgram::SquaredSerialSum {
                 axes: vec![Axis::new(1)],
@@ -6294,28 +6075,30 @@ mod tests {
             squared_sum_with_epilogue(scale_epilogue()),
             maximum_scalar(),
         ] {
-            let mut region = serial_reduction_builder(scalar);
-            read_from(&mut region, SECOND_INPUT);
+            let region = serial_reduction_builder(scalar.clone());
+            assert!(region.build().is_ok());
+            let mut intermediate = serial_reduction_builder(scalar);
+            read_from(&mut intermediate, TensorRole::Intermediate);
             assert_eq!(
-                region.build().unwrap_err().diagnostics(),
-                [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+                intermediate.build().unwrap_err().diagnostics(),
+                [ScheduledRegionDiagnostic::NumericalOrAccessRefinement,]
             );
         }
     }
 
-    /// The squared parallel family keeps its own first-input rule.
+    /// The squared parallel family keeps its own input-role rule.
     ///
     /// This is separate from the serial control above because the split and
     /// cooperative family tables are independent match arms. Widening either to
     /// every declared input would otherwise leave the serial check green.
     #[test]
-    fn squared_parallel_folds_reject_a_later_declared_input() {
+    fn squared_parallel_folds_require_an_input_access() {
         let mut partial = squared_partial_pass_builder(SPLIT);
-        read_from(&mut partial, SECOND_INPUT);
+        read_from(&mut partial, TensorRole::Intermediate);
         assert_eq!(
             partial.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
-            "a squared partial pass cannot read input one",
+            "a squared partial pass cannot read an intermediate",
         );
 
         let squared = ScalarProgram::SquaredSerialSum {
@@ -6326,35 +6109,35 @@ mod tests {
         };
         let mut cooperative = cooperative_builder(cooperative_tile_fixture());
         cooperative.scalar_program = Some(squared);
-        read_from(&mut cooperative, SECOND_INPUT);
+        read_from(&mut cooperative, TensorRole::Intermediate);
         assert_eq!(
             cooperative.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
-            "a squared cooperative tile cannot read input one",
+            "a squared cooperative tile cannot read an intermediate",
         );
     }
 
-    /// The maximum parallel family keeps its own first-input rule.
+    /// The maximum parallel family keeps its own input-role rule.
     ///
     /// Maximum has independent split and cooperative family-table arms, so the
     /// serial maximum control does not prove that either parallel obligation
     /// still refuses a later declared input.
     #[test]
-    fn maximum_parallel_folds_reject_a_later_declared_input() {
+    fn maximum_parallel_folds_require_an_input_access() {
         let mut partial = extrema_partial_builder(SPLIT);
-        read_from(&mut partial, SECOND_INPUT);
+        read_from(&mut partial, TensorRole::Intermediate);
         assert_eq!(
             partial.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
-            "a maximum partial pass cannot read input one",
+            "a maximum partial pass cannot read an intermediate",
         );
 
         let mut cooperative = extrema_cooperative_builder();
-        read_from(&mut cooperative, SECOND_INPUT);
+        read_from(&mut cooperative, TensorRole::Intermediate);
         assert_eq!(
             cooperative.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
-            "a maximum cooperative tile cannot read input one",
+            "a maximum cooperative tile cannot read an intermediate",
         );
     }
 
@@ -6383,7 +6166,7 @@ mod tests {
         );
 
         let mut into_input = cooperative_builder(cooperative_tile_fixture());
-        write_to(&mut into_input, FIRST_INPUT);
+        write_to(&mut into_input, TensorRole::Input);
         assert_eq!(
             into_input.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
@@ -6880,12 +6663,8 @@ mod tests {
     /// first input tensor along with the scalar program.
     fn squared_partial_pass_builder(partition: ContributorPartition) -> ScheduledRegionBuilder {
         let mut builder = partial_pass_builder(partition);
-        builder.accesses[0].tensor = TensorRole::Input {
-            ordinal: InputOrdinal::FIRST,
-        };
-        builder.bounds_proofs[0].tensor = TensorRole::Input {
-            ordinal: InputOrdinal::FIRST,
-        };
+        builder.accesses[0].tensor = TensorRole::Input;
+        builder.bounds_proofs[0].tensor = TensorRole::Input;
         builder.scalar_program = Some(ScalarProgram::SquaredSerialSum {
             axes: vec![Axis::new(1)],
             order: ContributorOrder::OriginalAxisLexicographic,
@@ -8667,24 +8446,9 @@ mod tests {
 
     /// A region that stages nothing moved for the version and nothing else.
     ///
-    /// The blast-radius proof for `tiler.schedule.v5`. The participant space and
-    /// the per-dimension stride vector both land inside the `0x35` cooperative
-    /// payload, which a region with no tile never reaches, so the only bytes
-    /// that may differ from `v4` are the eighteen of the domain separator — and
-    /// that is checked here by comparing the two recorded identities past it
-    /// rather than by asserting it in prose.
-    ///
-    /// The comparison is against the immediately preceding domain and not an
-    /// older one, which is what keeps it a one-step claim: two separator changes
-    /// agreeing past the tag say nothing about whether the payload moved at
-    /// either step individually.
-    ///
-    /// It is deliberately *not* an append proof. The step replaces an unframed
-    /// fixed-width run with a length-framed one, so there is no position to
-    /// append to; [`encode_identity`] records that, and records separately why
-    /// the `v4` step's own append was unavailable.
+    /// The `v6` step moves both the domain and the fieldless input-role payload.
     #[test]
-    fn the_staging_relation_step_moves_only_the_domain_separator() {
+    fn the_fieldless_input_role_step_moves_domain_and_payload() {
         // Eighteen bytes of `tiler.schedule.vN\0`, so thirty-six hex digits.
         const SEPARATOR: usize = 36;
 
@@ -8698,11 +8462,11 @@ mod tests {
         assert_eq!(hex, STRICT_F32_REGION_IDENTITY_HEX);
         assert_ne!(
             STRICT_F32_REGION_IDENTITY_HEX[..SEPARATOR],
-            STRICT_F32_REGION_IDENTITY_HEX_V4[..SEPARATOR]
+            STRICT_F32_REGION_IDENTITY_HEX_V5[..SEPARATOR]
         );
-        assert_eq!(
+        assert_ne!(
             STRICT_F32_REGION_IDENTITY_HEX[SEPARATOR..],
-            STRICT_F32_REGION_IDENTITY_HEX_V4[SEPARATOR..]
+            STRICT_F32_REGION_IDENTITY_HEX_V5[SEPARATOR..]
         );
     }
 
@@ -8920,15 +8684,13 @@ mod tests {
         };
         let mut builder = ScheduledRegionBuilder::new(RegionId::new(7));
         builder.iteration_shape(output.clone()).unwrap();
-        for (witness, ordinal, map) in [
-            (0, 0, operand_map(0, left.clone())),
-            (1, 1, operand_map(1, right.clone())),
+        for (witness, map) in [
+            (0, operand_map(0, left.clone())),
+            (1, operand_map(1, right.clone())),
         ] {
             builder
                 .push_access(Access {
-                    tensor: TensorRole::Input {
-                        ordinal: InputOrdinal::new(ordinal),
-                    },
+                    tensor: TensorRole::Input,
                     component_role: None,
                     mode: AccessMode::Read,
                     map,
@@ -8939,9 +8701,7 @@ mod tests {
             builder
                 .push_bounds_proof(BoundsProof {
                     id: BoundsWitnessId::new(witness),
-                    tensor: TensorRole::Input {
-                        ordinal: InputOrdinal::new(ordinal),
-                    },
+                    tensor: TensorRole::Input,
                     component_role: None,
                     kind: BoundsProofKind::LinearRange {
                         element_count: OUTPUT_EXTENT * CONTRACTED_EXTENT,
@@ -9216,9 +8976,7 @@ mod tests {
         ] {
             builder
                 .push_access(Access {
-                    tensor: TensorRole::Input {
-                        ordinal: InputOrdinal::new(ordinal),
-                    },
+                    tensor: TensorRole::Input,
                     component_role: None,
                     mode: AccessMode::Read,
                     map,
@@ -9229,9 +8987,7 @@ mod tests {
             builder
                 .push_bounds_proof(BoundsProof {
                     id: BoundsWitnessId::new(witness),
-                    tensor: TensorRole::Input {
-                        ordinal: InputOrdinal::new(ordinal),
-                    },
+                    tensor: TensorRole::Input,
                     component_role: None,
                     kind: BoundsProofKind::LinearRange {
                         element_count: match ordinal {
@@ -9432,7 +9188,7 @@ mod tests {
         );
     }
 
-    /// Existing one-committer encodings keep their bytes.
+    /// The existing one-committer fixture is re-pinned under fieldless roles.
     #[test]
     fn existing_one_committer_schedule_encodings_keep_their_bytes() {
         let verified = cooperative_builder(cooperative_tile_fixture())
@@ -9440,8 +9196,8 @@ mod tests {
             .expect("the one-committer fixture still verifies");
         let bytes = verified.canonical_identity().as_bytes();
         assert!(
-            bytes.starts_with(b"tiler.schedule.v5\0"),
-            "the schedule domain must not step"
+            bytes.starts_with(b"tiler.schedule.v6\0"),
+            "the schedule domain must carry the fieldless-role step"
         );
         assert!(
             bytes.contains(&0x35),

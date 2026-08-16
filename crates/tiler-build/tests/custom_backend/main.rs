@@ -1903,11 +1903,11 @@ fn a_kernel_this_backend_cannot_place_is_refused_during_translation() {
 fn wide_kernel() -> VerifiedKernel {
     use tiler_ir::kernel::lower_scheduled_region;
     use tiler_ir::schedule::{
-        Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId,
-        ExceptionalValueAssumption, ExecutionBinding, InputOrdinal, KernelSchedule, LaunchPlan,
-        LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
-        OwnershipProofKind, OwnershipWitnessId, PointwiseF32ExpressionBuilder, ReductionTopology,
-        RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+        Access, AccessMode, AccessOrdinal, BoundsProof, BoundsProofKind, BoundsWitnessId,
+        ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
+        NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+        OwnershipWitnessId, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId,
+        ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
     };
 
     let mut region = ScheduledRegionBuilder::new(RegionId::new(0));
@@ -1915,22 +1915,8 @@ fn wide_kernel() -> VerifiedKernel {
         .iteration_shape(Shape::from_dims([1]))
         .expect("the iteration shape binds");
     let accesses = [
-        (
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-            AccessMode::Read,
-            0,
-            None,
-        ),
-        (
-            TensorRole::Input {
-                ordinal: InputOrdinal::new(1),
-            },
-            AccessMode::Read,
-            1,
-            None,
-        ),
+        (TensorRole::Input, AccessMode::Read, 0, None),
+        (TensorRole::Input, AccessMode::Read, 1, None),
         (
             TensorRole::Intermediate,
             AccessMode::Write,
@@ -1968,10 +1954,10 @@ fn wide_kernel() -> VerifiedKernel {
 
     let mut expression = PointwiseF32ExpressionBuilder::new();
     let first = expression
-        .input(InputOrdinal::FIRST)
+        .input(AccessOrdinal::FIRST)
         .expect("the first pointwise input");
     let second = expression
-        .input(InputOrdinal::new(1))
+        .input(AccessOrdinal::new(1))
         .expect("the second pointwise input");
     let root = expression.add(first, second).expect("the pointwise sum");
     let expression = expression.build(root).expect("the expression verifies");

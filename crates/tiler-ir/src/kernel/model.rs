@@ -13,7 +13,7 @@
 //! mutation, thawing, or unchecked construction.
 
 use crate::identity::{push_len, push_slice};
-use crate::schedule::{BoundsWitnessId, OwnershipWitnessId};
+use crate::schedule::{AccessOrdinal, BoundsWitnessId, OwnershipWitnessId};
 use crate::schedule::{
     CanonicalScheduledRegionIdentity, ExceptionalValueAssumption, FlushedZeroSign, IndexArithmetic,
     NumericalPermission, NumericalRealization, REGION_INDEX_ARITHMETIC, RegionId,
@@ -76,7 +76,10 @@ use super::MAX_KERNEL_IDENTITY_BYTES;
 /// rather than match. Appending would not have avoided the step either: the
 /// requirement is a fact about the kernel a v6 identity could not state, so two
 /// kernels differing only in it were one subject.
-const KERNEL_DOMAIN: &[u8] = b"tiler.kernel.v7\0";
+/// `v8` makes input roles fieldless and records live extent operands by their
+/// exact ordered access position. Both fields sit inside repeated records, so
+/// every input-bearing kernel moves and an earlier reader must miss.
+const KERNEL_DOMAIN: &[u8] = b"tiler.kernel.v8\0";
 
 /// The width [`push_len`] frames a length in, as ADR 0074 fixes it.
 const LENGTH_BYTES: usize = size_of::<u64>();
@@ -330,26 +333,27 @@ pub struct StagingParameter {
     pub element_count: u64,
 }
 
-/// **Accepted public surface.** Tom accepted this exact spelling on
-/// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
-/// Dependents may treat this type as accepted vocabulary.
+/// **Accepted public surface.** Tom accepted the operand surface on 2026-08-13
+/// under [`accept-the-live-extent-operand-public-surface`], then accepted the
+/// complete `InputOrdinal` to [`AccessOrdinal`] field replacement on 2026-08-14
+/// under [`decide-the-full-list-access-coordinate-for-out-of-list-references`].
+/// Dependents may treat the resulting type as accepted vocabulary.
 ///
 /// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+/// [`decide-the-full-list-access-coordinate-for-out-of-list-references`]: ../../../../../tickets/decide-the-full-list-access-coordinate-for-out-of-list-references.md
 ///
 /// One live input-axis extent a kernel signature admits as a read-only operand.
 ///
-/// Names the scheduled input and axis whose runtime-bound extent the body may
+/// Names the scheduled access and axis whose runtime-bound extent the body may
 /// read. The live *value* is not part of kernel identity; the declaration is.
 /// The operand is the structured-kernel spelling of the existing
 /// [`crate::program::abi::AbiRoot::InputExtent`] root: the kernel names the
-/// region-local input and axis, and the artifact maps that ordinal onto the
+/// region-local access and axis, and the artifact maps that ordinal onto the
 /// program-interface key. Callers do not supply a second scalar list.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct InputExtentParameter {
-    /// Scheduled input tensor whose axis extent is read.
-    ///
-    /// Must be [`TensorRole::Input`]. Any other role is refused at declaration.
-    pub tensor: TensorRole,
+    /// Exact scheduled access whose input-axis extent is read.
+    pub access: AccessOrdinal,
     /// Axis of that input whose live extent the body may read.
     pub axis: Axis,
 }
@@ -1867,21 +1871,15 @@ impl<'a> SerialLoopRef<'a> {
 /// at both.
 fn push_tensor_role(bytes: &mut Vec<u8>, role: TensorRole) {
     match role {
-        TensorRole::Input { ordinal } => {
-            bytes.push(0x01);
-            bytes.extend_from_slice(&ordinal.get().to_be_bytes());
-        }
+        TensorRole::Input => bytes.push(0x01),
         TensorRole::Intermediate => bytes.push(0x02),
         TensorRole::Output => bytes.push(0x03),
     }
 }
 
-/// Mirrors [`push_tensor_role`]: one tag byte, plus an ordinal for an input.
-const fn tensor_role_encoded_len(role: TensorRole) -> usize {
-    match role {
-        TensorRole::Input { ordinal } => 1 + size_of_val(&ordinal.get()),
-        TensorRole::Intermediate | TensorRole::Output => 1,
-    }
+/// Mirrors [`push_tensor_role`]: one tag byte for every role category.
+const fn tensor_role_encoded_len(_role: TensorRole) -> usize {
+    1
 }
 
 fn push_subnormal(bytes: &mut Vec<u8>, mode: SubnormalMode) {
@@ -2040,7 +2038,7 @@ fn push_input_extents(bytes: &mut Vec<u8>, extents: &[InputExtentParameter]) {
     bytes.push(INPUT_EXTENT_BLOCK_TAG);
     push_len(bytes, extents.len());
     for parameter in extents {
-        push_tensor_role(bytes, parameter.tensor);
+        bytes.extend_from_slice(&parameter.access.get().to_be_bytes());
         bytes.extend_from_slice(&parameter.axis.get().to_be_bytes());
     }
 }
@@ -2054,7 +2052,7 @@ fn input_extents_encoded_len(extents: &[InputExtentParameter]) -> usize {
         .saturating_add(LENGTH_BYTES)
         .saturating_add(extents.iter().fold(0_usize, |total, parameter| {
             total
-                .saturating_add(tensor_role_encoded_len(parameter.tensor))
+                .saturating_add(size_of_val(&parameter.access.get()))
                 .saturating_add(size_of_val(&parameter.axis.get()))
         }))
 }

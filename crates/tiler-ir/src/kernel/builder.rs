@@ -239,20 +239,25 @@ impl KernelBuilder {
         Ok(id)
     }
 
-    /// **Accepted public surface.** Tom accepted this exact spelling on
-    /// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
+    /// **Accepted public surface.** Tom accepted this method on 2026-08-13 under
+    /// [`accept-the-live-extent-operand-public-surface`]; its parameter's exact
+    /// access-coordinate field was replaced by the accepted 2026-08-14
+    /// [`decide-the-full-list-access-coordinate-for-out-of-list-references`]
+    /// decision.
     ///
     /// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+    /// [`decide-the-full-list-access-coordinate-for-out-of-list-references`]: ../../../../../tickets/decide-the-full-list-access-coordinate-for-out-of-list-references.md
     ///
     /// Declares one live input-extent operand of the kernel signature.
     ///
-    /// Declaration order is canonical `(input ordinal, axis)` order: the
+    /// Declaration order is canonical `(access ordinal, axis)` order: the
     /// verifier refuses any other. The live value is not recorded; only the
     /// root is.
     ///
     /// # Errors
     ///
-    /// Returns [`KernelBuildError::InputExtentNotInput`] when the tensor is not
+    /// Returns [`KernelBuildError::InputExtentAccessOutOfRange`] when the access
+    /// does not exist, [`KernelBuildError::InputExtentNotInput`] when it is not
     /// a scheduled input, [`KernelBuildError::InputExtentWrongAxis`] when the
     /// axis is outside that input's scheduled rank, [`KernelBuildError::DuplicateInputExtent`]
     /// when the same axis is declared twice, or [`KernelBuildError::StructuralLimit`]
@@ -261,17 +266,22 @@ impl KernelBuilder {
         &mut self,
         parameter: InputExtentParameter,
     ) -> Result<KernelInputExtentId, KernelBuildError> {
-        let crate::schedule::TensorRole::Input { .. } = parameter.tensor else {
-            return Err(KernelBuildError::InputExtentNotInput);
+        let Some(access) = usize::try_from(parameter.access.get())
+            .ok()
+            .and_then(|position| self.schedule.index.accesses.get(position))
+        else {
+            return Err(KernelBuildError::InputExtentAccessOutOfRange);
         };
-        if u64::from(parameter.axis.get()) >= scheduled_input_rank(&self.schedule, parameter.tensor)
-        {
+        if !matches!(access.tensor, TensorRole::Input) {
+            return Err(KernelBuildError::InputExtentNotInput);
+        }
+        if u64::from(parameter.axis.get()) >= scheduled_access_rank(&self.schedule, access) {
             return Err(KernelBuildError::InputExtentWrongAxis);
         }
         if self
             .input_extents
             .iter()
-            .any(|declared| declared.tensor == parameter.tensor && declared.axis == parameter.axis)
+            .any(|declared| declared.access == parameter.access && declared.axis == parameter.axis)
         {
             return Err(KernelBuildError::DuplicateInputExtent);
         }
@@ -1211,13 +1221,11 @@ impl KernelBuilder {
 fn required_nonzero_input_extents(schedule: &ScheduledRegion) -> Vec<InputExtentParameter> {
     match schedule.schedule.reduction {
         ReductionTopology::LiveContraction {
-            live_input,
+            live_access,
             live_axis,
             ..
         } => vec![InputExtentParameter {
-            tensor: TensorRole::Input {
-                ordinal: live_input,
-            },
+            access: live_access,
             axis: live_axis,
         }],
         ReductionTopology::None
@@ -1248,15 +1256,7 @@ fn expect_type(expected: KernelType, actual: KernelType) -> Result<(), KernelBui
     Err(KernelBuildError::TypeMismatch { expected, actual })
 }
 
-fn scheduled_input_rank(schedule: &ScheduledRegion, tensor: TensorRole) -> u64 {
-    let Some(access) = schedule
-        .index
-        .accesses
-        .iter()
-        .find(|access| access.tensor == tensor)
-    else {
-        return 0;
-    };
+fn scheduled_access_rank(schedule: &ScheduledRegion, access: &crate::schedule::Access) -> u64 {
     let static_rank = match &access.map {
         LogicalAccess::LinearIdentity
         | LogicalAccess::ScalarBroadcast

@@ -70,6 +70,14 @@ use crate::target::honourability::NumericalRefusalEvidence;
 // record's bytes or an existing record's spelling; one marked *unforced* did
 // not, and is labelled so this file's history is not read as its rule.
 //
+// - Schema v11, *forced*: an opaque-call proposal's existing binding subject
+//   now writes the exact full access-list coordinate rather than an input role
+//   ordinal. The same parameter names can therefore bind different local reads
+//   without colliding, and output and intermediate positions remain
+//   distinguishable. Renderer v9, *forced*: the existing binding spelling moves
+//   from `input#N` to `access#N`. The composite schema and renderer stay v1 for
+//   the same reason as the provider-identity step below: they frame the complete
+//   nested trace and do not duplicate its binding fields.
 // - Schema v10, *forced*: every previously encodable rule head and SoundProof
 //   receipt moved from a flattened `namespace.name` provider key plus revision
 //   to an explicit authority-class tag. The compiler arm writes the governed
@@ -118,8 +126,8 @@ use crate::target::honourability::NumericalRefusalEvidence;
 // against the v4 tree. Event tag 9 is unused: it named the omitted-record
 // summary that the complete-or-refused trace contract removed at v1. The gap is
 // history rather than a reservation.
-pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 10;
-pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 8;
+pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 11;
+pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 9;
 const COMPILATION_EXPLAIN_SCHEMA_VERSION: u32 = 1;
 const COMPILATION_EXPLAIN_RENDERER_VERSION: u32 = 1;
 const MAX_COMPILATION_EXPLAIN_CANDIDATES: usize = 256;
@@ -3505,8 +3513,8 @@ mod tests {
 
     #[test]
     fn explain_vocabulary_is_append_only_and_versioned() {
-        assert_eq!(EXPLAIN_SCHEMA_VERSION, 10);
-        assert_eq!(EXPLAIN_RENDERER_VERSION, 8);
+        assert_eq!(EXPLAIN_SCHEMA_VERSION, 11);
+        assert_eq!(EXPLAIN_RENDERER_VERSION, 9);
         assert_eq!(subject_kind_tag(SubjectKind::Alternative), 12);
         assert_eq!(subject_kind_tag(SubjectKind::OpaqueCall), 13);
         assert_eq!(subject_kind_tag(SubjectKind::Provider), 14);
@@ -4073,7 +4081,7 @@ mod tests {
                 //     'test(deterministic_trace_is_sealed_and_rendered_separately)'
                 // and take the `left` value the assertion reports. The cause
                 // belongs in the commit that moves it, not appended here.
-                "tiler-explain-v8 request=17e0dd47e48b7c18\n",
+                "tiler-explain-v9 request=17e0dd47e48b7c18\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=compiler:tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=compiler:tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
@@ -4982,7 +4990,7 @@ mod tests {
         assert_eq!(
             forward
                 .render()
-                .matches("tiler-explain-v8 request=")
+                .matches("tiler-explain-v9 request=")
                 .count(),
             3,
             "the top-level selection and both complete candidate traces render",

@@ -480,7 +480,7 @@ pub(crate) fn emit_region(
         let parameter = binding.parameter();
         match parameter.tensor {
             TensorRole::Output => result_index = Some(u64::from(binding.index())),
-            TensorRole::Intermediate | TensorRole::Input { .. } => {
+            TensorRole::Intermediate | TensorRole::Input => {
                 operand_index = Some(u64::from(binding.index()));
             }
         }

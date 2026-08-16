@@ -24,13 +24,14 @@
 //!
 //! **The first row was `no` when this file was written, and
 //! `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
-//! flipped it.** `verify_pointwise_region` required read access `i` to be
-//! `TensorRole::Input { ordinal: i }` for every `i`, which conflated the access
+//! flipped it.** At that step `verify_pointwise_region` required read access `i`
+//! to be an input carrying declared ordinal `i`, which conflated the access
 //! *position* — the expression leaf it serves — with the *declared input* its
-//! role names. The two are separate now: the reads must name non-descending
-//! declared inputs and at most one materialized intermediate, so the epilogue's
-//! region is expressible and a region with two intermediate reads, which nothing
-//! could attribute to materialization edges, is still refused.
+//! role named. The role is fieldless now: the compiler projects each exact
+//! access through the retained checked request subject, while the schedule still
+//! admits at most one materialized intermediate. The epilogue's region is
+//! expressible and a region with two intermediate reads, which nothing could
+//! attribute to materialization edges, remains refused.
 //!
 //! **The second row was `no` too, and
 //! `admit-a-strict-serial-fold-that-writes-a-materialized-intermediate` flipped
@@ -52,8 +53,8 @@
 //! ordinary cover search assembles the chain.
 //!
 //! **The compiler still cannot route around the write by binding differently.** A
-//! region cannot declare `TensorRole::Input { ordinal }` for a read and let
-//! program assembly bind a temporary there: `tiler_ir::program::ValueRole::fills`
+//! region cannot label a read with fieldless `TensorRole::Input` and let program
+//! assembly bind a temporary there: `tiler_ir::program::ValueRole::fills`
 //! refuses a `Temporary` value for an `Input` buffer, and
 //! `KernelProgramBuilder::push_stage` is where that bites. The widening above did
 //! not touch `fills` and did not need to — an epilogue's read now says
@@ -90,12 +91,13 @@ use tiler_compiler::session::{
 };
 use tiler_compiler::target::{TargetProfile, TargetRequest};
 use tiler_ir::schedule::{
-    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContractionAxisSource,
-    ContributorOrder, ExceptionalValueAssumption, ExecutionBinding, IndexRegion, InputOrdinal,
-    KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission, NumericalRealization,
-    OwnershipProof, OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression,
-    PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram, ScheduledRegion,
-    ScheduledRegionBuilder, ScheduledRegionDiagnostic, SubnormalMode, TailPolicy, TensorRole,
+    Access, AccessMode, AccessOrdinal, BoundsProof, BoundsProofKind, BoundsWitnessId,
+    ContractionAxisSource, ContributorOrder, ExceptionalValueAssumption, ExecutionBinding,
+    IndexRegion, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
+    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
+    PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId,
+    ScalarProgram, ScheduledRegion, ScheduledRegionBuilder, ScheduledRegionDiagnostic,
+    SubnormalMode, TailPolicy, TensorRole,
 };
 use tiler_ir::semantic::{
     CANONICAL_F32_ARITHMETIC_NAN_BITS, ContractionIndex, ContractionIndexStructure, F32,
@@ -475,7 +477,7 @@ fn product_expression(count: usize) -> PointwiseF32Expression {
     let leaves: Vec<_> = (0..count)
         .map(|ordinal| {
             builder
-                .input(InputOrdinal::new(u32::try_from(ordinal).unwrap()))
+                .input(AccessOrdinal::new(u32::try_from(ordinal).unwrap()))
                 .unwrap()
         })
         .collect();
@@ -571,12 +573,13 @@ fn verify(region: ScheduledRegion) -> Result<(), Vec<ScheduledRegionDiagnostic>>
 ///
 /// This assertion measured the opposite when the file was written, and
 /// `admit-a-materialized-intermediate-read-in-the-scheduled-region-vocabulary`
-/// lifted it: `verify_pointwise_region` required read access `i` to be
-/// `TensorRole::Input { ordinal: i }` at every position, conflating the access
-/// position with the declared input the role names. It now requires the reads to
-/// name non-descending declared inputs and at most one intermediate. The
-/// control is the identical region reading input ordinal zero, so the admission
-/// is not evidence that the verifier stopped refusing things.
+/// lifted it: at that step `verify_pointwise_region` required read access `i` to
+/// be an input carrying declared ordinal `i`, conflating the access position
+/// with the declared input the role named. The role is fieldless now, while the
+/// checked compiler subject retains the association; the schedule verifier
+/// admits at most one intermediate. The control is the identical region reading
+/// an input at access zero, so the admission is not evidence that the verifier
+/// stopped refusing things.
 ///
 /// The two refusals travel with it because the widening had to keep them. A
 /// second intermediate read is *ambiguous*, not merely unsupported —
@@ -587,12 +590,7 @@ fn verify(region: ScheduledRegion) -> Result<(), Vec<ScheduledRegionDiagnostic>>
 /// a wildcard.
 #[test]
 fn a_pointwise_region_may_read_a_materialized_intermediate() {
-    let control = elementwise_region(
-        &[TensorRole::Input {
-            ordinal: InputOrdinal::new(0),
-        }],
-        4,
-    );
+    let control = elementwise_region(&[TensorRole::Input], 4);
     assert_eq!(
         verify(control),
         Ok(()),
@@ -611,39 +609,30 @@ fn a_pointwise_region_may_read_a_materialized_intermediate() {
     // The mixed list, which is what the separation actually buys: one leaf reads
     // what an earlier region staged, the other reads a declared input whose
     // ordinal is not its access position.
-    let mixed = elementwise_region(
-        &[
-            TensorRole::Intermediate,
-            TensorRole::Input {
-                ordinal: InputOrdinal::new(2),
-            },
-        ],
-        4,
-    );
+    let mixed = elementwise_region(&[TensorRole::Intermediate, TensorRole::Input], 4);
     assert_eq!(
         verify(mixed),
         Ok(()),
         "an epilogue reading a staged value and the program's third input must \
          verify, or the ordinal is still being read as the access position",
     );
+    assert_eq!(
+        verify(elementwise_region(
+            &[
+                TensorRole::Input,
+                TensorRole::Intermediate,
+                TensorRole::Input,
+            ],
+            4,
+        )),
+        Ok(()),
+        "fieldless input roles do not impose declared-input ordering on the local read list",
+    );
 
     for (reads, why) in [
         (
             vec![TensorRole::Intermediate, TensorRole::Intermediate],
             "two intermediate reads have nothing to attribute them to two edges",
-        ),
-        (
-            vec![
-                TensorRole::Input {
-                    ordinal: InputOrdinal::new(2),
-                },
-                TensorRole::Intermediate,
-                TensorRole::Input {
-                    ordinal: InputOrdinal::new(1),
-                },
-            ],
-            "declared input ordinals must not descend across the whole read \
-             list",
         ),
         (
             vec![TensorRole::Output],
@@ -767,10 +756,8 @@ fn a_strict_serial_sum_region_may_write_a_materialized_intermediate() {
         "a strict serial sum staging its result is the producer region \
          `sum(x * x) * scale` needs",
     );
-    let diagnostics = verify(fold(TensorRole::Input {
-        ordinal: InputOrdinal::FIRST,
-    }))
-    .expect_err("a fold committing into a declared input must be refused");
+    let diagnostics = verify(fold(TensorRole::Input))
+        .expect_err("a fold committing into a declared input must be refused");
     assert!(
         diagnostics.contains(&ScheduledRegionDiagnostic::NumericalOrAccessRefinement),
         "expected the access-refinement diagnostic, got {diagnostics:?}",
@@ -803,9 +790,7 @@ fn a_contraction_region_can_already_write_a_materialized_intermediate() {
             iteration_shape: output_shape.clone(),
             accesses: vec![
                 Access {
-                    tensor: TensorRole::Input {
-                        ordinal: InputOrdinal::new(0),
-                    },
+                    tensor: TensorRole::Input,
                     component_role: None,
                     mode: AccessMode::Read,
                     map: LogicalAccess::ContractionOperand {
@@ -822,9 +807,7 @@ fn a_contraction_region_can_already_write_a_materialized_intermediate() {
                     ownership: None,
                 },
                 Access {
-                    tensor: TensorRole::Input {
-                        ordinal: InputOrdinal::new(1),
-                    },
+                    tensor: TensorRole::Input,
                     component_role: None,
                     mode: AccessMode::Read,
                     map: LogicalAccess::ContractionOperand {
@@ -852,9 +835,7 @@ fn a_contraction_region_can_already_write_a_materialized_intermediate() {
             bounds_proofs: vec![
                 BoundsProof {
                     id: BoundsWitnessId::new(0),
-                    tensor: TensorRole::Input {
-                        ordinal: InputOrdinal::new(0),
-                    },
+                    tensor: TensorRole::Input,
                     component_role: None,
                     kind: BoundsProofKind::LinearRange {
                         element_count: operand_elements,
@@ -862,9 +843,7 @@ fn a_contraction_region_can_already_write_a_materialized_intermediate() {
                 },
                 BoundsProof {
                     id: BoundsWitnessId::new(1),
-                    tensor: TensorRole::Input {
-                        ordinal: InputOrdinal::new(1),
-                    },
+                    tensor: TensorRole::Input,
                     component_role: None,
                     kind: BoundsProofKind::LinearRange {
                         element_count: operand_elements,

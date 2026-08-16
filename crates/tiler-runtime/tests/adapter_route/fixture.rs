@@ -108,11 +108,11 @@ use tiler_ir::program::{
 // paths, and naming them through the boundary a consumer at ADR 0081 item 2's
 // closure actually has is what keeps this file evidence that the closure suffices.
 use tiler_ir::schedule::{
-    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContractionAxisSource,
-    ContributorOrder, ExecutionBinding, F32NumericalContractKey, InputOrdinal, KernelSchedule,
-    LaunchPlan, LogicalAccess, NumericalRealization, OwnershipProof, OwnershipProofKind,
-    OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology,
-    RegionId, ScalarProgram, ScheduledRegionBuilder, TailPolicy, TensorRole,
+    Access, AccessMode, AccessOrdinal, BoundsProof, BoundsProofKind, BoundsWitnessId,
+    ContractionAxisSource, ContributorOrder, ExecutionBinding, F32NumericalContractKey,
+    KernelSchedule, LaunchPlan, LogicalAccess, NumericalRealization, OwnershipProof,
+    OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
+    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, TailPolicy, TensorRole,
 };
 use tiler_ir::semantic::{
     Bf16, CanonicalField, CanonicalValue, F32, F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant,
@@ -1511,9 +1511,7 @@ fn fused_kernel() -> VerifiedKernel {
         .expect("the iteration shape");
     region
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::ReductionContributor {
@@ -1539,9 +1537,7 @@ fn fused_kernel() -> VerifiedKernel {
     region
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(0),
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             kind: BoundsProofKind::ReductionDomain {
                 input_shape: input_shape(),
@@ -1618,9 +1614,7 @@ fn live_row_major_kernel() -> VerifiedKernel {
         .expect("rows");
     region
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LiveRowMajor { inner_axis: inner },
@@ -1638,15 +1632,7 @@ fn live_row_major_kernel() -> VerifiedKernel {
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .expect("write");
-    for (witness, tensor) in [
-        (
-            0,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-        ),
-        (1, TensorRole::Output),
-    ] {
+    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Output)] {
         region
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
@@ -1664,7 +1650,7 @@ fn live_row_major_kernel() -> VerifiedKernel {
         })
         .expect("ownership");
     let mut expression = PointwiseF32ExpressionBuilder::new();
-    let input = expression.input(InputOrdinal::FIRST).expect("input");
+    let input = expression.input(AccessOrdinal::FIRST).expect("input");
     let scale = expression.constant(SCALE_BITS).expect("scale");
     let product = expression.multiply(input, scale).expect("product");
     let bias = expression.constant(BIAS_BITS).expect("bias");
@@ -1828,9 +1814,7 @@ fn live_contraction_kernel() -> VerifiedKernel {
         .expect("iteration shape");
     for (ordinal, free) in [0_u32, 1].into_iter().enumerate() {
         let witness = u32::try_from(ordinal).expect("two inputs");
-        let tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(witness),
-        };
+        let tensor = TensorRole::Input;
         region
             .push_access(Access {
                 tensor,
@@ -1897,7 +1881,7 @@ fn live_contraction_kernel() -> VerifiedKernel {
             tail: TailPolicy::Exact,
             output_owner: owner,
             reduction: ReductionTopology::LiveContraction {
-                live_input: InputOrdinal::FIRST,
+                live_access: AccessOrdinal::FIRST,
                 live_axis: Axis::new(1),
                 order: ContributorOrder::OriginalAxisLexicographic,
                 permits_reassociation: false,
@@ -2188,7 +2172,7 @@ fn declare_routing_commit(plan: &mut KernelProgramBuilder) {
 fn scale_bias_expression() -> PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
     let input = expression
-        .input(InputOrdinal::FIRST)
+        .input(AccessOrdinal::FIRST)
         .expect("the pointwise input");
     let scale = expression.constant(SCALE_BITS).expect("the scale constant");
     let product = expression
@@ -2208,9 +2192,7 @@ fn pointwise_kernel() -> VerifiedKernel {
         .expect("the iteration shape");
     region
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
@@ -2235,9 +2217,7 @@ fn pointwise_kernel() -> VerifiedKernel {
     region
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(0),
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             kind: BoundsProofKind::LinearRange {
                 element_count: count,

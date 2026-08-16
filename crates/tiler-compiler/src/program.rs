@@ -43,8 +43,8 @@ use tiler_ir::program::abi::{
 use crate::cover::{CoverRegion, RegionCover};
 use crate::lowering::ResolvedLowering;
 use crate::physical::{
-    AccessMode, ContributorPartition, NumericalRealization, RegionId, TensorRole, VerifiedKernel,
-    VerifiedScheduledRegion, lower_structured_kernel,
+    AccessMode, AccessOrdinal, ContributorPartition, NumericalRealization, RegionId, TensorRole,
+    VerifiedKernel, VerifiedScheduledRegion, lower_structured_kernel,
 };
 use crate::region::{RegionOccurrenceIdentity, SemanticStage, SemanticValueId, value_ordinal};
 use crate::request::{LoweringProviderIdentity, TargetProfile, VerifiedTargetRequest};
@@ -836,7 +836,7 @@ impl CoverAssembly {
                 };
                 let mut bindings = Vec::with_capacity(accesses.len());
                 let mut intermediate_reads = 0_usize;
-                for read in reads {
+                for (access_position, read) in reads.iter().enumerate() {
                     if read.mode != AccessMode::Read {
                         return Err(AssemblyRefusal::missing(
                             region.label(),
@@ -844,8 +844,25 @@ impl CoverAssembly {
                         ));
                     }
                     match read.tensor {
-                        TensorRole::Input { ordinal } => {
-                            let ordinal = usize::try_from(ordinal.get()).unwrap_or(usize::MAX);
+                        TensorRole::Input => {
+                            let access = u32::try_from(access_position)
+                                .ok()
+                                .map(AccessOrdinal::new)
+                                .ok_or_else(|| {
+                                    AssemblyRefusal::missing(
+                                        region.label(),
+                                        "region-access-ordinal",
+                                    )
+                                })?;
+                            let ordinal = stage_regions[stage]
+                                .declared_input_at(access)
+                                .and_then(|ordinal| usize::try_from(ordinal.get()).ok())
+                                .ok_or_else(|| {
+                                    AssemblyRefusal::missing(
+                                        region.label(),
+                                        "region-input-association",
+                                    )
+                                })?;
                             if ordinal >= inputs {
                                 return Err(AssemblyRefusal::missing(
                                     region.label(),
@@ -858,10 +875,10 @@ impl CoverAssembly {
                             intermediate_reads += 1;
                             // One intermediate read per dispatch, and exactly one
                             // edge for the dispatch that reads across the region
-                            // boundary. `TensorRole::Intermediate` carries no
-                            // ordinal — unlike `Input`, which does — so a second
-                            // one leaves nothing to say which edge it binds, and
-                            // guessing would bind a stage to the wrong buffer.
+                            // boundary. The fieldless role carries no edge
+                            // coordinate, so a second one leaves nothing to say
+                            // which edge it binds, and guessing would bind a
+                            // stage to the wrong buffer.
                             if intermediate_reads > 1 || (stage == first && consumed.len() != 1) {
                                 return Err(AssemblyRefusal::missing(
                                     region.label(),
@@ -925,8 +942,7 @@ impl CoverAssembly {
                         })?
                     }
                     (TensorRole::Intermediate, false) => pass_values[*position][stage - first],
-                    (TensorRole::Output | TensorRole::Input { .. }, false)
-                    | (TensorRole::Input { .. }, true) => {
+                    (TensorRole::Output | TensorRole::Input, false) | (TensorRole::Input, true) => {
                         return Err(AssemblyRefusal::missing(
                             region.label(),
                             "region-write-role",
@@ -1503,10 +1519,10 @@ fn build_cover_core(
             rule: "assembly-stage-cardinality",
         });
     }
-    // The declared program interface, in declaration order, because that order
-    // is what a region's input ordinals index: a stage's accesses bind to its
-    // kernel's buffers positionally, so reordering here would silently bind each
-    // buffer to the wrong tensor.
+    // The declared program interface, in declaration order. Checked request
+    // subjects retain the association from each regional access to this
+    // interface, and stage accesses bind to kernel buffers positionally, so
+    // reordering here would silently bind buffers to the wrong tensors.
     let inputs: Vec<(InputKey, Shape, Vec<SourcedExtent>)> = semantic
         .inputs()
         .map(|input| {

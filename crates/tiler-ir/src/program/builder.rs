@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 
 use crate::kernel::{BufferAccess, VerifiedKernel};
-use crate::schedule::element_count;
+use crate::schedule::{TensorRole, element_count};
 use crate::semantic::{
     EncodedComponentRole, InputKey, OutputKey, ResolvedValueType, SemanticGraphIdentity,
     SemanticProgram,
@@ -1436,15 +1436,9 @@ impl KernelProgramBuilder {
     /// Resolves each schedule-derived live-contraction extent through the
     /// stage's already-checked buffer/access correspondence.
     ///
-    /// Distinct component buffers may legitimately lead to the same logical
-    /// input and are deduplicated. Every selected live-contraction kernel in
-    /// the current vocabulary has exactly one buffer for its live-input role,
-    /// so more than one distinct owner is presently uninhabited after kernel
-    /// verification. The check remains deliberately fail-closed for a future
-    /// kernel vocabulary that may put several buffers behind one tensor role:
-    /// zero distinct owners would silently omit a required predicate, while
-    /// more than one would guess which caller input owns it. Both therefore
-    /// fail with the exact tensor, axis, and observed count.
+    /// The verified extent parameter names the exact buffer/access position.
+    /// No role search or owner deduplication is permitted: the stage access at
+    /// that position is the sole route to the owning [`InputKey`].
     fn check_required_nonzero_extents(
         &self,
         kernel: &VerifiedKernel,
@@ -1453,40 +1447,33 @@ impl KernelProgramBuilder {
         let buffers: Vec<_> = kernel.buffers().collect();
         let mut resolved_requirements = Vec::new();
         for parameter in &kernel.required_nonzero_input_extents {
-            let mut owners = Vec::new();
-            for (buffer, access) in buffers.iter().zip(accesses) {
-                if buffer.tensor != parameter.tensor {
-                    continue;
-                }
-                let view = self.views[as_position(access.view)];
-                let value = self.view_base(view);
-                let MaterializedOrigin::ProgramInput { key } = &value.origin else {
-                    continue;
-                };
-                let axis_exists = self.subject.inputs.iter().any(|(declared, shape, _)| {
-                    declared == key
-                        && usize::try_from(parameter.axis.get())
-                            .is_ok_and(|axis| axis < shape.rank())
+            let position = usize::try_from(parameter.access.get()).ok();
+            let resolved = position
+                .and_then(|position| buffers.get(position).zip(accesses.get(position)))
+                .and_then(|(buffer, access)| {
+                    let view = self.views[as_position(access.view)];
+                    let value = self.view_base(view);
+                    let MaterializedOrigin::ProgramInput { key } = &value.origin else {
+                        return None;
+                    };
+                    self.subject
+                        .inputs
+                        .iter()
+                        .any(|(declared, shape, _)| {
+                            declared == key
+                                && usize::try_from(parameter.axis.get())
+                                    .is_ok_and(|axis| axis < shape.rank())
+                        })
+                        .then(|| (key.clone(), parameter.axis, buffer.tensor))
                 });
-                if axis_exists {
-                    owners.push((key.clone(), parameter.axis));
-                }
-            }
-            owners.sort_by(|(left_key, left_axis), (right_key, right_axis)| {
-                left_key
-                    .as_str()
-                    .cmp(right_key.as_str())
-                    .then_with(|| left_axis.get().cmp(&right_axis.get()))
-            });
-            owners.dedup();
-            if owners.len() != 1 {
+            let Some((key, axis, _tensor)) = resolved else {
                 return Err(KernelProgramBuildError::RequiredInputExtentBinding {
-                    tensor: parameter.tensor,
+                    tensor: TensorRole::Input,
                     axis: parameter.axis,
-                    matches: owners.len(),
+                    matches: 0,
                 });
-            }
-            resolved_requirements.extend(owners);
+            };
+            resolved_requirements.push((key, axis));
         }
         Ok(resolved_requirements)
     }

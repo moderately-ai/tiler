@@ -180,12 +180,12 @@ impl ValueRole {
     #[must_use]
     pub const fn fills(self, tensor: TensorRole) -> bool {
         match (self, tensor) {
-            (Self::Input, TensorRole::Input { .. })
+            (Self::Input, TensorRole::Input)
             | (Self::Temporary, TensorRole::Intermediate)
             | (Self::Output, TensorRole::Output) => true,
             (Self::Input, TensorRole::Intermediate | TensorRole::Output)
-            | (Self::Temporary, TensorRole::Input { .. } | TensorRole::Output)
-            | (Self::Output, TensorRole::Input { .. } | TensorRole::Intermediate) => false,
+            | (Self::Temporary, TensorRole::Input | TensorRole::Output)
+            | (Self::Output, TensorRole::Input | TensorRole::Intermediate) => false,
         }
     }
 }

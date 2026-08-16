@@ -762,8 +762,8 @@ fn emit_entry_point(
     for (ordinal, (_, parameter)) in kernel.declared_input_extents().enumerate() {
         emit!(
             text,
-            "//   extent({ordinal}): {:?} tensor, axis {}\n",
-            parameter.tensor,
+            "//   extent({ordinal}): access {}, axis {}\n",
+            parameter.access.get(),
             parameter.axis.get(),
         );
     }
@@ -830,13 +830,9 @@ fn emit_entry_point(
 
 /// Returns the MSL declaration of one buffer parameter.
 /// Names one boundary tensor role for the emitted signature comment.
-///
-/// Rendered rather than `Debug`-formatted: a role carrying an ordinal prints as
-/// a Rust struct literal under `{:?}`, and this text lands in generated Metal
-/// source that a reader reads beside the buffer index it explains.
 fn tensor_role_comment(role: TensorRole) -> String {
     match role {
-        TensorRole::Input { ordinal } => format!("Input {}", ordinal.get()),
+        TensorRole::Input => "Input".to_owned(),
         TensorRole::Intermediate => "Intermediate".to_owned(),
         TensorRole::Output => "Output".to_owned(),
     }

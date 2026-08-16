@@ -57,6 +57,8 @@ ticket: "spike-kani-bounded-verification-on-one-inexhaustible-encoder"
 
 No claim was materially false. The release-cadence claim is the one that changes a decision, and it is corrected above.
 
+**Superseded 2026-08-14 for the tensor-role half only.** The table is the exact-base audit at `411e09bf`. [`reconcile-input-ordinal-region-local-and-declared-input-semantics`](../../../tickets/reconcile-input-ordinal-region-local-and-declared-input-semantics.md) later made `TensorRole::Input` fieldless, so `push_tensor_role` now has a complete three-value input domain and writes one tag byte. The guarded shim and its Kani harness moved with that source. `EncodedComponentRole` remains the full `u32` subject and the other proof claims are unchanged.
+
 ## The stop condition, and exactly what fails
 
 ```sh
@@ -92,6 +94,8 @@ So a Kani release bundling anything from roughly 2026-05 onward would unblock th
 The ticket permits a shim fallback only if the record states that a shim proof proves a copy and names the guard that would tie them. Both are done.
 
 `spikes/verification/kani-encoder-injectivity/src/lib.rs` initially held guarded copies of 13 encoder functions and 15 type definitions. After the 2026-08-10 re-sync it holds 14 functions and 16 type definitions: `IndexArithmetic` and `index_arithmetic_tag` are now first-class guarded subjects. `guard.sh` re-extracts each named item from its source file and compares token content — comments, formatting, and visibility normalized away; renamed fields, added variants, changed tag literals, dropped writes, and reordered writes not. It asserts its own population (30) so a marker syntax that stopped matching fails loudly rather than reporting a clean zero.
+
+**Maintenance correction 2026-08-14.** The fieldless tensor-role migration removes the copied `InputOrdinal`, reduces the guarded population to 29, and reduces `push_tensor_role` to a one-byte encoding of a three-value enum. The shim also incorporates the already-landed reserved `ResourceRequirements.subgroup` field, which the live artifact encoder intentionally destructures as `_`; before this correction those two resource copies were already reported as drift. The restored guard reports `29 copied items match their sources`, and the ordinary spike build is green. A fresh `cargo kani --harness push_tensor_role_injective` proves the complete new domain at unwind 2: 0 of 322 checks failed, 6 were unreachable, and verification completed in 0.667 s on the coordination host. This does not retroactively change the Kani rows below, which remain measurements of the exact earlier encoders at their named revision.
 
 **The guard was watched failing before being trusted**, on four planted drifts:
 

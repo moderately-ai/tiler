@@ -1743,10 +1743,7 @@ fn member_key(members: &[crate::region::SemanticStage]) -> Vec<(u32, u32)> {
 /// to every identity ever encoded (ADR 0074 convention 5b).
 fn push_tensor_role(output: &mut Vec<u8>, role: TensorRole) {
     match role {
-        TensorRole::Input { ordinal } => {
-            output.push(1);
-            output.extend_from_slice(&ordinal.get().to_be_bytes());
-        }
+        TensorRole::Input => output.push(1),
         TensorRole::Intermediate => output.push(2),
         TensorRole::Output => output.push(3),
     }
@@ -1838,7 +1835,7 @@ mod tests {
         VerifiedTargetRequest, verify_planned_request,
     };
     use std::collections::BTreeMap;
-    use tiler_ir::schedule::InputOrdinal;
+    use tiler_ir::schedule::AccessOrdinal;
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, ProviderIdentity,
         SemanticProgram, SemanticProgramBuilder, StrictSerialF32Sum,
@@ -1889,7 +1886,7 @@ mod tests {
 
     struct FixedCallProvider {
         identity: crate::call_registry::OpaqueCallIdentity,
-        bindings: Vec<(&'static str, TensorRole)>,
+        bindings: Vec<(&'static str, AccessOrdinal)>,
         cost: PhysicalCostEstimate,
     }
 
@@ -1975,7 +1972,6 @@ mod tests {
         request: &VerifiedTargetRequest,
         subject: FrontierRegionSubject,
         call_name: &'static str,
-        output: TensorRole,
         aliasing: crate::effects::Aliasing,
         scheduled: Option<ScheduledRegion>,
     ) -> RegionFrontier {
@@ -1987,15 +1983,7 @@ mod tests {
             .expect("one call");
         let opaque = FixedCallProvider {
             identity,
-            bindings: vec![
-                (
-                    "x",
-                    TensorRole::Input {
-                        ordinal: InputOrdinal::FIRST,
-                    },
-                ),
-                ("y", output),
-            ],
+            bindings: vec![("x", AccessOrdinal::FIRST), ("y", AccessOrdinal::new(1))],
             cost: PhysicalCostEstimate::structural(1, 2, 0),
         };
         let scheduled = scheduled.map(|region| FixedRegionProvider {
@@ -2029,7 +2017,6 @@ mod tests {
                 &request,
                 subject,
                 "fused",
-                TensorRole::Output,
                 crate::effects::Aliasing::Distinct,
                 Some(fused_raw(&request)),
             )],
@@ -2570,7 +2557,6 @@ mod tests {
                     &request,
                     pointwise_subject,
                     "aliasing-producer",
-                    TensorRole::Intermediate,
                     crate::effects::Aliasing::MayAliasInputs,
                     None,
                 ),
@@ -2798,12 +2784,7 @@ mod tests {
             producer,
             RegionBoundary {
                 guarantees: vec![guarantee_facet(TensorRole::Output, profile_guarantees())],
-                requirements: vec![requirement_facet(
-                    TensorRole::Input {
-                        ordinal: InputOrdinal::FIRST,
-                    },
-                    profile_requirements(),
-                )],
+                requirements: vec![requirement_facet(TensorRole::Input, profile_requirements())],
             },
         );
         boundaries.insert(
@@ -2870,12 +2851,7 @@ mod tests {
                     TensorRole::Intermediate,
                     profile_guarantees(),
                 )],
-                requirements: vec![requirement_facet(
-                    TensorRole::Input {
-                        ordinal: InputOrdinal::FIRST,
-                    },
-                    profile_requirements(),
-                )],
+                requirements: vec![requirement_facet(TensorRole::Input, profile_requirements())],
             },
         );
         boundaries.insert(

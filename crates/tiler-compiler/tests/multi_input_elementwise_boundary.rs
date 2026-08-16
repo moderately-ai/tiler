@@ -80,7 +80,8 @@ use tiler_compiler::session::{
 };
 use tiler_compiler::target::{TargetProfile, TargetRequest};
 use tiler_ir::schedule::{
-    InputOrdinal, PointwiseF32ExpressionBuilder, PointwiseF32ExpressionDiagnostic, PointwiseF32Node,
+    AccessOrdinal, PointwiseF32ExpressionBuilder, PointwiseF32ExpressionDiagnostic,
+    PointwiseF32Node,
 };
 use tiler_ir::semantic::{
     F32, F32Add, F32Constant, F32Multiply, F32Reindex, F32Silu, InputKey, OutputKey, ReindexForm,
@@ -411,12 +412,14 @@ fn a_family_with_no_node_of_its_own_compiles_by_projection_or_by_addressing() {
 fn the_physical_pointwise_expression_names_each_input_tensor() {
     let mut expression = PointwiseF32ExpressionBuilder::new();
     let a = expression
-        .input(InputOrdinal::new(0))
+        .input(AccessOrdinal::new(0))
         .expect("the first input is admitted");
     let b = expression
-        .input(InputOrdinal::new(1))
+        .input(AccessOrdinal::new(1))
         .expect("a second input tensor is now nameable");
-    let c = expression.input(InputOrdinal::new(2)).expect("and a third");
+    let c = expression
+        .input(AccessOrdinal::new(2))
+        .expect("and a third");
     let product = expression.multiply(a, b).unwrap();
     let root = expression.add(product, c).unwrap();
     let built = expression
@@ -426,18 +429,20 @@ fn the_physical_pointwise_expression_names_each_input_tensor() {
     assert_eq!(
         built.nodes()[0],
         PointwiseF32Node::Input {
-            ordinal: InputOrdinal::new(0)
+            access: AccessOrdinal::new(0)
         },
     );
 
     // The vocabulary is still bounded: an ordinal set with a gap names a
     // binding no read access would supply, and is refused by build.
     let mut sparse = PointwiseF32ExpressionBuilder::new();
-    let first = sparse.input(InputOrdinal::new(0)).unwrap();
-    let third = sparse.input(InputOrdinal::new(2)).unwrap();
+    let first = sparse.input(AccessOrdinal::new(0)).unwrap();
+    let third = sparse.input(AccessOrdinal::new(2)).unwrap();
     let root = sparse.add(first, third).unwrap();
     assert_eq!(
         sparse.build(root).unwrap_err().diagnostic(),
-        PointwiseF32ExpressionDiagnostic::SparseInputOrdinals { missing: 1 },
+        PointwiseF32ExpressionDiagnostic::SparseAccessOrdinals {
+            missing: AccessOrdinal::new(1),
+        },
     );
 }

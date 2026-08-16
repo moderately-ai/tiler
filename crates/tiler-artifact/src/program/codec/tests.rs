@@ -3100,7 +3100,7 @@ fn program_input_binding(envelope: &mut ArtifactEnvelope) -> &mut super::super::
 /// nothing about the `v3` step was undone. This is exactly the chance the doc
 /// comment above warns about, which is why the count is measured and never
 /// derived, and why a reader must not "simplify" it to the arithmetic.
-const DIFFERING_CARRIER_POSITIONS: usize = 68;
+const DIFFERING_CARRIER_POSITIONS: usize = 66;
 
 /// Byte positions at which the carrier-only fixture pair's *identities* differ.
 ///

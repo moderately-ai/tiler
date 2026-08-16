@@ -1721,10 +1721,10 @@ fn binding_target(
 
 /// Derives the live input-extent operand rows from the kernel the entry binds.
 ///
-/// Callers do not supply a second list. Each kernel operand names a region-local
-/// input; this maps that tensor through the stage access that reads it onto the
-/// program-interface key, and refuses a kernel operand the entry does not bind
-/// or an axis the bound input does not have.
+/// Callers do not supply a second list. Each kernel operand names an exact
+/// region-local access position; this maps that position through the matching
+/// stage access onto the program-interface key, and refuses an operand whose
+/// access is absent, is not an input, or names an axis the input does not have.
 fn derive_extent_operands(
     entry: usize,
     stage: StageRef<'_>,
@@ -1736,30 +1736,26 @@ fn derive_extent_operands(
     let accesses: Vec<_> = stage.accesses().collect();
     let mut rows = Vec::with_capacity(declared);
     for parameter in kernel.input_extents() {
-        let TensorRole::Input { ordinal } = parameter.tensor else {
+        let position = usize::try_from(parameter.access.get()).unwrap_or(usize::MAX);
+        let Some((buffer, access)) = buffers.get(position).zip(accesses.get(position)) else {
             return Err(ArtifactBuildError::ExtentOperandUnbound {
                 entry,
-                ordinal: u32::MAX,
+                access: parameter.access,
                 axis: parameter.axis.get(),
             });
         };
-        let Some(view) = buffers
-            .iter()
-            .zip(&accesses)
-            .find(|(buffer, _)| buffer.tensor == parameter.tensor)
-            .map(|(_, access)| access.view())
-        else {
+        if buffer.tensor != TensorRole::Input {
             return Err(ArtifactBuildError::ExtentOperandUnbound {
                 entry,
-                ordinal: ordinal.get(),
+                access: parameter.access,
                 axis: parameter.axis.get(),
             });
-        };
-        let value = view.value();
+        }
+        let value = access.view().value();
         let MaterializedOrigin::ProgramInput { key } = value.origin() else {
             return Err(ArtifactBuildError::ExtentOperandUnbound {
                 entry,
-                ordinal: ordinal.get(),
+                access: parameter.access,
                 axis: parameter.axis.get(),
             });
         };

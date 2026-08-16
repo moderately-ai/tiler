@@ -13,14 +13,14 @@ use crate::index::{
 };
 use crate::kernel::{KernelType, VerifiedKernel, lower_scheduled_region};
 use crate::schedule::{
-    Access, AccessMode, ApproximationEnvelope, Bf16NumericalContractKey, BoundsProof,
-    BoundsProofKind, BoundsWitnessId, ContractionAxisSource, ContributorOrder,
+    Access, AccessMode, AccessOrdinal, ApproximationEnvelope, Bf16NumericalContractKey,
+    BoundsProof, BoundsProofKind, BoundsWitnessId, ContractionAxisSource, ContributorOrder,
     ExceptionalValueAssumption, ExecutionBinding, F32NumericalContractKey, FlushedZeroSign,
-    InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess, MaterializationRounding,
-    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-    OwnershipWitnessId, PointwiseBf16ExpressionBuilder, PointwiseF32ExpressionBuilder,
-    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
-    TensorRole, VerifiedScheduledRegion,
+    KernelSchedule, LaunchPlan, LogicalAccess, MaterializationRounding, NumericalPermission,
+    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
+    PointwiseBf16ExpressionBuilder, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId,
+    ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+    VerifiedScheduledRegion,
 };
 use crate::semantic::{
     Bf16, Bf16Add, Bf16Constant, Bf16Multiply, EncodedComponentRole, F32, F32Add, F32Constant,
@@ -94,7 +94,7 @@ fn output_shape() -> Shape {
 
 fn scale_bias_expression(scale_bits: u32) -> crate::schedule::PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
-    let input = expression.input(InputOrdinal::FIRST).expect("input");
+    let input = expression.input(AccessOrdinal::FIRST).expect("input");
     let scale = expression.constant(scale_bits).expect("scale");
     let product = expression.multiply(input, scale).expect("product");
     let bias = expression.constant(BIAS_BITS).expect("bias");
@@ -110,9 +110,7 @@ fn pointwise_region(region: u32, scale_bits: u32) -> VerifiedScheduledRegion {
     builder.iteration_shape(shape).expect("iteration shape");
     builder
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
@@ -133,9 +131,7 @@ fn pointwise_region(region: u32, scale_bits: u32) -> VerifiedScheduledRegion {
     builder
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(0),
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             kind: BoundsProofKind::LinearRange {
                 element_count: count,
@@ -367,9 +363,7 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
         .expect("iteration shape");
     for access in [
         Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: Some(STRICT_AFFINE_CODES_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::PackedU4LsbZeroTail { logical_elements },
@@ -377,9 +371,7 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
             ownership: None,
         },
         Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: Some(STRICT_AFFINE_SCALE_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::ScalarBroadcast,
@@ -387,9 +379,7 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
             ownership: None,
         },
         Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: Some(STRICT_AFFINE_ZERO_POINT_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::ScalarBroadcast,
@@ -410,28 +400,12 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
     for (id, tensor, component_role, element_count) in [
         (
             0,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            TensorRole::Input,
             Some(STRICT_AFFINE_CODES_ROLE),
             logical_elements.div_ceil(2),
         ),
-        (
-            1,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-            Some(STRICT_AFFINE_SCALE_ROLE),
-            1,
-        ),
-        (
-            2,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-            Some(STRICT_AFFINE_ZERO_POINT_ROLE),
-            1,
-        ),
+        (1, TensorRole::Input, Some(STRICT_AFFINE_SCALE_ROLE), 1),
+        (2, TensorRole::Input, Some(STRICT_AFFINE_ZERO_POINT_ROLE), 1),
         (3, TensorRole::Output, None, logical_elements),
     ] {
         builder
@@ -1854,9 +1828,7 @@ fn a_stage_access_must_realize_its_bound_kernel_signature() {
             .expect_err("tensor roles are checked"),
         KernelProgramBuildError::StageTensorRole {
             position: 0,
-            expected: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            expected: TensorRole::Input,
             actual: ValueRole::Temporary,
         }
     );
@@ -3773,7 +3745,7 @@ fn bf16_output_region() -> VerifiedScheduledRegion {
     let shape = input_shape();
     let count = elements(&shape);
     let mut expression = PointwiseBf16ExpressionBuilder::new();
-    let leaf = expression.input(InputOrdinal::FIRST).expect("input");
+    let leaf = expression.input(AccessOrdinal::FIRST).expect("input");
     let scale = expression.constant(BF16_SCALE_BITS).expect("scale");
     let product = expression.multiply(leaf, scale).expect("product");
     let bias = expression.constant(BF16_BIAS_BITS).expect("bias");
@@ -3784,9 +3756,7 @@ fn bf16_output_region() -> VerifiedScheduledRegion {
     builder.iteration_shape(shape).expect("iteration shape");
     builder
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
@@ -3804,15 +3774,7 @@ fn bf16_output_region() -> VerifiedScheduledRegion {
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .expect("write access");
-    for (witness, tensor) in [
-        (
-            0,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-        ),
-        (1, TensorRole::Output),
-    ] {
+    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Output)] {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
@@ -4348,9 +4310,7 @@ fn live_contraction_kernel_for_program() -> VerifiedKernel {
     region.iteration_shape(output.clone()).expect("shape");
     for (ordinal, (operand, free)) in [(&left, 0_u32), (&right, 1)].into_iter().enumerate() {
         let witness = u32::try_from(ordinal).expect("two operands");
-        let tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(witness),
-        };
+        let tensor = TensorRole::Input;
         region
             .push_access(Access {
                 tensor,
@@ -4416,7 +4376,7 @@ fn live_contraction_kernel_for_program() -> VerifiedKernel {
     region
         .schedule(KernelSchedule {
             reduction: ReductionTopology::LiveContraction {
-                live_input: InputOrdinal::FIRST,
+                live_access: AccessOrdinal::FIRST,
                 live_axis: Axis::new(1),
                 order: ContributorOrder::OriginalAxisLexicographic,
                 permits_reassociation: false,
@@ -4969,9 +4929,7 @@ fn a_live_contraction_requirement_without_one_logical_owner_fails_typed() {
     assert_eq!(
         error,
         KernelProgramBuildError::RequiredInputExtentBinding {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             axis: Axis::new(1),
             matches: 0,
         }

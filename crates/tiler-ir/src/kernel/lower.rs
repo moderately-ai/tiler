@@ -170,8 +170,8 @@ struct CanonicalPlan<'a> {
     addressing: Vec<ReadAddressing>,
     cooperative: Option<CooperativePlan>,
     contraction: Option<CooperativeContractionPlan>,
-    live_extents: Vec<(TensorRole, crate::shape::Axis)>,
-    live_contraction: Option<(TensorRole, crate::shape::Axis)>,
+    live_extents: Vec<(crate::schedule::AccessOrdinal, crate::shape::Axis)>,
+    live_contraction: Option<(crate::schedule::AccessOrdinal, crate::shape::Axis)>,
 }
 
 /// The blocked cooperative-contraction shape this lowering emits.
@@ -316,15 +316,10 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
         live_extents: live_input_extents(schedule),
         live_contraction: match &schedule.schedule.reduction {
             ReductionTopology::LiveContraction {
-                live_input,
+                live_access,
                 live_axis,
                 ..
-            } => Some((
-                TensorRole::Input {
-                    ordinal: *live_input,
-                },
-                *live_axis,
-            )),
+            } => Some((*live_access, *live_axis)),
             _ => None,
         },
     })
@@ -1005,10 +1000,10 @@ fn declare_plan_live_extents(
     plan: &CanonicalPlan<'_>,
 ) -> Result<Vec<(InputExtentParameter, KernelValueId)>, KernelBuildError> {
     let mut declared = Vec::with_capacity(plan.live_extents.len());
-    for &(tensor, axis) in &plan.live_extents {
-        let id = builder.declare_input_extent(InputExtentParameter { tensor, axis })?;
+    for &(access, axis) in &plan.live_extents {
+        let id = builder.declare_input_extent(InputExtentParameter { access, axis })?;
         let value = builder.input_extent(id)?;
-        declared.push((InputExtentParameter { tensor, axis }, value));
+        declared.push((InputExtentParameter { access, axis }, value));
     }
     Ok(declared)
 }
@@ -1024,16 +1019,15 @@ fn emit_live_row_major(
     let columns = live
         .iter()
         .find_map(|(parameter, value)| {
-            plan.addressing
-                .iter()
-                .find_map(|addressing| match addressing {
-                    ReadAddressing::LiveRowMajor { inner_axis }
-                        if parameter.axis == *inner_axis =>
-                    {
-                        Some(*value)
-                    }
-                    _ => None,
-                })
+            let position = usize::try_from(parameter.access.get()).ok()?;
+            match plan.addressing.get(position) {
+                Some(ReadAddressing::LiveRowMajor { inner_axis })
+                    if parameter.axis == *inner_axis =>
+                {
+                    Some(*value)
+                }
+                _ => None,
+            }
         })
         .ok_or(KernelBuildError::UndeclaredInputExtent)?;
     let start = builder.constant(KernelConstant::Index(0))?;
@@ -1350,9 +1344,9 @@ fn live_contraction_bound(
     plan: &CanonicalPlan<'_>,
     live: &[(InputExtentParameter, KernelValueId)],
 ) -> Option<KernelValueId> {
-    let (tensor, axis) = plan.live_contraction?;
+    let (access, axis) = plan.live_contraction?;
     live.iter().find_map(|(parameter, value)| {
-        (parameter.tensor == tensor && parameter.axis == axis).then_some(*value)
+        (parameter.access == access && parameter.axis == axis).then_some(*value)
     })
 }
 
@@ -2244,9 +2238,9 @@ fn emit_pointwise(
     let mut values = Vec::with_capacity(expression.nodes().len());
     for node in expression.nodes() {
         let value = match node {
-            PointwiseF32Node::Input { ordinal } => usize::try_from(ordinal.get())
+            PointwiseF32Node::Input { access } => usize::try_from(access.get())
                 .ok()
-                .and_then(|ordinal| inputs.get(ordinal).copied())
+                .and_then(|position| inputs.get(position).copied())
                 .ok_or(KernelBuildError::InvalidHandle {
                     entity: super::error::KernelEntityKind::Buffer,
                 })?,
@@ -2317,9 +2311,9 @@ fn emit_pointwise_bf16(
     let mut values = Vec::with_capacity(expression.nodes().len());
     for node in expression.nodes() {
         let value = match node {
-            PointwiseBf16Node::Input { ordinal } => usize::try_from(ordinal.get())
+            PointwiseBf16Node::Input { access } => usize::try_from(access.get())
                 .ok()
-                .and_then(|ordinal| inputs.get(ordinal).copied())
+                .and_then(|position| inputs.get(position).copied())
                 .ok_or(KernelBuildError::InvalidHandle {
                     entity: super::error::KernelEntityKind::Buffer,
                 })?,
@@ -2513,7 +2507,7 @@ fn emit_reduction(
 
 /// Applies one fold's epilogue to its value, or returns the value unchanged.
 ///
-/// The folded value is bound to input ordinal zero, which is the sole leaf the
+/// The folded value is bound to local access zero, which is the sole leaf the
 /// schedule verifier admits: this region reads one boundary tensor and the
 /// epilogue names none, so the ordinal indexes the fold's own accumulator rather
 /// than a loaded buffer. A second leaf finds no value and is reported as an

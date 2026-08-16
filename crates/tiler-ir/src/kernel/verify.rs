@@ -266,7 +266,7 @@ pub(super) fn verify_kernel(
 ) -> Result<(), KernelDiagnostic> {
     let (reads, write) = boundary_accesses(schedule)?;
     verify_signature(data, schedule, reads, write, derived)?;
-    verify_input_extents(data, schedule, reads)?;
+    verify_input_extents(data, schedule)?;
     verify_cooperative(data, schedule)?;
 
     let axis = axis_guards(data, schedule);
@@ -318,30 +318,28 @@ pub(super) fn verify_kernel(
 fn verify_input_extents(
     data: &KernelData,
     schedule: &ScheduledRegion,
-    reads: &[Access],
 ) -> Result<(), KernelDiagnostic> {
     let expected: Vec<InputExtentParameter> = live_input_extents(schedule)
         .into_iter()
-        .map(|(tensor, axis)| InputExtentParameter { tensor, axis })
+        .map(|(access, axis)| InputExtentParameter { access, axis })
         .collect();
     if data.input_extents != expected {
         return Err(KernelDiagnostic::InputExtentContract);
     }
     let mut seen = BTreeSet::new();
     for parameter in &data.input_extents {
-        let crate::schedule::TensorRole::Input { ordinal } = parameter.tensor else {
+        let Some(access) = usize::try_from(parameter.access.get())
+            .ok()
+            .and_then(|position| schedule.index.accesses.get(position))
+        else {
             return Err(KernelDiagnostic::InputExtentContract);
         };
-        if !seen.insert((ordinal.get(), parameter.axis.get())) {
+        if !matches!(access.tensor, crate::schedule::TensorRole::Input)
+            || !seen.insert((parameter.access.get(), parameter.axis.get()))
+        {
             return Err(KernelDiagnostic::InputExtentContract);
         }
-        let rank = reads
-            .iter()
-            .find(|read| read.tensor == parameter.tensor)
-            .map_or_else(
-                || access_rank_from_iteration(schedule),
-                |read| access_rank(read, schedule),
-            );
+        let rank = access_rank(access, schedule);
         if u64::from(parameter.axis.get()) >= rank {
             return Err(KernelDiagnostic::InputExtentContract);
         }
@@ -394,10 +392,6 @@ fn access_rank(access: &Access, schedule: &ScheduledRegion) -> u64 {
             u64::from(inner_axis.get()).saturating_add(1)
         }
     }
-}
-
-fn access_rank_from_iteration(schedule: &ScheduledRegion) -> u64 {
-    schedule.index.iteration_shape.rank() as u64
 }
 
 fn verify_signature(
@@ -1289,20 +1283,13 @@ fn verify_predicated_contraction_roles(
     let [left, right] = reads else {
         return Err(KernelDiagnostic::ScheduleAccessCount);
     };
-    let left_buffer = u32::try_from(
-        data.buffers
-            .iter()
-            .position(|buffer| buffer.tensor == left.tensor)
-            .ok_or(KernelDiagnostic::BufferContract)?,
-    )
-    .map_err(|_| KernelDiagnostic::BufferContract)?;
-    let right_buffer = u32::try_from(
-        data.buffers
-            .iter()
-            .position(|buffer| buffer.tensor == right.tensor)
-            .ok_or(KernelDiagnostic::BufferContract)?,
-    )
-    .map_err(|_| KernelDiagnostic::BufferContract)?;
+    if data.buffers.first().map(|buffer| buffer.tensor) != Some(left.tensor)
+        || data.buffers.get(1).map(|buffer| buffer.tensor) != Some(right.tensor)
+    {
+        return Err(KernelDiagnostic::BufferContract);
+    }
+    let left_buffer = 0;
+    let right_buffer = 1;
     let axis = axis_guards(data, schedule);
     let plus_zero = data.values.iter().enumerate().find_map(|(index, value)| {
         matches!(value.constant, Some(KernelConstant::F32Bits(0)))
@@ -1841,7 +1828,7 @@ fn verify_live_contributor_loop(
         return Err(KernelDiagnostic::InputExtentContract);
     };
     let expected = live_input_extents(schedule);
-    if expected.first().copied() != Some((declared.tensor, declared.axis)) {
+    if expected.first().copied() != Some((declared.access, declared.axis)) {
         return Err(KernelDiagnostic::InputExtentContract);
     }
     let Some(end_value) = data.values.get(end as usize) else {

@@ -55,7 +55,7 @@
 //! ```
 //! use tiler_ir::schedule::{
 //!     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId,
-//!     ExceptionalValueAssumption, ExecutionBinding, InputOrdinal, KernelSchedule, LaunchPlan,
+//!     ExceptionalValueAssumption, ExecutionBinding, AccessOrdinal, KernelSchedule, LaunchPlan,
 //!     LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
 //!     OwnershipProofKind, OwnershipWitnessId, PointwiseF32ExpressionBuilder, RegionId,
 //!     ReductionTopology, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
@@ -67,7 +67,7 @@
 //! let mut builder = ScheduledRegionBuilder::new(RegionId::new(0));
 //! builder.iteration_shape(Shape::from_dims([4]))?;
 //! builder.push_access(Access {
-//!     tensor: TensorRole::Input { ordinal: InputOrdinal::FIRST },
+//!     tensor: TensorRole::Input,
 //!     component_role: None,
 //!     mode: AccessMode::Read,
 //!     map: LogicalAccess::LinearIdentity,
@@ -84,7 +84,7 @@
 //! })?;
 //! builder.push_bounds_proof(BoundsProof {
 //!     id: BoundsWitnessId::new(0),
-//!     tensor: TensorRole::Input { ordinal: InputOrdinal::FIRST },
+//!     tensor: TensorRole::Input,
 //!     component_role: None,
 //!     kind: BoundsProofKind::LinearRange { element_count: 4 },
 //! })?;
@@ -100,7 +100,7 @@
 //!     kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 4 },
 //! })?;
 //! let mut expression = PointwiseF32ExpressionBuilder::new();
-//! let input = expression.input(InputOrdinal::FIRST)?;
+//! let input = expression.input(AccessOrdinal::FIRST)?;
 //! let scale = expression.constant(2.0_f32.to_bits())?;
 //! let product = expression.multiply(input, scale)?;
 //! let bias = expression.constant(1.0_f32.to_bits())?;
@@ -164,7 +164,7 @@ pub use error::{
     ScheduleComponent, ScheduleLimitKind, ScheduledRegionBuildError, ScheduledRegionDiagnostic,
 };
 pub use handles::{
-    BoundsWitnessId, InputOrdinal, OwnershipWitnessId, PhaseId, RegionId, StagingId, SyncPointId,
+    AccessOrdinal, BoundsWitnessId, OwnershipWitnessId, PhaseId, RegionId, StagingId, SyncPointId,
 };
 pub use model::{
     Access, AccessMode, AxisDecode, BoundsProof, BoundsProofKind, CanonicalScheduledRegionIdentity,

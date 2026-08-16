@@ -762,17 +762,25 @@ fn disjoint_input_subset_program() -> SemanticProgram {
     builder.build().unwrap()
 }
 
-/// The boundary tensors one verified region reads, in access order.
-fn read_tensors(
-    region: &crate::physical::VerifiedScheduledRegion,
-) -> Vec<crate::physical::TensorRole> {
+/// The declared program inputs one verified region reads, in access order.
+fn read_declared_inputs(region: &crate::physical::VerifiedScheduledRegion) -> Vec<u32> {
     region
         .region()
         .index
         .accesses
         .iter()
-        .filter(|access| access.mode == crate::physical::AccessMode::Read)
-        .map(|access| access.tensor)
+        .enumerate()
+        .filter(|(_, access)| access.mode == crate::physical::AccessMode::Read)
+        .filter(|(_, access)| access.tensor == crate::physical::TensorRole::Input)
+        .map(|(position, _)| {
+            let access = crate::physical::AccessOrdinal::new(
+                u32::try_from(position).expect("bounded access position"),
+            );
+            region
+                .declared_input_at(access)
+                .expect("verified input access has a checked declaration")
+                .get()
+        })
         .collect()
 }
 
@@ -808,8 +816,6 @@ fn read_tensors(
 /// giving `[8, 26]`, where `b`'s gives `[98, 386]`.
 #[test]
 fn outputs_reading_input_subsets_compile_and_bind_the_inputs_they_read() {
-    use crate::physical::{InputOrdinal, TensorRole};
-
     let shape = Shape::from_dims([2, 2]);
     let a: [f32; 4] = [1.0, 2.0, 4.0, 8.0];
     let b: [f32; 4] = [16.0, 32.0, 64.0, 128.0];
@@ -822,9 +828,6 @@ fn outputs_reading_input_subsets_compile_and_bind_the_inputs_they_read() {
     let compiled = compile(CompilationRequest::governed(&program))
         .expect("outputs reading input subsets compile through the ordinary path");
     assert_eq!(compiled.targets[0].failure(), None);
-    let input = |ordinal| TensorRole::Input {
-        ordinal: InputOrdinal::new(ordinal),
-    };
     let alternative = compiled.targets[0]
         .portfolio
         .alternatives
@@ -834,7 +837,7 @@ fn outputs_reading_input_subsets_compile_and_bind_the_inputs_they_read() {
                 && alternative
                     .scheduled_regions
                     .iter()
-                    .any(|region| read_tensors(region) == [input(1)])
+                    .any(|region| read_declared_inputs(region) == [1])
         })
         .expect("the affine fold over input one is retained without materialization");
 
@@ -847,19 +850,19 @@ fn outputs_reading_input_subsets_compile_and_bind_the_inputs_they_read() {
 
     // Each region against the declaration, and `assert_kernels_match_program`
     // is what makes `kernels[i]` the kernel of `scheduled_regions[i]`.
-    let reads: Vec<Vec<TensorRole>> = alternative
+    let reads: Vec<Vec<u32>> = alternative
         .scheduled_regions
         .iter()
-        .map(read_tensors)
+        .map(read_declared_inputs)
         .collect();
-    let find = |expected: &[TensorRole]| {
+    let find = |expected: &[u32]| {
         reads
             .iter()
             .position(|actual| actual == expected)
             .unwrap_or_else(|| panic!("no region reads {expected:?}; regions read {reads:?}"))
     };
-    let product_region = find(&[input(0), input(2)]);
-    let fold_region = find(&[input(1)]);
+    let product_region = find(&[0, 2]);
+    let fold_region = find(&[1]);
 
     let product = interpret_fused_inputs(&alternative.kernels[product_region], &[&a, &c]);
     let folded = interpret_fused(&alternative.kernels[fold_region], &b);
@@ -947,8 +950,6 @@ fn contraction_input_subset_program() -> SemanticProgram {
 /// result so two agreeing evaluators cannot hide it.
 #[test]
 fn a_contraction_over_an_input_subset_compiles_and_matches_the_reference() {
-    use crate::physical::{InputOrdinal, TensorRole};
-
     let shape = Shape::from_dims([2, 2]);
     let a: [f32; 4] = [1.0, 2.0, 4.0, 8.0];
     let b: [f32; 4] = [16.0, 32.0, 64.0, 128.0];
@@ -970,22 +971,19 @@ fn a_contraction_over_an_input_subset_compiles_and_matches_the_reference() {
     assert_eq!(alternative.scheduled_regions.len(), 2);
     assert_eq!(alternative.kernels.len(), 2);
 
-    let input = |ordinal| TensorRole::Input {
-        ordinal: InputOrdinal::new(ordinal),
-    };
-    let reads: Vec<Vec<TensorRole>> = alternative
+    let reads: Vec<Vec<u32>> = alternative
         .scheduled_regions
         .iter()
-        .map(read_tensors)
+        .map(read_declared_inputs)
         .collect();
-    let find = |expected: &[TensorRole]| {
+    let find = |expected: &[u32]| {
         reads
             .iter()
             .position(|actual| actual == expected)
             .unwrap_or_else(|| panic!("no region reads {expected:?}; regions read {reads:?}"))
     };
-    let contraction_region = find(&[input(0), input(2)]);
-    let retained_region = find(&[input(1)]);
+    let contraction_region = find(&[0, 2]);
+    let retained_region = find(&[1]);
     let projected = interpret_fused_inputs(&alternative.kernels[contraction_region], &[&a, &c]);
     let doubled = interpret_fused(&alternative.kernels[retained_region], &b);
 

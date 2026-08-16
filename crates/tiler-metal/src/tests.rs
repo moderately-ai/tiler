@@ -26,16 +26,16 @@ use tiler_ir::kernel::{
     KernelType, MemoryScope, VerifiedKernel, lower_scheduled_region,
 };
 use tiler_ir::schedule::{
-    Access, AccessMode, ArithmeticType, AxisDecode, BoundsProof, BoundsProofKind, BoundsWitnessId,
-    ContractionAxisSource, ContributorArrival, ContributorCoverage, ContributorOrder,
-    ContributorPartition, ConvergenceEvidence, ExceptionalValueAssumption, ExecutionBinding,
-    FlushedZeroSign, InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
-    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
-    PointwiseBf16Expression, PointwiseBf16ExpressionBuilder, PointwiseF32Expression,
-    PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
-    ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode, SyncPointId, SynchronizationPlacement,
-    SynchronizationPoint, TailPolicy, TensorRole, ValueDomainProvenance, VerifiedScheduledRegion,
-    element_count, workgroup_tree_tile,
+    Access, AccessMode, AccessOrdinal, ArithmeticType, AxisDecode, BoundsProof, BoundsProofKind,
+    BoundsWitnessId, ContractionAxisSource, ContributorArrival, ContributorCoverage,
+    ContributorOrder, ContributorPartition, ConvergenceEvidence, ExceptionalValueAssumption,
+    ExecutionBinding, FlushedZeroSign, KernelSchedule, LaunchPlan, LogicalAccess,
+    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    OwnershipWitnessId, PointwiseBf16Expression, PointwiseBf16ExpressionBuilder,
+    PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId,
+    ScalarProgram, ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode, SyncPointId,
+    SynchronizationPlacement, SynchronizationPoint, TailPolicy, TensorRole, ValueDomainProvenance,
+    VerifiedScheduledRegion, element_count, workgroup_tree_tile,
 };
 use tiler_ir::semantic::{CANONICAL_BF16_ARITHMETIC_NAN_BITS, RMS_NORM_F32_REFERENCE_EPS_BITS};
 use tiler_ir::semantic::{
@@ -77,7 +77,7 @@ const CANONICALIZE_BF16_SYMBOL: &str = "tiler_canonicalize_nan_bf16_7fc0";
 fn scale_then_bias_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
     let input = expression
-        .input(InputOrdinal::FIRST)
+        .input(AccessOrdinal::FIRST)
         .expect("pointwise input");
     let scale = expression.constant(scale_bits).expect("scale constant");
     let product = expression
@@ -203,7 +203,7 @@ fn pointwise_region(id: RegionId, shape: &Shape, nan_bits: u32) -> VerifiedSched
 fn silu_expression() -> PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
     let input = expression
-        .input(InputOrdinal::FIRST)
+        .input(AccessOrdinal::FIRST)
         .expect("pointwise input");
     let negative_one = expression.constant(0xbf80_0000).expect("negative one");
     let negated = expression
@@ -253,13 +253,13 @@ pub(crate) fn silu_kernel() -> VerifiedKernel {
 fn rms_norm_epilogue_expression() -> PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
     let value = expression
-        .input(InputOrdinal::FIRST)
+        .input(AccessOrdinal::FIRST)
         .expect("the normalized value");
     let weight = expression
-        .input(InputOrdinal::new(1))
+        .input(AccessOrdinal::new(1))
         .expect("the broadcast weight");
     let mean = expression
-        .input(InputOrdinal::new(2))
+        .input(AccessOrdinal::new(2))
         .expect("the row mean of squares");
     let eps = expression
         .constant(RMS_NORM_F32_REFERENCE_EPS_BITS)
@@ -289,9 +289,7 @@ pub(crate) fn rms_norm_epilogue_kernel() -> VerifiedKernel {
     for ordinal in 0..3_u32 {
         builder
             .push_access(Access {
-                tensor: TensorRole::Input {
-                    ordinal: InputOrdinal::new(ordinal),
-                },
+                tensor: TensorRole::Input,
                 component_role: None,
                 mode: AccessMode::Read,
                 map: LogicalAccess::LinearIdentity,
@@ -302,9 +300,7 @@ pub(crate) fn rms_norm_epilogue_kernel() -> VerifiedKernel {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(ordinal),
-                tensor: TensorRole::Input {
-                    ordinal: InputOrdinal::new(ordinal),
-                },
+                tensor: TensorRole::Input,
                 component_role: None,
                 kind: BoundsProofKind::LinearRange {
                     element_count: elements,
@@ -376,9 +372,7 @@ fn pointwise_region_with(
     builder.iteration_shape(shape.clone()).unwrap();
     builder
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
@@ -396,15 +390,7 @@ fn pointwise_region_with(
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .unwrap();
-    for (witness, tensor) in [
-        (
-            0,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-        ),
-        (1, TensorRole::Intermediate),
-    ] {
+    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Intermediate)] {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
@@ -461,7 +447,7 @@ fn bf16_nan_bits() -> u32 {
 fn bf16_scale_then_bias_expression() -> PointwiseBf16Expression {
     let mut expression = PointwiseBf16ExpressionBuilder::new();
     let input = expression
-        .input(InputOrdinal::FIRST)
+        .input(AccessOrdinal::FIRST)
         .expect("pointwise input");
     let scale = expression
         .constant(BF16_SCALE_BITS)
@@ -547,9 +533,7 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
         .unwrap();
     for access in [
         Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: Some(STRICT_AFFINE_CODES_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::PackedU4LsbZeroTail { logical_elements },
@@ -557,9 +541,7 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
             ownership: None,
         },
         Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: Some(STRICT_AFFINE_SCALE_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::ScalarBroadcast,
@@ -567,9 +549,7 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
             ownership: None,
         },
         Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: Some(STRICT_AFFINE_ZERO_POINT_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::ScalarBroadcast,
@@ -590,28 +570,12 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
     for (id, tensor, component_role, element_count) in [
         (
             0,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            TensorRole::Input,
             Some(STRICT_AFFINE_CODES_ROLE),
             logical_elements.div_ceil(2),
         ),
-        (
-            1,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-            Some(STRICT_AFFINE_SCALE_ROLE),
-            1,
-        ),
-        (
-            2,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-            Some(STRICT_AFFINE_ZERO_POINT_ROLE),
-            1,
-        ),
+        (1, TensorRole::Input, Some(STRICT_AFFINE_SCALE_ROLE), 1),
+        (2, TensorRole::Input, Some(STRICT_AFFINE_ZERO_POINT_ROLE), 1),
         (3, TensorRole::Output, None, logical_elements),
     ] {
         builder
@@ -684,9 +648,7 @@ fn reduction_region(
         FixtureReduction::BareSum => TensorRole::Intermediate,
         FixtureReduction::ScaleBiasSum
         | FixtureReduction::SquaredSum
-        | FixtureReduction::Maximum => TensorRole::Input {
-            ordinal: InputOrdinal::FIRST,
-        },
+        | FixtureReduction::Maximum => TensorRole::Input,
     };
     let mut builder = ScheduledRegionBuilder::new(id);
     builder.iteration_shape(output.clone()).unwrap();
@@ -811,9 +773,7 @@ fn contraction_region(id: RegionId, m: u64, n: u64, k: u64) -> VerifiedScheduled
     builder.iteration_shape(output.clone()).unwrap();
     for (ordinal, (operand, free)) in [(&left, 0_u32), (&right, 1)].into_iter().enumerate() {
         let witness = u32::try_from(ordinal).unwrap();
-        let tensor = TensorRole::Input {
-            ordinal: InputOrdinal::new(witness),
-        };
+        let tensor = TensorRole::Input;
         builder
             .push_access(Access {
                 tensor,
@@ -1080,7 +1040,7 @@ fn loop_carried_cooperative_kernel() -> VerifiedKernel {
 fn identity_expression() -> PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
     let input = expression
-        .input(InputOrdinal::FIRST)
+        .input(AccessOrdinal::FIRST)
         .expect("pointwise input");
     expression
         .build(input)
@@ -1106,9 +1066,7 @@ fn structural_region(
     builder.iteration_shape(iteration_shape.clone()).unwrap();
     builder
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map,
@@ -1129,9 +1087,7 @@ fn structural_region(
     builder
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(0),
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             kind: BoundsProofKind::LinearRange {
                 element_count: operand_elements,
@@ -1215,9 +1171,7 @@ fn structural_signature(
 ) -> (KernelBufferId, KernelBufferId) {
     let read = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -2225,12 +2179,7 @@ fn the_binding_table_matches_the_emitted_subscripts() {
     let bindings = entry.buffers();
     assert_eq!(bindings.len(), 2);
     assert_eq!(bindings[0].index(), 0);
-    assert_eq!(
-        bindings[0].parameter().tensor,
-        TensorRole::Input {
-            ordinal: InputOrdinal::FIRST
-        }
-    );
+    assert_eq!(bindings[0].parameter().tensor, TensorRole::Input);
     assert_eq!(bindings[0].parameter().access, BufferAccess::Read);
     assert_eq!(bindings[1].index(), 1);
     assert_eq!(bindings[1].parameter().tensor, TensorRole::Intermediate);
@@ -2252,9 +2201,7 @@ pub(crate) fn live_row_major_kernel() -> VerifiedKernel {
         .expect("rows");
     builder
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LiveRowMajor { inner_axis: inner },
@@ -2272,15 +2219,7 @@ pub(crate) fn live_row_major_kernel() -> VerifiedKernel {
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .expect("write");
-    for (witness, tensor) in [
-        (
-            0,
-            TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
-        ),
-        (1, TensorRole::Intermediate),
-    ] {
+    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Intermediate)] {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
@@ -4104,9 +4043,7 @@ fn an_empty_extrema_domain_is_refused_where_an_empty_sum_commits_its_identity() 
     builder.iteration_shape(Shape::from_dims([2])).unwrap();
     builder
         .push_access(Access {
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::ReductionContributor {
@@ -4132,9 +4069,7 @@ fn an_empty_extrema_domain_is_refused_where_an_empty_sum_commits_its_identity() 
     builder
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(0),
-            tensor: TensorRole::Input {
-                ordinal: InputOrdinal::FIRST,
-            },
+            tensor: TensorRole::Input,
             component_role: None,
             kind: BoundsProofKind::ReductionDomain {
                 input_shape: empty,

@@ -110,7 +110,7 @@ use tiler_compiler::session::{
 };
 use tiler_compiler::target::{TargetProfile, TargetRequest};
 use tiler_ir::program::{MaterializedOrigin, StageAccessMode, ValueRole};
-use tiler_ir::schedule::{InputOrdinal, TensorRole};
+use tiler_ir::schedule::TensorRole;
 use tiler_ir::semantic::{
     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
     SemanticProgramBuilder, StrictSerialF32Sum,
@@ -581,13 +581,9 @@ fn two_programs_differing_only_in_output_order_have_distinct_identities() {
 fn a_published_output_value_cannot_fill_an_intermediate_buffer() {
     assert!(ValueRole::Output.fills(TensorRole::Output));
     assert!(!ValueRole::Output.fills(TensorRole::Intermediate));
-    assert!(!ValueRole::Output.fills(TensorRole::Input {
-        ordinal: InputOrdinal::new(0)
-    }));
+    assert!(!ValueRole::Output.fills(TensorRole::Input));
     // The neighbour that does compose, so the refusals above are about the
     // published role rather than about `fills` declining everything.
     assert!(ValueRole::Temporary.fills(TensorRole::Intermediate));
-    assert!(ValueRole::Input.fills(TensorRole::Input {
-        ordinal: InputOrdinal::new(0)
-    }));
+    assert!(ValueRole::Input.fills(TensorRole::Input));
 }
