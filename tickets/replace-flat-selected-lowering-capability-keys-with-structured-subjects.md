@@ -1,7 +1,7 @@
 ---
 id: replace-flat-selected-lowering-capability-keys-with-structured-subjects
 title: Replace flat selected lowering capability keys with structured subjects
-status: in-progress
+status: done
 priority: p1
 dependencies: [reconcile-the-operation-identity-and-governed-key-grammars, decide-the-selected-lowering-capability-subject-rust-surface]
 related: [reconcile-the-two-target-profile-key-grammars, package-selected-physical-implementation-provenance-in-artifact-identity, frame-provider-identities-before-using-them-as-explain-keys]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, validation, extensions, implementation, public-boundary, artifact, schema]
-claimed_from: todo
-assignee: worker-structured-capability-implementation
-lease_expires_at: 1786915334
 ---
 ## User-visible outcome
 
@@ -57,3 +54,9 @@ Narrowing `OpKey`, changing the governed family-key grammar, permitting multiple
 ## Closes when
 
 The structured subject is the only selected-capability authority across compiler and artifact layers, the collision pair remains distinct end to end, every legal current `OpKey` remains admitted, all schema and derived identities reconcile, exact-tip full gates pass, and an independent identity-sensitive review reports no findings.
+
+## Outcome — 2026-08-16
+
+Implemented at reviewed branch commit `554aa07e1cc8fd5064cba4545a02aba9ae0129fa` and integrated on main as `b23f07226b5c8d97bf0e3de14c906f9e09307198`. The compiler and artifact now carry layer-owned structured lowering-capability subjects; all eight adapters perform the checked family projection and clone the exact `OpKey`; provider key v3, artifact v18, and manifest 18.0 are coherent; the dotted-boundary pair remains distinct through selection, codec, proof, and envelope identity; and the legacy flat path is absent.
+
+The production-identical branch passed the full repository gate. Independent exact-tip review reported no findings after 1,325 focused package tests, doctests, all seven nested spike checks, typed Display/domain/frame perturbations, Clippy, rustdoc, ticket lint, citations, diff-check, and scope guard. Three unrelated exact-base spike defects discovered during the work were preserved as separate P1 tickets rather than folded into this identity migration.
