@@ -1,7 +1,7 @@
 ---
 id: correct-the-contraction-schedule-comment-s-operand-count-authority
 title: Correct the contraction schedule comment's operand-count authority
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [admit-the-contraction-semantic-profile, refresh-multi-output-correctness-row-after-access-ordinal-reconciliation]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, contraction, schedule]
-claimed_from: todo
-assignee: root
-lease_expires_at: 1786925224
 ---
 ## User-visible outcome
 
