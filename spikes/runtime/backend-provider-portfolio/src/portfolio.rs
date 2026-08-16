@@ -38,6 +38,18 @@ pub enum PreparedEntryProbe {
     RequiredAboveObserved,
 }
 
+/// The two compiler plans that become the Metal and CPU portfolio members.
+pub struct PortfolioPlans<'a> {
+    /// Compilation that owns the Metal plan.
+    pub metal_compilation: &'a Compilation,
+    /// Selected Metal plan.
+    pub metal_plan: PlanAlternative<'a>,
+    /// Compilation that owns the CPU plan.
+    pub cpu_compilation: &'a Compilation,
+    /// Selected CPU plan.
+    pub cpu_plan: PlanAlternative<'a>,
+}
+
 /// Why portfolio assembly failed.
 #[derive(Debug)]
 pub enum PortfolioError {
@@ -61,25 +73,19 @@ impl std::error::Error for PortfolioError {}
 /// variant names a different profile than the first.
 pub fn refuse_mixed_targets(
     semantic: &SemanticProgram,
-    metal_compilation: &Compilation,
-    metal_plan: PlanAlternative<'_>,
-    cpu_compilation: &Compilation,
-    cpu_plan: PlanAlternative<'_>,
+    plans: &PortfolioPlans<'_>,
     metal_content: &PayloadContent,
     cpu: &ProducedCpu,
 ) -> Result<ArtifactBuildError, PortfolioError> {
-    let metal_profile = target_ref(metal_compilation);
+    let metal_profile = target_ref(plans.metal_compilation);
     let mut other = metal_profile.clone();
     other.descriptor = TargetProfileDescriptorDigest::from_bytes(b"portfolio-other-descriptor")
         .map_err(|error| PortfolioError::Assemble(error.to_string()))?;
     match assemble_with(
         semantic,
-        metal_compilation,
-        metal_plan,
-        cpu_compilation,
-        cpu_plan,
-        metal_profile,
-        other,
+        plans,
+        &metal_profile,
+        &other,
         metal_content,
         cpu,
         None,
@@ -99,27 +105,13 @@ pub fn refuse_mixed_targets(
 /// Packages both families under one shared variant-level target.
 pub fn assemble_shared(
     semantic: &SemanticProgram,
-    metal_compilation: &Compilation,
-    metal_plan: PlanAlternative<'_>,
-    cpu_compilation: &Compilation,
-    cpu_plan: PlanAlternative<'_>,
-    shared: TargetProfileRef,
+    plans: &PortfolioPlans<'_>,
+    shared: &TargetProfileRef,
     metal_content: &PayloadContent,
     cpu: &ProducedCpu,
 ) -> Result<PackagedPortfolio, PortfolioError> {
-    let artifact = assemble_with(
-        semantic,
-        metal_compilation,
-        metal_plan,
-        cpu_compilation,
-        cpu_plan,
-        shared.clone(),
-        shared,
-        metal_content,
-        cpu,
-        None,
-    )
-    .map_err(|error| PortfolioError::Assemble(error.to_string()))?;
+    let artifact = assemble_with(semantic, plans, shared, shared, metal_content, cpu, None)
+        .map_err(|error| PortfolioError::Assemble(error.to_string()))?;
     let bytes = artifact
         .encode()
         .map_err(|error| PortfolioError::Assemble(error.to_string()))?;
@@ -132,29 +124,23 @@ pub fn assemble_shared(
 /// Packages both families while perturbing only the CPU variant's prepared-entry request.
 pub fn assemble_shared_property_probe(
     semantic: &SemanticProgram,
-    metal_compilation: &Compilation,
-    metal_plan: PlanAlternative<'_>,
-    cpu_compilation: &Compilation,
-    cpu_plan: PlanAlternative<'_>,
-    shared: TargetProfileRef,
+    plans: &PortfolioPlans<'_>,
+    shared: &TargetProfileRef,
     metal_content: &PayloadContent,
     cpu: &ProducedCpu,
     probe: PreparedEntryProbe,
 ) -> Result<PackagedPortfolio, PortfolioError> {
     let artifact = assemble_with(
         semantic,
-        metal_compilation,
-        metal_plan,
-        cpu_compilation,
-        cpu_plan,
-        shared.clone(),
+        plans,
+        shared,
         shared,
         metal_content,
         cpu,
         Some(probe),
     )
     .map_err(|error| PortfolioError::Assemble(error.to_string()))?;
-    package(artifact)
+    package(&artifact)
 }
 
 /// Packages a CPU-only control while perturbing its prepared-entry request.
@@ -162,7 +148,7 @@ pub fn assemble_cpu_property_probe(
     semantic: &SemanticProgram,
     compilation: &Compilation,
     plan: PlanAlternative<'_>,
-    profile: TargetProfileRef,
+    profile: &TargetProfileRef,
     cpu: &ProducedCpu,
     probe: PreparedEntryProbe,
 ) -> Result<PackagedPortfolio, PortfolioError> {
@@ -196,17 +182,17 @@ pub fn assemble_cpu_property_probe(
         .expect("a bounded entry table fits u32");
     draft
         .declare_realization(
-            realization::translate(plan.delivered_realization(), &profile, entries)
+            realization::translate(plan.delivered_realization(), profile, entries)
                 .map_err(|_| PortfolioError::Assemble("realization profile mismatch".into()))?,
         )
         .map_err(|error| PortfolioError::Assemble(error.to_string()))?;
     let artifact = draft
         .build()
         .map_err(|error| PortfolioError::Assemble(error.to_string()))?;
-    package(artifact)
+    package(&artifact)
 }
 
-fn package(artifact: VerifiedArtifactProgram) -> Result<PackagedPortfolio, PortfolioError> {
+fn package(artifact: &VerifiedArtifactProgram) -> Result<PackagedPortfolio, PortfolioError> {
     let bytes = artifact
         .encode()
         .map_err(|error| PortfolioError::Assemble(error.to_string()))?;
@@ -218,24 +204,22 @@ fn package(artifact: VerifiedArtifactProgram) -> Result<PackagedPortfolio, Portf
 
 fn assemble_with(
     semantic: &SemanticProgram,
-    metal_compilation: &Compilation,
-    metal_plan: PlanAlternative<'_>,
-    cpu_compilation: &Compilation,
-    cpu_plan: PlanAlternative<'_>,
-    metal_profile: TargetProfileRef,
-    cpu_profile: TargetProfileRef,
+    plans: &PortfolioPlans<'_>,
+    metal_profile: &TargetProfileRef,
+    cpu_profile: &TargetProfileRef,
     metal_content: &PayloadContent,
     cpu: &ProducedCpu,
     cpu_probe: Option<PreparedEntryProbe>,
 ) -> Result<VerifiedArtifactProgram, ArtifactBuildError> {
     let environment = CompilationEnvironment::new(
-        metal_compilation
+        plans
+            .metal_compilation
             .offered_lowering_providers()
             .iter()
             .cloned(),
     )?;
     let mut draft = ArtifactProgramBuilder::new(semantic, environment)?;
-    select_capabilities(&mut draft, metal_plan)?;
+    select_capabilities(&mut draft, plans.metal_plan)?;
 
     let metal_payload = draft.push_carried_payload(
         metal::backend(),
@@ -256,29 +240,33 @@ fn assemble_with(
 
     push_plan_variant(
         &mut draft,
-        metal_compilation,
-        metal_plan,
+        plans.metal_compilation,
+        plans.metal_plan,
         metal_profile.clone(),
         metal_payload,
         None,
     )?;
     push_plan_variant(
         &mut draft,
-        cpu_compilation,
-        cpu_plan,
-        cpu_profile,
+        plans.cpu_compilation,
+        plans.cpu_plan,
+        cpu_profile.clone(),
         cpu_payload,
         cpu_probe,
     )?;
 
     let entries = u32::try_from(
-        metal_plan.abi().kernel_program().stages().len()
-            + cpu_plan.abi().kernel_program().stages().len(),
+        plans.metal_plan.abi().kernel_program().stages().len()
+            + plans.cpu_plan.abi().kernel_program().stages().len(),
     )
     .expect("a bounded entry table fits u32");
     draft.declare_realization(
-        realization::translate(metal_plan.delivered_realization(), &metal_profile, entries)
-            .map_err(|_| ArtifactBuildError::RealizationProfileMismatch)?,
+        realization::translate(
+            plans.metal_plan.delivered_realization(),
+            metal_profile,
+            entries,
+        )
+        .map_err(|_| ArtifactBuildError::RealizationProfileMismatch)?,
     )?;
     draft
         .build()

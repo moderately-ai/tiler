@@ -149,12 +149,12 @@ pub fn dtype_dispatch(
     declaration
         .dtype_dispatchability_rows()
         .into_iter()
-        .filter_map(|(arithmetic, verdict)| {
+        .map(|(arithmetic, verdict)| {
             let dispatch = match verdict {
                 DTypeDispatchability::Dispatchable => DTypeDispatch::Dispatchable,
                 DTypeDispatchability::Unsupported => DTypeDispatch::Unsupported,
             };
-            Some((arithmetic, dispatch))
+            (arithmetic, dispatch)
         })
         .collect()
 }
@@ -173,7 +173,6 @@ pub fn representation() -> tiler_artifact::program::RepresentationKey {
 }
 
 /// Reports whether this host can bind a Metal device.
-#[must_use]
 pub fn device_available() -> Result<(), MetalError> {
     #[cfg(target_os = "macos")]
     {
@@ -227,7 +226,7 @@ pub fn route_and_compare(
                 });
             }
         }
-        return Ok(bits);
+        Ok(bits)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -397,9 +396,7 @@ impl RuntimeAdapter for MetalAdapter {
         self.pipelines.get(request.entry()).map_or(
             PreparedEntryObservation::Unrecognized,
             |pipeline| {
-                PreparedEntryObservation::Quantity(u64::from(
-                    pipeline.max_total_threads_per_threadgroup(),
-                ))
+                PreparedEntryObservation::Quantity(pipeline.max_total_threads_per_threadgroup())
             },
         )
     }
@@ -451,7 +448,8 @@ impl RuntimeAdapter for MetalAdapter {
                     binding.accessible_offset(),
                 );
             }
-            let width = u64::from(pipeline.thread_execution_width())
+            let width = pipeline
+                .thread_execution_width()
                 .min(launch.threads_per_workgroup())
                 .max(1);
             encoder.dispatch_threads(

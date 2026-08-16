@@ -1291,7 +1291,7 @@ impl RuntimeAdapter for CpuAdapter {
                 storage[at + 3],
             ]));
         }
-        self.result_bits = bits.clone();
+        self.result_bits.clone_from(&bits);
         Ok(bits)
     }
 }

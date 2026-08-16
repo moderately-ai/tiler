@@ -9,8 +9,8 @@ implementation_status: "spike-only"
 evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.extensions.backend-provider-composition"]
 entrypoints: ["spikes/runtime/backend-provider-portfolio/src/main.rs"]
-last_verified: "2026-08-12"
-verified_at_commit: "61246804"
+last_verified: "2026-08-16"
+verified_at_commit: "e0e4580d1c2f3df4cc6b6c2fd4c5472080bd474b"
 ticket: "exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio"
 ---
 
@@ -39,7 +39,7 @@ CPU always runs. Metal payload production needs the system `xcrun` toolchain; Me
 
 Spikes gate nothing. The `Makefile` has no target for this directory.
 
-**Current-tree route check — 2026-08-16.** The documented non-recording `cargo run` completes both the CPU-only route and the shared portfolio's CPU route with all twelve outputs equal to `tiler-reference`. On the checked macOS host the Metal leg completes too. The run also perturbs the prepared-entry request's provider, property key, and required quantity independently; the first two remain unowned and the third is compared by the loader and refused as unsatisfied. The result table and JSON below remain the earlier recorded measurement bounded to `61246804`; this current-tree check does not rewrite that fixture.
+**Current-tree route check — 2026-08-16, subject `e0e4580d1c2f3df4cc6b6c2fd4c5472080bd474b`.** The documented non-recording `cargo run` completes both the CPU-only route and the shared portfolio's CPU route with all twelve outputs equal to `tiler-reference`. On the checked macOS host the Metal leg completes too. The run also perturbs the prepared-entry request's provider, property key, and required quantity independently; the first two remain unowned and the third is compared by the loader and refused as unsatisfied. The result table and JSON below remain the earlier recorded measurement bounded to `61246804`; this current-tree check does not rewrite that fixture.
 
 ## What one run does, in order
 

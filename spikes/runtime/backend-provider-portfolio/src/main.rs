@@ -133,18 +133,16 @@ fn run(record: Option<PathBuf>) -> Result<(), String> {
     let metal_content = metal_payload
         .as_ref()
         .map_or_else(|| cpu.content.clone(), |produced| produced.content.clone());
+    let plans = portfolio::PortfolioPlans {
+        metal_compilation: &compiled.with_custom,
+        metal_plan,
+        cpu_compilation: &compiled.without_custom,
+        cpu_plan,
+    };
     // The mixed-target control uses a deliberately different descriptor so
     // `check_subject` is the thing that refuses, not a missing payload.
-    let mixed = portfolio::refuse_mixed_targets(
-        &program,
-        &compiled.with_custom,
-        metal_plan,
-        &compiled.without_custom,
-        cpu_plan,
-        &metal_content,
-        &cpu,
-    )
-    .map_err(|error| error.to_string())?;
+    let mixed = portfolio::refuse_mixed_targets(&program, &plans, &metal_content, &cpu)
+        .map_err(|error| error.to_string())?;
     assert!(matches!(mixed, ArtifactBuildError::TargetProfileMismatch));
     println!("portfolio.mixed_target\tTargetProfileMismatch");
 
@@ -154,17 +152,9 @@ fn run(record: Option<PathBuf>) -> Result<(), String> {
     let mut cross_family = Vec::new();
 
     if let Some(produced) = metal_payload.as_ref() {
-        let packaged = portfolio::assemble_shared(
-            &program,
-            &compiled.with_custom,
-            metal_plan,
-            &compiled.without_custom,
-            cpu_plan,
-            shared.clone(),
-            &produced.content,
-            &cpu,
-        )
-        .map_err(|error| error.to_string())?;
+        let packaged =
+            portfolio::assemble_shared(&program, &plans, &shared, &produced.content, &cpu)
+                .map_err(|error| error.to_string())?;
         portfolio_bytes = packaged.bytes.len();
         println!("portfolio.shared_target\t{} bytes", packaged.bytes.len());
 
@@ -246,11 +236,8 @@ fn run(record: Option<PathBuf>) -> Result<(), String> {
             |probe| {
                 portfolio::assemble_shared_property_probe(
                     &program,
-                    &compiled.with_custom,
-                    metal_plan,
-                    &compiled.without_custom,
-                    cpu_plan,
-                    cpu_env.target_profile.clone(),
+                    &plans,
+                    &cpu_env.target_profile,
                     &produced.content,
                     &cpu,
                     probe,
@@ -273,7 +260,7 @@ fn run(record: Option<PathBuf>) -> Result<(), String> {
                     &program,
                     &compiled.without_custom,
                     cpu_plan,
-                    cpu_env.target_profile.clone(),
+                    &cpu_env.target_profile,
                     &cpu,
                     probe,
                 )
@@ -287,14 +274,16 @@ fn run(record: Option<PathBuf>) -> Result<(), String> {
     if let Some(path) = record {
         write_fixture(
             &path,
-            &reference,
-            cpu_bits.as_deref(),
-            &metal_run,
-            &with_custom,
-            &without_custom,
-            portfolio_bytes,
-            &cross_family,
-            reference_identity.len(),
+            &FixtureRecord {
+                reference: &reference,
+                cpu_bits: cpu_bits.as_deref(),
+                metal: &metal_run,
+                with_custom: &with_custom,
+                without_custom: &without_custom,
+                portfolio_bytes,
+                cross_family: &cross_family,
+                reference_identity_bytes: reference_identity.len(),
+            },
         )?;
         println!("fixture\t{}", path.display());
     }
@@ -304,6 +293,17 @@ fn run(record: Option<PathBuf>) -> Result<(), String> {
 enum MetalRun {
     Executed(Vec<u32>),
     Unavailable(String),
+}
+
+struct FixtureRecord<'a> {
+    reference: &'a [u32],
+    cpu_bits: Option<&'a [u32]>,
+    metal: &'a MetalRun,
+    with_custom: &'a compile::PhysicalProvenance,
+    without_custom: &'a compile::PhysicalProvenance,
+    portfolio_bytes: usize,
+    cross_family: &'a [String],
+    reference_identity_bytes: usize,
 }
 
 fn matches_unsupported(rejection: &LoadRejection) -> bool {
@@ -405,22 +405,12 @@ fn sole_ineligibility(rejection: &LoadRejection) -> Option<&VariantIneligibility
     filtered.first().map(|filtered| &filtered.reason)
 }
 
-fn write_fixture(
-    path: &PathBuf,
-    reference: &[u32],
-    cpu_bits: Option<&[u32]>,
-    metal: &MetalRun,
-    with_custom: &compile::PhysicalProvenance,
-    without_custom: &compile::PhysicalProvenance,
-    portfolio_bytes: usize,
-    cross_family: &[String],
-    reference_identity_bytes: usize,
-) -> Result<(), String> {
+fn write_fixture(path: &PathBuf, record: &FixtureRecord<'_>) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let cpu_hex = cpu_bits.unwrap_or(reference);
-    let metal_line = match metal {
+    let cpu_hex = record.cpu_bits.unwrap_or(record.reference);
+    let metal_line = match record.metal {
         MetalRun::Executed(bits) => format!(
             "\"executed\", \"bits\": [{}]",
             bits.iter()
@@ -434,26 +424,31 @@ fn write_fixture(
     };
     let body = format!(
         "{{\n  \"base\": \"612468048d541a1017640fc5dcbe5ff9160716cf\",\n  \"program\": \"(input * 2.0) * 1.0\",\n  \"elements\": {},\n  \"reference_bits\": [{}],\n  \"cpu_bits\": [{}],\n  \"metal\": {{ \"status\": {metal_line} }},\n  \"offered_with_custom\": [{}],\n  \"offered_without_custom\": [{}],\n  \"portfolio_bytes\": {portfolio_bytes},\n  \"cross_family_refusals\": [{}],\n  \"reference_identity_bytes\": {reference_identity_bytes}\n}}\n",
-        reference.len(),
-        hex_list(reference),
+        record.reference.len(),
+        hex_list(record.reference),
         hex_list(cpu_hex),
-        with_custom
+        record
+            .with_custom
             .offered
             .iter()
             .map(|value| json_string(value))
             .collect::<Vec<_>>()
             .join(", "),
-        without_custom
+        record
+            .without_custom
             .offered
             .iter()
             .map(|value| json_string(value))
             .collect::<Vec<_>>()
             .join(", "),
-        cross_family
+        record
+            .cross_family
             .iter()
             .map(|value| json_string(value))
             .collect::<Vec<_>>()
             .join(", "),
+        portfolio_bytes = record.portfolio_bytes,
+        reference_identity_bytes = record.reference_identity_bytes,
     );
     std::fs::write(path, body).map_err(|error| error.to_string())
 }
