@@ -4,7 +4,7 @@ title: Reconcile InputOrdinal region-local and declared-input semantics
 status: done
 priority: p1
 dependencies: [decide-the-schedule-local-input-ordinal-model, decide-the-full-list-access-coordinate-for-out-of-list-references]
-related: [decide-the-source-bound-live-row-major-access-surface, admit-symbolic-extents-through-schedule-formation, associate-live-extent-operands-with-symbolic-semantic-interface-axes, scope-an-in-place-append-into-a-caller-retained-allocation]
+related: [decide-the-source-bound-live-row-major-access-surface, admit-symbolic-extents-through-schedule-formation, associate-live-extent-operands-with-symbolic-semantic-interface-axes, scope-an-in-place-append-into-a-caller-retained-allocation, repair-fieldless-tensor-role-documentation-after-access-ordinal-reconciliation]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/metal, implementation/build, implementation/conformance, implementation/runtime, contracts/foundation, contracts/artifacts, research/verification, research/target-profiles, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
