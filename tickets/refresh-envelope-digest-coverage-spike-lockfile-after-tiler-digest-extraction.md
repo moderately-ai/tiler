@@ -19,12 +19,12 @@ The envelope-digest coverage spike's committed dependency graph agrees with the 
 
 ## Exact-base evidence
 
-Verified in a clean detached worktree at exact base `98669e8ea9cafc91b3a9139ff821781560c526bd`. `crates/tiler-artifact/Cargo.toml` says `` `sha2` was here until ADR 0104 moved the governed digest to `tiler-digest` ``, and `crates/tiler-ir/Cargo.toml` also declares `tiler-digest.workspace = true`. The spike's checked-in `spikes/cache/envelope-digest-coverage/Cargo.lock` still records `tiler-artifact` depending directly on `sha2`, carries no `tiler-digest` package, and omits the `tiler-ir` to `tiler-digest` edge.
+Verified at exact implementation base `6ee6c133b2d56e9a403dc126190558b168c754ce`. The implementation-base Fact audit found the earlier `98669e8ea9cafc91b3a9139ff821781560c526bd` provenance imprecise for this checkout but found no change to the ticket's purpose: `crates/tiler-artifact/Cargo.toml` says `` `sha2` was here until ADR 0104 moved the governed digest to `tiler-digest` ``, and `crates/tiler-ir/Cargo.toml` also declares `tiler-digest.workspace = true`. The spike's checked-in `spikes/cache/envelope-digest-coverage/Cargo.lock` still records `tiler-artifact` depending directly on `sha2`, carries no `tiler-digest` package, and omits the `tiler-ir` to `tiler-digest` edge.
 
 From that exact-base worktree:
 
 ```sh
-cargo check --manifest-path spikes/cache/envelope-digest-coverage/Cargo.toml
+cargo check --manifest-path spikes/cache/envelope-digest-coverage/Cargo.toml --offline
 git status --short
 git diff --numstat -- spikes/cache/envelope-digest-coverage/Cargo.lock
 ```
@@ -51,6 +51,12 @@ The exact generated delta replaces `tiler-artifact`'s stale `sha2` edge with `ti
 ## Non-goals
 
 Changing the production digest crate, workspace dependency topology, artifact identity or schema, the spike's manifest/source/measurement records, or repairing the separate digest-manifest locator panic owned by `repair-envelope-digest-coverage-spike-after-identity-digest-manifest-step`.
+
+## Implementation evidence
+
+At exact base `6ee6c133b2d56e9a403dc126190558b168c754ce`, an offline check regenerated exactly the recorded 9-addition/1-deletion graph repair. The refreshed lock changes `tiler-artifact` from `sha2` to `tiler-digest`, adds the local `tiler-digest` package with its `sha2` edge, and adds the `tiler-ir` to `tiler-digest` edge. Its SHA-256 is `b28c9d24dcbc600d89d177d55342a47e8d3b13b2d7d32a47fdedf1097d985948`.
+
+Two successive locked checks exited zero, and the second preserved both that digest and the 9-addition/1-deletion diff. As an independent negative control, removing only the generated `tiler-digest` package stanza made the same locked check exit 101 with ``cannot update the lock file ... because --locked was passed to prevent this``; restoring the stanza restored the exact digest above. A locked dependency-tree read confirmed both `tiler-artifact -> tiler-digest -> sha2` and `tiler-ir -> tiler-digest`.
 
 ## Closes when
 
