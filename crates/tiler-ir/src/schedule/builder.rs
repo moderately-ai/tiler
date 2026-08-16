@@ -502,11 +502,10 @@ fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagn
             };
             verify_access_and_semantics(region, read, write)
         }
-        // A contraction reads exactly two operands. That count is the family's
-        // definition and not a bound this profile happens to impose: ADR 0087's
-        // fifth structural rule refuses an index shared by more than two
-        // operands, so a third read would be an occurrence the semantic registry
-        // already refused.
+        // The registered operation's exact-two semantic signature requires two
+        // reads, and this scheduled form preserves that arity. ADR 0087's fifth
+        // structural rule is independent: it limits one index's participation
+        // across operands, not the operation's operand count.
         ScalarProgram::StrictTensorContraction { .. } => {
             let [left, right, write] = region.index.accesses.as_slice() else {
                 return Err(ScheduledRegionDiagnostic::AccessCount);
