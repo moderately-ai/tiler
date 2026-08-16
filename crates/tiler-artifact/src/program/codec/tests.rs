@@ -17,10 +17,11 @@
 //! reject it anyway, with the named cause. The byte-level cases separately
 //! prove that an incompetent corruption cannot slip through either.
 
+use std::error::Error as _;
 use std::mem::variant_count;
 use std::time::Instant;
 
-use tiler_ir::identity::push_slice;
+use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::kernel::{AddressSpace, BufferAccess, KernelType};
 use tiler_ir::program::abi::{TargetPropertyRequirementRelation, compare_expr_nodes};
 use tiler_ir::program::{StorageEncoding, StorageScalar};
@@ -29,8 +30,8 @@ use tiler_ir::schedule::{
     ValueDomainProvenance,
 };
 use tiler_ir::semantic::{
-    InputKey, OutputKey, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
-    STRICT_AFFINE_ZERO_POINT_ROLE,
+    IdentityComponent, InputKey, OpKey, OutputKey, STRICT_AFFINE_CODES_ROLE,
+    STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
 };
 use tiler_ir::shape::Axis;
 
@@ -42,18 +43,18 @@ use super::super::error::{
 use super::super::expr::{AbiBinaryOp, AbiRoot, AbiType, AbiValue, AvailabilityPhase, ExprNode};
 use super::super::handles::PayloadId;
 use super::super::keys::{
-    BackendEntryKey, BackendKey, PayloadDigest, RepresentationKey, TargetProfileDescriptorDigest,
-    TargetProfileKey, TargetProfileRef,
+    BackendEntryKey, BackendKey, CapabilityFamilyKey, PayloadDigest, RepresentationKey,
+    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
 };
 use super::super::model::{
     ArtifactExecutionPolicy, BINDING_TARGET_INTERNAL, BINDING_TARGET_PROGRAM_INPUT,
     BINDING_TARGET_PROGRAM_OUTPUT, BindingKind, BindingTarget, BindingTargetData,
-    ExtentOperandData, RoutingPolicy, SchemaVersion, StageDependencyData, StageDependencyReason,
-    address_space_from_tag, address_space_tag, buffer_access_from_tag, buffer_access_tag,
-    element_type_from_tag, element_type_tag, exceptional_assumption_from_tag,
-    exceptional_assumption_tag, permission_from_tag, permission_tag, push_component_role,
-    push_storage_encoding, storage_scalar_from_tag, storage_scalar_tag, subnormal_from_tag,
-    subnormal_tag,
+    ExtentOperandData, LoweringCapabilitySubject, RoutingPolicy, SchemaVersion, SelectedProvider,
+    StageDependencyData, StageDependencyReason, address_space_from_tag, address_space_tag,
+    buffer_access_from_tag, buffer_access_tag, element_type_from_tag, element_type_tag,
+    exceptional_assumption_from_tag, exceptional_assumption_tag, permission_from_tag,
+    permission_tag, push_component_role, push_storage_encoding, storage_scalar_from_tag,
+    storage_scalar_tag, subnormal_from_tag, subnormal_tag,
 };
 use super::super::requirement::{RouteRequirement, RouteRequirementError, RouteResourceDimension};
 use super::super::tests::{
@@ -68,7 +69,7 @@ use super::super::{
     ArtifactProgramBuilder, CompilationEnvironment, MAX_ROUTE_REQUIREMENTS, MAX_VARIANT_ENTRIES,
     VerifiedArtifactProgram,
 };
-use super::decode::{Cursor, decode, parse_dependencies, parse_expression_arena};
+use super::decode::{Cursor, decode, parse_dependencies, parse_expression_arena, read_providers};
 use super::encode::{
     ENVELOPE_FORMAT, HEADER_BYTES, MAGIC, MANIFEST_DIGEST_DOMAIN, MANIFEST_DOMAIN, MANIFEST_SCHEMA,
     encode, encode_with_identity, envelope_digest, identity_digest, matches_canonical_encoding,
@@ -86,6 +87,7 @@ use super::payload::{
     PayloadPlatform, PayloadProvenance, PayloadSdkIdentity, PayloadTargetObligation, ToolComponent,
     decode_metadata,
 };
+use super::view::{ArtifactCodecFailure, decode_artifact};
 use tiler_digest::{DIGEST_BYTES, DigestAlgorithm};
 
 // -------------------------------------------------------------------------
@@ -98,6 +100,30 @@ fn envelope_of(artifact: &VerifiedArtifactProgram) -> ArtifactEnvelope {
 
 fn encoded(artifact: &VerifiedArtifactProgram) -> Vec<u8> {
     encode(&envelope_of(artifact)).expect("a verified artifact encodes")
+}
+
+/// Encodes exactly the selected-provider table that `read_providers` consumes.
+fn encoded_provider_rows(rows: &[(&str, &str, &str, u32)]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    push_len(&mut bytes, rows.len());
+    for (family, namespace, name, semantic_version) in rows {
+        push_slice(&mut bytes, b"tiler-test");
+        push_slice(&mut bytes, b"fused-serial-sum");
+        bytes.extend_from_slice(&1_u32.to_be_bytes());
+        push_slice(&mut bytes, family.as_bytes());
+        push_slice(&mut bytes, namespace.as_bytes());
+        push_slice(&mut bytes, name.as_bytes());
+        bytes.extend_from_slice(&semantic_version.to_be_bytes());
+        bytes.extend_from_slice(&1_u32.to_be_bytes());
+    }
+    bytes
+}
+
+fn subject(family: &str, namespace: &str, name: &str, version: u32) -> LoweringCapabilitySubject {
+    LoweringCapabilitySubject {
+        family: CapabilityFamilyKey::new(family).expect("a governed family"),
+        operation: OpKey::new(namespace, name, version).expect("a legal operation"),
+    }
 }
 
 #[test]
@@ -420,7 +446,239 @@ fn an_encoded_envelope_round_trips_to_an_equal_model() {
         artifact
             .canonical_identity()
             .as_bytes()
-            .starts_with(b"tiler.artifact-program.v17\0")
+            .starts_with(b"tiler.artifact-program.v18\0")
+    );
+}
+
+#[test]
+fn dotted_operation_boundaries_remain_distinct_through_artifact_and_codec_identity() {
+    let mut envelope = envelope_of(&default_artifact());
+    let provider = envelope.providers[0].provider.clone();
+    let selected = |namespace, name| SelectedProvider {
+        provider: provider.clone(),
+        capability: subject("index-access", namespace, name, 1),
+        capability_revision: 1,
+    };
+    envelope.providers = vec![selected("a.b", "c"), selected("a", "b.c")];
+    envelope
+        .providers
+        .sort_unstable_by_key(SelectedProvider::canonical_key);
+
+    assert_eq!(envelope.providers().len(), 2, "both selected rows survive");
+    assert_ne!(
+        envelope.providers()[0].canonical_key(),
+        envelope.providers()[1].canonical_key(),
+        "separate frames retain the namespace/name boundary",
+    );
+
+    let identity = envelope
+        .canonical_identity()
+        .expect("the collision pair has one injective artifact identity");
+    let bytes = encode(&envelope).expect("the collision pair packages");
+    let decoded = decode(&bytes).expect("the collision pair decodes");
+    assert_eq!(decoded.providers().len(), 2, "both rows decode");
+    assert!(decoded.providers().iter().any(|selected| {
+        selected.capability.operation.namespace() == "a.b"
+            && selected.capability.operation.name() == "c"
+    }));
+    assert!(decoded.providers().iter().any(|selected| {
+        selected.capability.operation.namespace() == "a"
+            && selected.capability.operation.name() == "b.c"
+    }));
+    assert_eq!(
+        decoded
+            .canonical_identity()
+            .expect("decoded identity re-derives"),
+        identity,
+        "the codec retains the structured identity",
+    );
+}
+
+#[test]
+fn every_selected_provider_component_perturbs_artifact_identity_independently() {
+    let mut baseline = envelope_of(&default_artifact());
+    baseline.providers[0].capability = subject("index-access", "a.b", "c", 1);
+    let baseline_identity = baseline.canonical_identity().unwrap();
+
+    let mut family = baseline.clone();
+    family.providers[0].capability.family = CapabilityFamilyKey::new("index-access-alt").unwrap();
+
+    let mut boundary = baseline.clone();
+    boundary.providers[0].capability.operation = OpKey::new("a", "b.c", 1).unwrap();
+
+    let mut version = baseline.clone();
+    version.providers[0].capability.operation = OpKey::new("a.b", "c", 2).unwrap();
+
+    let mut provider = baseline.clone();
+    provider.providers[0].provider =
+        tiler_ir::semantic::ProviderIdentity::new("tiler-test", "other-provider", 1).unwrap();
+
+    let mut revision = baseline.clone();
+    revision.providers[0].capability_revision = 2;
+
+    for (name, perturbed) in [
+        ("capability family", family),
+        ("operation namespace/name boundary", boundary),
+        ("operation semantic version", version),
+        ("provider", provider),
+        ("capability revision", revision),
+    ] {
+        assert_ne!(
+            perturbed.canonical_identity().unwrap(),
+            baseline_identity,
+            "{name} must independently enter artifact identity",
+        );
+    }
+}
+
+#[test]
+fn uppercase_and_maximum_length_operation_components_package_without_conversion() {
+    let namespace = "A".repeat(255);
+    let name = "Z".repeat(255);
+    let mut envelope = envelope_of(&default_artifact());
+    envelope.providers[0].capability = subject("index-access", &namespace, &name, u32::MAX);
+
+    let bytes = encode(&envelope).expect("maximum legal components package");
+    let decoded = decode(&bytes).expect("maximum legal components decode");
+    let operation = &decoded.providers()[0].capability.operation;
+    assert_eq!(operation.namespace(), namespace);
+    assert_eq!(operation.name(), name);
+    assert_eq!(operation.semantic_version(), u32::MAX);
+}
+
+#[test]
+fn corrupt_structured_components_preserve_typed_causes_but_classify_publicly_as_malformed() {
+    let cases = [
+        ("family", "Index-access", "tiler", "op", 1),
+        ("namespace", "index-access", "bad/name", "op", 1),
+        ("name", "index-access", "tiler", "bad/name", 1),
+        ("version", "index-access", "tiler", "op", 0),
+    ];
+
+    for (component, family, namespace, name, version) in cases {
+        let bytes = encoded_provider_rows(&[(family, namespace, name, version)]);
+        let error = read_providers(&mut Cursor::new(&bytes))
+            .expect_err("the independently corrupt component is refused");
+        assert!(
+            error.source().is_some(),
+            "{component} retains a typed source"
+        );
+        match (&error, component) {
+            (
+                ArtifactCodecError::InvalidGovernedKey {
+                    cause:
+                        ArtifactBuildError::NoncanonicalKeyByte {
+                            kind: super::super::error::ArtifactKeyKind::CapabilityFamily,
+                            index: 0,
+                            value: b'I',
+                        },
+                },
+                "family",
+            )
+            | (
+                ArtifactCodecError::InvalidOperationKey {
+                    cause:
+                        tiler_ir::semantic::TypeIdentityError::InvalidComponentCharacter {
+                            component: IdentityComponent::Namespace,
+                            byte_index: 3,
+                        },
+                },
+                "namespace",
+            )
+            | (
+                ArtifactCodecError::InvalidOperationKey {
+                    cause:
+                        tiler_ir::semantic::TypeIdentityError::InvalidComponentCharacter {
+                            component: IdentityComponent::Name,
+                            byte_index: 3,
+                        },
+                },
+                "name",
+            )
+            | (
+                ArtifactCodecError::InvalidOperationKey {
+                    cause: tiler_ir::semantic::TypeIdentityError::ZeroSemanticVersion,
+                },
+                "version",
+            ) => {}
+            _ => panic!("{component} produced the wrong typed cause: {error:?}"),
+        }
+
+        let public = ArtifactCodecFailure::from(error);
+        assert!(
+            matches!(public, ArtifactCodecFailure::Malformed { .. }),
+            "{component} must classify as malformed: {public:?}",
+        );
+        assert!(
+            public.source().is_none(),
+            "the public classifier truthfully carries no typed source",
+        );
+    }
+}
+
+#[test]
+fn public_decode_classifies_each_corrupt_structured_component_as_malformed_without_a_source() {
+    const NAMESPACE: &str = "UniqueNamespace";
+    const NAME: &str = "UniqueOperation";
+    let mut envelope = envelope_of(&default_artifact());
+    envelope.providers[0].capability = subject("index-access", NAMESPACE, NAME, 7);
+    let baseline = encode(&envelope).expect("the structured baseline encodes");
+
+    for component in ["family", "namespace", "name", "version"] {
+        let mut forged = baseline.clone();
+        match component {
+            "family" => {
+                let offset = manifest_offset(&forged, b"index-access");
+                forged[offset] = b'I';
+            }
+            "namespace" => {
+                let offset = manifest_offset(&forged, NAMESPACE.as_bytes());
+                forged[offset + 6] = b'/';
+            }
+            "name" => {
+                let offset = manifest_offset(&forged, NAME.as_bytes());
+                forged[offset + 6] = b'/';
+            }
+            "version" => {
+                let offset = manifest_offset(&forged, NAME.as_bytes()) + NAME.len();
+                forged[offset..offset + 4].copy_from_slice(&0_u32.to_be_bytes());
+            }
+            _ => unreachable!(),
+        }
+        reseal(&mut forged);
+
+        let failure = decode_artifact(&forged)
+            .expect_err("a forged structured component is rejected at the public boundary");
+        assert!(
+            matches!(failure, ArtifactCodecFailure::Malformed { .. }),
+            "{component} classified incorrectly: {failure:?}",
+        );
+        assert!(
+            failure.source().is_none(),
+            "{component}'s private typed cause must not be claimed publicly",
+        );
+    }
+}
+
+#[test]
+fn a_legacy_flat_capability_row_is_not_reinterpreted() {
+    let mut bytes = Vec::new();
+    push_len(&mut bytes, 1);
+    push_slice(&mut bytes, b"tiler-test");
+    push_slice(&mut bytes, b"fused-serial-sum");
+    bytes.extend_from_slice(&1_u32.to_be_bytes());
+    push_slice(
+        &mut bytes,
+        b"tiler.capability.index-access.tiler.strict-serial-sum-f32.v1",
+    );
+    bytes.extend_from_slice(&1_u32.to_be_bytes());
+
+    assert!(
+        matches!(
+            read_providers(&mut Cursor::new(&bytes)),
+            Err(ArtifactCodecError::Truncated { .. })
+        ),
+        "schema 18 requires the structured fields; no legacy parser exists",
     );
 }
 
@@ -454,7 +712,7 @@ fn the_framing_header_is_the_fixed_width_it_declares() {
         &bytes[HEADER_BYTES..HEADER_BYTES + MANIFEST_DOMAIN.len()],
         MANIFEST_DOMAIN,
     );
-    assert_eq!(MANIFEST_SCHEMA, (17, 0));
+    assert_eq!(MANIFEST_SCHEMA, (18, 0));
 }
 
 /// The canonicity backstop compares a derivation against bytes rather than
@@ -3088,19 +3346,23 @@ fn program_input_binding(envelope: &mut ArtifactEnvelope) -> &mut super::super::
 /// chance, so this is measured rather than asserted arithmetic, and it is
 /// pinned because `docs/artifact-abi.md` states it as a measurement.
 ///
-/// **It has been 68, then 67, then 68 again, and the arithmetic never changed.**
+/// **It has been 68, then 67, then 68, then 66, and now 68 again; the
+/// arithmetic never changed.**
 /// The two tag pairs and the two digests are the same four and sixty-four
 /// positions throughout; only how many digest bytes happen to coincide has
 /// moved. `tiler.semantic-graph.v3` gave both digests content in which one byte
 /// coincided, taking it to 67; `tiler.artifact-program.v16` — the derived
 /// index-arithmetic requirement entering every entry row, and so entering both
-/// digests — gave them content in which none does, taking it back to 68.
+/// digests — gave them content in which none does, taking it back to 68. The
+/// fieldless input-role step then produced two coincidences and took it to 66;
+/// the structured selected-capability subject changed both digests again and
+/// returned the measured count to 68.
 ///
 /// That the count returned to an earlier value is coincidence and not a revert:
 /// nothing about the `v3` step was undone. This is exactly the chance the doc
 /// comment above warns about, which is why the count is measured and never
 /// derived, and why a reader must not "simplify" it to the arithmetic.
-const DIFFERING_CARRIER_POSITIONS: usize = 66;
+const DIFFERING_CARRIER_POSITIONS: usize = 68;
 
 /// Byte positions at which the carrier-only fixture pair's *identities* differ.
 ///

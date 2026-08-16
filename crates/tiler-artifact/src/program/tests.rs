@@ -79,8 +79,8 @@ use super::{
     AbiUnaryOp, AbiValue, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind,
     ArtifactExecutionPolicy, ArtifactKeyKind, ArtifactProgramBuilder, AvailabilityPhase,
     BackendEntryKey, BackendEntryRef, BackendKey, BackendPayloadDescriptor, BindingKind,
-    BindingSpec, BindingTarget, CapabilityKey, CompilationEnvironment, DeferredPredicateSpec,
-    EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec,
+    BindingSpec, BindingTarget, CapabilityFamilyKey, CompilationEnvironment, DeferredPredicateSpec,
+    EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, LoweringCapabilitySubject,
     MAX_ARTIFACT_IDENTITY_BYTES, MAX_ROUTE_FEATURE_PAYLOAD_BYTES, PayloadDigest, PayloadId,
     RecordedArtifactIdentityError, RecordedArtifactProgramIdentity, RepresentationKey,
     RouteFeatureKey, RouteRequirement, RouteRequirementError, RouteRequirementSubject,
@@ -1734,8 +1734,19 @@ pub(super) fn spare_provider(revision: u32) -> ProviderIdentity {
 pub(super) fn selection(provider: ProviderIdentity) -> SelectedProvider {
     SelectedProvider {
         provider,
-        capability: CapabilityKey::new("tiler.capability.fused-serial-sum").unwrap(),
+        capability: lowering_subject("tiler", "strict-serial-sum-f32", 1),
         capability_revision: 1,
+    }
+}
+
+fn lowering_subject(
+    namespace: &str,
+    name: &str,
+    semantic_version: u32,
+) -> LoweringCapabilitySubject {
+    LoweringCapabilitySubject {
+        family: CapabilityFamilyKey::new("index-access").unwrap(),
+        operation: OpKey::new(namespace, name, semantic_version).unwrap(),
     }
 }
 
@@ -1912,8 +1923,7 @@ pub(crate) fn strict_affine_u4_dequantize_artifact() -> VerifiedArtifactProgram 
     draft
         .select_provider(SelectedProvider {
             provider,
-            capability: CapabilityKey::new("tiler.capability.strict-affine-u4-dequantize")
-                .expect("capability"),
+            capability: lowering_subject("tiler", "strict-affine-u4-dequantize", 1),
             capability_revision: 1,
         })
         .expect("selected provider");
@@ -2023,6 +2033,33 @@ pub(crate) fn build_artifact(
         .push_variant(program, variant(&formulas, descriptor, b"fused"))
         .unwrap();
     declare_realization(&mut draft, program);
+    draft.build().unwrap()
+}
+
+/// Builds the canonical fixture with exact selected operation subjects.
+pub(crate) fn artifact_with_selected_operations(
+    operations: &[(&str, &str, u32)],
+) -> VerifiedArtifactProgram {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    for (namespace, name, version) in operations {
+        draft
+            .select_provider(SelectedProvider {
+                provider: provider.clone(),
+                capability: lowering_subject(namespace, name, *version),
+                capability_revision: 1,
+            })
+            .unwrap();
+    }
+    let descriptor = draft.push_payload(payload(0xa1)).unwrap();
+    let formulas = formulas(&mut draft);
+    draft
+        .push_variant(&program, variant(&formulas, descriptor, b"fused"))
+        .unwrap();
+    declare_realization(&mut draft, &program);
     draft.build().unwrap()
 }
 
@@ -3024,8 +3061,7 @@ impl PointwiseWidth {
         draft
             .select_provider(SelectedProvider {
                 provider,
-                capability: CapabilityKey::new("tiler.capability.pointwise-scale-bias")
-                    .expect("capability"),
+                capability: lowering_subject("tiler", "pointwise-scale-bias", 1),
                 capability_revision: 1,
             })
             .expect("selected provider");
@@ -3860,7 +3896,7 @@ fn a_reached_capability_revision_changes_identity() {
         draft
             .select_provider(SelectedProvider {
                 provider: provider.clone(),
-                capability: CapabilityKey::new("tiler.capability.fused-serial-sum").unwrap(),
+                capability: lowering_subject("tiler", "strict-serial-sum-f32", 1),
                 capability_revision,
             })
             .unwrap();
@@ -4950,10 +4986,10 @@ fn a_governed_key_refuses_a_byte_outside_the_governed_alphabet() {
         }),
     );
     assert_eq!(
-        CapabilityKey::new("tiler.capability.fusé"),
+        CapabilityFamilyKey::new("fusé"),
         Err(ArtifactBuildError::NoncanonicalKeyByte {
-            kind: ArtifactKeyKind::Capability,
-            index: 20,
+            kind: ArtifactKeyKind::CapabilityFamily,
+            index: 3,
             value: 0xc3,
         }),
     );
@@ -5242,8 +5278,8 @@ fn empty_extent_lists_do_not_move_previously_encodable_artifact_bytes() {
         "two no-extent artifacts must keep one identity",
     );
     assert!(
-        super::model::ARTIFACT_DOMAIN.ends_with(b"v17\0"),
-        "empty extent lists write nothing, so the artifact identity domain must not step",
+        super::model::ARTIFACT_DOMAIN.ends_with(b"v18\0"),
+        "the independent selected-capability step owns v18; empty extent lists still write no bytes",
     );
     let with = live_extent_artifact();
     assert_ne!(

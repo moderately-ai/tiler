@@ -38,7 +38,8 @@ use tiler_ir::schedule::{
 };
 
 use crate::capability::{
-    CanonicalLoweringRegistryIdentity, FrozenLoweringCapabilityRegistry, LoweringCapabilityRevision,
+    CanonicalLoweringRegistryIdentity, FrozenLoweringCapabilityRegistry,
+    LoweringCapabilityRevision, LoweringCapabilitySubject,
 };
 use crate::elementary::{PointwiseExpressionSink, silu_point_body};
 use crate::governed::{governed_lowering_capabilities, governed_scalars};
@@ -1323,33 +1324,27 @@ impl DeterministicBudgets {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct LoweringProviderIdentity {
     provider: ProviderIdentity,
-    capability_key: String,
+    subject: LoweringCapabilitySubject,
     capability_revision: LoweringCapabilityRevision,
 }
 
 impl LoweringProviderIdentity {
-    /// Binds one resolved capability's provider, governed key, and revision.
+    /// Binds one resolved capability's provider, structured subject, and revision.
     pub(crate) const fn new(
         provider: ProviderIdentity,
-        capability_key: String,
+        subject: LoweringCapabilitySubject,
         capability_revision: LoweringCapabilityRevision,
     ) -> Self {
         Self {
             provider,
-            capability_key,
+            subject,
             capability_revision,
         }
     }
 
-    /// Returns the governed key of the capability that lowered the occurrence.
-    ///
-    /// Minted here rather than derived by a consumer. The key enters artifact
-    /// identity through the selected providers ADR 0072 folds in, and a
-    /// consumer assembling it from exposed parts would be a second derivation
-    /// of one identity — the drift this vocabulary exists to prevent. A
-    /// consumer wraps this string in its own key type; it does not compose one.
-    pub(crate) fn capability_key(&self) -> &str {
-        &self.capability_key
+    /// Returns the exact lowering capability that lowered the occurrence.
+    pub(crate) const fn subject(&self) -> &LoweringCapabilitySubject {
+        &self.subject
     }
 
     /// Returns the admitting provider identity.

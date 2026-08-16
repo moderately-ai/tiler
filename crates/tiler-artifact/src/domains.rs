@@ -212,10 +212,10 @@ impl GovernedDomain {
             Self::SidecarManifestDigest => b"tiler.proof-sidecar.manifest-digest.v1\0",
             Self::SidecarPayloadDigest => b"tiler.proof-sidecar.payload-digest.v1\0",
             Self::SidecarIdentity => b"tiler.proof-sidecar.identity.v1\0",
-            Self::ProgramArtifact => b"tiler.artifact-program.v17\0",
+            Self::ProgramArtifact => b"tiler.artifact-program.v18\0",
             Self::ProgramStageKey => b"tiler.artifact-program.stage.v3\0",
             Self::ProgramPayloadKey => b"tiler.artifact-program.payload.v1\0",
-            Self::ProgramProviderKey => b"tiler.artifact-program.provider.v2\0",
+            Self::ProgramProviderKey => b"tiler.artifact-program.provider.v3\0",
             Self::ProgramDeferredKey => b"tiler.artifact-program.deferred.v2\0",
             Self::ProgramDeliveredRealization => {
                 b"tiler.artifact-program.delivered-realization.v2\0"

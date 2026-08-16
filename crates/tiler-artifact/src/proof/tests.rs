@@ -27,8 +27,8 @@
 use tiler_ir::semantic::{InputKey, OutputKey, SemanticGraphIdentity, SemanticProgramBuilder};
 
 use crate::program::tests::{
-    OTHER_SCALE_BITS, SCALE_BITS, build_artifact, build_graph_scaled, default_artifact,
-    fused_program, lowering_provider,
+    OTHER_SCALE_BITS, SCALE_BITS, artifact_with_selected_operations, build_artifact,
+    build_graph_scaled, default_artifact, fused_program, lowering_provider,
 };
 use crate::program::{DIGEST_BYTES, DigestAlgorithm, VerifiedArtifactProgram};
 
@@ -543,6 +543,47 @@ fn a_different_artifact_changes_the_identity() {
     let left = default_sidecar();
     let right = sidecar(&other_artifact());
     assert_ne!(left.canonical_identity(), right.canonical_identity());
+}
+
+#[test]
+fn dotted_operation_boundaries_reach_proof_subject_and_envelope_association() {
+    let left = artifact_with_selected_operations(&[("a.b", "c", 1)]);
+    let right = artifact_with_selected_operations(&[("a", "b.c", 1)]);
+    let pair = artifact_with_selected_operations(&[("a.b", "c", 1), ("a", "b.c", 1)]);
+
+    assert_ne!(left.canonical_identity(), right.canonical_identity());
+    assert_ne!(left.canonical_identity(), pair.canonical_identity());
+    assert_ne!(right.canonical_identity(), pair.canonical_identity());
+    assert_eq!(pair.selected_providers().len(), 2, "both subjects package");
+
+    let left_sidecar = sidecar(&left);
+    let right_sidecar = sidecar(&right);
+    let pair_sidecar = sidecar(&pair);
+    assert_ne!(
+        left_sidecar.canonical_identity(),
+        right_sidecar.canonical_identity(),
+        "the exact artifact subject reaches proof identity",
+    );
+    assert_eq!(
+        pair_sidecar.artifact_identity_bytes(),
+        pair.canonical_identity().as_bytes(),
+    );
+    let pair_bytes = pair.encode().expect("the pair envelope encodes");
+    assert_eq!(
+        pair_sidecar.envelope_digest(),
+        &crate::program::envelope_digest(&pair_bytes),
+        "the exact pair envelope reaches the sidecar association",
+    );
+    let decoded = decode_proof_sidecar(
+        &pair_sidecar
+            .encode()
+            .expect("the pair-associated sidecar encodes"),
+    )
+    .expect("the pair-associated sidecar decodes");
+    assert_eq!(
+        decoded.artifact_identity_bytes(),
+        pair.canonical_identity().as_bytes(),
+    );
 }
 
 // The union no-prefix check moved to `crate::domains`, which enumerates every

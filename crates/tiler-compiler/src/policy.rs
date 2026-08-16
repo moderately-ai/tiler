@@ -136,10 +136,15 @@ pub(crate) const REALIZED_DIMENSIONS: [NumericalDimension; 8] = [
 /// while an entry that is missing drops a requirement and lets a target be
 /// admitted without ever being asked. The first is an over-declaration, the
 /// second is a silently wrong tensor.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct OperationNumericalCapability {
-    /// The governed operation key, as the semantic registry spells it.
+    /// Diagnostic spelling of the governed operation key.
     key: &'static str,
+    /// Typed constructor used for every semantic lookup.
+    ///
+    /// Kept separate from `key` so changing [`OpKey`]'s diagnostic punctuation
+    /// cannot change capability resolution, compilation, or derived identity.
+    operation: fn() -> OpKey,
     /// The dimensions this operation can consume, in canonical order.
     consumes: &'static [NumericalDimension],
 }
@@ -148,6 +153,11 @@ impl OperationNumericalCapability {
     /// The governed operation key this entry speaks about.
     pub(crate) const fn key(self) -> &'static str {
         self.key
+    }
+
+    /// Whether this row governs `operation`, compared as a typed identity.
+    fn matches(self, operation: &OpKey) -> bool {
+        (self.operation)() == *operation
     }
 
     /// The dimensions this operation can consume.
@@ -458,18 +468,22 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         // semantics produce a new value, so no arithmetic freedom acts on it.
         OperationNumericalCapability {
             key: "tiler::constant-f32@1",
+            operation: tiler_ir::semantic::constant_f32_op,
             consumes: &[],
         },
         OperationNumericalCapability {
             key: "tiler::multiply-f32@1",
+            operation: tiler_ir::semantic::multiply_f32_op,
             consumes: ARITHMETIC,
         },
         OperationNumericalCapability {
             key: "tiler::add-f32@1",
+            operation: tiler_ir::semantic::add_f32_op,
             consumes: ARITHMETIC,
         },
         OperationNumericalCapability {
             key: "tiler::strict-serial-sum-f32@1",
+            operation: tiler_ir::semantic::strict_serial_sum_f32_op,
             consumes: REDUCTION,
         },
         // The activation is `f32` arithmetic, so it consumes the arithmetic row's
@@ -498,6 +512,7 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         // grows to carry one.
         OperationNumericalCapability {
             key: "tiler::silu-f32@1",
+            operation: tiler_ir::semantic::silu_f32_op,
             consumes: ELEMENTARY,
         },
         // The normalization is an ordered reduction with per-point arithmetic on
@@ -512,6 +527,7 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         // states the omission as a checked claim.
         OperationNumericalCapability {
             key: "tiler::rms-norm-f32@1",
+            operation: tiler_ir::semantic::rms_norm_f32_op,
             consumes: NORMALIZATION,
         },
         // The softmax is two ordered reductions with per-point arithmetic between
@@ -526,10 +542,12 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         // real obligations rather than absent ones.
         OperationNumericalCapability {
             key: "tiler::softmax-f32@1",
+            operation: tiler_ir::semantic::softmax_f32_op,
             consumes: SOFTMAX,
         },
         OperationNumericalCapability {
             key: "tiler::strict-tensor-contraction-f32@1",
+            operation: tiler_ir::semantic::strict_tensor_contraction_f32_op,
             consumes: TENSOR_CONTRACTION,
         },
         // The two structural families consume nothing, and the reason is not
@@ -544,10 +562,12 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         // than the absent one, exactly as it is for `tiler::constant-f32@1`.
         OperationNumericalCapability {
             key: "tiler::reindex-f32@1",
+            operation: tiler_ir::semantic::reindex_f32_op,
             consumes: &[],
         },
         OperationNumericalCapability {
             key: "tiler::broadcast-f32@2",
+            operation: tiler_ir::semantic::broadcast_f32_op,
             consumes: &[],
         },
         // These operations carry a complete, fixed strict-affine conversion
@@ -555,14 +575,17 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         // it, and no physical lowering is implied by these rows.
         OperationNumericalCapability {
             key: "tiler::assemble-strict-affine@1",
+            operation: tiler_ir::semantic::assemble_strict_affine_op,
             consumes: &[],
         },
         OperationNumericalCapability {
             key: "tiler::quantize-strict-affine@1",
+            operation: tiler_ir::semantic::quantize_strict_affine_op,
             consumes: &[],
         },
         OperationNumericalCapability {
             key: "tiler::dequantize-strict-affine@1",
+            operation: tiler_ir::semantic::dequantize_strict_affine_op,
             consumes: &[],
         },
     ]
@@ -613,11 +636,10 @@ pub(crate) const ELEMENTARY_UNCARRIED_DIMENSIONS: [NumericalDimension; 2] = [
 /// The table's spellings are already checked in both directions against the
 /// governed typed keys by `the_capability_table_names_exactly_the_admitted_operations`.
 pub(crate) fn operation_capability(key: &OpKey) -> Option<OperationNumericalCapability> {
-    let key = key.to_string();
     operation_capabilities()
         .iter()
         .copied()
-        .find(|capability| capability.key == key)
+        .find(|capability| capability.matches(key))
 }
 
 /// Whether any admitted operation can consume `dimension`.

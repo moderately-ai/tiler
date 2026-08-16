@@ -2655,10 +2655,10 @@ fn product_is_deterministic_and_preserves_the_materialized_boundary() {
     .map(|(provider, operation)| {
         crate::request::LoweringProviderIdentity::new(
             tiler_ir::semantic::ProviderIdentity::new("tiler", provider, 1).unwrap(),
-            // The governed key names the capability family and the
-            // operation it lowers, never the provider, which is recorded
-            // beside it.
-            format!("tiler.capability.index-access.tiler.{operation}.v1"),
+            crate::capability::LoweringCapabilitySubject::new(
+                crate::capability::LoweringFamily::IndexAccess,
+                tiler_ir::semantic::OpKey::new("tiler", operation, 1).unwrap(),
+            ),
             crate::capability::LoweringCapabilityRevision::new(1).unwrap(),
         )
     })

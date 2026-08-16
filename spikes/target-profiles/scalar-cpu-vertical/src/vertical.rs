@@ -41,19 +41,19 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use tiler_artifact::program::{
-    AbiFactBinder, AbiFacts, ApproximationEnvelope, ArithmeticType, ArtifactCodecFailure,
-    ArtifactExecutionPolicy, ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey,
-    BackendEntryRef, BackendKey, BindingKind, BindingSpec, BindingTarget, CANONICAL_DIMENSIONS,
-    CapabilityKey, CompilationEnvironment, DIMENSION_COUNT, DeliveredRealizationBuilder,
-    DeliveredRealizationRecord, DimensionBehaviour, EntryRealization, EntrySpec,
-    FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef, HonouringMeans, LaunchSpec,
-    MaterializationRounding, NumericalDimension, NumericalObligationKey, NumericalPermission,
-    PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadPlatform, PayloadProvenance,
-    PolicyLocus, ProvenanceIdentity, RecordedArtifactIdentityError,
-    RecordedArtifactProgramIdentity, RepresentationKey, ScalarArithmeticSubject, SchemaVersion,
-    SelectedProvider, SemanticOccurrence, TargetEvidenceDeclaration, TargetProfileDescriptorDigest,
-    TargetProfileKey, TargetProfileRef, ToolComponent, VariantSpec, VerifiedArtifactProgram,
-    overlapping_behaviour,
+    AbiFactBinder, AbiFacts, ApproximationEnvelope, ArithmeticType, ArtifactBuildError,
+    ArtifactCodecFailure, ArtifactExecutionPolicy, ArtifactProgramBuilder, AvailabilityPhase,
+    BackendEntryKey, BackendEntryRef, BackendKey, BindingKind, BindingSpec, BindingTarget,
+    CANONICAL_DIMENSIONS, CapabilityFamilyKey, CompilationEnvironment, DIMENSION_COUNT,
+    DeliveredRealizationBuilder, DeliveredRealizationRecord, DimensionBehaviour, EntryRealization,
+    EntrySpec, FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef, HonouringMeans,
+    LaunchSpec, LoweringCapabilitySubject, MaterializationRounding, NumericalDimension,
+    NumericalObligationKey, NumericalPermission, PayloadContent, PayloadEntryMapping,
+    PayloadMetadata, PayloadPlatform, PayloadProvenance, PolicyLocus, ProvenanceIdentity,
+    RecordedArtifactIdentityError, RecordedArtifactProgramIdentity, RepresentationKey,
+    ScalarArithmeticSubject, SchemaVersion, SelectedProvider, SemanticOccurrence,
+    TargetEvidenceDeclaration, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
+    ToolComponent, VariantSpec, VerifiedArtifactProgram, overlapping_behaviour,
 };
 use tiler_compiler::session::{
     Compilation, CompileFailure, CompileRequest, NumericalContract, PlanAlternative, compile,
@@ -299,11 +299,15 @@ fn assemble(
     let mut builder = ArtifactProgramBuilder::new(semantic, environment)
         .map_err(|_| VerticalError::Package("a builder identity was not available"))?;
     for selected in plan.selected_capabilities() {
+        let subject = selected.subject();
         builder
             .select_provider(SelectedProvider {
                 provider: selected.provider().clone(),
-                capability: CapabilityKey::new(selected.capability_key())
-                    .map_err(|_| VerticalError::HostProfile)?,
+                capability: LoweringCapabilitySubject {
+                    family: CapabilityFamilyKey::new(subject.family().key_token())
+                        .map_err(VerticalError::ArtifactBuild)?,
+                    operation: subject.operation().clone(),
+                },
                 capability_revision: selected.capability_revision(),
             })
             .map_err(|_| VerticalError::Package("a selected provider was not offered"))?;
@@ -706,6 +710,7 @@ pub enum VerticalError {
     TargetRefused(String),
     NoSelection,
     Translate(TranslationError),
+    ArtifactBuild(ArtifactBuildError),
     Package(&'static str),
     HostProfile,
     Encode,
@@ -755,6 +760,12 @@ impl fmt::Display for VerticalError {
                 write!(
                     formatter,
                     "the kernel has no scalar CPU realization: {error}"
+                )
+            }
+            Self::ArtifactBuild(error) => {
+                write!(
+                    formatter,
+                    "the compiler capability cannot be packaged: {error}"
                 )
             }
             Self::Package(detail) => write!(formatter, "the artifact was not packaged: {detail}"),
@@ -831,7 +842,35 @@ impl fmt::Display for VerticalError {
     }
 }
 
-impl std::error::Error for VerticalError {}
+impl std::error::Error for VerticalError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Profile(error) => Some(error),
+            Self::Compile(error) => Some(error.as_ref()),
+            Self::Translate(error) => Some(error),
+            Self::ArtifactBuild(error) => Some(error),
+            Self::RecordedIdentity(error) => Some(error),
+            Self::Load(error) | Self::ProbeBaseline(error) => Some(error),
+            Self::ImageDecode(error) => Some(error),
+            Self::Host(error) => Some(error),
+            Self::Execute(error) => Some(error),
+            Self::TargetRefused(_)
+            | Self::NoSelection
+            | Self::Package(_)
+            | Self::HostProfile
+            | Self::Encode
+            | Self::NotFailedClosed { .. }
+            | Self::ProbeAccepted(_)
+            | Self::Interface(_)
+            | Self::SymbolAbsent { .. }
+            | Self::UnboundBinding { .. }
+            | Self::NoOutputBinding
+            | Self::EmptyLaunch { .. }
+            | Self::ForeignProgram
+            | Self::Mismatch { .. } => None,
+        }
+    }
+}
 
 /// The whole vertical, in the order every stage must happen in.
 #[allow(

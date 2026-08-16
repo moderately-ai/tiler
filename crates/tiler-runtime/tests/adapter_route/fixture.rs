@@ -72,15 +72,15 @@ use tiler_runtime::load::DTypeDispatch;
 use tiler_artifact::program::{
     ApproximationEnvelope, ArithmeticType, ArtifactExecutionPolicy, ArtifactProgramBuilder,
     AvailabilityPhase, BackendEntryKey, BackendEntryRef, BackendFeatureRequirement, BackendKey,
-    BindingKind, BindingSpec, CANONICAL_DIMENSIONS, CapabilityKey, CompilationEnvironment,
+    BindingKind, BindingSpec, CANONICAL_DIMENSIONS, CapabilityFamilyKey, CompilationEnvironment,
     DIMENSION_COUNT, DeferredPredicateSpec, DeliveredRealizationBuilder, DimensionBehaviour,
     EntryRealization, EntrySpec, ExceptionalValueAssumption, FactSourceProvenance,
     FeasibilityRuleSetKey, FeasibilityRuleSetRef, HonouringMeans, LaunchSpec,
-    MaterializationRounding, NumericalDimension, NumericalObligationKey, NumericalPermission,
-    PayloadContent, PayloadMetadata, PayloadPlatform, PayloadProvenance, PolicyLocus,
-    ProvenanceIdentity, RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey,
-    RouteRequirement, ScalarArithmeticSubject, ScalarArithmeticSubjectIdentity, SchemaVersion,
-    SelectedProvider, SemanticOccurrence, SubnormalMode, TargetEvidenceDeclaration,
+    LoweringCapabilitySubject, MaterializationRounding, NumericalDimension, NumericalObligationKey,
+    NumericalPermission, PayloadContent, PayloadMetadata, PayloadPlatform, PayloadProvenance,
+    PolicyLocus, ProvenanceIdentity, RecordedArtifactProgramIdentity, RepresentationKey,
+    RouteFeatureKey, RouteRequirement, ScalarArithmeticSubject, ScalarArithmeticSubjectIdentity,
+    SchemaVersion, SelectedProvider, SemanticOccurrence, SubnormalMode, TargetEvidenceDeclaration,
     TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, TargetPropertyKey,
     ToolComponent, VariantSpec, overlapping_behaviour,
 };
@@ -116,8 +116,8 @@ use tiler_ir::schedule::{
 };
 use tiler_ir::semantic::{
     Bf16, CanonicalField, CanonicalValue, F32, F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant,
-    F32Multiply, InputKey, OutputKey, ProviderIdentity, SemanticProgram, SemanticProgramBuilder,
-    StrictSerialF32Sum, add_f32_op, constant_f32_op, multiply_f32_op,
+    F32Multiply, InputKey, OpKey, OutputKey, ProviderIdentity, SemanticProgram,
+    SemanticProgramBuilder, StrictSerialF32Sum, add_f32_op, constant_f32_op, multiply_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape};
 use tiler_runtime::load::ExecutionEnvironment;
@@ -845,8 +845,11 @@ pub fn assemble_portfolio_over(members: &[FixtureSpec], semantic: &SemanticProgr
     draft
         .select_provider(SelectedProvider {
             provider,
-            capability: CapabilityKey::new("tiler.capability.serial-sum")
-                .expect("a capability key"),
+            capability: LoweringCapabilitySubject {
+                family: CapabilityFamilyKey::new("index-access").expect("a capability family"),
+                operation: OpKey::new("tiler", "strict-serial-sum-f32", 1)
+                    .expect("an operation key"),
+            },
             capability_revision: 1,
         })
         .expect("the selected provider was offered");

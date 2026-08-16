@@ -115,8 +115,8 @@ pub enum ArtifactKeyKind {
     TargetProfile,
     /// The governed feasibility rule-set key.
     FeasibilityRuleSet,
-    /// The governed capability key one provider was selected for.
-    Capability,
+    /// The governed lowering-capability family key.
+    CapabilityFamily,
     /// The governed backend-scoped route-requirement key.
     RouteFeature,
     /// The governed target-property key an ABI expression root names.

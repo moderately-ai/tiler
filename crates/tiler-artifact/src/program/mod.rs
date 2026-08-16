@@ -86,19 +86,20 @@
 //! ```
 //! use tiler_artifact::program::{
 //!     ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey, BackendEntryRef,
-//!     BackendKey, BackendPayloadDescriptor, BindingKind, BindingSpec, CapabilityKey,
+//!     BackendKey, BackendPayloadDescriptor, BindingKind, BindingSpec, CapabilityFamilyKey,
 //!     CompilationEnvironment, DeliveredRealizationBuilder, DimensionBehaviour, DispositionView,
 //!     EntrySpec, FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
-//!     HonouringMeans, LaunchSpec, NumericalDimension, NumericalObligationKey, PayloadDigest,
-//!     PolicyLocus, ProvenanceIdentity, RepresentationKey, ScalarArithmeticSubject, SchemaVersion,
-//!     SelectedProvider, SemanticOccurrence, TargetEvidenceDeclaration,
+//!     HonouringMeans, LaunchSpec, LoweringCapabilitySubject, NumericalDimension,
+//!     NumericalObligationKey, PayloadDigest, PolicyLocus, ProvenanceIdentity, RepresentationKey,
+//!     ScalarArithmeticSubject, SchemaVersion, SelectedProvider, SemanticOccurrence,
+//!     TargetEvidenceDeclaration,
 //!     TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, VariantSpec,
 //! };
 //! use tiler_ir::schedule::{
 //!     ApproximationEnvelope, ExceptionalValueAssumption, MaterializationRounding,
 //!     NumericalPermission, SubnormalMode,
 //! };
-//! use tiler_ir::semantic::{InputKey, OutputKey, ProviderIdentity};
+//! use tiler_ir::semantic::{InputKey, OpKey, OutputKey, ProviderIdentity};
 //! # use tiler_ir::index::{
 //! #     DomainRole, FrozenIndexRealizationLawRegistry, FrozenScalarRegistry,
 //! #     IndexRealizationAuthority, IndexRefinementSubject, IndexRefinementVerificationOutcome,
@@ -337,7 +338,10 @@
 //! let mut artifact = ArtifactProgramBuilder::new(&semantic, environment)?;
 //! artifact.select_provider(SelectedProvider {
 //!     provider,
-//!     capability: CapabilityKey::new("tiler.capability.elementwise-multiply")?,
+//!     capability: LoweringCapabilitySubject {
+//!         family: CapabilityFamilyKey::new("index-access")?,
+//!         operation: OpKey::new("tiler", "multiply-f32", 1)?,
+//!     },
 //!     capability_revision: 1,
 //! })?;
 //! let payload = artifact.push_payload(BackendPayloadDescriptor {
@@ -596,7 +600,7 @@ pub use facts::{
 };
 pub use handles::{AbiExprId, PayloadId, VariantId};
 pub use keys::{
-    BackendEntryKey, BackendKey, CapabilityKey, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
+    BackendEntryKey, BackendKey, CapabilityFamilyKey, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
     MAX_GOVERNED_KEY_BYTES, MAX_OPAQUE_IDENTITY_BYTES, MAX_TARGET_PROFILE_DESCRIPTOR_BYTES,
     PayloadDigest, RepresentationKey, RouteFeatureKey, TargetProfileDescriptorDigest,
     TargetProfileKey, TargetProfileRef,
@@ -609,8 +613,9 @@ pub use model::{
     AbiExprRef, AbiExprView, ArtifactExecutionPolicy, ArtifactInputRef, ArtifactOutputRef,
     ArtifactSchema, BackendEntryRef, BackendPayloadDescriptor, BindingKind, BindingRef,
     BindingTarget, CanonicalArtifactProgramIdentity, DeferredPredicateRef, EntryRef,
-    InterfaceComponentRef, RecordedArtifactProgramIdentity, RoutingPolicy, SchemaVersion,
-    SelectedProvider, StageDependencyReason, VariantRef, VerifiedArtifactProgram,
+    InterfaceComponentRef, LoweringCapabilitySubject, RecordedArtifactProgramIdentity,
+    RoutingPolicy, SchemaVersion, SelectedProvider, StageDependencyReason, VariantRef,
+    VerifiedArtifactProgram,
 };
 pub use realization::codec::{
     ArtifactCrossCheck, OrderedSubject as RealizationOrderedSubject, RealizationCodecError,

@@ -41,10 +41,11 @@ use std::fmt;
 
 use tiler_artifact::program::{
     AbiExprId, ArtifactBuildError, ArtifactProgramBuilder, ArtifactVerificationError,
-    BackendEntryKey, BackendEntryRef, BindingKind, BindingSpec, CapabilityKey,
+    BackendEntryKey, BackendEntryRef, BindingKind, BindingSpec, CapabilityFamilyKey,
     CompilationEnvironment, DeferredPredicateSpec, EntrySpec, FeasibilityRuleSetKey,
-    FeasibilityRuleSetRef, LaunchSpec, PayloadId, SelectedProvider, TargetProfileDescriptorDigest,
-    TargetProfileKey, TargetProfileRef, VariantSpec, VerifiedArtifactProgram,
+    FeasibilityRuleSetRef, LaunchSpec, LoweringCapabilitySubject, PayloadId, SelectedProvider,
+    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, VariantSpec,
+    VerifiedArtifactProgram,
 };
 use tiler_compiler::session::{Compilation, PlanAlternative};
 use tiler_ir::program::StageRef;
@@ -196,9 +197,13 @@ pub fn assemble_plan_artifact(
     let mut builder = ArtifactProgramBuilder::new(semantic, environment)?;
 
     for selected in plan.selected_capabilities() {
+        let subject = selected.subject();
         builder.select_provider(SelectedProvider {
             provider: selected.provider().clone(),
-            capability: CapabilityKey::new(selected.capability_key())?,
+            capability: LoweringCapabilitySubject {
+                family: CapabilityFamilyKey::new(subject.family().key_token())?,
+                operation: subject.operation().clone(),
+            },
             capability_revision: selected.capability_revision(),
         })?;
     }
