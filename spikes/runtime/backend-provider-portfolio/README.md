@@ -9,8 +9,8 @@ implementation_status: "spike-only"
 evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.extensions.backend-provider-composition"]
 entrypoints: ["spikes/runtime/backend-provider-portfolio/src/main.rs"]
-last_verified: "2026-08-12"
-verified_at_commit: "61246804"
+last_verified: "2026-08-16"
+verified_at_commit: "e0e4580d1c2f3df4cc6b6c2fd4c5472080bd474b"
 ticket: "exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio"
 ---
 
@@ -39,7 +39,7 @@ CPU always runs. Metal payload production needs the system `xcrun` toolchain; Me
 
 Spikes gate nothing. The `Makefile` has no target for this directory.
 
-**Current-tree compatibility check — 2026-08-14.** `cargo check` passes against the accepted provider-surface rename: portfolio assembly reads the lowering-only artifact environment through `Compilation::offered_lowering_providers`, while the physical-provider reporting below continues to read `Compilation::offered_physical_providers`. This is a build check, not a re-run of the device measurement; the result table and JSON remain bounded to `61246804`.
+**Current-tree route check — 2026-08-16, subject `e0e4580d1c2f3df4cc6b6c2fd4c5472080bd474b`.** The documented non-recording `cargo run` completes both the CPU-only route and the shared portfolio's CPU route with all twelve outputs equal to `tiler-reference`. On the checked macOS host the Metal leg completes too. The run also perturbs the prepared-entry request's provider, property key, and required quantity independently; the first two remain unowned and the third is compared by the loader and refused as unsatisfied. The result table and JSON below remain the earlier recorded measurement bounded to `61246804`; this current-tree check does not rewrite that fixture.
 
 ## What one run does, in order
 
@@ -51,8 +51,9 @@ Spikes gate nothing. The `Makefile` has no target for this directory.
 6. **Proves `check_subject`'s one-target pin:** pushing a second variant under a different descriptor refuses as `TargetProfileMismatch`.
 7. **Packages one portfolio** whose members share that Apple variant-level `TargetProfileRef` and vary backend, representation, payload, and compilation subject.
 8. **Cross-family preflight.** The Metal-only artifact under a CPU `ExecutionEnvironment`, and the CPU-only artifact under a Metal environment, refuse as `runtime.no-eligible-variant` / `UnsupportedRepresentation` before work. Against the combined portfolio the loader would select the matching family instead of refusing; that is eligibility, not fallback.
-9. **Routes two explicit attempts** through `route_with_adapter`. CPU always. Metal only when a device binds.
-10. **Compares twelve output bit patterns** against `tiler-reference`. Perturbs the envelope (flipped byte, truncation, foreign backend) and watches each refuse.
+9. **Routes the CPU-only artifact** through `route_with_adapter` on every host, then routes a separate CPU attempt through the shared portfolio when Metal payload production was available. Metal dispatch remains conditional on a bound device.
+10. **Compares twelve output bit patterns** from each completed route against `tiler-reference`.
+11. **Exercises fail-closed controls.** It perturbs the prepared-entry provider, property key, and required value independently, then perturbs the envelope (flipped byte, truncation, foreign backend), requiring every control to produce its exact refusal class.
 
 ## Result
 
@@ -80,11 +81,12 @@ The twelve output bit patterns are in [`results/2026-08-12-macos-arm64.json`](re
 
 **Fact — a combined portfolio does not refuse a matching family.** Presenting the packaged portfolio under a CPU environment selects the CPU variant; presenting it under a Metal environment selects the Metal variant. The cross-family refusal the ticket names is therefore observed on each *family's own* assembled artifact, not on the combined envelope.
 
-**Fact — the CPU variant of a Metal-assessed plan carries deferred predicates.** The Apple profile answers workgroup capacity as a prepared-entry query. `DecodedProgram::preflight` alone therefore refuses the CPU member as `runtime.deferred-predicates`. The CPU attempt uses `route_with_adapter` / `prepare` and answers that query with 1,024.
+**Fact — the CPU variant of a Metal-assessed plan carries deferred predicates.** The Apple profile answers workgroup capacity as a prepared-entry query. `DecodedProgram::preflight` alone therefore refuses the CPU member as `runtime.deferred-predicates`. The CPU attempt uses `route_with_adapter` / `prepare`. Its adapter exact-matches property key `tiler.target.prepared-entry.max-threads-per-workgroup.v1` and provider `tiler::prepared-entry-properties@1`, looks up the exact prepared entry requested, and reports that entry's bounded 1,024-thread capacity. The dispatch planner enforces the same bound. An unknown provider, unknown key, or absent prepared entry returns `PreparedEntryObservation::Unrecognized`; no backend-family or property-family fallback exists.
 
 ## What this spike does not claim
 
 - It is not a production CPU backend and installs no `tiler-cpu` crate.
 - It does not invent a composition facade, a family-fallback policy, or a production crate change.
+- The CPU adapter's 1,024-thread value is this bounded scalar implementation's enforced policy, not a device measurement or a target-profile fact.
 - It does not compare the two Metal physical providers on cost: both survive under the same structural estimate. Cost-comparability stays the open question ADR 0090 recorded.
 - Metal numbers are a fact about this host's device and toolchain in the interval the run was taken.
