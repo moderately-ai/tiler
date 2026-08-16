@@ -21,7 +21,7 @@ the live offset to every buffer. The current one-read live fixture and all-stati
 pointwise schedules remain valid; mixed addressing refuses during intrinsic
 schedule verification, before lowering can mint a wrong or out-of-bounds load.
 
-## Exact-base Fact audit — 2026-08-16, `98669e8ea9cafc91b3a9139ff821781560c526bd`
+## Exact-base Fact audit — 2026-08-16, `e2522345d571d5088ce47039e4399b7247e7bc47`
 
 1. **Fact — intrinsic pointwise verification admits the mixed population.**
    `crates/tiler-ir/src/schedule/builder.rs`, anchor
@@ -115,6 +115,28 @@ rg -n 'fn live_row_major_region|every_live_row_major_element_access_is_inside_it
 - Count the F32 and BF16 pointwise verifier entry points that reach the shared
   gate. Perturb one example of each width so a width-specific bypass cannot look
   green.
+
+## Worker evidence — 2026-08-16, exact base `e2522345d571d5088ce47039e4399b7247e7bc47`
+
+- The source-first audit above was rerun against the claimed base. All five
+  Facts remain verified; only the audit heading's earlier base hash was stale,
+  and this ticket now names the exact claimed base. The purpose did not change.
+- Before the repair, the exact two-read mixed subject built and lowered to a
+  verified F32 kernel and a verified BF16 kernel. Their buffer element counts
+  were `[2, 0, 0]`: the first read retained its two-element static proof while
+  the body selected the live-row-major loop.
+- With the final refusal assertions present but the shared predicate absent,
+  the read, write, and axis tests each failed with
+  `a mixed live-row-major access list must fail intrinsically: VerifiedScheduledRegion`.
+  Independently weakening the final predicate's read, write, and axis clause
+  reproduced that same red failure for the corresponding exact test alone.
+- `static_and_same_axis_live_pointwise_identities_remain_exact` pins the complete
+  pre-repair one-read all-live schedule and kernel bytes and reuses the existing
+  complete all-static kernel pin. The schedule builder's existing
+  `the_strict_f32_region_has_its_recorded_canonical_identity` test pins the
+  all-static schedule bytes. All four comparisons pass after the repair.
+- The two width-specific dispatch arms remain exactly the F32 and BF16 arms that
+  reach `verify_pointwise_region`; the mixed-read test perturbs and checks both.
 
 ## Graph and closing conditions
 

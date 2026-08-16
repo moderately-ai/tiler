@@ -35,6 +35,8 @@ const NAN_BITS: u32 = 0x7fc0_0000;
 const SCALE_BITS: u32 = 0x4000_0000;
 const BIAS_BITS: u32 = 0x3f80_0000;
 const ABSENT_SUBGROUP_KERNEL_IDENTITY_HEX: &str = "74696c65722e6b65726e656c2e763800000000000000018274696c65722e7363686564756c652e763600000000000000000200000000000000020000000000000003000000000000000201000101000000000002000201000000010100000000000000000000000200000000010011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc000000101010101010101010000000000000006000000010100000000310000000000000006000000010100000000000000020100030101000000000000000602000301020000000000000006000000000000000101000000000000001574696c65722e746573742e7374726963742d6633327fc000000101010101010101000000020000000100000000000000000101000101010101010101000000000000000a020201030303030303030000000000000000000000000000000411010000000000000001000000001202000000000000000600000000000000010000000114010000000000000001000000000000000100000002180000000200000000000000000000000000000008160000000000000000000000000000000000000001000000031203400000000000000000000001000000041306000000030000000400000000000000010000000515010000000500000000000000010000000612033f8000000000000000000001000000071305000000060000000700000000000000010000000815010000000800000000000000010000000917000000010000000000000009000000010000000000000000000000000000000000000000";
+const LIVE_ROW_MAJOR_SCHEDULE_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e763600000000000000000100000000000000020000000000000002010001090000000100000000000200020900000001000000010100000000000000000000000200000000010011000000000000000000000001020011000000000000000000000000020000000000000002240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000020000000101000000003100000000000000020000000101";
+const LIVE_ROW_MAJOR_KERNEL_IDENTITY_HEX: &str = "74696c65722e6b65726e656c2e763800000000000000018274696c65722e7363686564756c652e763600000000000000000100000000000000020000000000000002010001090000000100000000000200020900000001000000010100000000000000000000000200000000010011000000000000000000000001020011000000000000000000000000020000000000000002240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc000000101010101010101010000000000000002000000010100000000310000000000000002000000010100000000000000020100030101000000000000000002000301020000000000000000000000000000000101000000000000001574696c65722e746573742e7374726963742d6633327fc00000010101010101010100000002000000010000000000000000010100010101010101010100000000000000120202020102020202020203030303030303020000000000000000000000000000000520000000000000000000000001000000001101000000000000000100000001120200000000000000020000000000000001000000021401000000010000000200000000000000010000000318000000030000000000000000000000000000000312020000000000000000000000000000000100000004120200000000000000000000000000000001000000051f000000040000000000000000000000010000000500000000000000010000000700000000000000020000000600000007000000000000000a13020000000100000000000000000000000100000008130100000008000000060000000000000001000000091600000000000000090000000000000000000000010000000a12034000000000000000000000010000000b13060000000a0000000b00000000000000010000000c15010000000c00000000000000010000000d12033f80000000000000000000010000000e13050000000d0000000e00000000000000010000000f15010000000f00000000000000010000001017000000010000000900000010000000010000000000000000000000000000000000000001000000110000000000000000fe00000000000000010000000000000001";
 
 fn numerical() -> NumericalRealization {
     NumericalRealization::new(
@@ -5395,6 +5397,242 @@ fn live_row_major_region(rows: u64) -> VerifiedScheduledRegion {
         .schedule(linear_schedule(rows, OwnershipWitnessId::new(0)))
         .unwrap();
     builder.build().unwrap()
+}
+
+#[derive(Clone, Copy)]
+enum PointwiseWidth {
+    F32,
+    Bf16,
+}
+
+fn two_input_pointwise_program(width: PointwiseWidth) -> ScalarProgram {
+    match width {
+        PointwiseWidth::F32 => {
+            let mut expression = PointwiseF32ExpressionBuilder::new();
+            let left = expression.input(AccessOrdinal::FIRST).unwrap();
+            let right = expression.input(AccessOrdinal::new(1)).unwrap();
+            let root = expression.add(left, right).unwrap();
+            ScalarProgram::PointwiseF32(expression.build(root).unwrap())
+        }
+        PointwiseWidth::Bf16 => {
+            let mut expression = crate::schedule::PointwiseBf16ExpressionBuilder::new();
+            let left = expression.input(AccessOrdinal::FIRST).unwrap();
+            let right = expression.input(AccessOrdinal::new(1)).unwrap();
+            let root = expression.add(left, right).unwrap();
+            ScalarProgram::PointwiseBf16(expression.build(root).unwrap())
+        }
+    }
+}
+
+fn two_input_pointwise_builder(
+    width: PointwiseWidth,
+    rows: u64,
+    read_maps: [LogicalAccess; 2],
+    write_map: LogicalAccess,
+) -> ScheduledRegionBuilder {
+    let mut builder = ScheduledRegionBuilder::new(RegionId::new(23));
+    builder.iteration_shape(Shape::from_dims([rows])).unwrap();
+    for (position, map) in read_maps.into_iter().enumerate() {
+        let elements = match &map {
+            LogicalAccess::LinearIdentity => rows,
+            LogicalAccess::LiveRowMajor { .. } => 0,
+            _ => panic!("the focused fixture only constructs identity and live accesses"),
+        };
+        let witness = u32::try_from(position).unwrap();
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Input,
+                component_role: None,
+                mode: AccessMode::Read,
+                map,
+                bounds: BoundsWitnessId::new(witness),
+                ownership: None,
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(witness),
+                tensor: TensorRole::Input,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: elements,
+                },
+            })
+            .unwrap();
+    }
+    let write_elements = match &write_map {
+        LogicalAccess::LinearIdentity => rows,
+        LogicalAccess::LiveRowMajor { .. } => 0,
+        _ => panic!("the focused fixture only constructs identity and live accesses"),
+    };
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Intermediate,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: write_map,
+            bounds: BoundsWitnessId::new(2),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(2),
+            tensor: TensorRole::Intermediate,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: write_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Intermediate,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: rows },
+        })
+        .unwrap();
+    builder
+        .scalar_program(two_input_pointwise_program(width))
+        .unwrap();
+    builder
+        .numerical(match width {
+            PointwiseWidth::F32 => numerical(),
+            PointwiseWidth::Bf16 => bf16_numerical(),
+        })
+        .unwrap();
+    builder
+        .schedule(linear_schedule(rows, OwnershipWitnessId::new(0)))
+        .unwrap();
+    builder
+}
+
+fn identity_hex(bytes: &[u8]) -> String {
+    let mut hex = String::with_capacity(bytes.len().saturating_mul(2));
+    for byte in bytes {
+        write!(&mut hex, "{byte:02x}").unwrap();
+    }
+    hex
+}
+
+fn assert_pointwise_access_refinement(builder: ScheduledRegionBuilder, subject: &str) {
+    let error = builder
+        .build()
+        .expect_err("a mixed live-row-major access list must fail intrinsically");
+    assert_eq!(
+        error.diagnostics(),
+        [crate::schedule::ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+        "the {subject} perturbation must stop at the owning schedule rule: {error:?}"
+    );
+    assert_eq!(
+        error.diagnostics()[0].rule(),
+        "numerical-or-access-refinement",
+        "the {subject} refusal must retain the stable diagnostic"
+    );
+}
+
+/// A static read cannot inherit the live offset selected by its sibling.
+///
+/// The parent verifier admitted this exact two-read subject and canonical
+/// lowering minted a verified F32 and BF16 kernel whose buffer sizes were
+/// `[2, 0, 0]`, then loaded the two-element first buffer at `row * N + col`.
+/// Varying both widths proves their shared verifier is the refusing boundary.
+#[test]
+fn a_mixed_live_row_major_read_is_refused_for_f32_and_bf16() {
+    let inner = Axis::new(1);
+    for width in [PointwiseWidth::F32, PointwiseWidth::Bf16] {
+        assert_pointwise_access_refinement(
+            two_input_pointwise_builder(
+                width,
+                2,
+                [
+                    LogicalAccess::LinearIdentity,
+                    LogicalAccess::LiveRowMajor { inner_axis: inner },
+                ],
+                LogicalAccess::LiveRowMajor { inner_axis: inner },
+            ),
+            "read",
+        );
+    }
+}
+
+/// A static owning write cannot sit inside the live loop selected by its reads.
+#[test]
+fn a_mixed_live_row_major_write_is_refused() {
+    let inner = Axis::new(1);
+    assert_pointwise_access_refinement(
+        two_input_pointwise_builder(
+            PointwiseWidth::F32,
+            2,
+            [
+                LogicalAccess::LiveRowMajor { inner_axis: inner },
+                LogicalAccess::LiveRowMajor { inner_axis: inner },
+            ],
+            LogicalAccess::LinearIdentity,
+        ),
+        "write",
+    );
+}
+
+/// One live stride cannot become the authority for a different live axis.
+#[test]
+fn disagreeing_live_row_major_axes_are_refused() {
+    let inner = Axis::new(1);
+    assert_pointwise_access_refinement(
+        two_input_pointwise_builder(
+            PointwiseWidth::F32,
+            2,
+            [
+                LogicalAccess::LiveRowMajor { inner_axis: inner },
+                LogicalAccess::LiveRowMajor {
+                    inner_axis: Axis::new(2),
+                },
+            ],
+            LogicalAccess::LiveRowMajor { inner_axis: inner },
+        ),
+        "axis",
+    );
+}
+
+/// The refusal narrows only mixed subjects; both valid regimes stay byte-exact.
+#[test]
+fn static_and_same_axis_live_pointwise_identities_remain_exact() {
+    let static_schedule = pointwise_region(RegionId::new(0), &Shape::from_dims([2, 3]));
+    let static_kernel = lower_scheduled_region(&static_schedule).unwrap();
+    assert_eq!(
+        identity_hex(static_kernel.canonical_identity().as_bytes()),
+        ABSENT_SUBGROUP_KERNEL_IDENTITY_HEX,
+        "the existing all-static kernel pin must not move"
+    );
+
+    let live = live_row_major_region(2);
+    let live_kernel = lower_scheduled_region(&live).unwrap();
+    assert_eq!(
+        identity_hex(live.canonical_identity().as_bytes()),
+        LIVE_ROW_MAJOR_SCHEDULE_IDENTITY_HEX,
+        "the existing all-live schedule bytes must not move"
+    );
+    assert_eq!(
+        identity_hex(live_kernel.canonical_identity().as_bytes()),
+        LIVE_ROW_MAJOR_KERNEL_IDENTITY_HEX,
+        "the existing all-live kernel bytes must not move"
+    );
+
+    let inner = Axis::new(1);
+    for width in [PointwiseWidth::F32, PointwiseWidth::Bf16] {
+        let scheduled = two_input_pointwise_builder(
+            width,
+            2,
+            [
+                LogicalAccess::LiveRowMajor { inner_axis: inner },
+                LogicalAccess::LiveRowMajor { inner_axis: inner },
+            ],
+            LogicalAccess::LiveRowMajor { inner_axis: inner },
+        )
+        .build()
+        .expect("same-axis all-live accesses remain valid");
+        lower_scheduled_region(&scheduled).expect("both valid all-live widths still lower");
+    }
 }
 
 /// One compiled payload consumes a live input extent; baking the neighbour
