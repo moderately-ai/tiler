@@ -1,7 +1,7 @@
 ---
 id: repair-fieldless-tensor-role-documentation-after-access-ordinal-reconciliation
 title: Repair fieldless TensorRole documentation after AccessOrdinal reconciliation
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [reconcile-input-ordinal-region-local-and-declared-input-semantics, decide-the-source-bound-live-row-major-access-surface]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [defect, documentation, access-ordinal]
+claimed_from: todo
+assignee: root
+lease_expires_at: 1786921522
 ---
 ## User-visible outcome
 
