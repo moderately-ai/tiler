@@ -5712,16 +5712,16 @@ mod tests {
         serial_sum_program, sha256_hex, stating_probed_family,
     };
     use tiler_artifact::program::{
-        AbiExprId, AbiFactBinder, AbiFacts, ArithmeticType, ArtifactExecutionPolicy,
-        ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey, BackendEntryRef,
-        BackendFeatureRequirement, BackendKey, BindingKind, BindingSpec, BindingTarget,
-        BufferAccess, CapabilityKey, CompilationEnvironment, DeferredPredicateSpec, EntrySpec,
-        FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, PayloadContent,
-        PayloadEntryMapping, PayloadMetadata, PayloadPlatform, PayloadProvenance,
-        RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey,
-        RouteRequirementSubject, RouteResourceRequirement, SchemaVersion, SelectedProvider,
-        TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, ToolComponent,
-        VariantSpec, VerifiedArtifactProgram,
+        AbiExprId, AbiFactBinder, AbiFacts, ArithmeticType, ArtifactBuildError,
+        ArtifactExecutionPolicy, ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey,
+        BackendEntryRef, BackendFeatureRequirement, BackendKey, BindingKind, BindingSpec,
+        BindingTarget, BufferAccess, CapabilityFamilyKey, CompilationEnvironment,
+        DeferredPredicateSpec, EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec,
+        LoweringCapabilitySubject, PayloadContent, PayloadEntryMapping, PayloadMetadata,
+        PayloadPlatform, PayloadProvenance, RecordedArtifactProgramIdentity, RepresentationKey,
+        RouteFeatureKey, RouteRequirementSubject, RouteResourceRequirement, SchemaVersion,
+        SelectedProvider, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
+        ToolComponent, VariantSpec, VerifiedArtifactProgram,
     };
     use tiler_build::BoundMetalCompileDeclaration;
     use tiler_build::realization::translate;
@@ -6098,7 +6098,8 @@ mod tests {
         let compilation =
             compile_under(&declaration, &semantic).expect("the declared contraction compiles");
         let alternative = compilation.selected().expect("a selected plan alternative");
-        let artifact = assemble(&semantic, &compilation, alternative);
+        let artifact = assemble(&semantic, &compilation, alternative)
+            .expect("the compiler capability packages without narrowing");
         let bytes = artifact.encode().expect("the contraction envelope encodes");
         let expected = recorded_identity(&artifact);
         let environment =
@@ -6199,7 +6200,8 @@ mod tests {
             compile_under(&declaration, &semantic).expect("the declared program compiles");
         let plan = compilation.selected().expect("a selected plan alternative");
 
-        let artifact = assemble(&semantic, &compilation, plan);
+        let artifact = assemble(&semantic, &compilation, plan)
+            .expect("the compiler capability packages without narrowing");
         let bytes = artifact.encode().expect("the envelope encodes");
         let expected = recorded_identity(&artifact);
         let environment =
@@ -6232,7 +6234,7 @@ mod tests {
         semantic: &SemanticProgram,
         compilation: &Compilation,
         plan: PlanAlternative<'_>,
-    ) -> VerifiedArtifactProgram {
+    ) -> Result<VerifiedArtifactProgram, ArtifactBuildError> {
         assemble_program(
             semantic,
             compilation,
@@ -6259,7 +6261,7 @@ mod tests {
         plan: PlanAlternative<'_>,
         program: &VerifiedKernelProgram,
         route_requirements: &[RouteRequirement],
-    ) -> VerifiedArtifactProgram {
+    ) -> Result<VerifiedArtifactProgram, ArtifactBuildError> {
         let profile = TargetProfileRef {
             key: TargetProfileKey::new(compilation.target_profile_key())
                 .expect("the compiler mints a governed profile key"),
@@ -6282,11 +6284,14 @@ mod tests {
         let mut builder =
             ArtifactProgramBuilder::new(semantic, environment).expect("a builder identity remains");
         for selected in plan.selected_capabilities() {
+            let subject = selected.subject();
             builder
                 .select_provider(SelectedProvider {
                     provider: selected.provider().clone(),
-                    capability: CapabilityKey::new(selected.capability_key())
-                        .expect("the compiler mints a governed capability key"),
+                    capability: LoweringCapabilitySubject {
+                        family: CapabilityFamilyKey::new(subject.family().key_token())?,
+                        operation: subject.operation().clone(),
+                    },
                     capability_revision: selected.capability_revision(),
                 })
                 .expect("a selected provider was offered");
@@ -6435,7 +6440,7 @@ mod tests {
                 .expect("the plan's compiler evidence translates"),
             )
             .expect("the record agrees with the packaged portfolio");
-        builder.build().expect("the assembled artifact verifies")
+        Ok(builder.build().expect("the assembled artifact verifies"))
     }
 
     /// Passes a route with no live-device requirement through the qualification stage.
@@ -6525,7 +6530,8 @@ mod tests {
             plan,
             plan.abi().kernel_program(),
             requirements,
-        );
+        )
+        .expect("the compiler capability packages without narrowing");
         let bytes = artifact.encode().expect("the requiring envelope encodes");
         let expected = recorded_identity(&artifact);
         let environment =
@@ -7521,7 +7527,8 @@ mod tests {
             "the materialized plan dispatches more than one stage",
         );
 
-        let artifact = assemble(&semantic, &compilation, materialized);
+        let artifact = assemble(&semantic, &compilation, materialized)
+            .expect("the compiler capability packages without narrowing");
         let bytes = artifact.encode().expect("the envelope encodes");
         let expected = recorded_identity(&artifact);
         let environment =
@@ -7667,7 +7674,8 @@ mod tests {
             .find(|plan| !plan.is_fused())
             .expect("the materialized reference alternative is retained");
         let program = partial_window_program(&semantic, materialized.abi().kernel_program());
-        let artifact = assemble_program(&semantic, &compilation, materialized, &program, &[]);
+        let artifact = assemble_program(&semantic, &compilation, materialized, &program, &[])
+            .expect("the compiler capability packages without narrowing");
         let bytes = artifact
             .encode()
             .expect("the partial-window envelope encodes");

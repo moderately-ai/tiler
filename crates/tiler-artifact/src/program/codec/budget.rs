@@ -176,7 +176,9 @@ fn check_text_budgets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecEr
     for provider in envelope.providers() {
         texts.push(provider.provider.namespace());
         texts.push(provider.provider.name());
-        texts.push(provider.capability.as_str());
+        texts.push(provider.capability.family.as_str());
+        texts.push(provider.capability.operation.namespace());
+        texts.push(provider.capability.operation.name());
     }
     for payload in envelope.payloads() {
         texts.push(payload.backend.as_str());

@@ -1458,7 +1458,10 @@ fn an_externally_registered_lowering_provider_drives_the_compile_path() {
 
     let external = crate::request::LoweringProviderIdentity::new(
         external_lowering_provider(),
-        "tiler.capability.index-access.tiler.multiply-f32.v1".to_owned(),
+        crate::capability::LoweringCapabilitySubject::new(
+            crate::capability::LoweringFamily::IndexAccess,
+            multiply_f32_op(),
+        ),
         LoweringCapabilityRevision::new(7).unwrap(),
     );
     for alternative in &target.portfolio.alternatives {

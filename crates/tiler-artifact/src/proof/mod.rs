@@ -114,15 +114,16 @@
 //! use tiler_ir::semantic::{InputKey, OutputKey};
 //! # use tiler_artifact::program::{
 //! #     ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey, BackendEntryRef,
-//! #     BackendKey, BackendPayloadDescriptor, BindingKind, BindingSpec, CapabilityKey,
+//! #     BackendKey, BackendPayloadDescriptor, BindingKind, BindingSpec, CapabilityFamilyKey,
 //! #     CompilationEnvironment, DeliveredRealizationBuilder, DimensionBehaviour, EntrySpec,
 //! #     FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef, HonouringMeans,
-//! #     LaunchSpec, NumericalDimension, NumericalObligationKey, PayloadDigest, PolicyLocus,
-//! #     ProvenanceIdentity, RepresentationKey, ScalarArithmeticSubject, SchemaVersion,
-//! #     SelectedProvider, SemanticOccurrence, TargetEvidenceDeclaration,
+//! #     LaunchSpec, LoweringCapabilitySubject, NumericalDimension, NumericalObligationKey,
+//! #     PayloadDigest, PolicyLocus, ProvenanceIdentity, RepresentationKey,
+//! #     ScalarArithmeticSubject, SchemaVersion, SelectedProvider, SemanticOccurrence,
+//! #     TargetEvidenceDeclaration,
 //! #     TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, VariantSpec,
 //! # };
-//! # use tiler_ir::semantic::ProviderIdentity;
+//! # use tiler_ir::semantic::{OpKey, ProviderIdentity};
 //! # use tiler_ir::index::{
 //! #     DomainRole, FrozenIndexRealizationLawRegistry, FrozenScalarRegistry,
 //! #     IndexRealizationAuthority, IndexRefinementSubject, IndexRefinementVerificationOutcome,
@@ -362,7 +363,10 @@
 //! # let mut artifact = ArtifactProgramBuilder::new(&semantic, environment)?;
 //! # artifact.select_provider(SelectedProvider {
 //! #     provider,
-//! #     capability: CapabilityKey::new("tiler.capability.elementwise-multiply")?,
+//! #     capability: LoweringCapabilitySubject {
+//! #         family: CapabilityFamilyKey::new("index-access")?,
+//! #         operation: OpKey::new("tiler", "multiply-f32", 1)?,
+//! #     },
 //! #     capability_revision: 1,
 //! # })?;
 //! # let payload = artifact.push_payload(BackendPayloadDescriptor {

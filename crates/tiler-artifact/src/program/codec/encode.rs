@@ -186,7 +186,17 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// environment are different artifacts, and `ARTIFACT_DOMAIN` steps to
 /// `v17` so an earlier subject is incomparable rather than silently
 /// colliding.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (17, 0);
+///
+/// **`18.0` structures the selected lowering-capability subject.**
+///
+/// Each selected-provider row replaces one delimiter-composed capability text
+/// field with separately framed family, operation namespace, operation name,
+/// and semantic version fields. A `17.0` reader would consume the family as the
+/// complete capability and then read the namespace length as the capability
+/// revision, losing framing for every following row. The step is major, and
+/// artifact identity moves to `v18` because the earlier spelling admitted
+/// collisions between distinct legal namespace/name boundaries.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (18, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 ///
@@ -610,7 +620,16 @@ fn encode_provenance_tables(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
         push_slice(bytes, provider.provider.namespace().as_bytes());
         push_slice(bytes, provider.provider.name().as_bytes());
         bytes.extend_from_slice(&provider.provider.revision().to_be_bytes());
-        push_slice(bytes, provider.capability.as_str().as_bytes());
+        push_slice(bytes, provider.capability.family.as_str().as_bytes());
+        push_slice(bytes, provider.capability.operation.namespace().as_bytes());
+        push_slice(bytes, provider.capability.operation.name().as_bytes());
+        bytes.extend_from_slice(
+            &provider
+                .capability
+                .operation
+                .semantic_version()
+                .to_be_bytes(),
+        );
         bytes.extend_from_slice(&provider.capability_revision.to_be_bytes());
     }
     push_len(bytes, envelope.payloads().len());

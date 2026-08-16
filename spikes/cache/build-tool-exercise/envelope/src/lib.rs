@@ -25,16 +25,17 @@
 //! validation pass need.
 
 use tiler_artifact::program::{
-    ApproximationEnvelope, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey,
-    BackendEntryRef, BackendKey, BackendPayloadDescriptor, BindingKind, BindingSpec,
-    CANONICAL_DIMENSIONS, CapabilityKey, CompilationEnvironment, DIMENSION_COUNT,
-    DeliveredRealizationBuilder, DeliveredRealizationRecord, DimensionBehaviour, EntryRealization,
-    EntrySpec, FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef, HonouringMeans,
-    LaunchSpec, MaterializationRounding, NumericalDimension, NumericalObligationKey,
-    NumericalPermission, PayloadDigest, PolicyLocus, ProvenanceIdentity, RepresentationKey,
-    ScalarArithmeticSubject, SchemaVersion, SelectedProvider, SemanticOccurrence,
-    TargetEvidenceDeclaration, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
-    VariantSpec, VerifiedArtifactProgram, overlapping_behaviour,
+    ApproximationEnvelope, ArtifactBuildError, ArtifactExecutionPolicy, ArtifactProgramBuilder,
+    BackendEntryKey, BackendEntryRef, BackendKey, BackendPayloadDescriptor, BindingKind,
+    BindingSpec, CANONICAL_DIMENSIONS, CapabilityFamilyKey, CompilationEnvironment,
+    DIMENSION_COUNT, DeliveredRealizationBuilder, DeliveredRealizationRecord, DimensionBehaviour,
+    EntryRealization, EntrySpec, FactSourceProvenance, FeasibilityRuleSetKey,
+    FeasibilityRuleSetRef, HonouringMeans, LaunchSpec, LoweringCapabilitySubject,
+    MaterializationRounding, NumericalDimension, NumericalObligationKey, NumericalPermission,
+    PayloadDigest, PolicyLocus, ProvenanceIdentity, RepresentationKey, ScalarArithmeticSubject,
+    SchemaVersion, SelectedProvider, SemanticOccurrence, TargetEvidenceDeclaration,
+    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, VariantSpec,
+    VerifiedArtifactProgram, overlapping_behaviour,
 };
 use tiler_compiler::session::{Compilation, NumericalContract, PlanAlternative, compile_governed};
 use tiler_ir::program::VerifiedKernelProgram;
@@ -64,6 +65,7 @@ pub fn encoded_envelope() -> Vec<u8> {
         .expect("the governed program compiles");
     let plan = compilation.selected().expect("a selected plan alternative");
     assemble(&semantic, &compilation, plan)
+        .expect("the compiler capability packages without narrowing")
         .encode()
         .expect("the envelope encodes")
 }
@@ -98,7 +100,7 @@ fn assemble(
     semantic: &SemanticProgram,
     compilation: &Compilation,
     plan: PlanAlternative<'_>,
-) -> VerifiedArtifactProgram {
+) -> Result<VerifiedArtifactProgram, ArtifactBuildError> {
     let profile = TargetProfileRef {
         key: TargetProfileKey::new(compilation.target_profile_key())
             .expect("the compiler mints a governed profile key"),
@@ -121,11 +123,14 @@ fn assemble(
     let mut builder =
         ArtifactProgramBuilder::new(semantic, environment).expect("a builder identity remains");
     for selected in plan.selected_capabilities() {
+        let subject = selected.subject();
         builder
             .select_provider(SelectedProvider {
                 provider: selected.provider().clone(),
-                capability: CapabilityKey::new(selected.capability_key())
-                    .expect("the compiler mints a governed capability key"),
+                capability: LoweringCapabilitySubject {
+                    family: CapabilityFamilyKey::new(subject.family().key_token())?,
+                    operation: subject.operation().clone(),
+                },
                 capability_revision: selected.capability_revision(),
             })
             .expect("a selected provider was offered");
@@ -184,7 +189,7 @@ fn assemble(
     builder
         .declare_realization(realization_record(&profile, program))
         .expect("the record agrees with the packaged portfolio");
-    builder.build().expect("the assembled artifact verifies")
+    Ok(builder.build().expect("the assembled artifact verifies"))
 }
 
 /// Builds the delivered-realization record every executable artifact carries.

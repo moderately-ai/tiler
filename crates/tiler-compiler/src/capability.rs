@@ -10,7 +10,7 @@
 //!
 //! [`LoweringFamily`] stays a `#[non_exhaustive]` enum, and the stored provider
 //! handle stays family-typed, rather than either collapsing to that one family.
-//! The family is a durable component of the governed capability key, so
+//! The family is a durable component of the selected capability subject, so
 //! [`LoweringFamily::key_token`] has to survive, and a second family would want
 //! both shapes back; ADR 0105 decision 4 reserves either collapse to Tom.
 //!
@@ -114,10 +114,10 @@ pub enum LoweringFamily {
 }
 
 impl LoweringFamily {
-    /// Returns the governed token naming this family inside a capability key.
+    /// Returns the governed token naming this family in the artifact subject.
     ///
     /// Distinct from [`fmt::Display`], which renders prose for diagnostics. A
-    /// capability key is durable identity, so its spelling is written by an
+    /// selected capability subject is durable identity, so its spelling is written by an
     /// exhaustive match here (ADR 0074 convention 3) and a new family is a
     /// build error rather than a silently unnamed one.
     #[must_use]
@@ -146,6 +146,55 @@ impl fmt::Display for LoweringFamily {
         formatter.write_str(match self {
             Self::IndexAccess => "index-access lowering",
         })
+    }
+}
+
+/// The exact capability family and semantic operation one lowering provides.
+///
+/// Provider identity and the capability's output-affecting revision are
+/// deliberately separate provenance subjects. This record has no public
+/// constructor: only successful compiler resolution can mint one.
+///
+/// ```compile_fail,E0451
+/// use tiler_compiler::capability::{LoweringCapabilitySubject, LoweringFamily};
+/// use tiler_ir::semantic::OpKey;
+///
+/// let _ = LoweringCapabilitySubject {
+///     family: LoweringFamily::IndexAccess,
+///     operation: OpKey::new("example", "op", 1).unwrap(),
+/// };
+/// ```
+///
+/// The composite deliberately has no diagnostic string grammar:
+///
+/// ```compile_fail,E0277
+/// use std::fmt::Display;
+/// use tiler_compiler::capability::LoweringCapabilitySubject;
+///
+/// fn requires_display<T: Display>() {}
+/// requires_display::<LoweringCapabilitySubject>();
+/// ```
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct LoweringCapabilitySubject {
+    family: LoweringFamily,
+    operation: OpKey,
+}
+
+impl LoweringCapabilitySubject {
+    pub(crate) const fn new(family: LoweringFamily, operation: OpKey) -> Self {
+        Self { family, operation }
+    }
+
+    /// Returns the closed lowering family.
+    #[must_use]
+    pub const fn family(&self) -> LoweringFamily {
+        self.family
+    }
+
+    /// Returns the exact semantic operation key.
+    #[must_use]
+    pub const fn operation(&self) -> &OpKey {
+        &self.operation
     }
 }
 
@@ -1126,11 +1175,11 @@ impl LoweringCapabilityRegistryBuilder {
                 provider: Box::new(key.provider),
             });
         }
-        // The governed capability key names family, operation, and operation
-        // version; a consumer records the provider beside it. That pair is a
+        // The structured capability subject names family and exact operation;
+        // a consumer records the provider beside it. That pair is a
         // complete name only while it determines one signature, so a second
         // signature from one provider for one family and operation is refused
-        // here rather than allowed to mint a key already in use. Two *different*
+        // here rather than allowed to mint a subject already in use. Two *different*
         // providers may still register different signatures: the recorded
         // provider tells those apart, and ADR 0072 requires that contended case
         // to reach a deterministic resolution ambiguity rather than a
@@ -1496,18 +1545,18 @@ pub enum LoweringRegistryError {
     },
     /// One provider registered a second signature for one family and operation.
     ///
-    /// The governed capability key `tiler.capability.<family>.<namespace>.<name>.v<version>`
-    /// (`lowering.rs`) deliberately excludes the resolved signature, and every
-    /// consumer records the *provider* beside it, so a key and a provider name
+    /// The structured selected capability subject deliberately excludes the
+    /// resolved signature, and every consumer records the *provider* beside it,
+    /// so a subject and a provider name
     /// one capability exactly as long as that pair determines one signature.
     /// This rejection is what keeps that true: without it a second signature
-    /// would mint a key already in use and two capabilities would become
+    /// would mint a subject already in use and two capabilities would become
     /// indistinguishable in artifact identity, silently.
     ///
     /// It restricts what a provider may register, and that restriction is the
     /// point. Per-shape or per-attribute signatures for one operation family are
     /// a reasonable thing to want; they are refused here so that admitting them
-    /// is a decision someone makes about the key's encoding rather than a
+    /// is a decision someone makes about the subject's encoding rather than a
     /// property that quietly stops holding.
     ConflatedCapabilityKey {
         /// Family both registrations share.
@@ -1575,7 +1624,7 @@ impl fmt::Display for LoweringRegistryError {
                 ..
             } => write!(
                 formatter,
-                "provider {provider} already registered a different {family} signature for operation {operation}; the governed capability key cannot distinguish them"
+                "provider {provider} already registered a different {family} signature for operation {operation}; the selected capability subject cannot distinguish them"
             ),
             Self::OperationAuthority { operation, source } => write!(
                 formatter,
@@ -1849,15 +1898,20 @@ mod tests {
     };
     use tiler_ir::semantic::{
         AttributeFieldId, CanonicalValue, CanonicalValueKind, F32, FrozenSemanticRegistry,
-        InputKey, NormativeDefinitionRef, OpKey, OutputKey, ProviderDiagnosticCode,
-        ProviderIdentity, ResolvedValueType, SemanticProgramBuilder, multiply_f32_op,
+        InputKey, NormativeDefinitionRef, OpKey, OperationArity, OperationAttributeSchema,
+        OperationConformance, OperationDefinition, OperationDefinitionFacts, OperationEffect,
+        OperationInferenceError, OperationInferenceOutputs, OperationInferenceRequest,
+        OperationInferencer, OperationSchema, OutputKey, ProviderDiagnosticCode, ProviderIdentity,
+        RegistryError, ResolvedValueType, SemanticProgramBuilder, SemanticRegistryBuilder,
+        SemanticRegistryProvider, SemanticRegistryRegistrar, multiply_f32_op,
     };
     use tiler_ir::shape::{Extent, Shape};
 
     use super::{
         FrozenLoweringCapabilityRegistry, IndexAccessLoweringContext, IndexAccessLoweringProvider,
-        LoweringCapabilityRegistryBuilder, LoweringCapabilityRevision, LoweringEmitError,
-        LoweringFamily, LoweringRegistryError, LoweringResolveError, LoweringSignature,
+        LoweringCapabilityRegistryBuilder, LoweringCapabilityRevision, LoweringCapabilitySubject,
+        LoweringEmitError, LoweringFamily, LoweringRegistryError, LoweringResolveError,
+        LoweringSignature,
     };
 
     const CONSTANT_BITS: AttributeFieldId = AttributeFieldId::new(1);
@@ -1952,12 +2006,14 @@ mod tests {
         )
     }
 
-    fn scalar_registry() -> tiler_ir::index::FrozenScalarRegistry {
+    fn scalar_registry_for(
+        semantic: FrozenSemanticRegistry,
+    ) -> tiler_ir::index::FrozenScalarRegistry {
         // Ad-hoc: an `example` scalar namespace on purpose. The subject is capability
         // resolution and provider identity, not the governed vocabulary, and binding
         // these fixtures to `tiler.scalar::*` would make a change to the governed
         // profile's arity or attributes break tests that are not about it.
-        let mut builder = ScalarRegistryBuilder::new(FrozenSemanticRegistry::standard().unwrap());
+        let mut builder = ScalarRegistryBuilder::new(semantic);
         let scalars = provider("f32-scalars", 1);
         let constant_schema = ScalarAttributeSchema::new([ScalarAttributeField::required(
             CONSTANT_BITS,
@@ -1981,12 +2037,69 @@ mod tests {
         builder.freeze()
     }
 
+    fn scalar_registry() -> tiler_ir::index::FrozenScalarRegistry {
+        scalar_registry_for(FrozenSemanticRegistry::standard().unwrap())
+    }
+
     fn semantic() -> FrozenSemanticRegistry {
         FrozenSemanticRegistry::standard().unwrap()
     }
 
     fn empty_builder() -> LoweringCapabilityRegistryBuilder {
         LoweringCapabilityRegistryBuilder::new(semantic(), scalar_registry()).unwrap()
+    }
+
+    struct FirstOperand;
+
+    impl OperationInferencer for FirstOperand {
+        fn infer(
+            &self,
+            request: OperationInferenceRequest<'_>,
+            outputs: &mut OperationInferenceOutputs<'_>,
+        ) -> Result<(), OperationInferenceError> {
+            let first = request
+                .operands()
+                .first()
+                .expect("the schema requires operands");
+            outputs.try_push(first.clone())
+        }
+    }
+
+    fn dotted_operation(namespace: &str, name: &str) -> OpKey {
+        OpKey::new(namespace, name, 1).unwrap()
+    }
+
+    struct DottedOperations;
+
+    impl SemanticRegistryProvider for DottedOperations {
+        fn identity(&self) -> ProviderIdentity {
+            provider("dotted-semantic-operations", 1)
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            for (namespace, name) in [("a.b", "c"), ("a", "b.c")] {
+                registrar.register_operation(OperationDefinition::new(
+                    dotted_operation(namespace, name),
+                    OperationSchema::new(
+                        OperationArity::exact(2),
+                        OperationArity::exact(1),
+                        std::iter::empty::<OperationAttributeSchema>(),
+                    )
+                    .expect("a binary schema"),
+                    NormativeDefinitionRef::from_owned(format!(
+                        "urn:example:{namespace}:{name}:v1"
+                    ))?,
+                    OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                    OperationConformance::new(CanonicalValue::boolean(true)),
+                    OperationEffect::Pure,
+                    Arc::new(FirstOperand),
+                ))?;
+            }
+            Ok(())
+        }
     }
 
     /// Emits `out[i] = mul(in[i], in[i])` over the occurrence's own extent.
@@ -2074,6 +2187,54 @@ mod tests {
         assert!(index.index_access_provider().is_some());
     }
 
+    #[test]
+    fn dotted_operation_boundaries_register_and_resolve_as_distinct_subjects() {
+        let mut semantic_builder = SemanticRegistryBuilder::standard().unwrap();
+        semantic_builder
+            .register_provider(&DottedOperations)
+            .unwrap();
+        let semantic = semantic_builder.freeze().unwrap();
+        let scalars = scalar_registry_for(semantic.clone());
+        let mut builder = LoweringCapabilityRegistryBuilder::new(semantic, scalars).unwrap();
+        let selected_provider = provider("dotted-lowering", 1);
+
+        for operation in [dotted_operation("a.b", "c"), dotted_operation("a", "b.c")] {
+            builder
+                .register_index_access(
+                    selected_provider.clone(),
+                    operation,
+                    binary_signature(),
+                    &[scalar_key("multiply")],
+                    revision(),
+                    Arc::new(PointwiseSquareLowering),
+                )
+                .unwrap();
+        }
+
+        let frozen = builder.freeze();
+        assert_eq!(frozen.capability_count(), 2, "both registrations survive");
+        let mut subjects: Vec<_> = [dotted_operation("a.b", "c"), dotted_operation("a", "b.c")]
+            .into_iter()
+            .map(|operation| {
+                let resolved = frozen
+                    .resolve_index_access(&operation, &binary_signature())
+                    .expect("each exact operation resolves");
+                assert_eq!(resolved.provider(), &selected_provider);
+                assert_eq!(resolved.revision(), revision());
+                LoweringCapabilitySubject::new(resolved.family(), resolved.operation().clone())
+            })
+            .collect();
+        subjects.sort_unstable();
+        subjects.dedup();
+        assert_eq!(subjects.len(), 2, "resolved-provider census stays exact");
+        assert!(subjects.iter().any(|subject| {
+            subject.operation().namespace() == "a.b" && subject.operation().name() == "c"
+        }));
+        assert!(subjects.iter().any(|subject| {
+            subject.operation().namespace() == "a" && subject.operation().name() == "b.c"
+        }));
+    }
+
     /// Two capabilities are needed for the order to be observable at all, and
     /// with one family they are two *providers* of it: the registry is keyed by
     /// the whole four-tuple, so distinct providers is what makes the two
@@ -2117,7 +2278,7 @@ mod tests {
     }
 
     /// The registration boundary does not constrain one operation to one
-    /// signature, so the governed key's conflation is reachable, not hypothetical.
+    /// signature, so subject conflation is reachable, not hypothetical.
     ///
     /// `register` validates a signature by projecting the *authority* its types
     /// and operation transitively reach — `project_operation_authority` closes
@@ -2131,7 +2292,7 @@ mod tests {
     /// to register one signature per operation, but nothing at this boundary
     /// makes that so, and an externally registered provider reaches the second
     /// signature today. The guard below is what keeps the exclusion of the
-    /// signature from the governed key safe.
+    /// signature from the selected subject safe.
     #[test]
     fn one_operation_admits_more_than_one_registrable_signature() {
         let mut builder = empty_builder();
@@ -2149,10 +2310,10 @@ mod tests {
 
     /// One provider may register one signature per family and operation.
     ///
-    /// The governed capability key `tiler.capability.<family>.<ns>.<name>.v<v>`
-    /// excludes the signature, and consumers record the provider beside it, so
+    /// The structured selected capability subject excludes the signature, and
+    /// consumers record the provider beside it, so
     /// the pair names one capability only while this holds. Without the guard
-    /// the second registration would mint a key already in use and the two
+    /// the second registration would mint a subject already in use and the two
     /// capabilities would be indistinguishable in artifact identity — with no
     /// diagnostic, which is the failure mode the ticket exists to remove.
     ///

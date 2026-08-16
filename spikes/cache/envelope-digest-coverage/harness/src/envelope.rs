@@ -33,17 +33,17 @@
 //! about a real Metal compilation.
 
 use tiler_artifact::program::{
-    ApproximationEnvelope, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey,
-    BackendEntryRef, BackendKey, BindingKind, BindingSpec, CANONICAL_DIMENSIONS, CapabilityKey,
-    CompilationEnvironment, DIMENSION_COUNT, DeliveredRealizationBuilder,
+    ApproximationEnvelope, ArtifactBuildError, ArtifactExecutionPolicy, ArtifactProgramBuilder,
+    BackendEntryKey, BackendEntryRef, BackendKey, BindingKind, BindingSpec, CANONICAL_DIMENSIONS,
+    CapabilityFamilyKey, CompilationEnvironment, DIMENSION_COUNT, DeliveredRealizationBuilder,
     DeliveredRealizationRecord, DimensionBehaviour, EntryRealization, EntrySpec,
     FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef, HonouringMeans, LaunchSpec,
-    MaterializationRounding, NumericalDimension, NumericalObligationKey, NumericalPermission,
-    PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadPlatform, PayloadProvenance,
-    PolicyLocus, ProvenanceIdentity, RepresentationKey, ScalarArithmeticSubject, SchemaVersion,
-    SelectedProvider, SemanticOccurrence, TargetEvidenceDeclaration, TargetProfileDescriptorDigest,
-    TargetProfileKey, TargetProfileRef, ToolComponent, VariantSpec, VerifiedArtifactProgram,
-    overlapping_behaviour,
+    LoweringCapabilitySubject, MaterializationRounding, NumericalDimension, NumericalObligationKey,
+    NumericalPermission, PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadPlatform,
+    PayloadProvenance, PolicyLocus, ProvenanceIdentity, RepresentationKey, ScalarArithmeticSubject,
+    SchemaVersion, SelectedProvider, SemanticOccurrence, TargetEvidenceDeclaration,
+    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, ToolComponent, VariantSpec,
+    VerifiedArtifactProgram, overlapping_behaviour,
 };
 use tiler_compiler::session::{Compilation, NumericalContract, PlanAlternative, compile_governed};
 use tiler_ir::program::VerifiedKernelProgram;
@@ -144,6 +144,7 @@ impl EnvelopeFactory {
             object_bytes,
             self.tint,
         )
+        .expect("the compiler capability packages without narrowing")
         .encode()
         .expect("the envelope encodes")
     }
@@ -192,7 +193,7 @@ fn assemble(
     plan: PlanAlternative<'_>,
     object_bytes: usize,
     tint: u8,
-) -> VerifiedArtifactProgram {
+) -> Result<VerifiedArtifactProgram, ArtifactBuildError> {
     let profile = TargetProfileRef {
         key: TargetProfileKey::new(compilation.target_profile_key())
             .expect("the compiler mints a governed profile key"),
@@ -215,11 +216,14 @@ fn assemble(
     let mut builder =
         ArtifactProgramBuilder::new(semantic, environment).expect("a builder identity remains");
     for selected in plan.selected_capabilities() {
+        let subject = selected.subject();
         builder
             .select_provider(SelectedProvider {
                 provider: selected.provider().clone(),
-                capability: CapabilityKey::new(selected.capability_key())
-                    .expect("the compiler mints a governed capability key"),
+                capability: LoweringCapabilitySubject {
+                    family: CapabilityFamilyKey::new(subject.family().key_token())?,
+                    operation: subject.operation().clone(),
+                },
                 capability_revision: selected.capability_revision(),
             })
             .expect("a selected provider was offered");
@@ -334,7 +338,7 @@ fn assemble(
     builder
         .declare_realization(realization_record(&profile, program))
         .expect("the record agrees with the packaged portfolio");
-    builder.build().expect("the assembled artifact verifies")
+    Ok(builder.build().expect("the assembled artifact verifies"))
 }
 
 /// Builds the delivered-realization record every executable artifact carries.

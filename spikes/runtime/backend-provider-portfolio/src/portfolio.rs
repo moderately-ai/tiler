@@ -2,11 +2,11 @@
 
 use tiler_artifact::program::{
     ArtifactBuildError, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey,
-    BackendEntryRef, BindingKind, BindingSpec, CapabilityKey, CompilationEnvironment,
+    BackendEntryRef, BindingKind, BindingSpec, CapabilityFamilyKey, CompilationEnvironment,
     DeferredPredicateSpec, EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec,
-    PayloadContent, PayloadId, RecordedArtifactProgramIdentity, SchemaVersion, SelectedProvider,
-    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, VariantSpec,
-    VerifiedArtifactProgram,
+    LoweringCapabilitySubject, PayloadContent, PayloadId, RecordedArtifactProgramIdentity,
+    SchemaVersion, SelectedProvider, TargetProfileDescriptorDigest, TargetProfileKey,
+    TargetProfileRef, VariantSpec, VerifiedArtifactProgram,
 };
 use tiler_build::realization;
 use tiler_compiler::session::{Compilation, PlanAlternative};
@@ -131,9 +131,13 @@ fn assemble_with(
     )?;
     let mut draft = ArtifactProgramBuilder::new(semantic, environment)?;
     for selected in metal_plan.selected_capabilities() {
+        let subject = selected.subject();
         draft.select_provider(SelectedProvider {
             provider: selected.provider().clone(),
-            capability: CapabilityKey::new(selected.capability_key())?,
+            capability: LoweringCapabilitySubject {
+                family: CapabilityFamilyKey::new(subject.family().key_token())?,
+                operation: subject.operation().clone(),
+            },
             capability_revision: selected.capability_revision(),
         })?;
     }

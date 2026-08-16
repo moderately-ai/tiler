@@ -309,9 +309,9 @@ governed_key!(
     "A governed feasibility rule-set key."
 );
 governed_key!(
-    CapabilityKey,
-    ArtifactKeyKind::Capability,
-    "A governed capability key one provider was selected for."
+    CapabilityFamilyKey,
+    ArtifactKeyKind::CapabilityFamily,
+    "A governed lowering-capability family key."
 );
 governed_key!(
     RouteFeatureKey,

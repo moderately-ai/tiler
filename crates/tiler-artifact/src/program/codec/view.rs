@@ -1272,6 +1272,7 @@ impl From<ArtifactCodecError> for ArtifactCodecFailure {
             | ArtifactCodecError::SectionCountMismatch { .. }
             | ArtifactCodecError::InvalidText
             | ArtifactCodecError::InvalidGovernedKey { .. }
+            | ArtifactCodecError::InvalidOperationKey { .. }
             | ArtifactCodecError::InvalidInterfaceKey { .. }
             | ArtifactCodecError::InvalidProviderIdentity { .. }
             | ArtifactCodecError::InvalidShape { .. }

@@ -75,7 +75,7 @@ use tiler_ir::schedule::{
 };
 use tiler_ir::semantic::{ProviderIdentity, ResolvedValueType, SemanticProgram};
 
-use crate::capability::FrozenLoweringCapabilityRegistry;
+use crate::capability::{FrozenLoweringCapabilityRegistry, LoweringCapabilitySubject};
 pub use crate::explain::VerifiedCompilationExplain;
 use crate::explain::VerifiedExplainTrace;
 use crate::physical_provider::InstalledPhysicalProviders;
@@ -1272,10 +1272,8 @@ impl<'a> PreparedEntryTargetRequirementRef<'a> {
 
 /// One capability the compiler resolved to lower part of a program.
 ///
-/// The governed key is minted by the compiler and handed over whole. A caller
-/// wraps it in its own key type rather than composing one from parts, because
-/// the key enters artifact identity and two places deriving one identity is the
-/// drift this boundary exists to prevent.
+/// The exact typed subject is minted by the compiler and handed over whole.
+/// Provider identity and capability revision remain separate provenance.
 #[derive(Clone, Copy, Debug)]
 pub struct SelectedCapability<'a>(&'a LoweringProviderIdentity);
 
@@ -1286,10 +1284,10 @@ impl<'a> SelectedCapability<'a> {
         self.0.provider()
     }
 
-    /// Returns the governed key of the resolved capability.
+    /// Returns the exact family and operation of the resolved capability.
     #[must_use]
-    pub fn capability_key(self) -> &'a str {
-        self.0.capability_key()
+    pub fn subject(self) -> &'a LoweringCapabilitySubject {
+        self.0.subject()
     }
 
     /// Returns the capability's output-affecting revision.
@@ -3079,12 +3077,15 @@ mod tests {
         TargetElementaryAccuracyReason, TargetNumericalRefusalDisposition,
         TargetNumericalRequirement, compile, compile_governed,
     };
+    use crate::capability::{
+        LoweringCapabilityRevision, LoweringCapabilitySubject, LoweringFamily,
+    };
     use crate::pipeline::compile as compile_internal;
     use crate::target::{TargetProfile, TargetRequest};
     use tiler_ir::program::abi::{ExprNode, TargetPropertyRequirementRelation};
     use tiler_ir::semantic::{
-        F32, F32Add, F32Constant, F32Multiply, F32Silu, InputKey, OutputKey, SemanticProgram,
-        SemanticProgramBuilder, StrictSerialF32Sum,
+        F32, F32Add, F32Constant, F32Multiply, F32Silu, InputKey, OpKey, OutputKey,
+        ProviderIdentity, SemanticProgram, SemanticProgramBuilder, StrictSerialF32Sum,
     };
     use tiler_ir::shape::{Axis, Shape};
 
@@ -4456,36 +4457,30 @@ mod tests {
         let compilation = compile_governed(&program, NumericalContract::STRICT_F32).unwrap();
         let selected = compilation.selected().expect("a selected alternative");
 
-        // Every resolved capability is named by a governed key, never blank.
-        // The spelling is the family and the operation it lowers; the provider
-        // is recorded beside it rather than inside it, so two providers of one
-        // operation share a key and are still told apart.
-        let keys: Vec<_> = selected
+        // Every resolved capability retains its exact typed family/operation
+        // pair; the provider is recorded beside it rather than inside it.
+        let subjects: Vec<_> = selected
             .selected_capabilities()
-            .map(|capability| capability.capability_key().to_owned())
+            .map(super::SelectedCapability::subject)
             .collect();
-        assert!(!keys.is_empty(), "a compiled plan resolved some capability");
-        for key in &keys {
-            assert!(
-                key.starts_with("tiler.capability.index-access.tiler."),
-                "unexpected capability key spelling: {key}",
+        assert!(
+            !subjects.is_empty(),
+            "a compiled plan resolved some capability"
+        );
+        for subject in &subjects {
+            assert_eq!(
+                subject.family(),
+                crate::capability::LoweringFamily::IndexAccess
             );
-            // Split rather than match a literal suffix: the assertion is that
-            // the key ends in a parseable operation version, not that this
-            // operation happens to be at version one.
-            let version = key.rsplit('.').next().expect("a key has segments");
-            assert!(
-                version
-                    .strip_prefix('v')
-                    .is_some_and(|digits| digits.parse::<u32>().is_ok()),
-                "key omits the operation version: {key}",
-            );
+            assert_eq!(subject.operation().namespace(), "tiler");
+            assert!(subject.operation().semantic_version() > 0);
         }
         assert!(
-            keys.contains(
-                &"tiler.capability.index-access.tiler.strict-serial-sum-f32.v1".to_owned()
-            ),
-            "the reduction's capability is named: {keys:?}",
+            subjects.iter().any(|subject| {
+                subject.operation().name() == "strict-serial-sum-f32"
+                    && subject.operation().semantic_version() == 1
+            }),
+            "the reduction's capability is named: {subjects:?}",
         );
         for capability in selected.selected_capabilities() {
             assert_eq!(capability.provider().namespace(), "tiler");
@@ -4554,5 +4549,44 @@ mod tests {
             );
             assert_eq!(requirement.query().provider().revision(), 1);
         }
+    }
+
+    #[test]
+    fn public_selected_subjects_retain_dotted_operation_boundaries() {
+        let provider = ProviderIdentity::new("example", "dotted-lowering", 1).unwrap();
+        let revision = LoweringCapabilityRevision::new(1).unwrap();
+        let mut resolved = [
+            OpKey::new("a.b", "c", 1).unwrap(),
+            OpKey::new("a", "b.c", 1).unwrap(),
+        ]
+        .into_iter()
+        .map(|operation| {
+            super::LoweringProviderIdentity::new(
+                provider.clone(),
+                LoweringCapabilitySubject::new(LoweringFamily::IndexAccess, operation),
+                revision,
+            )
+        })
+        .collect::<Vec<_>>();
+        resolved.sort_unstable();
+        resolved.dedup();
+
+        let selected = resolved
+            .iter()
+            .map(super::SelectedCapability)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            selected.len(),
+            2,
+            "the resolved-provider census stays exact"
+        );
+        assert!(selected.iter().any(|selected| {
+            selected.subject().operation().namespace() == "a.b"
+                && selected.subject().operation().name() == "c"
+        }));
+        assert!(selected.iter().any(|selected| {
+            selected.subject().operation().namespace() == "a"
+                && selected.subject().operation().name() == "b.c"
+        }));
     }
 }

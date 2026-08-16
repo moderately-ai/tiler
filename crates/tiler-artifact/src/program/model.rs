@@ -28,7 +28,7 @@ use tiler_ir::schedule::{
     SynchronizationKind, SynchronizationScope, SynchronizationSubject, ValueDomainProvenance,
 };
 use tiler_ir::semantic::{
-    EncodedComponentRole, InputKey, OutputKey, ProviderIdentity,
+    EncodedComponentRole, InputKey, OpKey, OutputKey, ProviderIdentity,
     SemanticAdmissionProvenanceIdentity, SemanticDefinitionProjectionIdentity,
     SemanticGraphIdentity, SemanticIdentity,
 };
@@ -49,7 +49,7 @@ use super::expr::{
 };
 use super::handles::PayloadId;
 use super::keys::{
-    BackendEntryKey, BackendKey, CapabilityKey, FeasibilityRuleSetRef, PayloadDigest,
+    BackendEntryKey, BackendKey, CapabilityFamilyKey, FeasibilityRuleSetRef, PayloadDigest,
     RepresentationKey, TargetProfileRef,
 };
 use super::realization::DeliveredRealizationRecord;
@@ -236,6 +236,22 @@ use super::requirement::{RouteRequirement, push_requirements};
 /// holding a `v15` identity must miss on the complete subject rather than
 /// match it.
 ///
+/// # Why this was a `v17` step
+///
+/// `v17` added the retained shape environment after the existing semantic
+/// subjects. Its declarations and constraints are artifact meaning even when
+/// no variant guard happens to read them, so two programs differing there can
+/// no longer share the earlier incomplete identity.
+///
+/// # Why this is a `v18` step
+///
+/// A selected lowering capability now frames its governed family and exact
+/// operation namespace, name, and semantic version independently. The `v17`
+/// row carried one delimiter-composed text field, so two legal operations whose
+/// dots fell on different namespace/name boundaries could share one artifact
+/// identity. The structured record removes that collision; stepping the domain
+/// makes every ambiguous earlier subject incomparable with the injective one.
+///
 /// # Why this was a `v15` step
 ///
 /// Raised to `v15` when every artifact gained the required delivered-realization
@@ -252,7 +268,7 @@ use super::requirement::{RouteRequirement, push_requirements};
 /// bytes by `starts_with` on this separator, so a governed domain that prefixed
 /// it would let another subject's bytes be accepted as an artifact identity.
 /// `crate::domains` enumerates it and checks that no such domain exists.
-pub(crate) const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v17\0";
+pub(crate) const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v18\0";
 
 /// [`ARTIFACT_DOMAIN`] without its terminator, for rendering in a diagnostic.
 ///
@@ -297,7 +313,12 @@ pub(crate) const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1
 /// there because a provider key is also compared to its siblings on its own —
 /// `encode_identity` sorts and deduplicates these keys — so the record needs to
 /// be self-describing rather than relying on the enclosing domain.
-pub(crate) const PROVIDER_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.provider.v2\0";
+///
+/// `v3` replaces the delimiter-composed capability text with four independently
+/// framed fields: governed family, operation namespace, operation name, and
+/// semantic version. This key is sorted and deduplicated on its own, so its
+/// domain steps independently with the enclosing artifact domain.
+pub(crate) const PROVIDER_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.provider.v3\0";
 /// Versioned domain separator of one deferred predicate's canonical key.
 pub(crate) const DEFERRED_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.deferred.v2\0";
 
@@ -545,6 +566,27 @@ impl BindingKind {
     }
 }
 
+/// One structured lowering capability at the neutral artifact boundary.
+///
+/// Family and operation remain separately typed and are framed independently
+/// wherever this subject enters canonical bytes. There is deliberately no
+/// composite text spelling.
+///
+/// ```compile_fail,E0277
+/// use std::fmt::Display;
+/// use tiler_artifact::program::LoweringCapabilitySubject;
+///
+/// fn requires_display<T: Display>() {}
+/// requires_display::<LoweringCapabilitySubject>();
+/// ```
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct LoweringCapabilitySubject {
+    /// Governed lowering-family key.
+    pub family: CapabilityFamilyKey,
+    /// Exact semantic operation key.
+    pub operation: OpKey,
+}
+
 /// One capability provider the packaged plan actually reached.
 ///
 /// ADR 0072: a provider that was available but not selected is
@@ -554,8 +596,8 @@ impl BindingKind {
 pub struct SelectedProvider {
     /// Identity and nonzero output-affecting revision of the provider.
     pub provider: ProviderIdentity,
-    /// Governed capability key the provider was selected for.
-    pub capability: CapabilityKey,
+    /// Exact lowering capability the provider was selected for.
+    pub capability: LoweringCapabilitySubject,
     /// Output-affecting revision of that capability, as the compiler minted it.
     ///
     /// Two revisions, not one. `docs/operation-extensions.md` fixes them as
@@ -590,14 +632,20 @@ impl SelectedProvider {
             + framed(provider.namespace().len())
             + framed(provider.name().len())
             + size_of::<u32>()
-            + framed(capability.as_str().len())
+            + framed(capability.family.as_str().len())
+            + framed(capability.operation.namespace().len())
+            + framed(capability.operation.name().len())
+            + size_of::<u32>()
             + size_of::<u32>();
         let mut bytes = Vec::with_capacity(exact);
         bytes.extend_from_slice(PROVIDER_KEY_DOMAIN);
         push_slice(&mut bytes, provider.namespace().as_bytes());
         push_slice(&mut bytes, provider.name().as_bytes());
         bytes.extend_from_slice(&provider.revision().to_be_bytes());
-        push_slice(&mut bytes, capability.as_str().as_bytes());
+        push_slice(&mut bytes, capability.family.as_str().as_bytes());
+        push_slice(&mut bytes, capability.operation.namespace().as_bytes());
+        push_slice(&mut bytes, capability.operation.name().as_bytes());
+        bytes.extend_from_slice(&capability.operation.semantic_version().to_be_bytes());
         bytes.extend_from_slice(&capability_revision.to_be_bytes());
         debug_assert_eq!(bytes.len(), exact, "provider key capacity is exact");
         bytes

@@ -19,7 +19,7 @@ use std::error::Error;
 use std::fmt;
 
 use tiler_ir::program::ByteAlignmentError;
-use tiler_ir::semantic::{BuildError, RegistryError};
+use tiler_ir::semantic::{BuildError, RegistryError, TypeIdentityError};
 use tiler_ir::shape::{ShapeEnvSubjectError, ShapeError};
 
 use super::super::error::{ArtifactBuildError, ArtifactDiagnostic, ProvenanceField};
@@ -672,6 +672,11 @@ pub(crate) enum ArtifactCodecError {
         /// Typed rejection from the key constructor.
         cause: ArtifactBuildError,
     },
+    /// A structured operation key was rejected by its own validating constructor.
+    InvalidOperationKey {
+        /// Typed rejection from the shared semantic identity vocabulary.
+        cause: TypeIdentityError,
+    },
     /// A stable interface key was rejected by its own validating constructor.
     InvalidInterfaceKey {
         /// Typed rejection from the shared-IR key constructor.
@@ -739,6 +744,7 @@ impl Error for ArtifactCodecError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::InvalidGovernedKey { cause } => Some(cause),
+            Self::InvalidOperationKey { cause } => Some(cause),
             Self::InvalidInterfaceKey { cause } => Some(cause),
             Self::InvalidProviderIdentity { cause } => Some(cause),
             Self::InvalidShape { cause } => Some(cause),

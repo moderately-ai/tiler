@@ -494,11 +494,12 @@ fn the_direct_contraction_plan_never_enumerates_a_simdgroup_realization() {
             );
         }
         for capability in alternative.selected_capabilities() {
-            let key = capability.capability_key();
+            let subject = capability.subject();
             for marker in SIMDGROUP_REALIZATION_MARKERS {
                 assert!(
-                    !key.contains(marker),
-                    "{marker} must not name a selected capability: {key}"
+                    !subject.operation().namespace().contains(marker)
+                        && !subject.operation().name().contains(marker),
+                    "{marker} must not name a selected capability: {subject:?}"
                 );
             }
         }

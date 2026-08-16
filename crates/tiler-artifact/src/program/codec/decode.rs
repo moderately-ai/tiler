@@ -34,7 +34,7 @@ use tiler_ir::program::{
 use tiler_ir::schedule::{
     ExceptionalValueAssumption, FencedSpaces, ResourceRequirements, SynchronizationSubject,
 };
-use tiler_ir::semantic::{EncodedComponentRole, InputKey, OutputKey, ProviderIdentity};
+use tiler_ir::semantic::{EncodedComponentRole, InputKey, OpKey, OutputKey, ProviderIdentity};
 use tiler_ir::shape::Shape;
 
 use super::super::error::ArtifactBuildError;
@@ -43,7 +43,7 @@ use super::super::expr::{
     binary_operand_type, node_type, unary_operand_type,
 };
 use super::super::keys::{
-    BackendEntryKey, BackendKey, CapabilityKey, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
+    BackendEntryKey, BackendKey, CapabilityFamilyKey, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
     PayloadDigest, RepresentationKey, RouteFeatureKey, TargetProfileDescriptorDigest,
     TargetProfileKey, TargetProfileRef,
 };
@@ -51,10 +51,10 @@ use super::super::model::{
     ArtifactSchema, BINDING_TARGET_INTERNAL, BINDING_TARGET_PROGRAM_INPUT,
     BINDING_TARGET_PROGRAM_OUTPUT, BackendPayloadDescriptor, BindingData, BindingKind,
     BindingTargetData, DeferredPredicateData, InterfaceComponentData, InterfaceEntryData,
-    LaunchData, RoutingPolicy, SchemaVersion, SelectedProvider, StageDependencyData,
-    StageDependencyReason, address_space_from_tag, buffer_access_from_tag, element_type_from_tag,
-    exceptional_assumption_from_tag, index_arithmetic_from_tag, memory_ordering_from_tag,
-    permission_from_tag, storage_scalar_from_tag, subnormal_from_tag,
+    LaunchData, LoweringCapabilitySubject, RoutingPolicy, SchemaVersion, SelectedProvider,
+    StageDependencyData, StageDependencyReason, address_space_from_tag, buffer_access_from_tag,
+    element_type_from_tag, exceptional_assumption_from_tag, index_arithmetic_from_tag,
+    memory_ordering_from_tag, permission_from_tag, storage_scalar_from_tag, subnormal_from_tag,
     synchronization_kind_from_tag, synchronization_scope_from_tag,
 };
 use super::super::realization::DeliveredRealizationRecord;
@@ -468,15 +468,24 @@ fn read_outputs(
 }
 
 /// Reads the selected capability providers and proves their canonical order.
-fn read_providers(cursor: &mut Cursor<'_>) -> Result<Vec<SelectedProvider>, ArtifactCodecError> {
+pub(super) fn read_providers(
+    cursor: &mut Cursor<'_>,
+) -> Result<Vec<SelectedProvider>, ArtifactCodecError> {
     let providers = cursor.vec(
         MAX_SELECTED_PROVIDERS,
         CodecLimitKind::SelectedProviders,
         |cursor| {
+            let provider = cursor.provider()?;
+            let family = CapabilityFamilyKey::from_owned(cursor.text()?)
+                .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?;
+            let namespace = cursor.text()?;
+            let name = cursor.text()?;
+            let semantic_version = cursor.u32()?;
+            let operation = OpKey::from_owned(namespace, name, semantic_version)
+                .map_err(|cause| ArtifactCodecError::InvalidOperationKey { cause })?;
             Ok(SelectedProvider {
-                provider: cursor.provider()?,
-                capability: CapabilityKey::from_owned(cursor.text()?)
-                    .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?,
+                provider,
+                capability: LoweringCapabilitySubject { family, operation },
                 capability_revision: cursor.u32()?,
             })
         },

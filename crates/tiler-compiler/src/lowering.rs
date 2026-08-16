@@ -31,7 +31,9 @@ use tiler_ir::index::{IndexRefinementSubject, NumericalContractIdentity};
 use tiler_ir::program::CoveredOccurrence;
 use tiler_ir::semantic::{OpKey, SemanticProgram};
 
-use crate::capability::{LoweringResolveError, LoweringSignature, ResolvedLoweringCapability};
+use crate::capability::{
+    LoweringCapabilitySubject, LoweringResolveError, LoweringSignature, ResolvedLoweringCapability,
+};
 use crate::index_discharge::{
     IndexDomainDischargeError, IndexDomainDischargeRefusal, IndexDomainDischargeRefusalKind,
     discharge_pending_index_refinement,
@@ -169,7 +171,7 @@ pub(crate) enum LoweringError {
         /// Recognized member whose refinement was refused.
         member: SemanticMemberId,
         /// Resolved provider and capability revision that emitted the region.
-        provider: LoweringProviderIdentity,
+        provider: Box<LoweringProviderIdentity>,
         /// Typed refinement cause.
         source: Arc<RefinementError>,
     },
@@ -178,7 +180,7 @@ pub(crate) enum LoweringError {
         /// Recognized member whose realization failed semantic discharge.
         member: SemanticMemberId,
         /// Resolved provider and capability revision that emitted the region.
-        provider: LoweringProviderIdentity,
+        provider: Box<LoweringProviderIdentity>,
         /// Exact typed assessments and retained pending state.
         refusal: Box<IndexDomainDischargeRefusal>,
     },
@@ -351,7 +353,7 @@ pub(crate) fn resolve_lowering(
         let resolved = resolve_occurrence(capabilities, &occurrence, member)?;
         let provider = LoweringProviderIdentity::new(
             resolved.provider().clone(),
-            governed_capability_key(&resolved),
+            LoweringCapabilitySubject::new(resolved.family(), resolved.operation().clone()),
             resolved.revision(),
         );
         let evidence = refine(
@@ -396,7 +398,7 @@ pub(crate) fn resolve_capabilities(
         let resolved = resolve_occurrence(capabilities, &occurrence, member)?;
         providers.push(LoweringProviderIdentity::new(
             resolved.provider().clone(),
-            governed_capability_key(&resolved),
+            LoweringCapabilitySubject::new(resolved.family(), resolved.operation().clone()),
             resolved.revision(),
         ));
     }
@@ -435,7 +437,7 @@ fn refine(
     match refine_index_region(resolved, occurrence, realizations, scalars).map_err(|source| {
         LoweringError::Refine {
             member,
-            provider: provider.clone(),
+            provider: Box::new(provider.clone()),
             source: Arc::new(source),
         }
     })? {
@@ -446,13 +448,13 @@ fn refine(
                 Err(IndexDomainDischargeError::Domain(refusal)) => {
                     Err(LoweringError::SemanticDischarge {
                         member,
-                        provider,
+                        provider: Box::new(provider),
                         refusal: Box::new(refusal),
                     })
                 }
                 Err(IndexDomainDischargeError::Refinement(source)) => Err(LoweringError::Refine {
                     member,
-                    provider,
+                    provider: Box::new(provider),
                     source: Arc::new(source),
                 }),
             }
@@ -495,64 +497,4 @@ fn occurrence_signature(
         rule: "signature-bound",
         member,
     })
-}
-
-/// Mints the governed key of one resolved lowering capability.
-///
-/// The spelling names the capability family and the exact semantic operation
-/// family it lowers, including that operation's semantic version, so two
-/// versions of one operation never share a key.
-///
-/// # What is deliberately not in the key, and what keeps that safe
-///
-/// The resolved **signature** is excluded. A capability is registered under
-/// family, operation, signature, and provider (`capability.rs`'s
-/// `LoweringCapabilityKey`), so two capabilities from one provider differing
-/// only in signature would mint the same key here. Signatures are unbounded
-/// structural values and a governed key is bounded at 256 bytes, so folding one
-/// in would either truncate — silently colliding, which is worse than the
-/// conflation because it would *look* distinguishing — or require a digest,
-/// which is a second identity that must be kept in agreement with the signature
-/// it summarizes.
-///
-/// The exclusion is therefore kept, and the assumption it rests on is enforced
-/// rather than recorded: every consumer stores the provider beside this key, so
-/// the pair names one capability exactly while one provider registers one
-/// signature per family and operation, and
-/// `LoweringRegistryError::ConflatedCapabilityKey` refuses the registration that
-/// would make that false. Two *different* providers may still differ in
-/// signature for one operation, because the recorded provider distinguishes them.
-///
-/// The consequence is a real restriction: a provider cannot register per-shape
-/// or per-attribute signatures for one operation family. Admitting those means
-/// deciding a bounded signature encoding for this key first, which is a decision
-/// someone makes rather than a property that quietly stops holding
-/// (`resolve-capability-key-signature-conflation`).
-///
-/// # This composition can mint a key the artifact layer refuses
-///
-/// The two interpolated components come from an `OpKey`, whose validator
-/// (`tiler_ir::semantic::types`) admits ASCII *alphanumeric* — uppercase
-/// included — and 255 bytes per component. `tiler_artifact::program`'s governed
-/// keys admit ASCII lowercase within 256 bytes total. So a legal `OpKey` such
-/// as `Acme::MyOp`, registered through the public `register_index_access`,
-/// composes a capability key that `CapabilityKey::new` refuses at packaging
-/// time, and two long components compose one past the byte bound. This function
-/// is infallible and cannot report either, so the refusal lands at the
-/// packaging call rather than at the registration that caused it.
-///
-/// Refusing is correct — an uppercase key would compare unequal to the one a
-/// reader sees — but the site is wrong, and choosing between narrowing the
-/// operation-identity grammar and making this composition fallible is a public
-/// boundary decision. `reconcile-the-operation-identity-and-governed-key-grammars`
-/// owns it.
-fn governed_capability_key(resolved: &ResolvedLoweringCapability) -> String {
-    let operation = resolved.operation();
-    format!(
-        "tiler.capability.{}.{}.{}.v{}",
-        resolved.family().key_token(),
-        operation.namespace(),
-        operation.name(),
-        operation.semantic_version(),
-    )
 }

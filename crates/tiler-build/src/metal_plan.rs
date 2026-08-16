@@ -1662,9 +1662,9 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "3e113510c0eeb090968a8b7adb445f6bd64ed4c66b4b3ad440f032716e147be5";
+            "6196bc5a45d808a63d2a810781a63429886b66dced70ef17d69ab1b91adfc5c3";
         const CACHE_SUBJECT: &str =
-            "5ffb36be5c5714e9982153717d2af2adaef440afc4bf6144c81b3859757771a7";
+            "f82b92995b6bb399e2004310c28d9cfd265f2b1fa2c9162c587701eb7e1a3e4f";
         // **Hex step after the feasibility rule-set key v5 → v6.** Descriptor
         // length and fixed content stay at the workgroup-tree-width-policy
         // values: silent profiles write no subgroup section, and the key
@@ -1681,7 +1681,11 @@ mod tests {
         // from repeated schedule and kernel role records saves 50 bytes in this
         // fixed corpus. The artifact and manifest grammars do not move; they
         // frame the complete stepped nested identities.
-        const FIXED_CONTENT_BYTES: usize = 77_062;
+        // **77,054 after the structured selected-capability subject.** Dropping
+        // the redundant `tiler.capability.` text prefix saves eight bytes in
+        // this one-provider envelope while the replacement fields are framed
+        // independently.
+        const FIXED_CONTENT_BYTES: usize = 77_054;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
@@ -1755,9 +1759,9 @@ mod tests {
     #[test]
     fn the_authority_ledger_mirrors_the_live_standard_metal_pins() {
         const ARTIFACT_IDENTITY: &str =
-            "3e113510c0eeb090968a8b7adb445f6bd64ed4c66b4b3ad440f032716e147be5";
+            "6196bc5a45d808a63d2a810781a63429886b66dced70ef17d69ab1b91adfc5c3";
         const CACHE_SUBJECT: &str =
-            "5ffb36be5c5714e9982153717d2af2adaef440afc4bf6144c81b3859757771a7";
+            "f82b92995b6bb399e2004310c28d9cfd265f2b1fa2c9162c587701eb7e1a3e4f";
         let ledger = include_str!(
             "../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md"
         );
@@ -1775,7 +1779,7 @@ mod tests {
             "the live pin paragraph does not name CACHE_SUBJECT",
         );
         assert!(
-            today.contains("fixed content is 77,062 bytes"),
+            today.contains("fixed content is 77,054 bytes"),
             "the live pin paragraph does not name FIXED_CONTENT_BYTES",
         );
         assert!(
