@@ -1,7 +1,7 @@
 ---
 id: refresh-envelope-digest-coverage-spike-lockfile-after-tiler-digest-extraction
 title: Refresh envelope digest coverage spike lockfile after tiler-digest extraction
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [replace-flat-selected-lowering-capability-keys-with-structured-subjects, repair-envelope-digest-coverage-spike-after-identity-digest-manifest-step, site-the-governed-digest-so-layered-identity-encoders-can-reach-it]
@@ -9,6 +9,9 @@ scopes: [research/cache]
 shared_scopes: [project/tickets]
 paths: []
 tags: [maintenance, evidence, cache, dependencies]
+claimed_from: todo
+assignee: worker-envelope-lock
+lease_expires_at: 1786927429
 ---
 ## User-visible outcome
 
