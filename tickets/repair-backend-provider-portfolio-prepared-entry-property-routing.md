@@ -1,7 +1,7 @@
 ---
 id: repair-backend-provider-portfolio-prepared-entry-property-routing
 title: Repair backend-provider portfolio prepared-entry property routing
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [replace-flat-selected-lowering-capability-keys-with-structured-subjects]
@@ -9,6 +9,9 @@ scopes: [research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [correctness, evidence, runtime]
+claimed_from: todo
+assignee: repair_backend_portfolio
+lease_expires_at: 1786921403
 ---
 ## User-visible outcome
 

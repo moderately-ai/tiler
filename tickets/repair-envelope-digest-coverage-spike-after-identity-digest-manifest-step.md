@@ -1,7 +1,7 @@
 ---
 id: repair-envelope-digest-coverage-spike-after-identity-digest-manifest-step
 title: Repair envelope digest coverage spike after identity-digest manifest step
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [replace-flat-selected-lowering-capability-keys-with-structured-subjects]
@@ -9,6 +9,9 @@ scopes: [research/cache]
 shared_scopes: [project/tickets]
 paths: []
 tags: [correctness, evidence, cache, artifact]
+claimed_from: todo
+assignee: repair_envelope_locator
+lease_expires_at: 1786921403
 ---
 ## User-visible outcome
 

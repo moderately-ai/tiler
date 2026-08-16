@@ -1,7 +1,7 @@
 ---
 id: refuse-mixed-pointwise-live-row-major-access-relations-before-lowering
 title: Refuse mixed pointwise live-row-major access relations before lowering
-status: todo
+status: in-progress
 priority: p0
 dependencies: []
 related: [decide-the-source-bound-live-row-major-access-surface, admit-symbolic-extents-through-schedule-formation]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [defect, correctness, schedule, kernel]
+claimed_from: todo
+assignee: fix_mixed_live_maps
+lease_expires_at: 1786921403
 ---
 ## User-visible outcome
 
