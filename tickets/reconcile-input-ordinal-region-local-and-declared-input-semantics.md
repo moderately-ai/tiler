@@ -1,7 +1,7 @@
 ---
 id: reconcile-input-ordinal-region-local-and-declared-input-semantics
 title: Reconcile InputOrdinal region-local and declared-input semantics
-status: in-progress
+status: done
 priority: p1
 dependencies: [decide-the-schedule-local-input-ordinal-model, decide-the-full-list-access-coordinate-for-out-of-list-references]
 related: [decide-the-source-bound-live-row-major-access-surface, admit-symbolic-extents-through-schedule-formation, associate-live-extent-operands-with-symbolic-semantic-interface-axes, scope-an-in-place-append-into-a-caller-retained-allocation]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [defect, public-boundary, schedule, identity, shapes]
-claimed_from: todo
-assignee: worker-reconcile-input-ordinal
-lease_expires_at: 1786743680
 ---
 ## User-visible outcome
 
@@ -23,6 +20,12 @@ and a declared program ordinal is never accepted where an exact ordered access
 position is required.
 
 ## Exact-current-base Fact audit — 2026-08-14, `4e10b98066f846ca50de4c97ba6262dade9e0865`
+
+The implementation branch was cut from
+`1ab21ef7e56c09841d86a4b82ef2b842b3410bb3`. A path-limited diff from the
+audit base through that branch base is empty for `crates/`, `docs/`,
+`prototypes/`, and `spikes/`; the intervening commits are ticket-only, so
+the source verdicts below remain exact at the implementation base.
 
 The narrow source paths originally cited behind the first seven Facts are
 byte-identical to the earlier
@@ -150,6 +153,10 @@ cargo nextest run -p tiler-ir -p tiler-compiler -p tiler-artifact -p tiler-metal
 # 2,778 passed; 3 skipped
 cargo test -p tiler-ir -p tiler-compiler -p tiler-artifact -p tiler-metal -p tiler-build -p tiler-conformance -p tiler-runtime --doc
 RUSTDOCFLAGS='-D warnings' cargo doc --no-deps -p tiler-ir -p tiler-compiler -p tiler-artifact -p tiler-metal -p tiler-build -p tiler-conformance -p tiler-runtime
+make full
+# 3,620 debug tests passed; 8 skipped
+# all workspace doctests passed
+# 1,247 release compiler/reference tests passed; 3 skipped
 cd spikes/target-profiles/scalar-cpu-vertical && cargo check
 cd spikes/verification/kani-encoder-injectivity && ./guard.sh
 cd spikes/verification/kani-encoder-injectivity && cargo check
@@ -170,7 +177,23 @@ Subject perturbations were applied one at a time and restored:
   exact declared-input read`;
 - reverting only the schedule encoder to `tiler.schedule.v5` made
   `every_tiler_spelled_literal_is_pinned_or_classified` refuse that literal as
-  absent from `PINNED_IDENTITY_DOMAINS`.
+  absent from `PINNED_IDENTITY_DOMAINS`;
+- reverting only the kernel encoder to `tiler.kernel.v7` made the independent
+  IR domain census refuse that literal as absent from
+  `PINNED_IDENTITY_DOMAINS`;
+- reverting only the physical-proposal encoder to
+  `tiler.compiler.physical-implementation-proposal.v2` made the compiler
+  domain census refuse that exact unpinned literal;
+- reverting only `EXPLAIN_SCHEMA_VERSION` to 10 made
+  `explain_vocabulary_is_append_only_and_versioned` fail with
+  `left: 10, right: 11`;
+- reverting only `EXPLAIN_RENDERER_VERSION` to 8 made the same independent
+  vocabulary/header pin fail with `left: 8, right: 9`.
+
+The reviewed source and evidence commit is
+`eea073f10df6ae758f6b357777c352af627996ed`. Its worktree was clean after
+every perturbation was restored, and the exact-commit detached review found no
+remaining correctness, identity, schema, or public-boundary defect.
 
 ## Closes when
 
