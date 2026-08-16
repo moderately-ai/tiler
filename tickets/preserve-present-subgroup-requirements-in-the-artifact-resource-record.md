@@ -1,7 +1,7 @@
 ---
 id: preserve-present-subgroup-requirements-in-the-artifact-resource-record
 title: Preserve present subgroup requirements in the artifact resource record
-status: todo
+status: in-progress
 priority: p1
 dependencies: [accept-the-atomic-subgroup-realization-surface]
 related: [admit-subgroup-bindings-into-the-schedule-vocabulary, admit-subgroup-coordinates-and-xor-transfer-into-kernel-ir]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/artifact, contracts/artifacts, contra
 shared_scopes: [project/tickets]
 paths: []
 tags: [subgroup, artifact, schema, identity, public-boundary, correctness]
+claimed_from: todo
+assignee: sol-subgroup-artifact
+lease_expires_at: 1786926435
 ---
 ## User-visible outcome
 

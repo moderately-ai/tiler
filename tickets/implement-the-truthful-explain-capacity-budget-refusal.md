@@ -1,7 +1,7 @@
 ---
 id: implement-the-truthful-explain-capacity-budget-refusal
 title: Implement the truthful explain-capacity budget refusal
-status: todo
+status: in-progress
 priority: p1
 dependencies: [decide-the-truthful-public-class-for-complete-explain-capacity-refusals]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, correctness, explain, public-boundary]
+claimed_from: todo
+assignee: sol-explain-capacity
+lease_expires_at: 1786926435
 ---
 
 ## User-visible outcome
