@@ -5,13 +5,13 @@ status: in-progress
 priority: p1
 dependencies: [define-the-model-weight-binding-manifest, route-an-embedded-artifact-through-a-consumer-storage-seam, reclassify-language-model-work-as-a-conformance-track]
 related: [design-model-ingestion-and-complete-execution, derive-transformer-operation-and-shape-surface, spike-bf16-through-the-second-dtype-seams, drive-the-complete-forward-pass-over-three-artifacts]
-scopes: [implementation/workspace]
-shared_scopes: [project/tickets, implementation/cargo-lock]
+scopes: [research/program-planning]
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ingestion, weights, dtype, consumer, language-model, class-conformance-fixture]
 claimed_from: todo
 assignee: worker-checkpoint-ingest
-lease_expires_at: 1787004917
+lease_expires_at: 1787005622
 ---
 ## User-visible outcome
 
@@ -37,10 +37,78 @@ The pinned BF16 checkpoint becomes 310 dense F32 values a program can be handed,
 - A subnormal count recorded beside the non-finite counts on that same pass. On the pinned revision the count is the measured zero already cited above; retain it because a substituted checkpoint can move it even when non-finite stays zero.
 - A BF16-storage operand offered to a program declaring F32 refuses by name as `BindError::StorageScalarMismatch`, watched failing.
 
-## Workspace admission
+## Placement correction — 2026-08-17
 
-This consumer is a new prototype member and nothing may depend on it. Add the member and the lockfile update in one commit so a reviewer sees both, and note that no `[scopes]` entry in `ticketsplease.toml` covers a new `prototypes/` directory — adding one is part of this ticket and is covered by the shared `project/tickets` scope. Do not add a `[scope_crates]` mapping for a prototype.
+**False at the exact base, repaired before implementation.** The original
+`Workspace admission` required a root-workspace prototype member. That cannot
+also be the `tiler` consumer this outcome requires: the complete
+`crates/tiler/tests/dependency_direction.rs`, anchors
+`FRONTEND_PACKAGES` and `no_package_depends_on_the_frontend`, rejects a direct
+dependency on `tiler` or `tiler-macros` from every other Cargo.lock package.
+`TensorAdapter` is exposed by the facade at
+`crates/tiler/src/value.rs`, anchor `pub trait TensorAdapter`, so a root member
+cannot wrap these program inputs without breaking the consumer-neutral
+dependency boundary. The completed dependency
+`route-an-embedded-artifact-through-a-consumer-storage-seam` records the same
+constraint at anchor `No workspace package may depend on tiler` and identifies
+an out-of-tree consumer crate as the required placement.
+
+The consumer is therefore an isolated Cargo workspace under
+`spikes/program-planning/`, not a root-workspace member. It depends on the
+facade by path, owns its own lockfile and narrow local-data ignore rule, and is
+run only through its documented manual commands. This preserves the
+user-visible outcome as retained consumer-owned conformance evidence; it adds
+no public API, production-core dependency, or support claim. Root `Cargo.toml`
+and `Cargo.lock` remain unchanged.
 
 ## Closes when
 
-The 310 values exist as F32, the digests and the manifest both gate the run, the widened-byte digest is retained on the consumer load path (fixture host.tsv alone is not enough), the non-finite counts and the subnormal count are retained from the same digests pass, the non-finite guard is watched able to fail on a substituted fixture, the wrong-scalar refusal is watched failing, and no `Cast` appears in any program.
+The isolated consumer workspace proves the 310 values exist as F32, the
+digests and the manifest both gate its run, the widened-byte digest is retained
+on the consumer load path (fixture host.tsv alone is not enough), the
+non-finite counts and the subnormal count are retained from the same digests
+pass, the non-finite guard is watched able to fail on a substituted fixture,
+the wrong-scalar refusal is watched failing, and no `Cast` appears in any
+program. It remains a manually run conformance fixture rather than a
+root-workspace member or a production support claim.
+
+## Outcome — 2026-08-17
+
+Implemented the isolated consumer workspace at
+[`spikes/program-planning/qwen3-checkpoint-f32-inputs/`](../spikes/program-planning/qwen3-checkpoint-f32-inputs/).
+It checks the retained manifest bytes and digest, authenticates the complete
+checkpoint before parsing its header or assigning semantic meaning to payload
+values, validates all 310 manifest rows against the safetensors header and
+their derived qualified program slots, then streams BF16 pairs directly into
+the one retained F32 buffer for each input.
+It retains 310 dense `Tensor<CheckpointAdapter>` inputs, each reporting
+`DenseRowMajorStorage` and `StorageScalar::F32`; source BF16 buffers are only
+one MiB streaming chunks. The concatenation of those F32 byte runs in manifest
+order is checked before wrappers are returned against
+`d2abe344f7a4e4c0ea79c4a3c524ca851b095d930064e086d980972fe95c8437`.
+
+**Measurement.** On this macOS host, the release command documented in the
+new README processed the exact local
+`cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba`
+checkpoint in 4,696 ms. It retained 2,384,199,680 F32 bytes and printed
+1,799,782,400 resident bytes at retained-load completion (a current `ps`
+observation, explicitly not peak RSS). The widened digest matched the pin;
+the counted census was `nan=0 infinite=0 subnormal=0`. This is one
+checkpoint/host measurement, not an execution or support claim.
+
+**Negative controls.** The focused tests independently produced these refusal
+texts from perturbed subjects: a changed checkpoint digest (`checkpoint digest
+mismatch`), a same-shape K/V slot swap (`manifest mapping mismatch`), BF16
+infinity (`refusing widened checkpoint: 0 NaN, 1 infinite, 0 subnormal
+values`), BF16 NaN (`refusing widened checkpoint: 1 NaN, 0 infinite, 0
+subnormal values`), changed widened bytes (`widened payload digest mismatch`),
+and a Bf16 storage value offered to an F32 input
+(`tiler.bind.storage-scalar-mismatch`). A BF16 subnormal separately produces
+`subnormal=1` while remaining admitted. `cargo test -- --nocapture` prints all
+six refusals; `rg -n '\\bCast\\b' spikes/program-planning/qwen3-checkpoint-f32-inputs`
+has no matches.
+
+**Checks.** `cargo test -- --nocapture`, `cargo clippy --all-targets -- -D
+warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`, `tkt lint`,
+`make citations`, and `git diff --check` passed. The standalone workspace owns
+its `Cargo.lock`; the root `Cargo.toml` and `Cargo.lock` stayed byte-identical.
