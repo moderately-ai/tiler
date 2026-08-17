@@ -22,25 +22,25 @@ Before data-dependent gather enters the verified index/schedule vocabulary, Tile
 The audit read the complete ticket and dependency set, the accepted decision and contract set, and every current construction, validation, compaction, proof, identity, reference, request, schedule, lowering, refusal, registry, and test owner named in the evidence log below. Searches located owners; the verdicts come from reading the complete files. This repairs the discovery record before making a decision. The repair does not change the ticket's purpose.
 
 1. **Fact — verified.** [ADR 0108](../docs/decisions/0108-site-a-data-dependent-index-coordinate-on-the-expression.md) selects an append-only tagged gather access and literally says `This decision accepts no public Rust spelling`. [ADR 0075](../docs/decisions/0075-scope-public-boundary-approval-by-change-category.md) therefore reserves this packet's public boundary for Tom.
-2. **Fact — verified.** `AccessData` and `TensorAccessRef` in `crates/tiler-ir/src/index/model.rs` describe one tensor and one coordinate list. `IndexRegionBuilder::read` in `crates/tiler-ir/src/index/builder.rs` creates a scalar `AccessRead`. `verify_pointwise_accesses` in `crates/tiler-ir/src/schedule/model.rs` requires `reads.len() == input_count` and pairs reads and scalar input leaves by ordinal. A gather's F32 value read plus its address-only U32 read cannot enter that model without an explicit association rule.
+2. **Fact — imprecise owner repaired, semantics verified.** `AccessData` and `TensorAccessRef` in `crates/tiler-ir/src/index/model.rs` describe one tensor and one coordinate list. `IndexRegionBuilder::read` in `crates/tiler-ir/src/index/builder.rs` creates a scalar `AccessRead`. The owner is `verify_pointwise_region` in `crates/tiler-ir/src/schedule/builder.rs`, not a nonexistent `verify_pointwise_accesses` in `schedule/model.rs`: it rejects `reads.is_empty() || reads.len() != input_count`, while expression verification pairs scalar leaves to those reads by ordinal. A gather's F32 value read plus its address-only U32 read cannot enter that model without an explicit association rule.
 3. **Fact — verified.** No current type states the extra read's owner, order, multiplicity, or whether it is also a scalar value input. A search hit is not the evidence: the complete schedule verifier and construction paths contain no alternative association.
-4. **Fact — imprecise and repaired.** The discovery said no closed producer can mint `StaticallyProved`. No such producer or gather proof type exists today, but two closed O(1) proof cases are derivable from accepted types without reading index data: an empty index domain is vacuous, and a gathered source extent at least `2^32` contains every exact U32 value. Every other case requires invocation validation. The packet below fixes one private minting authority and those two cases only.
+4. **Fact — false and repaired.** The discovery said no closed producer can mint `StaticallyProved`; the first packet then narrowed vacuity incorrectly to an empty *index* shape. No producer or gather proof type exists today, but two closed proof classes are derivable without reading index data: the **complete result/access domain is empty** when any result extent is zero, and a gathered source extent at least `2^32` contains every exact U32 value. Thus source `[0, 5]`, axis 1, index `[3]` yields result `[0, 3]` and is vacuous even though the index is inhabited. Every other case requires invocation validation. The repair widens the static population and changes the option set, but not the ticket's purpose.
 5. **Fact — verified.** `PendingIndexRefinementReceipt` and `IndexRefinementUnknown` are not truthful dynamic-gather results. `CoveredOccurrence::from_receipt` accepts only a completed `IndexRefinementReceipt`; a dynamic obligation must instead stop before executable coverage and must not receive a receipt or executable-coverage identity.
 6. **Fact — verified.** The accepted ADR selects no law, access, schedule, proof, registry, or diagnostic tags. The source has advanced since the discovery base: current owners include the landed source-bearing proof and access repairs, so this packet derives from the exact base rather than reusing the `f46ac65c` census.
 7. **Fact — repaired maturity claim.** ADR 0108 is accepted. The chronological decision catalog, IR contract, open-question record, and roadmap still called it proposed or returned for revision; this ticket corrects those records. The current source census remains five `IndexNode` variants, three `IndexExprClass` variants, and three `IndexDomainUnknownReason` variants because accepting an architecture did not implement it.
 8. **Fact — repaired dependency claim.** Both dependencies are `done`; there is no remaining live scope conflict with `name-the-fact-source-on-retained-write-ownership-evidence` on this base.
 9. **Fact — verified.** The existing index-region encoder has direct read/write access tags `0x01`/`0x02`; `IndexRealizationLaw` uses `0x01` through `0x0D`; `LogicalAccess` uses `0x01` through `0x09`. The pending, independently reviewed live-row-major packet reserves schedule tags `0x0A`/`0x0B`, so this packet does not create two reviewable claims to the same byte.
 10. **Fact — verified.** The standard realization sidecar currently contains sixteen rows. The governed compiler request subject is version 6 and already folds lowering-registry and realization-registry identities. Adding the gather rows therefore moves those identities and all request/explain qualifiers that contain them, without changing the request-domain grammar.
-11. **Fact — verified semantic boundary.** ADRs 0107 and 0108 admit exactly an F32 source, exact U32 index, one explicit gathered axis, program-input operands, a static semantic result, nonzero source rank, rank-zero or higher index, duplicates, a shared result domain, one direct source coordinate for each non-gather source axis in source-axis order, and one complete index coordinate for each index axis in index-axis order. The index value supplies only the omitted gathered-axis coordinate.
+11. **Fact — verified for admitted literals, imprecise about sourced support.** ADRs 0107 and 0108 admit an F32 source, exact U32 index, one explicit gathered axis, program-input operands, nonzero source rank, rank-zero or higher index, duplicates, a shared result domain, one direct source coordinate for each non-gather source axis in source-axis order, and one complete index coordinate for each index axis in index-axis order. The index value supplies only the omitted gathered-axis coordinate. Current `GatherF32` is registered with `OperationDefinition::new`, is `ShapeInferenceParticipation::LiteralOnly`, and calls `static_operand_shape`; therefore the implemented family does **not** support sourced operands. A complete sourced candidate is a distinct frontier surface, not something the literal carrier may claim for free.
 12. **Fact — verified authority boundary.** `DTypeNotDispatchable` and the `dtype-recognized` reason in `crates/tiler-compiler/src/request.rs` currently refuse the U32 operand before operation lowering on ordinary targets. Admission must recognize U32 only as the gather's address operand; it must not widen the general scalar-arithmetic dispatch set.
 
 ### Evidence log
 
 Complete files read at the exact base: root `AGENTS.md`; this ticket; `admit-the-selected-data-dependent-index-representation`; `accept-adr-0108-data-dependent-index-coordinate-siting`; `name-the-fact-source-on-retained-write-ownership-evidence`; `revise-adr-0108-with-a-complete-data-dependent-index-vertical`; `admit-an-invocation-scoped-gather-index-validation-receipt`; `docs/README.md`; the complete ADR index and ADRs 0046, 0074, 0075, 0107, 0108, and 0109; the relevant complete IR, open-question, roadmap, status, and work-tracking contracts; and the complete implicated files under `tiler-ir::{index,semantic,schedule}`, `tiler-reference`, and `tiler-compiler` covering model, builder, proof, compaction, law, refinement, sourced values, identity, registry, reference evaluation, request verification, governed lowering, schedule formation, policy, physical refusal, errors, and their correctness-bearing tests.
 
-## Recommended exact public surface
+## Exact common public surface for implementation-capable candidates
 
-This is one atomic surface. Partial acceptance is a rejection and keeps the existing typed refusal.
+The following checked access, proof, requirement, diagnostics, and dynamic stop are common to frontier surfaces B through E. Capability participation and schedule association differ only where stated. Tom must select one atomic surface; mixing fields across candidates is not acceptance and keeps the existing typed refusal.
 
 ### Checked index access sum
 
@@ -63,7 +63,7 @@ pub enum TensorAccessView<'a> {
 
 `TensorAccessView` is exhaustive: reference and compiler consumers must prove they considered every admitted access kind. The common wrapper's current `tensor()`, `coordinates()`, `bounds_proof()`, and `write_ownership_proof()` are removed because none has one truthful meaning for both variants. This unpublished pre-alpha repository has no compatibility requirement that outweighs that correctness boundary.
 
-`DirectTensorAccessRef<'a>` and `GatherReadAccessRef<'a>` are `Clone + Copy + Debug`, nonconstructible outside the crate. The direct view exposes `tensor()`, `coordinates()`, `bounds_proof()`, and `write_ownership_proof()` with their existing return types. The gather view exposes:
+`DirectTensorAccessRef<'a>` and `GatherReadAccessRef<'a>` are `Clone + Copy + Debug`, nonconstructible outside the crate. The direct view exposes `tensor() -> VerifiedTensorId`, `coordinates() -> impl ExactSizeIterator<Item = VerifiedIndexExprId> + 'a`, `bounds_proof() -> Option<BoundsProofView>`, and `write_ownership_proof() -> Option<WriteOwnershipProofView>`. The gather view exposes:
 
 ```rust
 pub fn source(self) -> VerifiedTensorId;
@@ -161,9 +161,12 @@ pub fn gather_read(
 
 ### Closed proof authority and mandatory dynamic stop
 
-Add opaque, private-field owned types `GatherIndexBoundsProof` and `GatherIndexValidationRequirement`, and these read surfaces:
+The types below are defined in `crates/tiler-ir/src/index/model.rs` and re-exported exactly once from `tiler_ir::index` by `index/mod.rs`; there is no second module spelling. All fields are private. Each identity is `Clone + Debug + Eq + Hash + Ord + PartialEq + PartialOrd`, has no public constructor or byte conversion, and exposes `pub fn as_bytes(&self) -> &[u8]` only.
 
 ```rust
+pub struct GatherIndexBoundsProofIdentity(Vec<u8>);
+pub struct GatherIndexValidationRequirementIdentity(Vec<u8>);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GatherIndexBoundsResolution<'a> {
     StaticallyProved(&'a GatherIndexBoundsProof),
@@ -173,22 +176,23 @@ pub enum GatherIndexBoundsResolution<'a> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum GatherIndexBoundsProofKind {
-    VacuousEmptyIndexDomain,
+    VacuousEmptyResultDomain,
     U32RangeContainedBySourceExtent,
 }
 ```
 
-Only the verifier-private `derive_gather_index_bounds` mints either object. There is no public constructor, setter, proof parameter, unsafe escape, or boolean assertion. The proof and requirement both bind the exact region identity and access ordinal, source and index tensor ordinals and exact types, axis, gathered source extent, and domain identity. `GatherIndexBoundsProofIdentity` and `GatherIndexValidationRequirementIdentity` are opaque digest wrappers returned by `identity()`; `kind()` is the only proof classification accessor. The remaining binding accessors expose the fields above for diagnostics and cross-checking, never mutation.
+`GatherIndexBoundsProof` exposes exactly `identity() -> &GatherIndexBoundsProofIdentity`, `kind() -> GatherIndexBoundsProofKind`, `facts() -> IndexDomainFactSource`, `region() -> &CanonicalIndexRegionIdentity`, `access() -> VerifiedTensorAccessId`, `source() -> VerifiedTensorId`, `index() -> VerifiedTensorId`, `source_type() -> &ResolvedValueType`, `index_type() -> &ResolvedValueType`, `source_shape() -> &SourcedShape`, `index_shape() -> &SourcedShape`, `result_shape() -> &SourcedShape`, `axis() -> Axis`, `source_extent() -> &SourcedExtent`, and `domain() -> impl ExactSizeIterator<Item = VerifiedDimensionId> + '_`. `GatherIndexValidationRequirement` exposes the corresponding `identity()`, `region()`, `access()`, source/index/type/shape/result/axis/extent/domain accessors and **no** `facts()` or `kind()`: a requirement is not proof evidence. `GatherIndexBoundsResolution` exposes `statically_proved() -> Option<&GatherIndexBoundsProof>` and `invocation_validation_required() -> Option<&GatherIndexValidationRequirement>`. This uses existing concrete access/tensor/domain/extent/type/shape types and does not invent a free-floating “domain identity”; the opaque proof or requirement identity binds the exact ordered domain itself.
 
-Derivation order is closed:
+Only verifier-private `derive_gather_index_bounds` mints either object. It reads the result shape obtained by splicing the index extents into the source at `axis` and applies this closed precedence:
 
-1. `VacuousEmptyIndexDomain` when any exact index-shape extent is zero;
-2. `U32RangeContainedBySourceExtent` when the gathered source extent is at least `2^32`;
-3. `InvocationValidationRequired` for every other valid gather.
+1. scan **all** result extents for a literal zero without consulting `ShapeEnv`; if found, mint `VacuousEmptyResultDomain` with `IndexDomainFactSource::Program`;
+2. if none, scan all symbolic result extents through the one bound `ExtentSources`; if one is determined as zero, mint the same kind with `IndexDomainFactSource::ShapeEnvironment`;
+3. test the gathered source extent: literal `>= 2^32` mints `U32RangeContainedBySourceExtent` with `Program`, or an environment-determined value `>= 2^32` mints it with `ShapeEnvironment`;
+4. every other valid gather mints `InvocationValidationRequired`.
 
-The second case uses exact mathematical extent comparison; it does not narrow `2^32` into U32. The first wins when both apply, so proof identity is canonical. No data sample, profile, caller claim, target property, or reference run can mint static proof.
+The empty-result proof wins even when the source-axis universe proof also holds. `[0, 5]` gathered on axis 1 by `[3]` therefore proves vacuously from result `[0, 3]`. The comparison is in exact `u64`/mathematical extent space; it never narrows `2^32` into U32. `IndexDomainFactSource` appears once on the proof, is returned only by `facts()`, and is encoded once as the existing exhaustive `Program = 0x01` / `ShapeEnvironment = 0x02` tag. Every schedule `BoundsProofView` continues to expose its own source through its existing `facts()` total match. No sample, caller assertion, target fact, profile, or reference run can mint either proof kind.
 
-At semantic refinement the requirement is rebound to the exact occurrence, ordered operand bindings `[source, index]`, and result binding as opaque, private-field `InvocationGatherIndexValidationRequirement`. It exposes `subject()`, `access()`, `source_binding()`, `index_binding()`, `result_binding()`, and `requirement()` borrowed accessors. Add exact outcomes:
+The refinement-bound types live in `crates/tiler-ir/src/index/refinement.rs` and are re-exported from `tiler_ir::index`. `InvocationGatherIndexValidationRequirementIdentity` follows the same opaque-wrapper and `as_bytes()` rule. `InvocationGatherIndexValidationRequirement` exposes exactly `identity() -> &InvocationGatherIndexValidationRequirementIdentity`, `subject() -> &IndexRefinementSubject`, `access() -> VerifiedTensorAccessId`, `source_binding() -> &OperandBinding`, `index_binding() -> &OperandBinding`, `result_bindings() -> &[ResultBinding]`, and `requirement() -> &GatherIndexValidationRequirement`. The result is a slice because the existing refinement contract admits one binding per output root; gather validation requires exactly one and rejects any other count, but the accessor does not create a competing singular projection.
 
 ```rust
 IndexRefinementVerificationOutcome::InvocationValidationRequired(
@@ -200,11 +204,91 @@ IndexRefinementOutcome::InvocationValidationRequired(
 )
 ```
 
-Compiler-owned `PendingInvocationIndexValidation` has private fields and borrowed `provider()`, `revision()`, `capability_authority()`, and `requirement()` accessors. Existing `verified()`/`pending()` or `refined()`/`pending()` accessors return `None` for the new arm; add `invocation_validation_required()` to both outcomes and `into_invocation_validation_required()` to the compiler outcome. Add `IndexRefinementVerificationError::GatherValidationRequirementMismatch` for a requirement whose access, occurrence, ordered bindings, axis, shapes, or types disagree. A valid dynamic gather returns the requirement outcome only after all provider, law, occurrence, and binding checks. It creates no `IndexRefinementReceipt`, no `IndexRefinementReceiptIdentity`, no `IndexRefinementExecutableCoverageIdentity`, no `CoveredOccurrence`, schedule, artifact, cache subject, or dispatch attempt. The separate receipt ticket owns validation bytes, immutable snapshots, invocation binding, runtime carriage, and any later transition to executable coverage.
+`tiler_compiler::legality::PendingInvocationIndexValidation` has private fields and exactly `provider() -> &ProviderIdentity`, `revision() -> LoweringCapabilityRevision`, `capability_authority() -> &LoweringCapabilityAuthority`, and `requirement() -> &InvocationGatherIndexValidationRequirement`. `IndexRefinementVerificationOutcome` gains `verified()`, `pending()`, and `invocation_validation_required()` borrowed accessors, each returning `None` for the other two arms. Existing compiler `IndexRefinementOutcome::{refined,pending}` are extended to return `None` for the new arm; it gains `invocation_validation_required()` and `into_invocation_validation_required() -> Option<PendingInvocationIndexValidation>`, while `into_refined()` returns `None` for it. `IndexRefinementVerificationError::GatherValidationRequirementMismatch` owns any disagreement in access, occurrence, ordered bindings, axis, shapes, or types.
+
+A valid dynamic gather reaches this outcome only after provider, law, occurrence, exact `[source, index]` operand binding, one result binding, access association, and region checks. It creates no `IndexRefinementReceipt`, receipt identity, executable-coverage identity, `CoveredOccurrence`, schedule, artifact, cache subject, or dispatch. The separate receipt ticket alone owns validation bytes, immutable snapshots, invocation binding, runtime carriage, and any later transition to executable coverage.
+
+### Normalized request subject and total compiler consumers
+
+The recognizer cannot bypass request normalization: normalization runs before lowering/refinement, and request subject v6 encodes every `NormalizedOutputSubject`. Both implementation-capable frontier families therefore add a boxed arm to the crate-private exhaustive sums:
+
+```rust
+NormalizedOutput::Gather(Box<NormalizedGather>)
+NormalizedOutputSubject::Gather(Box<NormalizedGatherSubject>)
+```
+
+For the **literal-only** carrier, the exact private payloads are:
+
+```rust
+struct NormalizedGather {
+    input_keys: Vec<InputKey>,
+    output_key: OutputKey,
+    source_input: DeclaredInputOrdinal,
+    index_input: DeclaredInputOrdinal,
+    source_shape: Shape,
+    index_shape: Shape,
+    result_shape: Shape,
+    axis: Axis,
+    index_access: AccessOrdinal,
+    member: SemanticMemberId,
+    source_elements: u64,
+    index_elements: u64,
+    result_elements: u64,
+}
+
+struct NormalizedGatherSubject {
+    input_keys: Vec<InputKey>,
+    output_key: OutputKey,
+    source_input: DeclaredInputOrdinal,
+    index_input: DeclaredInputOrdinal,
+    source_shape: Shape,
+    index_shape: Shape,
+    result_shape: Shape,
+    axis: Axis,
+    index_access: AccessOrdinal,
+    member: SemanticMemberId,
+    source_elements: u64,
+    index_elements: u64,
+    result_elements: u64,
+}
+```
+
+These are B's source-side payloads: `index_access == AccessOrdinal::new(1)` and C removes that one field. `source_input != index_input`; they bind exact program-input operands 0 and 1. The scalar-value read is canonical local access 0 and the address-only read local access 1. B stores the companion on the owning source relation/subject; C derives it from canonical order and therefore has no editable ordinal. `output_subject` copies every selected field. There are no graph handles in either payload, so unlike staged/epilogue projection there is no recursive state to clear.
+
+For the **complete governed sourced** carrier, D starts from B and differs in exactly four ways: `source_shape`, `index_shape`, and `result_shape` are `SourcedShape`; their three `*_elements` fields are `Option<u64>` and are `Some` only when all extents are determined without overflow; `GatherF32` is registered by `OperationDefinition::new_governed_environment_aware`; and inference splices `source.shape().extents()` and `index.shape().extents()` into `SourcedShape::sourced`, returning `ValueFact::from_sourced`. E is D with `index_access` removed, as C is B. The family uses the request's one `extent_sources()` binding to admit and determine symbols. It does not compare symbol spelling or call `static_operand_shape`. Before schedule formation every source, index, and result extent must be `ExtentSources::determined` and converted once to concrete `Shape`; an undetermined extent returns the existing typed `RefinementError::SymbolicBoundary` even when a known zero proves bounds vacuously. No candidate in this packet silently creates a sourced schedule carrier.
+
+`encode_output_subject` gains a fresh framed `push_slice(bytes, b"gather-f32.v1")` arm and writes, in order: all declared `input_keys`; `output_key`; source declared ordinal; index declared ordinal; source shape; index shape; result shape; axis; member occurrence ordinal; source/index/result element counts; and association spelling tag (`0x01` source-side reference or `0x02` fieldless canonical order). Literal shapes use `encode_explain_shape`; sourced shapes use `encode_explain_sourced_shape` and each optional count writes `0x00` or `0x01` followed by big-endian U64. The source-side form then writes the big-endian index `AccessOrdinal`; the fieldless form writes no ordinal. This is a new output subtag, so request domain v6 does not step and every old subject byte remains exact. Source key, index key, either declared ordinal, any shape extent/source kind, axis, member, element count, association tag, or source-side local ordinal changes the subject bytes independently.
+
+Every total consumer must add an explicit gather arm; no wildcard is permitted to silently dispatch it:
+
+- `NormalizedOutput::{serial_sum,try_serial_sum,pointwise,contraction,epilogue,staged}` treats gather as the other variants do and gains `gather() -> Option<&NormalizedGather>`; `carries_parametric_broadcast` is false; `producer_shape_for` returns itself.
+- `input_elements_at` returns `source_elements` for `source_input`, `index_elements` for `index_input`, and `None` otherwise; `reads_declared_input` recognizes exactly those ordinals; `max_input_elements` is their maximum; `output_elements` is `result_elements`; `members` returns `[SemanticStage::first(member)]`; `owns_region_members` accepts exactly that singleton. Under the sourced carrier, the program-level sizing/cost accessors become `Option<u64>` rather than substituting zero or a result domain for an unknown operand.
+- `output_subject` projects to `NormalizedGatherSubject`; `encode_output_subject` writes the payload above; the test-only arm census is sized with `variant_count::<NormalizedOutput>()` and moves 5 to 6.
+- `physical::spell_output` returns a new internal `RegionSpellingKind::Gather(write)` only for the one member; `published_shape` returns `result_shape`; `declared_input_for_verified_access` maps local access 0 to `source_input`, 1 to `index_input`, and refuses every other position; `verify_region_output_binding` compares member, region 0, the identity `PointwiseF32` scalar program with exactly one F32 leaf, the exact two accesses, all three shapes, axis, association, bounds proof, result count, and ordered declarations. A requirement outcome never reaches these functions.
+- `pipeline::strategy_label` reports `"gather"`; region formation, frontier and cost code treat one proved gather as one single-region occurrence and use the exact optional counts. An unknown count is a refusal/unknown estimate, never zero work.
+
+The relation encoder is total too. `encode_access_relation` assigns `LogicalAccess::GatherSource` fresh `0x06` (existing `0x04` stays the unread marker and `0x05` stays parametric broadcast), then writes source shape, result shape, axis, association spelling, optional index ordinal, and index shape. The existing wildcard `0x00` remains a refusal for unhandled future relations and can never encode gather. This makes relation identity injective independently of the request-output encoding.
+
+### Index and reference consumers
+
+Every current user of removed common `TensorAccessRef` methods must match `view()` totally. Index compaction copies a `DirectAccessData` unchanged or remaps both gather tensors, its domain, both coordinate runs, and its retained resolution atomically; proof derivation, predicate construction, law/refinement interface checks, sourced-region checks, and test helpers reach direct-only fields only through `DirectTensorAccessRef`. A gather can never enter write-ownership or ordinary direct-coordinate proof logic. The access view census is typed, and adding a third view stops every internal total match.
+
+`tiler-reference::IndexRegionEvaluator` also matches the view rather than refusing the new arm generically. A direct access keeps its byte-for-byte/current evaluation. A gather evaluates the index-coordinate run first, loads one exact U32 element from the bound index tensor without creating scalar SSA, inserts its exact `u64` value at `axis` among the source-coordinate results, and loads the F32 source element. It checks source/index types and shapes against the verified access; a requirement resolution validates the observed value but mints no receipt or proof, while a static resolution independently checks its proof identity and still bounds-checks defensively. Add:
+
+```rust
+IndexRegionEvaluationError::GatherIndexOutOfBounds {
+    access: VerifiedTensorAccessId,
+    index_offset: usize,
+    value: u32,
+    extent: u64,
+}
+```
+
+The index offset is the row-major address in the index operand, not a result coordinate. This error wins after malformed handle/type/shape/coordinate checks and before any source payload read. Reference execution is an oracle result only: evaluating a requirement here cannot create compiler executable coverage, cache identity, or dispatch permission.
 
 ### Schedule association, ordering, and proof
 
-Only statically proved gathers reach schedule formation. Add:
+Only statically proved gathers with concrete boundary shapes reach schedule formation. Two correct association spellings survive the gate; Tom's selection is atomic with the capability surface. The self-locating source-side spelling is:
 
 ```rust
 pub enum LogicalAccess {
@@ -219,9 +303,11 @@ pub enum LogicalAccess {
 }
 ```
 
-Use schedule-relation encoder tag `0x0C`. Tags `0x0A` and `0x0B` remain reserved by the earlier live-row-major decision packet until that packet resolves; a gap is preferable to colliding reviewed identities.
+The lower-state fieldless spelling removes only `index_access`; its canonical rule fixes the owning address read as the first address-only read after the scalar leaf reads, in owner order. Neither spelling grants verification authority merely because `LogicalAccess` is publicly constructible: only the schedule verifier mints a verified schedule.
 
-Canonical schedule access order is: all scalar value-producing reads in pointwise-leaf order; then one address-only U32 read for each owning `GatherSource` in owner-access order; then the write. Every `GatherSource` names exactly one later address-only read through `index_access`; every address-only read is named by exactly one gather source; no address-only read may be a scalar leaf, be shared by two gathers, or remain unreferenced. For the initially admitted one-gather occurrence the source read is access 0, the index read is access 1, and the write is access 2. Request binding cross-checks access 0 and 1 against ordered semantic operands 0 and 1, including exact types, shapes, and axis.
+Use schedule-relation encoder tag `0x0C`. Tags `0x0A` and `0x0B` remain reserved by the earlier live-row-major decision packet until that packet resolves; a gap is preferable to colliding reviewed identities. `encode_access_relation`'s compiler-request tag is separately `0x06`; the domains are distinct and both tags are pinned.
+
+Canonical schedule access order in both spellings is: all scalar value-producing reads in pointwise-leaf order; then one address-only U32 read for each owning `GatherSource` in owner-access order; then the write. In the source-side spelling every `GatherSource` names exactly one later address-only read through `index_access`; in the fieldless spelling the verifier derives the same bijection from the complete access-list order. Every address-only read has exactly one owner; none is a scalar leaf, shared by two gathers, or unreferenced. For the initially admitted one-gather occurrence the source read is access 0, index read access 1, and write access 2. Request binding cross-checks access 0 and 1 against declared semantic operands 0 and 1, including exact types, shapes, and axis.
 
 Schedule verification owns these failures rather than the broad `AccessContract` or `NumericalOrAccessRefinement` buckets:
 
@@ -259,11 +345,13 @@ GatherSource {
     axis: Axis,
     index_access: AccessOrdinal,
     index_shape: Shape,
-    proof: GatherIndexBoundsProofKind,
+    proof: GatherIndexBoundsProof,
 }
 ```
 
-Use fresh bounds-proof encoder tag `0x03`; current `LinearRange`/`ReductionDomain` bytes at `0x01`/`0x02` do not move. Schedule verification cross-checks the relation, proof, paired address read, and request occurrence. The ordinary derived index-address map retains its own existing direct bounds proof.
+The fieldless spelling omits `index_access` here too. Use fresh bounds-proof encoder tag `0x03`; current `LinearRange`/`ReductionDomain` bytes at `0x01`/`0x02` do not move. It writes the exact relation fields and the framed `GatherIndexBoundsProofIdentity`; proof kind and fact source remain encoded once inside that opaque proof identity rather than copied into schedule state. Schedule verification cross-checks relation, proof, paired address read, and request occurrence. The ordinary derived index-address map retains its own direct bounds proof.
+
+ADR 0108's phrase “index-input ordinal” is realized at the normalized request boundary by `DeclaredInputOrdinal`, where ABI association belongs. It is not reused in the schedule: repeated or sparse local reads make a declared ordinal unable to identify one exact access. `AccessOrdinal` realizes the local source-to-address association and therefore clarifies rather than amends the ADR.
 
 ### Diagnostics and precedence
 
@@ -276,69 +364,91 @@ The governed gather lowering uses exact `LoweringEmitError::Occurrence` rules, b
 ## Identity, schema, registry, and cache consequences
 
 - Index access: fresh tag `0x03`; frame source tensor ordinal, index tensor ordinal, axis, domain, source coordinates, and index coordinates in exactly that order. Ordinals and axis are big-endian U32; each vector has a big-endian U64 count followed by its big-endian U32 members, matching `push_len` and `encode_u32s`. Existing direct read/write encodings remain byte-for-byte unchanged. `INDEX_REGION_IDENTITY_DOMAIN` remains version 11 because a fresh injective tag adds a value without reinterpreting an old byte.
-- Bounds resolution is deterministic from the framed access and exact shapes and is not an independently caller-encoded choice. `tiler.gather-index-bounds-proof.v1` frames proof kind, region identity, access ordinal, source/index tensor ordinals and canonical types, axis, source extent, and domain identity. `tiler.gather-index-validation-requirement.v1` frames the same fields without proof kind. `tiler.invocation-gather-index-validation-requirement.v1` frames the access-level requirement identity, refinement-subject identity, and canonical ordered source/index/result bindings. Each length-prefixes every variable-width component and writes fixed integers big-endian, matching the repository identity convention. No snapshot bytes or observed values enter any of the three.
+- Bounds resolution is deterministic from the framed access and exact sourced shapes and is not caller-selected. `tiler.gather-index-bounds-proof.v1\0` frames proof-kind tag (`0x01` empty result, `0x02` U32 universe), the existing fact-source tag **once**, region identity, big-endian verified access/source/index ordinals, canonical source/index types, sourced source/index/result shapes, axis, sourced gathered extent, and the count plus big-endian ordinals of the exact ordered domain. `tiler.gather-index-validation-requirement.v1\0` frames the same bindings without proof kind or fact source. `tiler.invocation-gather-index-validation-requirement.v1\0` frames the access requirement identity, refinement-subject identity, source `OperandBinding`, index `OperandBinding`, result-binding count and the one `ResultBinding`. Each variable component is length-framed and every integer big-endian. No snapshot bytes, observed index values, or invented domain identity enter these domains.
 - Realization law: fresh `0x0E` followed by the axis `AttributeFieldId`'s canonical big-endian U32, standard row count 16 to 17, new gather row revision 1. Existing row bytes remain exact; the frozen realization-registry identity moves.
-- Schedule: fresh relation `0x0C` followed by framed source shape, result shape, big-endian axis, big-endian index-access ordinal, and index shape; proof tag `0x03` followed by the same association and one proof-kind byte (`0x01` empty, `0x02` U32-universe). Old access/proof bytes remain exact and the schedule identity domain does not step. Only newly schedulable static gather identities are new.
-- Compiler: the governed gather lowering row is revision 1 and moves the frozen lowering-registry identity. Request subject v6 already folds both registries, so every request identity and explain qualifier containing either registry moves. This is a value cascade, not a request-domain or explain-schema reinterpretation; no version step is justified.
+- Schedule: fresh relation `0x0C` followed by framed source shape, result shape, big-endian axis, selected association spelling, and index shape; the source-side spelling includes the big-endian index-access ordinal and the fieldless spelling does not. Proof tag `0x03` follows with the same relation fields and framed `GatherIndexBoundsProofIdentity`; it does not duplicate proof kind or fact source. Old access/proof bytes remain exact and the schedule identity domain does not step. Only newly schedulable static gather identities are new.
+- Compiler request: fresh output subtag `gather-f32.v1`, compiler access-relation tag `0x06`, and the complete subject fields above. The governed lowering row is revision 1 and moves the frozen lowering-registry identity. Request subject v6 already folds lowering and realization registries, so every request identity and explain qualifier containing either moves. The output subtag and fresh relation tag add previously unencodable values, so old subject bytes remain exact and v6 does not step. Source/index/axis/shape/member/association perturbations each move the bytes.
+- Semantic registry: the literal carrier leaves `GatherF32` at participation tag `0x01` and does not move the already-pinned semantic-registry row for participation. The complete sourced carrier deliberately changes that row to `GovernedEnvironmentAware` tag `0x02`; because `encode_operation_definition` writes participation, semantic registry snapshot/projection/admission identities, semantic graph identities that bind them, request subjects, explain qualifiers, and downstream cache subjects all move and must be re-pinned. This cascade is required; asserting sourced support while holding the semantic identity fixed is identity aliasing.
 - Refinement: static gather gains new subject/resolution/authority values. Dynamic gather receives only the explicit requirement outcome and no receipt or coverage identity.
-- Artifact/cache: this ticket changes no artifact or manifest schema. A static gather can acquire downstream identities only after later backend work. A dynamic gather reaches neither artifact identity nor cache lookup/publication. The receipt ticket owns any future compatibility fence.
+- Artifact/cache: this ticket changes no artifact or manifest schema. A static, concrete gather can acquire downstream identities only after later backend work. A dynamic or unresolved sourced gather reaches neither artifact identity nor cache lookup/publication. The receipt ticket owns any future compatibility fence.
 
-Implementation must pin all old direct bytes before and after, the new gather field-order injectivity, law-row distinctness, schedule relation/proof distinctness, registry/request cascade, and the absence of dynamic artifact/cache construction. Typed `variant_count` censuses must move `IndexNode` 5 unchanged, `IndexExprClass` 3 unchanged, `IndexDomainUnknownReason` 3 unchanged, `IndexRealizationLaw` 13 to 14, standard realization rows 16 to 17, and the relevant access-view, schedule-relation, proof, refinement-outcome, and diagnostic enums by their exact new populations. Handwritten length claims are not substitutes.
+Implementation must pin all old direct and old request-output bytes before and after, gather field-order injectivity, output and relation subtag distinctness, law row, schedule relation/proof, registry/request cascade, sourced participation cascade where selected, and absence of dynamic artifact/cache construction. Typed `variant_count` censuses must keep `IndexNode` 5, `IndexExprClass` 3, and `IndexDomainUnknownReason` 3; move `IndexRealizationLaw` 13 to 14, standard realization rows 16 to 17, `NormalizedOutput` 5 to 6; and size the access-view, schedule-relation, proof-kind, refinement-outcome, and diagnostic populations from their enums. Handwritten lengths are not substitutes.
 
 ## Complete unsupported population
 
-This surface refuses signed, other unsigned, and floating indices; negative-index conventions; clamp, wrap, or truncation; inferred or multiple axes; recursive/nested or multiple indirect reads in one access; an index load exposed as scalar SSA; sharing one address-only read across gathers; coalescing a direct U32 read with a gather address read; non-input source or index tensors; rank-zero source; data-dependent result shape; scatter and duplicate-write semantics; mutable-device or zero-copy validation; caller assertions; inline-kernel validation; dynamic dispatch receipts; artifact/runtime carriage; and Metal emission. It also refuses caller-selected address relations, proof kinds, schedule associations, and cache participation. Duplicate gather reads remain allowed and deterministic. Static sourced semantic extents remain allowed only where the existing exact `ShapeEnv` resolves the two proof predicates; an unresolved gathered extent takes the dynamic requirement rather than invented authority.
+Every implementation-capable surface refuses signed, other unsigned, and floating indices; negative-index conventions; clamp, wrap, or truncation; inferred or multiple axes; recursive/nested or multiple indirect reads in one access; an index load exposed as scalar SSA; sharing one address-only read across gathers; coalescing a direct U32 read with a gather address read; non-input source or index tensors; rank-zero source; data-dependent result shape; scatter and duplicate-write semantics; mutable-device or zero-copy validation; caller assertions; inline-kernel validation; dynamic dispatch receipts; artifact/runtime carriage; and Metal emission. It also refuses caller-selected address relations, proof kinds, schedule associations, and cache participation. Duplicate gather reads remain allowed and deterministic.
+
+The literal carrier additionally refuses any symbolic source, index, or result extent through the existing `SymbolicOperandUnsupported` before inference. The complete sourced carrier admits declared `ShapeEnv` symbols semantically and may derive the two proof classes through the bound environment, but refuses schedule formation until **every** boundary extent is determined; an unresolved gathered extent requiring values returns the invocation requirement, while an unresolved non-gather extent can coexist with vacuous proof but still receives `SymbolicBoundary` before scheduling. Neither carrier claims general symbolic execution.
 
 ## Host memory and runtime comparison
 
-The selected access owns two tensor IDs, one axis, and three bounded coordinate vectors (domain, direct source, index), so retained host storage is `O(result_rank + source_rank + index_rank)` and one enum discriminant beyond current direct access. Static proof derivation is O(index-rank) only to detect a zero extent, then O(1) for the U32-universe comparison; the proof/requirement record is O(1). Dynamic admission does not scan or copy index data here. The receipt ticket's accepted research bound remains separate: validating `T <= 8192` U32 elements would inspect O(T) values and at most 32 KiB of index payload.
+The selected access owns two tensor IDs, one axis, and three bounded coordinate vectors (domain, direct source, index), so retained host storage is `O(result_rank + source_rank + index_rank)` and one enum discriminant beyond direct access. Static proof derivation is O(result-rank) to inspect every result extent, then O(1) for the U32-universe comparison; the proof/requirement record retains the ordered domain and three sourced shapes and is O(total boundary rank), not falsely O(1). Dynamic admission scans or copies no index payload. The receipt ticket's research bound remains separate: validating `T <= 8192` U32 elements would inspect O(T) values and at most 32 KiB of index payload.
 
-A nested tensor-reading expression would retain the same tensor, type, proof, and association facts plus recursive expression edges and compaction state; it cannot use less asymptotic host memory and adds traversal to every expression consumer. A static-only or no-static-producer slice saves one small resolution variant but rejects valid accepted programs and does not remove the two-operand access state. Exact `size_of` values are implementation evidence, not a stable public contract; implementation must measure the old and new `AccessData`, `TensorAccessRef`, `LogicalAccess`, `Access`, and diagnostic layouts on the repository toolchain and record the delta before landing.
+`RUSTFLAGS='-Zprint-type-sizes' cargo check -p tiler-ir` on the exact base measured current `LogicalAccess` as 208 bytes (alignment 8), `Shape` as 24 bytes, and `SourcedShape` as 32 bytes. Either proposed gather relation is materially below the existing 208-byte maximum, so neither widens `LogicalAccess`; an `AccessOrdinal` is a U32 and changes no enclosing layout here. The source-side spelling does add four canonical identity bytes per gather, while giving every detached relation consumer O(1) access to its address read. The fieldless spelling saves those four bytes but makes the complete access list and canonical-order algorithm mandatory context in request encoding, sizing, physical binding, schedule, kernel, program, and cost consumers. That is a real maintenance/serialized-memory tradeoff, not a presumed layout win.
+
+The complete sourced carrier retains three `SourcedShape` values (32-byte handles plus their extent storage), optional count state, and one already-owned shape-environment identity; the literal carrier retains three 24-byte `Shape` handles and exact counts. Both are O(total boundary rank), but the sourced carrier has a larger constant and adds determination work before scheduling. A nested tensor-reading expression retains the same tensor, proof, and association facts plus recursive edges and compaction state and is dominated after ADR 0108. Implementation still must measure the resulting `AccessData`, reference wrappers, normalized boxes, `Access`, and diagnostics before landing.
 
 ## Pareto-complete decision gate
 
-Every surviving candidate is top-tier on correctness and fail-closed strictness. The complete tagged replacement is the sole nondominated candidate.
+Every survivor is top-tier on correctness and fail-closed strictness. Capability breadth and association state create two genuine tradeoffs, so the prior “sole frontier” conclusion is withdrawn.
 
-| Candidate | Disposition | Correctness, maintenance, and host consequences |
+| Atomic surface | Capability and public/schema consequence | Maintenance, host runtime, and memory |
 |---|---|---|
-| Status quo / typed deferral | Dominated | Correctly refuses all gather refinement but delivers none of accepted ADR 0108; the complete surface preserves the same dynamic stop and adds the two sound static cases. |
-| Static-only tagged access | Dominated | Correct for two cases, but silently dropping or rejecting the accepted invocation obligation prevents the receipt dependency from binding to a stable subject. It saves only one small outcome variant. |
-| Tagged access with no static producer | Dominated | A truthful dynamic stop, but unnecessarily rejects empty-index and full-U32-range cases that exact shapes prove in O(1). |
-| **Complete tagged access, two closed static proofs, mandatory dynamic stop** | **Sole frontier** | Preserves old direct bytes, gives every read and proof one checked owner, supports every case justified by current authority, and stops before execution whenever runtime evidence is required. |
-| Generic nonrecursive indirect-access sum | Dominated | Can be made correct but publishes operand/type/axis combinations with no accepted semantics, increasing validation, enum, identity, and host state without another supported program. |
-| Tensor-reading `IndexNode` / nested expression | Dominated | Can be made correct only by adding recursive read, reachability, proof, compaction, identity, reference, and public-expression machinery. ADR 0108 rejected that larger carrier for this one bounded family. |
-| Further bounded research | Dominated | No unresolved owner, authority, identity, or negative control prevents an exact decision. More reading cannot select a smaller correct surface than the checked sum above. |
+| **A. Status quo / typed deferral** | Publishes nothing and preserves the current request refusal, all identities, and every unsupported case. ADR 0108 remains accepted architecture but unimplemented; implementation and receipt stay blocked. | Smallest state and no migration, but no gather reaches index IR. |
+| **B. Literal-only + source-side reference** (**recommended**) | Adds the exact public surface above; current semantic participation stays literal-only; normalized subject carries static shapes; dynamic values stop in the exact requirement. | Smallest useful vertical. Four extra relation-identity bytes buy O(1) detached association; no `LogicalAccess` layout widening measured/derived. Symbolic operands remain a named refusal. |
+| **C. Literal-only + fieldless canonical association** | Same literal support and public proof/outcome surface, but `GatherSource`/proof omit `index_access` and identity selects association tag `0x02`. | Saves four identity bytes per gather. Every detached consumer must retain/reconstruct the complete access order, increasing contextual coupling and lookup work. |
+| **D. Governed sourced + source-side reference** | Adds B plus governed environment-aware Gather inference, sourced normalized shapes/counts, semantic-registry participation migration, and concrete-before-schedule refusal. | Widest semantic support and O(1) detached association; largest identity/re-pinning surface and greater retained/derivation state. |
+| **E. Governed sourced + fieldless canonical association** | Adds C plus the complete sourced semantic/identity cascade and concrete-before-schedule rule. | Widest support and four fewer identity bytes than D, but combines the largest capability surface with contextual detached consumers. |
 
-Caller-minted proof, an unassociated or shareable address read, `Unknown` for a mandatory dynamic obligation, default target/backend fallback, old request-registry identity, or dynamic progress into schedule/dispatch are eliminated rather than ranked because each can silently accept or misidentify a program.
+None dominates another on all key dimensions. A has least state but no capability. B/C avoid the sourced registry/schema expansion; D/E support symbolic boundaries. B/D are more maintainable and faster for detached consumers; C/E serialize four fewer bytes. Kernel performance is unchanged by this host representation choice and remains unclaimed.
+
+Eliminated before ranking:
+
+- static-only admission that drops `InvocationValidationRequired` prevents the separate receipt work from binding a subject and falsely narrows an accepted obligation;
+- no-static-producer admission rejects empty result domains and U32-universe cases the verifier can prove soundly;
+- address-side ownership makes the less semantic read point backward and admits an orphan until a cross-list search; a separate sidecar duplicates association state and consistency; both retain at least the same ordinal state as source-side with more owners;
+- using only ADR's declared index-input ordinal cannot identify repeated/sparse local reads and leaks request ABI identity into schedule identity;
+- generic indirect sums and nested tensor-reading expressions publish unsupported combinations or contradict ADR 0108's selected carrier;
+- caller-minted proof, shareable/unassociated address reads, `Unknown` for the mandatory dynamic requirement, registry identity held fixed, default target/backend fallback, and dynamic progress into dispatch can silently accept or alias a program and are invalid rather than tradeoffs;
+- further broad research is not a surface: the source and layout evidence now expose the choices exactly. Deferral is represented truthfully by A.
 
 ### Strongest counterargument and reversal evidence
 
-The strongest counterargument is breadth: this breaks common `TensorAccessRef` methods and publishes gather-specific access, proof, requirement, schedule, error, and refinement vocabulary before any dynamic gather can execute. The exact checked sum is nevertheless smaller than preserving misleading common methods or publishing a generic indirect language, and the separate outcome is the minimum state that makes the already-accepted receipt dependency possible without forging proof.
+For A, the strongest counterargument is that it strands an accepted architecture and blocks the pinned gather workload. Evidence reversing A in its favour would be cancellation of that workload or rejection of implementation transition; perturb by showing no downstream ticket or workload requires the access. For B, breadth is the counterargument: it breaks misleading common accessors and publishes gather-specific proof/requirement vocabulary before dynamic execution. Evidence reversing B would be a required symbolic-boundary workload or a measured detached-consumer design whose four bytes matter more than context; perturb with one symbolic source/index extent and with removal of `index_access` from each detached consumer. For C, the counterargument is contextual coupling. Evidence reversing it would be a total-consumer census showing every relation consumer already has the canonical access list at no extra state/work; perturb by passing one relation alone to encoding, sizing, physical binding, kernel/program lowering, and cost code.
 
-Evidence that would reverse the recommendation is an accepted second indirect family requiring recursive/nested reads, a public consumer that must inspect an access without region context and cannot total-match the view, or a demonstrated representation in which one checked address read can serve multiple gathers while preserving distinct occurrence, relation, proof, and request identity with less state. None exists on this base. Such evidence would reopen the carrier rather than be guessed into this admission.
+For D, the counterargument is expanding semantic participation and moving semantic/request/cache identities for support no pinned workload needs. Evidence reversing it would be a named required gather with sourced operands plus a demonstrated concrete specialization boundary; perturb the participation tag, each source/index/result symbol, its ShapeEnv binding, and an undetermined nonzero axis. For E, the counterarguments of C and D compound; it reverses the recommendation only if both that sourced workload and negligible contextual-consumer cost are demonstrated. An accepted second indirect family requiring recursive reads would reopen ADR 0108's carrier rather than be guessed into any survivor.
 
 ### Required subject perturbations
 
 Implementation and independent review must show the actual failure text after perturbing each subject, not the assertion:
 
 - reuse index-access tag `0x02`, swap source/index fields, or delete the axis frame; injectivity pins must fail independently while old-direct-byte pins remain green;
-- mint `StaticallyProved` for source extent `u32::MAX`, change the threshold from `>= 2^32`, and remove the empty-domain precedence; proof-kind and boundary tests must fail independently;
+- mint `StaticallyProved` for source extent `u32::MAX`, change the threshold from `>= 2^32`, or restore the false index-only vacuity rule; prove source `[0, 5]`, axis 1, index `[3]` as the non-gather-zero control and independently fail when result extent inspection or empty-result precedence is removed;
 - make the address read a scalar leaf, share it between two gather owners, move it before a scalar read, point `index_access` at the write, or leave it unreferenced; schedule verification must name the violated association;
 - change operand order `[source, index]` to `[index, source]`, bind the index to F32, or change the gathered axis; occurrence/refinement verification must fail before the dynamic stop;
 - let `InvocationValidationRequired` construct a receipt, `CoveredOccurrence`, schedule, cache key, or dispatch request; the relevant typed census/negative construction check must fail;
-- hold either registry identity at its old value after adding the row, or hold the request qualifier fixed; frozen-registry/request pins must fail;
+- hold either lowering/realization registry identity at its old value after adding the row, or hold the request qualifier fixed; frozen-registry/request pins must fail;
+- under D/E, change `GatherF32` back to `LiteralOnly`, omit one sourced result extent, change one ShapeEnv binding while holding semantic/request identity fixed, or let an undetermined extent reach schedule; participation, sourced-splice, semantic-registry, request-subject, and concrete-boundary checks must fail independently;
+- change the normalized request's source key, index key, source/index declared ordinal, source/index/result shape, axis, member, association tag, or source-side index-access ordinal one at a time; each request-subject pin must move while every old output-subject pin remains exact;
 - widen `IndexNode`, `IndexExprClass`, or unknown reasons incidentally; typed `variant_count` censuses must fail at compile time.
 
-The decision packet itself has two load-bearing repository checks. Temporarily breaking a new local link must make `make citations` name that unresolved target; temporarily replacing a real dependency with a nonexistent ticket must make `tkt lint --format json` report `missing-dep`. Both perturbations are reverted before the final green runs.
+The packet's two repository checks were deliberately driven red and reverted. A broken ADR target made `make citations` print exactly `FAIL  tickets/decide-the-data-dependent-index-representation-public-surface.md`, then `no tracked file or directory at docs/decisions/0108-does-not-exist.md`, and finally `check-citations: 1 markdown link(s) do not resolve against this tree.` Replacing a dependency with `dependency-that-does-not-exist` made `tkt lint --format json` return `ok: false` with code `missing-dep` and message `depends on missing ticket \`dependency-that-does-not-exist\``. The final green runs use neither perturbation.
+
+### Exact-base mechanical evidence
+
+- `RUSTFLAGS='-Zprint-type-sizes' cargo check -p tiler-ir` passed and printed `LogicalAccess: 208 bytes`, `Shape: 24 bytes`, and `SourcedShape: 32 bytes` at alignment 8.
+- `cargo test -p tiler-ir semantic::gather::tests --lib` passed 19 tests; `cargo test -p tiler-reference --test gather_conformance` passed all 10 gather cases.
+- The first broad compiler filter matched zero tests and is not counted as evidence. Exact tests `request::tests::parametric_broadcast_request_subject_tag_is_injective`, `request::tests::verified_target_receipt_detects_every_governed_subject_mutation_class`, and `request::tests::a_two_declaration_contraction_keeps_its_v1_subject_bytes` each passed, preserving the current relation/output/subject identity controls this proposal must extend.
+- Final packet gates are `tkt lint --format json`, `make citations`, `git diff --check`, and exact-base/config-ref `tkt guard`; production Cargo is unchanged, so the repository's ticket-only green-gate carry remains applicable.
 
 ## ADR 0108 application and graph
 
-This packet corrects the accepted maturity in the chronological decision catalog, IR contract, Q-SHAPE-007, and roadmap. `docs/status.md` contains no stale ADR 0108 maturity claim and needs no edit. Production source comments and current 5/3/3 tests remain truthful about what is implemented, but comments that call ADR 0108 proposed/returned must be corrected by `admit-the-selected-data-dependent-index-representation` in the same implementation sweep. That carrier also owns every typed census, tag, byte pin, negative control, layout measurement, and request/registry recalculation above.
+This packet corrects the accepted maturity in the chronological decision catalog, IR contract, Q-SHAPE-007, roadmap, and decision queue. `docs/status.md` contains no stale ADR 0108 maturity claim and needs no edit. Current 5/3/3 tests remain truthful about implemented maturity. Production comments that call ADR 0108 proposed/returned are stale but sit outside this ticket's no-production edit boundary; `admit-the-selected-data-dependent-index-representation` must correct them in the same implementation sweep if Tom selects B–E. That carrier also owns every typed census, tag, byte pin, negative control, layout measurement, and selected identity recalculation above. If Tom selects A, a separate documentation correction must remove the implication that implementation is merely waiting on spelling while preserving ADR acceptance.
 
 The separate receipt ticket remains the sole owner of dynamic validation and runtime/artifact carriage. The implementation ticket remains blocked until Tom accepts this exact included and excluded surface. This ticket stays `in-progress` through independent exact-commit review and is not moved to `awaiting-decision` by its author.
 
 ## Recommendation and exact Tom question
 
-**Proposal — recommend the sole nondominated complete tagged surface above.** It is aligned with correctness first because no caller can mint proof, every address-only read has one checked owner, and every dynamic case stops. It is aligned with maintainability because it uses an exhaustive public sum and explicit gather-only types instead of infecting the expression language or publishing unsupported genericity. It is aligned with host performance because proof is O(1) after a bounded shape scan, dynamic admission copies no payload, and the retained state is linear only in ranks already represented by the access.
+**Proposal — recommend B, literal-only plus the source-side reference.** It is the smallest useful vertical aligned with the family current source actually supports, keeps symbolic operands under their existing named refusal, makes detached association O(1), and preserves the mandatory dynamic stop without inventing receipt authority. The four serialized bytes per gather are preferable to making every relation consumer depend on complete-list context; sourced participation should be added only when a named workload justifies its broader semantic and identity migration.
 
-After independent exact-commit review, ask Tom one question: **Accept this exact atomic public surface, identity migration, diagnostic precedence, and unsupported boundary, or reject it and retain the current typed no-admission refusal?**
+After independent exact-commit review, ask Tom one question: **Which atomic surface should govern the gather carrier: A current typed deferral; B literal-only with source-side `index_access` (recommended); C literal-only with fieldless canonical association; D governed sourced support with source-side `index_access`; or E governed sourced support with fieldless canonical association?**
