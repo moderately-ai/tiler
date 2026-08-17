@@ -5,7 +5,7 @@ status: todo
 priority: p2
 dependencies: [implement-parallel-reduction-strategies, realize-the-contraction-through-the-appendable-direct-path, decide-the-fixed-strided-contributor-membership-vocabulary]
 related: [reduction-semantics-contract, implement-analytical-component-cost-model, realize-the-tiled-contraction-schedule-and-its-metal-emission, enumerate-the-split-reduction-on-the-planning-frontier, admit-a-reassociating-contract-without-contraction]
-scopes: [implementation/compiler, implementation/ir, implementation/metal]
+scopes: [implementation/compiler, implementation/ir, implementation/metal, implementation/conformance, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, physical-planning, reductions, contraction, numerics]
@@ -33,7 +33,7 @@ Distributivity, in either direction. Regrouping a contraction *chain* is a diffe
 
 ## Graph repair — 2026-08-10
 
-Hard dependency on [`realize-the-tiled-contraction-schedule-and-its-metal-emission`](realize-the-tiled-contraction-schedule-and-its-metal-emission.md) re-pointed to [`realize-the-contraction-through-the-appendable-direct-path`](realize-the-contraction-through-the-appendable-direct-path.md). Tiled Non-goals exclude the split alternatives; tiled parks on the cooperative free-index tile public boundary, which this K-split outcome does not name. The foundation is the landed direct contraction path plus the parallel-reduction portfolio patterns; free-index tiled emission is a sibling alternative, not a prerequisite. The shared private `split_family` table still returns `None` for `StrictTensorContraction` — that remains this ticket's work. Tiled stays `related` for shared contraction-topology lessons only.
+Hard dependency on [`realize-the-tiled-contraction-schedule-and-its-metal-emission`](realize-the-tiled-contraction-schedule-and-its-metal-emission.md) re-pointed to [`realize-the-contraction-through-the-appendable-direct-path`](realize-the-contraction-through-the-appendable-direct-path.md). Tiled Non-goals exclude the split alternatives; tiled parks on the cooperative free-index tile public boundary, which this K-split outcome does not name. The foundation is the landed direct contraction path plus the parallel-reduction portfolio patterns; free-index tiled emission is a sibling alternative, not a prerequisite. The shared private `split_family` table still returns `None` for `StrictTensorContraction` because it is the one-read reduction-family table; that exclusion remains correct, and this ticket instead adds a separate two-read contraction-split construction and verification path. Tiled stays `related` for shared contraction-topology lessons only.
 
 **Source-first correction — 2026-08-11, exact base `b30e384497682c91771fcf93c5ce6854054d39a3`.** The graph repair originally named `multi_pass_family` / `cooperative_family`; [`implement-parallel-reduction-strategies`](implement-parallel-reduction-strategies.md) was followed by the private consolidation at `eb0b7514`, so the current source has one `split_family` table instead. Its `ScalarProgram::StrictTensorContraction { .. } => None` arm preserves the substantive exclusion. Reproduced with `rg -n 'multi_pass_family|cooperative_family|fn split_family|StrictTensorContraction' crates/tiler-ir/src/schedule/builder.rs`.
 
@@ -54,6 +54,13 @@ Hard dependency on [`realize-the-tiled-contraction-schedule-and-its-metal-emissi
 ## Reactivated — 2026-08-11
 
 Tom accepted the exact public carrier in [`decide-the-fixed-strided-contributor-membership-vocabulary`](decide-the-fixed-strided-contributor-membership-vocabulary.md): exhaustive `ContributorMembership::{Contiguous, LaneStrided}` plus fresh `ReductionTopology::CooperativeContractionSplit`, append-only topology tag `0x36`, membership tags `0x01`/`0x02`, and byte-identical preservation of every existing `tiler.schedule.v5` row. The decision was recorded from Tom's direct `accepted` response in the Codex coordination thread. All three hard dependencies are now done, so this implementation ticket returns from `blocked` to `todo` without widening its outcome.
+
+## Exact-base repair — 2026-08-17 at `47d38c4e7b8f1d817de93c469e0a688c7be20440`
+
+- **Imprecise — `split_family` ownership.** The current `split_family` documentation says its serial, multi-pass, and cooperative admissions read one table, and its `StrictTensorContraction` arm states that contraction owns a distinct two-read topology rather than this one-read family. The `None` arm must remain; the implementation adds the accepted contraction-specific path beside it.
+- **False as a current compatibility closure — schedule v5.** The accepted decision's v5 statement is historical provenance. The live domain is `tiler.schedule.v6\0`, and tags `0x37` and `0x38` have landed while `0x36` remains reserved. Delivery must preserve every currently encodable v6 row byte-for-byte and keep the current strict-F32 region identity pin exact; the append-only `0x36` subject adds only previously unencodable rows.
+- **Imprecise — affected scope.** The eight-case production corpus belongs in `tiler-conformance`, and `docs/ir.md` currently records `0x36` as reserved. The ticket therefore also declares `implementation/conformance` and `contracts/foundation`; this is scheduling metadata required by the already accepted outcome, not a public-surface expansion.
+- **Verified — accepted carrier is not landed source.** `ContributorMembership` and `CooperativeContractionSplit` do not yet exist in Rust; only their decision provenance and tag reservation exist. Implementing both accepted alternatives is this ticket's work and requires no new public decision.
 
 ## Closes when
 
