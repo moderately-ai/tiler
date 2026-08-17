@@ -16,7 +16,7 @@ use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::{ProviderIdentity, ResolvedValueType};
 
 use crate::fusion::FusionNumericalProof;
-use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
+use crate::request::{BudgetResource, LoweringProviderIdentity, VerifiedTargetRequest};
 use crate::target::honourability::NumericalRefusalEvidence;
 
 // The two numbers below version different things, under one rule: a version
@@ -1536,24 +1536,25 @@ impl ExplainWriter {
         // only how many were lost does not recover which. The detail bound is
         // the same `MAX_RECORDS`/`MAX_CANONICAL_BYTES` ceiling that
         // `MAX_TRACE_*` is derived from, so the two accountings stay consistent.
-        let exceeds = if terminal {
-            self.records.len().saturating_add(1)
+        let capacity = if terminal {
+            (self.records.len().saturating_add(1)
                 > usize::try_from(MAX_TRACE_RECORDS).unwrap_or(usize::MAX)
                 || self.retained_bytes.saturating_add(bytes)
-                    > usize::try_from(MAX_TRACE_CANONICAL_BYTES).unwrap_or(usize::MAX)
+                    > usize::try_from(MAX_TRACE_CANONICAL_BYTES).unwrap_or(usize::MAX))
+            .then_some(ExplainError::TerminalCapacity)
         } else {
-            self.retained_detail_records.saturating_add(1)
-                > usize::try_from(MAX_RECORDS).unwrap_or(usize::MAX)
-                || self.retained_detail_bytes.saturating_add(bytes)
-                    > usize::try_from(MAX_CANONICAL_BYTES).unwrap_or(usize::MAX)
+            detail_capacity(
+                self.retained_detail_records,
+                self.retained_detail_bytes,
+                bytes,
+                MAX_RECORDS,
+                MAX_CANONICAL_BYTES,
+            )
+            .map(ExplainError::DetailCapacity)
         };
-        if exceeds {
+        if let Some(error) = capacity {
             self.encoded_records.truncate(committed);
-            return Err(if terminal {
-                ExplainError::TerminalCapacity
-            } else {
-                ExplainError::DetailCapacity
-            });
+            return Err(error);
         }
         self.retained_bytes += bytes;
         if !terminal {
@@ -1849,6 +1850,41 @@ impl ExplainWriter {
             canonical_identity: ExplainIdentity(identity.into_boxed_slice()),
         })
     }
+}
+
+/// Returns the first detail-capacity arm the attempted retained prefix exceeds.
+///
+/// Record-first ordering is part of the refusal contract. If one record would
+/// exceed both independent limits, the public payload names records because
+/// that is the first comparison construction made; it does not claim the byte
+/// arm passed. Limits are parameters only so the negative controls can place
+/// each one exactly around one fixed attempted prefix. Production passes the
+/// two unchanged build constants.
+fn detail_capacity(
+    retained_records: usize,
+    retained_bytes: usize,
+    attempted_record_bytes: usize,
+    record_limit: u32,
+    canonical_byte_limit: u32,
+) -> Option<ExplainDetailCapacity> {
+    let attempted_records = u64::try_from(retained_records.saturating_add(1)).unwrap_or(u64::MAX);
+    if attempted_records > u64::from(record_limit) {
+        return Some(ExplainDetailCapacity {
+            resource: BudgetResource::ExplainDetailRecords,
+            limit: u64::from(record_limit),
+            reported: attempted_records,
+        });
+    }
+    let attempted_bytes =
+        u64::try_from(retained_bytes.saturating_add(attempted_record_bytes)).unwrap_or(u64::MAX);
+    if attempted_bytes > u64::from(canonical_byte_limit) {
+        return Some(ExplainDetailCapacity {
+            resource: BudgetResource::ExplainDetailCanonicalBytes,
+            limit: u64::from(canonical_byte_limit),
+            reported: attempted_bytes,
+        });
+    }
+    None
 }
 
 fn canonicalize_record_parts(
@@ -2814,6 +2850,42 @@ const fn selection_name(outcome: SelectionOutcome) -> &'static str {
     }
 }
 
+/// Exact construction state at the first detail the writer could not retain.
+///
+/// This is not the complete trace's demand: construction stopped at this
+/// attempted prefix. It is carried through the internal error chain so the
+/// public boundary never has to reconstruct an arm or quantity from a reason
+/// string.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ExplainDetailCapacity {
+    resource: BudgetResource,
+    limit: u64,
+    reported: u64,
+}
+
+impl ExplainDetailCapacity {
+    pub(crate) const fn resource(self) -> BudgetResource {
+        self.resource
+    }
+
+    pub(crate) const fn limit(self) -> u64 {
+        self.limit
+    }
+
+    pub(crate) const fn reported(self) -> u64 {
+        self.reported
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn for_test(resource: BudgetResource, limit: u64, reported: u64) -> Self {
+        Self {
+            resource,
+            limit,
+            reported,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ExplainError {
     InvalidKey {
@@ -2853,7 +2925,7 @@ pub(crate) enum ExplainError {
     /// The compilation is refused rather than the record dropped, so a trace
     /// that exists is complete. Distinct from [`Self::TerminalCapacity`]:
     /// that one bounds the terminal ledger, this one the explanation body.
-    DetailCapacity,
+    DetailCapacity(ExplainDetailCapacity),
     TerminalCapacity,
     EmptyTrace,
     StaleIdentity,
@@ -4636,15 +4708,18 @@ mod tests {
         // One past the ceiling is refused, not dropped. This is the guarantee
         // the whole retention design rests on: a sealed trace is complete.
         let excess_parts = admitted(&pressured, "candidate:excess");
-        assert_eq!(
+        assert!(matches!(
             pressured.push_detail(
                 excess_parts.rule,
                 excess_parts.subjects,
                 excess_parts.event,
                 excess_parts.causes,
             ),
-            Err(ExplainError::DetailCapacity)
-        );
+            Err(ExplainError::DetailCapacity(capacity))
+                if capacity.resource() == BudgetResource::ExplainDetailRecords
+                    && capacity.limit() == u64::from(MAX_RECORDS)
+                    && capacity.reported() == u64::from(MAX_RECORDS) + 1
+        ));
         let subject = pressured
             .subject(SubjectKind::Alternative, "alternative:test")
             .unwrap();
@@ -4697,6 +4772,78 @@ mod tests {
         assert_eq!(
             slice_bounded.finish_success(&alternatives, "alternative:selected"),
             Err(ExplainError::TerminalLedgerCapacity)
+        );
+    }
+
+    /// Each construction arm admits the attempted prefix on its exact limit,
+    /// refuses it when that limit moves one lower, and simultaneous pressure
+    /// reports the record arm because construction checks it first.
+    #[test]
+    fn detail_capacity_arms_are_independent_and_record_first() {
+        const RETAINED_RECORDS: usize = 37;
+        const RETAINED_BYTES: usize = 80;
+        const ATTEMPTED_RECORD_BYTES: usize = 21;
+        const ATTEMPTED_RECORDS: u32 = 38;
+        const ATTEMPTED_BYTES: u32 = 101;
+
+        assert_eq!(
+            detail_capacity(
+                RETAINED_RECORDS,
+                RETAINED_BYTES,
+                ATTEMPTED_RECORD_BYTES,
+                ATTEMPTED_RECORDS,
+                ATTEMPTED_BYTES,
+            ),
+            None,
+            "an attempted prefix exactly on both limits is admitted",
+        );
+
+        assert_eq!(
+            detail_capacity(
+                RETAINED_RECORDS,
+                RETAINED_BYTES,
+                ATTEMPTED_RECORD_BYTES,
+                ATTEMPTED_RECORDS - 1,
+                ATTEMPTED_BYTES,
+            ),
+            Some(ExplainDetailCapacity::for_test(
+                BudgetResource::ExplainDetailRecords,
+                u64::from(ATTEMPTED_RECORDS - 1),
+                u64::from(ATTEMPTED_RECORDS),
+            )),
+            "moving only the record limit one below the attempted prefix names records",
+        );
+
+        assert_eq!(
+            detail_capacity(
+                RETAINED_RECORDS,
+                RETAINED_BYTES,
+                ATTEMPTED_RECORD_BYTES,
+                ATTEMPTED_RECORDS,
+                ATTEMPTED_BYTES - 1,
+            ),
+            Some(ExplainDetailCapacity::for_test(
+                BudgetResource::ExplainDetailCanonicalBytes,
+                u64::from(ATTEMPTED_BYTES - 1),
+                u64::from(ATTEMPTED_BYTES),
+            )),
+            "moving only the byte limit one below the attempted prefix names canonical bytes",
+        );
+
+        assert_eq!(
+            detail_capacity(
+                RETAINED_RECORDS,
+                RETAINED_BYTES,
+                ATTEMPTED_RECORD_BYTES,
+                ATTEMPTED_RECORDS - 1,
+                ATTEMPTED_BYTES - 1,
+            ),
+            Some(ExplainDetailCapacity::for_test(
+                BudgetResource::ExplainDetailRecords,
+                u64::from(ATTEMPTED_RECORDS - 1),
+                u64::from(ATTEMPTED_RECORDS),
+            )),
+            "simultaneous pressure must report the first, record-count comparison",
         );
     }
 

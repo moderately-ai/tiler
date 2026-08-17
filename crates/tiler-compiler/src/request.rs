@@ -841,14 +841,14 @@ impl NumericalContractPreference {
 ///
 /// A caller acting on an exhausted budget needs the number's provenance, not
 /// only its magnitude. An exact completed count, a conservative planning
-/// envelope, and a truncated-search lower bound imply different actions, and
-/// reading any of them as a uniform "actual" is wrong in the silent direction
-/// for the other two.
+/// envelope, a truncated-search lower bound, and a stopped-construction lower
+/// bound imply different actions, and reading any of them as a uniform
+/// "actual" is wrong in the silent direction for the other three.
 ///
 /// # Not `#[non_exhaustive]`
 ///
 /// ADR 0074 convention 5a marks a public enum whose variant set is a
-/// bounded-profile placeholder. This is not one: the three provenances are a
+/// bounded-profile placeholder. This is not one: the four provenances are a
 /// closed report vocabulary, and `tiler-macros` maps every case totally to
 /// caller advice. A genuinely new meaning adds a variant and breaks every
 /// total owner until that consumer classifies and renders it. Marking the enum
@@ -879,22 +879,34 @@ pub enum BudgetRefusal {
     /// successful plan requires. A wider limit may reach a plan this
     /// compilation never saw, and may equally find nothing.
     SearchLowerBound,
+    /// Explain construction stopped at the first detail it could not retain.
+    ///
+    /// The reported value is the exact attempted retained prefix including
+    /// that refused detail: records retained plus one for the record arm, or
+    /// canonical detail bytes retained plus that detail's encoded bytes for
+    /// the byte arm. Construction stopped there, so the value is only a lower
+    /// bound on the complete trace and never the capacity required for success.
+    ConstructionLowerBound,
 }
 
 /// Which deterministic budget refused a compilation.
 ///
-/// Four authorities raise a budget refusal and each owns its own stop record.
-/// They are named here as plain text because every one of them is crate-private
-/// and a public doc cannot link a private item: `request::check_program_budgets`
-/// refuses a submitted program's own size before any target is consulted, and
-/// `region::RegionBudgetResource`, `cover::CoverBudgetResource`, and
-/// `selection::PlanBudgetResource` bound the three searches that run once one
-/// has been. Those records stay distinct because their surrounding
-/// data differs — a plan stop also names the cover whose enumeration it
-/// stopped. This is the single vocabulary they all name a resource in, so a
-/// caller reads one closed set rather than four, and each authority maps into
-/// it through a total `const fn` that a new internal budget must extend before
-/// it compiles.
+/// Five authorities raise a budget refusal. Four own request or planning stop
+/// records: `request::check_program_budgets` refuses a submitted program's own
+/// size before any target is consulted, and `region::RegionBudgetResource`,
+/// `cover::CoverBudgetResource`, and `selection::PlanBudgetResource` bound the
+/// three searches that run once one has been. The explain writer owns the two
+/// report-only construction resources added at the end of this enumeration.
+/// They are existing hard build constants, not fields of
+/// `DeterministicBudgets`, and therefore do not enter request or evidence
+/// identity. These authorities are named as plain text because each is
+/// crate-private and a public doc cannot link a private item.
+///
+/// The stop records stay distinct because their surrounding data differs — a
+/// plan stop also names the cover whose enumeration it stopped. This is the
+/// single vocabulary they all name a resource in, so a caller reads one set
+/// rather than five, and each request/planning authority maps into it through a
+/// total `const fn` that a new internal budget must extend before it compiles.
 ///
 /// [`Self::key`] is the stable diagnostic key, and it is the sole authority for
 /// these strings: the per-authority accessors delegate here rather than
@@ -902,16 +914,16 @@ pub enum BudgetRefusal {
 ///
 /// # Which of these a public caller can actually observe
 ///
-/// Only the five program-scoped resources today. The other eight are raised by
-/// the three searches, which reach a caller only through an empty portfolio,
-/// and `crate::session`'s reachability note records why that route is currently
-/// unreachable from the public surface: the region-shape bounds are now the
-/// same formulas as the program-scoped bounds they derive from, so a program
-/// large enough to truncate a search is refused for its size first. Reaching it
-/// needs a caller-stated budget set, which the public surface does not admit.
-/// The vocabulary is nevertheless complete, because the mapping into it must be
-/// total over what the compiler can raise and reachability is a property of the
-/// budgets a request carries rather than of this type.
+/// The five program-scoped resources and the two report-only explain resources.
+/// The other eight are raised by the three searches, which reach a caller only
+/// through an empty portfolio, and `crate::session`'s reachability note records
+/// why that route is currently unreachable from the public surface: the
+/// region-shape bounds are now the same formulas as the program-scoped bounds
+/// they derive from, so a program large enough to truncate a search is refused
+/// for its size first. Reaching it needs a caller-stated budget set, which the
+/// public surface does not admit. The vocabulary is nevertheless complete,
+/// because the mapping into it must be total over what the compiler can raise
+/// and reachability is a property of the authorities rather than of this type.
 ///
 /// # Why `#[non_exhaustive]`
 ///
@@ -950,6 +962,16 @@ pub enum BudgetResource {
     RegionCoverExpansions,
     /// Complete-plan combinations admitted for one cover source.
     PhysicalPlanCombinations,
+    /// Detail records the explain writer could retain while constructing a trace.
+    ///
+    /// Report-only: this is a hard build constant, not a caller-stated or
+    /// request-identity-bearing `DeterministicBudgets` field.
+    ExplainDetailRecords,
+    /// Canonical detail bytes the explain writer could retain while constructing a trace.
+    ///
+    /// Report-only: this is a hard build constant, not a caller-stated or
+    /// request-identity-bearing `DeterministicBudgets` field.
+    ExplainDetailCanonicalBytes,
 }
 
 impl BudgetResource {
@@ -976,6 +998,8 @@ impl BudgetResource {
         Self::RegionCovers,
         Self::RegionCoverExpansions,
         Self::PhysicalPlanCombinations,
+        Self::ExplainDetailRecords,
+        Self::ExplainDetailCanonicalBytes,
     ];
 
     /// Returns the stable diagnostic key of this budget.
@@ -1001,6 +1025,8 @@ impl BudgetResource {
             Self::RegionCovers => "region-covers",
             Self::RegionCoverExpansions => "region-cover-expansions",
             Self::PhysicalPlanCombinations => "physical-plan-combinations",
+            Self::ExplainDetailRecords => "explain-detail-records",
+            Self::ExplainDetailCanonicalBytes => "explain-detail-canonical-bytes",
         }
     }
 
@@ -1010,8 +1036,9 @@ impl BudgetResource {
     /// provenance, not by whether the number can be described abstractly as a
     /// bound: an exact completed count is mathematically both an upper and a
     /// lower bound, so the durable split is completed exact demand, a
-    /// conservative planning envelope computed before selection, and a lower
-    /// bound recorded where enumeration stopped.
+    /// conservative planning envelope computed before selection, a lower bound
+    /// recorded where enumeration stopped, and an attempted-prefix lower bound
+    /// recorded where explain construction stopped.
     ///
     /// The five search bounds stop an enumeration at the first demand they
     /// refuse, and all three stop records say so in their own documentation:
@@ -1020,7 +1047,9 @@ impl BudgetResource {
     /// `HostExpressionNodes`, `Buffers`) are computed before a plan is chosen
     /// and may exceed what a particular reachable plan uses. The remaining
     /// five are completed counts of a submitted program or of one refused
-    /// region candidate.
+    /// region candidate. The two report-only explain resources are exact
+    /// attempted prefixes but lower bounds on the complete trace construction
+    /// stopped before producing.
     ///
     /// This is the answer a `&'static str` resource could not give. A caller
     /// holding a key has no way to learn the number's provenance without
@@ -1042,6 +1071,9 @@ impl BudgetResource {
             | Self::RegionCovers
             | Self::RegionCoverExpansions
             | Self::PhysicalPlanCombinations => BudgetRefusal::SearchLowerBound,
+            Self::ExplainDetailRecords | Self::ExplainDetailCanonicalBytes => {
+                BudgetRefusal::ConstructionLowerBound
+            }
         }
     }
 }
@@ -4504,12 +4536,15 @@ pub(crate) enum RequestError {
     },
     /// A deterministic budget refused a demand.
     ///
-    /// The sole carrier of every budget refusal the compiler raises, from all
-    /// four authorities. `limit` and `reported` are `u64` because the internal
-    /// stop records are: the two search budgets `DeterministicBudgets` declares
-    /// as `u64` cannot be narrowed to `u32` without reporting a saturated
-    /// number as though it were the declared bound, and a `usize` demand would
-    /// make the width of a public refusal a property of the host.
+    /// The carrier of request and planning budget refusals from their four
+    /// authorities. Explain-detail capacity is deliberately absent: its hard
+    /// build constants are not request fields, and its distinct outer carrier
+    /// keeps that request-wide abort out of candidate-local budget retry.
+    /// `limit` and `reported` are `u64` because the internal stop records are:
+    /// the two search budgets `DeterministicBudgets` declares as `u64` cannot
+    /// be narrowed to `u32` without reporting a saturated number as though it
+    /// were the declared bound, and a `usize` demand would make the width of a
+    /// public refusal a property of the host.
     ///
     /// Whether `reported` is an exact demand, a planning envelope, or a search
     /// lower bound is not uniform across the vocabulary and is read from
@@ -11691,7 +11726,7 @@ mod tests {
         );
         assert_eq!(
             BudgetResource::ALL.len(),
-            13,
+            15,
             "the vocabulary changed size; every dependent claim about it needs re-reading",
         );
     }
@@ -11745,42 +11780,47 @@ mod tests {
         );
 
         // Every one of the eight is a search or shape stop reached after a
-        // target is consulted, and the five program-scoped rows are exactly the
-        // ones no stop vocabulary maps onto.
+        // target is consulted. The five program-scoped and two report-only
+        // explain rows are exactly the ones no stop vocabulary maps onto.
         for resource in BudgetResource::ALL {
-            let program_scoped = matches!(
+            let outside_stop_vocabularies = matches!(
                 resource,
                 BudgetResource::SemanticValues
                     | BudgetResource::SemanticOperations
                     | BudgetResource::Regions
                     | BudgetResource::HostExpressionNodes
                     | BudgetResource::Buffers
+                    | BudgetResource::ExplainDetailRecords
+                    | BudgetResource::ExplainDetailCanonicalBytes
             );
             assert_eq!(
-                program_scoped,
+                outside_stop_vocabularies,
                 !distinct.contains(&resource),
-                "{resource:?} is claimed by both a stop vocabulary and the request boundary",
+                "{resource:?} is claimed by both a stop vocabulary and another refusal authority",
             );
         }
     }
 
-    /// Every resource reports exactly one of the three provenances, and the
+    /// Every resource reports exactly one of the four provenances, and the
     /// population is sized from the type.
     ///
     /// Categories are defined by how the compared number was produced, not by
     /// whether it can be described abstractly as a bound. An exact completed
     /// count is mathematically both an upper and a lower bound; a conservative
     /// envelope computed before selection is not a reachable plan's demand; a
-    /// search stop is a floor on unexplored work, not the budget success needs.
+    /// search stop is a floor on unexplored work, not the budget success needs;
+    /// a construction stop is an exact attempted prefix, not the complete
+    /// trace's demand.
     ///
     /// The match is wildcard-free over [`BudgetResource::ALL`], which is itself
-    /// sized by `variant_count`, so a fourteenth resource is a build error here
-    /// rather than a census that still reports three classes over a smaller set.
+    /// sized by `variant_count`, so a sixteenth resource is a build error here
+    /// rather than a census that still reports four classes over a smaller set.
     #[test]
     fn every_budget_resource_reports_exactly_one_provenance() {
         let mut exact = 0usize;
         let mut envelope = 0usize;
         let mut search = 0usize;
+        let mut construction = 0usize;
         for resource in BudgetResource::ALL {
             let expected = match resource {
                 BudgetResource::SemanticValues
@@ -11796,6 +11836,10 @@ mod tests {
                 | BudgetResource::RegionCovers
                 | BudgetResource::RegionCoverExpansions
                 | BudgetResource::PhysicalPlanCombinations => BudgetRefusal::SearchLowerBound,
+                BudgetResource::ExplainDetailRecords
+                | BudgetResource::ExplainDetailCanonicalBytes => {
+                    BudgetRefusal::ConstructionLowerBound
+                }
             };
             assert_eq!(
                 resource.refusal(),
@@ -11806,16 +11850,23 @@ mod tests {
                 BudgetRefusal::ExactDemand => exact += 1,
                 BudgetRefusal::PlanningUpperBound => envelope += 1,
                 BudgetRefusal::SearchLowerBound => search += 1,
+                BudgetRefusal::ConstructionLowerBound => construction += 1,
             }
         }
         assert_eq!(
-            (exact, envelope, search, exact + envelope + search),
-            (5, 3, 5, BudgetResource::ALL.len()),
-            "provenance census changed; re-read every dependent claim. exact={exact} envelope={envelope} search={search} total={}",
+            (
+                exact,
+                envelope,
+                search,
+                construction,
+                exact + envelope + search + construction,
+            ),
+            (5, 3, 5, 2, BudgetResource::ALL.len()),
+            "provenance census changed; re-read every dependent claim. exact={exact} envelope={envelope} search={search} construction={construction} total={}",
             BudgetResource::ALL.len(),
         );
         eprintln!(
-            "budget-resource provenance census: exact={exact} envelope={envelope} search={search} total={}",
+            "budget-resource provenance census: exact={exact} envelope={envelope} search={search} construction={construction} total={}",
             BudgetResource::ALL.len(),
         );
     }
