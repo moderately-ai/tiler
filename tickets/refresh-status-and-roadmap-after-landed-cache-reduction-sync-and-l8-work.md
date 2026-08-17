@@ -1,7 +1,7 @@
 ---
 id: refresh-status-and-roadmap-after-landed-cache-reduction-sync-and-l8-work
 title: Refresh status and roadmap after landed cache, reduction, synchronization, and L8 work
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [decide-the-expansion-cache-collection-schedule, wire-the-env-configured-eviction-policy-through-the-deliver-path, calibrate-and-activate-parallel-reduction-selection, check-synchronization-realization-before-the-routing-commit, correct-the-roadmap-s-milestone-0b-inline-composition-claim, land-the-model-level-qualification-record, decide-the-tiler-metal-public-facade-surface]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, status, roadmap, correction]
-claimed_from: todo
-assignee: worker-status-roadmap
-lease_expires_at: 1786976056
 ---
 ## User-visible outcome
 
@@ -61,3 +58,7 @@ No capability, maturity promotion, milestone-exit decision, cache-policy change,
 ## Closes when
 
 All four stale source claims are absent from their live narrative positions, their replacements name the exact current bounded truth, independent subject perturbations fail, and navigation citations and ticket status remain coherent.
+
+## Integrated outcome — 2026-08-17
+
+Exact worker commit `45b7170bf2073b6e5155b84ae2f4373577ef951b` over `404cacd21ee9a1ae91c10cc1d86b77f6752f2439` passed independent review with no findings and is integrated on `main`. The four corrected claims, bounded non-goals, source-reading check, and independent perturbations are preserved exactly. The production full gate carries because the delta touches only `docs/` and `tickets/`; `tkt lint`, `make citations`, diff checking, and exact-base scope guard were rerun on the reviewed packet.
