@@ -1307,7 +1307,7 @@ struct DetailCapacityWriterControlForTest {
 }
 
 #[cfg(test)]
-std::thread_local! {
+thread_local! {
     static DETAIL_CAPACITY_CONTROL_FOR_TEST: RefCell<Option<DetailCapacityControlStateForTest>> = const { RefCell::new(None) };
 }
 

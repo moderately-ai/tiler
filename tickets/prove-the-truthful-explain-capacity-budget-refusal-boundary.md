@@ -149,3 +149,5 @@ git show ade271ddeddfd1a507b5308308d8f2d9018b7ec4:crates/tiler-compiler/src/expl
 ```
 
 Only compiler tests/test-only writer control, the retained spike regression and its README, and this ticket move. Both revisions print schema 11 and renderer 9. The writer control and every added compiler carrier are `pub(crate)` under `#[cfg(test)]`. The final spike attribution import, carrier, helpers, and update calls are also all `#[cfg(test)]`; `main.rs` and `measure.rs` carry no attribution reference, so normal timing and RSS construction remain aggregate-only. No non-test compiler or public item is added, and no request, artifact, cache, schema, renderer, or trace-content identity input changes.
+
+The first integrated `make full` reached all 3,649 workspace tests and failed only the source-language census because the new test-only control invoked `thread_local!` as the unsupported path-qualified `std::thread_local!`. The integrated correction uses the repository's existing unqualified macro spelling; the census then accepts the source without changing the test control, production behavior, or public boundary.
