@@ -1,7 +1,7 @@
 ---
 id: assemble-the-embedding-and-vocabulary-projection-programs
 title: Assemble the embedding and vocabulary-projection programs
-status: in-progress
+status: done
 priority: p1
 dependencies: [admit-a-storage-carrier-for-integer-program-inputs, admit-the-rms-normalization-family, reclassify-language-model-work-as-a-conformance-track, admit-an-indirect-gather-family-for-tied-embedding-lookup, admit-the-contraction-semantic-profile]
 related: [design-model-ingestion-and-complete-execution, project-only-the-final-position-logits]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, gather, logits, language-model, class-conformance-fixture]
-claimed_from: todo
-assignee: worker-lm-boundaries
-lease_expires_at: 1787004728
 ---
 ## User-visible outcome
 
@@ -64,6 +61,10 @@ Four independent subject perturbations were run with `cargo nextest run -p tiler
 - **Tied tensor binding:** independently materializing equal embedding bytes for P3 made the fixture fail with `assertion failed: std::ptr::eq(p1_bindings[1].tensor(), p3_bindings[2].tensor())`.
 
 Focused and affected-package evidence after restoration: `cargo fmt --all -- --check`; `cargo check -p tiler-reference --all-targets`; `cargo clippy -p tiler-reference --all-targets -- -D warnings`; three of three boundary tests; all 320 `tiler-reference` tests passed with two skipped; package rustdoc with `RUSTDOCFLAGS='-D warnings'`; and package doctests with warnings denied. No evaluator limit, public API, identity/schema/domain, compiler, lowering, artifact, runtime, Metal, model/checkpoint type, or execution support changed.
+
+## Integrated outcome — 2026-08-17
+
+The reviewed implementation commit `e5e1e66294dc8c4303647c34b660ac8c6a36736c` was integrated on `main` as `eb1d89febbd11518a1b7cb28b0dba23589776e9a`. Independent exact-commit review reported no findings at any severity and reproduced the RMS/projection bits plus all four subject perturbations. On the integrated tree, `make full` exited zero: citations, formatting, workspace all-target check, warnings-denied workspace Clippy, workspace nextest (3,670 tests with eight configured skips), doctests, warnings-denied rustdoc, the release numerical gate (1,262 tests with three configured skips), ticket lint, and shellcheck all passed. The outcome is therefore the bounded semantic/reference conformance fixture described above; compiler, lowering, artifact, runtime, Metal, and full C1 materialization remain explicitly unsupported here.
 
 ## Closes when
 
