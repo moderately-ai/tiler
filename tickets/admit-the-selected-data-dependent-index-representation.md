@@ -1,14 +1,14 @@
 ---
 id: admit-the-selected-data-dependent-index-representation
 title: Admit the selected data-dependent index representation
-status: todo
+status: blocked
 priority: p1
-dependencies: [accept-adr-0108-data-dependent-index-coordinate-siting]
+dependencies: [accept-adr-0108-data-dependent-index-coordinate-siting, decide-the-data-dependent-index-representation-public-surface]
 related: [revise-adr-0108-with-a-complete-data-dependent-index-vertical, admit-an-invocation-scoped-gather-index-validation-receipt, emit-the-indirect-gather-on-metal]
-scopes: [implementation/ir, implementation/reference, implementation/compiler, contracts/foundation]
+scopes: [implementation/ir, implementation/reference, implementation/compiler, contracts/foundation, contracts/decisions, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, indexing, gather, verification, identity]
+tags: [implementation, indexing, gather, verification, identity, decision, needs-tom, public-boundary]
 ---
 ## User-visible outcome
 
