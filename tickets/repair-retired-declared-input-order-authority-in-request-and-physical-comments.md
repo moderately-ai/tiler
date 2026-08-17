@@ -59,6 +59,31 @@ The first physical comment also justifies the current conservative `value_input 
 owns that consequential support decision. This ticket keeps `rms_norm(x, x)`
 fail-closed and states only the truthful unsupported boundary.
 
+## Exact implementation-base Fact audit — 2026-08-17, `3969f46cc94ad296bba46885b2688f8a6124bb55`
+
+- **Verified — the two edited Rust sources did not drift from the complete
+  read-only audit.** `git diff --quiet e8141d7d 3969f46c --
+  crates/tiler-compiler/src/request.rs crates/tiler-compiler/src/physical.rs`
+  exits zero. The complete files and their current construction, verification,
+  projection, assembly, staged-family, and repeated-read owners were re-read at
+  this checkout before source edits.
+- **Verified — the exact stale population remains six blocks.** Each of the six
+  shortest source anchors named by the read-only audit occurs once; no seventh
+  live request/physical block assigns declared-interface authority to the
+  fieldless role or intrinsic verifier. Historical past-tense accounts remain
+  accurate and are excluded.
+- **Verified — the replacement authority remains unique.** `canonical_input_reads`
+  owns whole-program/prologue declared-input grouping and dense-before-mapped
+  order; `recognize_epilogue` prepends its one staged read;
+  `VerifiedScheduledRegion::declared_input_at` projects an exact
+  `AccessOrdinal` through the retained `VerifiedRequestSubject`; and
+  `CoverAssembly::from_plan` consumes that checked projection.
+- **Verified — the RMS boundary still requires no behavior change here.** The
+  equality guard and all of its construction and consumption paths are
+  unchanged. The linked P1 still owns the unresolved one-access versus
+  two-access canonical spelling, so this repair preserves the guard and changes
+  only its false intrinsic-verifier explanation.
+
 ## Required work
 
 - Re-read the complete request normalization/recognition, physical construction/verification, checked projection, assembly, staged-family, and repeated-read paths at the exact implementation base.
@@ -71,3 +96,52 @@ fail-closed and states only the truthful unsupported boundary.
 ## Graph
 
 Related to the narrow pipeline-test prose repair and the completed fieldless-role documentation repair. It must not be folded into either without its own current-base source audit.
+
+## Implementation record — 2026-08-17
+
+- Repaired exactly the six audited comment blocks. Whole-program/prologue and
+  epilogue read ordering now name compiler normalization; physical construction
+  and program assembly name the retained checked request subject and exact
+  access projection. The `value_input == weight_input` guard remains unchanged
+  and its comment links the P1 that owns coincident-operand support.
+- No executable Rust, test, fixture, assertion, public surface, identity,
+  schema, pin, or supported population changed.
+- The final source check rejects all six retired anchors and positively requires
+  `canonical_input_reads`'s live normalization anchor, `recognize_epilogue`'s
+  staged-read construction, `declared_input_at`'s projection documentation, and
+  CoverAssembly's call to that accessor. Restoring each retired source phrase
+  independently produced, respectively:
+
+  ```text
+  crates/tiler-compiler/src/request.rs:1843:/// whole-program elementwise region never had to distinguish them.**
+  ERROR: retired declared-input authority remains
+  crates/tiler-compiler/src/request.rs:7170:/// tidiness.** The pointwise access contract requires a region's declared input ordinals not to descend.
+  ERROR: retired declared-input authority remains
+  crates/tiler-compiler/src/physical.rs:282:/// with that same declaration; the schedule's own read-ordering rule refuses as two spellings.
+  ERROR: retired declared-input authority remains
+  crates/tiler-compiler/src/physical.rs:338:    // The reads in the canonical order a pointwise region requires.
+  ERROR: retired declared-input authority remains
+  crates/tiler-compiler/src/physical.rs:602:    /// different facts: a pointwise region's reads are the declared inputs in declaration order.
+  ERROR: retired declared-input authority remains
+  crates/tiler-compiler/src/physical.rs:1498:/// between the two elementwise regions this profile builds.** A whole-program or prologue region reads every declared input in declaration order.
+  ERROR: retired declared-input authority remains
+  ```
+
+  Each perturbation was restored before the next; the same check then returned
+  zero retired hits and all four live anchors.
+- The eight named request, physical, conformance, pipeline, and IR controls each
+  ran one test and passed. Compiler nextest ran 941 tests: 941 passed and one was
+  skipped. Compiler all-target check and Clippy with warnings denied, rustdoc
+  with warnings denied, and all 16 compiler doctests passed. Final formatting,
+  ticket lint, citations, diff check, and exact-base scope guard are the closing
+  gates recorded with the worker handoff.
+
+Source check:
+
+```sh
+matches=$(rg -n -e 'whole-program elementwise region never had to distinguish them' -e "pointwise access contract requires a region's declared input ordinals not to descend" -e 'own read-ordering rule refuses as two spellings' -e 'canonical order a pointwise region requires' -e "a pointwise region's reads are the declared inputs in declaration order" -e 'A whole-program or prologue region reads every declared input in declaration order' crates/tiler-compiler/src/request.rs crates/tiler-compiler/src/physical.rs || true)
+if [[ -n "$matches" ]]; then printf '%s\n' "$matches"; printf '%s\n' 'ERROR: retired declared-input authority remains'; exit 1; fi
+for anchor in "compiler normalization's canonical spelling" 'The staged read, then whichever declared inputs' 'Projects one local input access back to the declared program interface' 'declared_input_at(access)'; do
+  if ! rg -n -F "$anchor" crates/tiler-compiler/src/request.rs crates/tiler-compiler/src/physical.rs crates/tiler-compiler/src/program.rs; then printf 'ERROR: live authority anchor missing: %s\n' "$anchor"; exit 1; fi
+done
+```

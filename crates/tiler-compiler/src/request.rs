@@ -1839,13 +1839,14 @@ pub(crate) struct NormalizedContraction {
 
 /// Which boundary tensor one recognized read binds.
 ///
-/// **The access position and the boundary role are separate facts here, and a
-/// whole-program elementwise region never had to distinguish them.** That region
-/// reads every declared input in declaration order, so leaf `i` and declared
-/// input `i` coincide and one number serves as both. An epilogue reads the value
-/// an earlier region staged plus whichever declared inputs its expression names,
-/// so the *position* of a read — the leaf it serves — and the *tensor* it binds
-/// are independent. `tiler_ir::schedule`'s `reads_bind_boundary_tensors_in_order`
+/// **Local access position and declared association are separate facts in every
+/// recognized shape.** [`canonical_input_reads`] orders a whole-program or
+/// prologue run by declaration group and dense-before-mapped relation, while
+/// omitting unread declarations and preserving distinguishable repeated reads.
+/// Leaf position and declared ordinal therefore need not coincide. An epilogue
+/// additionally reads the value an earlier region staged. In both cases the
+/// *position* of a read — the leaf it serves — and the *tensor* it binds are
+/// independent. `tiler_ir::schedule`'s `reads_bind_boundary_tensors_in_order`
 /// checks only each fieldless boundary category; it has no declared-interface
 /// association to resolve. `crate::program::CoverAssembly::from_plan` constructs
 /// the exact [`AccessOrdinal`] from the read position and projects it through
@@ -7164,15 +7165,16 @@ fn recognize_pointwise(
 
 /// Recognizes an elementwise epilogue over one staged producer result.
 ///
-/// **The read order is canonical rather than the order the walk minted leaves
-/// in, and that is a correctness requirement rather than tidiness.**
-/// `tiler_ir::schedule`'s pointwise access contract requires a region's declared
-/// input ordinals not to descend across its read list, so a read list in walk
-/// order would make `staged * (b + a)` admissible and `staged * (a + b)` not —
-/// the same computation refused for the order its operands happened to be popped
-/// in. The staged read leads because exactly one read binds it and it carries no
-/// ordinal to interleave with; the declared inputs follow in declaration order,
-/// each input's own reads in the dense-first order that contract states.
+/// **The read order is compiler normalization rather than the order the walk
+/// minted leaves in, and that is a correctness requirement rather than
+/// tidiness.** A read list in walk order would give `staged * (b + a)` and
+/// `staged * (a + b)` different spellings solely because their operands were
+/// popped in a different order. The staged read leads because exactly one read
+/// binds it and it carries no declared association to interleave with;
+/// [`canonical_input_reads`]'s rule supplies the rest — declaration groups in
+/// order and each group's distinguishable reads dense-first. Intrinsic schedule
+/// verification sees only the resulting local access positions and fieldless
+/// boundary categories.
 ///
 /// # Errors
 ///

@@ -277,11 +277,16 @@ pub(crate) fn staged_plan(normalized: &NormalizedStaged) -> Option<StagedPlan> {
 ///   decode, or axes that are not a canonical in-range set.
 ///
 /// And one refusal that is this layer's rather than the law's: **the two operands
-/// must be distinct declared inputs.** `rms_norm(x, x)` is a legal occurrence
-/// whose consuming pass would read one declared input twice, densely, which
-/// `tiler_ir::schedule`'s own read-ordering rule refuses as two spellings of one
-/// computation. Declining here loses that program rather than proposing a region
-/// the verifier would reject as invalid compiler output.
+/// must be distinct declared inputs.** `rms_norm(x, x)` is a legal occurrence,
+/// and the retained request subject can associate two exact local input accesses
+/// with that same declaration; intrinsic verification sees only the fieldless
+/// categories and does not reject them. This constructor nevertheless stays
+/// fail-closed because no accepted contract yet chooses between two
+/// operand-position accesses and one coalesced access, which are different
+/// schedule and kernel identities.
+/// [`decide-the-canonical-staged-pass-access-spelling-for-coincident-rms-operands`](../../../tickets/decide-the-canonical-staged-pass-access-spelling-for-coincident-rms-operands.md)
+/// owns that support decision. Declining here loses the program rather than
+/// inventing its canonical physical spelling.
 ///
 /// **The same refusal covers an operand supplied by a materialization edge**,
 /// which the recognizer now admits (`rms_norm(matmul(a, b), w)`) and this
@@ -330,11 +335,11 @@ fn root_mean_square_scale_plan(
     let root = fold.rsqrt(biased).ok()?;
     let fold_epilogue = fold.build(root).ok()?;
 
-    // The reads in the canonical order a pointwise region requires: declared
-    // inputs by ascending ordinal, then the handed value. Which of the two
-    // operands leads is therefore the caller's declaration order rather than the
-    // law's operand order, and the expression below binds each leaf to the read
-    // that actually serves it.
+    // This law's compiler-owned spelling for distinct operands: declared inputs
+    // in declaration order, then the handed value. `value_leads` derives the
+    // declared half from the retained request association; intrinsic pointwise
+    // verification supplies no interface order. The expression below binds each
+    // law operand to the exact local access that serves it.
     let value_leads = value_input < weight_input;
     let handed_map = if handed_shape == normalized.output_shape {
         // A fold over no axis hands one value per point, read densely. Not a
@@ -594,9 +599,11 @@ pub(crate) enum RegionSpellingKind {
     ///
     /// Distinct from [`Self::Pointwise`] although both build a
     /// [`ScalarProgram::PointwiseF32`] region, because the two are built from
-    /// different facts: a pointwise region's reads are the declared inputs in
-    /// declaration order, and an epilogue's are the recognized read list, whose
-    /// positions and boundary roles are independent.
+    /// different recognized subjects: a pointwise region receives
+    /// `crate::request`'s `canonical_input_reads` compiler-normalized
+    /// declared-input run, which may omit or repeat a declaration, while an
+    /// epilogue's run may additionally name one staged value. Local positions
+    /// and boundary associations are independent in both.
     Epilogue(RegionWrite),
     /// The producing stage of a staged family: a fold carrying its own epilogue,
     /// handing one value per kept coordinate to the stage that follows.
@@ -1489,11 +1496,12 @@ fn addressed_elements(map: &LogicalAccess, elements: u64) -> u64 {
 ///
 /// **The read list is the parameter, because it is the only thing that differs
 /// between the two elementwise regions this profile builds.** A whole-program or
-/// prologue region reads every declared input in declaration order; an epilogue
-/// reads one staged value and whichever declared inputs its expression names.
-/// Everything else — witness numbering, the owning write, the ownership proof,
-/// the launch — is the same region shape, and stating it once is what keeps the
-/// two from drifting into two shapes.
+/// prologue region receives the compiler-normalized declared-input run, which
+/// may omit an unread declaration or retain distinguishable repeated reads; an
+/// epilogue may additionally read one staged value. Everything else — witness
+/// numbering, the owning write, the ownership proof, the launch — is the same
+/// region shape, and stating it once is what keeps the two from drifting into
+/// two shapes.
 fn elementwise_region(
     request: &VerifiedTargetRequest,
     id: RegionId,
