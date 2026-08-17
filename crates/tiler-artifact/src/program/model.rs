@@ -24,8 +24,9 @@ use tiler_ir::program::{
 };
 use tiler_ir::schedule::{
     ExceptionalValueAssumption, FlushedZeroSign, IndexArithmetic, MemoryOrdering,
-    NumericalPermission, NumericalRealization, ResourceRequirements, SubnormalMode,
-    SynchronizationKind, SynchronizationScope, SynchronizationSubject, ValueDomainProvenance,
+    NumericalPermission, NumericalRealization, ResourceRequirements, SubgroupRealizationSubject,
+    SubgroupTransfer, SubnormalMode, SynchronizationKind, SynchronizationScope,
+    SynchronizationSubject, ValueDomainProvenance,
 };
 use tiler_ir::semantic::{
     EncodedComponentRole, InputKey, OpKey, OutputKey, ProviderIdentity,
@@ -2310,6 +2311,49 @@ pub(super) fn push_synchronization(bytes: &mut Vec<u8>, subject: Option<Synchron
     }
 }
 
+/// Opens the artifact resource record's conditional subgroup tail.
+///
+/// Zero is deliberately not an absence tag. An absent row writes nothing, and
+/// the next field's bounded `u64` text length always supplies a zero high byte.
+/// A present row claims the otherwise-impossible nonzero byte and appends the
+/// fixed-width public subject encoding.
+pub(super) const SUBGROUP_REQUIREMENT_BLOCK_TAG: u8 = 0x01;
+
+/// Resolves the transfer tag at the artifact decoder's sole consuming seam.
+///
+/// The public schedule surface deliberately exposes no raw transfer tag or
+/// inverse. Forward bytes remain owned by
+/// [`SubgroupRealizationSubject::encode`]; this private inverse only recognizes
+/// bytes that have already crossed the artifact boundary. The test-sized
+/// transfer population derives every claimed byte through that public encoder
+/// and checks this function over all 256 inputs, so vocabulary growth cannot
+/// leave the literal below as a silently partial second authority.
+pub(super) const fn subgroup_transfer_from_tag(tag: u8) -> Option<SubgroupTransfer> {
+    match tag {
+        0x01 => Some(SubgroupTransfer::InRangeXorShuffle),
+        _ => None,
+    }
+}
+
+/// Appends one present subgroup subject, while preserving every absent byte.
+///
+/// This conditional tail is injective because it is the final resource field
+/// and the following numerical profile key has a `u64` byte length bounded by
+/// `MAX_TEXT_BYTES = 4096`. Every valid legacy continuation therefore begins
+/// with zero. Absence consumes none of that continuation; presence begins with
+/// the otherwise-impossible nonzero block tag and six fixed subject bytes. An
+/// old reader interprets that nonzero byte as the high byte of the text length
+/// and refuses it as over-limit rather than misreading the row.
+pub(super) fn push_subgroup_requirement(
+    bytes: &mut Vec<u8>,
+    subject: Option<SubgroupRealizationSubject>,
+) {
+    if let Some(subject) = subject {
+        bytes.push(SUBGROUP_REQUIREMENT_BLOCK_TAG);
+        subject.encode(bytes);
+    }
+}
+
 pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirements) {
     let ResourceRequirements {
         buffer_bindings,
@@ -2318,7 +2362,7 @@ pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirement
         requires_device_memory,
         index_arithmetic,
         synchronization,
-        subgroup: _,
+        subgroup,
         input_subnormals,
         result_subnormals,
         contraction,
@@ -2342,6 +2386,7 @@ pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirement
     bytes.push(permission_tag(signed_zero));
     bytes.push(exceptional_assumption_tag(nan_assumptions));
     bytes.push(exceptional_assumption_tag(infinity_assumptions));
+    push_subgroup_requirement(bytes, subgroup);
 }
 
 pub(super) fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalFacts) {

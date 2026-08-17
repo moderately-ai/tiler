@@ -19,6 +19,7 @@ use std::error::Error;
 use std::fmt;
 
 use tiler_ir::program::ByteAlignmentError;
+use tiler_ir::schedule::SubgroupRealizationError;
 use tiler_ir::semantic::{BuildError, RegistryError, TypeIdentityError};
 use tiler_ir::shape::{ShapeEnvSubjectError, ShapeError};
 
@@ -117,6 +118,12 @@ pub(crate) enum TagSubject {
     MemoryOrdering,
     /// Whether one entry requires a synchronization realization at all.
     SynchronizationPresence,
+    /// Whether the conditional subgroup-requirement block is present.
+    SubgroupPresence,
+    /// The arithmetic type of one subgroup realization.
+    SubgroupArithmetic,
+    /// The register transfer of one subgroup realization.
+    SubgroupTransfer,
     /// A Boolean field encoded as one byte.
     Boolean,
     /// The platform shape one carried payload's provenance declares.
@@ -623,6 +630,18 @@ pub(crate) enum ArtifactCodecError {
     /// the wire against the world, so no sibling variant separates a "digest
     /// disagreed" case from an "identity disagreed" one — there is one case.
     ArtifactIdentityMismatch,
+    /// A second conditional subgroup block followed the complete first block.
+    ///
+    /// The resource carrier is a singleton. Treating a duplicate as the next
+    /// field's length would hide a second claim inside an absurd text count,
+    /// while accepting either block would leave two encodings for one model.
+    DuplicateSubgroupRequirement,
+    /// A subgroup subject was framed completely but its checked constructor
+    /// rejected the stated width and transfer combination.
+    InvalidSubgroupRealization {
+        /// Typed rejection from the shared schedule vocabulary.
+        cause: SubgroupRealizationError,
+    },
     /// A closed enumeration presented a tag this reader does not implement.
     UnknownTag {
         /// Enumeration whose tag was rejected.
@@ -749,6 +768,7 @@ impl Error for ArtifactCodecError {
             Self::InvalidProviderIdentity { cause } => Some(cause),
             Self::InvalidShape { cause } => Some(cause),
             Self::InvalidAlignment { cause } => Some(cause),
+            Self::InvalidSubgroupRealization { cause } => Some(cause),
             Self::ModelRule { cause } => Some(cause.as_ref()),
             Self::ModelObligation { cause } | Self::IdentityDerivation { cause } => Some(cause),
             Self::DeliveredRealization { cause } => Some(cause.as_ref()),
@@ -799,6 +819,7 @@ impl Error for ArtifactCodecError {
             | Self::ExtentOperandTransport { .. }
             | Self::DeclaredFeatureMismatch
             | Self::ArtifactIdentityMismatch
+            | Self::DuplicateSubgroupRequirement
             | Self::UnknownTag { .. }
             | Self::MissingReference { .. }
             | Self::ExpressionOperandOrder { .. }

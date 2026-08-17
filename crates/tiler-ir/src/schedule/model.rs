@@ -1511,13 +1511,13 @@ pub struct ResourceRequirements {
     pub synchronization: Option<SynchronizationSubject>,
     /// The subgroup realization the region's schedule requires, if any.
     ///
-    /// **Labelled draft** under ADR 0075. `None` is the canonical absence a
-    /// schedule with no subgroup combine derives, and it is not a default
-    /// width: it emits no requirement, no target query, no explain row, and
-    /// no artifact field, so a target that declares nothing about subgroups
-    /// is *feasible* for such a region rather than merely untested. A `Some`
-    /// is the complete [`SubgroupRealizationSubject`] one atomic target fact
-    /// must equal.
+    /// `None` is the canonical absence a schedule with no subgroup combine
+    /// derives, and it is not a default width: it emits no target requirement,
+    /// query, explain row, or subgroup block in the artifact resource tail, so
+    /// a target that declares nothing about subgroups is *feasible* for such a
+    /// region rather than merely untested. A `Some` is the complete
+    /// [`SubgroupRealizationSubject`] one atomic target fact must equal, and the
+    /// artifact carrier preserves that whole subject without decomposing it.
     ///
     /// This ticket does not derive a `Some` from any admitted topology —
     /// subgroup KIR emission is a separate ticket — so every region produced

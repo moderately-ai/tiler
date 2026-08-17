@@ -1,10 +1,12 @@
 //! The atomic subgroup realization a schedule can require of a target.
 //!
-//! **Labelled draft** under ADR 0075. Tom accepted the whole-subject *shape*
-//! on 2026-08-11 — one checked subject over a literal width, an exact
-//! arithmetic type, and an operation-specific transfer, matched only by
-//! equality — and has not accepted this crate's exact type, constructor, or
-//! error spelling.
+//! Tom accepted this exact public surface on 2026-08-14 through
+//! `accept-the-atomic-subgroup-realization-surface`: one checked subject over a
+//! literal width, an exact arithmetic type, and an operation-specific transfer,
+//! matched only by equality. The accepted boundary includes the checked
+//! constructors, value getters, stable transfer key, and whole-subject encoder;
+//! it excludes a public raw transfer tag, inverse, default, unchecked
+//! constructor, and second transfer.
 //!
 //! [`SubgroupRealizationSubject`] groups the three dimensions a target must
 //! realize *together*. Each of them is separately true of some machine — a
