@@ -17,8 +17,8 @@ use tiler_metal::target::{
 use tiler_metal_aot::diagnostic::DriverError;
 use tiler_metal_aot::driver::PreparedCompilation;
 use tiler_metal_aot::input::{
-    ApplePlatform, CompileRequest, DeploymentMinimum, FpContract, MathMode, MetalTarget,
-    MetalTargetError, MslVersion, NumericalRealization, OptimizationLevel,
+    ApplePlatform, CompileRequest, DeploymentMinimum, Fp32Functions, FpContract, MathMode,
+    MetalTarget, MetalTargetError, MslVersion, NumericalRealization, OptimizationLevel,
 };
 use tiler_metal_aot::record::StageOutputs;
 
@@ -339,6 +339,9 @@ fn validate_numerical_selection(
             MetalNumericalRequirement::NoFloatingPointContraction => {
                 numerical.fp_contract == FpContract::Off
             }
+            MetalNumericalRequirement::PreciseFp32Functions => {
+                numerical.fp32_functions == Fp32Functions::Precise
+            }
             _ => false,
         };
         if !satisfied {
@@ -544,11 +547,22 @@ mod tests {
     }
 
     fn arithmetic_unit() -> tiler_metal::record::MetalTranslationUnit {
-        arithmetic_unit_with_subnormal_arithmetic(MetalSubnormalArithmetic::PreservesSubnormals)
+        f32_unit_with(
+            MetalSubnormalArithmetic::PreservesSubnormals,
+            scale_then_bias_expression(1.0_f32.to_bits(), 0.0_f32.to_bits()),
+        )
     }
 
-    fn arithmetic_unit_with_subnormal_arithmetic(
+    fn elementary_unit() -> tiler_metal::record::MetalTranslationUnit {
+        f32_unit_with(
+            MetalSubnormalArithmetic::PreservesSubnormals,
+            exponential_expression(),
+        )
+    }
+
+    fn f32_unit_with(
         subnormal_arithmetic: MetalSubnormalArithmetic,
+        expression: PointwiseF32Expression,
     ) -> tiler_metal::record::MetalTranslationUnit {
         let mut builder = ScheduledRegionBuilder::new(RegionId::new(0));
         builder
@@ -590,10 +604,7 @@ mod tests {
             })
             .expect("the ownership proof binds");
         builder
-            .scalar_program(ScalarProgram::PointwiseF32(scale_then_bias_expression(
-                1.0_f32.to_bits(),
-                0.0_f32.to_bits(),
-            )))
+            .scalar_program(ScalarProgram::PointwiseF32(expression))
             .expect("the scalar program binds");
         builder
             .numerical(DeclaredNumericalRealization::new(
@@ -647,6 +658,17 @@ mod tests {
         expression
             .build(root)
             .expect("verified pointwise expression")
+    }
+
+    fn exponential_expression() -> PointwiseF32Expression {
+        let mut expression = PointwiseF32ExpressionBuilder::new();
+        let input = expression
+            .input(AccessOrdinal::FIRST)
+            .expect("pointwise input");
+        let root = expression.exp(input).expect("precise exponential");
+        expression
+            .build(root)
+            .expect("verified elementary pointwise expression")
     }
 
     fn write_executable(path: &Path, body: &str) {
@@ -844,12 +866,57 @@ mod tests {
     }
 
     #[test]
+    fn elementary_request_and_preparation_require_precise_fp32_functions() {
+        let directory = scratch("elementary-precise-fp32-functions");
+        let unit = elementary_unit();
+        let precise =
+            NumericalRealization::new(MathMode::Safe, Fp32Functions::Precise, FpContract::Off);
+        let request = metal_compile_request(&unit, OptimizationLevel::Default, precise)
+            .expect("the precise selection satisfies the elementary unit");
+        let prepared = toolchain(&directory)
+            .prepare(&request)
+            .expect("the precise request prepares");
+        prepare_metal_payload(&unit, prepared)
+            .expect("the prepared precise request satisfies the elementary unit");
+
+        // Perturb only the selected elementary-function realization. The other
+        // two requirements remain satisfied, so both refusals must identify the
+        // precise-FP32 requirement rather than a neighbouring math-mode rule.
+        let fast_functions =
+            NumericalRealization::new(MathMode::Safe, Fp32Functions::Fast, FpContract::Off);
+        assert!(matches!(
+            metal_compile_request(&unit, OptimizationLevel::Default, fast_functions),
+            Err(MetalAssemblyError::UnsatisfiedNumericalRequirement {
+                requirement: tiler_metal::record::MetalNumericalRequirement::PreciseFp32Functions,
+            }),
+        ));
+        let fast_request = CompileRequest::new(
+            unit.source(),
+            super::compile_target(*unit.target()).expect("the emitted target is valid"),
+            OptimizationLevel::Default,
+            fast_functions,
+        );
+        let fast_prepared = toolchain(&directory)
+            .prepare(&fast_request)
+            .expect("the deliberately mismatched elementary request prepares");
+        assert!(matches!(
+            prepare_metal_payload(&unit, fast_prepared),
+            Err(MetalAssemblyError::UnsatisfiedNumericalRequirement {
+                requirement: tiler_metal::record::MetalNumericalRequirement::PreciseFp32Functions,
+            }),
+        ));
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn preparation_refuses_an_unrealizable_emitted_unit() {
         let directory = scratch("prepared-numerical-gap");
-        let unit =
-            arithmetic_unit_with_subnormal_arithmetic(MetalSubnormalArithmetic::FlushesToZero {
+        let unit = f32_unit_with(
+            MetalSubnormalArithmetic::FlushesToZero {
                 zero_sign: MetalFlushedZeroSign::PreservesSign,
-            });
+            },
+            scale_then_bias_expression(1.0_f32.to_bits(), 0.0_f32.to_bits()),
+        );
         let request = CompileRequest::new(
             unit.source(),
             super::compile_target(*unit.target()).expect("the emitted target is valid"),
