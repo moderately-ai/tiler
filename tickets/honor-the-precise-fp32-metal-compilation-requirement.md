@@ -1,7 +1,7 @@
 ---
 id: honor-the-precise-fp32-metal-compilation-requirement
 title: Honor the precise FP32 Metal compilation requirement
-status: todo
+status: in-progress
 priority: p0
 dependencies: []
 related: [decide-the-tiler-metal-public-facade-surface]
@@ -9,6 +9,9 @@ scopes: [implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: worker-precise-fp32
+lease_expires_at: 1786979470
 ---
 ## User-visible outcome
 

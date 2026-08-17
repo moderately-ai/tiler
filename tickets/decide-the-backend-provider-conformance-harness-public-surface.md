@@ -1,7 +1,7 @@
 ---
 id: decide-the-backend-provider-conformance-harness-public-surface
 title: Decide the backend-provider conformance harness public surface
-status: todo
+status: in-progress
 priority: p1
 dependencies: [exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio]
 related: [publish-the-backend-provider-conformance-suite, audit-backend-authoring-against-all-thirteen-responsibilities, specify-the-consumer-neutral-backend-provider-composition-contract, make-explain-dispositions-assertable-by-a-conformance-suite]
@@ -9,6 +9,9 @@ scopes: [implementation/conformance, contracts/foundation, contracts/decisions, 
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, needs-tom, public-boundary, backend-providers, conformance]
+claimed_from: todo
+assignee: worker-conformance-facade
+lease_expires_at: 1786979471
 ---
 ## User-visible outcome
 
