@@ -14,7 +14,7 @@ Updated 2026-08-17 after the repaired source-bound live-row-major packet passed 
 
 ## 2. Atomic subgroup realization surface — accepted
 
-- Tickets: `accept-the-atomic-subgroup-realization-surface` (`p1`, `awaiting-decision`) and `minimize-and-prove-the-atomic-subgroup-public-surface-before-acceptance`.
+- Tickets: `accept-the-atomic-subgroup-realization-surface` and `minimize-and-prove-the-atomic-subgroup-public-surface-before-acceptance` (both `p1`, both `done`).
 - Packet evidence: the exact-surface repair and independent source review landed. A fresh read-only audit at `67fc9cac` found no source drift and one ticket-only identity imprecision, now repaired: both descriptors encode phase, authority, and validity, while only the complete declaration encodes the structured source and the checked descriptor deliberately excludes source identity. Focused IR, compiler, external-API, and UI populations remain green.
 - Accepted 2026-08-14 by Tom in the live Codex conversation: the exact minimized surface at `efa83d9d8ac01de35091fd2dd2b47064dd89c524`, including its explicit unsupported population and reopening triggers.
 - Release trigger: none. The accepted implementation/evidence already landed; the decision ticket is terminal.
