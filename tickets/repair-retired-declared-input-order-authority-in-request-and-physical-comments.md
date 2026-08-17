@@ -1,7 +1,7 @@
 ---
 id: repair-retired-declared-input-order-authority-in-request-and-physical-comments
 title: Repair retired declared-input ordering authority in request and physical comments
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [repair-retired-input-ordinal-claims-in-compiler-pipeline-tests, repair-fieldless-tensor-role-documentation-after-access-ordinal-reconciliation, decide-the-canonical-staged-pass-access-spelling-for-coincident-rms-operands]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [defect, documentation, access-ordinal]
+claimed_from: todo
+assignee: worker-declared-input-prose
+lease_expires_at: 1786966365
 ---
 ## User-visible outcome
 
