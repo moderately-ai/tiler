@@ -1,7 +1,7 @@
 ---
 id: calibrate-the-physical-frontier-provider-and-outcome-budgets
 title: Calibrate the physical-frontier provider and raw-outcome budgets
-status: todo
+status: deferred
 priority: p1
 dependencies: [decide-whether-the-implementation-frontier-owes-a-retention-budget, measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro, decide-how-explain-capacity-bounds-active-physical-provider-populations, decide-the-truthful-public-class-for-complete-explain-capacity-refusals, implement-the-truthful-explain-capacity-budget-refusal, prove-the-truthful-explain-capacity-budget-refusal-boundary]
 related: [replace-provider-offer-with-a-host-bounded-frontier-sink]
@@ -100,7 +100,7 @@ The assessment column is independently observed at proposal-loop entry. A provid
 
 **Nondominated — request-scoped 1,024.** It admits governed plus two active installed specialists: `304 + 2 × 272 = 848`, headroom 176. It bounds host work more strictly and intentionally refuses three specialists at 1,120. Strongest counterargument: no accepted policy says two is the maximum ordinary active population. Reversing evidence is a named three-specialist consumer or an accepted policy separating many installed identities from at most two active answerers.
 
-**Eliminated under current authorities — request-scoped 16,384.** Under the separate 32-provider candidate, 31 installed specialists would arithmetically produce `304 + 31 × 272 = 8,736`, headroom 7,648. The exact idle-M3 public run does not reach that population: it refuses on the first target after 527 installed-provider outcomes. A fixed one-target control succeeds through six specialists and first fails at seven with `compiler-failure:explain-detail-capacity` at record ordinal 2,257. `ExplainWriter::push` has an independent one-MiB canonical detail-byte ceiling, so raw 16,384 alone cannot support its named population. Full-provider activity is unevaluable only as a composite option after [`decide-how-explain-capacity-bounds-active-physical-provider-populations`](decide-how-explain-capacity-bounds-active-physical-provider-populations.md) deliberately retains, widens, or compacts that complete-explain authority.
+**Eliminated under current authorities — request-scoped 16,384.** Under the separate 32-provider candidate, 31 installed specialists would arithmetically produce `304 + 31 × 272 = 8,736`, headroom 7,648. The exact idle-M3 public run does not reach that population: it refuses on the first target after 527 installed-provider outcomes. A fixed one-target control succeeds through six specialists and first fails at seven with `compiler-failure:explain-detail-capacity` at record ordinal 2,257. The current public class truthfully reports `BudgetExhausted { resource: ExplainDetailCanonicalBytes, limit: 1048576, reported: 1048698 }`. `ExplainWriter::push`, anchor `let capacity = if terminal`, has an independent one-MiB canonical detail-byte ceiling, so raw 16,384 alone cannot support its named population. [`decide-how-explain-capacity-bounds-active-physical-provider-populations`](decide-how-explain-capacity-bounds-active-physical-provider-populations.md) retains both explain ceilings and promises no numeric active-provider cardinality; full-provider activity is a deferred expansion rather than a current support requirement.
 
 **Not material yet — 2,048, 4,096, 8,192.** They cover at most 6, 13, and 29 installed specialists. Six is also the last successful active-specialist count for this exact one-target subject under the current explain byte ceiling, but an incidental implementation boundary is not an accepted support population. No contract, ticket outcome, or consumer names 6, 13, or 29; choosing one would still invent policy. A named consumer population makes the corresponding point material and reopens this enumeration.
 
@@ -108,7 +108,7 @@ The assessment column is independently observed at proposal-loop entry. A provid
 
 The raw-budget frontier now has one conditional survivor: `1,024`, only if Tom explicitly chooses two active specialists as the supported population. The measurement supplies no such policy, so it is not accepted by this ticket. A future full-provider candidate is a composite decision, not `16,384` alone. Whichever value is accepted directly changes the compiler-internal canonical request/evidence subject and explain request qualifier. Budget bytes do not directly enter plan, artifact, or cache identity; those move only indirectly if the changed bound changes selected packaged content. No public surface or schema is added by this census; the sink stays a labelled draft.
 
-**Graph safety.** The truthful-classification decision is not sufficient evidence by itself. Before that decision closes, it must create the exact accepted implementation and regression/evidence tickets and add this calibration as a hard dependent of both. This ticket must remain blocked until the false public `InvalidCompilerOutput` path is removed or made unreachable and the required public/evidence regression is complete.
+**Graph safety — current.** The truthful-classification decision, exact implementation, and public/evidence regression are all `done`; the earlier false `InvalidCompilerOutput` blocker is closed. The idle-M3 measurement is also complete and needs no rerun. What still blocks an exact raw value is policy rather than evidence: no consumer or accepted contract names two, six, 31, or another active-specialist population. This ticket is therefore deferred until such an authority exists, rather than left apparently ready to manufacture one.
 
 ## Idle-M3 request-wide measurement
 
@@ -139,3 +139,13 @@ Assertions stayed unchanged while each subject was perturbed:
 - raw/annotated custody: `raw timing artifact does not match generated record` and `annotated measurement fields differ from generated record`.
 
 The check reaches the request-wide subject: the target-count perturbation returns 15 target slots and fails before any arithmetic assertion can mask the omission.
+
+## Current graph disposition — 2026-08-16
+
+The exact-current explain policy retains both ceilings with no numeric active-provider guarantee. That answer eliminates 16,384 as a standalone full-activity value and leaves 1,024 conditional on a two-specialist policy nobody has accepted. No other power becomes material merely because it is between them. This ticket remains the correct owner for a future value, but it has no current decision to make and no production edit to authorize.
+
+The retained 2026-08-14 M3 record, custody verifier, and negative controls remain live evidence. The separate measurement ticket has completed its outcome and no longer needs this decision as a prerequisite. The labelled-draft sink remains held until this ticket's trigger fires and an exact request-wide value survives a fresh current-base audit.
+
+## Trigger check log
+
+- **2026-08-16 — not fired.** `rg -n -i 'active specialist|active-provider|full (32|provider)|31 (installed|active)|two active' tickets docs --glob '*.md'` finds the numeric populations only in this calibration family, the explain-capacity decision/conditional experiment, and implementation non-goals; no consumer or accepted support contract names one. Trigger when a named consumer or accepted contract states an active-provider population whose request-wide raw outcomes must be supported. Re-audit current provider, candidate, target, explain, runtime/RSS, request-identity, and partial-output authorities before selecting a value.

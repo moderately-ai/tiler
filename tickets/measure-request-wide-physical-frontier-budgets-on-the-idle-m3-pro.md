@@ -3,7 +3,7 @@ id: measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro
 title: Measure request-wide physical-frontier budgets on the idle M3 Pro
 status: todo
 priority: p1
-dependencies: [decide-how-explain-capacity-bounds-active-physical-provider-populations]
+dependencies: []
 related: [calibrate-the-physical-frontier-provider-and-outcome-budgets]
 scopes: [research/program-planning]
 shared_scopes: [project/tickets]
@@ -104,3 +104,11 @@ All six closing-condition perturbations ran at exact executable evidence commit 
 - `full-limit-population`: `FAIL request-full-provider-limit-calculation expected=16384 observed=8192`.
 
 The exact [green baseline log](../spikes/program-planning/physical-frontier-budget-calibration/results/2026-08-14-request-wide-macos-27.0-m3-pro.baselines.txt) records eight spike custody/boundary tests, the focused compiler census, all 42 public spike census checks, and the retained evidence verifier passing after restoration.
+
+## Current-base correction and terminal readiness — 2026-08-16
+
+The measurement above remains dated evidence from executable `d086fe9953a09a1a8a64dbd2353e9ded78ef18e6`; its retained 31-specialist row truthfully records the historical class and subject that executable produced. It is not the current public classification authority. At exact current base `91e6bb23dac594c88e0cda237fb3833283e8082d`, `ExplainWriter::push` uses anchor `let capacity = if terminal`, and the same seven-specialist public subject reports `BudgetExhausted { resource: ExplainDetailCanonicalBytes, limit: 1048576, reported: 1048698 }` with terminal subject `f10d1b8bfd323115`. The accepted implementation preserves the same refusal point, complete-or-refused trace, and request-wide atomicity; it changes no retained timing/RSS observation.
+
+The current checkout's custody verifier again returned `PASS custody evidence`, reparsing all 2,250 ordered durations and all 45 RSS child records. The three hashes remain `ec3abc4ef90acb0d0e3e8a53f355f86a172ac2c2fce5a442310172b80b376c41`, `ebfb9015623fef7da7e9cfc7c6420cf3f5cd8faa245761e2e28d7f500d2b44ce`, and `8d8146bed7f0fa6e3d6a1feaed1cd2b4e5e9fea16721bd7ef50a44c26eb9cf78`. No new M3 timing was run.
+
+Every closing condition is satisfied and no policy choice can change the historical observations. The dependency on the explain-capacity policy is removed so the graph does not imply a rerun; terminal status is left to the coordinator because this worker is not authorized to close tickets.

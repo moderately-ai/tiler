@@ -1,7 +1,7 @@
 ---
 id: measure-complete-explain-demand-and-lossless-compaction-for-full-physical-provider-activity
 title: Measure complete explain demand and lossless compaction for full physical-provider activity
-status: todo
+status: deferred
 priority: p1
 dependencies: [decide-how-explain-capacity-bounds-active-physical-provider-populations]
 related: [decide-how-explain-capacity-bounds-active-physical-provider-populations, calibrate-the-physical-frontier-provider-and-outcome-budgets]
@@ -13,7 +13,7 @@ tags: [optimizer, budgets, explain, measurement]
 
 ## Dispatch condition
 
-Do not dispatch merely because this ticket exists. Tom must first make full activity across the governed provider plus all 31 installed physical-provider slots a named support requirement through [`decide-how-explain-capacity-bounds-active-physical-provider-populations`](decide-how-explain-capacity-bounds-active-physical-provider-populations.md). If he intentionally leaves that population unsupported, close this ticket without running it.
+Do not dispatch merely because this ticket exists. A named consumer or accepted support contract must first require an active-provider population that the current complete-or-refused explain policy does not guarantee. [`decide-how-explain-capacity-bounds-active-physical-provider-populations`](decide-how-explain-capacity-bounds-active-physical-provider-populations.md) retains both ceilings with no numeric guarantee and does not name governed plus all 31 installed slots as a current requirement. If a future trigger names a smaller or differently structured population, repair this ticket's subject before dispatch rather than silently retaining 31.
 
 ## Outcome
 
@@ -66,3 +66,7 @@ Only after Tom accepts one production option create:
 2. `remeasure-accepted-explain-capacity-change-on-the-idle-m3-pro` depending on that implementation.
 
 [`calibrate-the-physical-frontier-provider-and-outcome-budgets`](calibrate-the-physical-frontier-provider-and-outcome-budgets.md) must depend on the accepted remeasurement before it selects or lands a raw-outcome value.
+
+## Trigger check log
+
+- **2026-08-16 — not fired.** `rg -n -i 'active specialist|active-provider|full (32|provider)|31 (installed|active)|two active' tickets docs --glob '*.md'` finds the numeric populations only in the calibration/decision records and implementation non-goals; no consumer or accepted support contract names one. The current truthful public seven-specialist control remains `BudgetExhausted { resource: ExplainDetailCanonicalBytes, limit: 1048576, reported: 1048698 }`, which is the accepted fail-closed policy rather than an unclassified defect. Trigger when a named consumer or accepted contract requires a population the current ceilings do not guarantee; then re-audit the exact current subject, public class, schema, identities, host safety, and experiment contour before running anything.
