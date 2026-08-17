@@ -2058,6 +2058,8 @@ pub(super) const fn element_type_tag(element_type: KernelType) -> u8 {
         // Appended: every earlier tag keeps its value, so no artifact the
         // earlier vocabulary could encode maps to different bytes.
         KernelType::Bf16 => 0x06,
+        // Appended: every earlier artifact element-type byte remains exact.
+        KernelType::U32 => 0x07,
     }
 }
 
@@ -2069,6 +2071,7 @@ pub(super) const fn element_type_from_tag(tag: u8) -> Option<KernelType> {
         0x04 => Some(KernelType::U8),
         0x05 => Some(KernelType::I32),
         0x06 => Some(KernelType::Bf16),
+        0x07 => Some(KernelType::U32),
         _ => None,
     }
 }
@@ -2079,6 +2082,7 @@ pub(super) const fn storage_scalar_tag(storage_scalar: StorageScalar) -> u8 {
         StorageScalar::F32 => 0x02,
         // Appended, for the reason `element_type_tag` states.
         StorageScalar::Bf16 => 0x03,
+        StorageScalar::U32 => 0x04,
     }
 }
 
@@ -2087,6 +2091,7 @@ pub(super) const fn storage_scalar_from_tag(tag: u8) -> Option<StorageScalar> {
         0x01 => Some(StorageScalar::U8),
         0x02 => Some(StorageScalar::F32),
         0x03 => Some(StorageScalar::Bf16),
+        0x04 => Some(StorageScalar::U32),
         _ => None,
     }
 }

@@ -1407,14 +1407,22 @@ fn every_governed_tag_table_round_trips() {
     use tiler_ir::kernel::{AddressSpace, BufferAccess, KernelType};
     use tiler_ir::program::{StorageScalar, ValueRole};
 
-    for value in [
+    const ELEMENT_TYPES: [KernelType; variant_count::<KernelType>()] = [
         KernelType::Bool,
         KernelType::Index,
         KernelType::F32,
         KernelType::U8,
         KernelType::I32,
         KernelType::Bf16,
-    ] {
+        KernelType::U32,
+    ];
+    const STORAGE_SCALARS: [StorageScalar; variant_count::<StorageScalar>()] = [
+        StorageScalar::U8,
+        StorageScalar::F32,
+        StorageScalar::Bf16,
+        StorageScalar::U32,
+    ];
+    for value in ELEMENT_TYPES {
         // The wildcard-free `match` is what keeps the array above honest. A bare
         // list would keep passing while covering one fewer variant than the
         // vocabulary has, which is the opposite of the exhaustive round trip
@@ -1425,7 +1433,8 @@ fn every_governed_tag_table_round_trips() {
             | KernelType::F32
             | KernelType::U8
             | KernelType::I32
-            | KernelType::Bf16 => {}
+            | KernelType::Bf16
+            | KernelType::U32 => {}
         }
         assert_eq!(element_type_from_tag(element_type_tag(value)), Some(value),);
     }
@@ -1435,9 +1444,10 @@ fn every_governed_tag_table_round_trips() {
     assert_eq!(element_type_tag(KernelType::U8), 0x04);
     assert_eq!(element_type_tag(KernelType::I32), 0x05);
     assert_eq!(element_type_tag(KernelType::Bf16), 0x06);
-    for value in [StorageScalar::U8, StorageScalar::F32, StorageScalar::Bf16] {
+    assert_eq!(element_type_tag(KernelType::U32), 0x07);
+    for value in STORAGE_SCALARS {
         match value {
-            StorageScalar::U8 | StorageScalar::F32 | StorageScalar::Bf16 => {}
+            StorageScalar::U8 | StorageScalar::F32 | StorageScalar::Bf16 | StorageScalar::U32 => {}
         }
         assert_eq!(
             storage_scalar_from_tag(storage_scalar_tag(value)),
@@ -1447,6 +1457,7 @@ fn every_governed_tag_table_round_trips() {
     assert_eq!(storage_scalar_tag(StorageScalar::U8), 0x01);
     assert_eq!(storage_scalar_tag(StorageScalar::F32), 0x02);
     assert_eq!(storage_scalar_tag(StorageScalar::Bf16), 0x03);
+    assert_eq!(storage_scalar_tag(StorageScalar::U32), 0x04);
     for value in [
         AddressSpace::Device,
         AddressSpace::Workgroup,
@@ -3843,6 +3854,85 @@ fn program_input_binding(envelope: &mut ArtifactEnvelope) -> &mut super::super::
     binding
 }
 
+/// Moves the fixture's program input onto the exact unsigned 32-bit pair.
+fn u32_input_envelope() -> ArtifactEnvelope {
+    let mut envelope = envelope_of(&default_artifact());
+    for component in &mut envelope.inputs[0].components {
+        component.storage_scalar = StorageScalar::U32;
+        component.access_type = KernelType::U32;
+    }
+    let binding = program_input_binding(&mut envelope);
+    binding.storage_scalar = StorageScalar::U32;
+    binding.access_type = KernelType::U32;
+    envelope
+}
+
+/// The exact U32/U32 pair survives the neutral artifact boundary.
+#[test]
+fn a_u32_carrier_round_trips_only_through_its_u32_access_type() {
+    let envelope = u32_input_envelope();
+    let bytes = encode(&envelope).expect("the exact U32 pair encodes");
+    let decoded = decode(&bytes).expect("the exact U32 pair decodes");
+    assert_eq!(decoded, envelope);
+    let component = &decoded.inputs[0].components[0];
+    assert_eq!(component.storage_scalar, StorageScalar::U32);
+    assert_eq!(component.access_type, KernelType::U32);
+    let mut decoded = decoded;
+    let binding = program_input_binding(&mut decoded);
+    assert_eq!(binding.storage_scalar, StorageScalar::U32);
+    assert_eq!(binding.access_type, KernelType::U32);
+}
+
+/// An equal-width signed access is not an alias for unsigned storage.
+#[test]
+fn u32_storage_read_through_i32_is_refused_without_reinterpretation() {
+    let mut envelope = u32_input_envelope();
+    program_input_binding(&mut envelope).access_type = KernelType::I32;
+    let bytes = encode(&envelope).expect("the forged envelope still encodes");
+    assert_eq!(
+        decode(&bytes),
+        Err(ArtifactCodecError::BindingAccessTypeMismatch),
+    );
+}
+
+/// An equal-width floating access is not an alias for unsigned storage.
+#[test]
+fn u32_storage_read_through_f32_is_refused_without_reinterpretation() {
+    let mut envelope = u32_input_envelope();
+    program_input_binding(&mut envelope).access_type = KernelType::F32;
+    let bytes = encode(&envelope).expect("the forged envelope still encodes");
+    assert_eq!(
+        decode(&bytes),
+        Err(ArtifactCodecError::BindingAccessTypeMismatch),
+    );
+}
+
+/// A binding cannot substitute an equal-width F32 carrier for a U32 component.
+#[test]
+fn a_u32_component_bound_from_f32_storage_is_refused_by_component() {
+    let mut envelope = u32_input_envelope();
+    let binding = program_input_binding(&mut envelope);
+    binding.storage_scalar = StorageScalar::F32;
+    binding.access_type = KernelType::F32;
+    let bytes = encode(&envelope).expect("the forged envelope still encodes");
+    assert_eq!(
+        decode(&bytes),
+        Err(ArtifactCodecError::BindingComponentMismatch)
+    );
+}
+
+/// Bit-packed storage remains the U8-only carrier profile.
+#[test]
+fn bit_packed_u32_storage_is_refused() {
+    let mut envelope = u32_input_envelope();
+    program_input_binding(&mut envelope).encoding = StorageEncoding::PACKED_U4_LSB_ZERO_TAIL;
+    let bytes = encode(&envelope).expect("the forged envelope still encodes");
+    assert_eq!(
+        decode(&bytes),
+        Err(ArtifactCodecError::BindingAccessTypeMismatch),
+    );
+}
+
 /// Byte positions at which the carrier-only fixture pair's *envelopes* differ.
 ///
 /// **Measured, and it is exactly the arithmetic with no digest byte
@@ -4092,8 +4182,8 @@ fn a_producer_built_bf16_artifact_round_trips_and_re_derives_its_identity() {
 /// provides and every digest and identity check passes on the way there.
 #[test]
 fn an_unassigned_carrier_or_access_tag_is_refused_before_its_width_is_used() {
-    const UNASSIGNED_CARRIER: u8 = 0x04;
-    const UNASSIGNED_ACCESS: u8 = 0x07;
+    const UNASSIGNED_CARRIER: u8 = 0x05;
+    const UNASSIGNED_ACCESS: u8 = 0x08;
 
     let bytes = encode(&bf16_input_envelope()).expect("the bf16 envelope encodes");
     decode(&bytes).expect("the unperturbed bf16 envelope decodes");

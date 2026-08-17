@@ -446,6 +446,7 @@ fn check_binding_access(
                     StorageScalar::U8 => KernelType::U8,
                     StorageScalar::F32 => KernelType::F32,
                     StorageScalar::Bf16 => KernelType::Bf16,
+                    StorageScalar::U32 => KernelType::U32,
                 }
         }
         StorageEncoding::BitPacked(_) => {

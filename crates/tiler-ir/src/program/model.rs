@@ -348,11 +348,17 @@ pub enum StorageScalar {
     /// A bfloat16 carrier: binary32's sign and exponent over a seven-bit
     /// significand, in two bytes.
     ///
-    /// Admitted as a *carrier*, not as a target capability. Nothing in this
-    /// workspace produces a `Bf16`-carried boundary value yet; the carrier
-    /// exists so that every total map over this vocabulary states what it means
-    /// or refuses it by name.
+    /// Admitted as a *carrier*, not as a target capability. A
+    /// [`crate::schedule::ScalarProgram::PointwiseBf16`] region now produces a
+    /// `Bf16`-carried boundary value, while target support remains an
+    /// independently checked profile fact.
     Bf16,
+    /// An unsigned 32-bit integer carrier.
+    ///
+    /// This is physical storage and not an integer-arithmetic capability. Its
+    /// natural access type is the exact-width [`KernelType::U32`], while
+    /// arithmetic, conversion, and backend support remain separate decisions.
+    U32,
 }
 
 impl StorageScalar {
@@ -365,6 +371,9 @@ impl StorageScalar {
             // program identity domain does not step. No program the earlier
             // vocabulary could express carries `0x03` here.
             Self::Bf16 => 0x03,
+            // Appended under the same compatibility rule: every earlier tag
+            // and field position remains byte-identical.
+            Self::U32 => 0x04,
         }
     }
 
@@ -383,7 +392,7 @@ impl StorageScalar {
     pub const fn byte_width(self) -> u64 {
         match self {
             Self::U8 => 1,
-            Self::F32 => 4,
+            Self::F32 | Self::U32 => 4,
             Self::Bf16 => 2,
         }
     }
@@ -393,6 +402,7 @@ impl StorageScalar {
             Self::U8 => KernelType::U8,
             Self::F32 => KernelType::F32,
             Self::Bf16 => KernelType::Bf16,
+            Self::U32 => KernelType::U32,
         }
     }
 }
@@ -731,7 +741,7 @@ pub(super) const fn element_bytes(element_type: KernelType) -> u64 {
         KernelType::Bool | KernelType::U8 => 1,
         KernelType::Bf16 => 2,
         KernelType::Index => 8,
-        KernelType::F32 | KernelType::I32 => 4,
+        KernelType::F32 | KernelType::I32 | KernelType::U32 => 4,
     }
 }
 
@@ -1911,6 +1921,8 @@ fn push_element_type(bytes: &mut Vec<u8>, element_type: KernelType) {
         // Appended, so every program the earlier vocabulary could express keeps
         // its exact bytes and the program identity domain does not step.
         KernelType::Bf16 => 0x06,
+        // Appended, so every earlier program element-type byte remains exact.
+        KernelType::U32 => 0x07,
     });
 }
 
@@ -2612,11 +2624,16 @@ mod injectivity_tests {
         KernelType::U8,
         KernelType::I32,
         KernelType::Bf16,
+        KernelType::U32,
     ];
 
     /// Every physical storage carrier.
-    const STORAGE_SCALARS: [StorageScalar; variant_count::<StorageScalar>()] =
-        [StorageScalar::U8, StorageScalar::F32, StorageScalar::Bf16];
+    const STORAGE_SCALARS: [StorageScalar; variant_count::<StorageScalar>()] = [
+        StorageScalar::U8,
+        StorageScalar::F32,
+        StorageScalar::Bf16,
+        StorageScalar::U32,
+    ];
 
     /// Every ordering of consecutive packed elements inside a byte.
     const BIT_ORDERS: [PackedBitOrder; variant_count::<PackedBitOrder>()] = [
@@ -2627,10 +2644,10 @@ mod injectivity_tests {
     /// Every interpretation of the unused bits after the final packed element.
     const TAIL_RULES: [PackedTailRule; variant_count::<PackedTailRule>()] = [PackedTailRule::Zero];
 
-    /// The element encoder is injective over all six kernel types.
+    /// The element encoder is injective over all seven kernel types.
     ///
     /// **Exhaustive finite evidence.** The vocabulary is closed and every
-    /// inhabitant is enumerated, so the six tags are proved pairwise distinct
+    /// inhabitant is enumerated, so the seven tags are proved pairwise distinct
     /// rather than read as distinct literals.
     ///
     /// This encoder restates the table `KernelType::tag` holds rather than
@@ -2639,19 +2656,44 @@ mod injectivity_tests {
     /// *these* bytes and not about the other table's.
     #[test]
     fn the_program_element_type_encoding_is_injective_over_its_whole_domain() {
-        assert_eq!(ELEMENT_TYPES.len(), 6);
+        assert_eq!(ELEMENT_TYPES.len(), 7);
         assert_injective_fixed_width(&ELEMENT_TYPES, 1, push_element_type);
+        let mut bytes = Vec::new();
+        for element_type in ELEMENT_TYPES {
+            push_element_type(&mut bytes, element_type);
+        }
+        assert_eq!(bytes, [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
     }
 
-    /// The storage-carrier encoder is injective over all three carriers.
+    /// The storage-carrier encoder is injective over all four carriers.
     ///
     /// Exhaustive finite evidence. A carrier decides a byte width, so two
     /// carriers sharing a tag would let one program's allocation sizes answer
     /// for another's.
     #[test]
     fn the_storage_scalar_encoding_is_injective_over_its_whole_domain() {
-        assert_eq!(STORAGE_SCALARS.len(), 3);
+        assert_eq!(STORAGE_SCALARS.len(), 4);
+        assert_eq!(STORAGE_SCALARS.map(StorageScalar::tag), [1, 2, 3, 4]);
         assert_injective_fixed_width(&STORAGE_SCALARS, 1, push_storage_scalar);
+        let mut bytes = Vec::new();
+        for scalar in STORAGE_SCALARS {
+            push_storage_scalar(&mut bytes, scalar);
+        }
+        assert_eq!(bytes, [0x01, 0x02, 0x03, 0x04]);
+    }
+
+    /// Every carrier has one exact-width natural access type.
+    #[test]
+    fn every_storage_scalar_has_its_exact_natural_access_type() {
+        for (scalar, access_type) in [
+            (StorageScalar::U8, KernelType::U8),
+            (StorageScalar::F32, KernelType::F32),
+            (StorageScalar::Bf16, KernelType::Bf16),
+            (StorageScalar::U32, KernelType::U32),
+        ] {
+            assert_eq!(scalar.natural_access_type(), access_type);
+            assert_eq!(scalar.byte_width(), super::element_bytes(access_type));
+        }
     }
 
     /// The storage-encoding encoder is injective over every constructible value.

@@ -998,23 +998,23 @@ fn builtin_parameter(builtin: Builtin) -> Result<&'static str, MetalEmitError> {
 /// refusing to create a pipeline for it. Emission is the same on both, which is
 /// exactly why the refusal cannot live here.
 ///
-/// **Every governed type now has a spelling, so the `Err` arm is currently
-/// vacant, and the signature stays fallible anyway.** This is the seam a
-/// widened `KernelType` lands on: the match is exhaustive over a vocabulary
-/// that is deliberately not `#[non_exhaustive]`, so adding `F16` or `F64` stops
-/// the build here, and the decision available at that point must include
-/// "refuse", which a total signature would have removed while the caller chain
-/// — `parameter_declaration`, `staging_declaration`,
+/// **`U32` is deliberately unspelled.** The type exists so a program input can
+/// retain its exact unsigned four-byte representation, but no admitted backend
+/// consumer produces a `U32`-typed kernel value. Emitting `uint` here would
+/// therefore assert an untested backend capability. The typed refusal is lifted
+/// only when such a consumer lands with direct emission evidence.
+///
+/// The signature stays fallible for that refusal and for future widenings. The
+/// match is exhaustive over a vocabulary that is deliberately not
+/// `#[non_exhaustive]`, so adding `F16` or `F64` stops the build here, and the
+/// decision available at that point must include "refuse", which a total
+/// signature would have removed while the caller chain —
+/// `parameter_declaration`, `staging_declaration`,
 /// [`KernelEmitter::value_type`], [`KernelEmitter::emit_convert`], and the
 /// translation-unit header — was rewritten to drop the propagation.
 /// [`MetalEmitError::UnsupportedValueType`] is kept for the same reason, and
-/// `the_unspelled_value_type_refusal_keeps_its_rule_and_rendering` exercises its
-/// identifier and rendering directly, so the widening that reaches for it finds
-/// a surface something still checks.
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "the Err arm is the seam a widened KernelType must land on; see above"
-)]
+/// `the_u32_value_type_refuses_with_its_exact_name` exercises the direct path,
+/// identifier, and rendering.
 pub(crate) const fn msl_type(value_type: KernelType) -> Result<&'static str, MetalEmitError> {
     match value_type {
         KernelType::Bool => Ok("bool"),
@@ -1023,6 +1023,9 @@ pub(crate) const fn msl_type(value_type: KernelType) -> Result<&'static str, Met
         KernelType::Index => Ok("uint64_t"),
         KernelType::F32 => Ok("float"),
         KernelType::Bf16 => Ok("bfloat"),
+        KernelType::U32 => Err(MetalEmitError::UnsupportedValueType {
+            value_type: KernelType::U32,
+        }),
     }
 }
 

@@ -10,6 +10,7 @@ use tiler_ir::shape::{Axis, BindingSource, FactProvenance, ShapeSymbol, SymbolSc
 
 use super::{
     BoundRegion, BoundResultAxis, DeclaredAxis, REGION_SCOPE, RegionBindError, RegionDeclarations,
+    storage_scalar_path,
 };
 
 /// A span a test can construct and assert on.
@@ -533,5 +534,49 @@ fn the_single_operand_facts_are_what_the_facade_fixture_compiles() {
     assert!(
         source.contains(&facts),
         "the fixture no longer contains the text this emitter produces.\n\nemitted:\n{facts}\n",
+    );
+}
+
+/// Every storage carrier has one exact facade path, including U32.
+#[test]
+fn every_storage_scalar_has_an_exact_frontend_spelling() {
+    const SCALARS: [StorageScalar; 4] = [
+        StorageScalar::U8,
+        StorageScalar::F32,
+        StorageScalar::Bf16,
+        StorageScalar::U32,
+    ];
+    for scalar in SCALARS {
+        let expected = match scalar {
+            StorageScalar::U8 => "::tiler::value::StorageScalar::U8",
+            StorageScalar::F32 => "::tiler::value::StorageScalar::F32",
+            StorageScalar::Bf16 => "::tiler::value::StorageScalar::Bf16",
+            StorageScalar::U32 => "::tiler::value::StorageScalar::U32",
+        };
+        assert_eq!(storage_scalar_path(scalar), expected);
+    }
+
+    let mut region = RegionDeclarations::new(REGION);
+    region.declare_symbol("n", At(1)).unwrap();
+    region
+        .operand(
+            input("token_ids"),
+            StorageScalar::U32,
+            vec![symbol_axis("n", 2)],
+            At(2),
+        )
+        .unwrap();
+    region
+        .result(
+            output("copied_ids"),
+            StorageScalar::U32,
+            vec![symbol_axis("n", 3)],
+            At(3),
+        )
+        .unwrap();
+    let facts = region.bind().expect("the U32 region binds").facts_source();
+    assert!(
+        facts.contains("::tiler::value::StorageScalar::U32"),
+        "the generated facts must carry the exact U32 facade path: {facts}",
     );
 }

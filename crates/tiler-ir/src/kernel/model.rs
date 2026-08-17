@@ -94,7 +94,8 @@ use super::handles::{
 /// The bounded profile resolves exactly the roles the scheduled-region IR can
 /// require: a control predicate, an unsigned byte carrier, an unsigned 64-bit
 /// index role used for element offsets and induction variables, a signed 32-bit
-/// computation type, and the `f32` and `bf16` element types. Widening this
+/// computation type, an exact-width unsigned 32-bit storage access, and the
+/// `f32` and `bf16` element types. Widening this
 /// vocabulary is a versioned extension, not an open type universe.
 ///
 /// **Deliberately not `#[non_exhaustive]`, and this one is mandatory rather
@@ -138,6 +139,12 @@ pub enum KernelType {
     /// target family, for conversion or contraction, or through a complete
     /// `compile()`/artifact/routing path.
     Bf16,
+    /// An unsigned 32-bit storage access and SSA value.
+    ///
+    /// This exact-width type prevents a four-byte unsigned program input from
+    /// being reinterpreted as signed [`Self::I32`] or widened to [`Self::Index`].
+    /// It currently has no arithmetic, conversion, or backend producer.
+    U32,
 }
 
 impl KernelType {
@@ -154,6 +161,8 @@ impl KernelType {
             // domain does not step. No kernel the earlier vocabulary could
             // express contains `0x06`.
             Self::Bf16 => 0x06,
+            // Appended: every earlier kernel type keeps its exact identity byte.
+            Self::U32 => 0x07,
         }
     }
 }
@@ -171,11 +180,10 @@ impl IndexArithmetic {
     /// instead of deriving it again from KIR. Only the index role yields a
     /// requirement, and a type answering `None` is
     /// making the narrow claim that it needs no *index* arithmetic, not that it
-    /// needs no target capability at all. [`KernelType::Bf16`] is where the
-    /// distinction bites: whether a target can compute in bfloat16 is a separate
-    /// profile fact resolved where that arithmetic is proposed, and answering it
-    /// from this classifier would read a capability out of a vocabulary that
-    /// does not carry one.
+    /// needs no target capability at all. [`KernelType::Bf16`] and
+    /// [`KernelType::U32`] are where the distinction bites: target computation
+    /// support for either type is a separate fact, and the U32 storage-access
+    /// type is not the unsigned-64 coordinate role this classifier names.
     #[must_use]
     pub(crate) const fn of(value_type: KernelType) -> Option<Self> {
         match value_type {
@@ -184,7 +192,8 @@ impl IndexArithmetic {
             | KernelType::U8
             | KernelType::F32
             | KernelType::I32
-            | KernelType::Bf16 => None,
+            | KernelType::Bf16
+            | KernelType::U32 => None,
         }
     }
 }
@@ -205,6 +214,10 @@ const _: () = {
             Some(REGION_INDEX_ARITHMETIC)
         ),
         "the KIR index role and the scheduled region's coordinate arithmetic must agree",
+    );
+    assert!(
+        IndexArithmetic::of(KernelType::U32).is_none(),
+        "the U32 storage-access type must not acquire unsigned-64 index arithmetic",
     );
 };
 
@@ -2638,6 +2651,7 @@ mod injectivity_tests {
             KernelType::F32,
             KernelType::I32,
             KernelType::Bf16,
+            KernelType::U32,
         ];
         const SPACES: [AddressSpace; variant_count::<AddressSpace>()] = [
             AddressSpace::Device,
@@ -2685,6 +2699,7 @@ mod injectivity_tests {
             [IndexArithmetic::CompleteU64];
 
         assert_tag_table("KernelType::tag", &TYPES, KernelType::tag);
+        assert_eq!(TYPES.map(KernelType::tag), [1, 4, 2, 3, 5, 6, 7]);
         assert_tag_table("AddressSpace::tag", &SPACES, AddressSpace::tag);
         assert_tag_table("BufferAccess::tag", &ACCESSES, BufferAccess::tag);
         assert_tag_table("Builtin::tag", &BUILTINS, Builtin::tag);

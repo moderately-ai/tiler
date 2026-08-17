@@ -284,6 +284,43 @@ fn a_stored_scalar_the_region_did_not_declare_is_refused() {
     );
 }
 
+/// A U32 declaration is not satisfied by equal-width F32 storage.
+#[test]
+fn a_u32_operand_reported_as_f32_is_refused_without_reinterpretation() {
+    const U32_REGION: RegionFacts = RegionFacts {
+        operands: &[OperandFacts {
+            key: "token_ids",
+            storage_scalar: StorageScalar::U32,
+            extents: &[OperandExtent::Literal(7)],
+        }],
+        symbols: &[],
+        capabilities: &[],
+        result: ResultFacts {
+            key: "copied_ids",
+            storage_scalar: StorageScalar::U32,
+            axes: &[ResultAxis::Literal(7)],
+        },
+    };
+
+    let reported_f32 = wrap(Held::f32([7]));
+    assert_eq!(
+        bind_region::<Complete>(&U32_REGION, &[&reported_f32])
+            .expect_err("equal-width F32 storage is not U32 storage"),
+        BindError::StorageScalarMismatch {
+            input: "token_ids",
+            declared: StorageScalar::U32,
+            actual: StorageScalar::F32,
+        },
+    );
+
+    let exact_u32 = wrap(Held {
+        scalar: StorageScalar::U32,
+        extents: vec![7],
+        unreadable: false,
+    });
+    bind_region::<Complete>(&U32_REGION, &[&exact_u32]).expect("the exact U32 neighbour binds");
+}
+
 /// An adapter that declines a required capability refuses the region outright.
 ///
 /// Before any shape is read: a region an adapter cannot serve at all should not

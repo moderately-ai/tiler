@@ -264,14 +264,21 @@ mod tests {
         AlignmentGuarantee, AlignmentRequirement, ByteAlignment, ByteAlignmentError, StorageScalar,
     };
 
-    const CARRIERS: [StorageScalar; core::mem::variant_count::<StorageScalar>()] =
-        [StorageScalar::U8, StorageScalar::F32, StorageScalar::Bf16];
+    const CARRIERS: [StorageScalar; core::mem::variant_count::<StorageScalar>()] = [
+        StorageScalar::U8,
+        StorageScalar::F32,
+        StorageScalar::Bf16,
+        StorageScalar::U32,
+    ];
 
     #[test]
     fn every_storage_carrier_has_a_representable_alignment() {
         for scalar in CARRIERS {
             match scalar {
-                StorageScalar::U8 | StorageScalar::F32 | StorageScalar::Bf16 => {}
+                StorageScalar::U8
+                | StorageScalar::F32
+                | StorageScalar::Bf16
+                | StorageScalar::U32 => {}
             }
             let width = scalar.byte_width();
             assert!(

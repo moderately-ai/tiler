@@ -3118,30 +3118,29 @@ fn governed_types_map_to_their_metal_spellings() {
     assert_eq!(msl_type(KernelType::Bf16), Ok("bfloat"));
 }
 
-/// The unspelled-type refusal keeps its identifier and rendering while its arm
-/// is vacant.
+/// U32 keeps its exact name while Metal refuses to invent an untested spelling.
 ///
-/// Every governed `KernelType` now has an MSL spelling, so `msl_type` cannot
-/// currently return this — and that is a statement about today's vocabulary,
-/// not about the diagnostic. `KernelType` is deliberately not
-/// `#[non_exhaustive]`, so `F16` or `F64` stops the build at that match, and the
-/// decision available there has to include "refuse". Keeping the variant
-/// exercised means the widening that reaches for it finds a rule identifier and
-/// a rendering that already work, rather than a surface nothing has checked
-/// since BF16 stopped using it.
+/// The refusal is lifted only when an admitted backend consumer produces a
+/// U32-typed kernel value and brings direct emission evidence. Until then the
+/// exact carrier/access pair remains usable at the program and artifact layers
+/// without implying that this backend emits `uint`.
 #[test]
-fn the_unspelled_value_type_refusal_keeps_its_rule_and_rendering() {
-    let refusal = MetalEmitError::UnsupportedValueType {
-        value_type: KernelType::Bf16,
-    };
+fn the_u32_value_type_refuses_with_its_exact_name() {
+    let refusal = msl_type(KernelType::U32).expect_err("U32 has no Metal producer yet");
+    assert_eq!(
+        refusal,
+        MetalEmitError::UnsupportedValueType {
+            value_type: KernelType::U32,
+        },
+    );
     assert_eq!(refusal.rule(), "unsupported-value-type");
-    assert_eq!(refusal.to_string(), "unsupported-value-type: Bf16");
-    // The type it names is carried rather than formatted away, so a widened
-    // vocabulary can report which member was refused.
+    assert_eq!(refusal.to_string(), "unsupported-value-type: U32");
+    // The type it names is carried rather than formatted away or misreported as
+    // the neighbouring signed type.
     assert_ne!(
         refusal,
         MetalEmitError::UnsupportedValueType {
-            value_type: KernelType::F32,
+            value_type: KernelType::I32,
         },
     );
 }

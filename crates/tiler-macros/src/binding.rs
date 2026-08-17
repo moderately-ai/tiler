@@ -858,6 +858,7 @@ const fn storage_scalar_path(scalar: StorageScalar) -> &'static str {
         StorageScalar::U8 => "::tiler::value::StorageScalar::U8",
         StorageScalar::F32 => "::tiler::value::StorageScalar::F32",
         StorageScalar::Bf16 => "::tiler::value::StorageScalar::Bf16",
+        StorageScalar::U32 => "::tiler::value::StorageScalar::U32",
     }
 }
 

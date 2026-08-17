@@ -2054,15 +2054,23 @@ mod tests {
     /// six — legal as a byte count, impossible as an alignment — would otherwise
     /// first reach that panic from a construction site on the compile path.
     ///
-    /// The `match` is what keeps the list honest: it has no wildcard, so a widened
-    /// [`StorageScalar`] is an `E0004` here and the author has to extend the array
-    /// beside it. A bare array would keep passing while silently covering one
-    /// fewer variant than the vocabulary has.
+    /// `variant_count` sizes the census from [`StorageScalar`] itself, and the
+    /// match has no wildcard. A widening therefore cannot leave this population
+    /// one variant short while still reporting success.
     #[test]
     fn every_storage_carrier_has_a_representable_alignment() {
-        for scalar in [StorageScalar::U8, StorageScalar::F32, StorageScalar::Bf16] {
+        const CARRIERS: [StorageScalar; core::mem::variant_count::<StorageScalar>()] = [
+            StorageScalar::U8,
+            StorageScalar::F32,
+            StorageScalar::Bf16,
+            StorageScalar::U32,
+        ];
+        for scalar in CARRIERS {
             match scalar {
-                StorageScalar::U8 | StorageScalar::F32 | StorageScalar::Bf16 => {}
+                StorageScalar::U8
+                | StorageScalar::F32
+                | StorageScalar::Bf16
+                | StorageScalar::U32 => {}
             }
             let width = scalar.byte_width();
             assert!(
