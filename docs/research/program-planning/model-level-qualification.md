@@ -207,7 +207,7 @@ Claims are labelled **Fact** when traced to inspected source, primary documentat
 | --- | --- | --- |
 | 0 | N repeated executions of one artifact, same inputs, same device, against each other | "disagrees with itself" — needs no reference, and separates plan non-determinism from every reference disagreement below |
 | 1 | the four host computations against `host.tsv`, `rotary.tsv`, `mask.tsv` | the rotary table, the additive mask, the widened weight set, and the token IDs — all checkable in full and the cheapest rung |
-| 2 | the weight binding manifest against the pinned safetensors header | the `57! · 56!² · 28!⁴` shape-preserving permutation class that every Tiler check is indifferent to |
+| 2 | the weight binding manifest against the pinned safetensors header | the `57! · 56!³ · 28!³` shape-preserving permutation class that every Tiler check is indifferent to |
 | 3 | P1's `x0 [T, 1024]` against the reference's embedding output | the gather, including the consistently-wrong-index case |
 | 4 | per layer and per position: `h_out`, `k_rope`, `v_heads` against `hidden.tsv` and `cache.tsv` | 27 of the 28 layer executions, and the attention half from the MLP half within the failing one |
 | 5 | P3's logits against `positions.tsv` and `top32.tsv` | the final normalization and the vocabulary projection |

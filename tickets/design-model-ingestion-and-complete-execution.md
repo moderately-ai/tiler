@@ -97,7 +97,7 @@ Ten facts beyond L5's table, each with why moving it one layer breaks something 
 
 ### The permutation nothing refuses
 
-The checkpoint's 310 tensors fall into eight shape classes whose members are mutually interchangeable under every check in the stack: 57 `[1024]`, 56 `[1024, 1024]`, 56 `[128]`, 56 `[3072, 1024]`, 28 each of `[2048, 1024]`, `[1024, 2048]`, `[1024, 3072]`, and one `[151936, 1024]`. So `57! · 56!² · 28!⁴` bindings pass and one is right. This is not "unchecked" — the checks that exist all pass — and the named enforcement boundary is a consumer-side weight binding manifest under L1's manifested-by-digest discipline, placed there because a per-tensor digest in artifact identity would compile one artifact per checkpoint and a runtime-validated one is the same check by a longer route.
+The checkpoint's 310 tensors fall into eight shape classes whose members are mutually interchangeable under every check in the stack: 57 `[1024]`, 56 `[1024, 1024]`, 56 `[128]`, 56 `[3072, 1024]`, 28 each of `[2048, 1024]`, `[1024, 2048]`, `[1024, 3072]`, and one `[151936, 1024]`. So `57! · 56!³ · 28!³` bindings pass and one is right. This is not "unchecked" — the checks that exist all pass — and the named enforcement boundary is a consumer-side weight binding manifest under L1's manifested-by-digest discipline, placed there because a per-tensor digest in artifact identity would compile one artifact per checkpoint and a runtime-validated one is the same check by a longer route.
 
 ### Peak residency, the figure L1 deferred
 
