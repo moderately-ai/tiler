@@ -96,3 +96,7 @@ The dependency graph is corrected with the acceptance: the concrete partitioned-
 ## Closes when
 
 All construction and consumption sites are total over the new sum; missing, defaulted, and contradictory states fail closed; arithmetic records remain byte-for-byte or deliberately versioned; and independent subject perturbations prove every new discriminator and cross-check is load-bearing.
+
+## Current-base correction — 2026-08-17 at `783e9b5b743afafdf4957396dbcfdb2f4c34565c`
+
+The accepted semantic split remains authoritative, but two implementation premises above are historical rather than current. Schedule identity is now `tiler.schedule.v6\0`, not v5, after the accepted AccessOrdinal reconciliation; any partitioned-copy encoding must re-derive append-only compatibility against v6. More importantly, “exact names follow the source audit” is a real remaining public-boundary choice, not authorization for the schedule implementer to choose them: [`decide-the-partitioned-copy-scheduled-region-public-surface`](decide-the-partitioned-copy-scheduled-region-public-surface.md) owns the exact `RegionProgram`/copy-member construction, diagnostics, population, and identity spelling. This ticket still owns the accepted downstream `FloatingPoint | BitPreservingCopy` projection after that concrete schedule surface lands.
