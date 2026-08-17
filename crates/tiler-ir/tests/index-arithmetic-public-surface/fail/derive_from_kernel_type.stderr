@@ -1,0 +1,10 @@
+error[E0624]: associated function `of` is private
+ --> tests/index-arithmetic-public-surface/fail/derive_from_kernel_type.rs:5:30
+  |
+5 |     let _ = IndexArithmetic::of(KernelType::Index);
+  |                              ^^ private associated function
+  |
+ ::: src/kernel/model.rs
+  |
+  |     pub(crate) const fn of(value_type: KernelType) -> Option<Self> {
+  |     -------------------------------------------------------------- private associated function defined here

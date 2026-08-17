@@ -73,13 +73,14 @@
 //! so a reader finds
 //! it at the outcome rather than by inference.
 //!
-//! # Draft boundary
+//! # Accepted boundary
 //!
-//! Every public item here is a reviewed *draft* boundary under ADR 0074 §7 and
-//! ADR 0075, prepared under the tested-draft authorization recorded in
+//! Tom accepted this module's exact public surface under ADR 0075, with the
+//! acceptance provenance recorded in
 //! `tickets/carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit.md`.
-//! Its exact surface returns to Tom for acceptance before it is treated as
-//! accepted.
+//! The public map, refusal, and comparison expose the one-authority path; the
+//! raw SDK enumerator stays crate-private so an external caller cannot create a
+//! second device-comparison route.
 
 use core::fmt;
 use std::error::Error;
@@ -107,6 +108,14 @@ use crate::applicability::{MetalGpuFamily, MetalGpuFamilySupport};
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum AppleFamilyFloor {
     /// `MTLGPUFamilyApple3`, as the `64-bit integer math` row names it.
+    ///
+    /// ```compile_fail
+    /// use tiler_metal::direct_requirement::AppleFamilyFloor;
+    ///
+    /// // The raw SDK enumerator stays inside tiler-metal; external callers
+    /// // compare through evaluate_index_arithmetic instead.
+    /// let _ = AppleFamilyFloor::Apple3.apple_constant_value();
+    /// ```
     Apple3,
 }
 
@@ -122,8 +131,12 @@ impl AppleFamilyFloor {
     /// because that type is opaque by construction — its field is private
     /// precisely so nothing can mint an enumerator for a family
     /// [`MetalGpuFamily`] does not name, and this floor is exactly such a family.
+    ///
+    /// Crate-private because the normalized observation path is the sole
+    /// public device comparison: publishing the raw SDK value would let a
+    /// caller bypass that path and supply a second comparison authority.
     #[must_use]
-    pub const fn apple_constant_value(self) -> isize {
+    pub(crate) const fn apple_constant_value(self) -> isize {
         match self {
             Self::Apple3 => 1003,
         }

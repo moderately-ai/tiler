@@ -2010,9 +2010,9 @@ pub fn contributor_count(axes: &[Axis], access: &LogicalAccess) -> Result<u64, C
 ///
 /// The two levels are held together where they meet rather than by inspection:
 /// `crate::kernel::model` asserts at compile time that this constant is exactly
-/// what [`IndexArithmetic::of`] derives for the governed KIR index role, so a
-/// lowering that changed the index type without changing this would stop the
-/// build.
+/// what its crate-private KIR classifier derives for the governed index role,
+/// so a lowering that changed the index type without changing this would stop
+/// the build.
 pub(crate) const REGION_INDEX_ARITHMETIC: IndexArithmetic = IndexArithmetic::CompleteU64;
 
 /// Derives the resource requirements of a verified region.
