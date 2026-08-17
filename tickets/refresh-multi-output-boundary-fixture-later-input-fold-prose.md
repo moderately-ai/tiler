@@ -1,7 +1,7 @@
 ---
 id: refresh-multi-output-boundary-fixture-later-input-fold-prose
 title: Refresh the multi-output boundary fixture's retired later-input-fold prose
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [refresh-multi-output-correctness-row-after-access-ordinal-reconciliation, admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, compiler, multi-output]
-claimed_from: todo
-assignee: worker-multi-output-doc
-lease_expires_at: 1786941050
 ---
 ## Exact-base Fact audit — 2026-08-16
 
