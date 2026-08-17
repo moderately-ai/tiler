@@ -40,18 +40,18 @@ Every accepted public field and atomicity guarantee has an independent subject p
 
 Audited on 2026-08-16 at exact base `b757936b6620620a321c3c9ba43ec75ca4376599`. This ticket stated no `## Facts` section, so each Required-delivery claim was treated as a current obligation. The accepted implementation commit `b474fd01e339396ab7779c6ae0ae9e58631a7856` is an ancestor of that base.
 
-- **Fact — verified.** The unmodified public seven-specialist request is constructible through source anchors `request_boundary`, `compile_request_diagnostic`, `CompileRequest::preferring`, and `compile(request)`. It reaches every installed-provider outcome before refusing: 7 specialists × 17 invocations = 119, partitioned into 21 proposals and 98 declines.
+- **Fact — imprecise at reviewed evidence commit `fa97753ded6b5f72f4a2587034fcd764c09f811e`, repaired at `2453367ed24692525214ccbac99e50cfef21c6a5`.** The unmodified public seven-specialist request is constructible through source anchors `request_boundary`, `compile_request_diagnostic`, `CompileRequest::preferring`, and `compile(request)`. The first evidence commit retained only aggregate counts, which could not prove that each distinct specialist reached all 17 opportunities. The repair attributes the unchanged 119 invocations, 21 proposals, and 98 declines by exact installed `ProviderIdentity`; all seven identities independently report 17 invocations, 3 proposals, and 14 declines.
 - **Fact — false as a claim of existing retained coverage.** `detail_capacity_arms_are_independent_and_record_first` called `detail_capacity` directly. `capacity_aborts_before_a_later_candidate_and_contract_fallback` and `outer_capacity_discards_an_earlier_target_outcome_and_skips_the_later_target` constructed `capacity_error()` at orchestration seams. They verified the implementation shape but did not reach the accepted public mapper from production explain construction.
 - **Fact — verified but incomplete.** `explain_capacity_maps_exactly_and_other_explain_errors_remain_defects` preserved direct typed carrier fields and classified the real `verify_semantic_output_type` error as `InvalidCompilerOutput`; it did not drive capacity through public compile orchestration.
 - **Fact — verified.** Source anchors `EXPLAIN_SCHEMA_VERSION` and `EXPLAIN_RENDERER_VERSION` remained 11 and 9. The accepted boundary required no public API, identity, schema, renderer, trace-content, provider-admission, cap, or policy movement.
 
-No stale statement required a ticket repair, and the audit did not change the ticket's purpose or accepted public surface. `research/program-planning` was added because the retained public reproduction is owned by `spikes/program-planning/physical-frontier-budget-calibration`.
+The reviewed seven-specialist population statement required the repair above; the spike README's current terminal digest and `ExplainWriter::push` source anchor were stale too. Repairing them did not change the ticket's purpose or accepted public surface. `research/program-planning` was added because the retained public reproduction is owned by `spikes/program-planning/physical-frontier-budget-calibration`.
 
 ## Retained evidence
 
-Implementation commit: `b474fd01e339396ab7779c6ae0ae9e58631a7856`. Evidence commit: `fa97753ded6b5f72f4a2587034fcd764c09f811e`.
+Implementation commit: `b474fd01e339396ab7779c6ae0ae9e58631a7856`. Evidence commit: `2453367ed24692525214ccbac99e50cfef21c6a5` (including the earlier evidence tree at `fa97753ded6b5f72f4a2587034fcd764c09f811e`).
 
-`seven_specialists_reach_the_public_explain_byte_refusal` constructs the public semantic program, seven separately named installed providers, target profile, numerical contract, and `CompileRequest`; it then calls public `session::compile`. It cannot mint a failure class. The retained population is exactly 119 invocations = 21 proposals + 98 declines, with 21 baseline-bearing and 98 coverless/unspellable subjects. It returns zero successes and zero alternatives with:
+At evidence commit `2453367ed24692525214ccbac99e50cfef21c6a5`, `seven_specialists_reach_the_public_explain_byte_refusal` constructs the public semantic program, seven separately named installed providers, target profile, numerical contract, and `CompileRequest`; it then calls public `session::compile`. It cannot mint a failure class. Its exact identity-keyed census contains `acme::request-boundary-{0..6}@1`; every identity independently reports 17 invocations = 3 proposals + 14 declines, partitioned into 3 baseline-bearing and 14 coverless/unspellable opportunities. The attributed totals equal the unchanged aggregate population of 119 invocations = 21 proposals + 98 declines. It returns zero successes and zero alternatives with:
 
 ```text
 BudgetExhausted { resource: ExplainDetailCanonicalBytes, limit: 1048576, reported: 1048698 }
@@ -91,7 +91,17 @@ The first command prints the complete 1-through-7 control. Its terminal row is `
 
 ### Production-subject perturbations
 
-Each edit below was applied alone, the named unchanged test command was run, and the edit was restored before the next perturbation. The first five use:
+Each edit below was applied alone, the named unchanged test command was run, and the edit was restored before the next perturbation.
+
+For the seven-specialist census, change `CountingProvider::tally_identity` so only stored identity `request-boundary-6` is attributed to `request-boundary-5`, leaving provider installation, public compilation, and the aggregate 119/21/98 counts unchanged. Run:
+
+```sh
+cargo test --manifest-path spikes/program-planning/physical-frontier-budget-calibration/Cargo.toml seven_specialists_reach_the_public_explain_byte_refusal -- --nocapture
+```
+
+It fails unchanged with `assertion left == right failed: the exact seven attributed specialist identities moved`; left contains exact identities `request-boundary-0` through `request-boundary-5`, while right additionally contains `request-boundary-6`. This proves a skipped/duplicated provider attribution cannot satisfy the aggregate census.
+
+The five public payload-field perturbations use:
 
 ```sh
 cargo test -p tiler-compiler --lib public_explain_capacity_is_exact_and_record_first_at_one_below -- --nocapture
@@ -133,9 +143,9 @@ It fails unchanged with `a genuine compiler-output verification failure must not
 ### Identity and surface non-movement
 
 ```sh
-git diff --name-only b757936b6620620a321c3c9ba43ec75ca4376599..fa97753ded6b5f72f4a2587034fcd764c09f811e
+git diff --name-only b757936b6620620a321c3c9ba43ec75ca4376599..2453367ed24692525214ccbac99e50cfef21c6a5
 git show b757936b6620620a321c3c9ba43ec75ca4376599:crates/tiler-compiler/src/explain.rs | rg '^pub\(crate\) const EXPLAIN_(SCHEMA|RENDERER)_VERSION'
-git show fa97753ded6b5f72f4a2587034fcd764c09f811e:crates/tiler-compiler/src/explain.rs | rg '^pub\(crate\) const EXPLAIN_(SCHEMA|RENDERER)_VERSION'
+git show 2453367ed24692525214ccbac99e50cfef21c6a5:crates/tiler-compiler/src/explain.rs | rg '^pub\(crate\) const EXPLAIN_(SCHEMA|RENDERER)_VERSION'
 ```
 
-Only compiler tests/test-only writer control, the retained spike regression, and this ticket move. Both revisions print schema 11 and renderer 9. The writer control and every added compiler carrier are `pub(crate)` under `#[cfg(test)]`; no non-test or public item is added, and no request, artifact, cache, schema, renderer, or trace-content identity input changes.
+Only compiler tests/test-only writer control, the retained spike regression and its README, and this ticket move. Both revisions print schema 11 and renderer 9. The writer control and every added compiler carrier are `pub(crate)` under `#[cfg(test)]`; the spike attribution is test-observation state in a binary-only harness. No non-test compiler or public item is added, and no request, artifact, cache, schema, renderer, or trace-content identity input changes.
