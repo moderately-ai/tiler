@@ -129,9 +129,11 @@
 //!
 //! # Boundary status
 //!
-//! Every public item in this crate is a reviewed *draft* boundary under ADR
-//! 0074 §7: it is built and tested at full fidelity while the facade is under
-//! review, rather than presented as an accepted public API.
+//! Most public items in this crate are reviewed *draft* boundaries under ADR
+//! 0074 §7: they are built and tested at full fidelity while the facade is
+//! under review. [`direct_requirement`] is the accepted exception: ADR 0075
+//! accepted its exact public comparison surface, while keeping the raw SDK
+//! enumerator private to this crate.
 //!
 //! ```
 //! use tiler_ir::kernel::lower_scheduled_region;

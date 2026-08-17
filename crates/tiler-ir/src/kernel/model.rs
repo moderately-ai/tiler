@@ -159,13 +159,17 @@ impl KernelType {
 }
 
 impl IndexArithmetic {
-    /// Derives the index arithmetic one governed KIR value type requires.
+    /// Classifies the index arithmetic one governed KIR value type requires.
     ///
     /// Exhaustive and wildcard-free, so a widened [`KernelType`] is an `E0004`
     /// here — in the module that declares it — rather than a type silently
     /// inheriting whichever answer it resembles.
     ///
-    /// Only the index role yields a requirement, and a type answering `None` is
+    /// Crate-private: external consumers read the requirement a verified
+    /// schedule already derived into
+    /// [`ResourceRequirements::index_arithmetic`](crate::schedule::ResourceRequirements::index_arithmetic)
+    /// instead of deriving it again from KIR. Only the index role yields a
+    /// requirement, and a type answering `None` is
     /// making the narrow claim that it needs no *index* arithmetic, not that it
     /// needs no target capability at all. [`KernelType::Bf16`] is where the
     /// distinction bites: whether a target can compute in bfloat16 is a separate
@@ -173,7 +177,7 @@ impl IndexArithmetic {
     /// from this classifier would read a capability out of a vocabulary that
     /// does not carry one.
     #[must_use]
-    pub const fn of(value_type: KernelType) -> Option<Self> {
+    pub(crate) const fn of(value_type: KernelType) -> Option<Self> {
         match value_type {
             KernelType::Index => Some(Self::CompleteU64),
             KernelType::Bool
