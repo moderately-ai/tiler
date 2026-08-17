@@ -3091,9 +3091,11 @@ mod tests {
     use crate::capability::{
         LoweringCapabilityRevision, LoweringCapabilitySubject, LoweringFamily,
     };
+    use crate::explain::{DetailCapacityObservationForTest, with_detail_capacity_limits_for_test};
     use crate::pipeline::compile as compile_internal;
     use crate::target::{TargetProfile, TargetRequest};
     use tiler_ir::program::abi::{ExprNode, TargetPropertyRequirementRelation};
+    use tiler_ir::schedule::{NumericalPermission, SubnormalMode};
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, F32Silu, InputKey, OpKey, OutputKey,
         ProviderIdentity, SemanticProgram, SemanticProgramBuilder, StrictSerialF32Sum,
@@ -3102,6 +3104,114 @@ mod tests {
 
     fn governed_targets() -> TargetRequest {
         TargetRequest::new([TargetProfile::governed()]).unwrap()
+    }
+
+    #[derive(Debug)]
+    enum ObservedPublicCompile {
+        Complete {
+            targets: Vec<ObservedPublicTarget>,
+        },
+        Refused {
+            class: CompileFailureClass,
+            rendered: Option<String>,
+        },
+    }
+
+    #[derive(Debug, Eq, PartialEq)]
+    struct ObservedPublicTarget {
+        key: String,
+        resolved_contract: Option<String>,
+        semantic_candidates: Option<usize>,
+        failure: Option<CompileFailureClass>,
+    }
+
+    fn observed_public_compile(
+        program: &SemanticProgram,
+        contracts: &[NumericalContract],
+        profiles: Vec<TargetProfile>,
+        controlled_target_key: &str,
+        controlled_target_writer: usize,
+        record_limit: u32,
+        canonical_byte_limit: u32,
+    ) -> (ObservedPublicCompile, DetailCapacityObservationForTest) {
+        let targets = TargetRequest::new(profiles).expect("the test target request is valid");
+        let request = CompileRequest::preferring(program, contracts.iter().copied(), targets)
+            .expect("the public request is valid");
+        with_detail_capacity_limits_for_test(
+            controlled_target_key,
+            controlled_target_writer,
+            record_limit,
+            canonical_byte_limit,
+            || match compile(request) {
+                Ok(batch) => ObservedPublicCompile::Complete {
+                    targets: batch
+                        .targets()
+                        .map(|slot| {
+                            let key = slot.target_profile().profile_key().as_str().to_owned();
+                            match slot.outcome() {
+                                Ok(compilation) => ObservedPublicTarget {
+                                    key,
+                                    resolved_contract: Some(
+                                        compilation.resolved_numerical_contract_key().to_owned(),
+                                    ),
+                                    semantic_candidates: Some(
+                                        compilation.explain().semantic_candidate_count(),
+                                    ),
+                                    failure: None,
+                                },
+                                Err(failure) => ObservedPublicTarget {
+                                    key,
+                                    resolved_contract: None,
+                                    semantic_candidates: None,
+                                    failure: Some(failure.class()),
+                                },
+                            }
+                        })
+                        .collect(),
+                },
+                Err(failure) => ObservedPublicCompile::Refused {
+                    class: failure.class(),
+                    rendered: failure.explain().map(|explain| explain.render()),
+                },
+            },
+        )
+    }
+
+    fn public_capacity_failure(
+        outcome: ObservedPublicCompile,
+        expected_resource: BudgetResource,
+        expected_limit: u64,
+        expected_reported: u64,
+    ) -> String {
+        let ObservedPublicCompile::Refused { class, rendered } = outcome else {
+            panic!("detail capacity returned a partial or complete compilation batch");
+        };
+        let CompileFailureClass::BudgetExhausted {
+            resource,
+            limit,
+            reported,
+        } = class
+        else {
+            panic!("production detail capacity mapped to {class:?}");
+        };
+        assert_eq!(
+            resource, expected_resource,
+            "the public resource did not preserve the production detail-capacity arm",
+        );
+        assert_eq!(
+            limit, expected_limit,
+            "the public limit did not preserve the production construction limit",
+        );
+        assert_eq!(
+            reported, expected_reported,
+            "the public reported value did not preserve the production attempted prefix",
+        );
+        assert_eq!(
+            resource.refusal(),
+            BudgetRefusal::ConstructionLowerBound,
+            "the production explain resource lost ConstructionLowerBound provenance",
+        );
+        rendered.expect("a production explain-capacity refusal retains its terminal trace")
     }
 
     /// Builds the bounded profile's scale-then-reduce program.
@@ -3121,6 +3231,23 @@ mod tests {
         let sum = StrictSerialF32Sum::apply(&mut builder, mapped, [Axis::new(1)]).unwrap();
         builder
             .output(OutputKey::new("result").unwrap(), sum)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    /// An ordered add chain whose reassociating contract produces the original
+    /// and one independently readmitted semantic candidate.
+    fn tensor_add_chain_for_capacity_test() -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 2]))
+            .unwrap();
+        let first = F32Constant::apply(&mut builder, 1.0e20_f32.to_bits()).unwrap();
+        let second = F32Constant::apply(&mut builder, (-1.0e20_f32).to_bits()).unwrap();
+        let left = F32Add::apply(&mut builder, input, first).unwrap();
+        let root = F32Add::apply(&mut builder, left, second).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
             .unwrap();
         builder.build().unwrap()
     }
@@ -4285,6 +4412,349 @@ mod tests {
         assert_eq!(
             BudgetResource::ExplainDetailRecords.refusal(),
             BudgetRefusal::ConstructionLowerBound,
+        );
+    }
+
+    /// The public compile path reaches both independent construction arms at
+    /// one unit below the exact raw prefix observed from the same production
+    /// writer. If both limits reject that record, record-first construction
+    /// decides the public resource.
+    #[test]
+    fn public_explain_capacity_is_exact_and_record_first_at_one_below() {
+        let program = semantic_program();
+        let target_key = "test.public-capacity-arms.v1";
+        let contracts = [NumericalContract::STRICT_F32];
+        let (complete, baseline) = observed_public_compile(
+            &program,
+            &contracts,
+            vec![TargetProfile::governed_with_key_for_test(target_key)],
+            target_key,
+            0,
+            u32::MAX,
+            u32::MAX,
+        );
+        let ObservedPublicCompile::Complete { targets } = complete else {
+            panic!("the unbounded production subject must compile");
+        };
+        assert_eq!(
+            targets,
+            [ObservedPublicTarget {
+                key: target_key.to_owned(),
+                resolved_contract: Some(NumericalContract::STRICT_F32.key().to_owned()),
+                semantic_candidates: Some(1),
+                failure: None,
+            }],
+            "the exact-prefix control moved away from its one-candidate target",
+        );
+        assert_eq!(
+            baseline.writer_openings.len(),
+            2,
+            "one semantic candidate and its portfolio writer must open",
+        );
+        let attempted = *baseline
+            .selected_writer_attempts
+            .get(8)
+            .expect("the production candidate emits at least nine detail records");
+        let attempted_records = attempted.attempted_records();
+        let attempted_bytes = attempted.attempted_bytes();
+        assert_eq!(
+            (attempted_records, attempted_bytes),
+            (9, 2_795),
+            "the exact production prefix chosen for both arm controls moved",
+        );
+        let record_limit = u32::try_from(attempted_records - 1).unwrap();
+        let byte_limit = u32::try_from(attempted_bytes - 1).unwrap();
+
+        let (record_outcome, record_observation) = observed_public_compile(
+            &program,
+            &contracts,
+            vec![TargetProfile::governed_with_key_for_test(target_key)],
+            target_key,
+            0,
+            record_limit,
+            u32::MAX,
+        );
+        let record_rendered = public_capacity_failure(
+            record_outcome,
+            BudgetResource::ExplainDetailRecords,
+            u64::from(record_limit),
+            attempted_records,
+        );
+        assert_eq!(
+            record_observation.selected_writer_attempts.last(),
+            Some(&attempted),
+            "the record arm did not refuse the planned production record",
+        );
+
+        let (byte_outcome, byte_observation) = observed_public_compile(
+            &program,
+            &contracts,
+            vec![TargetProfile::governed_with_key_for_test(target_key)],
+            target_key,
+            0,
+            u32::MAX,
+            byte_limit,
+        );
+        let byte_rendered = public_capacity_failure(
+            byte_outcome,
+            BudgetResource::ExplainDetailCanonicalBytes,
+            u64::from(byte_limit),
+            attempted_bytes,
+        );
+        assert_eq!(
+            byte_observation.selected_writer_attempts.last(),
+            Some(&attempted),
+            "the byte arm did not refuse the planned production record",
+        );
+
+        let (both_outcome, both_observation) = observed_public_compile(
+            &program,
+            &contracts,
+            vec![TargetProfile::governed_with_key_for_test(target_key)],
+            target_key,
+            0,
+            record_limit,
+            byte_limit,
+        );
+        let both_rendered = public_capacity_failure(
+            both_outcome,
+            BudgetResource::ExplainDetailRecords,
+            u64::from(record_limit),
+            attempted_records,
+        );
+        assert_eq!(
+            both_observation.selected_writer_attempts.last(),
+            Some(&attempted),
+            "the both-arms control did not refuse the planned production record",
+        );
+        assert_eq!(
+            record_rendered.lines().last(),
+            byte_rendered.lines().last(),
+            "the terminal capacity record changed with the governing arm",
+        );
+        assert_eq!(
+            record_rendered.lines().last(),
+            both_rendered.lines().last(),
+            "record-first precedence changed the terminal capacity record",
+        );
+    }
+
+    /// Capacity is an outer stop in the real public candidate orchestration.
+    #[test]
+    fn public_explain_capacity_stops_later_semantic_candidates() {
+        let candidate_program = tensor_add_chain_for_capacity_test();
+        let candidate_key = "test.capacity-candidate.v1";
+        let candidate_contracts = [NumericalContract::REASSOCIATE_F32];
+        let candidate_profile = || {
+            TargetProfile::numerical_realization_for_test(
+                candidate_key,
+                SubnormalMode::Preserve,
+                NumericalPermission::Permitted,
+            )
+        };
+        let (candidate_complete, candidate_baseline) = observed_public_compile(
+            &candidate_program,
+            &candidate_contracts,
+            vec![candidate_profile()],
+            candidate_key,
+            0,
+            u32::MAX,
+            u32::MAX,
+        );
+        let ObservedPublicCompile::Complete { targets } = candidate_complete else {
+            panic!("the two-candidate control must compile");
+        };
+        assert_eq!(
+            targets[0].semantic_candidates,
+            Some(2),
+            "the exercised semantic population moved",
+        );
+        assert_eq!(
+            candidate_baseline.writer_openings.len(),
+            3,
+            "two candidate writers and one portfolio writer must open",
+        );
+        assert!(
+            candidate_baseline.writer_openings.iter().all(|opening| {
+                opening.target_profile_key == candidate_key
+                    && opening.numerical_contract_key == NumericalContract::REASSOCIATE_F32.key()
+            }),
+            "the candidate writer counter included another target or contract",
+        );
+        let candidate_attempt = *candidate_baseline
+            .selected_writer_attempts
+            .get(8)
+            .expect("the first semantic candidate emits nine details");
+        let candidate_limit = u32::try_from(candidate_attempt.attempted_records() - 1).unwrap();
+        let (candidate_failure, candidate_stopped) = observed_public_compile(
+            &candidate_program,
+            &candidate_contracts,
+            vec![candidate_profile()],
+            candidate_key,
+            0,
+            candidate_limit,
+            u32::MAX,
+        );
+        public_capacity_failure(
+            candidate_failure,
+            BudgetResource::ExplainDetailRecords,
+            u64::from(candidate_limit),
+            candidate_attempt.attempted_records(),
+        );
+        assert_eq!(
+            candidate_stopped.writer_openings.len(),
+            1,
+            "a later semantic candidate or portfolio writer opened after capacity",
+        );
+    }
+
+    /// A capacity stop in the preferred contract cannot be reinterpreted as a
+    /// candidate-local miss and retried under a viable lower preference.
+    #[test]
+    fn public_explain_capacity_stops_a_viable_contract_fallback() {
+        let contract_program = semantic_program();
+        let contract_key = "test.capacity-contract.v1";
+        let preferred = [
+            NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+            NumericalContract::STRICT_F32,
+        ];
+        let (preferred_complete, preferred_baseline) = observed_public_compile(
+            &contract_program,
+            &preferred,
+            vec![TargetProfile::governed_with_key_for_test(contract_key)],
+            contract_key,
+            0,
+            u32::MAX,
+            u32::MAX,
+        );
+        let ObservedPublicCompile::Complete { targets } = preferred_complete else {
+            panic!("the preferred numerical contract must compile");
+        };
+        assert_eq!(
+            targets[0].resolved_contract.as_deref(),
+            Some(NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32.key()),
+            "the first preferred contract did not own the controlled writer",
+        );
+        let (fallback_complete, _) = observed_public_compile(
+            &contract_program,
+            &[NumericalContract::STRICT_F32],
+            vec![TargetProfile::governed_with_key_for_test(contract_key)],
+            contract_key,
+            0,
+            u32::MAX,
+            u32::MAX,
+        );
+        let ObservedPublicCompile::Complete { targets } = fallback_complete else {
+            panic!("the lower-preference strict contract is independently viable");
+        };
+        assert_eq!(
+            targets[0].resolved_contract.as_deref(),
+            Some(NumericalContract::STRICT_F32.key()),
+            "the fallback viability control resolved another contract",
+        );
+        assert!(
+            preferred_baseline.writer_openings.iter().all(|opening| {
+                opening.numerical_contract_key
+                    == NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32.key()
+            }),
+            "the successful preferred-contract control opened a fallback writer",
+        );
+        let contract_attempt = *preferred_baseline
+            .selected_writer_attempts
+            .get(8)
+            .expect("the preferred contract emits nine details");
+        let contract_limit = u32::try_from(contract_attempt.attempted_records() - 1).unwrap();
+        let (contract_failure, contract_stopped) = observed_public_compile(
+            &contract_program,
+            &preferred,
+            vec![TargetProfile::governed_with_key_for_test(contract_key)],
+            contract_key,
+            0,
+            contract_limit,
+            u32::MAX,
+        );
+        public_capacity_failure(
+            contract_failure,
+            BudgetResource::ExplainDetailRecords,
+            u64::from(contract_limit),
+            contract_attempt.attempted_records(),
+        );
+        assert_eq!(
+            contract_stopped.writer_openings.len(),
+            1,
+            "a viable lower-preference contract opened after explain capacity",
+        );
+    }
+
+    /// A completed earlier target is discarded when a later target hits
+    /// capacity, and the target after the stop is never opened.
+    #[test]
+    fn public_explain_capacity_discards_earlier_targets_and_stops_later_targets() {
+        let contract_program = semantic_program();
+        let earlier_key = "test.capacity-earlier-success.v1";
+        let stop_key = "test.capacity-stop.v1";
+        let later_key = "test.capacity-later.v1";
+        let profiles = || {
+            vec![
+                TargetProfile::governed_with_key_for_test(earlier_key),
+                TargetProfile::governed_with_key_for_test(stop_key),
+                TargetProfile::governed_with_key_for_test(later_key),
+            ]
+        };
+        let (targets_complete, targets_baseline) = observed_public_compile(
+            &contract_program,
+            &[NumericalContract::STRICT_F32],
+            profiles(),
+            stop_key,
+            0,
+            u32::MAX,
+            u32::MAX,
+        );
+        let ObservedPublicCompile::Complete { targets } = targets_complete else {
+            panic!("the three-target reachability control must compile");
+        };
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| target.key.as_str())
+                .collect::<Vec<_>>(),
+            [earlier_key, stop_key, later_key],
+            "the exercised public target population or order moved",
+        );
+        let target_attempt = *targets_baseline
+            .selected_writer_attempts
+            .get(8)
+            .expect("the controlled target emits nine details");
+        let target_limit = u32::try_from(target_attempt.attempted_records() - 1).unwrap();
+        let (target_failure, targets_stopped) = observed_public_compile(
+            &contract_program,
+            &[NumericalContract::STRICT_F32],
+            profiles(),
+            stop_key,
+            0,
+            target_limit,
+            u32::MAX,
+        );
+        public_capacity_failure(
+            target_failure,
+            BudgetResource::ExplainDetailRecords,
+            u64::from(target_limit),
+            target_attempt.attempted_records(),
+        );
+        assert_eq!(
+            targets_stopped
+                .writer_openings
+                .iter()
+                .map(|opening| opening.target_profile_key.as_str())
+                .collect::<Vec<_>>(),
+            [earlier_key, earlier_key, stop_key],
+            "capacity did not stop before the later target, or the earlier target did not finish",
+        );
+        assert!(
+            targets_stopped.writer_openings.iter().all(|opening| {
+                opening.numerical_contract_key == NumericalContract::STRICT_F32.key()
+            }),
+            "the target reachability counter included another contract",
         );
     }
 

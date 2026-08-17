@@ -9,7 +9,7 @@ implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement", "exhaustive-finite"]
 supports: ["tiler.research.program-planning.physical-frontier-budget-calibration"]
 entrypoints: ["spikes/program-planning/physical-frontier-budget-calibration/src/main.rs"]
-last_verified: "2026-08-14"
+last_verified: "2026-08-16"
 ticket: "calibrate-the-physical-frontier-provider-and-outcome-budgets"
 ---
 
@@ -167,13 +167,15 @@ The generated rationale's `propose_per_outcome_ns=0` is not evidence: the unchan
 
 ### Explain-capacity boundary control
 
-`request-boundary 31` holds the one-target five-operation strict subject fixed and varies only the number of installed specialists. Six specialists succeed with 102 installed outcomes, 56 alternatives, 2,291 rendered record lines, and 650,099 rendered bytes. Seven emit 119 installed outcomes and fail with the exact final retained line:
+`request-boundary 31` holds the one-target five-operation strict subject fixed and varies only the number of installed specialists. Six specialists succeed with 102 installed outcomes, 56 alternatives, 2,291 rendered record lines, and 650,099 rendered bytes. A current-toolchain reproduction on 2026-08-16 at audited base `b757936b6620620a321c3c9ba43ec75ca4376599` (where implementation commit `b474fd01e339396ab7779c6ae0ae9e58631a7856` is ancestral) used the repository's `nightly-2026-07-19` pin. Seven specialists emit 119 installed outcomes and fail with the exact current final retained line:
 
 ```text
-2257 target-feasibility compiler-failure rule=compile.failure@1 provider=compiler:tiler.compiler@1 subject=region:program-alternative:b489b9770d000255/region:0 event=compiler-failure:explain-detail-capacity causes=2256
+2257 target-feasibility compiler-failure rule=compile.failure@1 provider=compiler:tiler.compiler@1 subject=region:program-alternative:f10d1b8bfd323115/region:0 event=compiler-failure:explain-detail-capacity causes=2256
 ```
 
-**Fact.** Source anchor `let exceeds = if terminal` in `ExplainWriter::push` gives two non-terminal bounds: 4,096 detail records and 1 MiB of canonical detail bytes. Each declined strategy contributes a detail record under `for rejection in frontier.rejections()`, while complete-plan explanation grows with the Cartesian plan population.
+The linked 2026-08-13 raw boundary artifacts were produced by the historical `d086fe99…` executable and retain their earlier `b489b9770d000255` digest unchanged. They remain rerunnable provenance for that dated toolchain rather than the current digest authority.
+
+**Fact.** Source anchor `let capacity = if terminal` in `ExplainWriter::push` gives two non-terminal bounds: 4,096 detail records and 1 MiB of canonical detail bytes. Each declined strategy contributes a detail record under `for rejection in frontier.rejections()`, while complete-plan explanation grows with the Cartesian plan population.
 
 **Fact.** `DeterministicBudgets` has no physical-provider raw-outcome field at the behavior base. `16,384` is a calibration candidate rather than an installed authority, so it cannot fire on this compile path; the preserved 256-outcome draft is read-only evidence on a different commit.
 

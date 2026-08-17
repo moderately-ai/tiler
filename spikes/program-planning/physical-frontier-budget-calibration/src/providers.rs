@@ -1,6 +1,8 @@
 //! Instrumented physical providers used as census and sweep subjects.
 
 use std::cell::RefCell;
+#[cfg(test)]
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
@@ -43,6 +45,9 @@ pub struct Tally {
     pub baseline_subjects: u64,
     /// Subjects that had no single-dispatch baseline.
     pub coverless_or_unspellable: u64,
+    /// Outcome counts attributed to each exact installed provider identity.
+    #[cfg(test)]
+    provider_tallies: BTreeMap<ProviderIdentity, ProviderTally>,
 }
 
 impl Tally {
@@ -56,6 +61,38 @@ impl Tally {
     #[must_use]
     pub fn distinct_subjects(&self) -> u64 {
         u64::try_from(self.subjects.len()).unwrap_or(u64::MAX)
+    }
+
+    /// Per-provider counts for exactly the identities that were invoked.
+    #[cfg(test)]
+    #[must_use]
+    pub const fn provider_tallies(&self) -> &BTreeMap<ProviderIdentity, ProviderTally> {
+        &self.provider_tallies
+    }
+}
+
+/// One exact provider identity's contribution to a shared tally.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[cfg(test)]
+pub struct ProviderTally {
+    /// `propose` invocations observed for this provider.
+    pub invocations: u64,
+    /// Proposal bodies emitted by this provider.
+    pub proposals: u64,
+    /// Named strategy declines emitted by this provider.
+    pub declines: u64,
+    /// Invocations that carried a single-dispatch baseline.
+    pub baseline_subjects: u64,
+    /// Invocations without a single-dispatch baseline.
+    pub coverless_or_unspellable: u64,
+}
+
+#[cfg(test)]
+impl ProviderTally {
+    /// Proposal-plus-decline outcomes attributed to this provider.
+    #[must_use]
+    pub const fn raw_outcomes(self) -> u64 {
+        self.proposals.saturating_add(self.declines)
     }
 }
 
@@ -87,6 +124,43 @@ impl CountingProvider {
             tally,
         }
     }
+
+    #[cfg(test)]
+    fn tally_identity(&self) -> ProviderIdentity {
+        self.identity.clone()
+    }
+
+    #[cfg(test)]
+    fn record_provider_invocation(&self, tally: &mut Tally, has_baseline: bool) {
+        let provider = tally
+            .provider_tallies
+            .entry(self.tally_identity())
+            .or_default();
+        provider.invocations = provider.invocations.saturating_add(1);
+        if has_baseline {
+            provider.baseline_subjects = provider.baseline_subjects.saturating_add(1);
+        } else {
+            provider.coverless_or_unspellable = provider.coverless_or_unspellable.saturating_add(1);
+        }
+    }
+
+    #[cfg(test)]
+    fn record_provider_proposal(&self, tally: &mut Tally) {
+        let provider = tally
+            .provider_tallies
+            .get_mut(&self.tally_identity())
+            .expect("the invocation registered its provider identity");
+        provider.proposals = provider.proposals.saturating_add(1);
+    }
+
+    #[cfg(test)]
+    fn record_provider_decline(&self, tally: &mut Tally) {
+        let provider = tally
+            .provider_tallies
+            .get_mut(&self.tally_identity())
+            .expect("the invocation registered its provider identity");
+        provider.declines = provider.declines.saturating_add(1);
+    }
 }
 
 impl PhysicalImplementationProvider for CountingProvider {
@@ -117,6 +191,8 @@ impl PhysicalImplementationProvider for CountingProvider {
             } else {
                 tally.coverless_or_unspellable = tally.coverless_or_unspellable.saturating_add(1);
             }
+            #[cfg(test)]
+            self.record_provider_invocation(&mut tally, baseline.is_some());
         }
 
         match self.answer {
@@ -125,6 +201,8 @@ impl PhysicalImplementationProvider for CountingProvider {
                 {
                     let mut tally = self.tally.borrow_mut();
                     tally.declines = tally.declines.saturating_add(1);
+                    #[cfg(test)]
+                    self.record_provider_decline(&mut tally);
                 }
                 ProviderOffer::default().decline(DeclinedStrategy::new(
                     "acme.calibrate-decline",
@@ -139,6 +217,8 @@ impl PhysicalImplementationProvider for CountingProvider {
                     {
                         let mut tally = self.tally.borrow_mut();
                         tally.proposals = tally.proposals.saturating_add(1);
+                        #[cfg(test)]
+                        self.record_provider_proposal(&mut tally);
                     }
                     let mut region = baseline.region().clone();
                     region.schedule.threads_per_workgroup = threads;
@@ -155,6 +235,8 @@ impl PhysicalImplementationProvider for CountingProvider {
                     {
                         let mut tally = self.tally.borrow_mut();
                         tally.declines = tally.declines.saturating_add(1);
+                        #[cfg(test)]
+                        self.record_provider_decline(&mut tally);
                     }
                     ProviderOffer::default().decline(DeclinedStrategy::new(
                         "acme.wide-workgroup",
