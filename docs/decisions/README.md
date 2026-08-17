@@ -261,7 +261,7 @@ Both indexes on this page are **maintained by hand**; the renderer that once pro
 - [0105: Retire the scalar-lowering provider seam](0105-retire-the-scalar-lowering-provider-seam.md) — accepted
 - [0106: Admit tiler-conformance as the cross-layer evidence member](0106-admit-tiler-conformance-as-the-cross-layer-evidence-member.md) — accepted
 - [0107: Admit an indirect gather as a semantic family above the index language](0107-admit-an-indirect-gather-as-a-semantic-family-above-the-index-language.md) — accepted
-- [0108: Choose how a data-dependent index coordinate enters the index layer](0108-site-a-data-dependent-index-coordinate-on-the-expression.md) — proposed, returned for revision
+- [0108: Choose how a data-dependent index coordinate enters the index layer](0108-site-a-data-dependent-index-coordinate-on-the-expression.md) — accepted
 - [0109: Fail closed before executable planning when index-domain proof is Unknown](0109-fail-closed-before-executable-planning-when-index-domain-proof-is-unknown.md) — accepted
 - [0110: Split the bounded scalar CPU backend at the production process boundaries](0110-split-the-bounded-scalar-cpu-backend-at-the-production-process-boundaries.md) — accepted
 - [0111: Separate externally specified raw hashes from governed Tiler digests](0111-separate-externally-specified-raw-hashes-from-governed-tiler-digests.md) — accepted
