@@ -5,7 +5,7 @@ status: in-progress
 priority: p2
 dependencies: [reproduce-the-identical-output-chain-stage-key-collision]
 related: [bound-the-assembled-region-count-and-derive-the-multi-output-budget-actuals]
-scopes: [implementation/compiler, implementation/ir, implementation/artifact, implementation/build, implementation/runtime, contracts/foundation, contracts/artifacts]
+scopes: [implementation/compiler, implementation/ir, implementation/artifact, implementation/build, implementation/runtime, contracts/foundation, contracts/artifacts, research/target-profiles, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, ir, artifact, identity-domain, multi-output]
@@ -71,3 +71,64 @@ The original compiler/IR-only scopes were false for the accepted remedy. `tiler-
 - wrong occurrence, foreign evidence, duplicate/skipped ordinal, missing declaration, missing publication, and ambiguous ownership perturbations each fail by a named typed rule;
 - every affected program, artifact, envelope, cache, and build pin is recomputed and its ledger updated, while the manifest and artifact-domain non-step derivations are recorded; and
 - no request refusal, stage merge, builder-position discriminator, recursive key dependency, default owner, or silent fallback is introduced.
+
+## Implementation evidence — 2026-08-17
+
+**Fact — repaired before amendment.** The first implementation selected a split
+occurrence from `producer.semantic_members().first()`, which was not an
+accepted authority for a fused producer. `split_continuation_occurrence` now
+derives exactly one member only where the producer's `SemanticStage` has an
+exact `next_stage()` atom in the combiner coverage, and `build_cover_core`
+cross-checks the declared assembly member against that derivation before
+projecting it through `OccurrenceLowering`. Missing or ambiguous continuity is
+the typed compiler structure refusal; an asserted mismatched occurrence is
+`assembly-split-occurrence-mismatch`.
+
+**Fact — direct owner and identity evidence.**
+`cargo test -p tiler-ir --lib complete_stage_owner_refusals_reach_their_exact_graph_branches`
+exercises missing ownership, foreign root, fork, loop, merge/disconnected path,
+missing publication, and mixed realization/publication subjects and observes
+their named `KernelProgramDiagnostic` branches. `complete_stage_owner_identity_changes_only_for_admitted_owner_claims` independently changes occurrence, reached proof, and continuation ordinal and observes different owner bytes; its equal control has no downstream value, allocation, dependency, or builder-order input. `cargo test -p tiler-artifact --lib the_artifact_stage_key_encodes_the_complete_kernel_program_stage_subject`
+reconstructs the complete v4 subject and compares its tag/count/claims against
+both the independently serialized key and the kernel-program identity. Its two
+controls are a realization owner and a closed administrative
+intermediate-to-named-output copy, so the latter reaches the publication tag,
+count, exact output key, and `None` component-role framing. The generation test
+reconstructs v1, v2, v3, and live v4 separately.
+`complete_stage_owner_identity_changes_only_for_admitted_owner_claims` also
+constructs the crate-private `StageOwner::Publication` subject directly and
+proves that its `published`/`None` baseline differs independently for a changed
+key and for `Some(EncodedComponentRole::new(99))`. That is encoder evidence,
+not a claim that the current verified producer can emit a nonempty component
+publication.
+
+**Fact — negative controls.** The compiler continuity test changes the combiner
+subject to an unrelated `next_stage()` and receives
+`SplitContinuationError::Missing`; the owner tests mutate the graph subjects,
+not their expectations. Temporarily changing the production artifact
+realization owner tag from `0x01` to `0x03` and running
+`cargo test -p tiler-artifact --lib the_artifact_stage_key_encodes_the_complete_kernel_program_stage_subject`
+fails at `crates/tiler-artifact/src/program/tests.rs` with
+`assertion \`left == right\` failed`; the independently reconstructed subject
+retains `0x01` while the emitted artifact key carries `0x03`. The probe was
+restored before the gates below. The amended publication control separately
+changes production publication tag `0x02 -> 0x03`, derives
+`perturbed-publication-key` instead of the actual output key, and derives
+`Some(EncodedComponentRole::new(99))` instead of the actual `None` role. Each
+unchanged agreement assertion fails with `assertion \`left == right\` failed`;
+all three subjects were restored before the gates.
+
+**Fact — component-role measurement boundary.** The live control reaches the
+`None` role's explicit framing but cannot claim a nonempty role payload at this
+base. `KernelProgramBuilder::check_origin` admits `Some(EncodedComponentRole)`
+only for a semantic encoded output component, `verify_components` requires the
+entire declared component set, and internal temporary values reject a component
+role. The only existing artifact component kernel,
+`strict_affine_u4_dequantize_kernel`, produces a plain F32 output; no current
+artifact fixture/kernel writes an encoded output component. Constructing that
+population would require a new encoded-result semantic operation, its
+refinement/lowering authority, and component-output kernel(s), so it is outside
+this accepted ownership and identity repair. This ticket therefore records the
+supported `None` framing probe rather than inventing nonempty-component support;
+the crate-private owner subject test above supplies the narrower nonempty-role
+encoding evidence without implying producer reachability.

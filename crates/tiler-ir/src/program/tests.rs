@@ -1028,21 +1028,22 @@ fn the_program_domain_separator_is_what_distinguishes_the_reinterpreting_steps()
     const V9: &[u8] = b"tiler.kernel-program.v9\0";
     const V10: &[u8] = b"tiler.kernel-program.v10\0";
     const V11: &[u8] = b"tiler.kernel-program.v11\0";
+    const V12: &[u8] = b"tiler.kernel-program.v12\0";
     let semantic = serial_sum_program(SCALE_BITS);
     let program = canonical_program(&semantic);
     // One record: the v8 encoding and the v7 sort agree on this payload.
     assert_eq!(program.outputs().len(), 1);
     let current = program.canonical_identity().as_bytes();
-    assert!(current.starts_with(V11));
+    assert!(current.starts_with(V12));
 
-    for historical in [V6, V7, V8, V9, V10] {
+    for historical in [V6, V7, V8, V9, V10, V11] {
         let mut spelling = historical.to_vec();
-        spelling.extend_from_slice(&current[V11.len()..]);
+        spelling.extend_from_slice(&current[V12.len()..]);
         assert_ne!(current, spelling.as_slice());
     }
     // The check can say no about the separator rather than about the length: the
     // current separator over the current payload *is* the current identity.
-    let mut rebuilt = V11.to_vec();
+    let mut rebuilt = V12.to_vec();
     rebuilt.extend_from_slice(&current[V11.len()..]);
     assert_eq!(current, rebuilt.as_slice());
 }
@@ -2979,6 +2980,7 @@ fn split_over(wired: &TwoStage) -> PartialReduction {
         combiner: wired.reduction,
         partial: wired.temporary,
         result: wired.output,
+        occurrence: SemanticOccurrence::new(1),
         partitions: 3,
         contributors_per_partition: 1,
     }
@@ -2988,7 +2990,7 @@ fn program_with_split(
     semantic: &SemanticProgram,
     amend: impl FnOnce(&TwoStage, PartialReduction) -> PartialReduction,
 ) -> Result<VerifiedKernelProgram, KernelProgramDiagnostic> {
-    let wired = two_stage(semantic, TwoStageShape::Canonical);
+    let wired = two_stage(semantic, TwoStageShape::UncoveringSecondStage);
     let split = amend(&wired, split_over(&wired));
     let mut builder = wire_two_stage_structure(wired);
     builder
@@ -2998,6 +3000,208 @@ fn program_with_split(
     builder
         .build()
         .map_err(|error| *error.diagnostics().first().expect("one diagnostic"))
+}
+
+/// Retains the assembled owner subject so these tests can perturb the graph the
+/// owner derivation reads, rather than weakening an assertion around a verified
+/// program that no longer contains the malformed shape.
+fn owner_data_with_split(
+    semantic: &SemanticProgram,
+    amend: impl FnOnce(&TwoStage, PartialReduction) -> PartialReduction,
+) -> super::model::KernelProgramData {
+    let wired = two_stage(semantic, TwoStageShape::UncoveringSecondStage);
+    let split = amend(&wired, split_over(&wired));
+    let mut builder = wire_two_stage_structure(wired);
+    builder
+        .push_partial_reduction(split)
+        .expect("the base split declaration is locally well formed");
+    declare_program_contract(&mut builder);
+    builder.into_data_for_owner_test()
+}
+
+fn owner_refusal(data: &super::model::KernelProgramData) -> KernelProgramDiagnostic {
+    match super::verify::derive_stage_owners(data) {
+        Ok(_) => panic!("the perturbed owner graph unexpectedly derived an owner"),
+        Err(diagnostic) => diagnostic,
+    }
+}
+
+#[test]
+fn complete_stage_owner_refusals_reach_their_exact_graph_branches() {
+    use super::model::{PublishingCopyData, StagedRealizationData};
+
+    let semantic = serial_sum_program(SCALE_BITS);
+
+    let mut missing_builder =
+        wire_two_stage_structure(two_stage(&semantic, TwoStageShape::UncoveringSecondStage));
+    declare_program_contract(&mut missing_builder);
+    assert_eq!(
+        owner_refusal(&missing_builder.into_data_for_owner_test()),
+        KernelProgramDiagnostic::MissingStageOwner,
+        "the uncovered combiner has no owner when its continuation declaration is absent",
+    );
+
+    let mut foreign = owner_data_with_split(&semantic, |_, split| PartialReduction {
+        occurrence: SemanticOccurrence::new(4),
+        ..split
+    });
+    foreign.stages[0]
+        .coverage
+        .retain(|covered| covered.occurrence().get() != 4);
+    assert_eq!(
+        owner_refusal(&foreign),
+        KernelProgramDiagnostic::ForeignStageOwnerProof,
+        "changing the split subject to an occurrence no stage covers must not invent a root",
+    );
+
+    let mut fork = owner_data_with_split(&semantic, |_, split| split);
+    fork.partial_reductions.push(fork.partial_reductions[0]);
+    assert_eq!(
+        owner_refusal(&fork),
+        KernelProgramDiagnostic::DuplicateStageOwnerOrdinal,
+        "two continuation edges from one root are a fork, not two owners for ordinal one",
+    );
+
+    let mut looped = owner_data_with_split(&semantic, |_, split| split);
+    let split = looped.partial_reductions[0];
+    looped.staged_realizations.push(StagedRealizationData {
+        producer: split.combiner,
+        consumer: split.producer,
+        handed: split.partial,
+        occurrence: split.occurrence,
+    });
+    assert_eq!(
+        owner_refusal(&looped),
+        KernelProgramDiagnostic::DuplicateStageOwnerOrdinal,
+        "a continuation that revisits a reached stage is a loop, not a new ordinal",
+    );
+
+    let mut merged = owner_data_with_split(&semantic, |_, split| split);
+    merged.stages.push(merged.stages[1].clone());
+    let split = merged.partial_reductions[0];
+    merged.staged_realizations.push(StagedRealizationData {
+        producer: 2,
+        consumer: split.combiner,
+        handed: split.partial,
+        occurrence: split.occurrence,
+    });
+    assert_eq!(
+        owner_refusal(&merged),
+        KernelProgramDiagnostic::SkippedStageOwnerOrdinal,
+        "a second incoming continuation is a merge only through an edge detached from the root path",
+    );
+
+    let mut disconnected_builder =
+        wire_two_stage_structure(two_stage(&semantic, TwoStageShape::UncoveringSecondStage));
+    declare_program_contract(&mut disconnected_builder);
+    let mut disconnected = disconnected_builder.into_data_for_owner_test();
+    disconnected
+        .staged_realizations
+        .push(StagedRealizationData {
+            producer: 1,
+            consumer: 0,
+            handed: 1,
+            occurrence: 1,
+        });
+    assert_eq!(
+        owner_refusal(&disconnected),
+        KernelProgramDiagnostic::SkippedStageOwnerOrdinal,
+        "an edge not reachable from its proof-bound root is disconnected",
+    );
+
+    let mut publication = complete_two_stage(two_stage(&semantic, TwoStageShape::Canonical))
+        .into_data_for_owner_test();
+    publication.publishing_copies.push(PublishingCopyData {
+        source_stage: 0,
+        publisher: 1,
+        source: 1,
+        published: 1,
+    });
+    assert_eq!(
+        owner_refusal(&publication),
+        KernelProgramDiagnostic::MissingPublicationOwner,
+        "a copy whose published value has no named output cannot claim publication ownership",
+    );
+
+    let mut mixed = complete_two_stage(two_stage(&semantic, TwoStageShape::Canonical))
+        .into_data_for_owner_test();
+    mixed.publishing_copies.push(PublishingCopyData {
+        source_stage: 0,
+        publisher: 1,
+        source: 1,
+        published: 2,
+    });
+    assert_eq!(
+        owner_refusal(&mixed),
+        KernelProgramDiagnostic::AmbiguousStageOwner,
+        "a computing stage cannot also be the administrative publisher",
+    );
+}
+
+#[test]
+fn complete_stage_owner_identity_changes_only_for_admitted_owner_claims() {
+    use super::model::{
+        PublicationStageClaim, RealizationStageClaim, StageOwner, encoded_stage_owner_for_test,
+    };
+
+    let semantic = serial_sum_program(SCALE_BITS);
+    let strict = checked_coverage(&semantic, &strict_contract());
+    let flushed = checked_coverage(&semantic, &flush_contract());
+    let bytes = |covered: CoveredOccurrence, ordinal| {
+        encoded_stage_owner_for_test(&StageOwner::Realization(vec![RealizationStageClaim {
+            covered,
+            ordinal,
+        }]))
+    };
+    let baseline = bytes(strict[0].clone(), 1);
+    assert_ne!(
+        baseline,
+        bytes(strict[1].clone(), 1),
+        "changing the proof-bound occurrence changes the complete owner subject",
+    );
+    assert_ne!(
+        baseline,
+        bytes(flushed[0].clone(), 1),
+        "changing the reached refinement proof changes the complete owner subject",
+    );
+    assert_ne!(
+        baseline,
+        bytes(strict[0].clone(), 2),
+        "changing only the continuation ordinal changes the complete owner subject",
+    );
+    assert_eq!(
+        baseline,
+        bytes(strict[0].clone(), 1),
+        "the owner encoder has no downstream value, allocation, dependency, or builder-order input to distinguish",
+    );
+
+    // This is deliberately the crate-private owner projection rather than a
+    // purported verified publisher. Existing fixtures can construct only a
+    // plain-output copy, so the public artifact control proves `None` framing;
+    // this encoder-level subject probe proves a nonempty component role is not
+    // silently omitted when a future verified producer makes it reachable.
+    let publication = |key, component_role| {
+        encoded_stage_owner_for_test(&StageOwner::Publication(vec![PublicationStageClaim {
+            key: OutputKey::new(key).expect("output key"),
+            component_role,
+        }]))
+    };
+    let publication_baseline = publication("published", None);
+    assert_ne!(
+        publication_baseline,
+        publication("renamed-publication", None),
+        "changing the exact publication key changes the owner subject",
+    );
+    assert_ne!(
+        publication_baseline,
+        publication("published", Some(EncodedComponentRole::new(99))),
+        "changing the publication component role from None to a concrete role changes the owner subject",
+    );
+    assert_eq!(
+        publication_baseline,
+        publication("published", None),
+        "the publication owner encoder has no producer, downstream value, allocation, dependency, or builder-order input",
+    );
 }
 
 /// A declared split verifies and is readable back off the verified program.
@@ -3032,8 +3236,8 @@ fn the_declared_split_separates_kernel_program_identity() {
         declared.canonical_identity(),
         "a program that proves a split must not share identity with one that does not"
     );
-    // `contributors_per_partition` is the field program scope cannot derive, so
-    // it is exactly the one identity has to carry.
+    // Contributor coverage is an independently declared split fact, so changing
+    // it must move identity alongside the exact occurrence and owner claims.
     let restated = program_with_split(&semantic, |_, split| PartialReduction {
         contributors_per_partition: 7,
         ..split
@@ -3086,6 +3290,7 @@ fn a_partial_that_is_not_an_internal_temporary_is_rejected() {
         combiner: wired.pointwise,
         partial: wired.output,
         result: wired.temporary,
+        occurrence: SemanticOccurrence::new(1),
         partitions: 3,
         contributors_per_partition: 1,
     };

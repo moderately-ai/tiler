@@ -699,6 +699,12 @@ impl KernelProgramBuilder {
         self.resolve_stage(split.combiner)?;
         self.resolve_value(split.partial)?;
         self.resolve_value(split.result)?;
+        if split.occurrence.get() >= self.subject.operations {
+            return Err(KernelProgramBuildError::CoverageOutOfRange {
+                occurrence: split.occurrence,
+                operations: self.subject.operations,
+            });
+        }
         // One stage cannot both stage the partials and combine them: the split
         // exists precisely to put a dispatch boundary between the two, and a
         // self-edge is what a program declares when it has not.
@@ -724,6 +730,7 @@ impl KernelProgramBuilder {
             combiner: split.combiner.index,
             partial: split.partial.index,
             result: split.result.index,
+            occurrence: split.occurrence.get(),
             partitions: split.partitions,
             contributors_per_partition: split.contributors_per_partition,
         });
@@ -923,7 +930,8 @@ impl KernelProgramBuilder {
         self.materialize_required_nonzero_guard();
         let data = self.take_data();
         match super::verify::verify_program(&data, &self.subject).and_then(|(derived, keys)| {
-            let identity = encode_identity(&data, &keys, &derived.definitions)?;
+            let identity =
+                encode_identity(&data, &keys, &derived.definitions, &derived.stage_owners)?;
             Ok((derived, identity))
         }) {
             Ok((derived, identity)) => Ok(VerifiedKernelProgram {
@@ -967,6 +975,16 @@ impl KernelProgramBuilder {
             applicability_guard: self.applicability_guard,
             routing_commit: std::mem::take(&mut self.routing_commit),
         }
+    }
+
+    /// Exposes an assembled subject to the owning verifier tests only.
+    ///
+    /// Production callers retain the transactional, opaque builder boundary;
+    /// these tests perturb graph subjects (rather than assertions) to show each
+    /// complete-stage-owner refusal remains reachable.
+    #[cfg(test)]
+    pub(super) fn into_data_for_owner_test(mut self) -> KernelProgramData {
+        self.take_data()
     }
 
     /// Returns a taken arena to the builder, restoring the recoverable state

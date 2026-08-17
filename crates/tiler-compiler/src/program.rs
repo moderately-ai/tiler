@@ -421,7 +421,42 @@ pub(crate) struct AssemblySplit {
     pub(crate) combiner: usize,
     pub(crate) partial: usize,
     pub(crate) result: usize,
+    /// Semantic occurrence whose final realization stage combines the partials.
+    pub(crate) occurrence: crate::region::SemanticMemberId,
     pub(crate) partition: ContributorPartition,
+}
+
+/// Why two declared split passes do not prove one exact continuation.
+///
+/// The occurrence belongs to the edge, not to either pass independently: a
+/// fused producer may contain several atoms, and taking its first member would
+/// turn declaration order into semantic authority.  The two pass coverages are
+/// the authority, so callers derive the member only from an atom whose exact
+/// successor the combiner also claims.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SplitContinuationError {
+    Missing,
+    Ambiguous,
+}
+
+/// Derives the one occurrence a split's producer-to-combiner edge continues.
+fn split_continuation_occurrence(
+    producer: &AssemblyStage,
+    combiner: &AssemblyStage,
+) -> Result<crate::region::SemanticMemberId, SplitContinuationError> {
+    let mut continuations = producer.coverage.iter().filter_map(|atom| {
+        combiner
+            .coverage
+            .contains(&atom.next_stage())
+            .then_some(atom.member())
+    });
+    let Some(occurrence) = continuations.next() else {
+        return Err(SplitContinuationError::Missing);
+    };
+    if continuations.next().is_some() {
+        return Err(SplitContinuationError::Ambiguous);
+    }
+    Ok(occurrence)
 }
 
 /// One publishing-copy contract a two-dispatch publishing region declares.
@@ -1001,6 +1036,22 @@ impl CoverAssembly {
                     combiner,
                     partial: pass_values[*position][stage - first],
                     result,
+                    occurrence: split_continuation_occurrence(
+                        stages.get(stage).ok_or_else(|| {
+                            AssemblyRefusal::missing(region.label(), "split-producer-missing")
+                        })?,
+                        stages.get(combiner).ok_or_else(|| {
+                            AssemblyRefusal::missing(region.label(), "split-combiner-missing")
+                        })?,
+                    )
+                    .map_err(|error| match error {
+                        SplitContinuationError::Missing => {
+                            AssemblyRefusal::missing(region.label(), "split-continuation-missing")
+                        }
+                        SplitContinuationError::Ambiguous => {
+                            AssemblyRefusal::missing(region.label(), "split-continuation-ambiguous")
+                        }
+                    })?,
                     partition,
                 });
             }
@@ -1663,6 +1714,31 @@ fn build_cover_core(
         )?;
     }
     for split in &assembly.splits {
+        let producer = assembly
+            .stages
+            .get(split.producer)
+            .ok_or(ProgramError::Structure {
+                rule: "assembly-split-stage",
+            })?;
+        let combiner = assembly
+            .stages
+            .get(split.combiner)
+            .ok_or(ProgramError::Structure {
+                rule: "assembly-split-stage",
+            })?;
+        let occurrence = split_continuation_occurrence(producer, combiner).map_err(|error| {
+            ProgramError::Structure {
+                rule: match error {
+                    SplitContinuationError::Missing => "assembly-split-continuation-missing",
+                    SplitContinuationError::Ambiguous => "assembly-split-continuation-ambiguous",
+                },
+            }
+        })?;
+        if occurrence != split.occurrence {
+            return Err(ProgramError::Structure {
+                rule: "assembly-split-occurrence-mismatch",
+            });
+        }
         builder.push_partial_reduction(tiler_ir::program::PartialReduction {
             producer: *pushed.get(split.producer).ok_or(ProgramError::Structure {
                 rule: "assembly-split-stage",
@@ -1680,6 +1756,13 @@ fn build_cover_core(
                 .ok_or(ProgramError::Structure {
                     rule: "assembly-split-value",
                 })?,
+            occurrence: lowering
+                .occurrence(split.occurrence)
+                .map(crate::lowering::OccurrenceLowering::covered_occurrence)
+                .ok_or(ProgramError::Structure {
+                    rule: "refinement-coverage-missing",
+                })?
+                .occurrence(),
             partitions: split.partition.partitions,
             contributors_per_partition: split.partition.contributors_per_partition,
         })?;

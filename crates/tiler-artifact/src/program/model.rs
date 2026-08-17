@@ -304,7 +304,16 @@ pub(super) const ARTIFACT_DOMAIN_LABEL: &str = {
 /// row, which is why it carries its own separator instead of relying on
 /// [`ARTIFACT_DOMAIN`] — and why that domain does not step with it, as the note
 /// there records.
-pub(crate) const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v3\0";
+///
+/// `v4` replaces coverage-only ownership with one complete canonical owner:
+/// realization stages write a tagged, counted run of proof-bound occurrence
+/// ordinals (including split and staged continuations), while administrative
+/// publishers write their exact named-output component claims. The tag and
+/// count are part of the independently serialized subject, so an older reader
+/// cannot determine which grammar follows the bound kernel identity. The stage
+/// domain steps; [`ARTIFACT_DOMAIN`] does not, because each entry length-frames
+/// this complete stepped key.
+pub(crate) const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v4\0";
 /// Versioned domain separator of one carried payload descriptor's canonical key.
 pub(crate) const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
 /// Versioned domain separator of one selected provider's canonical key.
@@ -974,7 +983,11 @@ pub(super) fn packaged_entry_positions(variants: &[VariantData]) -> Vec<u32> {
     let mut flat = Vec::new();
     let mut base = 0_u32;
     for variant in variants {
-        let stage_keys: Vec<Vec<u8>> = variant.program.stages().map(stage_key).collect();
+        let stage_keys: Vec<Vec<u8>> = variant
+            .program
+            .stages()
+            .map(|stage| stage_key(&variant.program, stage))
+            .collect();
         let entry_of = canonical_entry_positions(&stage_keys);
         flat.extend(entry_of.iter().map(|canonical| base + canonical));
         base += ordinal(entry_of.len());
@@ -1886,39 +1899,139 @@ pub enum AbiExprView<'a> {
 
 /// Derives the canonical content key of one program stage.
 ///
-/// The key is the shared IR's own stage subject — the exact bound kernel, and
-/// the semantic occurrences it covers each paired with the reached-only
-/// executable-coverage identity proving it — so an artifact entry
+/// The key is the shared IR's own complete stage subject — the exact bound
+/// kernel and either proof-bound realization claims (including continuations)
+/// or exact named-output component publication claims — so an artifact entry
 /// cross-references a stage by content rather than by the program's declaration
-/// position, and two stages that differ only in which verified index
-/// realization justifies their coverage are two stages here as well as in the
-/// kernel program.
+/// position. Two stages that differ in any owner claim are different here as
+/// well as in the kernel program.
 ///
 /// This is the second, independent writer of that subject. It is deliberately
 /// not shared with `tiler_ir`'s own stage encoder: a widening the two disagree
 /// about must be a visible divergence between two readable encoders rather than
 /// a silent agreement neither states.
-pub(super) fn stage_key(stage: StageRef<'_>) -> Vec<u8> {
-    // Each coverage record is one `SemanticOccurrence` — a `u32` ordinal —
-    // followed by its length-framed refinement evidence.
-    let exact = STAGE_KEY_DOMAIN.len()
-        + framed(stage.kernel().canonical_identity().as_bytes().len())
-        + LENGTH_BYTES
-        + stage
-            .coverage()
-            .iter()
-            .map(|covered| size_of::<u32>() + framed(covered.refinement().as_bytes().len()))
-            .sum::<usize>();
-    let mut bytes = Vec::with_capacity(exact);
+pub(super) fn stage_key(program: &VerifiedKernelProgram, stage: StageRef<'_>) -> Vec<u8> {
+    let mut bytes = Vec::new();
     bytes.extend_from_slice(STAGE_KEY_DOMAIN);
     push_slice(&mut bytes, stage.kernel().canonical_identity().as_bytes());
-    push_len(&mut bytes, stage.coverage().len());
-    for covered in stage.coverage() {
-        bytes.extend_from_slice(&covered.occurrence().get().to_be_bytes());
-        push_slice(&mut bytes, covered.refinement().as_bytes());
+    let realization = realization_claims(program, stage);
+    let publication = publication_claims(program, stage);
+    match (realization.is_empty(), publication.is_empty()) {
+        (false, true) => {
+            bytes.push(0x01);
+            push_len(&mut bytes, realization.len());
+            for (ordinal, covered) in realization {
+                bytes.extend_from_slice(&ordinal.to_be_bytes());
+                bytes.extend_from_slice(&covered.occurrence().get().to_be_bytes());
+                push_slice(&mut bytes, covered.refinement().as_bytes());
+            }
+        }
+        (true, false) => {
+            bytes.push(0x02);
+            push_len(&mut bytes, publication.len());
+            for (key, role) in publication {
+                push_slice(&mut bytes, key.as_str().as_bytes());
+                push_component_role(&mut bytes, role);
+            }
+        }
+        // A verified kernel program has exactly one closed owner per stage;
+        // reaching either branch is a shared-IR verifier defect, not a fallback.
+        _ => unreachable!("verified program carries one complete stage owner"),
     }
-    debug_assert_eq!(bytes.len(), exact, "stage key capacity is exact");
     bytes
+}
+
+fn realization_claims<'a>(
+    program: &'a VerifiedKernelProgram,
+    stage: StageRef<'a>,
+) -> Vec<(u32, tiler_ir::program::CoveredOccurrence)> {
+    let mut claims: Vec<_> = stage
+        .coverage()
+        .iter()
+        .cloned()
+        .map(|covered| (0, covered))
+        .collect();
+    let mut occurrences: Vec<_> = program
+        .partial_reductions()
+        .filter(|split| split.combiner() == stage)
+        .map(tiler_ir::program::PartialReductionRef::occurrence)
+        .chain(
+            program
+                .staged_realizations()
+                .filter(|row| row.consumer() == stage)
+                .map(tiler_ir::program::StagedRealizationRef::occurrence),
+        )
+        .collect();
+    occurrences.sort_unstable();
+    occurrences.dedup();
+    for occurrence in occurrences {
+        let (root, proof) = program
+            .stages()
+            .find_map(|candidate| {
+                candidate
+                    .coverage()
+                    .iter()
+                    .find(|covered| covered.occurrence() == occurrence)
+                    .cloned()
+                    .map(|covered| (candidate, covered))
+            })
+            .expect("verified owner has a proof-bound root");
+        let mut current = root;
+        let mut ordinal = 0_u32;
+        while let Some(next) = program
+            .partial_reductions()
+            .filter(|split| split.occurrence() == occurrence)
+            .map(|split| (split.producer(), split.combiner()))
+            .chain(
+                program
+                    .staged_realizations()
+                    .filter(|row| row.occurrence() == occurrence)
+                    .map(|row| (row.producer(), row.consumer())),
+            )
+            .find(|(producer, _)| *producer == current)
+            .map(|(_, consumer)| consumer)
+        {
+            ordinal = ordinal.saturating_add(1);
+            if next == stage {
+                claims.push((ordinal, proof.clone()));
+                break;
+            }
+            current = next;
+        }
+    }
+    claims.sort_by(|left, right| {
+        left.1
+            .occurrence()
+            .get()
+            .cmp(&right.1.occurrence().get())
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    claims
+}
+
+fn publication_claims(
+    program: &VerifiedKernelProgram,
+    stage: StageRef<'_>,
+) -> Vec<(OutputKey, Option<EncodedComponentRole>)> {
+    let mut claims: Vec<_> = program
+        .publishing_copies()
+        .filter(|copy| copy.publisher() == stage)
+        .map(|copy| {
+            let published = copy.published();
+            let output = program
+                .outputs()
+                .find(|output| output.value() == published)
+                .expect("verified publishing owner names one output component");
+            (output.key().clone(), published.component_role())
+        })
+        .collect();
+    claims.sort_by(|left, right| {
+        left.0
+            .as_str()
+            .cmp(right.0.as_str())
+            .then_with(|| left.1.cmp(&right.1))
+    });
+    claims
 }
 
 // Each shared-IR vocabulary below has exactly one tag table, written as an

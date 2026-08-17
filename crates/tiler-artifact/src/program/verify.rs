@@ -169,7 +169,11 @@ fn payload_at_two_delivery_positions(data: &ArtifactProgramData) -> Option<u32> 
 /// keys would make the entry-to-stage mapping unrecoverable.
 fn stage_keys_collide(data: &ArtifactProgramData) -> bool {
     data.variants.iter().any(|variant| {
-        let mut keys: Vec<Vec<u8>> = variant.program.stages().map(stage_key).collect();
+        let mut keys: Vec<Vec<u8>> = variant
+            .program
+            .stages()
+            .map(|stage| stage_key(&variant.program, stage))
+            .collect();
         keys.sort_unstable();
         keys.windows(2).any(|pair| pair[0] == pair[1])
     })

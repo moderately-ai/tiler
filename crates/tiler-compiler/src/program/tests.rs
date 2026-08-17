@@ -173,6 +173,37 @@ fn stage_coverage_uses_verified_canonical_receipt_occurrences() {
 }
 
 #[test]
+fn split_occurrence_is_derived_from_exact_two_pass_continuity() {
+    let first = crate::region::SemanticStage::first(crate::region::SemanticMemberId(7));
+    let other = crate::region::SemanticStage::first(crate::region::SemanticMemberId(9));
+    let producer = AssemblyStage {
+        coverage: vec![other, first],
+        bindings: Vec::new(),
+    };
+    let combiner = AssemblyStage {
+        coverage: vec![first.next_stage()],
+        bindings: Vec::new(),
+    };
+    assert_eq!(
+        split_continuation_occurrence(&producer, &combiner),
+        Ok(first.member()),
+        "the continuation, not the producer's first declared atom, names the split",
+    );
+
+    let wrong_combiner = AssemblyStage {
+        coverage: vec![
+            crate::region::SemanticStage::first(crate::region::SemanticMemberId(11)).next_stage(),
+        ],
+        bindings: Vec::new(),
+    };
+    assert_eq!(
+        split_continuation_occurrence(&producer, &wrong_combiner),
+        Err(SplitContinuationError::Missing),
+        "perturbing the combiner subject must make an unstated continuation refuse",
+    );
+}
+
+#[test]
 fn artifact_construction_rejects_a_cross_program_semantic_request_mix() {
     let (_, request, scheduled) = fixture_with_scale(2.0_f32.to_bits());
     let (different_semantic, _, _) = fixture_with_scale(3.0_f32.to_bits());
