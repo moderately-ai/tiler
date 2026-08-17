@@ -3,7 +3,7 @@ id: admit-reassociated-contraction-schedule-alternatives
 title: Admit reassociated and permuted contraction schedule alternatives
 status: blocked
 priority: p2
-dependencies: [implement-parallel-reduction-strategies, realize-the-contraction-through-the-appendable-direct-path, decide-the-fixed-strided-contributor-membership-vocabulary, decide-the-algebraic-capability-authority-for-contraction-splits]
+dependencies: [implement-parallel-reduction-strategies, realize-the-contraction-through-the-appendable-direct-path, decide-the-fixed-strided-contributor-membership-vocabulary, decide-the-algebraic-capability-authority-for-contraction-splits, implement-the-adr-0013-plan-determinism-stability-subject]
 related: [reduction-semantics-contract, implement-analytical-component-cost-model, realize-the-tiled-contraction-schedule-and-its-metal-emission, enumerate-the-split-reduction-on-the-planning-frontier, admit-a-reassociating-contract-without-contraction]
 scopes: [implementation/compiler, implementation/ir, implementation/metal, implementation/conformance, contracts/foundation]
 shared_scopes: [project/tickets]
@@ -81,3 +81,7 @@ The reviewer found the attempted partitioning, first-product/root-partial seeds,
 The algebraic-authority audit found a prerequisite one layer earlier than the missing capability. `tiler::strict-tensor-contraction-f32@1` currently declares one strict lexicographic value, carries both order-permission facts as `false`, and is accepted only in that form by the independent reference decoder. An ordered/commutative declaration on its realized scalar add cannot override the semantic operation the realization refines. [`decide-the-semantic-order-contract-for-relaxed-contractions`](decide-the-semantic-order-contract-for-relaxed-contractions.md) now owns the separate key/facts/result-set/reference/identity question and is a hard dependency of the algebraic-authority ticket. This implementation inherits that prerequisite transitively instead of declaring a redundant direct edge.
 
 If that decision keeps the key strict, this implementation outcome is closed or superseded rather than implemented. If it admits a permission-indexed relaxed population, the algebraic-authority ticket reopens on that exact accepted base and must settle the internal combiner authority before this ticket can resume. The failed attempt remains preserved and unmerged in either case; request permission alone is still never authority.
+
+## Determinism graph repair — 2026-08-17
+
+ADR 0012's `plan-deterministic` fact string is not a realized stability subject, and ADR 0013 leaves the exact declared target-environment compatibility identity unresolved. [`decide-the-adr-0013-plan-determinism-stability-subject`](decide-the-adr-0013-plan-determinism-stability-subject.md) owns that consequential decision. [`implement-the-adr-0013-plan-determinism-stability-subject`](implement-the-adr-0013-plan-determinism-stability-subject.md) is the blocked carrier for only the eventually accepted surface and is now a hard dependency of this ticket. This edge prevents a reassociated plan from claiming stable selected-topology behavior before the generic identity, artifact/explain projection, and runtime refusal path exist; it does not guess those fields here.
