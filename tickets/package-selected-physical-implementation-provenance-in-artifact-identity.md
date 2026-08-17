@@ -1,7 +1,7 @@
 ---
 id: package-selected-physical-implementation-provenance-in-artifact-identity
 title: Package selected physical implementation provenance in artifact identity
-status: todo
+status: in-progress
 priority: p1
 dependencies: [disclose-the-physical-provider-environment-a-compilation-was-offered, publish-occurrence-bound-selected-physical-implementation-evidence, replace-flat-selected-lowering-capability-keys-with-structured-subjects]
 related: [disclose-offered-and-selected-physical-provider-sets-separately, reconcile-the-operation-identity-and-governed-key-grammars]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, implementation/build, contracts/artifacts, con
 shared_scopes: [project/tickets]
 paths: []
 tags: [backend-providers, provenance, artifact, identity, schema, public-boundary]
+claimed_from: todo
+assignee: sol-physical-artifact
+lease_expires_at: 1786933579
 ---
 ## User-visible outcome
 
