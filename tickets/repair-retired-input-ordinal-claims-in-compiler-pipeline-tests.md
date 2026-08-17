@@ -1,7 +1,7 @@
 ---
 id: repair-retired-input-ordinal-claims-in-compiler-pipeline-tests
 title: Repair retired input-ordinal claims in compiler pipeline tests
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [repair-fieldless-tensor-role-documentation-after-access-ordinal-reconciliation]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [defect, documentation, access-ordinal]
-claimed_from: todo
-assignee: worker-pipeline-doc
-lease_expires_at: 1786965597
 ---
 ## User-visible outcome
 
