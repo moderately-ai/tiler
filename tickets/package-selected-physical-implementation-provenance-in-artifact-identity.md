@@ -9,9 +9,6 @@ scopes: [implementation/artifact, implementation/build, contracts/artifacts, con
 shared_scopes: [project/tickets]
 paths: [.ticketsplease/decision-queue.md]
 tags: [backend-providers, provenance, artifact, identity, schema, public-boundary]
-claimed_from: todo
-assignee: sol-physical-artifact
-lease_expires_at: 1786933579
 ---
 ## Exact-base Fact audit and stop — 2026-08-16
 
