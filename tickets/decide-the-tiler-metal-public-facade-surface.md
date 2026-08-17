@@ -1,7 +1,7 @@
 ---
 id: decide-the-tiler-metal-public-facade-surface
 title: Decide the tiler-metal public facade surface
-status: blocked
+status: in-progress
 priority: p1
 dependencies: [prototype-metal-kir-lowering, check-synchronization-realization-before-the-routing-commit, carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit]
 related: [choose-one-owner-for-apple-target-vocabulary, realize-parallel-reduction-strategies-on-metal]
@@ -9,6 +9,9 @@ scopes: [implementation/metal, implementation/metal-aot, contracts/decisions, co
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, needs-tom, public-boundary, metal, facade]
+claimed_from: todo
+assignee: worker-metal-facade
+lease_expires_at: 1786977676
 ---
 ## User-visible outcome
 
