@@ -1,9 +1,9 @@
 ---
 id: implement-the-composed-realization-evaluation-driver
 title: Implement the composed realization evaluation driver
-status: in-progress
+status: blocked
 priority: p2
-dependencies: [retain-each-plan-alternative-s-verified-semantic-candidate, define-the-composed-realization-driver-subject-bridge]
+dependencies: [retain-each-plan-alternative-s-verified-semantic-candidate, define-the-composed-realization-driver-subject-bridge, accept-the-exact-composed-reference-session-and-event-surface]
 related: [accept-the-composed-realization-evaluation-surface, compose-a-declared-reduction-topology-into-a-semantic-program-evaluation, decide-the-safe-cross-crate-composed-reference-boundary]
 scopes: [implementation/compiler, implementation/conformance, implementation/ir, implementation/reference, contracts/numerics]
 shared_scopes: [project/tickets]
@@ -13,6 +13,22 @@ claimed_from: todo
 assignee: worker-composed-driver
 lease_expires_at: 1786977751
 ---
+## Source-first Fact and obligation audit — exact published base `f6f310a47e1def152313120e0beda91ef8219fd8`
+
+- **Verified — exact checkout and claim.** The ticket worktree is on `tkt/implement-the-composed-realization-evaluation-driver` at `f6f310a47e1def152313120e0beda91ef8219fd8`, was clean before this ticket-only repair, and the live claim names `worker-composed-driver`. Its declared compiler/conformance/IR/reference/numerics scopes cover the requested implementation.
+- **Verified — both implementation prerequisites are done.** `retain-each-plan-alternative-s-verified-semantic-candidate` made `ProgramAlternative.semantic` mandatory, Arc-retained, identity-bound, and reverified. `define-the-composed-realization-driver-subject-bridge` accepted the one-shot compiler visitor, exact five-event population, atomic pre-`Begin` validation, distinct visitor errors, and staged/synthetic first-slice refusal.
+- **Verified — the retained candidate/plan path is mechanically available.** `build_alternative_for_origin` constructs `CoverAssembly::from_plan(P', selected_plan)`, retains the exact `Arc<SemanticProgram>`, schedule vector, verified program and identity; `verify_alternative` rederives assembly against that same owner. `PlanAlternative` retains references to both the owning `Compilation` and exact `ProgramAlternative`.
+- **Verified — `CoverAssembly` is the only complete derivation authority.** Its execution order, stage bindings, actual producer/consumer dependencies, materialization values, split pairs, publishing copies, and staged/synthetic handoffs are the facts the visitor must factor. KIR and ABI views omit semantic-value attribution and cannot replace it.
+- **Verified — the reference evaluator owns the required computations but not the composition protocol.** `ReferenceEvaluator::evaluate` already owns all intermediate tensors while walking one `SemanticProgram`; `strict_partial_sums_under` and `strict_partitioned_sum_under` own the declared blocked fold. The missing primitive/session must compose those paths without accepting a caller tensor for an internal `ValueId`.
+- **Verified — the current split fixture never exercises a distinct `P'`.** `the_assembled_split_program_matches_the_partitioned_sum_oracle` builds and assembles the original semantic program directly, derives its prologue from `kernels[0]`, and its `semantic_case_with_axis` has only one multiply and one add before the sum, so neither ordered-reassociation rule has a same-operation chain to rewrite. The research fixture `sum((x * 0.3) * 10.0)` supplies a discriminating `P' != P` multiply reassociation before the physical two-by-two split.
+- **Verified — the required semantic behavior remains unchanged.** The wrapper must evaluate exact retained `P'`, then apply stage/materialization/split order and the declared partition, with explicit registry/work authority and no strict/baseline/default fallback. Staged/synthetic values remain named refusals in the initial population. No artifact/cache/request/schedule/KIR/semantic/registry identity or schema population moves.
+- **False — the accepted bridge's illustrative `IterationStepAllowance` names no repository type.** Existing public authority is `usize` on `ReferenceEvaluator::with_iteration_step_allowance`; inventing a newtype would be a new language-public boundary.
+- **False — the illustrative `ReferenceOutputs` return is not an owned program result.** It is the public mutable writer for one registered `ReferenceOperation` callback, with crate-private construction/finalization. Whole-program reference evaluation returns `Vec<Tensor>`.
+- **Imprecise — the accepted decisions do not fix every exact language-public spelling implementation requires.** They decide ownership, safety, event population and sequencing, but not the safe session type/method/error/output surface or the event row/accessor/iterator/error surface. Several correct spellings have different compatibility and protocol consequences. Under the public-boundary stop condition this cannot be invented in implementation.
+- **Verified — the current `PlanAlternative`-backed expected-value population is narrower than the ticket prose suggests.** `serial_sum::partitioned_reference` is its only member and the only `strict_partitioned_sum` call; it folds caller operands after reconstructing a partition from ABI geometry. `loop_carried::grouped_bits` is another grouping oracle and calls `cooperative_grouped_sum`, but it constructs a `VerifiedScheduledRegion` directly under its stated `The compiler is not in the path` boundary and consumes no `PlanAlternative`. Other `PlanAlternative` consumers package proof or device dispatch evidence; no crate depends on `tiler-conformance`; no composed public symbol exists.
+
+**Blocked correction, 2026-08-17.** [`accept-the-exact-composed-reference-session-and-event-surface`](accept-the-exact-composed-reference-session-and-event-surface.md) now owns the missing consequential public spellings, existing-type collisions, exact consumer census, and Pareto-complete decision packet. No production edit is authorized until it is accepted. The prerequisite itself stays blocked and must not be queued or presented while LiveRow is active.
+
 ## User-visible outcome
 
 One supported test-only conformance entry computes expected bits from the exact semantic candidate and the exact ordered realization the selected plan declared, including plans that spend reassociation in both a semantic rewrite and a physical reduction split.
