@@ -1,7 +1,7 @@
 ---
 id: refuse-two-structurally-identical-output-chains-by-name-not-as-compiler-output
 title: Carry complete canonical ownership in every program stage
-status: in-progress
+status: done
 priority: p2
 dependencies: [reproduce-the-identical-output-chain-stage-key-collision]
 related: [bound-the-assembled-region-count-and-derive-the-multi-output-budget-actuals]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/ir, implementation/artifact, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, ir, artifact, identity-domain, multi-output]
-claimed_from: todo
-assignee: worker-stage-ownership
-lease_expires_at: 1786992067
 ---
 ## User-visible outcome
 
@@ -132,3 +129,22 @@ this accepted ownership and identity repair. This ticket therefore records the
 supported `None` framing probe rather than inventing nonempty-component support;
 the crate-private owner subject test above supplies the narrower nonempty-role
 encoding evidence without implying producer reachability.
+
+## Independent review and integration — 2026-08-17
+
+Independent exact-commit review of `e5f1720db47354b5a63e9f7b7e7d154e76d75661`
+over `796f87e58c2eec6a1e8c813f98ec9c16c882ac54` found no remaining issue.
+The review re-derived split continuity, the closed owner graph and refusal
+precedence, both independent stage encoders, every identity-domain step and
+non-step, and the public same-shaped-output regression. It independently
+perturbed the publication tag, output key, and `None` role framing; each made
+the unchanged complete-subject agreement fail before restoration. Seven focused
+cross-crate checks passed, followed by 1,466 `tiler-ir`/`tiler-artifact` tests
+with one skipped, warnings-denied Clippy and rustdoc, ticket lint, citations,
+diff checking, and exact-base scope guard with no conflict or under-declaration.
+
+The reviewed hash was integrated unchanged by merge commit
+`6c55d77a619c9752e005abcc54c027e47021fcc7`. The coordinator re-read the
+cumulative 23-file diff and the final publication-only amendments before the
+merge. Repository-wide publication gates and the final pushed commit are
+recorded in the closing commit that marks this ticket done.
