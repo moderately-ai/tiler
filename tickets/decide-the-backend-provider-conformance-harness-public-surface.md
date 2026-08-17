@@ -1,7 +1,7 @@
 ---
 id: decide-the-backend-provider-conformance-harness-public-surface
 title: Decide the backend-provider conformance harness public surface
-status: in-progress
+status: awaiting-decision
 priority: p1
 dependencies: [exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio]
 related: [publish-the-backend-provider-conformance-suite, audit-backend-authoring-against-all-thirteen-responsibilities, specify-the-consumer-neutral-backend-provider-composition-contract, make-explain-dispositions-assertable-by-a-conformance-suite]
@@ -9,9 +9,6 @@ scopes: [implementation/conformance, contracts/foundation, contracts/decisions, 
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, needs-tom, public-boundary, backend-providers, conformance]
-claimed_from: todo
-assignee: worker-conformance-facade
-lease_expires_at: 1786979471
 ---
 ## User-visible outcome
 
@@ -138,6 +135,10 @@ Do not perturb assertions. With assertions unchanged, independently:
 ## Stop boundary
 
 This ticket authorizes research and ticket/document corrections only. It authorizes no public export, new crate, module move, production implementation, provider default, adapter discovery, or conformance claim. Do not add it to the Tom decision queue until the exact current packet is Pareto-complete and independently reviewed.
+
+## Independent review — 2026-08-17
+
+The repaired packet at `ed1d557170ff8a2afb0fac11a39765dfc5b83a00` received an independent exact-commit review over `b085f9dcd95c77ecdf42e93d3e083f02a584a4a8`. The review found no remaining correctness or graph defect after candidate D was split into an explicitly partial D1 and an all-eleven-row D2. It independently confirmed that the provenance carriers and structured explain gate only their corresponding complete coverage claims, while the current blocker for even D1 is the absence of a neutral, non-self-certifying subject shared by two independently authored fixtures. The portability census remained 22 source files, 81 device-free tests, and 3 macOS-gated tests; `tkt lint --format json`, `make citations`, `git diff --check`, and exact-base `tkt guard` were green. The packet remains held from presentation while the earlier LiveRow decision owns Tom's single active question.
 
 ## Closes when
 
