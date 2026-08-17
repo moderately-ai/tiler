@@ -1,0 +1,3962 @@
+{
+  "bindings": [
+    {
+      "checkpoint_tensor": "model.embed_tokens.weight",
+      "expected_shape": [
+        151936,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_embed",
+      "qualified_slot": "P1+P3.shared.W_embed",
+      "uses": [
+        "P1.W_embed",
+        "P3.W_embed"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.0.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-00.w_input_layernorm",
+      "uses": [
+        "P2.layer-00.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.0.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-00.W_down",
+      "uses": [
+        "P2.layer-00.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.0.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-00.W_gate",
+      "uses": [
+        "P2.layer-00.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.0.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-00.W_up",
+      "uses": [
+        "P2.layer-00.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.0.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-00.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-00.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.0.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-00.w_k_norm",
+      "uses": [
+        "P2.layer-00.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.0.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-00.W_k",
+      "uses": [
+        "P2.layer-00.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.0.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-00.W_o",
+      "uses": [
+        "P2.layer-00.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.0.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-00.w_q_norm",
+      "uses": [
+        "P2.layer-00.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.0.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-00.W_q",
+      "uses": [
+        "P2.layer-00.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.0.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-00.W_v",
+      "uses": [
+        "P2.layer-00.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.1.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-01.w_input_layernorm",
+      "uses": [
+        "P2.layer-01.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.1.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-01.W_down",
+      "uses": [
+        "P2.layer-01.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.1.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-01.W_gate",
+      "uses": [
+        "P2.layer-01.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.1.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-01.W_up",
+      "uses": [
+        "P2.layer-01.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.1.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-01.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-01.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.1.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-01.w_k_norm",
+      "uses": [
+        "P2.layer-01.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.1.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-01.W_k",
+      "uses": [
+        "P2.layer-01.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.1.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-01.W_o",
+      "uses": [
+        "P2.layer-01.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.1.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-01.w_q_norm",
+      "uses": [
+        "P2.layer-01.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.1.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-01.W_q",
+      "uses": [
+        "P2.layer-01.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.1.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-01.W_v",
+      "uses": [
+        "P2.layer-01.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.10.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-10.w_input_layernorm",
+      "uses": [
+        "P2.layer-10.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.10.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-10.W_down",
+      "uses": [
+        "P2.layer-10.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.10.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-10.W_gate",
+      "uses": [
+        "P2.layer-10.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.10.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-10.W_up",
+      "uses": [
+        "P2.layer-10.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.10.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-10.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-10.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.10.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-10.w_k_norm",
+      "uses": [
+        "P2.layer-10.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.10.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-10.W_k",
+      "uses": [
+        "P2.layer-10.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.10.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-10.W_o",
+      "uses": [
+        "P2.layer-10.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.10.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-10.w_q_norm",
+      "uses": [
+        "P2.layer-10.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.10.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-10.W_q",
+      "uses": [
+        "P2.layer-10.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.10.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-10.W_v",
+      "uses": [
+        "P2.layer-10.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.11.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-11.w_input_layernorm",
+      "uses": [
+        "P2.layer-11.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.11.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-11.W_down",
+      "uses": [
+        "P2.layer-11.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.11.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-11.W_gate",
+      "uses": [
+        "P2.layer-11.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.11.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-11.W_up",
+      "uses": [
+        "P2.layer-11.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.11.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-11.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-11.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.11.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-11.w_k_norm",
+      "uses": [
+        "P2.layer-11.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.11.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-11.W_k",
+      "uses": [
+        "P2.layer-11.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.11.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-11.W_o",
+      "uses": [
+        "P2.layer-11.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.11.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-11.w_q_norm",
+      "uses": [
+        "P2.layer-11.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.11.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-11.W_q",
+      "uses": [
+        "P2.layer-11.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.11.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-11.W_v",
+      "uses": [
+        "P2.layer-11.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.12.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-12.w_input_layernorm",
+      "uses": [
+        "P2.layer-12.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.12.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-12.W_down",
+      "uses": [
+        "P2.layer-12.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.12.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-12.W_gate",
+      "uses": [
+        "P2.layer-12.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.12.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-12.W_up",
+      "uses": [
+        "P2.layer-12.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.12.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-12.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-12.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.12.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-12.w_k_norm",
+      "uses": [
+        "P2.layer-12.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.12.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-12.W_k",
+      "uses": [
+        "P2.layer-12.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.12.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-12.W_o",
+      "uses": [
+        "P2.layer-12.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.12.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-12.w_q_norm",
+      "uses": [
+        "P2.layer-12.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.12.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-12.W_q",
+      "uses": [
+        "P2.layer-12.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.12.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-12.W_v",
+      "uses": [
+        "P2.layer-12.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.13.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-13.w_input_layernorm",
+      "uses": [
+        "P2.layer-13.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.13.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-13.W_down",
+      "uses": [
+        "P2.layer-13.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.13.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-13.W_gate",
+      "uses": [
+        "P2.layer-13.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.13.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-13.W_up",
+      "uses": [
+        "P2.layer-13.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.13.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-13.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-13.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.13.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-13.w_k_norm",
+      "uses": [
+        "P2.layer-13.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.13.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-13.W_k",
+      "uses": [
+        "P2.layer-13.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.13.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-13.W_o",
+      "uses": [
+        "P2.layer-13.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.13.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-13.w_q_norm",
+      "uses": [
+        "P2.layer-13.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.13.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-13.W_q",
+      "uses": [
+        "P2.layer-13.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.13.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-13.W_v",
+      "uses": [
+        "P2.layer-13.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.14.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-14.w_input_layernorm",
+      "uses": [
+        "P2.layer-14.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.14.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-14.W_down",
+      "uses": [
+        "P2.layer-14.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.14.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-14.W_gate",
+      "uses": [
+        "P2.layer-14.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.14.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-14.W_up",
+      "uses": [
+        "P2.layer-14.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.14.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-14.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-14.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.14.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-14.w_k_norm",
+      "uses": [
+        "P2.layer-14.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.14.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-14.W_k",
+      "uses": [
+        "P2.layer-14.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.14.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-14.W_o",
+      "uses": [
+        "P2.layer-14.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.14.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-14.w_q_norm",
+      "uses": [
+        "P2.layer-14.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.14.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-14.W_q",
+      "uses": [
+        "P2.layer-14.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.14.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-14.W_v",
+      "uses": [
+        "P2.layer-14.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.15.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-15.w_input_layernorm",
+      "uses": [
+        "P2.layer-15.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.15.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-15.W_down",
+      "uses": [
+        "P2.layer-15.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.15.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-15.W_gate",
+      "uses": [
+        "P2.layer-15.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.15.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-15.W_up",
+      "uses": [
+        "P2.layer-15.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.15.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-15.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-15.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.15.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-15.w_k_norm",
+      "uses": [
+        "P2.layer-15.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.15.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-15.W_k",
+      "uses": [
+        "P2.layer-15.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.15.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-15.W_o",
+      "uses": [
+        "P2.layer-15.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.15.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-15.w_q_norm",
+      "uses": [
+        "P2.layer-15.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.15.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-15.W_q",
+      "uses": [
+        "P2.layer-15.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.15.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-15.W_v",
+      "uses": [
+        "P2.layer-15.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.16.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-16.w_input_layernorm",
+      "uses": [
+        "P2.layer-16.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.16.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-16.W_down",
+      "uses": [
+        "P2.layer-16.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.16.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-16.W_gate",
+      "uses": [
+        "P2.layer-16.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.16.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-16.W_up",
+      "uses": [
+        "P2.layer-16.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.16.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-16.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-16.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.16.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-16.w_k_norm",
+      "uses": [
+        "P2.layer-16.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.16.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-16.W_k",
+      "uses": [
+        "P2.layer-16.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.16.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-16.W_o",
+      "uses": [
+        "P2.layer-16.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.16.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-16.w_q_norm",
+      "uses": [
+        "P2.layer-16.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.16.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-16.W_q",
+      "uses": [
+        "P2.layer-16.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.16.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-16.W_v",
+      "uses": [
+        "P2.layer-16.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.17.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-17.w_input_layernorm",
+      "uses": [
+        "P2.layer-17.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.17.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-17.W_down",
+      "uses": [
+        "P2.layer-17.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.17.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-17.W_gate",
+      "uses": [
+        "P2.layer-17.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.17.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-17.W_up",
+      "uses": [
+        "P2.layer-17.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.17.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-17.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-17.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.17.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-17.w_k_norm",
+      "uses": [
+        "P2.layer-17.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.17.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-17.W_k",
+      "uses": [
+        "P2.layer-17.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.17.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-17.W_o",
+      "uses": [
+        "P2.layer-17.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.17.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-17.w_q_norm",
+      "uses": [
+        "P2.layer-17.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.17.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-17.W_q",
+      "uses": [
+        "P2.layer-17.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.17.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-17.W_v",
+      "uses": [
+        "P2.layer-17.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.18.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-18.w_input_layernorm",
+      "uses": [
+        "P2.layer-18.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.18.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-18.W_down",
+      "uses": [
+        "P2.layer-18.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.18.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-18.W_gate",
+      "uses": [
+        "P2.layer-18.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.18.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-18.W_up",
+      "uses": [
+        "P2.layer-18.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.18.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-18.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-18.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.18.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-18.w_k_norm",
+      "uses": [
+        "P2.layer-18.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.18.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-18.W_k",
+      "uses": [
+        "P2.layer-18.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.18.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-18.W_o",
+      "uses": [
+        "P2.layer-18.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.18.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-18.w_q_norm",
+      "uses": [
+        "P2.layer-18.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.18.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-18.W_q",
+      "uses": [
+        "P2.layer-18.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.18.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-18.W_v",
+      "uses": [
+        "P2.layer-18.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.19.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-19.w_input_layernorm",
+      "uses": [
+        "P2.layer-19.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.19.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-19.W_down",
+      "uses": [
+        "P2.layer-19.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.19.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-19.W_gate",
+      "uses": [
+        "P2.layer-19.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.19.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-19.W_up",
+      "uses": [
+        "P2.layer-19.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.19.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-19.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-19.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.19.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-19.w_k_norm",
+      "uses": [
+        "P2.layer-19.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.19.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-19.W_k",
+      "uses": [
+        "P2.layer-19.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.19.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-19.W_o",
+      "uses": [
+        "P2.layer-19.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.19.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-19.w_q_norm",
+      "uses": [
+        "P2.layer-19.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.19.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-19.W_q",
+      "uses": [
+        "P2.layer-19.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.19.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-19.W_v",
+      "uses": [
+        "P2.layer-19.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.2.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-02.w_input_layernorm",
+      "uses": [
+        "P2.layer-02.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.2.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-02.W_down",
+      "uses": [
+        "P2.layer-02.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.2.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-02.W_gate",
+      "uses": [
+        "P2.layer-02.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.2.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-02.W_up",
+      "uses": [
+        "P2.layer-02.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.2.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-02.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-02.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.2.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-02.w_k_norm",
+      "uses": [
+        "P2.layer-02.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.2.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-02.W_k",
+      "uses": [
+        "P2.layer-02.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.2.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-02.W_o",
+      "uses": [
+        "P2.layer-02.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.2.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-02.w_q_norm",
+      "uses": [
+        "P2.layer-02.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.2.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-02.W_q",
+      "uses": [
+        "P2.layer-02.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.2.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-02.W_v",
+      "uses": [
+        "P2.layer-02.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.20.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-20.w_input_layernorm",
+      "uses": [
+        "P2.layer-20.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.20.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-20.W_down",
+      "uses": [
+        "P2.layer-20.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.20.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-20.W_gate",
+      "uses": [
+        "P2.layer-20.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.20.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-20.W_up",
+      "uses": [
+        "P2.layer-20.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.20.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-20.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-20.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.20.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-20.w_k_norm",
+      "uses": [
+        "P2.layer-20.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.20.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-20.W_k",
+      "uses": [
+        "P2.layer-20.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.20.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-20.W_o",
+      "uses": [
+        "P2.layer-20.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.20.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-20.w_q_norm",
+      "uses": [
+        "P2.layer-20.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.20.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-20.W_q",
+      "uses": [
+        "P2.layer-20.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.20.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-20.W_v",
+      "uses": [
+        "P2.layer-20.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.21.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-21.w_input_layernorm",
+      "uses": [
+        "P2.layer-21.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.21.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-21.W_down",
+      "uses": [
+        "P2.layer-21.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.21.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-21.W_gate",
+      "uses": [
+        "P2.layer-21.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.21.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-21.W_up",
+      "uses": [
+        "P2.layer-21.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.21.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-21.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-21.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.21.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-21.w_k_norm",
+      "uses": [
+        "P2.layer-21.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.21.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-21.W_k",
+      "uses": [
+        "P2.layer-21.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.21.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-21.W_o",
+      "uses": [
+        "P2.layer-21.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.21.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-21.w_q_norm",
+      "uses": [
+        "P2.layer-21.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.21.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-21.W_q",
+      "uses": [
+        "P2.layer-21.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.21.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-21.W_v",
+      "uses": [
+        "P2.layer-21.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.22.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-22.w_input_layernorm",
+      "uses": [
+        "P2.layer-22.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.22.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-22.W_down",
+      "uses": [
+        "P2.layer-22.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.22.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-22.W_gate",
+      "uses": [
+        "P2.layer-22.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.22.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-22.W_up",
+      "uses": [
+        "P2.layer-22.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.22.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-22.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-22.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.22.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-22.w_k_norm",
+      "uses": [
+        "P2.layer-22.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.22.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-22.W_k",
+      "uses": [
+        "P2.layer-22.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.22.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-22.W_o",
+      "uses": [
+        "P2.layer-22.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.22.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-22.w_q_norm",
+      "uses": [
+        "P2.layer-22.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.22.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-22.W_q",
+      "uses": [
+        "P2.layer-22.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.22.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-22.W_v",
+      "uses": [
+        "P2.layer-22.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.23.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-23.w_input_layernorm",
+      "uses": [
+        "P2.layer-23.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.23.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-23.W_down",
+      "uses": [
+        "P2.layer-23.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.23.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-23.W_gate",
+      "uses": [
+        "P2.layer-23.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.23.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-23.W_up",
+      "uses": [
+        "P2.layer-23.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.23.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-23.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-23.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.23.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-23.w_k_norm",
+      "uses": [
+        "P2.layer-23.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.23.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-23.W_k",
+      "uses": [
+        "P2.layer-23.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.23.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-23.W_o",
+      "uses": [
+        "P2.layer-23.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.23.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-23.w_q_norm",
+      "uses": [
+        "P2.layer-23.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.23.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-23.W_q",
+      "uses": [
+        "P2.layer-23.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.23.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-23.W_v",
+      "uses": [
+        "P2.layer-23.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.24.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-24.w_input_layernorm",
+      "uses": [
+        "P2.layer-24.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.24.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-24.W_down",
+      "uses": [
+        "P2.layer-24.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.24.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-24.W_gate",
+      "uses": [
+        "P2.layer-24.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.24.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-24.W_up",
+      "uses": [
+        "P2.layer-24.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.24.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-24.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-24.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.24.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-24.w_k_norm",
+      "uses": [
+        "P2.layer-24.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.24.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-24.W_k",
+      "uses": [
+        "P2.layer-24.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.24.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-24.W_o",
+      "uses": [
+        "P2.layer-24.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.24.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-24.w_q_norm",
+      "uses": [
+        "P2.layer-24.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.24.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-24.W_q",
+      "uses": [
+        "P2.layer-24.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.24.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-24.W_v",
+      "uses": [
+        "P2.layer-24.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.25.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-25.w_input_layernorm",
+      "uses": [
+        "P2.layer-25.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.25.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-25.W_down",
+      "uses": [
+        "P2.layer-25.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.25.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-25.W_gate",
+      "uses": [
+        "P2.layer-25.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.25.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-25.W_up",
+      "uses": [
+        "P2.layer-25.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.25.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-25.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-25.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.25.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-25.w_k_norm",
+      "uses": [
+        "P2.layer-25.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.25.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-25.W_k",
+      "uses": [
+        "P2.layer-25.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.25.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-25.W_o",
+      "uses": [
+        "P2.layer-25.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.25.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-25.w_q_norm",
+      "uses": [
+        "P2.layer-25.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.25.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-25.W_q",
+      "uses": [
+        "P2.layer-25.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.25.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-25.W_v",
+      "uses": [
+        "P2.layer-25.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.26.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-26.w_input_layernorm",
+      "uses": [
+        "P2.layer-26.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.26.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-26.W_down",
+      "uses": [
+        "P2.layer-26.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.26.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-26.W_gate",
+      "uses": [
+        "P2.layer-26.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.26.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-26.W_up",
+      "uses": [
+        "P2.layer-26.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.26.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-26.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-26.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.26.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-26.w_k_norm",
+      "uses": [
+        "P2.layer-26.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.26.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-26.W_k",
+      "uses": [
+        "P2.layer-26.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.26.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-26.W_o",
+      "uses": [
+        "P2.layer-26.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.26.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-26.w_q_norm",
+      "uses": [
+        "P2.layer-26.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.26.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-26.W_q",
+      "uses": [
+        "P2.layer-26.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.26.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-26.W_v",
+      "uses": [
+        "P2.layer-26.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.27.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-27.w_input_layernorm",
+      "uses": [
+        "P2.layer-27.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.27.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-27.W_down",
+      "uses": [
+        "P2.layer-27.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.27.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-27.W_gate",
+      "uses": [
+        "P2.layer-27.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.27.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-27.W_up",
+      "uses": [
+        "P2.layer-27.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.27.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-27.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-27.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.27.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-27.w_k_norm",
+      "uses": [
+        "P2.layer-27.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.27.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-27.W_k",
+      "uses": [
+        "P2.layer-27.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.27.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-27.W_o",
+      "uses": [
+        "P2.layer-27.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.27.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-27.w_q_norm",
+      "uses": [
+        "P2.layer-27.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.27.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-27.W_q",
+      "uses": [
+        "P2.layer-27.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.27.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-27.W_v",
+      "uses": [
+        "P2.layer-27.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.3.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-03.w_input_layernorm",
+      "uses": [
+        "P2.layer-03.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.3.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-03.W_down",
+      "uses": [
+        "P2.layer-03.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.3.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-03.W_gate",
+      "uses": [
+        "P2.layer-03.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.3.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-03.W_up",
+      "uses": [
+        "P2.layer-03.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.3.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-03.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-03.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.3.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-03.w_k_norm",
+      "uses": [
+        "P2.layer-03.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.3.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-03.W_k",
+      "uses": [
+        "P2.layer-03.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.3.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-03.W_o",
+      "uses": [
+        "P2.layer-03.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.3.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-03.w_q_norm",
+      "uses": [
+        "P2.layer-03.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.3.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-03.W_q",
+      "uses": [
+        "P2.layer-03.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.3.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-03.W_v",
+      "uses": [
+        "P2.layer-03.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.4.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-04.w_input_layernorm",
+      "uses": [
+        "P2.layer-04.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.4.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-04.W_down",
+      "uses": [
+        "P2.layer-04.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.4.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-04.W_gate",
+      "uses": [
+        "P2.layer-04.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.4.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-04.W_up",
+      "uses": [
+        "P2.layer-04.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.4.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-04.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-04.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.4.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-04.w_k_norm",
+      "uses": [
+        "P2.layer-04.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.4.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-04.W_k",
+      "uses": [
+        "P2.layer-04.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.4.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-04.W_o",
+      "uses": [
+        "P2.layer-04.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.4.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-04.w_q_norm",
+      "uses": [
+        "P2.layer-04.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.4.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-04.W_q",
+      "uses": [
+        "P2.layer-04.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.4.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-04.W_v",
+      "uses": [
+        "P2.layer-04.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.5.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-05.w_input_layernorm",
+      "uses": [
+        "P2.layer-05.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.5.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-05.W_down",
+      "uses": [
+        "P2.layer-05.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.5.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-05.W_gate",
+      "uses": [
+        "P2.layer-05.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.5.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-05.W_up",
+      "uses": [
+        "P2.layer-05.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.5.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-05.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-05.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.5.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-05.w_k_norm",
+      "uses": [
+        "P2.layer-05.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.5.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-05.W_k",
+      "uses": [
+        "P2.layer-05.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.5.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-05.W_o",
+      "uses": [
+        "P2.layer-05.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.5.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-05.w_q_norm",
+      "uses": [
+        "P2.layer-05.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.5.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-05.W_q",
+      "uses": [
+        "P2.layer-05.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.5.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-05.W_v",
+      "uses": [
+        "P2.layer-05.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.6.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-06.w_input_layernorm",
+      "uses": [
+        "P2.layer-06.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.6.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-06.W_down",
+      "uses": [
+        "P2.layer-06.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.6.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-06.W_gate",
+      "uses": [
+        "P2.layer-06.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.6.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-06.W_up",
+      "uses": [
+        "P2.layer-06.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.6.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-06.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-06.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.6.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-06.w_k_norm",
+      "uses": [
+        "P2.layer-06.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.6.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-06.W_k",
+      "uses": [
+        "P2.layer-06.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.6.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-06.W_o",
+      "uses": [
+        "P2.layer-06.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.6.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-06.w_q_norm",
+      "uses": [
+        "P2.layer-06.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.6.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-06.W_q",
+      "uses": [
+        "P2.layer-06.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.6.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-06.W_v",
+      "uses": [
+        "P2.layer-06.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.7.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-07.w_input_layernorm",
+      "uses": [
+        "P2.layer-07.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.7.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-07.W_down",
+      "uses": [
+        "P2.layer-07.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.7.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-07.W_gate",
+      "uses": [
+        "P2.layer-07.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.7.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-07.W_up",
+      "uses": [
+        "P2.layer-07.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.7.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-07.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-07.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.7.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-07.w_k_norm",
+      "uses": [
+        "P2.layer-07.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.7.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-07.W_k",
+      "uses": [
+        "P2.layer-07.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.7.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-07.W_o",
+      "uses": [
+        "P2.layer-07.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.7.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-07.w_q_norm",
+      "uses": [
+        "P2.layer-07.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.7.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-07.W_q",
+      "uses": [
+        "P2.layer-07.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.7.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-07.W_v",
+      "uses": [
+        "P2.layer-07.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.8.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-08.w_input_layernorm",
+      "uses": [
+        "P2.layer-08.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.8.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-08.W_down",
+      "uses": [
+        "P2.layer-08.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.8.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-08.W_gate",
+      "uses": [
+        "P2.layer-08.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.8.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-08.W_up",
+      "uses": [
+        "P2.layer-08.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.8.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-08.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-08.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.8.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-08.w_k_norm",
+      "uses": [
+        "P2.layer-08.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.8.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-08.W_k",
+      "uses": [
+        "P2.layer-08.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.8.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-08.W_o",
+      "uses": [
+        "P2.layer-08.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.8.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-08.w_q_norm",
+      "uses": [
+        "P2.layer-08.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.8.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-08.W_q",
+      "uses": [
+        "P2.layer-08.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.8.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-08.W_v",
+      "uses": [
+        "P2.layer-08.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.9.input_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_input_layernorm",
+      "qualified_slot": "P2.layer-09.w_input_layernorm",
+      "uses": [
+        "P2.layer-09.w_input_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.9.mlp.down_proj.weight",
+      "expected_shape": [
+        1024,
+        3072
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_down",
+      "qualified_slot": "P2.layer-09.W_down",
+      "uses": [
+        "P2.layer-09.W_down"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.9.mlp.gate_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_gate",
+      "qualified_slot": "P2.layer-09.W_gate",
+      "uses": [
+        "P2.layer-09.W_gate"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.9.mlp.up_proj.weight",
+      "expected_shape": [
+        3072,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_up",
+      "qualified_slot": "P2.layer-09.W_up",
+      "uses": [
+        "P2.layer-09.W_up"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.9.post_attention_layernorm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_post_attention_layernorm",
+      "qualified_slot": "P2.layer-09.w_post_attention_layernorm",
+      "uses": [
+        "P2.layer-09.w_post_attention_layernorm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.9.self_attn.k_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_k_norm",
+      "qualified_slot": "P2.layer-09.w_k_norm",
+      "uses": [
+        "P2.layer-09.w_k_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.9.self_attn.k_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_k",
+      "qualified_slot": "P2.layer-09.W_k",
+      "uses": [
+        "P2.layer-09.W_k"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.9.self_attn.o_proj.weight",
+      "expected_shape": [
+        1024,
+        2048
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_o",
+      "qualified_slot": "P2.layer-09.W_o",
+      "uses": [
+        "P2.layer-09.W_o"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.9.self_attn.q_norm.weight",
+      "expected_shape": [
+        128
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_q_norm",
+      "qualified_slot": "P2.layer-09.w_q_norm",
+      "uses": [
+        "P2.layer-09.w_q_norm"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.9.self_attn.q_proj.weight",
+      "expected_shape": [
+        2048,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_q",
+      "qualified_slot": "P2.layer-09.W_q",
+      "uses": [
+        "P2.layer-09.W_q"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.layers.9.self_attn.v_proj.weight",
+      "expected_shape": [
+        1024,
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "W_v",
+      "qualified_slot": "P2.layer-09.W_v",
+      "uses": [
+        "P2.layer-09.W_v"
+      ]
+    },
+    {
+      "checkpoint_tensor": "model.norm.weight",
+      "expected_shape": [
+        1024
+      ],
+      "expected_storage_scalar": "F32",
+      "interface_key": "w_norm",
+      "qualified_slot": "P3.w_norm",
+      "uses": [
+        "P3.w_norm"
+      ]
+    }
+  ],
+  "checkpoint": {
+    "bytes": 1192135096,
+    "dtype": "BF16",
+    "file": "model.safetensors",
+    "repo_id": "Qwen/Qwen3-0.6B-Base",
+    "revision": "da87bfb608c14b7cf20ba1ce41287e8de496c0cd",
+    "safetensors_header_bytes": 35248,
+    "sha256": "cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba",
+    "tensor_count": 310
+  },
+  "framing": {
+    "binding_order": "checkpoint_tensor ascending by UTF-8 bytes",
+    "json": "UTF-8; object keys sorted; indent 2; LF line endings; one final LF",
+    "manifest_digest": "SHA-256 over the exact manifest.json bytes"
+  },
+  "schema": "tiler-research/qwen3-weight-binding-manifest/v1",
+  "validation_boundary": {
+    "manifest_catches": [
+      "checkpoint revision or complete-file SHA-256 mismatch",
+      "duplicate, omitted, or foreign checkpoint tensor names",
+      "duplicate qualified program slots",
+      "name-to-qualified-slot or bare interface-key permutation",
+      "checkpoint-header or program-interface shape mismatch",
+      "checkpoint dtype or program StorageScalar mismatch"
+    ],
+    "not_caught": [
+      "a consumer that validates this record and then ignores it while binding buffers",
+      "a same-shape F32 buffer swap after checkpoint authentication and named extraction",
+      "any runtime loading, widening, execution, artifact, compiler, or Metal behavior"
+    ],
+    "tiler_bind_error_checks_after_loading": [
+      "BindError::OperandCountMismatch",
+      "BindError::UnsupportedCapability",
+      "BindError::RankMismatch",
+      "BindError::StorageScalarMismatch",
+      "BindError::LiteralExtentMismatch",
+      "BindError::InconsistentExtent",
+      "BindError::StorageLengthMismatch on the dispatch path"
+    ]
+  }
+}

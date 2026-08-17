@@ -1,0 +1,14 @@
+fact	value
+schema	tiler-research/qwen3-weight-binding-manifest/v1
+checkpoint.repo_id	Qwen/Qwen3-0.6B-Base
+checkpoint.revision	da87bfb608c14b7cf20ba1ce41287e8de496c0cd
+checkpoint.sha256	cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba
+checkpoint.bytes	1192135096
+checkpoint.safetensors_header_bytes	35248
+checkpoint.tensor_count	310
+checkpoint.dtype	BF16
+program.storage_scalar	F32
+binding.count	310
+binding.unique_checkpoint_names	310
+binding.unique_qualified_slots	310
+manifest.sha256	7044ad5173ee123d8970f7a8f782fc24b607d19628a3af5b036995109de250ee

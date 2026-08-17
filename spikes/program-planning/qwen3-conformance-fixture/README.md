@@ -8,7 +8,7 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement", "executable-model"]
 supports: ["tiler.research.program-planning.first-metal-lm-workload", "tiler.research.program-planning.complete-model-ingestion-and-execution", "tiler.research.program-planning.model-level-qualification"]
-entrypoints: ["spikes/program-planning/qwen3-conformance-fixture/produce_fixture.py", "spikes/program-planning/qwen3-conformance-fixture/verify_fixture.py"]
+entrypoints: ["spikes/program-planning/qwen3-conformance-fixture/produce_fixture.py", "spikes/program-planning/qwen3-conformance-fixture/verify_fixture.py", "spikes/program-planning/qwen3-conformance-fixture/produce_weight_bindings.py", "spikes/program-planning/qwen3-conformance-fixture/verify_weight_bindings.py", "spikes/program-planning/qwen3-conformance-fixture/exercise_weight_binding_controls.py"]
 last_verified: "2026-08-01"
 ticket: "measure-the-model-level-comparison-envelope-under-the-target-realization"
 ---
@@ -57,6 +57,46 @@ UV_PROJECT_ENVIRONMENT=local-work/venv uv run --locked python produce_fixture.py
 ```
 
 `UV_PROJECT_ENVIRONMENT` keeps the virtual environment inside `local-work/`, which the one gitignore entry beside this file already covers. Omitting it puts a `.venv/` in this directory that nothing ignores.
+
+### Produce and verify the retained weight-binding record
+
+The weight-binding record is a separate, standard-library-only path through this spike. It never fetches and never loads tensor payloads into a model. Give it the already-local exact checkpoint:
+
+```sh
+python3.11 -B produce_weight_bindings.py \
+  --checkpoint /absolute/path/to/da87bfb608c14b7cf20ba1ce41287e8de496c0cd/model.safetensors \
+  --revision da87bfb608c14b7cf20ba1ce41287e8de496c0cd \
+  --out results/2026-08-17-qwen3-0.6b-base-da87bfb6-weight-bindings
+
+python3.11 -B verify_weight_bindings.py \
+  results/2026-08-17-qwen3-0.6b-base-da87bfb6-weight-bindings \
+  --checkpoint /absolute/path/to/da87bfb608c14b7cf20ba1ce41287e8de496c0cd/model.safetensors \
+  --revision da87bfb608c14b7cf20ba1ce41287e8de496c0cd
+
+# Reconstruct in memory and demand byte-for-byte equality with all three files.
+python3.11 -B produce_weight_bindings.py \
+  --checkpoint /absolute/path/to/da87bfb608c14b7cf20ba1ce41287e8de496c0cd/model.safetensors \
+  --revision da87bfb608c14b7cf20ba1ce41287e8de496c0cd \
+  --out results/2026-08-17-qwen3-0.6b-base-da87bfb6-weight-bindings \
+  --compare
+
+# Change only scratch-copy subjects; every verifier assertion stays unchanged.
+python3.11 -B exercise_weight_binding_controls.py \
+  results/2026-08-17-qwen3-0.6b-base-da87bfb6-weight-bindings \
+  --checkpoint /absolute/path/to/da87bfb608c14b7cf20ba1ce41287e8de496c0cd/model.safetensors
+```
+
+The retained directory contains three files. `manifest.json` is the 310-row relation; `manifest.sha256` owns the digest over its exact canonical bytes; and `verification.tsv` retains the complete population, pin, header, scalar, uniqueness, and manifest-digest facts a successful run must reproduce. JSON object keys are sorted, indentation is two spaces, line endings are LF, there is one final LF, and binding rows are ordered by the UTF-8 bytes of `checkpoint_tensor`. Its retained manifest digest is `7044ad5173ee123d8970f7a8f782fc24b607d19628a3af5b036995109de250ee`.
+
+**The map has 310 source names and 310 globally unique target slots, even though its programs reuse bare keys.** Each of the 28 P2 owners is qualified as `P2.layer-NN.<interface_key>`. `model.embed_tokens.weight` is one source tensor and one global slot, `P1+P3.shared.W_embed`, with the two graph-local uses `P1.W_embed` and `P3.W_embed`; duplicating it into two mapping rows would invent a 311th source binding. Every row carries the exact completed-program bare key, its expected `Shape`, and expected program `StorageScalar::F32`. The checkpoint header's `BF16` is checked separately: widening to the F32 carrier belongs to ingestion and is not disguised as a property of the stored file.
+
+The producer authenticates the complete 1,192,135,096-byte checkpoint before reading its 35,248-byte header. The verifier then independently constructs the expected P1/P2/P3 inventory, checks the canonical record and its digest, authenticates the file again, and compares all 310 header names, shapes, dtypes, spans, and contiguous payload framing. Revision and complete-file SHA-256 are separate checks, both pinned. A digest over the complete source file catches any byte-level content swap *inside that file*, including a same-shape BF16 swap; the mapping independently catches a name-to-slot permutation.
+
+**The boundary is intentionally smaller than ingestion.** This record does not load, widen, bind, or execute a tensor. It therefore cannot observe a consumer that checks the record and ignores it, or a same-shape F32 buffer swap performed after checkpoint authentication and named extraction. No per-tensor digest is retained to establish post-extraction buffer identity. A future consumer must preserve the validated name association while it constructs the bound set; this spike neither creates that runtime nor claims full ingestion, compiler, artifact, Metal, or execution support.
+
+After loading, current Tiler checks `BindError::OperandCountMismatch`, `UnsupportedCapability`, `RankMismatch`, `StorageScalarMismatch`, `LiteralExtentMismatch`, and `InconsistentExtent`, plus `StorageLengthMismatch` on the dispatch path. None of those identifies checkpoint contents. This earlier manifest gate instead refuses duplicate, omitted, or foreign names; duplicate qualified slots; name/slot or bare-key permutations; header or program shape mismatches; checkpoint dtype or program stored-scalar mismatches; and revision or checkpoint-digest mismatches.
+
+Nine subject perturbations demonstrate those refusals. The map control exchanges layer 0's same-shaped K and V target fields while leaving its two shapes and scalars valid; the digest and revision controls independently change only their recorded checkpoint pin fields. Independent omission, duplicate-name, duplicate-slot, shape, scalar, and foreign-name controls complete the population. Each scratch manifest is canonically reframed and re-hashed so the semantic check, rather than a stale sidecar, is what says no.
 
 ## What the producer checks before it computes anything
 
@@ -117,7 +157,7 @@ L6 fixes that removing a computation from the executed program moves it into the
 - **The token IDs.** Already in `sequence.tsv`; `host.tsv` adds a digest over one declared serialization of them, little-endian int32 in sequence order, so the same evidence can be compared as bytes.
 - **The BF16-to-F32 widening.** One digest over the widened bytes, taken from the *loaded parameters the F32 pass actually used* rather than from a re-derivation of them, absorbing for each of the checkpoint's 310 tensors in lexicographic name order the name's UTF-8 bytes, one NUL, and the tensor's little-endian C-contiguous F32 bytes.
 
-Per-tensor weight digests are deliberately **not** retained. A total, injective map from checkpoint tensor name to interface key is [`define-the-model-weight-binding-manifest`](../../../tickets/define-the-model-weight-binding-manifest.md)'s subject, and a second naming authority for one subject is what that ticket exists to avoid.
+Per-tensor weight digests are deliberately **not** retained. The [retained weight-binding record](results/2026-08-17-qwen3-0.6b-base-da87bfb6-weight-bindings/manifest.json) is the one total, injective naming authority: the exact checkpoint digest authenticates the complete source bytes, and its 310 rows associate the header's names with globally qualified program slots. Adding a second per-tensor naming-and-digest table here would create two authorities for that association without closing the post-extraction boundary described above.
 
 ## The joint comparison band
 
