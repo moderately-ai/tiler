@@ -1,7 +1,7 @@
 ---
 id: assemble-the-embedding-and-vocabulary-projection-programs
 title: Assemble the embedding and vocabulary-projection programs
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-a-storage-carrier-for-integer-program-inputs, admit-the-rms-normalization-family, reclassify-language-model-work-as-a-conformance-track, admit-an-indirect-gather-family-for-tied-embedding-lookup, admit-the-contraction-semantic-profile]
 related: [design-model-ingestion-and-complete-execution, project-only-the-final-position-logits]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, gather, logits, language-model, class-conformance-fixture]
+claimed_from: todo
+assignee: worker-lm-boundaries
+lease_expires_at: 1787004728
 ---
 ## User-visible outcome
 
