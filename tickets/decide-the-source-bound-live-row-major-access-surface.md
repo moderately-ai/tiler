@@ -1101,7 +1101,7 @@ The hard path is:
 decide-the-schedule-local-input-ordinal-model (done)
   -> decide-the-full-list-access-coordinate-for-out-of-list-references (done)
   -> reconcile-input-ordinal-region-local-and-declared-input-semantics (done)
-  -> this decision (in-progress packet repair; awaiting Tom only after review)
+  -> this decision (awaiting Tom after independent review)
   -> admit-symbolic-extents-through-schedule-formation (blocked implementation)
   -> associate-live-extent-operands-with-symbolic-semantic-interface-axes (todo)
   -> deliver-an-artifact-family-from-a-symbolic-region (todo, also has its existing live-payload dependency)
@@ -1112,10 +1112,13 @@ refuse-mixed-pointwise-live-row-major-access-relations-before-lowering (P0 done)
 
 The documentation repair and P0 are both `done`. The former supplied no runtime
 authority; the latter supplied the topology-neutral fail-closed current surface.
-Every implementation dependency except this in-progress decision is now done,
+Every implementation dependency except this awaiting decision is now done,
 so the graph is acyclic and the public choice is the sole unmet implementation
-edge. Returning the ticket to `awaiting-decision` is a post-review coordinator
-action, not part of this repair.
+edge. Exact repaired packet `c452249655ab4b5ddcaef7cea8745b22a1c50634`
+passed independent strongest-reasoning review with no findings, integrated as
+`b30f4c2c`, and returned to `awaiting-decision` at `783e9b5b`. The exact
+question above has been presented in the live coordination thread and awaits
+Tom's answer.
 
 Only Tom accepts one exact surface. On acceptance, record who/date/venue/relay
 provenance here, leave implementation to
