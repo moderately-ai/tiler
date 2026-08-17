@@ -156,6 +156,74 @@ document was edited before this audit.
     independent consumer axes are a refused population that would require a new
     execution/validation decision, not state this slice should pre-authorize.
 
+## Exact-current-base Fact re-audit — 2026-08-17, `a51305ce5b78628f9fbcbce78fd5cbbdfd43512e`
+
+No production source changed between the independently reviewed current-main
+commit `e8141d7decbb8204e7930421d0b1acedef9b4dd5` and this exact repair base:
+`git diff --quiet e8141d7decbb8204e7930421d0b1acedef9b4dd5
+a51305ce5b78628f9fbcbce78fd5cbbdfd43512e -- crates/tiler-ir/src/schedule
+crates/tiler-ir/src/kernel crates/tiler-compiler/src/physical.rs
+crates/tiler-compiler/src/pipeline.rs crates/tiler-compiler/src/request.rs
+crates/tiler-artifact/src/program/builder.rs` exits zero. The intervening commit
+only pulled this ticket back to `in-progress`. No file was edited before this
+re-audit.
+
+1. **Verified — Fact 1 remains exact historical evidence.** Re-running its
+   ten-path `git diff --stat` still reports 867 insertions and 511 deletions
+   between `a660ed61` and `88c7c218`; the current owners remain the authority.
+2. **Verified — Fact 2 remains exact.** `request_environment`,
+   `symbolic_three_input_elementwise`, `plan_elementwise`,
+   `SemanticIdentity::shape_environment`, and `decode_shape_env_subject` retain
+   the same authored `[program/0::n]` and exact `a[0]` root evidence.
+3. **Verified — Fact 3 remains exact.** Current `live_input_extents`,
+   `declare_plan_live_extents`, `emit_live_row_major`, and
+   `verify_input_extents` still derive three input operands and consume only one;
+   no compiler `LiveRowMajor` constructor exists.
+4. **Verified — Fact 4 remains exact.** The rank-one outer iteration shape is
+   empty with one static work item, and every element access remains inside the
+   live zero-trip-capable loop.
+5. **Verified — Fact 5 remains exact.** `TensorRole::Input` is fieldless,
+   `AccessOrdinal` owns the complete access-list coordinate, and
+   `DeclaredInputOrdinal` remains compiler-private.
+6. **Verified — Fact 6 remains exact.** `InputExtentParameter` directly names
+   an access and `derive_extent_operands` follows the corresponding stage access
+   to `MaterializedOrigin::ProgramInput`; no role-filtered fallback exists.
+7. **Verified — Fact 7 remains exact for this subject.**
+   `VerifiedScheduledRegion::declared_input_at` retains the checked projection,
+   `elementwise_reads_match` still has no source-bound live case, and every
+   malformed or mismatched semantic/root subject remains compiler
+   `request-binding`.
+8. **Verified — Fact 8 remains the correctly labelled inference.** An explicit
+   and implicit self-source would still be two spellings, and equal runtime
+   values still cannot replace the exact `a[0]` authority.
+9. **Verified — Fact 9 remains exact current evidence.** The two-input builder
+   and exact live schedule/kernel pins are unchanged.
+10. **Verified — Fact 10 remains exact.** Symbolic artifact association is
+    still downstream and its ticket still depends on schedule formation.
+11. **Verified — Fact 11 remains exact.** The directly related documentation
+    repair is `done`; later declared-input prose work supplies no runtime or
+    source-binding authority.
+12. **Verified — Fact 12 remains exact.** The P0 is `done`, and
+    `pointwise_accesses_choose_one_addressing_regime` still rejects mixed or
+    disagreeing live maps before lowering.
+13. **Verified but incomplete — Fact 13 correctly eliminates the
+    redundant-axis referenced consumer.** It does not complete the census:
+    the same proof that makes a referenced consumer's `inner_axis` redundant
+    also makes it redundant on the contextual marker consumer.
+14. **False — the resulting three-survivor and recommendation claims are not
+    Pareto-complete.** The packet omitted the complete replacement
+    `LiveRowMajorSource { inner_axis }` plus fieldless contextual
+    `LiveRowMajor`. With exactly one marker, the containing verified region is
+    the consumer's sole axis authority. Relative to the retained-axis marker it
+    preserves correctness, the contextual one-domain ceiling, linear
+    verification, and map/access layout while removing one public field,
+    `AxisMismatch`, four bytes per consumer, and one representable invalid
+    state. The retained-axis marker has no surviving advantage under the same
+    pre-production and refused-future-population rules that eliminate the
+    redundant-axis referenced hybrid, so it is dominated. The frontier,
+    diagnostics, tags, byte counts, recommendation, dependent implementation,
+    and queue item must be re-derived below.
+
 Reproduce:
 
 ```sh
@@ -263,7 +331,7 @@ would discard. The dedicated arm is not cosmetic; each rule below has a
 different producer repair, carries the coordinates needed to make that repair,
 and is independently perturbable.
 
-If Tom chooses the marker survivor, the exact public
+If Tom chooses the fieldless-marker survivor, the exact public
 `#[non_exhaustive] LiveRowMajorSourceRule` population is:
 
 ```rust
@@ -271,16 +339,11 @@ Missing,
 Multiple { first: AccessOrdinal, second: AccessOrdinal },
 SourceNotInputRead { source: AccessOrdinal },
 ConsumerMissingRelation { access: AccessOrdinal },
-AxisMismatch {
-    access: AccessOrdinal,
-    source_axis: Axis,
-    access_axis: Axis,
-},
 ```
 
 If Tom chooses the explicit-source/referenced-consumer survivor, its consumer
 stores no axis of its own, so `AxisMismatch` is not representable. Its exact
-six-rule population is the marker's first four rules plus the two invalid
+six-rule population is the fieldless marker's four rules plus the two invalid
 states a consumer reference can construct:
 
 ```rust
@@ -300,15 +363,18 @@ The stable rules are respectively
 `live-row-major-source-missing`, `live-row-major-source-multiple`,
 `live-row-major-source-not-input-read`,
 `live-row-major-source-consumer-missing-relation`,
-`live-row-major-source-axis-mismatch`,
 `live-row-major-source-reference-out-of-range`, and
-`live-row-major-source-inconsistent-reference`. Marker verification recognizes
+`live-row-major-source-inconsistent-reference`; total-local additionally owns
+`live-row-major-source-axis-mismatch`. Fieldless-marker verification recognizes
 whether any marker/consumer live relation is present, counts markers, validates
 the unique marker's role/mode, requires every pointwise access including the
 final write to carry either the unique source marker or the consumer relation,
-then checks axes, reporting the first failing access in list order. No marker is
-`Missing`; the second marker is `Multiple`; the first static or other relation
-inside the live-driven access list is `ConsumerMissingRelation { access }`.
+and then succeeds: the consumer has no axis or reference field to validate.
+No marker is `Missing`; the second marker is `Multiple`; the first static or
+other relation inside the live-driven access list is
+`ConsumerMissingRelation { access }`. Its exact precedence is marker count,
+marker role/mode, then complete live-relation coverage; an all-static region
+has no source obligation.
 Referenced-consumer verification has this exact precedence: reject the first consumer whose
 reference is out of range; count source markers and report `Missing` or the
 first/second `Multiple`; validate the unique marker's input/read role and mode;
@@ -337,17 +403,15 @@ source role/mode, missing consumer relation, and source integrity never collapse
 into `AccessContract` or `NumericalOrAccessRefinement`. Local failures outside
 this source relation retain their existing owner.
 
-This additive diagnostic vocabulary changes no identity preimage, but marker
-validation does narrow current values: a formerly verified all-`0x09`
-`LiveRowMajor` region has no new marker and becomes `Missing`. Its existing
-schedule bytes are not re-encoded or reinterpreted; they leave the verified
-population. The new refusal is that subject's first trace value rather than a
-different encoding of an older refusal. Marker uses fresh logical-access tag
-`0x0A` for `LiveRowMajorSource` and retains `0x09` only for its narrowed
-consumer. Total-local uses `0x0A` for its replacement and retires `0x09`.
-The referenced-consumer replacement retires `0x09` completely:
-`LiveRowMajorSource` uses fresh `0x0A`, and
-the referenced consumer uses fresh `0x0B`. Exact source reading confirms
+This additive diagnostic vocabulary changes no identity preimage. Every
+survivor is a complete live-relation replacement and retires `0x09`, so no old
+tag is reinterpreted under a changed payload. Fieldless-marker and
+referenced-consumer both use fresh `0x0A` for `LiveRowMajorSource` and fresh
+`0x0B` for their distinct consumer payload; total-local uses `0x0A` for its
+single replacement. Every valid live schedule and nested identity value moves,
+while static values remain byte-identical. A constructed fieldless consumer
+without a marker reports `Missing`; an old all-`0x09` byte run is never decoded
+as that new state. Exact source reading confirms
 `0x0A` and `0x0B` are unused in the logical-access tag space; tags in other
 framed vocabularies are irrelevant to this one. `map_schedule_build_error`
 already projects any intrinsic diagnostic's
@@ -361,15 +425,16 @@ probe on the repository toolchain (`rustc 1.99.0-nightly
 (eff8269f7 2026-07-18)`, `aarch64-apple-darwin`) copied every current
 `LogicalAccess` variant and field type, changed only the live arms to each
 candidate, and first checked the replica against the real type. Current,
-marker, total-local, and referenced-consumer `LogicalAccess` are all exactly 208 bytes with
-alignment 8; `Access` is 232/8 in all four cases. The five-rule marker enum is
-16/4; the six-rule referenced-consumer and seven-rule total-local enums are
-also 16/4. Adding the nested diagnostic
-grows `ScheduledRegionDiagnostic` from 2/1 to 16/4 for every survivor. That
-last growth enlarges entries in the failure-only diagnostics vector; verified
-schedules retain no diagnostic, and kernel runtime memory is unchanged. Rust
-layout is not a stable ABI promise, so implementation must pin these sizes on
-the same toolchain rather than extrapolate them to another compiler.
+fieldless-marker, total-local, and referenced-consumer `LogicalAccess` are all
+exactly 208 bytes with alignment 8; `Access` is 232/8 in all four cases. The
+four-rule fieldless-marker enum is 12/4 and projects the complete diagnostic to
+12/4. The six-rule referenced-consumer and seven-rule total-local enums are
+16/4 and project the diagnostic to 16/4. The current
+`ScheduledRegionDiagnostic` is 2/1. This growth enlarges entries in the
+failure-only diagnostics vector; verified schedules retain no diagnostic, and
+kernel runtime memory is unchanged. Rust layout is not a stable ABI promise,
+so implementation must pin these sizes on the same toolchain rather than
+extrapolate them to another compiler.
 
 Reproduce from this exact base with a clean worktree-local `target/`. Run the
 first two commands, supply the following Rust block to the second command's
@@ -434,9 +499,9 @@ macro_rules! candidate {
     };
 }
 
-candidate!(Marker,
+candidate!(FieldlessMarker,
     LiveRowMajorSource { inner_axis: Axis },
-    LiveRowMajor { inner_axis: Axis },
+    LiveRowMajor,
 );
 candidate!(Total,
     LiveRowMajor { inner_axis: Axis, source_access: AccessOrdinal },
@@ -455,12 +520,11 @@ struct AccessProbe<M> {
     ownership: Option<OwnershipWitnessId>,
 }
 
-enum MarkerRule {
+enum FieldlessMarkerRule {
     Missing,
     Multiple { first: AccessOrdinal, second: AccessOrdinal },
     SourceNotInputRead { source: AccessOrdinal },
     ConsumerMissingRelation { access: AccessOrdinal },
-    AxisMismatch { access: AccessOrdinal, source_axis: Axis, access_axis: Axis },
 }
 
 enum ReferencedRule {
@@ -515,28 +579,28 @@ fn layout<T>() -> (usize, usize) {
 fn main() {
     assert_eq!(layout::<LogicalAccess>(), (208, 8));
     assert_eq!(layout::<Access>(), (232, 8));
-    assert_eq!(layout::<Marker>(), layout::<LogicalAccess>());
+    assert_eq!(layout::<FieldlessMarker>(), layout::<LogicalAccess>());
     assert_eq!(layout::<Total>(), layout::<LogicalAccess>());
     assert_eq!(layout::<Referenced>(), layout::<LogicalAccess>());
-    assert_eq!(layout::<AccessProbe<Marker>>(), layout::<Access>());
+    assert_eq!(layout::<AccessProbe<FieldlessMarker>>(), layout::<Access>());
     assert_eq!(layout::<AccessProbe<Total>>(), layout::<Access>());
     assert_eq!(layout::<AccessProbe<Referenced>>(), layout::<Access>());
     assert_eq!(layout::<ScheduledRegionDiagnostic>(), (2, 1));
-    assert_eq!(layout::<MarkerRule>(), (16, 4));
+    assert_eq!(layout::<FieldlessMarkerRule>(), (12, 4));
     assert_eq!(layout::<ReferencedRule>(), (16, 4));
     assert_eq!(layout::<TotalRule>(), (16, 4));
-    assert_eq!(layout::<Diagnostic<MarkerRule>>(), (16, 4));
+    assert_eq!(layout::<Diagnostic<FieldlessMarkerRule>>(), (12, 4));
     assert_eq!(layout::<Diagnostic<ReferencedRule>>(), (16, 4));
     assert_eq!(layout::<Diagnostic<TotalRule>>(), (16, 4));
     println!(
-        "real map/access = {:?}/{:?}; candidates equal; real diagnostic = {:?}; marker/referenced/total/projected diagnostics = {:?}/{:?}/{:?}/{:?}/{:?}/{:?}",
+        "real map/access = {:?}/{:?}; candidates equal; real diagnostic = {:?}; fieldless-marker/referenced/total/projected diagnostics = {:?}/{:?}/{:?}/{:?}/{:?}/{:?}",
         layout::<LogicalAccess>(),
         layout::<Access>(),
         layout::<ScheduledRegionDiagnostic>(),
-        layout::<MarkerRule>(),
+        layout::<FieldlessMarkerRule>(),
         layout::<ReferencedRule>(),
         layout::<TotalRule>(),
-        layout::<Diagnostic<MarkerRule>>(),
+        layout::<Diagnostic<FieldlessMarkerRule>>(),
         layout::<Diagnostic<ReferencedRule>>(),
         layout::<Diagnostic<TotalRule>>(),
     );
@@ -563,14 +627,15 @@ implementation outcome. The landed repair is topology-neutral: it narrowed the
 existing surface without selecting or eliminating one of the three source-bound
 relations below.
 
-### Narrow fail-closed marker slice — survivor
+### Fieldless contextual marker replacement — survivor and recommendation
 
-Add one source-marker variant and narrow the accepted variant to consumers:
+Retire the accepted live relation and replace it with a source marker plus a
+fieldless consumer:
 
 ```rust
 pub enum LogicalAccess {
     LiveRowMajorSource { inner_axis: Axis },
-    LiveRowMajor { inner_axis: Axis },
+    LiveRowMajor,
     // existing non-live variants unchanged
 }
 ```
@@ -580,10 +645,11 @@ pointwise region uses `LiveRowMajorSource`; it both reads that tensor and marks
 its axis as the extent operand. Every other pointwise read and the final write
 uses `LiveRowMajor` as a consumer; no access executed by the live loop may keep
 `LinearIdentity` or another map. A source marker on an intermediate/write, no
-marker, two markers, any access missing the selected live relation, or an axis
-disagreement fails intrinsic verification. `live_input_extents` derives the
-marker's exact `AccessOrdinal` and `inner_axis`; it never searches for the first
-input.
+marker, two markers, or any access missing the selected live relation fails
+intrinsic verification. The consumer stores no axis: the exact same-shape
+rank-one compiler proof makes the unique marker's axis the only current
+authority. `live_input_extents` derives the marker's exact `AccessOrdinal` and
+`inner_axis`; it never searches for the first input.
 
 Compiler binding then decodes the shape-environment subject from retained
 `SemanticIdentity` bytes, proves that the marker projects to the symbol's exact
@@ -596,40 +662,60 @@ cannot be out of range or name a detached access. Exactly-one validation makes
 missing/multiple authority fail closed, and
 `ConsumerMissingRelation { access }` preserves the landed mixed-map closure
 under its exact owning source diagnostic instead of the P0's temporary broad
-refusal. The cost is contextual meaning:
-interpreting a consumer requires the containing verified region's unique
-marker, and the representation deliberately has a one-live-domain ceiling.
+refusal. A consumer-axis disagreement and a dangling or inconsistent consumer
+handle are unrepresentable. The cost is contextual meaning: interpreting a
+consumer requires the containing verified region's unique marker, and the
+representation deliberately has a one-live-domain ceiling.
 
 **Maintenance, compatibility, and host cost.** It adds one map arm but no
-retained ordinal per consumer. Verification/lowering scan the bounded access
-list once, as `live_input_extents` already does. The measured Rust layout stays
-`LogicalAccess` 208/8 and `Access` 232/8. Canonical schedule bytes remain one
-tag plus one axis — five bytes — per live map. The current one-source
-source-read changes from tag `0x09` to `0x0A`; consumer reads and the write
-retain narrowed `0x09`. Static subjects are untouched.
+retained axis or ordinal per consumer. Verification/lowering scan the bounded
+access list once, as `live_input_extents` already does. The measured Rust layout
+stays `LogicalAccess` 208/8 and `Access` 232/8. The one source is five canonical
+bytes — tag plus axis — and every consumer is its one-byte tag, so the
+three-read-plus-write fixture uses eight bytes. Its four-rule diagnostic and
+projected outer diagnostic are 12/4 rather than the other survivors' 16/4.
+Context must be threaded through one presently detached internal lowering
+helper: `kernel::lower::addressing` currently receives only an `Access` and
+`ReductionTopology`, so implementation must pass the verified source axis (or
+the owning schedule relation) instead of reading an axis from each consumer.
+`kernel::builder::scheduled_access_rank` and `kernel::verify::access_rank`
+already receive the schedule; `schedule::live_input_extents` already scans it.
+The request `read_tensor_elements` wildcard declines this schedule-only map,
+the physical builder's `addressed_elements` uses the region element count for
+it, and the identity encoder needs no detached semantic interpretation. Thus
+the migration is bounded but not zero-cost.
 
-**Identity/schema/public consequences.** Use fresh unused logical-access tag
-`0x0A` for `LiveRowMajorSource`; do not reinterpret `0x09` as a marker. Existing live
-schedule values migrate; static values remain byte-identical. Schedule v6 and
-kernel v8 domains need not step because no existing tag payload or kernel
-grammar changes; the kernel identity value moves because it frames the moved
-schedule identity. `InputExtentParameter`, kernel-program grammar, artifact
-extent row, and artifact schemas remain unchanged. Public diagnostics add
-`ScheduledRegionDiagnostic::LiveRowMajorSource` and the five marker rules above;
-malformed semantic/root binding stays compiler `request-binding`. This is public
-semantic and diagnostic growth plus a narrowing of where the accepted
-`LiveRowMajor` input form verifies, so Tom must accept it despite the enums being
-`#[non_exhaustive]`.
+**Identity/schema/public consequences.** Retire `0x09`; changing its payload
+from an axis to no fields would reinterpret old bytes. Use fresh unused `0x0A`
+for `LiveRowMajorSource` and `0x0B` for fieldless `LiveRowMajor`. Every live
+schedule and nested identity value migrates; static values remain
+byte-identical. Schedule v6 and kernel v8 domains need not step because both are
+fresh injective tags and no enclosing grammar changes; the kernel identity
+value moves because it frames the moved schedule identity.
+`InputExtentParameter`, kernel-program grammar, artifact extent row, and
+artifact schemas remain unchanged. Public diagnostics add
+`ScheduledRegionDiagnostic::LiveRowMajorSource` and the four marker rules
+above; malformed semantic/root binding stays compiler `request-binding`. This
+is a breaking existing public signature and requires Tom under ADR 0075.
 
 **Strongest counterargument.** The consumer map is not self-contained and the
 one-marker grammar must be replaced if one region later consumes two independent
-live domains.
+live domains; referenced consumers pay more state now but already name the
+association a multi-source grammar would need.
 
-**Reversal evidence.** Eliminate this survivor if a current consumer observes
-one `LogicalAccess` without its verified region, or if the next admitted
-population requires two live sources in one region. Prefer it if a bounded
-prototype shows the total reference only creates repeated invalid state and no
-current or next consumer benefits from map-local source identity.
+**Reversal evidence.** Eliminate this survivor if a public or identity-bearing
+consumer must interpret one `LogicalAccess` without its verified region and
+cannot instead take checked context, or if the next admitted population
+requires two live sources in one region. Prefer it while detached helper
+plumbing remains internal and bounded and no accepted next population benefits
+from map-local source identity.
+
+**Negative controls.** Remove the marker, duplicate it, place it on the write,
+and change one read and then the final write to `LinearIdentity`; require the
+four exact dedicated rules in their stated precedence. Independently attempt
+to construct `LiveRowMajor { inner_axis: Axis::new(0) }`; the public compile-fail
+fixture must prove the consumer is fieldless rather than accepting a hidden
+second axis authority.
 
 ### Complete total local replacement — survivor
 
@@ -653,7 +739,7 @@ authorities that can disagree. Intrinsic verification requires the referenced
 access to exist, be `Input`/`Read`, use this relation, and self-reference; every
 pointwise access in this admitted region must use the relation and name it.
 Compiler binding applies the same decoded-identity root-source and exact-shape
-proof as the marker survivor.
+proof as the fieldless-marker survivor.
 
 **Correctness and strictness.** Each map states its complete relation locally.
 Out-of-range, non-input, non-read, non-self-referencing, missing consumer
@@ -685,15 +771,21 @@ total-local rules above; compiler decode/root/shape failure remains
 
 **Strongest counterargument.** It repeats one region-wide fact on every map,
 grows live identity bytes, and creates dangling/inconsistent handles that the
-marker form cannot represent.
+fieldless-marker form cannot represent.
 
-**Reversal evidence.** Prefer the marker if source repetition measurably grows
+**Reversal evidence.** Prefer the fieldless marker if source repetition measurably grows
 the dominant host schedule population or negative-control implementation shows
 the repeated equality is error-prone. Prefer this replacement if access
 consumers benefit from interpreting a map without a region-wide source scan, or
 if a concrete next population needs more than one source.
 
-### Explicit source plus referenced consumers — complete replacement survivor and recommendation
+**Negative controls.** Independently use an out-of-range source, zero and two
+self-references, a source on the write, one consumer naming another in-range
+access, and one consumer with another axis. Each must reach its exact one of the
+seven rules before lowering; changing only the self-reference must not change
+which axis becomes the one input-extent operand.
+
+### Explicit source plus referenced consumers — complete replacement survivor
 
 Retire the old live relation and replace it with an explicit source plus a
 source-referencing consumer:
@@ -740,8 +832,8 @@ Verification remains linear. Exact-base layout probing gives the same
 `LogicalAccess` 208/8 and `Access` 232/8 as current and both other survivors,
 with no added heap allocation. Canonical map bytes are five for the one source
 and five for each consumer: the three-input/read-plus-write fixture uses 20
-bytes, equal to the marker and below total-local's 36. Kernel runtime and kernel
-memory remain unchanged.
+bytes, above the fieldless marker's eight and below total-local's 36. Kernel
+runtime and kernel memory remain unchanged.
 
 **Identity/schema/public consequences.** This is a complete replacement, not
 the eliminated additive follower below. Retire old contextual tag `0x09`; use
@@ -762,17 +854,24 @@ decode/root/shape failure remains compiler `request-binding`.
 
 **Strongest counterargument.** It spends a second public variant and two tag
 arms to encode a distinction total-local expresses with one self-reference;
-every non-source consumer still pays the four-byte handle the marker avoids.
+every non-source consumer still pays the four-byte handle the fieldless marker
+avoids, even though the current grammar proves exactly one marker.
 Unlike total-local, it cannot later give a consumer an axis different from its
 source without changing that consumer signature.
 
 **Reversal evidence.** Prefer total-local if an implementation prototype shows
 the two-arm construction/verification split produces more defects than its
 unrepresentable bad-source state prevents, or an admitted population requires
-consumer and source axes to differ. Prefer the marker if no current or next
+consumer and source axes to differ. Prefer the fieldless marker if no current or next
 consumer needs map-local source lookup. Prefer this replacement if a concrete
 multi-source design can reuse the marker/reference split without changing
 either variant.
+
+**Negative controls.** Independently use an out-of-range consumer reference,
+remove and duplicate the marker, and point one consumer at itself and then at a
+different in-range non-marker. Require range, missing, multiple, and
+inconsistent-reference failures in the exact stated precedence, and prove that
+neither a source self-handle nor a consumer axis can be constructed.
 
 ### Explicit source plus redundant-axis referenced consumers — eliminated
 
@@ -790,6 +889,22 @@ its state now would weaken current canonicality rather than provide compatible
 admission. The narrower referenced-consumer surface therefore dominates this
 hybrid for the authorized contract, so it is eliminated before ranking.
 
+### Explicit source plus retained-axis contextual consumers — eliminated
+
+The former marker survivor used `LiveRowMajorSource { inner_axis }` plus
+contextual `LiveRowMajor { inner_axis }`. It is correct, but the unique marker
+and compiler exact-shape proof already make the source axis the only axis the
+current consumer can use. Relative to the fieldless-marker survivor it has the
+same two roles, contextual interpretation, one-domain ceiling, 208/8 map
+layout, 232/8 access layout, linear region scan, and kernel runtime while adding
+one public field, `AxisMismatch`, four canonical bytes per consumer, and one
+representable invalid state. Retaining the old `0x09` consumer payload is not a
+surviving compatibility advantage: the source map and therefore every valid
+live schedule identity already move, and Tiler is pre-production. A future
+independent consumer axis is the same unsupported population that cannot save
+the redundant-axis referenced hybrid. The fieldless marker dominates this
+candidate, so it leaves the frontier.
+
 ### Additive/disjoint follower relation — eliminated
 
 The strongest compatibility form would keep existing `LiveRowMajor` for the
@@ -799,8 +914,8 @@ role restrictions make it correct and disjoint, and current one-source bytes
 would remain exact. It is eliminated under Tiler's pre-production replacement
 rule: the same variant would mean “source” on one role and “consumer” on
 another, leaving permanent role-contextual semantics solely to retain internal
-bytes. The marker survivor has the same two-variant/runtime cost while making
-the source explicit, and the total replacement has one local relation. Exact
+bytes. The fieldless-marker survivor makes both roles explicit with fewer
+consumer bytes, and the total replacement has one local relation. Exact
 byte continuity must still be captured as migration evidence; it is not a
 reason to retain the weaker public model.
 
@@ -820,7 +935,7 @@ when live maps exist, validate the named input/read/source axis, and require
 every pointwise access including the write to carry `LiveRowMajor`; omitting
 that coverage proof would reintroduce the mixed-map wrong code the landed P0
 now closes and is eliminated as incorrect before ranking. Even in its strongest
-fail-closed form it is worse than the marker on
+fail-closed form it is worse than the fieldless marker on
 every relevant dimension: it adds an optional field and invalid
 dangling-coordinate states to every `IndexRegion` and changes all 12 actual
 construction sites under `crates/` — one IR builder construction, eight
@@ -830,7 +945,8 @@ including the static ones. The exact source command
 struct definition plus those 12 literals. The option also keeps `LiveRowMajor`
 contextual and has the same one-domain ceiling. Its only benefit is direct
 lookup; the bounded source scan already exists and both the region-level and
-marker forms must scan consumers to validate them. It leaves the frontier.
+fieldless-marker forms must scan consumers to validate them. It leaves the
+frontier.
 
 ### Implicit collapse, schedule semantic state, and broad geometry — eliminated
 
@@ -860,55 +976,59 @@ and the exact all-live schedule and kernel bytes are now pinned at this base. A
 production prototype would merely implement an unaccepted public
 surface, so no research ticket is required before decision. A measured layout
 or implementation-defect difference can reverse the recommendation among the
-three correct survivors; the redundant-axis hybrid is dominated for the current
-contract rather than a fourth frontier choice.
+three correct survivors; both redundant-axis forms are dominated for the
+current contract rather than further frontier choices.
 
 ## Pareto frontier
 
 | Survivor | Correctness / strictness | Maintenance / compatibility | Tiler host runtime / memory | Identity / public / unsupported consequence |
 | --- | --- | --- | --- | --- |
-| Unique source marker | Exact one structural marker, complete live relation on every pointwise access, plus decoded-identity compiler proof; contextual consumers | No repeated handles; two variants; public one-domain ceiling | Linear scan; 208/8 map and 232/8 access; no per-consumer ordinal; failure diagnostic 16/4; unchanged kernel runtime | Source `0x0A`, narrowed consumer `0x09`; five rules; current all-`0x09` values become `Missing`; valid live values migrate; static bytes/schema versions stay |
+| Fieldless contextual marker | Exact one structural marker, complete live relation on every pointwise access, plus decoded-identity compiler proof; consumer axis and bad handles unrepresentable | Two disjoint variants and four rules; contextual consumers; one detached lowering helper must accept checked context; public one-domain ceiling | Linear scan; 208/8 map and 232/8 access; eight fixture bytes; failure diagnostic 12/4; unchanged kernel runtime | Source `0x0A`, fieldless consumer `0x0B`, old `0x09` retired; all valid live values migrate; static bytes/schema versions stay; artifact row unchanged |
 | Total local replacement | Exact checked source-bearing relation on every pointwise access plus decoded-identity compiler proof; self-contained | One variant and one match arm; repeated dangling/inconsistent/self handles; explicit future association seam | Linear validation; 208/8 map and 232/8 access; nine canonical bytes per live map; failure diagnostic 16/4; unchanged kernel runtime | Replacement `0x0A`, old `0x09` retired; seven rules; all valid live values migrate; static bytes/schema versions stay; artifact row unchanged |
 | Explicit source + referenced consumers | Exact marker plus range-checked local consumer references and decoded-identity compiler proof; bad source self-handle and consumer-axis disagreement unrepresentable | Two disjoint variants; map-local source lookup; public multi-source association seam while current multiple markers refuse; a future independent consumer axis requires a reviewed signature change | Linear validation; 208/8 map and 232/8 access; five bytes per map (20 fixture bytes); failure diagnostic 16/4; unchanged kernel runtime | Source `0x0A`, consumer `0x0B`, old `0x09` retired; six rules; all valid live values migrate; static bytes/schema versions stay; artifact row unchanged |
 
-None dominates. The marker minimizes canonical state and representable bad
-handles, but its consumers are contextual and its public shape cannot identify
-different sources later. Total-local minimizes variant count, makes every map
-self-contained, and already carries independent per-consumer axes, but
-represents redundant and potentially wrong source self-reference and axis
-state. The referenced-consumer form spends a second variant and consumer
-handles to make source and consumer jobs explicit, matches marker's 20 canonical
-fixture bytes, and leaves a multi-source association seam without authorizing
-multiple live loops or independent axes today.
+None dominates. The fieldless marker minimizes current canonical state,
+diagnostic surface, and representable invalid states, but its consumers are
+contextual and its public shape cannot identify different sources later.
+Total-local minimizes variant count, makes every map self-contained, and
+already carries independent per-consumer axes, but represents redundant and
+potentially wrong source self-reference and axis state. The
+referenced-consumer form spends a second variant and repeated handles to make
+the source association map-local and leave a multi-source seam, while avoiding
+total-local's self-handle and duplicate axis.
 
-The recommendation is the explicit-source/referenced-consumer replacement.
-ADR 0046 makes each logical access relation,
-not a region side field or role convention, the owner of tensor-coordinate
-meaning. Its consumer carries the exact relation to the marker which owns the
-current loop axis, while source declaration is structurally explicit and
-canonical rather than a handle-equals-own-position special case. It ties the
-marker on current canonical bytes, improves on the marker's contextual lookup,
-and avoids total-local's redundant state. Its strongest counterarguments are
-total-local's one-variant grammar and ready-made independent-axis field, and the
-marker's no-handle grammar. Neither dominates the recommendation: the former
-stores more invalid/current bytes and the latter cannot identify a source from
-one consumer map.
+The recommendation is the fieldless contextual marker replacement. ADR 0046
+makes the `IndexRegion` the owner of its checked access maps; it does not require
+one enum value detached from that verified region to carry a duplicate of a
+region-wide unique fact. The explicit source variant and the fieldless consumer
+variant jointly state the current one-source relation. The governing builder,
+verifier, extent derivation, and identity consumers own or can accept the
+containing region; one internal lowering helper must be given that checked
+context. On this authorized population a consumer handle or axis cannot
+distinguish two legal meanings, so retaining either weakens canonicality and
+adds failure surface. The fieldless form is therefore the smallest complete
+current contract: four rules, eight fixture bytes, and no dangling handle or
+axis mismatch. Its strongest counterarguments are total-local's one-variant
+self-contained grammar and the referenced form's map-local
+association/multi-source seam. Neither dominates: both avoid the contextual
+helper refactor but pay repeated state for a property the fieldless form
+deliberately defers, while the fieldless form would require a reviewed new
+consumer relation if a second source becomes admissible.
 
 ## One decision question for Tom
 
-Should Tiler accept the **explicit-source/referenced-consumer complete
-replacement** (recommended), with `LiveRowMajorSource { inner_axis: Axis }`,
-referenced `LiveRowMajor { source_access: AccessOrdinal }`, fresh tags
-`0x0A`/`0x0B`, and the six exact source rules; accept the
+Should Tiler accept the **fieldless contextual marker complete replacement**
+(recommended), with `LiveRowMajorSource { inner_axis: Axis }`, fieldless
+consumer `LiveRowMajor`, fresh tags `0x0A`/`0x0B`, and the four exact source
+rules; accept the **explicit-source/referenced-consumer complete replacement**,
+with `LiveRowMajorSource { inner_axis: Axis }`, referenced
+`LiveRowMajor { source_access: AccessOrdinal }`, fresh tags `0x0A`/`0x0B`, and
+the six exact source rules; accept the
 **complete total local replacement**
 `LiveRowMajor { inner_axis: Axis, source_access: AccessOrdinal }`,
 with the source access self-referencing, every pointwise access carrying the
 relation and naming it, and the seven
-exact `LiveRowMajorSourceRule`s above; accept the
-**unique marker** alternative
-`LiveRowMajorSource { inner_axis: Axis }` plus consumer
-`LiveRowMajor { inner_axis: Axis }`, every pointwise access carrying one of
-those relations, plus its five exact source rules; or reject all three and
+exact `LiveRowMajorSourceRule`s above; or reject all three and
 retain the typed schedule-stage deferral after the independent mixed-map
 correctness repair which is already landed?
 
@@ -935,7 +1055,11 @@ correctness repair which is already landed?
   `LiveRowMajorSourceRule::ConsumerMissingRelation { access }` and stable
   `live-row-major-source-consumer-missing-relation`, never a broad access or
   refinement failure. Quote the exact dedicated stable rules and payload
-  coordinates. For the total replacement separately perturb an out-of-range
+  coordinates. For the recommended fieldless marker, pin the exact public
+  source fields and unit consumer with a positive external construction, then
+  compile-fail attempts to add `inner_axis` and `source_access` to the consumer;
+  prove the four-rule census is total and neither `AxisMismatch` nor a reference
+  failure can be constructed. For the total replacement separately perturb an out-of-range
   source, zero and two self-references, and one live consumer's source handle; require
   `live-row-major-source-reference-out-of-range`,
   `live-row-major-source-missing`, `live-row-major-source-multiple`, and
@@ -945,9 +1069,9 @@ correctness repair which is already landed?
   itself and then at another in-range non-marker. Require the
   range/missing/multiple/inconsistent rules in the stated precedence, while
   proving no source self-reference or consumer-axis-disagreement state can be
-  constructed. Pin the exact recommended public fields with a positive external
-  construction and a compile-fail construction which attempts to add
-  `inner_axis` to the consumer. For total-local only, independently alter one
+  constructed. Pin its exact source/reference fields with a positive external
+  construction and compile-fail attempts to add `inner_axis` to the consumer.
+  For total-local only, independently alter one
   consumer axis and require `live-row-major-source-axis-mismatch`.
 - Keep the schedule fixed and perturb only the checked request/root binding;
   `verify_region_subject_binding` must reject invalid reuse. Separately reorder
@@ -980,7 +1104,7 @@ The hard path is:
 decide-the-schedule-local-input-ordinal-model (done)
   -> decide-the-full-list-access-coordinate-for-out-of-list-references (done)
   -> reconcile-input-ordinal-region-local-and-declared-input-semantics (done)
-  -> this decision (awaiting Tom)
+  -> this decision (in-progress packet repair; awaiting Tom only after review)
   -> admit-symbolic-extents-through-schedule-formation (blocked implementation)
   -> associate-live-extent-operands-with-symbolic-semantic-interface-axes (todo)
   -> deliver-an-artifact-family-from-a-symbolic-region (todo, also has its existing live-payload dependency)
@@ -991,9 +1115,10 @@ refuse-mixed-pointwise-live-row-major-access-relations-before-lowering (P0 done)
 
 The documentation repair and P0 are both `done`. The former supplied no runtime
 authority; the latter supplied the topology-neutral fail-closed current surface.
-Every implementation dependency except this awaiting decision is now done, so
-the graph is acyclic and the public choice is the sole unmet implementation
-edge.
+Every implementation dependency except this in-progress decision is now done,
+so the graph is acyclic and the public choice is the sole unmet implementation
+edge. Returning the ticket to `awaiting-decision` is a post-review coordinator
+action, not part of this repair.
 
 Only Tom accepts one exact surface. On acceptance, record who/date/venue/relay
 provenance here, leave implementation to

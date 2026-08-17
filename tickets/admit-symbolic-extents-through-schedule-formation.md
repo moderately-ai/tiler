@@ -108,6 +108,22 @@ the current-base correction below; it must not be used as live authority.
   `done`; the accepted source implementation will replace that temporary broad
   refusal with the selected dedicated source rule.
 
+## Exact-current-base correction — 2026-08-17, `a51305ce5b78628f9fbcbce78fd5cbbdfd43512e`
+
+- **Verified — the implementation purpose and all production Facts are
+  unchanged.** The exact live-row-major construction, verification, lowering,
+  compiler binding, identity, and artifact owners are byte-identical to
+  independently audited current main `e8141d7d`; this correction changes no
+  production authority.
+- **False — the 2026-08-16 frontier sentence retained a redundant consumer
+  axis.** The exact three survivors are now the fieldless contextual marker
+  `LiveRowMajorSource { inner_axis }` plus `LiveRowMajor`, total-local, and the
+  referenced consumer. The former contextual `LiveRowMajor { inner_axis }` is
+  dominated for the same reason as the redundant-axis referenced hybrid. The
+  decision packet now recommends the fieldless marker, subject to independent
+  review, and this implementation remains blocked until Tom accepts one exact
+  surface.
+
 Reproduce:
 
 ```sh
@@ -130,14 +146,16 @@ rg -n 'pub fn decode_shape_env_subject|enum ShapeEnvSubjectError|fn shape_enviro
 - Do not change production until [`decide-the-source-bound-live-row-major-access-surface`](decide-the-source-bound-live-row-major-access-surface.md) is accepted. If accepted, implement only its source-bound rank-one live-inner slice; if rejected, retain the typed schedule refusal and defer.
 - Implement the selected packet's exact public
   `ScheduledRegionDiagnostic::LiveRowMajorSource` and
-  `LiveRowMajorSourceRule` population: five rules for the marker or seven for
-  total-local, and six for the explicit-source/referenced-consumer replacement.
-  For that recommended replacement, retire old `0x09`, use fresh `0x0A` for
-  `LiveRowMajorSource { inner_axis }` and fresh `0x0B` for
-  `LiveRowMajor { source_access }`, and apply consumer-reference
-  range, marker count, marker role/mode, complete access relation, unique-marker
-  reference precedence. The consumer has no duplicate axis; `AxisMismatch`
-  belongs only to marker and total-local. Once one selected live relation
+  `LiveRowMajorSourceRule` population: four rules for the recommended
+  fieldless marker, seven for total-local, and six for the
+  explicit-source/referenced-consumer replacement. For the recommended
+  fieldless marker, retire old `0x09`, use fresh `0x0A` for
+  `LiveRowMajorSource { inner_axis }` and fresh `0x0B` for unit
+  `LiveRowMajor`, and apply marker count, marker role/mode, then complete access
+  relation precedence. The consumer has no duplicate axis or source handle;
+  `AxisMismatch` belongs only to total-local. The referenced survivor instead
+  adds consumer-reference range before marker count and unique-marker reference
+  consistency after complete coverage. Once one selected live relation
   appears, every pointwise read and the final write must carry that relation. The first
   access that does not is
   `ConsumerMissingRelation { access }` with stable rule
@@ -145,6 +163,13 @@ rg -n 'pub fn decode_shape_env_subject|enum ShapeEnvSubjectError|fn shape_enviro
   out-of-range, inconsistent, and missing-consumer source relations do not
   collapse into `AccessContract` or `NumericalOrAccessRefinement`; semantic
   decode/root/shape mismatch remains compiler `request-binding`.
+- For the recommended fieldless marker, thread the verified source axis or
+  owning schedule relation into `kernel::lower::addressing`, which currently
+  receives a detached `Access` plus `ReductionTopology`. Do not default a
+  fieldless consumer axis. `kernel::builder::scheduled_access_rank` and
+  `kernel::verify::access_rank` already receive the schedule, while request
+  sizing declines this schedule-only relation and physical sizing uses the
+  region element count; preserve those fail-closed/current owners.
 - `IndexRegion.iteration_shape: Shape` need not change for that slice: the live inner dimension is outside the static outer domain. Any later sourced-geometry replacement is a separate broad public decision, not an implementation fallback here.
 - Keep reductions, contractions, staged families, and structural maps refused by name until each has its own admitted geometry. Do not silently reuse the elementwise path.
 - Leave Metal emission and the `deliver` identity-across-extents hash to [`deliver-an-artifact-family-from-a-symbolic-region`](deliver-an-artifact-family-from-a-symbolic-region.md).
@@ -161,6 +186,11 @@ rg -n 'pub fn decode_shape_env_subject|enum ShapeEnvSubjectError|fn shape_enviro
   empty-environment default, or fallback source.
 - Perturb every selected intrinsic source rule independently and quote its exact
   `live-row-major-source-*` identifier and coordinate payload.
+- For the recommended fieldless marker, prove the exact four-rule population
+  and precedence, positively construct the public source and unit consumer from
+  outside the crate, and compile-fail attempts to add either `inner_axis` or
+  `source_access` to the consumer. No axis-mismatch or reference failure may be
+  representable on that surface.
 - With a valid source fixed, independently change one read and then the final
   write to `LinearIdentity`; both fail intrinsically as exact
   `ConsumerMissingRelation` coordinates before kernel lowering. Preserve an
