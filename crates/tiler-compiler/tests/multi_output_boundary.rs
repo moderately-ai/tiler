@@ -76,16 +76,25 @@
 //! because an input no region reads is a buffer the caller binds, the ABI
 //! declares, and no kernel loads.
 //!
-//! **Its remainder is a fold's contributor, and it is a `tiler-ir` wall rather
-//! than a recognizer one.** `tiler_ir::schedule`'s `ContributorTensor` admits a
-//! fold's contributor read at `TensorRole::Intermediate` or the *first* declared
-//! input and nothing else, so a fold over a later declared input — reachable for
-//! the first time now that a walk may read a subset — is refused at the request
-//! boundary under `sum-contributor-ordinal` rather than proposed and rejected as
-//! invalid compiler output. The fused single-region alternative is withheld for
-//! the same reason and loses a candidate rather than a program.
+//! **The later-input fold row is now positive, but this fixture does not own that
+//! guarantee.** `request::tests::a_fold_over_a_later_declared_input_retains_its_ordinal`
+//! proves that a bare fold keeps the contributor's true declared-input ordinal
+//! through recognition and request-subject identity.
+//! `pipeline::conformance`'s
+//! `outputs_reading_input_subsets_compile_and_bind_the_inputs_they_read` retains
+//! the fused no-materialization alternative over declared input one, projects
+//! its region-local access through
+//! `VerifiedScheduledRegion::declared_input_at`, and compares both published
+//! outputs bit for bit. `CoverAssembly::from_plan` consumes that checked
+//! association when it binds the selected stage to the caller's input.
+//!
+//! This caller-boundary fixture has no later-input-fold test. Its positive rows
+//! remain ordered multi-output admission and disjoint elementwise input-subset
+//! binding; its negative rows remain shared publication, the same-shaped split
+//! stage-key collision, and publication/consumption role exclusivity; and its
+//! identity row remains semantic output order. The completed
 //! `admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary`
-//! owns the widening.
+//! owns the widening rather than this file.
 //!
 //! # Output order is identity at both layers, and this file pins the semantic half
 //!
