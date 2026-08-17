@@ -3061,6 +3061,53 @@ fn emission_never_names_a_semantic_or_schedule_shape() {
     }
 }
 
+/// The public numerical-requirements accessor distinguishes the elementary
+/// subject from its non-elementary neighbour without claiming to return a
+/// complete compiler command line.
+///
+/// Read the accessor's own source rather than repeating the claim in rustdoc:
+/// this fails if the corrected subject disappears or the retired universal
+/// statement returns, even though neither change affects runtime behaviour.
+#[test]
+fn numerical_requirements_docs_name_the_current_elementary_subject() {
+    const RECORD: &str = include_str!("record.rs");
+    let accessor = RECORD
+        .split_once("Returns the numerical compiler requirements")
+        .expect("record.rs documents numerical_requirements")
+        .1
+        .split_once("#[must_use]")
+        .expect("the accessor documentation ends at its attribute")
+        .0;
+    let prose = accessor
+        .lines()
+        .map(|line| line.trim().trim_start_matches("///").trim())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    assert!(
+        prose.contains(
+            "Precise `f32` elementary operations add [`MetalNumericalRequirement::PreciseFp32Functions`]"
+        ),
+        "the accessor must name the elementary subject that requires precise FP32 functions: {prose}"
+    );
+    assert!(
+        prose.contains(
+            "a unit containing no accuracy-mode-dependent library call carries no requirement for that selection"
+        ),
+        "the accessor must preserve the non-elementary neighbour: {prose}"
+    );
+    assert!(
+        prose.contains("a requirement subset, not a complete compiler flag list"),
+        "the accessor must not present its requirement slice as the complete compiler selection: {prose}"
+    );
+    assert!(
+        !prose.contains(
+            "`-fmetal-math-fp32-functions` is unconstrained here because this emission contains no accuracy-mode-dependent library call"
+        ),
+        "the retired universal claim contradicts elementary translation units: {prose}"
+    );
+}
+
 #[test]
 fn governed_types_map_to_their_metal_spellings() {
     assert_eq!(msl_type(KernelType::Bool), Ok("bool"));
