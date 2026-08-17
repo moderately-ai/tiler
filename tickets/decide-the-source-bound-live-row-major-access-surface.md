@@ -1,7 +1,7 @@
 ---
 id: decide-the-source-bound-live-row-major-access-surface
 title: Decide the source-bound LiveRowMajor access surface
-status: awaiting-decision
+status: in-progress
 priority: p1
 dependencies: [accept-the-live-extent-operand-public-surface, reconcile-input-ordinal-region-local-and-declared-input-semantics]
 related: [admit-symbolic-extents-through-schedule-formation, associate-live-extent-operands-with-symbolic-semantic-interface-axes, deliver-an-artifact-family-from-a-symbolic-region, repair-fieldless-tensor-role-documentation-after-access-ordinal-reconciliation, refuse-mixed-pointwise-live-row-major-access-relations-before-lowering]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: [.ticketsplease/decision-queue.md]
 tags: [decision, needs-tom, public-boundary, schedule, shapes, identity]
+claimed_from: todo
+assignee: worker-live-row-major-packet
+lease_expires_at: 1786966097
 ---
 ## User-visible outcome
 
