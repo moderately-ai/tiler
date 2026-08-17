@@ -1,7 +1,7 @@
 ---
 id: refuse-two-structurally-identical-output-chains-by-name-not-as-compiler-output
 title: Carry complete canonical ownership in every program stage
-status: todo
+status: in-progress
 priority: p2
 dependencies: [reproduce-the-identical-output-chain-stage-key-collision]
 related: [bound-the-assembled-region-count-and-derive-the-multi-output-budget-actuals]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/ir, implementation/artifact, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, ir, artifact, identity-domain, multi-output]
+claimed_from: todo
+assignee: worker-stage-ownership
+lease_expires_at: 1786992067
 ---
 ## User-visible outcome
 
