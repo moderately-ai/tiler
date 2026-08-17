@@ -304,10 +304,11 @@ mod tests {
         AccessMode, BoundsProofView, DomainRole, FrozenScalarRegistry, IndexBuildError,
         IndexDomainFactSource, IndexDomainPredicate, IndexDomainUnknownReason, IndexExprClass,
         IndexExprView, IndexExtentRef, IndexRegionBuildError, IndexRegionBuilder,
-        IndexRegionDiagnostic, ScalarArity, ScalarAttributeSchema, ScalarAttributes, ScalarEffect,
-        ScalarInferenceError, ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey,
-        ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
-        ScalarRegistryBuilder, TensorRole, VerifiedIndexRegion, WriteOwnershipProofView,
+        IndexRegionDiagnostic, JointPartitionProofView, ScalarArity, ScalarAttributeSchema,
+        ScalarAttributes, ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs,
+        ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
+        ScalarOperationInferencer, ScalarRegistryBuilder, TensorRole, VerifiedIndexRegion,
+        WriteOwnershipProofView,
     };
     use crate::program::abi::AvailabilityPhase;
     use crate::semantic::{
@@ -1172,7 +1173,9 @@ mod tests {
             region
                 .accesses()
                 .any(|access| access.write_ownership_proof()
-                    == Some(WriteOwnershipProofView::CoordinatePermutation)),
+                    == Some(WriteOwnershipProofView::CoordinatePermutation {
+                        facts: IndexDomainFactSource::ShapeEnvironment,
+                    })),
             "the write is owned through the environment's equality class"
         );
         assert_eq!(census.semantic_closure, 1);
@@ -1245,7 +1248,9 @@ mod tests {
             same_extent
                 .accesses()
                 .any(|access| access.write_ownership_proof()
-                    == Some(WriteOwnershipProofView::CoordinatePermutation)),
+                    == Some(WriteOwnershipProofView::CoordinatePermutation {
+                        facts: IndexDomainFactSource::ShapeEnvironment,
+                    })),
             "ownership is the permutation argument, discharged through the environment",
         );
 
@@ -1389,7 +1394,9 @@ mod tests {
                 .accesses()
                 .filter(|access| access.mode() == AccessMode::Write)
                 .all(|access| access.write_ownership_proof()
-                    == Some(WriteOwnershipProofView::CoordinatePermutation)),
+                    == Some(WriteOwnershipProofView::CoordinatePermutation {
+                        facts: IndexDomainFactSource::ShapeEnvironment,
+                    })),
             "ownership stays the permutation argument, which was already discharged",
         );
     }
@@ -2041,6 +2048,194 @@ mod tests {
                 .filter(|access| access.mode() == AccessMode::Read)
                 .all(|access| access.bounds_proof().is_none()),
             "one open atom leaves the access unproved, and no proof kind claims otherwise",
+        );
+    }
+
+    /// Builds two writes over one four-element boundary.
+    ///
+    /// Unit coefficients tile it as two contiguous rectangles; coefficients
+    /// fixed at two interleave even and odd coordinates and require the joint
+    /// walk. Mixing literal and symbolic coefficients in one output makes the
+    /// joint source aggregation observable without changing its population.
+    fn ownership_partition(
+        environment: Option<Arc<ShapeEnv>>,
+        coefficients: [SourcedIndexInteger; 2],
+        offsets: [i128; 2],
+    ) -> VerifiedIndexRegion {
+        let mut builder = match environment {
+            Some(environment) => {
+                IndexRegionBuilder::new_with_shape_environment(registry(), environment).unwrap()
+            }
+            None => IndexRegionBuilder::new(registry()).unwrap(),
+        };
+        let output = builder
+            .tensor(TensorRole::Output, value_type(), Shape::from_dims([4]))
+            .unwrap();
+        let dimension = builder
+            .dimension(DomainRole::Parallel, Extent::new(2))
+            .unwrap();
+        let dimension_expr = builder.dimension_expr(dimension).unwrap();
+        let value = builder
+            .apply(zero_key(), ScalarAttributes::empty(), &[])
+            .unwrap()
+            .get(0)
+            .unwrap();
+        for (coefficient, offset) in coefficients.into_iter().zip(offsets) {
+            let coordinate = builder
+                .sourced_linear_combination(offset.into(), &[(coefficient, dimension_expr)])
+                .unwrap();
+            let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
+            builder.output(write, value).unwrap();
+        }
+        builder.build().expect("the two writes own the boundary")
+    }
+
+    fn assert_partition_source(
+        region: &VerifiedIndexRegion,
+        expected_joint: JointPartitionProofView,
+    ) {
+        for access in region
+            .accesses()
+            .filter(|access| access.mode() == AccessMode::Write)
+        {
+            let proof = access
+                .write_ownership_proof()
+                .expect("each write retains ownership evidence");
+            let WriteOwnershipProofView::PartitionMember { joint } = proof else {
+                panic!("two roots over one output retain a joint partition proof")
+            };
+            assert_eq!(joint, expected_joint);
+            assert_eq!(proof.facts(), joint.facts());
+        }
+    }
+
+    /// Literal, symbolic, and mixed unit coefficients retain the exact source
+    /// of the interval partition argument.
+    #[test]
+    fn interval_partitions_name_their_complete_fact_population() {
+        let unit_environment = || {
+            environment_over(
+                EXTENT_PHASE_CEILING,
+                &["u"],
+                &[ExtentRelation::interval(term("u"), 1, 1).unwrap()],
+            )
+        };
+        let symbolic_unit = || SourcedIndexInteger::Symbol(symbol("u"));
+        let cases = [
+            (
+                ownership_partition(None, [1_i128.into(), 1_i128.into()], [0, 2]),
+                IndexDomainFactSource::Program,
+            ),
+            (
+                ownership_partition(
+                    Some(unit_environment()),
+                    [symbolic_unit(), symbolic_unit()],
+                    [0, 2],
+                ),
+                IndexDomainFactSource::ShapeEnvironment,
+            ),
+            (
+                ownership_partition(
+                    Some(unit_environment()),
+                    [1_i128.into(), symbolic_unit()],
+                    [0, 2],
+                ),
+                IndexDomainFactSource::ShapeEnvironment,
+            ),
+        ];
+        for (region, facts) in cases {
+            assert_partition_source(&region, JointPartitionProofView::Interval { facts });
+        }
+    }
+
+    /// Exact two remains outside rectangle placement, and literal, symbolic,
+    /// and mixed interleavings retain the source of the exhaustive joint walk.
+    #[test]
+    fn exhaustive_partitions_name_their_complete_fact_population() {
+        let two_environment = || {
+            environment_over(
+                EXTENT_PHASE_CEILING,
+                &["t"],
+                &[ExtentRelation::interval(term("t"), 2, 2).unwrap()],
+            )
+        };
+        let symbolic_two = || SourcedIndexInteger::Symbol(symbol("t"));
+        let cases = [
+            (
+                ownership_partition(None, [2_i128.into(), 2_i128.into()], [0, 1]),
+                IndexDomainFactSource::Program,
+            ),
+            (
+                ownership_partition(
+                    Some(two_environment()),
+                    [symbolic_two(), symbolic_two()],
+                    [0, 1],
+                ),
+                IndexDomainFactSource::ShapeEnvironment,
+            ),
+            (
+                ownership_partition(
+                    Some(two_environment()),
+                    [2_i128.into(), symbolic_two()],
+                    [0, 1],
+                ),
+                IndexDomainFactSource::ShapeEnvironment,
+            ),
+        ];
+        for (region, facts) in cases {
+            assert_partition_source(
+                &region,
+                JointPartitionProofView::Exhaustive { points: 4, facts },
+            );
+        }
+    }
+
+    /// A single non-permutation write carries the source used by its walk.
+    #[test]
+    fn a_symbolic_single_write_exhaustive_proof_names_its_fact_source() {
+        let environment = environment_over(
+            EXTENT_PHASE_CEILING,
+            &["u"],
+            &[ExtentRelation::interval(term("u"), 3, 3).unwrap()],
+        );
+        let mut builder =
+            IndexRegionBuilder::new_with_shape_environment(registry(), environment).unwrap();
+        let output = builder
+            .tensor(TensorRole::Output, value_type(), Shape::from_dims([4]))
+            .unwrap();
+        let dimension = builder
+            .dimension(DomainRole::Parallel, Extent::new(4))
+            .unwrap();
+        let dimension_expr = builder.dimension_expr(dimension).unwrap();
+        let scaled = builder
+            .sourced_linear_combination(
+                0_i128.into(),
+                &[(SourcedIndexInteger::Symbol(symbol("u")), dimension_expr)],
+            )
+            .unwrap();
+        let coordinate = builder
+            .modulo(scaled, SourcedExtent::Static(Extent::new(4)))
+            .unwrap();
+        let value = builder
+            .apply(zero_key(), ScalarAttributes::empty(), &[])
+            .unwrap()
+            .get(0)
+            .unwrap();
+        let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
+        builder.output(write, value).unwrap();
+        let region = builder
+            .build()
+            .expect("multiplication by three permutes mod four");
+        let write = region
+            .accesses()
+            .find(|access| access.mode() == AccessMode::Write)
+            .unwrap();
+        assert_eq!(
+            write.write_ownership_proof(),
+            Some(WriteOwnershipProofView::Exhaustive {
+                points: 4,
+                facts: IndexDomainFactSource::ShapeEnvironment,
+            })
         );
     }
 

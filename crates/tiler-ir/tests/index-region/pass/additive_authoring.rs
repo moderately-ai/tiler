@@ -24,7 +24,7 @@ fn inspect_proofs(bounds: BoundsProofView, ownership: WriteOwnershipProofView) {
         _ => 3,
     };
     let _ = match ownership {
-        WriteOwnershipProofView::CoordinatePermutation => 0,
+        WriteOwnershipProofView::CoordinatePermutation { .. } => 0,
         WriteOwnershipProofView::Exhaustive { .. } => 1,
         _ => 2,
     };

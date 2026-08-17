@@ -80,13 +80,6 @@ pub enum IndexDomainSoundProof {
 
 /// Which facts one discharged index-domain predicate rested on.
 ///
-/// **Draft surface, not yet accepted.** This type, its variants, its canonical
-/// tag byte, and [`DischargedIndexDomainPredicate::facts`] are a concrete draft
-/// pending Tom's acceptance, exactly as [`SourcedIndexInteger`] is; the label is
-/// what an acceptance flips.
-///
-/// [`SourcedIndexInteger`]: super::SourcedIndexInteger
-///
 /// # Why this is beside the evidence rather than inside it
 ///
 /// [`IndexDomainEvidence`] names the *argument* that closed the predicate.
@@ -255,9 +248,6 @@ impl DischargedIndexDomainPredicate {
     }
 
     /// Returns which facts the argument named by [`Self::evidence`] rested on.
-    ///
-    /// **Draft surface, not yet accepted**; [`IndexDomainFactSource`] carries
-    /// the full label.
     ///
     /// This is the answer to "would this proof still hold if the shape
     /// environment were not there", and it is recorded rather than left for a

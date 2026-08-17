@@ -150,14 +150,26 @@ pub(super) enum BoundsProof {
 }
 #[derive(Clone, Copy, Debug)]
 pub(super) enum WriteOwnershipProof {
-    CoordinatePermutation,
-    Exhaustive { points: u64 },
-    PartitionMember { joint: JointPartitionProof },
+    CoordinatePermutation {
+        facts: IndexDomainFactSource,
+    },
+    Exhaustive {
+        points: u64,
+        facts: IndexDomainFactSource,
+    },
+    PartitionMember {
+        joint: JointPartitionProof,
+    },
 }
 #[derive(Clone, Copy, Debug)]
 pub(super) enum JointPartitionProof {
-    Interval,
-    Exhaustive { points: u64 },
+    Interval {
+        facts: IndexDomainFactSource,
+    },
+    Exhaustive {
+        points: u64,
+        facts: IndexDomainFactSource,
+    },
 }
 #[derive(Clone, Debug)]
 pub(super) struct VerifiedAccessData {
@@ -992,18 +1004,20 @@ impl<'a> TensorAccessRef<'a> {
     #[must_use]
     pub fn write_ownership_proof(self) -> Option<WriteOwnershipProofView> {
         self.data.ownership_proof.map(|proof| match proof {
-            WriteOwnershipProof::CoordinatePermutation => {
-                WriteOwnershipProofView::CoordinatePermutation
+            WriteOwnershipProof::CoordinatePermutation { facts } => {
+                WriteOwnershipProofView::CoordinatePermutation { facts }
             }
-            WriteOwnershipProof::Exhaustive { points } => {
-                WriteOwnershipProofView::Exhaustive { points }
+            WriteOwnershipProof::Exhaustive { points, facts } => {
+                WriteOwnershipProofView::Exhaustive { points, facts }
             }
             WriteOwnershipProof::PartitionMember { joint } => {
                 WriteOwnershipProofView::PartitionMember {
                     joint: match joint {
-                        JointPartitionProof::Interval => JointPartitionProofView::Interval,
-                        JointPartitionProof::Exhaustive { points } => {
-                            JointPartitionProofView::Exhaustive { points }
+                        JointPartitionProof::Interval { facts } => {
+                            JointPartitionProofView::Interval { facts }
+                        }
+                        JointPartitionProof::Exhaustive { points, facts } => {
+                            JointPartitionProofView::Exhaustive { points, facts }
                         }
                     },
                 }
@@ -1059,9 +1073,6 @@ pub enum BoundsProofView {
 
 impl BoundsProofView {
     /// Returns which facts this proof rested on.
-    ///
-    /// **Draft surface, not yet accepted**; [`IndexDomainFactSource`] carries
-    /// the full label.
     #[must_use]
     pub const fn facts(self) -> IndexDomainFactSource {
         match self {
@@ -1077,11 +1088,16 @@ impl BoundsProofView {
 #[non_exhaustive]
 pub enum WriteOwnershipProofView {
     /// Coordinates are a dimension permutation matching output shape.
-    CoordinatePermutation,
+    CoordinatePermutation {
+        /// Facts the extent equalities rested on.
+        facts: IndexDomainFactSource,
+    },
     /// Finite enumeration proved total, injective ownership.
     Exhaustive {
         /// Enumerated domain points.
         points: u64,
+        /// Facts the walked domain, boundary, and coordinates rested on.
+        facts: IndexDomainFactSource,
     },
     /// This root is total and injective over its own partition of an output
     /// that several roots jointly own.
@@ -1100,6 +1116,17 @@ pub enum WriteOwnershipProofView {
     },
 }
 
+impl WriteOwnershipProofView {
+    /// Returns which facts this ownership proof rested on.
+    #[must_use]
+    pub const fn facts(self) -> IndexDomainFactSource {
+        match self {
+            Self::CoordinatePermutation { facts } | Self::Exhaustive { facts, .. } => facts,
+            Self::PartitionMember { joint } => joint.facts(),
+        }
+    }
+}
+
 /// Public view of the mechanism that discharged one output's joint partition
 /// obligation.
 ///
@@ -1114,11 +1141,14 @@ pub enum WriteOwnershipProofView {
 pub enum JointPartitionProofView {
     /// Interval reasoning over contiguous coordinate ranges decided the set.
     ///
-    /// Each root's partition is a rectangle of static ranges, pairwise
+    /// Each root's partition is a rectangle of determined ranges, pairwise
     /// disjointness was decided by finding a separating axis for every pair,
     /// and coverage followed from the disjoint volumes summing to the
     /// boundary's element count. Nothing was enumerated.
-    Interval,
+    Interval {
+        /// Facts the rectangle placement and coverage argument rested on.
+        facts: IndexDomainFactSource,
+    },
     /// Finite enumeration over the boundary decided the set.
     ///
     /// One shared bitset across every root: a second write to one element is a
@@ -1126,7 +1156,19 @@ pub enum JointPartitionProofView {
     Exhaustive {
         /// Domain points enumerated across every root of this output.
         points: u64,
+        /// Facts the shared walk rested on.
+        facts: IndexDomainFactSource,
     },
+}
+
+impl JointPartitionProofView {
+    /// Returns which facts this joint ownership proof rested on.
+    #[must_use]
+    pub const fn facts(self) -> IndexDomainFactSource {
+        match self {
+            Self::Interval { facts } | Self::Exhaustive { facts, .. } => facts,
+        }
+    }
 }
 
 /// One scalar value definition.

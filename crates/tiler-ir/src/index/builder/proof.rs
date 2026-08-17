@@ -328,7 +328,12 @@ impl IndexRegionBuilder {
         for (tensor, roots) in &partitioned {
             match self.decide_partition_by_interval(*tensor, roots, diagnostics) {
                 PartitionVerdict::Interval => {
-                    partition_proofs.insert(*tensor, JointPartitionProof::Interval);
+                    partition_proofs.insert(
+                        *tensor,
+                        JointPartitionProof::Interval {
+                            facts: self.partition_fact_source(*tensor, roots),
+                        },
+                    );
                 }
                 PartitionVerdict::Refuted => {}
                 PartitionVerdict::Enumerate => {
@@ -376,8 +381,13 @@ impl IndexRegionBuilder {
                         &partitioned[tensor],
                         diagnostics,
                     ) {
-                        partition_proofs
-                            .insert(*tensor, JointPartitionProof::Exhaustive { points });
+                        partition_proofs.insert(
+                            *tensor,
+                            JointPartitionProof::Exhaustive {
+                                points,
+                                facts: self.partition_fact_source(*tensor, &partitioned[tensor]),
+                            },
+                        );
                     }
                 }
                 for access_index in &exhaustive_accesses {
@@ -1048,7 +1058,9 @@ impl IndexRegionBuilder {
     ///
     /// The whole vocabulary interval reasoning admits for a partition, and it
     /// is deliberately narrow: `d`, `d + c`, and a bare `c`, each with a unit
-    /// coefficient and a non-negative displacement. That is exactly the form
+    /// coefficient and a non-negative displacement. The unit may be written
+    /// literally or be a symbol this region's environment determines as one;
+    /// that is exactly the form
     /// whose image over a dimension is a *contiguous* range, which is what
     /// makes a rectangle the right description of the root's partition. A
     /// coordinate outside it — a scaled dimension, a quotient, a sum of two
@@ -1067,12 +1079,16 @@ impl IndexRegionBuilder {
                 let [term] = terms.as_slice() else {
                     return None;
                 };
-                // A symbolic coefficient is not the unit this vocabulary
-                // requires and is not known to be anything else, so it declines
-                // here exactly as a scaled dimension does — the joint
-                // enumeration, or an obligation, decides the root instead.
-                if term.coefficient.as_literal().map(|value| &value.0) != Some(&BigInt::from(1_u8))
-                {
+                // The rectangle vocabulary requires an exact unit. A literal
+                // states that directly; a symbol is admitted only when this
+                // region's environment determines it to be exactly one. The
+                // expression still names the symbol, so proof and canonical
+                // normalization remain separate decisions.
+                let is_unit = match term.coefficient.as_literal() {
+                    Some(value) => value.0 == BigInt::from(1_u8),
+                    None => self.determined_scalar(&term.coefficient) == Some(1),
+                };
+                if !is_unit {
                     return None;
                 }
                 let IndexNode::Dimension(dimension) = *self.expressions[term.value as usize].node

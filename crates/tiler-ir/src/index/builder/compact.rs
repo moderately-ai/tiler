@@ -402,10 +402,13 @@ impl IndexRegionBuilder {
                 if let Some(joint) = partition_proofs.get(&access.tensor) {
                     WriteOwnershipProof::PartitionMember { joint: *joint }
                 } else if self.write_is_permutation(access, shape) {
-                    WriteOwnershipProof::CoordinatePermutation
+                    WriteOwnershipProof::CoordinatePermutation {
+                        facts: self.access_fact_source(access, shape),
+                    }
                 } else {
                     WriteOwnershipProof::Exhaustive {
                         points: enumerated_points(points),
+                        facts: self.access_fact_source(access, shape),
                     }
                 }
             }),

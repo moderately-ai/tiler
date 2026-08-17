@@ -3095,7 +3095,9 @@ mod tests {
                         .unwrap()
                         .write_ownership_proof(),
                     Some(WriteOwnershipProofView::PartitionMember {
-                        joint: JointPartitionProofView::Interval
+                        joint: JointPartitionProofView::Interval {
+                            facts: IndexDomainFactSource::Program
+                        }
                     })
                 ),
                 "member {binding:?} owns its partition by interval reasoning"

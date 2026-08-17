@@ -993,6 +993,24 @@ impl IndexRegionBuilder {
         }
     }
 
+    /// Returns which facts a joint ownership proof over `roots` may rest on.
+    ///
+    /// A joint proof reads the union of every member's domain and coordinates
+    /// and their shared boundary. `access_fact_source` already covers exactly
+    /// those three populations, so the weak source is the safe aggregate when
+    /// any member names an environment-owned symbol.
+    fn partition_fact_source(&self, tensor: u32, roots: &[u32]) -> IndexDomainFactSource {
+        let shape = &self.tensors[tensor as usize].shape;
+        if roots.iter().any(|root| {
+            self.access_fact_source(&self.accesses[*root as usize], shape)
+                == IndexDomainFactSource::ShapeEnvironment
+        }) {
+            IndexDomainFactSource::ShapeEnvironment
+        } else {
+            IndexDomainFactSource::Program
+        }
+    }
+
     /// Returns whether the environment proves two extents are one extent.
     ///
     /// The symbolic form of a literal `==`. A wholly static region has no

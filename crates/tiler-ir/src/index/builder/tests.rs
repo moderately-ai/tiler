@@ -15,7 +15,7 @@ use super::{
 };
 use crate::index::model::{
     IndexNode, ReducerBodyOperationData, ReducerBodyValueData, ReducerBodyValueSource,
-    ScalarReducerBodyData,
+    ScalarReducerBodyData, WriteOwnershipProof,
 };
 use crate::index::scalar::{ScalarApplyError, ScalarInferenceHostFailure};
 use crate::index::{
@@ -387,6 +387,56 @@ const FACT_SOURCE_CASES: [IndexDomainFactSource; variant_count::<IndexDomainFact
     IndexDomainFactSource::Program,
     IndexDomainFactSource::ShapeEnvironment,
 ];
+
+#[test]
+fn retained_ownership_proof_metadata_does_not_enter_region_identity() {
+    let region = verified_copy();
+    let data = &region.data;
+    let mut compacted = CompactedRegion {
+        dimensions: data.dimensions.clone(),
+        tensors: data.tensors.clone(),
+        expressions: data.expressions.clone(),
+        accesses: data.accesses.clone(),
+        index_domain_evidence: data.index_domain_evidence.clone(),
+        unknown_index_domain_predicates: data.unknown_index_domain_predicates.clone(),
+        operations: data.operations.clone(),
+        values: data.values.clone(),
+        outputs: data.outputs.clone(),
+    };
+    let identity =
+        |region: &CompactedRegion| encode_region(region, None, encoded_region_len(region, None));
+    let baseline = identity(&compacted);
+    assert_eq!(baseline.as_bytes(), region.canonical_identity().as_bytes());
+
+    let write = compacted
+        .accesses
+        .iter_mut()
+        .find(|access| access.mode == crate::index::AccessMode::Write)
+        .expect("the existing copy fixture has one write");
+    write.ownership_proof = Some(WriteOwnershipProof::CoordinatePermutation {
+        facts: IndexDomainFactSource::ShapeEnvironment,
+    });
+    assert_eq!(
+        identity(&compacted),
+        baseline,
+        "the fact-source tag is retained analysis metadata, not a region byte",
+    );
+
+    let write = compacted
+        .accesses
+        .iter_mut()
+        .find(|access| access.mode == crate::index::AccessMode::Write)
+        .expect("the existing copy fixture has one write");
+    write.ownership_proof = Some(WriteOwnershipProof::Exhaustive {
+        points: 987,
+        facts: IndexDomainFactSource::ShapeEnvironment,
+    });
+    assert_eq!(
+        identity(&compacted),
+        baseline,
+        "proof mechanism and point count are retained analysis metadata, not region bytes",
+    );
+}
 
 #[test]
 fn index_domain_subject_predicate_outcome_and_basis_each_enter_region_identity() {

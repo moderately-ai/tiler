@@ -7031,7 +7031,11 @@ mod tests {
         assert_eq!(bindings[0].written_value(), root.value());
         assert!(matches!(
             ownership(&region, &bindings[0]),
-            Some(super::super::WriteOwnershipProofView::CoordinatePermutation)
+            Some(
+                super::super::WriteOwnershipProofView::CoordinatePermutation {
+                    facts: super::super::IndexDomainFactSource::Program,
+                }
+            )
         ));
     }
 

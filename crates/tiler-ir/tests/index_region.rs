@@ -1496,7 +1496,9 @@ fn contiguous_partitions_are_admitted_by_interval_reasoning() {
         partition_ownership(&region),
         vec![
             WriteOwnershipProofView::PartitionMember {
-                joint: JointPartitionProofView::Interval
+                joint: JointPartitionProofView::Interval {
+                    facts: IndexDomainFactSource::Program,
+                }
             };
             2
         ]
@@ -1516,7 +1518,10 @@ fn strided_partitions_fall_back_to_the_recorded_joint_walk() {
         partition_ownership(&region),
         vec![
             WriteOwnershipProofView::PartitionMember {
-                joint: JointPartitionProofView::Exhaustive { points: 4 }
+                joint: JointPartitionProofView::Exhaustive {
+                    points: 4,
+                    facts: IndexDomainFactSource::Program,
+                }
             };
             2
         ]
@@ -1605,7 +1610,9 @@ fn a_sole_root_keeps_its_whole_boundary_evidence() {
     let region = partitioned_output_region(4, 4, &[(1, 0)]).build().unwrap();
     assert_eq!(
         partition_ownership(&region),
-        vec![WriteOwnershipProofView::CoordinatePermutation]
+        vec![WriteOwnershipProofView::CoordinatePermutation {
+            facts: IndexDomainFactSource::Program,
+        }]
     );
 }
 
@@ -1651,7 +1658,9 @@ fn unequally_sized_contiguous_partitions_are_admitted_by_interval_reasoning() {
         partition_ownership(&region),
         vec![
             WriteOwnershipProofView::PartitionMember {
-                joint: JointPartitionProofView::Interval
+                joint: JointPartitionProofView::Interval {
+                    facts: IndexDomainFactSource::Program,
+                }
             };
             2
         ]
@@ -1673,7 +1682,9 @@ fn a_zero_extent_partition_member_owns_nothing_and_is_admitted() {
         partition_ownership(&region),
         vec![
             WriteOwnershipProofView::PartitionMember {
-                joint: JointPartitionProofView::Interval
+                joint: JointPartitionProofView::Interval {
+                    facts: IndexDomainFactSource::Program,
+                }
             };
             2
         ]
@@ -1702,7 +1713,9 @@ fn an_empty_partition_member_inside_a_sibling_range_is_still_disjoint() {
         partition_ownership(&region),
         vec![
             WriteOwnershipProofView::PartitionMember {
-                joint: JointPartitionProofView::Interval
+                joint: JointPartitionProofView::Interval {
+                    facts: IndexDomainFactSource::Program,
+                }
             };
             2
         ]
@@ -1905,7 +1918,9 @@ fn empty_reduction_read_is_vacuous_and_parallel_write_is_proved() {
     );
     assert_eq!(
         accesses.next().unwrap().write_ownership_proof(),
-        Some(WriteOwnershipProofView::CoordinatePermutation)
+        Some(WriteOwnershipProofView::CoordinatePermutation {
+            facts: IndexDomainFactSource::Program,
+        })
     );
 }
 
@@ -1994,7 +2009,10 @@ fn non_permutation_write_retains_bounded_exhaustive_evidence() {
         .unwrap();
     assert_eq!(
         write.write_ownership_proof(),
-        Some(WriteOwnershipProofView::Exhaustive { points: 4 })
+        Some(WriteOwnershipProofView::Exhaustive {
+            points: 4,
+            facts: IndexDomainFactSource::Program,
+        })
     );
 }
 
@@ -2759,6 +2777,8 @@ fn a_contraction_emits_two_operand_projections_dropping_different_coordinates() 
     }
     assert_eq!(
         accesses[2].write_ownership_proof(),
-        Some(WriteOwnershipProofView::CoordinatePermutation)
+        Some(WriteOwnershipProofView::CoordinatePermutation {
+            facts: IndexDomainFactSource::Program,
+        })
     );
 }
