@@ -40,18 +40,18 @@ Every accepted public field and atomicity guarantee has an independent subject p
 
 Audited on 2026-08-16 at exact base `b757936b6620620a321c3c9ba43ec75ca4376599`. This ticket stated no `## Facts` section, so each Required-delivery claim was treated as a current obligation. The accepted implementation commit `b474fd01e339396ab7779c6ae0ae9e58631a7856` is an ancestor of that base.
 
-- **Fact — imprecise at reviewed evidence commit `fa97753ded6b5f72f4a2587034fcd764c09f811e`, repaired at `2453367ed24692525214ccbac99e50cfef21c6a5`.** The unmodified public seven-specialist request is constructible through source anchors `request_boundary`, `compile_request_diagnostic`, `CompileRequest::preferring`, and `compile(request)`. The first evidence commit retained only aggregate counts, which could not prove that each distinct specialist reached all 17 opportunities. The repair attributes the unchanged 119 invocations, 21 proposals, and 98 declines by exact installed `ProviderIdentity`; all seven identities independently report 17 invocations, 3 proposals, and 14 declines.
+- **Fact — imprecise at reviewed evidence commit `fa97753ded6b5f72f4a2587034fcd764c09f811e`, with a measurement-path defect in first repair `2453367ed24692525214ccbac99e50cfef21c6a5`, repaired at `ade271ddeddfd1a507b5308308d8f2d9018b7ec4`.** The unmodified public seven-specialist request is constructible through source anchors `request_boundary`, `compile_request_diagnostic`, `CompileRequest::preferring`, and `compile(request)`. The first evidence commit retained only aggregate counts, which could not prove that each distinct specialist reached all 17 opportunities. The first repair added exact attribution, but its `BTreeMap`, identity cloning, and updates compiled into normal timing and RSS subjects even though only the accessor was `#[cfg(test)]`. The final repair retains the seven-by-seventeen test census while compiling the attribution import, storage, type, identity clone, update helpers, and every update call only under `#[cfg(test)]`.
 - **Fact — false as a claim of existing retained coverage.** `detail_capacity_arms_are_independent_and_record_first` called `detail_capacity` directly. `capacity_aborts_before_a_later_candidate_and_contract_fallback` and `outer_capacity_discards_an_earlier_target_outcome_and_skips_the_later_target` constructed `capacity_error()` at orchestration seams. They verified the implementation shape but did not reach the accepted public mapper from production explain construction.
 - **Fact — verified but incomplete.** `explain_capacity_maps_exactly_and_other_explain_errors_remain_defects` preserved direct typed carrier fields and classified the real `verify_semantic_output_type` error as `InvalidCompilerOutput`; it did not drive capacity through public compile orchestration.
 - **Fact — verified.** Source anchors `EXPLAIN_SCHEMA_VERSION` and `EXPLAIN_RENDERER_VERSION` remained 11 and 9. The accepted boundary required no public API, identity, schema, renderer, trace-content, provider-admission, cap, or policy movement.
 
-The reviewed seven-specialist population statement required the repair above; the spike README's current terminal digest and `ExplainWriter::push` source anchor were stale too. Repairing them did not change the ticket's purpose or accepted public surface. `research/program-planning` was added because the retained public reproduction is owned by `spikes/program-planning/physical-frontier-budget-calibration`.
+The reviewed seven-specialist population statement required the repair above; the spike README's current terminal digest and `ExplainWriter::push` source anchor were stale too. The first attribution repair also contaminated the normal measurement subject and therefore requires the test-only correction recorded below. These repairs do not change the ticket's purpose or accepted public surface. `research/program-planning` was added because the retained public reproduction is owned by `spikes/program-planning/physical-frontier-budget-calibration`.
 
 ## Retained evidence
 
-Implementation commit: `b474fd01e339396ab7779c6ae0ae9e58631a7856`. Evidence commit: `2453367ed24692525214ccbac99e50cfef21c6a5` (including the earlier evidence tree at `fa97753ded6b5f72f4a2587034fcd764c09f811e`).
+Implementation commit: `b474fd01e339396ab7779c6ae0ae9e58631a7856`. Evidence commit: `ade271ddeddfd1a507b5308308d8f2d9018b7ec4` (including the earlier evidence trees at `fa97753ded6b5f72f4a2587034fcd764c09f811e` and `2453367ed24692525214ccbac99e50cfef21c6a5`).
 
-At evidence commit `2453367ed24692525214ccbac99e50cfef21c6a5`, `seven_specialists_reach_the_public_explain_byte_refusal` constructs the public semantic program, seven separately named installed providers, target profile, numerical contract, and `CompileRequest`; it then calls public `session::compile`. It cannot mint a failure class. Its exact identity-keyed census contains `acme::request-boundary-{0..6}@1`; every identity independently reports 17 invocations = 3 proposals + 14 declines, partitioned into 3 baseline-bearing and 14 coverless/unspellable opportunities. The attributed totals equal the unchanged aggregate population of 119 invocations = 21 proposals + 98 declines. It returns zero successes and zero alternatives with:
+At evidence commit `ade271ddeddfd1a507b5308308d8f2d9018b7ec4`, `seven_specialists_reach_the_public_explain_byte_refusal` constructs the public semantic program, seven separately named installed providers, target profile, numerical contract, and `CompileRequest`; it then calls public `session::compile`. It cannot mint a failure class. Its exact test-only identity-keyed census contains `acme::request-boundary-{0..6}@1`; every identity independently reports 17 invocations = 3 proposals + 14 declines, partitioned into 3 baseline-bearing and 14 coverless/unspellable opportunities. The attributed totals equal the unchanged aggregate population of 119 invocations = 21 proposals + 98 declines. In non-test and release binaries the attribution carrier and updates do not exist, so timing and RSS retain their original aggregate-only provider path. The public reproduction returns zero successes and zero alternatives with:
 
 ```text
 BudgetExhausted { resource: ExplainDetailCanonicalBytes, limit: 1048576, reported: 1048698 }
@@ -83,11 +83,12 @@ The genuine-defect negative builds a `u8` semantic output, obtains `ProgramError
 ```sh
 cargo run --quiet --manifest-path spikes/program-planning/physical-frontier-budget-calibration/Cargo.toml -- request-boundary 7
 cargo test --manifest-path spikes/program-planning/physical-frontier-budget-calibration/Cargo.toml seven_specialists_reach_the_public_explain_byte_refusal -- --nocapture
+cargo test --manifest-path spikes/program-planning/physical-frontier-budget-calibration/Cargo.toml provider_attribution_is_test_only_and_absent_from_measurement_paths -- --nocapture
 cargo test -p tiler-compiler --lib public_explain_capacity -- --nocapture
 cargo test -p tiler-compiler --lib explain_capacity_maps_exactly_and_other_explain_errors_remain_defects -- --nocapture
 ```
 
-The first command prints the complete 1-through-7 control. Its terminal row is `specialists=7 successes=0 invocations=119 proposals=21 declines=98 raw=119 alternatives=0 explain_record_lines=2258 explain_bytes=643313` followed by the exact class and terminal line above. The retained tests report 1/1, 4/4, and 1/1 green respectively.
+The first command prints the complete 1-through-7 control. Its terminal row is `specialists=7 successes=0 invocations=119 proposals=21 declines=98 raw=119 alternatives=0 explain_record_lines=2258 explain_bytes=643313` followed by the exact class and terminal line above. The retained tests report 1/1, 1/1, 4/4, and 1/1 green respectively.
 
 ### Production-subject perturbations
 
@@ -100,6 +101,8 @@ cargo test --manifest-path spikes/program-planning/physical-frontier-budget-cali
 ```
 
 It fails unchanged with `assertion left == right failed: the exact seven attributed specialist identities moved`; left contains exact identities `request-boundary-0` through `request-boundary-5`, while right additionally contains `request-boundary-6`. This proves a skipped/duplicated provider attribution cannot satisfy the aggregate census.
+
+`provider_attribution_is_test_only_and_absent_from_measurement_paths` source-checks that every attribution import, carrier, helper, and update call is directly `#[cfg(test)]`, that the production part of `boundary.rs` contains no attribution symbol, and that `main.rs` and `measure.rs` contain no attribution API reference. Removing `#[cfg(test)]` from the invocation-update call fails unchanged with `attribution anchor is not directly cfg(test): self.record_provider_invocation(&mut tally, baseline.is_some());` — left `}`, right `#[cfg(test)]`.
 
 The five public payload-field perturbations use:
 
@@ -143,9 +146,9 @@ It fails unchanged with `a genuine compiler-output verification failure must not
 ### Identity and surface non-movement
 
 ```sh
-git diff --name-only b757936b6620620a321c3c9ba43ec75ca4376599..2453367ed24692525214ccbac99e50cfef21c6a5
+git diff --name-only b757936b6620620a321c3c9ba43ec75ca4376599..ade271ddeddfd1a507b5308308d8f2d9018b7ec4
 git show b757936b6620620a321c3c9ba43ec75ca4376599:crates/tiler-compiler/src/explain.rs | rg '^pub\(crate\) const EXPLAIN_(SCHEMA|RENDERER)_VERSION'
-git show 2453367ed24692525214ccbac99e50cfef21c6a5:crates/tiler-compiler/src/explain.rs | rg '^pub\(crate\) const EXPLAIN_(SCHEMA|RENDERER)_VERSION'
+git show ade271ddeddfd1a507b5308308d8f2d9018b7ec4:crates/tiler-compiler/src/explain.rs | rg '^pub\(crate\) const EXPLAIN_(SCHEMA|RENDERER)_VERSION'
 ```
 
-Only compiler tests/test-only writer control, the retained spike regression and its README, and this ticket move. Both revisions print schema 11 and renderer 9. The writer control and every added compiler carrier are `pub(crate)` under `#[cfg(test)]`; the spike attribution is test-observation state in a binary-only harness. No non-test compiler or public item is added, and no request, artifact, cache, schema, renderer, or trace-content identity input changes.
+Only compiler tests/test-only writer control, the retained spike regression and its README, and this ticket move. Both revisions print schema 11 and renderer 9. The writer control and every added compiler carrier are `pub(crate)` under `#[cfg(test)]`. The final spike attribution import, carrier, helpers, and update calls are also all `#[cfg(test)]`; `main.rs` and `measure.rs` carry no attribution reference, so normal timing and RSS construction remain aggregate-only. No non-test compiler or public item is added, and no request, artifact, cache, schema, renderer, or trace-content identity input changes.
