@@ -1302,6 +1302,7 @@ impl From<ArtifactCodecError> for ArtifactCodecFailure {
             | ArtifactCodecError::NonCanonicalSectionId { .. }
             | ArtifactCodecError::NonCanonicalOrder { .. }
             | ArtifactCodecError::DuplicateItem { .. }
+            | ArtifactCodecError::DuplicateSubgroupRequirement
             | ArtifactCodecError::PlatformFieldWithoutPlatform { .. }
             | ArtifactCodecError::NonCanonicalManifest
             | ArtifactCodecError::UnreferencedSection { .. }
@@ -1327,6 +1328,7 @@ impl From<ArtifactCodecError> for ArtifactCodecFailure {
             | ArtifactCodecError::MalformedInterfaceComponents
             | ArtifactCodecError::UnknownBindingTargetComponent { .. }
             | ArtifactCodecError::BindingComponentMismatch
+            | ArtifactCodecError::InvalidSubgroupRealization { .. }
             // The record failing on its own terms is classified `Invalid` and
             // not `Malformed`, including its unknown-tag and truncation rules.
             // The framing was readable — the manifest's own length prefix

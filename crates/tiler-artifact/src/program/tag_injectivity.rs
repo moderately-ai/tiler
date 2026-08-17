@@ -4,12 +4,14 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::mem::variant_count;
 
-use tiler_ir::schedule::IndexArithmetic;
+use tiler_ir::schedule::{
+    ArithmeticType, IndexArithmetic, SubgroupRealizationSubject, SubgroupTransfer, SubgroupWidth,
+};
 
 use super::keys::{BackendKey, RouteFeatureKey};
 use super::model::{
     ArtifactExecutionPolicy, BindingKind, RoutingPolicy, StageDependencyReason,
-    index_arithmetic_from_tag, index_arithmetic_tag,
+    index_arithmetic_from_tag, index_arithmetic_tag, subgroup_transfer_from_tag,
 };
 use super::realization::{AssessmentDisposition, RecordFamily};
 use super::requirement::{
@@ -174,4 +176,26 @@ fn route_requirement_tag_tables_are_injective_and_inverse_complete_where_availab
         RouteRequirement::BackendFeature(feature),
     ];
     assert_tag_table_ref("RouteRequirement", &requirements, RouteRequirement::tag);
+}
+
+#[test]
+fn subgroup_transfer_inverse_is_coupled_to_the_public_subject_encoder() {
+    const TRANSFERS: [SubgroupTransfer; variant_count::<SubgroupTransfer>()] =
+        [SubgroupTransfer::InRangeXorShuffle];
+
+    let encoded_tag = |transfer| {
+        let width = SubgroupWidth::new(2).expect("the smallest XOR width is valid");
+        let subject = SubgroupRealizationSubject::new(width, ArithmeticType::F16, transfer)
+            .expect("every enumerated transfer must define the test width");
+        let mut bytes = Vec::new();
+        subject.encode(&mut bytes);
+        assert_eq!(bytes.len(), 6, "the public subject encoding is fixed-width");
+        bytes[5]
+    };
+    assert_tag_table_with_inverse(
+        "artifact subgroup transfer",
+        &TRANSFERS,
+        encoded_tag,
+        subgroup_transfer_from_tag,
+    );
 }

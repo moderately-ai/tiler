@@ -32,7 +32,8 @@ use tiler_ir::program::{
     StorageScalar,
 };
 use tiler_ir::schedule::{
-    ExceptionalValueAssumption, FencedSpaces, ResourceRequirements, SynchronizationSubject,
+    ArithmeticType, ExceptionalValueAssumption, FencedSpaces, ResourceRequirements,
+    SubgroupRealizationSubject, SubgroupTransfer, SubgroupWidth, SynchronizationSubject,
 };
 use tiler_ir::semantic::{EncodedComponentRole, InputKey, OpKey, OutputKey, ProviderIdentity};
 use tiler_ir::shape::Shape;
@@ -51,10 +52,11 @@ use super::super::model::{
     ArtifactSchema, BINDING_TARGET_INTERNAL, BINDING_TARGET_PROGRAM_INPUT,
     BINDING_TARGET_PROGRAM_OUTPUT, BackendPayloadDescriptor, BindingData, BindingKind,
     BindingTargetData, DeferredPredicateData, InterfaceComponentData, InterfaceEntryData,
-    LaunchData, LoweringCapabilitySubject, RoutingPolicy, SchemaVersion, SelectedProvider,
-    StageDependencyData, StageDependencyReason, address_space_from_tag, buffer_access_from_tag,
-    element_type_from_tag, exceptional_assumption_from_tag, index_arithmetic_from_tag,
-    memory_ordering_from_tag, permission_from_tag, storage_scalar_from_tag, subnormal_from_tag,
+    LaunchData, LoweringCapabilitySubject, RoutingPolicy, SUBGROUP_REQUIREMENT_BLOCK_TAG,
+    SchemaVersion, SelectedProvider, StageDependencyData, StageDependencyReason,
+    address_space_from_tag, buffer_access_from_tag, element_type_from_tag,
+    exceptional_assumption_from_tag, index_arithmetic_from_tag, memory_ordering_from_tag,
+    permission_from_tag, storage_scalar_from_tag, subgroup_transfer_from_tag, subnormal_from_tag,
     synchronization_kind_from_tag, synchronization_scope_from_tag,
 };
 use super::super::realization::DeliveredRealizationRecord;
@@ -1068,7 +1070,6 @@ fn parse_entry(
         requires_device_memory: cursor.boolean()?,
         index_arithmetic: cursor.index_arithmetic()?,
         synchronization: cursor.synchronization()?,
-        subgroup: None,
         input_subnormals: cursor.subnormal()?,
         result_subnormals: cursor.subnormal()?,
         contraction: cursor.permission()?,
@@ -1077,6 +1078,11 @@ fn parse_entry(
         signed_zero: cursor.permission()?,
         nan_assumptions: cursor.exceptional_assumption()?,
         infinity_assumptions: cursor.exceptional_assumption()?,
+        // The conditional block is physically last even though the model keeps
+        // the field beside synchronization. Its absence is distinguished from
+        // the following bounded text length, not from the nonzero resource tags
+        // above, so reading it earlier would be ambiguous.
+        subgroup: cursor.subgroup_requirement()?,
     };
     let numerical = NumericalFacts {
         profile_key: cursor.text()?,
@@ -1407,6 +1413,57 @@ impl<'a> Cursor<'a> {
             })),
             tag => Err(ArtifactCodecError::UnknownTag {
                 subject: TagSubject::SynchronizationPresence,
+                tag,
+            }),
+        }
+    }
+
+    /// Reads the conditional subgroup tail at the resource/numerical boundary.
+    ///
+    /// A zero belongs to the following bounded `u64` text length and is peeked
+    /// without consumption. The nonzero block tag instead claims six fixed
+    /// bytes, all rebuilt through the schedule vocabulary's checked public
+    /// constructors. No unknown or invalid byte becomes an absent requirement.
+    pub(super) fn subgroup_requirement(
+        &mut self,
+    ) -> Result<Option<SubgroupRealizationSubject>, ArtifactCodecError> {
+        match self.peek_u8() {
+            None | Some(0x00) => return Ok(None),
+            Some(SUBGROUP_REQUIREMENT_BLOCK_TAG) => {
+                let _ = self.u8()?;
+            }
+            Some(tag) => {
+                return Err(ArtifactCodecError::UnknownTag {
+                    subject: TagSubject::SubgroupPresence,
+                    tag,
+                });
+            }
+        }
+
+        let width = SubgroupWidth::new(self.u32()?)
+            .map_err(|cause| ArtifactCodecError::InvalidSubgroupRealization { cause })?;
+        let arithmetic_tag = self.u8()?;
+        let arithmetic =
+            ArithmeticType::from_tag(arithmetic_tag).ok_or(ArtifactCodecError::UnknownTag {
+                subject: TagSubject::SubgroupArithmetic,
+                tag: arithmetic_tag,
+            })?;
+        let transfer_tag = self.u8()?;
+        let transfer: SubgroupTransfer =
+            subgroup_transfer_from_tag(transfer_tag).ok_or(ArtifactCodecError::UnknownTag {
+                subject: TagSubject::SubgroupTransfer,
+                tag: transfer_tag,
+            })?;
+        let subject = SubgroupRealizationSubject::new(width, arithmetic, transfer)
+            .map_err(|cause| ArtifactCodecError::InvalidSubgroupRealization { cause })?;
+
+        match self.peek_u8() {
+            None | Some(0x00) => Ok(Some(subject)),
+            Some(SUBGROUP_REQUIREMENT_BLOCK_TAG) => {
+                Err(ArtifactCodecError::DuplicateSubgroupRequirement)
+            }
+            Some(tag) => Err(ArtifactCodecError::UnknownTag {
+                subject: TagSubject::SubgroupPresence,
                 tag,
             }),
         }
