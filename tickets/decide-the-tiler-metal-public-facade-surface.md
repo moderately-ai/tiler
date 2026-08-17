@@ -9,9 +9,6 @@ scopes: [implementation/metal, implementation/metal-aot, contracts/decisions, co
 shared_scopes: [project/tickets]
 paths: [.ticketsplease/decision-queue.md]
 tags: [decision, needs-tom, public-boundary, metal, facade]
-claimed_from: todo
-assignee: worker-metal-facade
-lease_expires_at: 1786977676
 ---
 ## User-visible outcome
 
