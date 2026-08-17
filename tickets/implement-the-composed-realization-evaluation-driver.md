@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/conformance, implementation/ir,
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, public-boundary, conformance, reference, numerics, correctness]
-claimed_from: todo
-assignee: worker-composed-driver
-lease_expires_at: 1786977751
 ---
 ## Source-first Fact and obligation audit — exact published base `f6f310a47e1def152313120e0beda91ef8219fd8`
 
