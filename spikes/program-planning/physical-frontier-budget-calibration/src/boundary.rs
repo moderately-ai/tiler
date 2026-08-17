@@ -157,6 +157,77 @@ mod tests {
         );
     }
 
+    #[test]
+    fn provider_attribution_is_test_only_and_absent_from_measurement_paths() {
+        let providers = include_str!("providers.rs");
+        for anchor in [
+            "use std::collections::BTreeMap;",
+            "provider_tallies: BTreeMap<ProviderIdentity, ProviderTally>,",
+            "pub struct ProviderTally {",
+            "impl ProviderTally {",
+            "fn tally_identity(&self) -> ProviderIdentity {",
+            "fn record_provider_invocation(&self, tally: &mut Tally, has_baseline: bool) {",
+            "fn record_provider_proposal(&self, tally: &mut Tally) {",
+            "fn record_provider_decline(&self, tally: &mut Tally) {",
+            "self.record_provider_invocation(&mut tally, baseline.is_some());",
+            "self.record_provider_proposal(&mut tally);",
+            "self.record_provider_decline(&mut tally);",
+        ] {
+            assert_directly_cfg_test(providers, anchor);
+        }
+
+        let boundary = include_str!("boundary.rs");
+        let (production_boundary, _) = boundary
+            .split_once("#[cfg(test)]\nmod tests")
+            .expect("the boundary test module remains cfg(test)");
+        for anchor in ["provider_tallies", "ProviderTally", "tally_identity"] {
+            assert!(
+                !production_boundary.contains(anchor),
+                "production boundary source contains test attribution anchor {anchor}",
+            );
+        }
+
+        for (name, source) in [
+            ("main.rs", include_str!("main.rs")),
+            ("measure.rs", include_str!("measure.rs")),
+        ] {
+            for forbidden in [
+                "provider_tallies",
+                "ProviderTally",
+                "tally_identity",
+                "record_provider_",
+            ] {
+                assert!(
+                    !source.contains(forbidden),
+                    "{name} reached test-only attribution anchor {forbidden}",
+                );
+            }
+        }
+    }
+
+    fn assert_directly_cfg_test(source: &str, anchor: &str) {
+        let offsets = source
+            .match_indices(anchor)
+            .map(|(offset, _)| offset)
+            .collect::<Vec<_>>();
+        assert!(
+            !offsets.is_empty(),
+            "attribution anchor disappeared: {anchor}"
+        );
+        for offset in offsets {
+            let line_start = source[..offset].rfind('\n').unwrap_or_default();
+            let preceding = source[..line_start]
+                .lines()
+                .next_back()
+                .map(str::trim)
+                .unwrap_or_default();
+            assert_eq!(
+                preceding, "#[cfg(test)]",
+                "attribution anchor is not directly cfg(test): {anchor}",
+            );
+        }
+    }
+
     /// The accepted public refusal is reached by the complete seven-specialist
     /// population, not by constructing its expected class in a fixture.
     ///
