@@ -1,7 +1,7 @@
 ---
 id: apply-the-accepted-tiler-metal-public-facade
 title: Apply the accepted tiler-metal public facade
-status: todo
+status: blocked
 priority: p1
 dependencies: [decide-the-tiler-metal-public-facade-surface, honor-the-precise-fp32-metal-compilation-requirement]
 related: []
