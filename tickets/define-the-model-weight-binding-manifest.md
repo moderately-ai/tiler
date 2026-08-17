@@ -1,7 +1,7 @@
 ---
 id: define-the-model-weight-binding-manifest
 title: Define the model weight binding manifest and its digest gate
-status: todo
+status: in-progress
 priority: p1
 dependencies: [assemble-the-decoder-layer-program, assemble-the-embedding-and-vocabulary-projection-programs, reclassify-language-model-work-as-a-conformance-track]
 related: [design-model-ingestion-and-complete-execution, define-first-metal-lm-workload, retain-the-qwen-conformance-reference-logit-fixture, ingest-the-checkpoint-as-f32-program-inputs]
@@ -9,6 +9,9 @@ scopes: [contracts/integrations, research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [design, ingestion, weights, identity, validation, language-model, class-conformance-fixture]
+claimed_from: todo
+assignee: worker-weight-manifest
+lease_expires_at: 1786999769
 ---
 ## User-visible outcome
 
