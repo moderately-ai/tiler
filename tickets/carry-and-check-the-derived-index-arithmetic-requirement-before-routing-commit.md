@@ -1,7 +1,7 @@
 ---
 id: carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit
 title: Carry and check the derived index-arithmetic requirement before routing commit
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [emit-a-route-requirement-from-the-build-producer-so-a-family-authority-refusal-is-drivable, check-synchronization-realization-before-the-routing-commit, separate-metal-launch-index-from-index-and-address-width, declare-a-required-gpu-family-in-the-artifact]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
 tags: [correctness, fail-closed, index-arithmetic, metal, public-boundary, implementation]
-claimed_from: todo
-assignee: worker-index-arithmetic
-lease_expires_at: 1786976056
 ---
 ## User-visible outcome
 
@@ -183,6 +180,10 @@ The original outcome found unasserted BF16 byte lengths in `docs/dtype-support.m
 **Checks.** Passed: `cargo fmt --check`; `cargo test -p tiler-ir -p tiler-metal`; `cargo check --all-targets -p tiler-ir -p tiler-metal`; `cargo clippy --all-targets -p tiler-ir -p tiler-metal -- -D warnings`; `RUSTDOCFLAGS='-D warnings' cargo doc --no-deps -p tiler-ir -p tiler-metal`; `cargo test --doc -p tiler-ir -p tiler-metal`; `tkt lint`; `make citations`; and `git diff --check 404cacd21ee9a1ae91c10cc1d86b77f6752f2439..HEAD`. `tkt guard tkt/carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit --base 404cacd21ee9a1ae91c10cc1d86b77f6752f2439 --format json` returned `severity: warn` only for live declared-scope collisions and `under_declared: []`; it reported the edited files solely in `implementation/ir`, `implementation/metal`, and `project/tickets`.
 
 **Boundary retained.** This changes no runtime behavior, artifact byte, identity/schema/domain/pin, device observation, route-row population, or support-matrix row; it does not restore historical `v7`/`v16`/`16.0` values. `Cargo.lock` was deliberately left unchanged: the Metal negative is a doctest and adds no dependency. The only edited scopes are `implementation/ir`, `implementation/metal`, and shared `project/tickets`.
+
+## Integration and independent review — 2026-08-17
+
+The exact implementation commit `b864c15d078ac2ab4465621f6ec3062951b1ddd1` was independently reviewed over exact base `404cacd21ee9a1ae91c10cc1d86b77f6752f2439` with no findings. The reviewer re-read the accepted public boundary and both derivation/consumption paths, confirmed zero out-of-crate positive consumers, independently reproduced both visibility subject perturbations, and reran the package and ticket gates. Main integrated that exact commit through merge `adfe9ca3`; `git merge-base --is-ancestor b864c15d078ac2ab4465621f6ec3062951b1ddd1 main` succeeds. No later-main source overlapped the implementation paths.
 
 ## Closes when
 
