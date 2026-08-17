@@ -39,11 +39,11 @@ use crate::cover::{
     CoverEnumeration, CoverError, RegionCover, RegionCoverIdentity, enumerate_covers,
 };
 use crate::explain::{
-    CostDisposition, CostModelKey, CostTerm, EvidenceBasis, ExplainError, ExplainEvent,
-    ExplainFact, ExplainRecordId, ExplainStage, ExplainWriter, FactValue, FailureDescriptor,
-    MAX_TERMINAL_CAUSES, PredicateAssessment, PredicateKey, ProviderRef, Quantity, ReasonCode,
-    RejectionClass, RuleRef, SelectionOutcome, SubjectKind, TerminalCause, VerifiedEvidenceRef,
-    VerifiedExplainTrace,
+    CostDisposition, CostModelKey, CostTerm, EvidenceBasis, ExplainDetailCapacity, ExplainError,
+    ExplainEvent, ExplainFact, ExplainRecordId, ExplainStage, ExplainWriter, FactValue,
+    FailureDescriptor, MAX_TERMINAL_CAUSES, PredicateAssessment, PredicateKey, ProviderRef,
+    Quantity, ReasonCode, RejectionClass, RuleRef, SelectionOutcome, SubjectKind, TerminalCause,
+    VerifiedEvidenceRef, VerifiedExplainTrace,
 };
 use crate::frontier::{
     FrontierError, FrontierRegionSubject, GovernedPhysicalProvider, ImplementationFrontier,
@@ -429,12 +429,52 @@ pub(crate) enum CompileError {
     InvalidRequest(RequestError),
     UnsupportedCapability(RequestError),
     BudgetExhausted(RequestError),
+    /// Explain construction hit one of its report-only hard build limits.
+    ///
+    /// Distinct from [`Self::BudgetExhausted`], whose `RequestError` payload is
+    /// candidate-local at `compile_candidate_target`. This carrier is never
+    /// admitted into that retry class and therefore remains an outer,
+    /// request-wide abort until `session` projects it onto the shared public
+    /// `BudgetExhausted` vocabulary.
+    ExplainCapacity(ExplainCapacityError),
     NoFeasiblePlan(NoFeasiblePlanError),
     InvalidCompilerOutput(CompilerOutputError),
     Explained {
         source: Box<CompileError>,
         explain: VerifiedExplainTrace,
     },
+}
+
+/// Source-preserving carrier for the one explain error that is caller-facing.
+///
+/// The field is private and construction occurs only in `From<ExplainError>`,
+/// so its source is always `ExplainError::DetailCapacity`. Keeping the enum
+/// value in the error chain preserves the exact construction failure while the
+/// accessor hands the session boundary the already-minted typed payload.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ExplainCapacityError {
+    source: ExplainError,
+}
+
+impl ExplainCapacityError {
+    pub(crate) fn capacity(&self) -> ExplainDetailCapacity {
+        match &self.source {
+            ExplainError::DetailCapacity(capacity) => *capacity,
+            _ => unreachable!("an explain-capacity carrier has one private constructor"),
+        }
+    }
+}
+
+impl fmt::Display for ExplainCapacityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.source.fmt(formatter)
+    }
+}
+
+impl Error for ExplainCapacityError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.source)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -467,6 +507,7 @@ impl fmt::Display for CompileError {
             | Self::UnsupportedCapability(error)
             | Self::BudgetExhausted(error)
             | Self::NoFeasiblePlan(NoFeasiblePlanError::Request(error)) => error.fmt(formatter),
+            Self::ExplainCapacity(error) => error.fmt(formatter),
             Self::NoFeasiblePlan(NoFeasiblePlanError::Physical(error)) => error.fmt(formatter),
             Self::NoFeasiblePlan(NoFeasiblePlanError::Selection(error))
             | Self::InvalidCompilerOutput(CompilerOutputError::Selection(error)) => {
@@ -508,6 +549,7 @@ impl Error for CompileError {
             | Self::UnsupportedCapability(error)
             | Self::BudgetExhausted(error)
             | Self::NoFeasiblePlan(NoFeasiblePlanError::Request(error)) => Some(error),
+            Self::ExplainCapacity(error) => Some(error),
             Self::NoFeasiblePlan(NoFeasiblePlanError::Physical(error))
             | Self::InvalidCompilerOutput(CompilerOutputError::Physical(error)) => Some(error),
             Self::NoFeasiblePlan(NoFeasiblePlanError::Selection(error))
@@ -605,7 +647,12 @@ impl From<ProgramError> for CompileError {
 
 impl From<ExplainError> for CompileError {
     fn from(value: ExplainError) -> Self {
-        Self::InvalidCompilerOutput(CompilerOutputError::Explain(value))
+        match value {
+            source @ ExplainError::DetailCapacity(_) => {
+                Self::ExplainCapacity(ExplainCapacityError { source })
+            }
+            source => Self::InvalidCompilerOutput(CompilerOutputError::Explain(source)),
+        }
     }
 }
 
@@ -1588,6 +1635,7 @@ fn explain_step<T>(
 ) -> Result<T, TargetFailure> {
     result.map_err(|source| {
         let reason = match &source {
+            CompileError::ExplainCapacity(_) => "explain-detail-capacity".to_owned(),
             CompileError::InvalidCompilerOutput(CompilerOutputError::Explain(error)) => {
                 format!("explain-{}", explain_error_reason(error))
             }
@@ -2223,6 +2271,11 @@ fn failure_source_details(error: &CompileError) -> (String, SubjectKind, String)
             SubjectKind::KernelProgram,
             "compiler-explain".to_owned(),
         ),
+        CompileError::ExplainCapacity(_) => (
+            "explain-detail-capacity".to_owned(),
+            SubjectKind::KernelProgram,
+            "compiler-explain".to_owned(),
+        ),
         CompileError::InvalidCompilerOutput(CompilerOutputError::Normalization(error)) => (
             format!("normalize-{}", error.reason()),
             SubjectKind::Normalization,
@@ -2398,7 +2451,7 @@ fn explain_error_reason(error: &ExplainError) -> &'static str {
         ExplainError::RequirementQuantityMismatch => "requirement-quantity-mismatch",
         ExplainError::UnknownQuantityUnit => "unknown-quantity-unit",
         ExplainError::EmptyCostEvidence => "empty-cost-evidence",
-        ExplainError::DetailCapacity => "detail-capacity",
+        ExplainError::DetailCapacity(_) => "detail-capacity",
         ExplainError::TerminalCapacity => "terminal-capacity",
         ExplainError::EmptyTrace => "empty-trace",
         ExplainError::StaleIdentity => "stale-identity",
@@ -2505,3 +2558,169 @@ mod tests;
 
 #[cfg(test)]
 mod conformance;
+
+#[cfg(test)]
+mod explain_capacity_scope_tests {
+    use super::*;
+    use crate::explain::ExplainDetailCapacity;
+
+    fn capacity_error() -> CompileError {
+        ExplainError::DetailCapacity(ExplainDetailCapacity::for_test(
+            BudgetResource::ExplainDetailRecords,
+            4_096,
+            4_097,
+        ))
+        .into()
+    }
+
+    #[test]
+    fn the_distinct_carrier_preserves_the_typed_detail_capacity_source() {
+        let error = capacity_error();
+        let CompileError::ExplainCapacity(carrier) = &error else {
+            panic!("detail capacity entered the wrong internal class: {error:?}");
+        };
+        assert_eq!(
+            carrier.capacity(),
+            ExplainDetailCapacity::for_test(BudgetResource::ExplainDetailRecords, 4_096, 4_097,),
+        );
+        assert!(matches!(
+            std::error::Error::source(carrier).and_then(|source| source.downcast_ref()),
+            Some(ExplainError::DetailCapacity(capacity))
+                if *capacity == carrier.capacity()
+        ));
+
+        let genuine = CompileError::from(ExplainError::StaleIdentity);
+        assert!(matches!(
+            genuine,
+            CompileError::InvalidCompilerOutput(CompilerOutputError::Explain(
+                ExplainError::StaleIdentity
+            ))
+        ));
+    }
+
+    #[test]
+    fn capacity_aborts_before_a_later_candidate_and_contract_fallback() {
+        let stated = crate::request::StrictF32NumericalContract::named_profile();
+
+        let mut candidates_reached = Vec::new();
+        let candidate_result = evaluate_preferred_groups(
+            &stated[..1],
+            vec![(stated[0].key, vec!["capacity", "later-candidate"])],
+            |candidate| {
+                candidates_reached.push(candidate);
+                if candidate == "capacity" {
+                    Err(capacity_error())
+                } else {
+                    Ok(candidate)
+                }
+            },
+            |_| true,
+            |_| unreachable!("the only group is stated"),
+        );
+        assert!(matches!(
+            candidate_result,
+            Err(CompileError::ExplainCapacity(_))
+        ));
+        assert_eq!(
+            candidates_reached,
+            ["capacity"],
+            "a later viable semantic candidate was retried after explain capacity",
+        );
+
+        let mut contracts_reached = Vec::new();
+        let contract_result = evaluate_preferred_groups(
+            &stated[..2],
+            vec![
+                (stated[0].key, vec!["capacity"]),
+                (stated[1].key, vec!["viable-fallback"]),
+            ],
+            |candidate| {
+                contracts_reached.push(candidate);
+                if candidate == "capacity" {
+                    Err(capacity_error())
+                } else {
+                    Ok(candidate)
+                }
+            },
+            |_| true,
+            |_| unreachable!("both groups are stated"),
+        );
+        assert!(matches!(
+            contract_result,
+            Err(CompileError::ExplainCapacity(_))
+        ));
+        assert_eq!(
+            contracts_reached,
+            ["capacity"],
+            "a viable lower-preference contract was retried after explain capacity",
+        );
+    }
+
+    #[test]
+    fn outer_capacity_discards_an_earlier_target_outcome_and_skips_the_later_target() {
+        use tiler_ir::semantic::{F32, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder};
+        use tiler_ir::shape::Shape;
+
+        let first = crate::request::TargetProfile::governed_with_key_for_test(
+            "test.capacity-earlier-success.v1",
+        );
+        let capacity =
+            crate::request::TargetProfile::governed_with_key_for_test("test.capacity-stop.v1");
+        let later =
+            crate::request::TargetProfile::governed_with_key_for_test("test.capacity-later.v1");
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let left = builder
+            .input::<F32>(InputKey::new("left").unwrap(), Shape::from_dims([4]))
+            .unwrap();
+        let right = builder
+            .input::<F32>(InputKey::new("right").unwrap(), Shape::from_dims([4]))
+            .unwrap();
+        let product = F32Multiply::apply(&mut builder, left, right).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), product)
+            .unwrap();
+        let semantic = builder.build().unwrap();
+        let mut seed_request = CompilationRequest::governed(&semantic);
+        seed_request.target_profiles[0] = first.clone();
+        let mut seed = compile(seed_request).expect("the earlier target genuinely succeeds");
+        let earlier_success = seed.targets.pop().expect("the seed requested one target");
+        assert!(matches!(
+            &earlier_success,
+            TargetCompilationOutcome::Compiled(_)
+        ));
+        let mut reached: Vec<String> = Vec::new();
+
+        let result = (|| -> Result<CompilationProduct, CompileError> {
+            reached.push(first.profile_key().as_str().to_owned());
+            let mut outcomes = vec![earlier_success];
+
+            reached.push(capacity.profile_key().as_str().to_owned());
+            outcomes.push(target_compilation_outcome(
+                &capacity,
+                Err(TargetCompileFailure::Outer(capacity_error())),
+            )?);
+
+            reached.push(later.profile_key().as_str().to_owned());
+            outcomes.push(TargetCompilationOutcome::Rejected {
+                target_profile: later,
+                failure: CompileError::NoFeasiblePlan(NoFeasiblePlanError::Selection(
+                    SelectionError::Structure {
+                        rule: "test-later-target-outcome",
+                    },
+                )),
+            });
+            Ok(CompilationProduct { targets: outcomes })
+        })();
+
+        assert!(matches!(&result, Err(CompileError::ExplainCapacity(_))));
+        assert_eq!(
+            reached,
+            ["test.capacity-earlier-success.v1", "test.capacity-stop.v1"],
+            "the target after explain capacity was reached",
+        );
+        assert!(
+            result.is_err(),
+            "an earlier target outcome survived as a partial compilation product",
+        );
+    }
+}

@@ -175,8 +175,8 @@ pub enum CompileFailureClass {
     /// budget refusal is within itself — a bound no further search escapes, or
     /// a search stopped before it finished — is [`BudgetResource::refusal`],
     /// and that answer is what gives `reported` its meaning: an exact completed
-    /// count, a conservative planning envelope, or a truncated-search lower
-    /// bound.
+    /// count, a conservative planning envelope, a truncated-search lower bound,
+    /// or the attempted-prefix lower bound where explain construction stopped.
     ///
     /// The three fields are the refusal's own, carried rather than re-derived,
     /// so a caller names the exhausted resource without reading compiler source.
@@ -193,8 +193,10 @@ pub enum CompileFailureClass {
         ///
         /// Read [`BudgetResource::refusal`] on `resource` before treating this
         /// as a required size. It is an exact completed count, a conservative
-        /// planning envelope that a particular plan may undershoot, or a lower
-        /// bound recorded where search stopped — never a uniform "actual".
+        /// planning envelope that a particular plan may undershoot, a lower
+        /// bound recorded where search stopped, or an attempted-prefix lower
+        /// bound recorded where explain construction stopped — never a uniform
+        /// "actual".
         reported: u64,
     },
     /// The compiler produced output its own verifier refused.
@@ -1641,6 +1643,14 @@ fn class_of(error: CompileError) -> CompileFailureClass {
                 reported,
             }
         }
+        CompileError::ExplainCapacity(cause) => {
+            let capacity = cause.capacity();
+            CompileFailureClass::BudgetExhausted {
+                resource: capacity.resource(),
+                limit: capacity.limit(),
+                reported: capacity.reported(),
+            }
+        }
         CompileError::NoFeasiblePlan(_) => CompileFailureClass::NoFeasiblePlan,
         CompileError::InvalidCompilerOutput(_) => CompileFailureClass::InvalidCompilerOutput,
     }
@@ -2801,6 +2811,7 @@ fn target_request_refusal(error: &CompileError) -> Option<&RequestError> {
         CompileError::InvalidRequest(_)
         | CompileError::UnsupportedCapability(_)
         | CompileError::BudgetExhausted(_)
+        | CompileError::ExplainCapacity(_)
         | CompileError::NoFeasiblePlan(
             NoFeasiblePlanError::Physical(_) | NoFeasiblePlanError::Selection(_),
         )
@@ -3919,8 +3930,10 @@ mod tests {
     ///   `target_outcomes_preserve_request_order_cardinality_and_profile_identity`
     ///   through a profile that declares no strict-`f32` behaviour.
     /// - `BudgetExhausted` — reached by a program that exceeds a deterministic
-    ///   budget. `RequestError::BudgetExceeded` is still its sole carrier, and
-    ///   it is raised from two places: `check_program_budgets`, for a program
+    ///   request budget, and by a complete-explain construction that reaches a
+    ///   report-only hard build limit. `RequestError::BudgetExceeded` carries
+    ///   the request/planning case and is raised from two places:
+    ///   `check_program_budgets`, for a program
     ///   whose *size* a bound refuses before any target compiles, and the empty
     ///   portfolio, for a target whose *analysis* a bound truncated before it
     ///   reached a plan. `tests/region_search_budget_coverage.rs` reaches the
@@ -3937,7 +3950,10 @@ mod tests {
     ///   dissolved. Reaching the empty portfolio now needs a caller-stated
     ///   budget set, which this surface deliberately does not admit;
     ///   `crate::pipeline::tests::a_region_shape_budget_below_the_only_implementable_cover_reports_the_budget`
-    ///   drives it one layer down and is what keeps that path measured.
+    ///   drives it one layer down and is what keeps that path measured. Explain
+    ///   capacity uses a distinct internal outer carrier, so it never enters
+    ///   this candidate-local retry path even though both project onto the same
+    ///   public class.
     /// - `InvalidCompilerOutput` — **unreachable by construction from a valid
     ///   call, deliberately.** It reports that Tiler's own verifier refused
     ///   Tiler's own output, so reaching it from the public surface would mean
@@ -4265,6 +4281,98 @@ mod tests {
         assert_eq!(
             BudgetResource::HostExpressionNodes.refusal(),
             BudgetRefusal::PlanningUpperBound,
+        );
+        assert_eq!(
+            BudgetResource::ExplainDetailRecords.refusal(),
+            BudgetRefusal::ConstructionLowerBound,
+        );
+    }
+
+    /// Only detail capacity changes public ownership; every other explain
+    /// failure remains a verifier/compiler-output defect.
+    ///
+    /// Each public payload subject is moved independently. The unchanged class
+    /// comparison names the moved subject in its failure text, so a resource,
+    /// limit, or attempted-prefix projection that stopped participating could
+    /// not leave this test green. Provenance is checked separately through the
+    /// resource authority because it is derived rather than duplicated in the
+    /// class payload.
+    #[test]
+    fn explain_capacity_maps_exactly_and_other_explain_errors_remain_defects() {
+        use crate::explain::{ExplainDetailCapacity, ExplainError};
+        use crate::pipeline::CompileError;
+        use tiler_ir::semantic::{InputKey, OutputKey, SemanticProgramBuilder, U8};
+        use tiler_ir::shape::Shape;
+
+        let classify = |resource, limit, reported| {
+            CompileFailure::from(CompileError::from(ExplainError::DetailCapacity(
+                ExplainDetailCapacity::for_test(resource, limit, reported),
+            )))
+            .class()
+        };
+        let assert_exact = |expected_resource, expected_limit, expected_reported| {
+            let CompileFailureClass::BudgetExhausted {
+                resource,
+                limit,
+                reported,
+            } = classify(expected_resource, expected_limit, expected_reported)
+            else {
+                panic!("detail capacity did not map to public budget exhaustion");
+            };
+            assert_eq!(
+                resource, expected_resource,
+                "the public resource did not preserve the detail-capacity arm",
+            );
+            assert_eq!(
+                limit, expected_limit,
+                "the public limit did not preserve the construction limit",
+            );
+            assert_eq!(
+                reported, expected_reported,
+                "the public reported value did not preserve the attempted retained prefix",
+            );
+        };
+        for (resource, limit, reported) in [
+            (BudgetResource::ExplainDetailRecords, 4_096, 4_097),
+            (BudgetResource::ExplainDetailCanonicalBytes, 4_096, 4_097),
+            (BudgetResource::ExplainDetailRecords, 4_095, 4_097),
+            (BudgetResource::ExplainDetailRecords, 4_096, 4_098),
+        ] {
+            assert_exact(resource, limit, reported);
+        }
+        assert_eq!(
+            BudgetResource::ExplainDetailRecords.refusal(),
+            BudgetRefusal::ConstructionLowerBound,
+            "the report-only record resource lost its attempted-prefix provenance",
+        );
+        assert_eq!(
+            BudgetResource::ExplainDetailCanonicalBytes.refusal(),
+            BudgetRefusal::ConstructionLowerBound,
+            "the report-only byte resource lost its attempted-prefix provenance",
+        );
+
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let unsupported_output = builder
+            .input::<U8>(InputKey::new("bytes").unwrap(), Shape::from_dims([4]))
+            .unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), unsupported_output)
+            .unwrap();
+        let semantic = builder.build().unwrap();
+        let verifier_error = crate::program::verify_semantic_output_type(&semantic)
+            .expect_err("the real compiler verifier rejects an unplanned output arithmetic");
+        assert_eq!(
+            verifier_error,
+            crate::program::ProgramError::Structure {
+                rule: "semantic-output-type",
+            },
+            "the negative must be produced by the intended compiler verifier",
+        );
+        let genuine_verifier_error = CompileError::from(verifier_error);
+        assert_eq!(
+            CompileFailure::from(genuine_verifier_error).class(),
+            CompileFailureClass::InvalidCompilerOutput,
+            "a genuine compiler-output verification failure must not become a budget refusal",
         );
     }
 

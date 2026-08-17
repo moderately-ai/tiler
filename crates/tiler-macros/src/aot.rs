@@ -542,7 +542,7 @@ fn rendered_refusal(class: CompileFailureClass, scope: &str) -> String {
         // told only that "a budget" was exhausted has to read compiler source
         // to learn which one — the reading these fields exist to remove.
         //
-        // The three provenances are split on `refusal()` rather than merged.
+        // The four provenances are split on `refusal()` rather than merged.
         // The text this replaced treated every non-search value as a region-size
         // fact, which is true of a completed exact demand and false of a
         // planning envelope: the envelope is a conservative admission bound and
@@ -576,6 +576,17 @@ fn rendered_refusal(class: CompileFailureClass, scope: &str) -> String {
                      finish, not the budget this region needs in order to succeed. The \
                      search stopped before it finished; `fallback-only` expands without \
                      compiling at all"
+                ),
+                BudgetRefusal::ConstructionLowerBound => format!(
+                    "complete explanation construction hit the report-only budget `{}` and the \
+                     compilation therefore returned no plan {scope}: the build limit is {limit} \
+                     and the compiler compared {reported}. That value is the exact attempted \
+                     retained prefix including the first explain detail construction could not \
+                     keep. Construction stopped there, so it is only a lower bound on the \
+                     complete explanation, not the capacity this region requires in order to \
+                     succeed. Reduce the trace-producing request population, or state \
+                     `fallback-only` to expand without compiling at all",
+                    resource.key(),
                 ),
             }
         }
@@ -900,3 +911,52 @@ fn open_cache(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod explain_capacity_tests {
+    use super::*;
+    use tiler_compiler::session::BudgetResource;
+
+    #[test]
+    fn report_only_explain_capacity_is_rendered_as_an_attempted_prefix_lower_bound() {
+        for (resource, key) in [
+            (
+                BudgetResource::ExplainDetailRecords,
+                "explain-detail-records",
+            ),
+            (
+                BudgetResource::ExplainDetailCanonicalBytes,
+                "explain-detail-canonical-bytes",
+            ),
+        ] {
+            let rendered = rendered_refusal(
+                CompileFailureClass::BudgetExhausted {
+                    resource,
+                    limit: 100,
+                    reported: 101,
+                },
+                "at all",
+            );
+            assert!(
+                rendered.contains(&format!("`{key}`")),
+                "the advice omitted the report-only resource: {rendered}",
+            );
+            assert!(
+                rendered.contains("exact attempted retained prefix")
+                    && rendered.contains("only a lower bound on the complete explanation")
+                    && rendered.contains("not the capacity this region requires"),
+                "the advice presented a stopped prefix as required capacity: {rendered}",
+            );
+            assert!(
+                !rendered.contains("completed count")
+                    && !rendered.contains("particular reachable plan may use less")
+                    && !rendered.contains("so it has no plan"),
+                "the advice borrowed another provenance's meaning: {rendered}",
+            );
+            assert!(
+                rendered.contains("the compilation therefore returned no plan"),
+                "the advice did not distinguish a returned result from plan existence: {rendered}",
+            );
+        }
+    }
+}
