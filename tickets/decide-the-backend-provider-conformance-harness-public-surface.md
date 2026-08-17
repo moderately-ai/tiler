@@ -7,7 +7,7 @@ dependencies: [exercise-standard-metal-custom-metal-and-cpu-providers-in-one-por
 related: [publish-the-backend-provider-conformance-suite, audit-backend-authoring-against-all-thirteen-responsibilities, specify-the-consumer-neutral-backend-provider-composition-contract, make-explain-dispositions-assertable-by-a-conformance-suite]
 scopes: [implementation/conformance, contracts/foundation, contracts/decisions, contracts/navigation]
 shared_scopes: [project/tickets]
-paths: []
+paths: [.ticketsplease/decision-queue.md]
 tags: [decision, needs-tom, public-boundary, backend-providers, conformance]
 ---
 ## User-visible outcome
@@ -111,7 +111,7 @@ Trigger 1 is the current public-boundary blocker and is sufficient to reopen thi
 - **Public surface:** remains empty. External authors continue to exercise each accepted production seam through their own integration tests and retained spikes; Tiler publishes no reusable conformance claim.
 - **Runtime/memory:** no production path changes. The private portability census remains 81 device-free plus 3 macOS-gated tests at this base; device runs keep their existing resource lifetime.
 - **Unsupported population:** third-party reusable reports; certification; arbitrary mathematical correctness; benchmarks/performance; dynamic plugins; adapter discovery; missing-adapter tests; explain-disposition coverage; complete rows 4/6/11 before their carriers; generic device/output buffers; non-Metal availability policy; and any pass synthesized from unavailable hardware.
-- **Graph:** the existing publication ticket remains blocked because its stated outcome claims the complete compilation→artifact→route→execution suite. Its provenance and selection dependencies are holds for that complete outcome only. If Trigger 1 fires first, a separately scoped partial-publication carrier (or a truthfully narrowed implementation ticket) must depend on this public-boundary decision and the neutral-subject evidence, not inherit the complete suite's carrier dependencies. The explain ticket remains blocked while no facade is accepted; an accepted partial facade that explicitly excludes explain can close it without an implementation edge, while including explain still requires the structured-accessor path. Neither answer creates a backward edge. No decision-queue row is added while LiveRow owns presentation order.
+- **Graph:** the existing publication ticket remains blocked because its stated outcome claims the complete compilation→artifact→route→execution suite. Its provenance and selection dependencies are holds for that complete outcome only. If Trigger 1 fires first, a separately scoped partial-publication carrier (or a truthfully narrowed implementation ticket) must depend on this public-boundary decision and the neutral-subject evidence, not inherit the complete suite's carrier dependencies. The explain ticket remains blocked while no facade is accepted; an accepted partial facade that explicitly excludes explain can close it without an implementation edge, while including explain still requires the structured-accessor path. Neither answer creates a backward edge. The independently reviewed typed-deferral packet is queue item 14, held behind the already ordered LiveRow, artifact-provenance, coincident-RMS, gather, and Metal-facade questions; adding that row records order and does not present another question while LiveRow remains active.
 
 ### Strongest counterargument and reversal evidence
 
