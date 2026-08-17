@@ -1470,14 +1470,17 @@ fn a_contraction_epilogue_chain_matches_the_reference_evaluator() {
 /// `out = contract(a, b) * a` reaches a chain whose epilogue reads the staged
 /// value *and* a declared input, matching the reference bit for bit.
 ///
-/// **This is the case the access-position/declared-ordinal separation exists
-/// for, and it is the only shape that currently reaches it.** The epilogue's
+/// **This is the case that makes the access-position/declared-association
+/// separation observable.** The epilogue's
 /// expression has two leaves: leaf `0` is served by the read of the
 /// materialized intermediate and leaf `1` by the read of declared input `a`. A
-/// builder that kept the leaf index and the `TensorRole::Input` ordinal equal
-/// would bind leaf `1` to input `1` — `b` — and compute a different program over
-/// the same buffers, which the intrinsic region verifier cannot notice because
-/// both spellings are well-formed regions.
+/// compiler that reused local leaf/access position `1` as declared input ordinal
+/// `1`, instead of projecting exact [`AccessOrdinal`] `1` through the retained
+/// checked [`crate::request::VerifiedRequestSubject`], would bind the leaf to `b`
+/// and compute a different program over the same buffers. Intrinsic region
+/// verification cannot detect that interface substitution: [`TensorRole::Input`]
+/// is a fieldless boundary category, and the shared region carries no
+/// declared-input association.
 ///
 /// The fixture is chosen so that substitution is visible: `a` and `b` differ,
 /// and the contraction is square so its result shares `a`'s shape. `b` is not
@@ -1552,21 +1555,18 @@ fn an_epilogue_reading_a_staged_value_and_a_declared_input_matches_the_reference
 
 /// An epilogue whose walk reaches declared input `b` before `a` still compiles.
 ///
-/// **This is what makes the canonical read order a requirement rather than a
-/// convention.** `tiler_ir::schedule`'s pointwise access contract requires a
-/// region's declared input ordinals to ascend strictly across its read list —
-/// two reads naming one input, or a descending pair, are two spellings of one
-/// computation. The recognizer's walk mints leaves in operand order, so
-/// `projected * b * a` reaches `b` first; a read list in that order names input
-/// `1` before input `0` and the region is refused. Ordering the reads
-/// canonically — the staged value, then the declared inputs by declaration —
-/// makes admission a property of the program rather than of which operand the
-/// walk happened to pop.
+/// **Canonical read order is compiler normalization, not an intrinsic schedule
+/// rule.** The recognizer's walk mints leaves in operand order, so
+/// `projected * b * a` reaches `b` first. `recognize_epilogue` rebuilds that run
+/// as the staged value followed by declared inputs in declaration order, then
+/// mints the expression against those exact access positions. Program assembly
+/// projects each [`AccessOrdinal`] through the retained
+/// [`crate::request::VerifiedRequestSubject`]; intrinsic verification sees only
+/// the fieldless boundary categories and supplies no declared-input order.
 ///
-/// Its accepted neighbour is `projected * a * b`, the same expression with the
-/// two factors exchanged, which the walk reaches in ascending order anyway. Both
-/// compile, and both are bit-compared, so a build that lost the canonical order
-/// fails on exactly one of them.
+/// Its accepted neighbour is `projected * a * b`, whose walk reaches the two
+/// inputs in the opposite order. Both compile, and both are bit-compared, so a
+/// build that lost the canonical order fails on exactly one of them.
 #[test]
 fn an_epilogue_reaching_declared_inputs_out_of_order_still_compiles() {
     let square = Shape::from_dims([2, 2]);
