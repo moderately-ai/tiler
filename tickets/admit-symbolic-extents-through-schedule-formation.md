@@ -69,7 +69,7 @@ the current-base correction below; it must not be used as live authority.
 - **Imprecise — Fact 4 needs an authority split.** `InputExtentParameter` does name a scheduled input axis, but `InputOrdinal`'s defining docs say it is dense, region-local, positional, and not an interface key. `TensorRole::Input` docs and physical compiler construction instead call the same value a declared program-input ordinal. Artifact construction follows the former model in practice: kernel buffer and stage-access position resolve the parameter to `MaterializedOrigin::ProgramInput { key }`. [`reconcile-input-ordinal-region-local-and-declared-input-semantics`](reconcile-input-ordinal-region-local-and-declared-input-semantics.md) is the blocking P1 defect; no new live-source field may assign either authority until it resolves the contradiction.
 - **False — the first packet's sole-dominance claim is withdrawn.** An additive explicit source variant overlaps existing implicit-self `LiveRowMajor` unless verification makes their populations disjoint. Complete replacement and a region-level binding are materially distinct options and must be compared. The repaired decision packet does so; the implementation purpose is unchanged, but no exact production spelling is authorized yet.
 
-## Current-base correction — 2026-08-16, `98669e8ea9cafc91b3a9139ff821781560c526bd`
+## Current-base correction — 2026-08-16, `88c7c2181ac9a73de56598411915f176c50c3645`
 
 - **False now — production evidence is not unchanged.** The AccessOrdinal
   reconciliation changed the schedule, kernel, compiler, program, and artifact
@@ -92,18 +92,21 @@ the current-base correction below; it must not be used as live authority.
   public `decode_shape_env_subject`. Shared schedule IR carries only the source relation and the
   runtime input-axis operand, preserving ADR 0070's boundary and keeping the
   live value out of identity.
-- **Verified current stop.** The decision dependency now contains three
-  nondominated exact surfaces and awaits Tom. No missing ordinal or interface
-  authority remains a prerequisite; this implementation stays blocked on that
-  public choice and the independent current-correctness repair below.
-- **False former omission — current mixed pointwise maps are unsound.** The
-  schedule verifier admits `LinearIdentity` and `LiveRowMajor` independently,
-  while kernel lowering selects the live loop if any read is live and loads and
-  stores every buffer at that live offset. The P0
+- **Verified after frontier repair — the decision dependency contains three
+  nondominated exact surfaces and awaits Tom.** They are the contextual marker,
+  total-local, and explicit-source/referenced-consumer form whose consumer
+  carries only `source_access`. The earlier redundant-axis hybrid is dominated
+  for this exact same-shape rank-one contract. No missing ordinal, interface, or
+  mixed-map authority remains a prerequisite; this implementation stays blocked
+  only on the public choice.
+- **False at the former base — current mixed pointwise maps now fail closed.**
+  The P0
   [`refuse-mixed-pointwise-live-row-major-access-relations-before-lowering`](refuse-mixed-pointwise-live-row-major-access-relations-before-lowering.md)
-  is therefore a hard dependency: this ticket cannot treat its new source
-  relation as sufficient while leaving another access in the same pointwise
-  loop static.
+  landed at `f568467b` and closed at `48088dfb`. Current intrinsic verification
+  requires all accesses to be static or every read and write to be live on the
+  same axis. Its dependency edge remains truthful history, but the dependency is
+  `done`; the accepted source implementation will replace that temporary broad
+  refusal with the selected dedicated source rule.
 
 Reproduce:
 
@@ -128,13 +131,14 @@ rg -n 'pub fn decode_shape_env_subject|enum ShapeEnvSubjectError|fn shape_enviro
 - Implement the selected packet's exact public
   `ScheduledRegionDiagnostic::LiveRowMajorSource` and
   `LiveRowMajorSourceRule` population: five rules for the marker or seven for
-  total-local and the explicit-source/referenced-consumer hybrid. For the
-  hybrid, retire old `0x09`, use fresh `0x0A` for
+  total-local, and six for the explicit-source/referenced-consumer replacement.
+  For that recommended replacement, retire old `0x09`, use fresh `0x0A` for
   `LiveRowMajorSource { inner_axis }` and fresh `0x0B` for
-  `LiveRowMajor { inner_axis, source_access }`, and apply consumer-reference
+  `LiveRowMajor { source_access }`, and apply consumer-reference
   range, marker count, marker role/mode, complete access relation, unique-marker
-  reference, then axis precedence. Once one selected live relation appears,
-  every pointwise read and the final write must carry that relation. The first
+  reference precedence. The consumer has no duplicate axis; `AxisMismatch`
+  belongs only to marker and total-local. Once one selected live relation
+  appears, every pointwise read and the final write must carry that relation. The first
   access that does not is
   `ConsumerMissingRelation { access }` with stable rule
   `live-row-major-source-consumer-missing-relation`. Missing, multiple,
