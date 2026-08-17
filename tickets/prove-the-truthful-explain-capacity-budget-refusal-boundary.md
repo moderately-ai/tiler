@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [implement-the-truthful-explain-capacity-budget-refusal]
 related: []
-scopes: [implementation/compiler, implementation/frontend]
+scopes: [implementation/compiler, implementation/frontend, research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [evidence, correctness, explain, public-boundary]

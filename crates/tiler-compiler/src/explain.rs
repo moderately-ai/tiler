@@ -8,6 +8,9 @@ use std::error::Error;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(test)]
+use std::cell::RefCell;
+
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::program::abi::{
     AvailabilityPhase, PreparedEntryTargetRequirement, TargetPropertyRequirementRelation,
@@ -1237,6 +1240,196 @@ pub(crate) struct ExplainWriter {
     retained_detail_bytes: usize,
     selection_ledger: BTreeMap<SubjectKey, PendingSelection>,
     terminal_ledger_bytes: usize,
+    /// Test-only construction control attached at the real writer boundary.
+    ///
+    /// The control can change only the two inputs production already passes to
+    /// [`detail_capacity`]. It cannot construct an [`ExplainError`], the
+    /// internal capacity carrier, or a public failure class, so public-path
+    /// tests still traverse the production arithmetic and mapping.
+    #[cfg(test)]
+    detail_capacity_control: DetailCapacityWriterControlForTest,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DetailCapacityWriterOpeningForTest {
+    pub(crate) target_profile_key: String,
+    pub(crate) numerical_contract_key: String,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DetailCapacityAttemptForTest {
+    pub(crate) retained_records: usize,
+    pub(crate) retained_bytes: usize,
+    pub(crate) attempted_record_bytes: usize,
+}
+
+#[cfg(test)]
+impl DetailCapacityAttemptForTest {
+    pub(crate) fn attempted_records(self) -> u64 {
+        u64::try_from(self.retained_records.saturating_add(1)).unwrap_or(u64::MAX)
+    }
+
+    pub(crate) fn attempted_bytes(self) -> u64 {
+        u64::try_from(
+            self.retained_bytes
+                .saturating_add(self.attempted_record_bytes),
+        )
+        .unwrap_or(u64::MAX)
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DetailCapacityObservationForTest {
+    pub(crate) writer_openings: Vec<DetailCapacityWriterOpeningForTest>,
+    pub(crate) selected_writer_attempts: Vec<DetailCapacityAttemptForTest>,
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+struct DetailCapacityControlStateForTest {
+    target_profile_key: String,
+    selected_target_writer: usize,
+    record_limit: u32,
+    canonical_byte_limit: u32,
+    target_writers_opened: usize,
+    observation: DetailCapacityObservationForTest,
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+struct DetailCapacityWriterControlForTest {
+    selected: bool,
+    record_limit: u32,
+    canonical_byte_limit: u32,
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static DETAIL_CAPACITY_CONTROL_FOR_TEST: RefCell<Option<DetailCapacityControlStateForTest>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+struct ResetDetailCapacityControlForTest;
+
+#[cfg(test)]
+impl Drop for ResetDetailCapacityControlForTest {
+    fn drop(&mut self) {
+        DETAIL_CAPACITY_CONTROL_FOR_TEST.with(|slot| {
+            slot.borrow_mut().take();
+        });
+    }
+}
+
+/// Runs one real compile path with test-only limits on one target writer.
+///
+/// Selection is by target key and target-local writer ordinal so an earlier
+/// target may finish before a later target reaches the controlled writer. The
+/// observation records raw construction inputs, not an expected public
+/// payload; [`detail_capacity`] remains the only authority that decides the arm
+/// and constructs [`ExplainDetailCapacity`].
+#[cfg(test)]
+pub(crate) fn with_detail_capacity_limits_for_test<Output>(
+    target_profile_key: &str,
+    selected_target_writer: usize,
+    record_limit: u32,
+    canonical_byte_limit: u32,
+    action: impl FnOnce() -> Output,
+) -> (Output, DetailCapacityObservationForTest) {
+    DETAIL_CAPACITY_CONTROL_FOR_TEST.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        assert!(slot.is_none(), "detail-capacity test controls cannot nest");
+        *slot = Some(DetailCapacityControlStateForTest {
+            target_profile_key: target_profile_key.to_owned(),
+            selected_target_writer,
+            record_limit,
+            canonical_byte_limit,
+            target_writers_opened: 0,
+            observation: DetailCapacityObservationForTest {
+                writer_openings: Vec::new(),
+                selected_writer_attempts: Vec::new(),
+            },
+        });
+    });
+    let reset = ResetDetailCapacityControlForTest;
+    let output = action();
+    let observation = DETAIL_CAPACITY_CONTROL_FOR_TEST.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("the detail-capacity control remains installed")
+            .observation
+            .clone()
+    });
+    drop(reset);
+    (output, observation)
+}
+
+#[cfg(test)]
+fn detail_capacity_writer_control_for_test(
+    request: &VerifiedTargetRequest,
+) -> DetailCapacityWriterControlForTest {
+    DETAIL_CAPACITY_CONTROL_FOR_TEST.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let Some(state) = slot.as_mut() else {
+            return DetailCapacityWriterControlForTest {
+                selected: false,
+                record_limit: MAX_RECORDS,
+                canonical_byte_limit: MAX_CANONICAL_BYTES,
+            };
+        };
+        let target_profile_key = request.target_profile().profile_key().as_str();
+        state
+            .observation
+            .writer_openings
+            .push(DetailCapacityWriterOpeningForTest {
+                target_profile_key: target_profile_key.to_owned(),
+                numerical_contract_key: request.numerical_contract().key.to_owned(),
+            });
+        let selected = target_profile_key == state.target_profile_key
+            && state.target_writers_opened == state.selected_target_writer;
+        if target_profile_key == state.target_profile_key {
+            state.target_writers_opened = state.target_writers_opened.saturating_add(1);
+        }
+        DetailCapacityWriterControlForTest {
+            selected,
+            record_limit: if selected {
+                state.record_limit
+            } else {
+                MAX_RECORDS
+            },
+            canonical_byte_limit: if selected {
+                state.canonical_byte_limit
+            } else {
+                MAX_CANONICAL_BYTES
+            },
+        }
+    })
+}
+
+#[cfg(test)]
+fn record_detail_capacity_attempt_for_test(
+    control: &DetailCapacityWriterControlForTest,
+    retained_records: usize,
+    retained_bytes: usize,
+    attempted_record_bytes: usize,
+) {
+    if !control.selected {
+        return;
+    }
+    DETAIL_CAPACITY_CONTROL_FOR_TEST.with(|slot| {
+        slot.borrow_mut()
+            .as_mut()
+            .expect("a selected writer has an installed detail-capacity control")
+            .observation
+            .selected_writer_attempts
+            .push(DetailCapacityAttemptForTest {
+                retained_records,
+                retained_bytes,
+                attempted_record_bytes,
+            });
+    });
 }
 
 #[derive(Clone, Debug)]
@@ -1336,6 +1529,8 @@ impl FailureDescriptor {
 impl ExplainWriter {
     pub(crate) fn new(request: &VerifiedTargetRequest) -> Result<Self, ExplainError> {
         let subject = CompilationSubject::from_request(request);
+        #[cfg(test)]
+        let detail_capacity_control = detail_capacity_writer_control_for_test(request);
         // The authorities this compilation may attribute a rule to *besides* its
         // own: every provider the request's installed lowering registry admits,
         // plus the compiler's governed physical-implementation and
@@ -1377,6 +1572,8 @@ impl ExplainWriter {
             retained_detail_bytes: 0,
             selection_ledger: BTreeMap::new(),
             terminal_ledger_bytes: 0,
+            #[cfg(test)]
+            detail_capacity_control,
         })
     }
 
@@ -1543,12 +1740,26 @@ impl ExplainWriter {
                     > usize::try_from(MAX_TRACE_CANONICAL_BYTES).unwrap_or(usize::MAX))
             .then_some(ExplainError::TerminalCapacity)
         } else {
+            #[cfg(test)]
+            record_detail_capacity_attempt_for_test(
+                &self.detail_capacity_control,
+                self.retained_detail_records,
+                self.retained_detail_bytes,
+                bytes,
+            );
+            #[cfg(test)]
+            let (record_limit, canonical_byte_limit) = (
+                self.detail_capacity_control.record_limit,
+                self.detail_capacity_control.canonical_byte_limit,
+            );
+            #[cfg(not(test))]
+            let (record_limit, canonical_byte_limit) = (MAX_RECORDS, MAX_CANONICAL_BYTES);
             detail_capacity(
                 self.retained_detail_records,
                 self.retained_detail_bytes,
                 bytes,
-                MAX_RECORDS,
-                MAX_CANONICAL_BYTES,
+                record_limit,
+                canonical_byte_limit,
             )
             .map(ExplainError::DetailCapacity)
         };

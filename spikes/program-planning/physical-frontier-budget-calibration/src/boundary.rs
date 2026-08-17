@@ -104,6 +104,17 @@ fn rendered_record_lines(rendered: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use tiler_compiler::physical_provider::InstalledPhysicalProviders;
+    use tiler_compiler::session::{
+        BudgetRefusal, BudgetResource, CompileFailureClass, NumericalContract,
+    };
+
+    use crate::profile::declared_workgroup_profile;
+    use crate::program::five_op_program;
+    use crate::providers::{Answer, as_dyn, flock, shared_tally};
+
+    use super::compile_request_diagnostic;
+
     #[test]
     fn diagnostic_observer_has_only_the_boundary_command_caller() {
         let main = include_str!("main.rs");
@@ -142,6 +153,80 @@ mod tests {
         assert!(
             !measure.contains("compile_request_diagnostic"),
             "timing and RSS child helpers must not import the diagnostic observer"
+        );
+    }
+
+    /// The accepted public refusal is reached by the complete seven-specialist
+    /// population, not by constructing its expected class in a fixture.
+    ///
+    /// The provider counters prove every installed specialist saw every one of
+    /// the seventeen region subjects before explain construction refused. The
+    /// public compile result remains request-wide: no target success or plan
+    /// alternative escapes beside the failure.
+    #[test]
+    fn seven_specialists_reach_the_public_explain_byte_refusal() {
+        let program = five_op_program(4, 3);
+        let tally = shared_tally();
+        let providers = flock(
+            "request-boundary",
+            7,
+            Answer::Specialize { threads: 32 },
+            &tally,
+        );
+        let environment = InstalledPhysicalProviders::installed(as_dyn(&providers))
+            .expect("all seven independently named specialists install");
+        let profile = declared_workgroup_profile("test.request-boundary-7.v1", 64);
+
+        let diagnostic = compile_request_diagnostic(
+            &program,
+            [NumericalContract::STRICT_F32],
+            [profile],
+            &environment,
+        );
+        let tally = tally.borrow();
+        assert_eq!(providers.len(), 7, "the exercised specialist population moved");
+        assert_eq!(
+            (tally.invocations, tally.proposals, tally.declines),
+            (119, 21, 98),
+            "the complete seven-by-seventeen provider population moved",
+        );
+        assert_eq!(
+            (tally.baseline_subjects, tally.coverless_or_unspellable),
+            (21, 98),
+            "the seven providers did not each reach three baselines and fourteen declines",
+        );
+        assert_eq!(
+            tally.raw_outcomes(),
+            119,
+            "every provider invocation must emit one proposal or decline",
+        );
+        assert_eq!(
+            (diagnostic.successes, diagnostic.alternatives),
+            (0, 0),
+            "a request-wide capacity refusal returned partial target or plan output",
+        );
+        assert_eq!(
+            diagnostic.failure,
+            Some(CompileFailureClass::BudgetExhausted {
+                resource: BudgetResource::ExplainDetailCanonicalBytes,
+                limit: 1_048_576,
+                reported: 1_048_698,
+            }),
+            "the seven-specialist public payload moved away from its exact attempted prefix",
+        );
+        assert_eq!(
+            BudgetResource::ExplainDetailCanonicalBytes.refusal(),
+            BudgetRefusal::ConstructionLowerBound,
+            "the public byte resource lost its attempted-prefix provenance",
+        );
+        assert_eq!(diagnostic.explain_record_lines, 2_258);
+        assert_eq!(diagnostic.explain_bytes, 643_313);
+        assert_eq!(
+            diagnostic.failure_explain_last_line.as_deref(),
+            Some(
+                "2257 target-feasibility compiler-failure rule=compile.failure@1 provider=compiler:tiler.compiler@1 subject=region:program-alternative:f10d1b8bfd323115/region:0 event=compiler-failure:explain-detail-capacity causes=2256",
+            ),
+            "the retained terminal compiler-failure record changed",
         );
     }
 }
