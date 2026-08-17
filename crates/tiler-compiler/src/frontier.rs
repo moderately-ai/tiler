@@ -3563,8 +3563,7 @@ fn govern_spelling(
                 )));
             }
         };
-        let mut split = None;
-        let mut tree = None;
+        let mut parallel = Vec::new();
         // The recognized output whose partition this region belongs to. The
         // spelling resolved it from the cover's own occurrences, so every shape,
         // expression, and member set below is that output's rather than a
@@ -3615,14 +3614,14 @@ fn govern_spelling(
                 // assembles, so the strategies are declined by name rather than
                 // offered as plans the assembler would refuse.
                 if subject.write().publishes_a_copy() {
-                    split = Some(Err(DeclinedStrategy::new(
+                    parallel.push(Err(DeclinedStrategy::new(
                         crate::physical::MULTI_PASS_SPLIT_STRATEGY,
                         StrategyDeclineCause::UnspellableRegion {
                             rule: PUBLISHING_COPY_COMPOSITION_RULE,
                             covered: u32::try_from(members.len()).unwrap_or(u32::MAX),
                         },
                     )));
-                    tree = Some(Err(DeclinedStrategy::new(
+                    parallel.push(Err(DeclinedStrategy::new(
                         crate::physical::SINGLE_WORKGROUP_TREE_STRATEGY,
                         StrategyDeclineCause::UnspellableRegion {
                             rule: PUBLISHING_COPY_COMPOSITION_RULE,
@@ -3630,13 +3629,13 @@ fn govern_spelling(
                         },
                     )));
                 } else {
-                    split = Some(propose_split(
+                    parallel.push(propose_split(
                         request,
                         producer,
                         &applicability,
                         subject.write(),
                     ));
-                    tree = Some(propose_workgroup_tree(
+                    parallel.push(propose_workgroup_tree(
                         request,
                         producer,
                         &applicability,
@@ -3648,13 +3647,35 @@ fn govern_spelling(
                     PhysicalCostEstimate::structural(1, output_elements, 0),
                 )
             }
-            // No split: a contraction's fold is the declared contributor
-            // sequence, and splitting it would consume the reassociation this
-            // family declares forbidden.
-            crate::physical::RegionSpellingKind::Contraction => (
-                crate::physical::contraction_region(request, producer, subject.write()).0,
-                PhysicalCostEstimate::structural(1, output_elements, 0),
-            ),
+            crate::physical::RegionSpellingKind::Contraction => {
+                for membership in [
+                    tiler_ir::schedule::ContributorMembership::Contiguous,
+                    tiler_ir::schedule::ContributorMembership::LaneStrided,
+                ] {
+                    let strategy = contraction_split_strategy(membership);
+                    if subject.write().publishes_a_copy() {
+                        parallel.push(Err(DeclinedStrategy::new(
+                            strategy,
+                            StrategyDeclineCause::UnspellableRegion {
+                                rule: PUBLISHING_COPY_COMPOSITION_RULE,
+                                covered: u32::try_from(members.len()).unwrap_or(u32::MAX),
+                            },
+                        )));
+                    } else {
+                        parallel.push(propose_contraction_split(
+                            request,
+                            producer,
+                            &applicability,
+                            subject.write(),
+                            membership,
+                        ));
+                    }
+                }
+                (
+                    crate::physical::contraction_region(request, producer, subject.write()).0,
+                    PhysicalCostEstimate::structural(1, output_elements, 0),
+                )
+            }
             // Whether the whole-program region may be *fused* belongs to the
             // numerical-legality authority and whether it *fits* belongs to this
             // target; neither is a capability question. Every occurrence the
@@ -3745,7 +3766,7 @@ fn govern_spelling(
             region,
             cost,
             applicability,
-            parallel: [split, tree].into_iter().flatten().collect(),
+            parallel,
         })
     }
 }
@@ -3892,6 +3913,73 @@ fn propose_split(
             partial_elements.saturating_add(output_elements),
             partial_elements.saturating_mul(4),
         ),
+    ))
+}
+
+const fn contraction_split_strategy(
+    membership: tiler_ir::schedule::ContributorMembership,
+) -> &'static str {
+    match membership {
+        tiler_ir::schedule::ContributorMembership::Contiguous => {
+            crate::physical::CONTIGUOUS_CONTRACTION_SPLIT_STRATEGY
+        }
+        tiler_ir::schedule::ContributorMembership::LaneStrided => {
+            crate::physical::LANE_STRIDED_CONTRACTION_SPLIT_STRATEGY
+        }
+    }
+}
+
+/// Offers one fixed-membership, one-workgroup contraction split.
+///
+/// The returned structural cost describes the candidate but does not decide its
+/// preference. The target-qualified measured fold-step row evaluates this
+/// topology through `measured_cost`, alongside serial contractions and the
+/// existing reduction portfolio.
+fn propose_contraction_split(
+    request: &VerifiedTargetRequest,
+    output: &crate::request::NormalizedOutput,
+    applicability: &TargetApplicability,
+    write: crate::physical::RegionWrite,
+    membership: tiler_ir::schedule::ContributorMembership,
+) -> Result<ImplementationProposal, DeclinedStrategy> {
+    let strategy = contraction_split_strategy(membership);
+    let (region, _) = crate::physical::contraction_split_region(request, output, write, membership)
+        .map_err(|unavailable| {
+            DeclinedStrategy::new(
+                strategy,
+                match unavailable {
+                    crate::physical::ContractionSplitUnavailable::ReassociationForbidden => {
+                        StrategyDeclineCause::NumericalPermissionRefused {
+                            dimension:
+                                crate::target::honourability::NumericalDimension::Reassociation
+                                    .key(),
+                        }
+                    }
+                    crate::physical::ContractionSplitUnavailable::PermutationForbidden => {
+                        StrategyDeclineCause::NumericalPermissionRefused {
+                            dimension:
+                                crate::target::honourability::NumericalDimension::Permutation.key(),
+                        }
+                    }
+                    crate::physical::ContractionSplitUnavailable::NoAdmissiblePartition {
+                        contributors,
+                    } => StrategyDeclineCause::NoAdmissibleShape {
+                        rule: unavailable.reason(),
+                        extent: contributors,
+                    },
+                    crate::physical::ContractionSplitUnavailable::Unrepresentable => {
+                        StrategyDeclineCause::Unrepresentable {
+                            rule: unavailable.reason(),
+                        }
+                    }
+                },
+            )
+        })?;
+    let launched = region.schedule.work_items;
+    Ok(ImplementationProposal::new(
+        ProposalBody::ScheduledKernel(Box::new(region)),
+        applicability.clone(),
+        PhysicalCostEstimate::structural(1, launched, 0),
     ))
 }
 
@@ -4052,14 +4140,14 @@ fn encode_provider(output: &mut Vec<u8>, provider: &ProviderIdentity) {
 #[cfg(test)]
 mod tests {
     use super::{
-        AdmittedImplementation, BoundaryOwnership, FrontierError, FrontierRegionSubject,
-        FrontierRejection, GovernedPhysicalProvider, ImplementationBody, ImplementationContext,
-        ImplementationFrontier, ImplementationProposal, KernelSubprogram, OpaqueCallRejectionCause,
-        PhysicalCostEstimate, PhysicalImplementationProvider, PhysicalProposalKind,
-        PhysicalProviderProvenance, PhysicalProviderProvenanceError, ProposalBody, ProviderOffer,
-        ReservedProposalSeam, SubprogramStage, TargetApplicability, boundary_carrier,
-        bounded_guarantees, bounded_requirements, enumerate_frontier, resolve_work_items,
-        validate_opaque_access_bindings,
+        AdmittedImplementation, BoundaryOwnership, DeclinedStrategy, FrontierError,
+        FrontierRegionSubject, FrontierRejection, GovernedPhysicalProvider, ImplementationBody,
+        ImplementationContext, ImplementationFrontier, ImplementationProposal, KernelSubprogram,
+        OpaqueCallRejectionCause, PhysicalCostEstimate, PhysicalImplementationProvider,
+        PhysicalProposalKind, PhysicalProviderProvenance, PhysicalProviderProvenanceError,
+        ProposalBody, ProviderOffer, ReservedProposalSeam, StrategyDeclineCause, SubprogramStage,
+        TargetApplicability, boundary_carrier, bounded_guarantees, bounded_requirements,
+        enumerate_frontier, govern_spelling, resolve_work_items, validate_opaque_access_bindings,
     };
     use crate::boundary::{
         AlignmentGuarantee, AlignmentRequirement, BoundaryProperty, GuaranteedProperty,
@@ -4071,11 +4159,13 @@ mod tests {
     use crate::call_registry::{OpaqueCallIdentity, OpaqueCallProposal, OpaqueCallRegistry};
     use crate::physical::{build_fused_scheduled_region, pointwise_region};
     use crate::request::{
-        CompilationRequest, TargetProfileKey, VerifiedTargetRequest, verify_planned_request,
+        CompilationRequest, StrictF32NumericalContract, TargetProfileKey, VerifiedTargetRequest,
+        verify_planned_request,
     };
     use tiler_ir::schedule::{
-        AccessMode, AccessOrdinal, ContributorOrder, ExceptionalValueAssumption,
-        NumericalPermission, ScalarProgram, ScheduledRegion, SubnormalMode, TensorRole,
+        AccessMode, AccessOrdinal, ContributorMembership, ContributorOrder,
+        ExceptionalValueAssumption, NumericalPermission, ReductionTopology, ScalarProgram,
+        ScheduledRegion, SubnormalMode, TensorRole,
     };
     use tiler_ir::semantic::EncodedComponentRole;
     use tiler_ir::semantic::{
@@ -6480,16 +6570,37 @@ mod tests {
 
     /// The `ab,bc->ac` matrix product, recognized as a contraction program.
     fn contraction_request() -> VerifiedTargetRequest {
+        contraction_request_under(2, StrictF32NumericalContract::governed())
+    }
+
+    fn contraction_request_under(
+        contracted: u64,
+        numerical: StrictF32NumericalContract,
+    ) -> VerifiedTargetRequest {
+        contraction_request_under_target(contracted, numerical, None)
+    }
+
+    fn contraction_request_under_target(
+        contracted: u64,
+        numerical: StrictF32NumericalContract,
+        target: Option<crate::target::TargetProfile>,
+    ) -> VerifiedTargetRequest {
         use tiler_ir::semantic::{
             ContractionIndex, ContractionIndexStructure, F32TensorContraction,
         };
 
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let left = builder
-            .input::<F32>(InputKey::new("left").unwrap(), Shape::from_dims([2, 2]))
+            .input::<F32>(
+                InputKey::new("left").unwrap(),
+                Shape::from_dims([2, contracted]),
+            )
             .unwrap();
         let right = builder
-            .input::<F32>(InputKey::new("right").unwrap(), Shape::from_dims([2, 2]))
+            .input::<F32>(
+                InputKey::new("right").unwrap(),
+                Shape::from_dims([contracted, 2]),
+            )
             .unwrap();
         let structure = ContractionIndexStructure::new(
             [
@@ -6504,8 +6615,138 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), product)
             .unwrap();
         let program = builder.build().unwrap();
-        let request = verify_planned_request(CompilationRequest::governed(&program)).unwrap();
+        let compilation = match target {
+            Some(target) => {
+                CompilationRequest::governed_under_synthetic_target(&program, numerical, target)
+            }
+            None => CompilationRequest::governed_under(&program, numerical),
+        };
+        let request = verify_planned_request(compilation).unwrap();
         request.for_target(0).unwrap()
+    }
+
+    #[test]
+    fn contraction_membership_permission_is_decided_before_construction() {
+        let request =
+            contraction_request_under(4, StrictF32NumericalContract::governed_reassociating());
+        let output = request.sole_output();
+        let contiguous = crate::physical::contraction_split_region(
+            &request,
+            output,
+            crate::physical::RegionWrite::ProgramOutput,
+            ContributorMembership::Contiguous,
+        )
+        .expect("contiguous membership consumes no permutation");
+        assert!(matches!(
+            contiguous.0.schedule.reduction,
+            ReductionTopology::CooperativeContractionSplit {
+                membership: ContributorMembership::Contiguous,
+                ..
+            }
+        ));
+        assert_eq!(
+            crate::physical::contraction_split_region(
+                &request,
+                output,
+                crate::physical::RegionWrite::ProgramOutput,
+                ContributorMembership::LaneStrided,
+            )
+            .unwrap_err(),
+            crate::physical::ContractionSplitUnavailable::PermutationForbidden
+        );
+
+        let subject = FrontierRegionSubject::new(
+            "whole-program",
+            request.contraction().unwrap().members.clone(),
+            crate::physical::RegionWrite::ProgramOutput,
+        );
+        let Ok(spelling) = govern_spelling(&request, &subject) else {
+            panic!("the contraction has a governed spelling")
+        };
+        let [contiguous, strided] = spelling.parallel.as_slice() else {
+            panic!("the governed provider considers both accepted memberships")
+        };
+        assert!(matches!(
+            contiguous,
+            Ok(ImplementationProposal {
+                body: ProposalBody::ScheduledKernel(region),
+                ..
+            }) if matches!(
+                region.schedule.reduction,
+                ReductionTopology::CooperativeContractionSplit {
+                    membership: ContributorMembership::Contiguous,
+                    ..
+                }
+            )
+        ));
+        assert!(matches!(
+            strided,
+            Err(DeclinedStrategy {
+                strategy: crate::physical::LANE_STRIDED_CONTRACTION_SPLIT_STRATEGY,
+                cause: StrategyDeclineCause::NumericalPermissionRefused { dimension },
+            }) if *dimension
+                == crate::target::honourability::NumericalDimension::Permutation.key()
+        ));
+    }
+
+    #[test]
+    fn a_synthetic_permutation_contract_builds_both_membership_maps() {
+        const MEMBERSHIPS: [ContributorMembership;
+            core::mem::variant_count::<ContributorMembership>()] = [
+            ContributorMembership::Contiguous,
+            ContributorMembership::LaneStrided,
+        ];
+        let request = contraction_request_under_target(
+            4,
+            StrictF32NumericalContract {
+                reassociation: NumericalPermission::Permitted,
+                permutation: NumericalPermission::Permitted,
+                ..StrictF32NumericalContract::governed()
+            }
+            .keyed(),
+            Some(crate::target::TargetProfile::synthetic_permutation_for_test()),
+        );
+        for membership in MEMBERSHIPS {
+            let (region, members) = crate::physical::contraction_split_region(
+                &request,
+                request.sole_output(),
+                crate::physical::RegionWrite::ProgramOutput,
+                membership,
+            )
+            .expect("the synthetic contract authorizes both maps");
+            let verified = crate::physical::verify_schedule(region, members, &request)
+                .expect("compiler and intrinsic binding admit the split");
+            assert!(matches!(
+                verified.region().schedule.reduction,
+                ReductionTopology::CooperativeContractionSplit {
+                    membership: actual,
+                    ..
+                } if actual == membership
+            ));
+        }
+
+        let subject = FrontierRegionSubject::new(
+            "whole-program",
+            request.contraction().unwrap().members.clone(),
+            crate::physical::RegionWrite::ProgramOutput,
+        );
+        let Ok(spelling) = govern_spelling(&request, &subject) else {
+            panic!("the contraction has a governed spelling")
+        };
+        assert_eq!(spelling.parallel.len(), MEMBERSHIPS.len());
+        for (proposal, expected) in spelling.parallel.iter().zip(MEMBERSHIPS) {
+            assert!(matches!(
+                proposal,
+                Ok(ImplementationProposal {
+                    body: ProposalBody::ScheduledKernel(region),
+                    ..
+                }) if matches!(
+                    region.schedule.reduction,
+                    ReductionTopology::CooperativeContractionSplit { membership, .. }
+                        if membership == expected
+                )
+            ));
+        }
     }
 
     /// An `ab,bc->ac` request whose two input buffers have distinguishable

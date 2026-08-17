@@ -265,6 +265,25 @@ fn work_span(schedule: &KernelSchedule, accesses: &[Access]) -> Option<StageWork
                 depth: per_round_depth.checked_mul(tile.rounds)?,
             })
         }
+        // The two-read contraction split has the same two-phase work/span
+        // geometry as the one-read cooperative tree: every participant folds
+        // one fixed nonempty subset, the barrier orders publication of exactly
+        // one partial per slot, and the root folds those slots once. Membership
+        // changes which contributor ordinal occupies a participant's subset,
+        // not either phase's cardinality.
+        ReductionTopology::CooperativeContractionSplit {
+            partition, tile, ..
+        } => {
+            let per_round_work =
+                work_items.checked_mul(partition.contributors_per_partition.checked_add(1)?)?;
+            let per_round_depth = partition
+                .contributors_per_partition
+                .checked_add(partition.partitions)?;
+            Some(StageWorkSpan {
+                work: per_round_work.checked_mul(tile.rounds)?,
+                depth: per_round_depth.checked_mul(tile.rounds)?,
+            })
+        }
         _ => None,
     }
 }
@@ -338,8 +357,8 @@ mod tests {
     use super::*;
     use tiler_ir::schedule::{
         AccessMode, AccessOrdinal, ArithmeticType, BoundsWitnessId, ContributorArrival,
-        ContributorCoverage, ContributorOrder, ContributorPartition, CooperativeTile,
-        ExecutionBinding, LaunchPlan, OwnershipWitnessId, TailPolicy, TensorRole,
+        ContributorCoverage, ContributorMembership, ContributorOrder, ContributorPartition,
+        CooperativeTile, ExecutionBinding, LaunchPlan, OwnershipWitnessId, TailPolicy, TensorRole,
         workgroup_tree_tile,
     };
     use tiler_ir::shape::{Axis, Shape};
@@ -387,6 +406,23 @@ mod tests {
             accumulation: ArithmeticType::F32,
             permits_reassociation: true,
             permits_permutation: false,
+            arrival: ContributorArrival::AscendingParticipant,
+        }
+    }
+
+    fn cooperative_contraction(
+        partition: ContributorPartition,
+        membership: ContributorMembership,
+    ) -> ReductionTopology {
+        ReductionTopology::CooperativeContractionSplit {
+            partition,
+            membership,
+            tile: workgroup_tree_tile(partition.partitions).unwrap(),
+            contracted_shape: Shape::from_dims([partition.total_contributors().unwrap()]),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            accumulation: ArithmeticType::F32,
+            permits_reassociation: true,
+            permits_permutation: membership.requires_permutation(),
             arrival: ContributorArrival::AscendingParticipant,
         }
     }
@@ -507,6 +543,29 @@ mod tests {
             work_span(&schedule(1, pass(ReductionPass::Final)), &[]),
             Some(StageWorkSpan { work: 4, depth: 4 })
         );
+    }
+
+    #[test]
+    fn both_contraction_memberships_keep_measured_work_span_scores() {
+        const MEMBERSHIPS: [ContributorMembership;
+            core::mem::variant_count::<ContributorMembership>()] = [
+            ContributorMembership::Contiguous,
+            ContributorMembership::LaneStrided,
+        ];
+        let partition = ContributorPartition {
+            partitions: 4,
+            contributors_per_partition: 4,
+        };
+        for membership in MEMBERSHIPS {
+            assert_eq!(
+                work_span(
+                    &schedule(4, cooperative_contraction(partition, membership)),
+                    &[]
+                ),
+                Some(StageWorkSpan { work: 20, depth: 8 }),
+                "{membership:?} must not drop out of a measured portfolio"
+            );
+        }
     }
 
     /// The cooperative arm reproduces the retained spike's own triples.

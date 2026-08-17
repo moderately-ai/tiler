@@ -125,6 +125,7 @@ impl<'a> RealizationWitness<'a> {
             ReductionTopology::Serial { order, .. }
             | ReductionTopology::MultiPass { order, .. }
             | ReductionTopology::Contraction { order, .. }
+            | ReductionTopology::CooperativeContractionSplit { order, .. }
             | ReductionTopology::LiveContraction { order, .. }
             | ReductionTopology::CooperativeWorkgroup { order, .. }
             | ReductionTopology::CooperativeContraction { order, .. } => Some(*order),
@@ -147,6 +148,7 @@ impl<'a> RealizationWitness<'a> {
         match self.reduction {
             ReductionTopology::None
             | ReductionTopology::Contraction { .. }
+            | ReductionTopology::CooperativeContractionSplit { .. }
             | ReductionTopology::CooperativeContraction { .. }
             | ReductionTopology::LiveContraction { .. } => &[],
             ReductionTopology::Serial { axes, .. }
@@ -170,6 +172,9 @@ impl<'a> RealizationWitness<'a> {
             ReductionTopology::Contraction {
                 contracted_shape, ..
             }
+            | ReductionTopology::CooperativeContractionSplit {
+                contracted_shape, ..
+            }
             | ReductionTopology::CooperativeContraction {
                 contracted_shape, ..
             } => Some(contracted_shape),
@@ -190,6 +195,7 @@ impl<'a> RealizationWitness<'a> {
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
             | ReductionTopology::Contraction { .. }
+            | ReductionTopology::CooperativeContractionSplit { .. }
             | ReductionTopology::CooperativeContraction { .. }
             | ReductionTopology::LiveContraction { .. } => None,
         }
@@ -203,6 +209,7 @@ impl<'a> RealizationWitness<'a> {
             | ReductionTopology::CooperativeWorkgroup { coverage, .. } => {
                 Some(coverage.partition())
             }
+            ReductionTopology::CooperativeContractionSplit { partition, .. } => Some(*partition),
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
             | ReductionTopology::Contraction { .. }
@@ -226,6 +233,7 @@ impl<'a> RealizationWitness<'a> {
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
             | ReductionTopology::Contraction { .. }
+            | ReductionTopology::CooperativeContractionSplit { .. }
             | ReductionTopology::LiveContraction { .. }
             | ReductionTopology::CooperativeWorkgroup { .. }
             | ReductionTopology::CooperativeContraction { .. } => None,
@@ -254,6 +262,7 @@ impl<'a> RealizationWitness<'a> {
         match self.reduction {
             ReductionTopology::MultiPass { accumulation, .. }
             | ReductionTopology::CooperativeWorkgroup { accumulation, .. }
+            | ReductionTopology::CooperativeContractionSplit { accumulation, .. }
             | ReductionTopology::CooperativeContraction { accumulation, .. } => *accumulation,
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
@@ -266,7 +275,8 @@ impl<'a> RealizationWitness<'a> {
     #[must_use]
     pub const fn arrival(&self) -> Option<ContributorArrival> {
         match self.reduction {
-            ReductionTopology::CooperativeWorkgroup { arrival, .. } => Some(*arrival),
+            ReductionTopology::CooperativeWorkgroup { arrival, .. }
+            | ReductionTopology::CooperativeContractionSplit { arrival, .. } => Some(*arrival),
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
             | ReductionTopology::MultiPass { .. }

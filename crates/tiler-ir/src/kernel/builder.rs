@@ -1233,6 +1233,7 @@ fn required_nonzero_input_extents(schedule: &ScheduledRegion) -> Vec<InputExtent
         | ReductionTopology::MultiPass { .. }
         | ReductionTopology::Contraction { .. }
         | ReductionTopology::CooperativeWorkgroup { .. }
+        | ReductionTopology::CooperativeContractionSplit { .. }
         | ReductionTopology::CooperativeContraction { .. } => Vec::new(),
     }
 }

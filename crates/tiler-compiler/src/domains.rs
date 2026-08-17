@@ -164,7 +164,12 @@ const PINNED_IDENTITY_DOMAINS: &[PinnedDomain] = &[
 ///
 /// `tiler.compiler` must be exact: admitting that as a prefix would swallow
 /// fifteen pinned compiler domains. Sorted and duplicate-free.
-const ADMITTED_NON_DOMAIN_LITERALS: &[&[u8]] = &[b"tiler.compiler", b"tiler.pipeline"];
+const ADMITTED_NON_DOMAIN_LITERALS: &[&[u8]] = &[
+    b"tiler.compiler",
+    b"tiler.contraction.cooperative-split.contiguous",
+    b"tiler.contraction.cooperative-split.lane-strided",
+    b"tiler.pipeline",
+];
 
 /// Namespaces of `tiler.` literals that separate no canonical byte subjects.
 ///

@@ -19,8 +19,9 @@ use super::cooperative::{
     StagedSpan, VisibilityEdge,
 };
 use super::error::{
-    BlockedWorkgroupRule, ContributorCoverageRule, CooperativeTileRule, ScheduleBuildError,
-    ScheduleComponent, ScheduleLimitKind, ScheduledRegionBuildError, ScheduledRegionDiagnostic,
+    BlockedWorkgroupRule, ContractionSplitRule, ContributorCoverageRule, CooperativeTileRule,
+    ScheduleBuildError, ScheduleComponent, ScheduleLimitKind, ScheduledRegionBuildError,
+    ScheduledRegionDiagnostic,
 };
 #[cfg(test)]
 use super::handles::AccessOrdinal;
@@ -544,6 +545,12 @@ fn verify_contraction(
     }
     if matches!(
         region.schedule.reduction,
+        ReductionTopology::CooperativeContractionSplit { .. }
+    ) {
+        return verify_cooperative_contraction_split(region, left, right, write);
+    }
+    if matches!(
+        region.schedule.reduction,
         ReductionTopology::LiveContraction { .. }
     ) {
         return verify_live_contraction(region, left, right, write);
@@ -658,6 +665,193 @@ fn verify_contraction(
     // Every output coordinate must be read by at least one operand: one that no
     // operand reads would make every output position along it hold the same
     // value, which is a broadcast the structure never declared.
+    if output_covered.iter().any(|read| !read) || contracted_covered.iter().any(|read| !read) {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    Ok(())
+}
+
+/// Verifies a one-workgroup split of a two-read contraction.
+///
+/// Permission refusals deliberately precede every shape and construction rule:
+/// a lane-strided proposal under a contract that withholds permutation must name
+/// that missing freedom even when another field is malformed too.
+fn verify_cooperative_contraction_split(
+    region: &ScheduledRegion,
+    left: &Access,
+    right: &Access,
+    write: &Access,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    let ReductionTopology::CooperativeContractionSplit {
+        partition,
+        membership,
+        tile,
+        contracted_shape: scheduled_contracted,
+        order: scheduled_order,
+        accumulation,
+        permits_reassociation,
+        permits_permutation,
+        arrival,
+    } = &region.schedule.reduction
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    let ScalarProgram::StrictTensorContraction {
+        contracted_shape,
+        order,
+        ..
+    } = &region.index.scalar_program
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    let numerical = &region.index.numerical;
+    if !numerical.permits_reassociation() {
+        return Err(contraction_split(
+            ContractionSplitRule::ReassociationPermission,
+        ));
+    }
+    if (membership.requires_permutation() || arrival.requires_permutation())
+        && !numerical.permits_permutation()
+    {
+        return Err(contraction_split(
+            ContractionSplitRule::PermutationPermission,
+        ));
+    }
+    if *permits_reassociation != numerical.permits_reassociation()
+        || *permits_permutation != numerical.permits_permutation()
+        || contracted_shape != scheduled_contracted
+        || order != scheduled_order
+    {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    verify_accumulation_width(*accumulation, &region.index.scalar_program)?;
+    if *arrival != ContributorArrival::AscendingParticipant {
+        return Err(contraction_split(ContractionSplitRule::UnadmittedArrival));
+    }
+    let contributors = element_count(contracted_shape)
+        .map_err(|_| ScheduledRegionDiagnostic::ShapeProductOverflow)?;
+    if contributors == 0 || !partition.covers(contributors) {
+        return Err(contraction_split(ContractionSplitRule::ExactCoverage));
+    }
+    let participants = tile
+        .coordinates
+        .participants
+        .participants()
+        .ok_or_else(|| cooperative(CooperativeTileRule::LocalCoordinates))?;
+    if tile.rounds != 1 || participants != partition.partitions {
+        return Err(contraction_split(
+            ContractionSplitRule::ParticipantPartition,
+        ));
+    }
+
+    let LogicalAccess::ContractionOperand {
+        output_shape,
+        contracted_shape: left_contracted,
+        ..
+    } = &left.map
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    if left_contracted != contracted_shape
+        || partial_reduction_shape(output_shape, *partition)
+            .is_none_or(|shape| region.index.iteration_shape != shape)
+    {
+        return Err(contraction_split(
+            ContractionSplitRule::ParticipantPartition,
+        ));
+    }
+    verify_static_contraction_accesses(
+        region,
+        left,
+        right,
+        write,
+        contracted_shape,
+        *order,
+        output_shape,
+    )?;
+    verify_cooperative_tile(tile)
+}
+
+/// Verifies the static operand maps shared by direct and split contractions.
+fn verify_static_contraction_accesses(
+    region: &ScheduledRegion,
+    left: &Access,
+    right: &Access,
+    write: &Access,
+    contracted_shape: &crate::shape::Shape,
+    order: ContributorOrder,
+    expected_output_shape: &crate::shape::Shape,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    if left.mode != AccessMode::Read
+        || right.mode != AccessMode::Read
+        || left.ownership.is_some()
+        || right.ownership.is_some()
+        || write.mode != AccessMode::Write
+        || write.map != LogicalAccess::LinearIdentity
+        || write.ownership != Some(region.schedule.output_owner)
+        || !CommittedTensor::CoverAssigned.admits(write.tensor)
+        || write.component_role.is_some()
+        || left.component_role.is_some()
+        || right.component_role.is_some()
+        || !matches!(left.tensor, TensorRole::Input)
+        || !matches!(right.tensor, TensorRole::Input)
+    {
+        return Err(ScheduledRegionDiagnostic::AccessContract);
+    }
+    verify_proof_records(region, &[left, right], write)?;
+
+    let mut contracted_covered = vec![false; contracted_shape.rank()];
+    let mut output_covered = vec![false; expected_output_shape.rank()];
+    for access in [left, right] {
+        let LogicalAccess::ContractionOperand {
+            operand_shape,
+            output_shape,
+            contracted_shape: access_contracted,
+            sources,
+            order: access_order,
+        } = &access.map
+        else {
+            return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+        };
+        if output_shape != expected_output_shape
+            || access_contracted != contracted_shape
+            || *access_order != order
+            || sources.len() != operand_shape.rank()
+        {
+            return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+        }
+        let mut seen_output = vec![false; output_shape.rank()];
+        let mut seen_contracted = vec![false; contracted_shape.rank()];
+        for (axis, source) in sources.iter().enumerate() {
+            let (shape, seen, covered) = match source {
+                ContractionAxisSource::Output { .. } => {
+                    (output_shape, &mut seen_output, &mut output_covered)
+                }
+                ContractionAxisSource::Contracted { .. } => (
+                    contracted_shape,
+                    &mut seen_contracted,
+                    &mut contracted_covered,
+                ),
+            };
+            let position = match source {
+                ContractionAxisSource::Output { position }
+                | ContractionAxisSource::Contracted { position } => usize::try_from(*position)
+                    .map_err(|_| ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?,
+            };
+            let (Some(extent), Some(slot)) =
+                (shape.extents().get(position), seen.get_mut(position))
+            else {
+                return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+            };
+            if std::mem::replace(slot, true) || operand_shape.extents()[axis] != *extent {
+                return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+            }
+            covered[position] = true;
+        }
+        if seen_contracted.iter().any(|read| !read) {
+            return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+        }
+    }
     if output_covered.iter().any(|read| !read) || contracted_covered.iter().any(|read| !read) {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
@@ -2646,6 +2840,10 @@ const fn cooperative(rule: CooperativeTileRule) -> ScheduledRegionDiagnostic {
     ScheduledRegionDiagnostic::CooperativeTile { rule }
 }
 
+const fn contraction_split(rule: ContractionSplitRule) -> ScheduledRegionDiagnostic {
+    ScheduledRegionDiagnostic::ContractionSplit { rule }
+}
+
 const fn blocked(rule: BlockedWorkgroupRule) -> ScheduledRegionDiagnostic {
     ScheduledRegionDiagnostic::BlockedWorkgroup { rule }
 }
@@ -2705,7 +2903,8 @@ fn owned_output_positions(region: &ScheduledRegion) -> Option<u64> {
     // sibling owns one position per invocation. Inferring the first from
     // `cooperative_tile` would silently undersize the operand-sharing write.
     match &region.schedule.reduction {
-        ReductionTopology::CooperativeWorkgroup { tile, .. } => {
+        ReductionTopology::CooperativeWorkgroup { tile, .. }
+        | ReductionTopology::CooperativeContractionSplit { tile, .. } => {
             let participants = tile.coordinates.participants.participants()?;
             if participants == 0 || !work_items.is_multiple_of(participants) {
                 return None;
@@ -2740,6 +2939,7 @@ fn reduction_output_shape(region: &ScheduledRegion) -> Option<crate::shape::Shap
         | ReductionTopology::CooperativeWorkgroup { coverage, .. } => {
             coverage.partition().partitions
         }
+        ReductionTopology::CooperativeContractionSplit { partition, .. } => partition.partitions,
         ReductionTopology::None
         | ReductionTopology::Serial { .. }
         | ReductionTopology::Contraction { .. }
@@ -3069,7 +3269,9 @@ mod tests {
     use crate::schedule::handles::{
         BoundsWitnessId, OwnershipWitnessId, PhaseId, StagingId, SyncPointId,
     };
-    use crate::schedule::model::{ContributorOrder, ContributorPartition, LaunchPlan};
+    use crate::schedule::model::{
+        ContributorMembership, ContributorOrder, ContributorPartition, LaunchPlan,
+    };
     use crate::schedule::numerics::{
         ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
         SubnormalMode, ValueDomainProvenance,
@@ -3080,6 +3282,7 @@ mod tests {
     };
     use crate::schedule::{
         PointwiseBf16ExpressionBuilder, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
+        workgroup_tree_tile,
     };
     use crate::shape::{Axis, Shape};
 
@@ -4240,6 +4443,183 @@ mod tests {
             })
             .unwrap();
         builder
+    }
+
+    fn contraction_split_builder(
+        membership: ContributorMembership,
+        permits_permutation: bool,
+    ) -> ScheduledRegionBuilder {
+        let operand = Shape::from_dims([2, 4]);
+        let output = Shape::from_dims([2, 2]);
+        let contracted = Shape::from_dims([4]);
+        let partition = ContributorPartition {
+            partitions: 2,
+            contributors_per_partition: 2,
+        };
+        let operand_map = |free_position| LogicalAccess::ContractionOperand {
+            operand_shape: operand.clone(),
+            output_shape: output.clone(),
+            contracted_shape: contracted.clone(),
+            sources: vec![
+                ContractionAxisSource::Output {
+                    position: free_position,
+                },
+                ContractionAxisSource::Contracted { position: 0 },
+            ],
+            order: ContributorOrder::OriginalAxisLexicographic,
+        };
+        let mut builder = ScheduledRegionBuilder::new(RegionId::new(43));
+        builder
+            .iteration_shape(Shape::from_dims([2, 2, 2]))
+            .unwrap();
+        for (witness, map) in [(0, operand_map(0)), (1, operand_map(1))] {
+            builder
+                .push_access(Access {
+                    tensor: TensorRole::Input,
+                    component_role: None,
+                    mode: AccessMode::Read,
+                    map,
+                    bounds: BoundsWitnessId::new(witness),
+                    ownership: None,
+                })
+                .unwrap();
+            builder
+                .push_bounds_proof(BoundsProof {
+                    id: BoundsWitnessId::new(witness),
+                    tensor: TensorRole::Input,
+                    component_role: None,
+                    kind: BoundsProofKind::LinearRange { element_count: 8 },
+                })
+                .unwrap();
+        }
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Output,
+                component_role: None,
+                mode: AccessMode::Write,
+                map: LogicalAccess::LinearIdentity,
+                bounds: BoundsWitnessId::new(2),
+                ownership: Some(OwnershipWitnessId::new(0)),
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(2),
+                tensor: TensorRole::Output,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange { element_count: 4 },
+            })
+            .unwrap();
+        builder
+            .ownership_proof(OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: TensorRole::Output,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 4 },
+            })
+            .unwrap();
+        builder
+            .scalar_program(ScalarProgram::StrictTensorContraction {
+                contracted_shape: contracted.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: 0x7fc0_0000,
+            })
+            .unwrap();
+        builder
+            .numerical(NumericalRealization::new(
+                "tiler.test.reassociated-contraction-f32",
+                0x7fc0_0000,
+                SubnormalMode::FlushToZero {
+                    zero_sign: FlushedZeroSign::PreservesSign,
+                },
+                SubnormalMode::FlushToZero {
+                    zero_sign: FlushedZeroSign::PreservesSign,
+                },
+                NumericalPermission::Forbidden,
+                NumericalPermission::Permitted,
+                if permits_permutation {
+                    NumericalPermission::Permitted
+                } else {
+                    NumericalPermission::Forbidden
+                },
+                NumericalPermission::Forbidden,
+                ExceptionalValueAssumption::MakeNoAssumption,
+                ExceptionalValueAssumption::MakeNoAssumption,
+            ))
+            .unwrap();
+        let mut schedule = linear_schedule(8, OwnershipWitnessId::new(0));
+        schedule.threads_per_workgroup = 2;
+        schedule.launch.threads_per_workgroup = 2;
+        schedule.reduction = ReductionTopology::CooperativeContractionSplit {
+            partition,
+            membership,
+            tile: workgroup_tree_tile(2).unwrap(),
+            contracted_shape: contracted,
+            order: ContributorOrder::OriginalAxisLexicographic,
+            accumulation: ArithmeticType::F32,
+            permits_reassociation: true,
+            permits_permutation,
+            arrival: ContributorArrival::AscendingParticipant,
+        };
+        builder.schedule(schedule).unwrap();
+        builder
+    }
+
+    #[test]
+    fn both_fixed_contraction_memberships_verify_and_separate_identity() {
+        const MEMBERSHIPS: [ContributorMembership; variant_count::<ContributorMembership>()] = [
+            ContributorMembership::Contiguous,
+            ContributorMembership::LaneStrided,
+        ];
+        let identities = MEMBERSHIPS.map(|membership| {
+            contraction_split_builder(membership, true)
+                .build()
+                .expect("every accepted membership verifies")
+                .canonical_identity()
+                .clone()
+        });
+        assert_ne!(identities[0], identities[1]);
+        assert_eq!(MEMBERSHIPS.map(ContributorMembership::tag), [0x01, 0x02]);
+    }
+
+    #[test]
+    fn contiguous_membership_does_not_consume_permutation_permission() {
+        contraction_split_builder(ContributorMembership::Contiguous, false)
+            .build()
+            .expect("contiguous membership preserves contributor order");
+    }
+
+    #[test]
+    fn lane_strided_permission_refusal_precedes_partition_validation() {
+        let mut builder = contraction_split_builder(ContributorMembership::LaneStrided, false);
+        let ReductionTopology::CooperativeContractionSplit { partition, .. } =
+            &mut builder.schedule.as_mut().unwrap().reduction
+        else {
+            unreachable!()
+        };
+        partition.contributors_per_partition = 3;
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::ContractionSplit {
+                rule: ContractionSplitRule::PermutationPermission,
+            }]
+        );
+    }
+
+    #[test]
+    fn contraction_split_requires_exact_nonempty_partition_coverage() {
+        let mut builder = contraction_split_builder(ContributorMembership::Contiguous, false);
+        let ReductionTopology::CooperativeContractionSplit { partition, .. } =
+            &mut builder.schedule.as_mut().unwrap().reduction
+        else {
+            unreachable!()
+        };
+        partition.contributors_per_partition = 3;
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::ContractionSplit {
+                rule: ContractionSplitRule::ExactCoverage,
+            }]
+        );
     }
 
     /// Contraction inputs are distinguished by exact access position, not role payload.
@@ -5440,6 +5820,7 @@ mod tests {
             ReductionTopology::None
             | ReductionTopology::Serial { .. }
             | ReductionTopology::Contraction { .. }
+            | ReductionTopology::CooperativeContractionSplit { .. }
             | ReductionTopology::CooperativeContraction { .. }
             | ReductionTopology::LiveContraction { .. } => {
                 panic!("the fixture has a parallel reduction")

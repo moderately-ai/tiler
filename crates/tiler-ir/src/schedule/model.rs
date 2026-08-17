@@ -1013,6 +1013,39 @@ pub enum ReductionTopology {
         /// Whether the contract permits contributor permutation.
         permits_permutation: bool,
     },
+    /// One workgroup splits a contraction's contracted contributor sequence.
+    ///
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-11 under
+    /// [`decide-the-fixed-strided-contributor-membership-vocabulary`]. It is a
+    /// two-read sibling of [`Self::CooperativeWorkgroup`], with contributor
+    /// membership stated independently from staged-partial arrival. The split
+    /// covers the contracted space exactly: every partition is nonempty, the
+    /// seed is the first product of each partial and is attached only once at
+    /// the root-facing staged fold, and no padding, mask, or ragged tail is
+    /// implied.
+    ///
+    /// [`decide-the-fixed-strided-contributor-membership-vocabulary`]: ../../../../../tickets/decide-the-fixed-strided-contributor-membership-vocabulary.md
+    CooperativeContractionSplit {
+        /// Exact partition-count geometry of the contracted contributor space.
+        partition: ContributorPartition,
+        /// Which original contributors each participant owns.
+        membership: ContributorMembership,
+        /// Cross-invocation partial staging and synchronization.
+        tile: CooperativeTile,
+        /// Row-major shape of the contracted iteration space.
+        contracted_shape: Shape,
+        /// Contributor combination order within the contracted space.
+        order: ContributorOrder,
+        /// Width every product and addition is performed at.
+        accumulation: ArithmeticType,
+        /// Whether the contract permits reassociation.
+        permits_reassociation: bool,
+        /// Whether the contract permits contributor permutation.
+        permits_permutation: bool,
+        /// Fixed order in which the staged partials reach the root fold.
+        arrival: ContributorArrival,
+    },
     /// A contraction whose contracted extent is a live input-axis operand.
     ///
     /// **Accepted public surface.** Tom accepted this exact spelling on
@@ -1200,7 +1233,7 @@ impl ReductionPass {
     }
 }
 
-/// How a multi-pass reduction splits one output's contributor sequence.
+/// Count geometry for splitting one output's contributor sequence.
 ///
 /// The split is a *physical* contract, not a semantic one: it says how many
 /// partial values one output position is built from and how many contributors
@@ -1211,19 +1244,61 @@ impl ReductionPass {
 /// second trip count, and [`ContributorPartition::covers`] rejects one rather
 /// than approximating it.
 ///
-/// Contributor order is preserved: partition `p` covers the contiguous
-/// contributor range `p * contributors_per_partition ..
-/// (p + 1) * contributors_per_partition` of the [`ContributorOrder`] the region
-/// declares, and the final pass combines the partials in ascending `p`. A
-/// multi-pass split is therefore a *reassociation* of the declared contributor
-/// sequence and never a permutation of it — the two permissions stay
-/// independent, and this strategy consumes only the first.
+/// This record deliberately states counts, not contributor membership.
+/// [`ReductionTopology::MultiPass`] and
+/// [`ReductionTopology::CooperativeWorkgroup`] compose it with contiguous
+/// membership and preserve contributor order. A
+/// [`ReductionTopology::CooperativeContractionSplit`] instead states its
+/// [`ContributorMembership`] alongside this same exact count geometry.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ContributorPartition {
     /// Partial values produced per output position.
     pub partitions: u64,
     /// Contributors every partition combines.
     pub contributors_per_partition: u64,
+}
+
+/// How a contraction split assigns the canonical contributor sequence.
+///
+/// Deliberately exhaustive: membership changes the arithmetic tree and therefore
+/// canonical schedule and artifact identity. A new membership must break every
+/// total verifier, lowering, encoder, explanation, and backend consumer instead
+/// of inheriting either permission requirement.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ContributorMembership {
+    /// Partition `p` owns one consecutive interval of the canonical sequence.
+    Contiguous,
+    /// Partition `p` owns ordinals `p, p + partitions, ...`.
+    LaneStrided,
+}
+
+impl ContributorMembership {
+    /// Returns whether this membership consumes contributor permutation.
+    #[must_use]
+    pub const fn requires_permutation(self) -> bool {
+        match self {
+            Self::Contiguous => false,
+            Self::LaneStrided => true,
+        }
+    }
+
+    /// Returns the canonical identity tag of this membership.
+    #[must_use]
+    pub const fn tag(self) -> u8 {
+        match self {
+            Self::Contiguous => 0x01,
+            Self::LaneStrided => 0x02,
+        }
+    }
+
+    /// Returns the stable explanation key of this membership.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Contiguous => "contiguous",
+            Self::LaneStrided => "lane-strided",
+        }
+    }
 }
 
 impl ContributorPartition {
@@ -1746,6 +1821,7 @@ pub fn partial_reduction_axis(output_shape: &Shape) -> Option<Axis> {
 pub fn cooperative_tile(reduction: &ReductionTopology) -> Option<&CooperativeTile> {
     match reduction {
         ReductionTopology::CooperativeWorkgroup { tile, .. }
+        | ReductionTopology::CooperativeContractionSplit { tile, .. }
         | ReductionTopology::CooperativeContraction { tile, .. } => Some(tile),
         ReductionTopology::None
         | ReductionTopology::Serial { .. }
@@ -2191,19 +2267,24 @@ const TAG_REDUCTION_CONTRACTION: u8 = 0x34;
 /// the schedule identity domain deliberately does not step. A reader that
 /// reaches `0x35` is reading a region the earlier vocabulary could not express.
 const TAG_REDUCTION_COOPERATIVE_WORKGROUP: u8 = 0x35;
+/// Reduction-topology tag of a cooperative contraction split.
+///
+/// Reserved by the accepted carrier before `0x37` and `0x38` landed. Consuming
+/// it now appends only previously unencodable rows: every existing v6 topology
+/// keeps its tag and field positions, so the identity domain does not step.
+const TAG_REDUCTION_COOPERATIVE_CONTRACTION_SPLIT: u8 = 0x36;
 /// Reduction-topology tag of the operand-sharing cooperative contraction.
 ///
-/// Appended exactly as `0x35` was. `0x36` is reserved for the accepted
-/// [`ReductionTopology`] spelling `CooperativeContractionSplit` owned by
-/// `decide-the-fixed-strided-contributor-membership-vocabulary` and is not
-/// consumed here. A reader that reaches `0x37` is reading a region the earlier
+/// Appended exactly as `0x35` was. `0x36` was reserved for the accepted
+/// [`ReductionTopology::CooperativeContractionSplit`] spelling and is now
+/// consumed by that row. A reader that reaches `0x37` is reading a region the earlier
 /// vocabulary could not express; every earlier topology keeps its tag and field
 /// positions, so no previously encodable region's bytes move and the schedule
 /// identity domain does not step.
 const TAG_REDUCTION_COOPERATIVE_CONTRACTION: u8 = 0x37;
 /// Reduction-topology tag of a contraction whose contracted extent is live.
 ///
-/// Appended after `0x37`. `0x36` stays reserved for
+/// Appended after `0x37`. `0x36` names
 /// `CooperativeContractionSplit`; this tag is the next free slot. `0x01`
 /// through `0x37` keep their tags and field positions, so no previously
 /// encodable region's bytes move and the schedule identity domain does not
@@ -3011,6 +3092,29 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
             bytes.push(u8::from(*permits_reassociation));
             bytes.push(u8::from(*permits_permutation));
         }
+        ReductionTopology::CooperativeContractionSplit {
+            partition,
+            membership,
+            tile,
+            contracted_shape,
+            order,
+            accumulation,
+            permits_reassociation,
+            permits_permutation,
+            arrival,
+        } => {
+            bytes.push(TAG_REDUCTION_COOPERATIVE_CONTRACTION_SPLIT);
+            bytes.extend_from_slice(&partition.partitions.to_be_bytes());
+            bytes.extend_from_slice(&partition.contributors_per_partition.to_be_bytes());
+            bytes.push(membership.tag());
+            push_cooperative_tile(bytes, tile);
+            push_shape(bytes, contracted_shape);
+            push_order(bytes, *order);
+            bytes.push(accumulation.tag());
+            bytes.push(u8::from(*permits_reassociation));
+            bytes.push(u8::from(*permits_permutation));
+            bytes.push(arrival.tag());
+        }
         ReductionTopology::LiveContraction {
             live_access,
             live_axis,
@@ -3283,7 +3387,7 @@ mod tests {
         };
         let mut exact = Vec::new();
         push_coverage_suffix(&mut exact, ContributorCoverage::Exact(split));
-        assert_eq!(exact, [], "exact coverage is the implicit default");
+        assert!(exact.is_empty(), "exact coverage is the implicit default");
 
         let identities = [
             ReductionPaddingIdentity::F16(0x8000),

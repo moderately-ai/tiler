@@ -13,8 +13,8 @@ use std::fmt::Write as _;
 use super::*;
 use crate::schedule::{
     Access, AccessMode, AccessOrdinal, ArithmeticType, BoundsProof, BoundsProofKind,
-    BoundsWitnessId, ContractionAxisSource, ContributorCoverage, ContributorOrder,
-    ContributorPartition, ConvergenceEvidence, CooperativePhase, CooperativeTile,
+    BoundsWitnessId, ContractionAxisSource, ContributorCoverage, ContributorMembership,
+    ContributorOrder, ContributorPartition, ConvergenceEvidence, CooperativePhase, CooperativeTile,
     ExceptionalValueAssumption, ExecutionBinding, FencedSpaces, KernelSchedule, LaunchPlan,
     LocalCoordinateSource, LocalCoordinates, LogicalAccess, MemoryOrdering, NumericalPermission,
     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId, ParticipantRange,
@@ -24,7 +24,7 @@ use crate::schedule::{
     SubgroupRealizationSubject, SubgroupTransfer, SubgroupWidth, SubnormalMode, SyncPointId,
     SynchronizationKind, SynchronizationPlacement, SynchronizationPoint, SynchronizationScope,
     SynchronizationSubject, TailPolicy, TensorRole, VerifiedScheduledRegion, WorkgroupStaging,
-    element_count,
+    element_count, partial_reduction_shape, workgroup_tree_tile,
 };
 use crate::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
@@ -998,6 +998,9 @@ fn body_shaping_vocabulary_is_closed(
             ReductionTopology::Contraction { .. } => "contraction",
             ReductionTopology::LiveContraction { .. } => "live-contraction",
             ReductionTopology::CooperativeWorkgroup { .. } => "cooperative-workgroup",
+            ReductionTopology::CooperativeContractionSplit { .. } => {
+                "cooperative-contraction-split"
+            }
             ReductionTopology::CooperativeContraction { .. } => "cooperative-contraction",
         },
         match program {
@@ -5254,6 +5257,91 @@ fn the_contraction_lowers_to_a_first_product_separately_rounded_fold() {
         3,
         "the seed product, the fold product, and the fold sum each canonicalize"
     );
+}
+
+fn contraction_split_region(membership: ContributorMembership) -> VerifiedScheduledRegion {
+    let direct = contraction_region(RegionId::new(10), 2, 3, 4);
+    let mut region = direct.region().clone();
+    let partition = ContributorPartition {
+        partitions: 2,
+        contributors_per_partition: 2,
+    };
+    region.index.iteration_shape =
+        partial_reduction_shape(&Shape::from_dims([2, 3]), partition).unwrap();
+    region.index.numerical = NumericalRealization {
+        reassociation: NumericalPermission::Permitted,
+        permutation: NumericalPermission::Permitted,
+        ..numerical()
+    };
+    region.schedule.work_items = 12;
+    region.schedule.threads_per_workgroup = 2;
+    region.schedule.launch = LaunchPlan {
+        grid_threads: 12,
+        threads_per_workgroup: 2,
+        zero_work_skips_dispatch: true,
+    };
+    region.schedule.reduction = ReductionTopology::CooperativeContractionSplit {
+        partition,
+        membership,
+        tile: workgroup_tree_tile(2).unwrap(),
+        contracted_shape: Shape::from_dims([4]),
+        order: ContributorOrder::OriginalAxisLexicographic,
+        accumulation: ArithmeticType::F32,
+        permits_reassociation: true,
+        permits_permutation: true,
+        arrival: crate::schedule::ContributorArrival::AscendingParticipant,
+    };
+    ScheduledRegionBuilder::from_region(region)
+        .build()
+        .expect("the contraction split fixture verifies")
+}
+
+fn collect_loop_bounds(block: BlockRef<'_>, found: &mut Vec<(u64, u64)>) {
+    for operation in block.operations() {
+        match operation.view() {
+            OperationView::SerialLoop(serial) => {
+                found.push((serial.start(), serial.end()));
+                collect_loop_bounds(serial.body(), found);
+            }
+            OperationView::Predicated { body, .. } => collect_loop_bounds(body, found),
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn both_contraction_memberships_lower_to_first_product_fenced_folds() {
+    const MEMBERSHIPS: [ContributorMembership;
+        core::mem::variant_count::<ContributorMembership>()] = [
+        ContributorMembership::Contiguous,
+        ContributorMembership::LaneStrided,
+    ];
+    for membership in MEMBERSHIPS {
+        let scheduled = contraction_split_region(membership);
+        let kernel = lower_scheduled_region(&scheduled).expect("the contraction split lowers");
+        let top: Vec<_> = kernel.body().operations().map(OperationRef::view).collect();
+        assert_eq!(
+            top.iter()
+                .filter(|view| matches!(view, OperationView::Barrier { .. }))
+                .count(),
+            1,
+            "{membership:?} must publish partials through one top-level barrier"
+        );
+        let (writes, reads) = staged_accesses(&kernel);
+        assert_eq!(writes, [PhaseId::FIRST]);
+        assert_eq!(reads, [PhaseId::new(1); 2]);
+        assert_eq!(binary_op_counts(&kernel, BinaryOp::F32Multiply), 2);
+        assert_eq!(binary_op_counts(&kernel, BinaryOp::F32Add), 2);
+        assert_eq!(count_canonicalizations(&kernel), 4);
+
+        let mut bounds = Vec::new();
+        collect_loop_bounds(kernel.body(), &mut bounds);
+        assert_eq!(
+            bounds,
+            [(1, 2), (1, 2)],
+            "both folds seed from ordinal zero"
+        );
+    }
 }
 
 /// A `+0.0` seed is `reduction-contract`, not a realization of `@1`.

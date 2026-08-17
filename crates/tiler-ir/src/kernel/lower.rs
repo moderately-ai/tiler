@@ -17,11 +17,11 @@
 
 use crate::schedule::{
     Access, BoundsWitnessId, CanonicalScheduledRegionIdentity, ContributorCoverage,
-    ExecutionBinding, LogicalAccess, NumericalRealization, OwnershipWitnessId,
-    PointwiseBf16Expression, PointwiseBf16Node, PointwiseF32Expression, PointwiseF32Node,
-    ReductionPass, ReductionTopology, ResourceRequirements, ScalarProgram, ScheduledRegion,
-    TailPolicy, TensorRole, VerifiedScheduledRegion, contributor_count, element_count,
-    live_input_extents,
+    ContributorMembership, ContributorPartition, ExecutionBinding, LogicalAccess,
+    NumericalRealization, OwnershipWitnessId, PointwiseBf16Expression, PointwiseBf16Node,
+    PointwiseF32Expression, PointwiseF32Node, ReductionPass, ReductionTopology,
+    ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
+    VerifiedScheduledRegion, contributor_count, element_count, live_input_extents,
 };
 use crate::shape::Shape;
 
@@ -169,6 +169,7 @@ struct CanonicalPlan<'a> {
     contributors: u64,
     addressing: Vec<ReadAddressing>,
     cooperative: Option<CooperativePlan>,
+    contraction_split: Option<(CooperativePlan, ContributorMembership)>,
     contraction: Option<CooperativeContractionPlan>,
     live_extents: Vec<(crate::schedule::AccessOrdinal, crate::shape::Axis)>,
     live_contraction: Option<(crate::schedule::AccessOrdinal, crate::shape::Axis)>,
@@ -277,6 +278,9 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
         ReductionTopology::CooperativeWorkgroup { coverage, .. } => {
             exact_partition(*coverage)?.contributors_per_partition
         }
+        ReductionTopology::CooperativeContractionSplit { partition, .. } => {
+            partition.contributors_per_partition
+        }
         ReductionTopology::CooperativeContraction {
             contracted_tile, ..
         } => crate::schedule::element_count(contracted_tile)
@@ -312,6 +316,7 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
         contributors,
         addressing,
         cooperative: cooperative_plan(schedule)?,
+        contraction_split: cooperative_contraction_split_plan(schedule)?,
         contraction: cooperative_contraction_plan(schedule)?,
         live_extents: live_input_extents(schedule),
         live_contraction: match &schedule.schedule.reduction {
@@ -341,6 +346,28 @@ fn cooperative_plan(
         return Ok(None);
     };
     let partition = exact_partition(*coverage)?;
+    cooperative_plan_from(tile, partition).map(Some)
+}
+
+fn cooperative_contraction_split_plan(
+    schedule: &ScheduledRegion,
+) -> Result<Option<(CooperativePlan, ContributorMembership)>, KernelDiagnostic> {
+    let ReductionTopology::CooperativeContractionSplit {
+        partition,
+        membership,
+        tile,
+        ..
+    } = &schedule.schedule.reduction
+    else {
+        return Ok(None);
+    };
+    cooperative_plan_from(tile, *partition).map(|plan| Some((plan, *membership)))
+}
+
+fn cooperative_plan_from(
+    tile: &crate::schedule::CooperativeTile,
+    partition: ContributorPartition,
+) -> Result<CooperativePlan, KernelDiagnostic> {
     let shape = KernelDiagnostic::CooperativeLoweringShape;
     // One allocation and two phases: the bounded profile's tile stages one
     // partial per participant and reads the set back once, however many rounds
@@ -415,7 +442,7 @@ fn cooperative_plan(
     let contributors_per_round = participants
         .checked_mul(partition.contributors_per_partition)
         .ok_or(shape)?;
-    Ok(Some(CooperativePlan {
+    Ok(CooperativePlan {
         participants,
         rounds: tile.rounds,
         contributors_per_partition: partition.contributors_per_partition,
@@ -430,7 +457,7 @@ fn cooperative_plan(
         consume_offset: read.span.offset,
         barrier,
         round_barrier,
-    }))
+    })
 }
 
 fn cooperative_contraction_plan(
@@ -666,6 +693,7 @@ fn addressing(
                 // receives the already-split roots, which is why this arm is the
                 // unsplit form and not `Partitioned`.
                 ReductionTopology::CooperativeWorkgroup { .. }
+                | ReductionTopology::CooperativeContractionSplit { .. }
                 | ReductionTopology::None
                 | ReductionTopology::Serial { .. }
                 | ReductionTopology::Contraction { .. }
@@ -927,6 +955,9 @@ fn emit(
     }
     if let Some(cooperative) = &plan.cooperative {
         return emit_cooperative(builder, plan, cooperative, requirements);
+    }
+    if let Some((split, membership)) = &plan.contraction_split {
+        return emit_cooperative_contraction_split(builder, plan, split, *membership, requirements);
     }
     if let Some(contraction) = &plan.contraction {
         return emit_cooperative_contraction(builder, plan, contraction, requirements);
@@ -1512,6 +1543,159 @@ fn emit_cooperative(
         })
     })?;
     Ok(())
+}
+
+/// Emits one fixed-membership cooperative contraction split.
+///
+/// Each participant seeds its partial from its first product, folds its exact
+/// nonempty membership set, and stages one value. After the schedule-declared
+/// barrier, participant zero seeds the root fold from slot zero and combines the
+/// remaining slots in ascending participant order. No `+0.0` seed and no fused
+/// multiply-add exists in this body.
+fn emit_cooperative_contraction_split(
+    builder: &mut KernelBuilder,
+    plan: &CanonicalPlan<'_>,
+    split: &CooperativePlan,
+    membership: ContributorMembership,
+    requirements: ResourceRequirements,
+) -> Result<(), KernelLoweringError> {
+    let ([left, right], [_, _]) = (plan.reads, plan.addressing.as_slice()) else {
+        return Err(KernelLoweringError::UnsupportedRegion {
+            rule: "cooperative-contraction-split-access-count",
+        });
+    };
+    let element_type = region_element_type(plan.scalar);
+    let left_buffer = builder.declare_buffer(BufferParameter {
+        tensor: left.tensor,
+        component_role: None,
+        element_type,
+        address_space: AddressSpace::Device,
+        access: BufferAccess::Read,
+        element_count: plan.read_elements.first().copied().unwrap_or(0),
+    })?;
+    let right_buffer = builder.declare_buffer(BufferParameter {
+        tensor: right.tensor,
+        component_role: None,
+        element_type,
+        address_space: AddressSpace::Device,
+        access: BufferAccess::Read,
+        element_count: plan.read_elements.get(1).copied().unwrap_or(0),
+    })?;
+    let write_buffer = builder.declare_buffer(BufferParameter {
+        tensor: plan.write_tensor,
+        component_role: None,
+        element_type,
+        address_space: AddressSpace::Device,
+        access: BufferAccess::Write,
+        element_count: plan.write_elements,
+    })?;
+    builder.admit_builtin(Builtin::GlobalInvocationIndex)?;
+    builder.admit_builtin(Builtin::LocalInvocationIndex)?;
+    let staging = builder.declare_staging(StagingParameter {
+        staging: split.staging,
+        element_type: KernelType::F32,
+        address_space: AddressSpace::Workgroup,
+        element_count: split.slots,
+    })?;
+    builder.numerical(plan.numerical)?;
+    builder.requirements(requirements)?;
+
+    let invocation = builder.builtin(Builtin::GlobalInvocationIndex)?;
+    let local = builder.builtin(Builtin::LocalInvocationIndex)?;
+    let (output, partition) =
+        split_partitioned_invocation(builder, invocation, split.participants)?;
+    let extent = builder.constant(KernelConstant::Index(plan.work_items))?;
+    let active = builder.compare(CompareOp::IndexLessThan, invocation, extent)?;
+    let reads = [(left_buffer, left.bounds), (right_buffer, right.bounds)];
+
+    builder.predicated(active, |builder| {
+        let seed_ordinal =
+            emit_membership_contributor(builder, membership, partition, None, split)?;
+        let seed = emit_contraction_product(builder, plan, reads, output, seed_ordinal, &[])?;
+        let partial = if split.contributors_per_partition <= 1 {
+            seed
+        } else {
+            let results = builder.serial_loop(
+                SerialLoopSpec {
+                    start: 1,
+                    end: split.contributors_per_partition,
+                },
+                &[seed],
+                |builder, parameters| {
+                    let within = parameters.induction();
+                    let accumulator = parameters
+                        .accumulator(0)
+                        .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
+                    let contributor = emit_membership_contributor(
+                        builder,
+                        membership,
+                        partition,
+                        Some(within),
+                        split,
+                    )?;
+                    let product =
+                        emit_contraction_product(builder, plan, reads, output, contributor, &[])?;
+                    let sum = builder.binary(BinaryOp::F32Add, accumulator, product)?;
+                    let sum = builder.convert(ConvertOp::CanonicalizeF32Nan, sum)?;
+                    Ok(vec![sum])
+                },
+            )?;
+            results
+                .get(0)
+                .ok_or(KernelBuildError::EmptyLoopAccumulators)?
+        };
+        let slot = emit_staged_slot(builder, split, local)?;
+        builder.staged_store(staging, slot, partial, split.produce_phase)
+    })?;
+    builder.barrier(split.barrier.clone())?;
+    builder.predicated(active, |builder| {
+        let commit = builder.constant(KernelConstant::Index(split.commit_count))?;
+        let commits = builder.compare(CompareOp::IndexLessThan, local, commit)?;
+        builder.predicated(commits, |builder| {
+            let total = emit_staged_fold(builder, split, staging, ReductionCombiner::F32Add)?;
+            builder.store(
+                write_buffer,
+                output,
+                total,
+                plan.write_bounds,
+                plan.ownership,
+            )
+        })
+    })?;
+    Ok(())
+}
+
+fn emit_membership_contributor(
+    builder: &mut KernelBuilder,
+    membership: ContributorMembership,
+    partition: Option<KernelValueId>,
+    within: Option<KernelValueId>,
+    split: &CooperativePlan,
+) -> Result<Option<KernelValueId>, KernelBuildError> {
+    match membership {
+        ContributorMembership::Contiguous => emit_partition_contributor(
+            builder,
+            None,
+            partition,
+            within,
+            split.contributors_per_partition,
+        ),
+        ContributorMembership::LaneStrided => {
+            let partition = partition.ok_or(KernelBuildError::InvalidHandle {
+                entity: super::error::KernelEntityKind::Value,
+            })?;
+            let Some(within) = within else {
+                return Ok(Some(partition));
+            };
+            let stride = builder.constant(KernelConstant::Index(split.participants))?;
+            let scaled = builder.binary(BinaryOp::IndexMultiply, within, stride)?;
+            Ok(Some(builder.binary(
+                BinaryOp::IndexAdd,
+                partition,
+                scaled,
+            )?))
+        }
+    }
 }
 
 fn emit_cooperative_contraction(

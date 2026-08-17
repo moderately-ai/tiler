@@ -15,11 +15,11 @@ use tiler_ir::shape::{Axis, Shape};
 pub(crate) use tiler_ir::kernel::VerifiedKernel;
 pub(crate) use tiler_ir::schedule::{
     Access, AccessMode, AccessOrdinal, AxisDecode, BoundsProof, BoundsProofKind, BoundsWitnessId,
-    ContractionAxisSource, ContributorCoverage, ContributorOrder, ContributorPartition,
-    ExecutionBinding, IndexArithmetic, IndexRegion, KernelSchedule, LaunchPlan, LogicalAccess,
-    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
-    PointwiseF32Expression, PointwiseF32Node, ReductionTopology, RegionId, ResourceRequirements,
-    ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
+    ContractionAxisSource, ContributorCoverage, ContributorMembership, ContributorOrder,
+    ContributorPartition, ExecutionBinding, IndexArithmetic, IndexRegion, KernelSchedule,
+    LaunchPlan, LogicalAccess, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    OwnershipWitnessId, PointwiseF32Expression, PointwiseF32Node, ReductionTopology, RegionId,
+    ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
 };
 use tiler_ir::schedule::{
     ArithmeticType, ScheduledRegionBuildError, ScheduledRegionBuilder, ScheduledRegionDiagnostic,
@@ -2003,6 +2003,172 @@ pub(crate) fn contraction_region(
     (region, normalized.members.clone())
 }
 
+/// Why one fixed-membership cooperative contraction split is unavailable.
+///
+/// Permission refusals precede all derived construction. In particular, a
+/// lane-strided request whose contract forbids permutation is refused before a
+/// partition, tile, or region exists, so malformed derived state cannot mask the
+/// caller's missing authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ContractionSplitUnavailable {
+    /// The split changes the declared association of the product sequence.
+    ReassociationForbidden,
+    /// Lane-strided membership changes contributor order within the split.
+    PermutationForbidden,
+    /// The contracted extent has no exact governed partition.
+    NoAdmissiblePartition { contributors: u64 },
+    /// A derived shape, extent, launch, or tile is not representable.
+    Unrepresentable,
+}
+
+impl ContractionSplitUnavailable {
+    pub(crate) const fn reason(self) -> &'static str {
+        match self {
+            Self::ReassociationForbidden => "reassociation-forbidden",
+            Self::PermutationForbidden => "permutation-forbidden",
+            Self::NoAdmissiblePartition { .. } => "no-admissible-partition",
+            Self::Unrepresentable => "contraction-split-unrepresentable",
+        }
+    }
+}
+
+/// Stable strategy names for the two accepted fixed membership maps.
+pub(crate) const CONTIGUOUS_CONTRACTION_SPLIT_STRATEGY: &str =
+    "tiler.contraction.cooperative-split.contiguous";
+pub(crate) const LANE_STRIDED_CONTRACTION_SPLIT_STRATEGY: &str =
+    "tiler.contraction.cooperative-split.lane-strided";
+
+/// Builds one two-read cooperative contraction split.
+///
+/// This is deliberately distinct from [`split_family`]: that admission helper
+/// describes one-read reduction families and continues to return `None` for
+/// [`ScalarProgram::StrictTensorContraction`]. Both operands keep their exact
+/// contraction access relations while the added partition axis names which
+/// contributor subset one workgroup participant owns.
+pub(crate) fn contraction_split_region(
+    request: &VerifiedTargetRequest,
+    output: &NormalizedOutput,
+    write: RegionWrite,
+    membership: ContributorMembership,
+) -> Result<(ScheduledRegion, Vec<SemanticStage>), ContractionSplitUnavailable> {
+    if request.numerical_contract().reassociation == NumericalPermission::Forbidden {
+        return Err(ContractionSplitUnavailable::ReassociationForbidden);
+    }
+    if membership.requires_permutation()
+        && request.numerical_contract().permutation == NumericalPermission::Forbidden
+    {
+        return Err(ContractionSplitUnavailable::PermutationForbidden);
+    }
+    let normalized = output
+        .contraction()
+        .expect("a contraction split is built only for a contraction output");
+    let contributors = normalized.contracted_elements;
+    let partition = governed_partition(contributors)
+        .ok_or(ContractionSplitUnavailable::NoAdmissiblePartition { contributors })?;
+    let participants = partition.partitions;
+    let tile = tiler_ir::schedule::workgroup_tree_tile(participants)
+        .ok_or(ContractionSplitUnavailable::Unrepresentable)?;
+    let iteration_shape =
+        tiler_ir::schedule::partial_reduction_shape(&normalized.output_shape, partition)
+            .ok_or(ContractionSplitUnavailable::Unrepresentable)?;
+    let work_items = normalized
+        .output_elements
+        .checked_mul(participants)
+        .ok_or(ContractionSplitUnavailable::Unrepresentable)?;
+    let threads_per_workgroup =
+        u32::try_from(participants).map_err(|_| ContractionSplitUnavailable::Unrepresentable)?;
+    let write_tensor = write.tensor();
+
+    let mut accesses = Vec::with_capacity(3);
+    let mut bounds_proofs = Vec::with_capacity(3);
+    for (position, read) in normalized.reads.iter().enumerate() {
+        let witness = u32::try_from(position).unwrap_or(u32::MAX);
+        accesses.push(Access {
+            tensor: TensorRole::Input,
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::ContractionOperand {
+                operand_shape: read.shape.clone(),
+                output_shape: normalized.output_shape.clone(),
+                contracted_shape: normalized.contracted_shape.clone(),
+                sources: contraction_operand_sources(normalized, read),
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+            bounds: BoundsWitnessId::new(witness),
+            ownership: None,
+        });
+        bounds_proofs.push(BoundsProof {
+            id: BoundsWitnessId::new(witness),
+            tensor: TensorRole::Input,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: read.elements,
+            },
+        });
+    }
+    let write_witness = u32::try_from(accesses.len()).unwrap_or(u32::MAX);
+    accesses.push(Access {
+        tensor: write_tensor,
+        component_role: None,
+        mode: AccessMode::Write,
+        map: LogicalAccess::LinearIdentity,
+        bounds: BoundsWitnessId::new(write_witness),
+        ownership: Some(OwnershipWitnessId::new(0)),
+    });
+    bounds_proofs.push(BoundsProof {
+        id: BoundsWitnessId::new(write_witness),
+        tensor: write_tensor,
+        component_role: None,
+        kind: BoundsProofKind::LinearRange {
+            element_count: normalized.output_elements,
+        },
+    });
+
+    let region = ScheduledRegion {
+        index: IndexRegion {
+            id: RegionId::new(0),
+            iteration_shape,
+            accesses,
+            bounds_proofs,
+            ownership_proof: OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: write_tensor,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                    output_count: normalized.output_elements,
+                },
+            },
+            scalar_program: ScalarProgram::StrictTensorContraction {
+                contracted_shape: normalized.contracted_shape.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
+            },
+            numerical: request.numerical_contract().realization(),
+        },
+        schedule: KernelSchedule {
+            threads_per_workgroup,
+            reduction: ReductionTopology::CooperativeContractionSplit {
+                partition,
+                membership,
+                tile,
+                contracted_shape: normalized.contracted_shape.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                accumulation: request.numerical_contract().arithmetic,
+                permits_reassociation: true,
+                permits_permutation: request.numerical_contract().permutation
+                    != NumericalPermission::Forbidden,
+                arrival: tiler_ir::schedule::ContributorArrival::AscendingParticipant,
+            },
+            launch: LaunchPlan {
+                grid_threads: work_items,
+                threads_per_workgroup,
+                zero_work_skips_dispatch: true,
+            },
+            ..linear_schedule(work_items, OwnershipWitnessId::new(0))
+        },
+    };
+    Ok((region, normalized.members.clone()))
+}
+
 /// Builds the canonical reduction scheduled region for one request.
 ///
 /// **It is the whole plan for a fold with no prologue, and the fold half of a
@@ -3463,7 +3629,16 @@ fn verify_region_output_binding(
                     == normalized.contracted_elements
                 && semantic_members == normalized.members
                 && region.index.id == RegionId::new(0)
-                && region.index.iteration_shape == normalized.output_shape
+                && match &region.schedule.reduction {
+                    ReductionTopology::CooperativeContractionSplit { partition, .. } => {
+                        tiler_ir::schedule::partial_reduction_shape(
+                            &normalized.output_shape,
+                            *partition,
+                        )
+                        .is_some_and(|shape| shape == region.index.iteration_shape)
+                    }
+                    _ => region.index.iteration_shape == normalized.output_shape,
+                }
                 && contracted_shape == &normalized.contracted_shape
                 && *canonical_nan_bits == subject.numerical_contract().canonical_arithmetic_nan_bits
                 && contraction_accesses_match(&region.index.accesses, normalized)

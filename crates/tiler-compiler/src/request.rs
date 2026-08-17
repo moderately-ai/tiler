@@ -1541,6 +1541,18 @@ impl CompilationRequest<'_> {
         )
     }
 
+    /// Test-only request constructor with an explicitly synthetic target.
+    #[cfg(test)]
+    pub(crate) fn governed_under_synthetic_target(
+        program: &SemanticProgram,
+        numerical_contract: StrictF32NumericalContract,
+        target_profile: TargetProfile,
+    ) -> CompilationRequest<'_> {
+        let mut request = Self::governed_under(program, numerical_contract);
+        request.target_profiles = vec![target_profile];
+        request
+    }
+
     /// Builds the governed request under a caller-stated ordered preference.
     ///
     /// The list is resolved by the caller's stated order against each target's

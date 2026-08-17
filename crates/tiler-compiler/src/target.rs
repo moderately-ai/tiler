@@ -4214,6 +4214,60 @@ impl TargetProfile {
             .clone()
     }
 
+    /// Test-only synthetic profile that explicitly admits permutation.
+    ///
+    /// This is not Apple evidence and is never exposed to production request
+    /// construction. It exists solely to exercise compiler structure that the
+    /// standard live Apple profile correctly refuses.
+    #[cfg(test)]
+    pub(crate) fn synthetic_permutation_for_test() -> Self {
+        let mut builder = TargetProfileBuilder::governed();
+        builder.key = TargetProfileKey::new("tiler.test.synthetic-permutation.v1".to_owned())
+            .expect("the test profile key is valid");
+        builder
+            .scalar
+            .retain(|declaration| declaration.dimension != NumericalDimension::Permutation);
+        let source = TargetFactSource(governed_profile_source());
+        builder.quantitative.retain(|declaration| {
+            !matches!(
+                declaration.axis,
+                CapabilityAxis::GridAxisThreads | CapabilityAxis::LocalMemoryBytes
+            )
+        });
+        builder
+            .declare_max_threads_per_grid_axis(1_024, source.clone())
+            .expect("the synthetic grid bound is valid");
+        builder
+            .declare_local_memory_bytes(4_096, source.clone())
+            .expect("the synthetic local-memory bound is valid");
+        let synchronization = tiler_ir::schedule::workgroup_tree_tile(2)
+            .expect("two participants form a tile")
+            .synchronization[0]
+            .subject;
+        builder
+            .declare_synchronization_realization(
+                synchronization,
+                SynchronizationSupport::Realized,
+                &source,
+            )
+            .expect("the synthetic synchronization row is valid");
+        let subject = ScalarArithmetic::f32();
+        for permission in [
+            NumericalPermission::Forbidden,
+            NumericalPermission::Permitted,
+        ] {
+            builder
+                .declare_permutation(
+                    subject.clone(),
+                    permission,
+                    ScalarSupport::Exact,
+                    source.clone(),
+                )
+                .expect("the synthetic permutation row is valid");
+        }
+        builder.build().expect("the synthetic profile is coherent")
+    }
+
     /// Returns this profile's owned key.
     #[must_use]
     pub fn profile_key(&self) -> &TargetProfileKey {

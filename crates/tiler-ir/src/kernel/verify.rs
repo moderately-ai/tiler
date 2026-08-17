@@ -1684,6 +1684,22 @@ fn verify_reduction(
                 .ok_or(KernelDiagnostic::ElementCountOverflow)?,
             tile.rounds,
         ),
+        ReductionTopology::CooperativeContractionSplit {
+            partition, tile, ..
+        } => {
+            if reads.len() != 2 {
+                return Err(KernelDiagnostic::ReductionContract);
+            }
+            verify_cooperative_loops(
+                walk,
+                *partition,
+                tile.coordinates
+                    .participants
+                    .participants()
+                    .ok_or(KernelDiagnostic::ElementCountOverflow)?,
+                tile.rounds,
+            )
+        }
         ReductionTopology::CooperativeContraction {
             contracted_tile, ..
         } => {

@@ -1,4 +1,5 @@
 #![doc(test(attr(forbid(unsafe_code))))]
+#![cfg_attr(test, feature(variant_count))]
 //! Cross-layer executed conformance evidence for Tiler.
 //!
 //! A target profile is a set of claims, and conformance is what refutes them.
@@ -153,6 +154,7 @@
 //! | module | what it owns |
 //! | --- | --- |
 //! | `bf16_vertical` | the BF16 corpus, its semantic program, scheduled region, emission, and comparison |
+//! | `contraction_split` | the retained eight-case FTZ oracle for both fixed contraction membership maps; deterministic and device-free |
 //! | `serial_sum` | the `f32` reduction vertical: the direct path, the retained portfolio, and the declared-grouping oracle |
 //! | `loop_carried` | the first multi-round cooperative kernel, executed on Metal against the reference-owned grouping |
 //! | `envelope` | the artifact-delivered route: interface, placement, fail-closed probes, and the retained-digest comparison |
@@ -229,6 +231,8 @@
 mod applicability;
 #[cfg(test)]
 mod bf16_vertical;
+#[cfg(test)]
+mod contraction_split;
 #[cfg(all(test, target_os = "macos"))]
 mod device_buffer;
 #[cfg(test)]

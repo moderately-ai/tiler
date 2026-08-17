@@ -28,14 +28,14 @@ use tiler_ir::kernel::{
 use tiler_ir::schedule::{
     Access, AccessMode, AccessOrdinal, ArithmeticType, AxisDecode, BoundsProof, BoundsProofKind,
     BoundsWitnessId, ContractionAxisSource, ContributorArrival, ContributorCoverage,
-    ContributorOrder, ContributorPartition, ConvergenceEvidence, ExceptionalValueAssumption,
-    ExecutionBinding, FlushedZeroSign, KernelSchedule, LaunchPlan, LogicalAccess,
-    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    ContributorMembership, ContributorOrder, ContributorPartition, ConvergenceEvidence,
+    ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign, KernelSchedule, LaunchPlan,
+    LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
     OwnershipWitnessId, PointwiseBf16Expression, PointwiseBf16ExpressionBuilder,
     PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId,
     ScalarProgram, ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode, SyncPointId,
     SynchronizationPlacement, SynchronizationPoint, TailPolicy, TensorRole, ValueDomainProvenance,
-    VerifiedScheduledRegion, element_count, workgroup_tree_tile,
+    VerifiedScheduledRegion, element_count, partial_reduction_shape, workgroup_tree_tile,
 };
 use tiler_ir::semantic::{CANONICAL_BF16_ARITHMETIC_NAN_BITS, RMS_NORM_F32_REFERENCE_EPS_BITS};
 use tiler_ir::semantic::{
@@ -860,6 +860,51 @@ pub(crate) fn contraction_kernel() -> VerifiedKernel {
         .expect("bounded contraction fixture lowers")
 }
 
+fn contraction_split_region(
+    id: RegionId,
+    membership: ContributorMembership,
+) -> VerifiedScheduledRegion {
+    let direct = contraction_region(id, 2, 3, 4);
+    let mut region = direct.region().clone();
+    let partition = ContributorPartition {
+        partitions: 2,
+        contributors_per_partition: 2,
+    };
+    region.index.iteration_shape =
+        partial_reduction_shape(&Shape::from_dims([2, 3]), partition).unwrap();
+    region.index.numerical = NumericalRealization {
+        reassociation: NumericalPermission::Permitted,
+        permutation: NumericalPermission::Permitted,
+        ..numerical(NAN_BITS)
+    };
+    region.schedule.work_items = 12;
+    region.schedule.threads_per_workgroup = 2;
+    region.schedule.launch = LaunchPlan {
+        grid_threads: 12,
+        threads_per_workgroup: 2,
+        zero_work_skips_dispatch: true,
+    };
+    region.schedule.reduction = ReductionTopology::CooperativeContractionSplit {
+        partition,
+        membership,
+        tile: workgroup_tree_tile(2).unwrap(),
+        contracted_shape: Shape::from_dims([4]),
+        order: ContributorOrder::OriginalAxisLexicographic,
+        accumulation: ArithmeticType::F32,
+        permits_reassociation: true,
+        permits_permutation: true,
+        arrival: ContributorArrival::AscendingParticipant,
+    };
+    ScheduledRegionBuilder::from_region(region)
+        .build()
+        .expect("the synthetic contraction split verifies")
+}
+
+fn contraction_split_kernel(membership: ContributorMembership) -> VerifiedKernel {
+    lower_scheduled_region(&contraction_split_region(RegionId::new(12), membership))
+        .expect("the synthetic contraction split lowers")
+}
+
 /// The single-workgroup tree realization of a `[2, 6] -> [2]` strict sum.
 ///
 /// Three participants per workgroup, each folding two contributors into its own
@@ -1452,6 +1497,55 @@ fn cooperative_workgroup_reduction_matches_its_golden_source() {
         "cooperative_workgroup_reduction.metal",
         include_str!("../goldens/cooperative_workgroup_reduction.metal"),
         &emit_one(&cooperative_kernel()),
+    );
+}
+
+#[test]
+fn contraction_splits_emit_distinct_synchronized_non_fused_sources() {
+    const MEMBERSHIPS: [ContributorMembership;
+        core::mem::variant_count::<ContributorMembership>()] = [
+        ContributorMembership::Contiguous,
+        ContributorMembership::LaneStrided,
+    ];
+    let [contiguous, strided] = MEMBERSHIPS.map(|membership| {
+        let kernel = contraction_split_kernel(membership);
+        emit_one(&kernel)
+    });
+    let source_digest = |source: &str| {
+        source
+            .as_bytes()
+            .iter()
+            .fold(0xcbf2_9ce4_8422_2325_u64, |digest, byte| {
+                (digest ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+            })
+    };
+    assert_ne!(
+        contiguous, strided,
+        "membership must reach emitted addressing"
+    );
+    for (membership, source) in MEMBERSHIPS.into_iter().zip([&contiguous, &strided]) {
+        assert!(
+            source.contains("threadgroup float tg0[2];"),
+            "{membership:?}: {source}"
+        );
+        assert_eq!(
+            source.matches("threadgroup_barrier(").count(),
+            1,
+            "{membership:?}: {source}"
+        );
+        assert!(!source.contains("fma("), "{membership:?}: {source}");
+        assert_eq!(
+            source
+                .matches("tiler_canonicalize_nan_f32_7fc00000(")
+                .count(),
+            5,
+            "{membership:?}: {source}"
+        );
+    }
+    assert_eq!(
+        [source_digest(&contiguous), source_digest(&strided)],
+        [0xc52d_68e9_2c0d_686e, 0xf125_71cf_dd36_cb91],
+        "the complete synthetic Metal sources are golden-pinned"
     );
 }
 

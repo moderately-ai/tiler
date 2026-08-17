@@ -168,6 +168,11 @@ pub enum ScheduledRegionDiagnostic {
         /// The violated coverage rule.
         rule: ContributorCoverageRule,
     },
+    /// A cooperative contraction split violated a topology-specific rule.
+    ContractionSplit {
+        /// The violated split rule.
+        rule: ContractionSplitRule,
+    },
     /// The blocked-workgroup execution binding is not a bijection from launched
     /// invocations onto the declared output domain, or it is paired with the
     /// wrong topology.
@@ -429,6 +434,43 @@ impl fmt::Display for ContributorCoverageRule {
 }
 impl Error for ContributorCoverageRule {}
 
+/// One violated rule of a cooperative contraction split.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum ContractionSplitRule {
+    /// The split consumes reassociation and the contract withholds it.
+    ReassociationPermission,
+    /// Lane-strided membership consumes permutation and the contract withholds it.
+    PermutationPermission,
+    /// The exact partition does not cover the positive contracted sequence.
+    ExactCoverage,
+    /// The tile participant set does not equal the partition set.
+    ParticipantPartition,
+    /// The staged partial arrival is not fixed ascending-participant order.
+    UnadmittedArrival,
+}
+
+impl ContractionSplitRule {
+    /// Returns the stable rule identifier for this refusal.
+    #[must_use]
+    pub const fn rule(self) -> &'static str {
+        match self {
+            Self::ReassociationPermission => "contraction-split-reassociation-permission",
+            Self::PermutationPermission => "contraction-split-permutation-permission",
+            Self::ExactCoverage => "contraction-split-exact-coverage",
+            Self::ParticipantPartition => "contraction-split-participant-partition",
+            Self::UnadmittedArrival => "contraction-split-unadmitted-arrival",
+        }
+    }
+}
+
+impl fmt::Display for ContractionSplitRule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.rule())
+    }
+}
+impl Error for ContractionSplitRule {}
+
 /// Typed preflight refusal for an exact-divisible cooperative contraction.
 ///
 /// A caller selecting the tiled approach receives one of these when an
@@ -532,6 +574,7 @@ impl ScheduledRegionDiagnostic {
             Self::CooperativeTile { rule } => rule.rule(),
             Self::Synchronization { rule } => rule.rule(),
             Self::ContributorCoverage { rule } => rule.rule(),
+            Self::ContractionSplit { rule } => rule.rule(),
             Self::BlockedWorkgroup { rule } => rule.rule(),
         }
     }
