@@ -1,7 +1,7 @@
 ---
 id: refresh-status-and-roadmap-after-landed-cache-reduction-sync-and-l8-work
 title: Refresh status and roadmap after landed cache, reduction, synchronization, and L8 work
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [decide-the-expansion-cache-collection-schedule, wire-the-env-configured-eviction-policy-through-the-deliver-path, calibrate-and-activate-parallel-reduction-selection, check-synchronization-realization-before-the-routing-commit, correct-the-roadmap-s-milestone-0b-inline-composition-claim, land-the-model-level-qualification-record, decide-the-tiler-metal-public-facade-surface]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, status, roadmap, correction]
+claimed_from: todo
+assignee: worker-status-roadmap
+lease_expires_at: 1786976056
 ---
 ## User-visible outcome
 
