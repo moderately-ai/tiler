@@ -1,7 +1,7 @@
 ---
 id: implement-the-composed-realization-evaluation-driver
 title: Implement the composed realization evaluation driver
-status: todo
+status: in-progress
 priority: p2
 dependencies: [retain-each-plan-alternative-s-verified-semantic-candidate, define-the-composed-realization-driver-subject-bridge]
 related: [accept-the-composed-realization-evaluation-surface, compose-a-declared-reduction-topology-into-a-semantic-program-evaluation, decide-the-safe-cross-crate-composed-reference-boundary]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/conformance, implementation/ir,
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, public-boundary, conformance, reference, numerics, correctness]
+claimed_from: todo
+assignee: worker-composed-driver
+lease_expires_at: 1786977751
 ---
 ## User-visible outcome
 
