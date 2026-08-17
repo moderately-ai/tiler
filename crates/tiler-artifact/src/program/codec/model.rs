@@ -561,7 +561,11 @@ impl ArtifactEnvelope {
 
         let mut variants = Vec::with_capacity(data.variants.len());
         for (declared, variant) in data.variants.iter().enumerate() {
-            let stage_keys: Vec<Vec<u8>> = variant.program.stages().map(stage_key).collect();
+            let stage_keys: Vec<Vec<u8>> = variant
+                .program
+                .stages()
+                .map(|stage| stage_key(&variant.program, stage))
+                .collect();
             if stage_keys.len() != variant.entries.len() {
                 return Err(ArtifactDiagnostic::AmbiguousCanonicalKey {
                     entity: ArtifactEntityKind::Entry,

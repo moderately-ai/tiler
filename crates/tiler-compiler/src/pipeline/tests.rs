@@ -8440,6 +8440,7 @@ fn split_assembly(
             combiner: 2,
             partial: 1,
             result: 2,
+            occurrence: subject.members.reduction()[0].member(),
             partition,
         }],
         Vec::new(),

@@ -90,8 +90,9 @@
 //!
 //! This caller-boundary fixture has no later-input-fold test. Its positive rows
 //! remain ordered multi-output admission and disjoint elementwise input-subset
-//! binding; its negative rows remain shared publication, the same-shaped split
-//! stage-key collision, and publication/consumption role exclusivity; and its
+//! binding; its negative rows remain shared publication and
+//! publication/consumption role exclusivity, while the same-shaped split pair
+//! is now a positive complete-ownership regression; and its
 //! identity row remains semantic output order. The completed
 //! `admit-a-fold-over-any-declared-input-in-the-scheduled-region-vocabulary`
 //! owns the widening rather than this file.
@@ -451,27 +452,25 @@ fn two_outputs_reading_disjoint_declared_inputs_compile_binding_only_what_they_r
     );
 }
 
-/// Two independently declared, same-shaped producer chains still collide at
-/// the current public compiler boundary.
+/// Two independently declared, same-shaped producer chains retain distinct
+/// realization-owned program stages at the public compiler boundary.
 ///
 /// Reassociation makes each four-contributor fold's split alternative
 /// reachable. The two split combiners bind distinct materialized values but
 /// dispatch the same kernel. Each physical pass claims its own fold occurrence's
-/// second semantic stage, but program assembly projects only first-stage atoms
-/// into `CoveredOccurrence`, so both combiners carry an empty IR coverage list.
-/// Kernel plus that projected coverage is the complete subject `stage_key`
-/// compares. Whole-program verification therefore rejects the pair as
-/// ambiguous and the public boundary classifies the defect as
-/// [`CompileFailureClass::InvalidCompilerOutput`].
+/// second semantic stage, while `CoveredOccurrence` remains the stage-zero
+/// projection. The complete owner adds their proof-bound nonzero continuation
+/// claims, so equal kernels and empty stage-zero coverage no longer collapse
+/// the two combiners into one canonical stage subject.
 ///
 /// The shape perturbation is the executable neighbour: reducing `y` from four
 /// contributors to two removes its split alternative, and therefore the second
-/// uncovered combiner carrying the same stage key. Keeping the request,
-/// operation families, bindings, and output cardinality otherwise fixed proves
-/// the changed result belongs to the stage subject rather than to the expected
-/// error.
+/// uncovered combiner carrying the same kernel plus projected coverage.
+/// Keeping the request, operation families, bindings, and output cardinality
+/// otherwise fixed proves the changed compilation result belongs to complete
+/// stage ownership rather than an incidental request difference.
 #[test]
-fn same_shaped_epilogue_chains_reach_invalid_compiler_output() {
+fn same_shaped_epilogue_chains_compile_with_distinct_stage_owners() {
     let control = one_epilogue_chain_program();
     assert_eq!(control.input_count(), 1);
     assert_eq!(control.output_count(), 1);
@@ -491,21 +490,12 @@ fn same_shaped_epilogue_chains_reach_invalid_compiler_output() {
         "one chain must compile or the pair is not evidence about a collision",
     );
     let targets = TargetRequest::new([TargetProfile::governed()]).unwrap();
-    let failure = compile(CompileRequest::new(&same_shape, contract, targets))
-        .expect_err("the two same-shaped split chains still collide");
-    assert_eq!(
-        failure.class(),
-        CompileFailureClass::InvalidCompilerOutput,
-        "the public boundary must report its own ambiguous stage-key output as a defect",
-    );
-    assert!(
-        failure.explain().is_some(),
-        "program verification happens after the target-qualified trace opens",
-    );
+    compile(CompileRequest::new(&same_shape, contract, targets))
+        .expect("same-shaped split combiners differ by their proof-bound realization ownership");
     assert_eq!(
         compile_under(&different_extent, contract),
         Ok(()),
-        "changing only one chain's extent must remove the colliding split combiner",
+        "changing only one chain's extent must remove the second split combiner",
     );
 }
 

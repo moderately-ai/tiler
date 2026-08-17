@@ -20,8 +20,8 @@ use super::builder::SemanticSubject;
 use super::error::{KernelProgramDiagnostic, ProgramEntityKind};
 use super::model::{
     CanonicalKeys, DependencyReasonData, DerivedProgramFacts, KernelProgramData,
-    ROUTING_COMMIT_TRANSITIONS, RoutingCommitState, StageAccessMode, ValueDefinition, ValueRole,
-    canonical_keys,
+    PublicationStageClaim, ROUTING_COMMIT_TRANSITIONS, RealizationStageClaim, RoutingCommitState,
+    StageAccessMode, StageOwner, ValueDefinition, ValueRole, canonical_keys,
 };
 
 /// One stage access to one materialized value.
@@ -51,21 +51,12 @@ pub(super) fn verify_program(
     let definitions = definitions(data)?;
     verify_coverage(data, subject)?;
 
-    let keys = canonical_keys(data, &definitions);
-    verify_unambiguous(&keys)?;
-
     // Every edge must state an obligation its two stages realize before the
     // graph those edges induce is ordered: a cycle closed by a meaningless edge
     // should name the meaningless edge.
     verify_dependencies(data, &accesses, &definitions)?;
     let successors = successor_lists(data);
-    let execution_order = canonical_execution_order(data, &keys.stages, &successors)
-        .ok_or(KernelProgramDiagnostic::DependencyCycle)?;
 
-    // After the dependency phase, so a split whose passes are unordered reports
-    // the missing edge rather than the split, and before storage, so a split
-    // that stages its partials in an aliasable place is named as a split.
-    verify_stage_accounts(data)?;
     verify_partial_reductions(data, &accesses, &definitions)?;
     // After the split phase, so a program declaring both accounts for one stage
     // reports the split obligation it names rather than the copy obligation it
@@ -77,12 +68,22 @@ pub(super) fn verify_program(
     // reports the older obligation, which is the one whose other half the
     // program also names.
     verify_staged_realizations(data, &accesses, &definitions)?;
+    // The declaration-specific facts lead: an invalid split/copy/continuation
+    // names its own broken obligation before the stage-account projection sees
+    // the uncovered dispatch it would otherwise have explained.
+    verify_stage_accounts(data)?;
 
+    verify_outputs(data, subject)?;
+    verify_components(data, subject)?;
+
+    let stage_owners = derive_stage_owners(data)?;
+    let keys = canonical_keys(data, &definitions, &stage_owners);
+    verify_unambiguous(&keys)?;
+    let execution_order = canonical_execution_order(data, &keys.stages, &successors)
+        .ok_or(KernelProgramDiagnostic::DependencyCycle)?;
     verify_usage(data, &accesses)?;
     verify_storage(data)?;
     verify_reuse(data, &accesses, &definitions, &execution_order, &successors)?;
-    verify_outputs(data, subject)?;
-    verify_components(data, subject)?;
 
     // Last, because a program whose structure does not hold has a more basic
     // defect than an incomplete routing contract, and reporting the contract
@@ -94,9 +95,152 @@ pub(super) fn verify_program(
         DerivedProgramFacts {
             definitions,
             execution_order,
+            stage_owners,
         },
         keys,
     ))
+}
+
+/// Derives the complete, closed canonical owner of every physical stage.
+///
+/// Coverage proves a realization's stage zero.  The two declaration families
+/// that continue semantic work add later ordinals by following their exact
+/// edges; a publishing copy is the sole non-semantic administrative case and
+/// derives its output component from the already-verified interface record.
+/// No builder position or downstream value/allocation key participates.
+#[cfg_attr(test, allow(dead_code))]
+pub(super) fn derive_stage_owners(
+    data: &KernelProgramData,
+) -> Result<Vec<StageOwner>, KernelProgramDiagnostic> {
+    let mut realization: Vec<Vec<RealizationStageClaim>> = vec![Vec::new(); data.stages.len()];
+    for (stage, data) in data.stages.iter().enumerate() {
+        for covered in &data.coverage {
+            realization[stage].push(RealizationStageClaim {
+                covered: covered.clone(),
+                ordinal: 0,
+            });
+        }
+    }
+
+    let mut occurrences: Vec<u32> = data
+        .stages
+        .iter()
+        .flat_map(|stage| {
+            stage
+                .coverage
+                .iter()
+                .map(|covered| covered.occurrence().get())
+        })
+        .collect();
+    occurrences.extend(data.partial_reductions.iter().map(|split| split.occurrence));
+    occurrences.extend(
+        data.staged_realizations
+            .iter()
+            .map(|realization| realization.occurrence),
+    );
+    occurrences.sort_unstable();
+    occurrences.dedup();
+    for occurrence in occurrences {
+        let Some((root, proof)) = data.stages.iter().enumerate().find_map(|(stage, data)| {
+            data.coverage
+                .iter()
+                .find(|covered| covered.occurrence().get() == occurrence)
+                .cloned()
+                .map(|covered| (stage, covered))
+        }) else {
+            return Err(KernelProgramDiagnostic::ForeignStageOwnerProof);
+        };
+        let mut edges: Vec<(u32, u32)> = data
+            .partial_reductions
+            .iter()
+            .filter(|split| split.occurrence == occurrence)
+            .map(|split| (split.producer, split.combiner))
+            .chain(
+                data.staged_realizations
+                    .iter()
+                    .filter(|row| row.occurrence == occurrence)
+                    .map(|row| (row.producer, row.consumer)),
+            )
+            .collect();
+        if edges.is_empty() {
+            continue;
+        }
+        let mut current = ordinal(root);
+        let mut next_ordinal = 1_u32;
+        let mut walked = 0_usize;
+        let mut reached = vec![false; data.stages.len()];
+        reached[root] = true;
+        while let Some((_, next)) = edges.iter().find(|(producer, _)| *producer == current) {
+            if edges
+                .iter()
+                .filter(|(producer, _)| *producer == current)
+                .count()
+                != 1
+            {
+                return Err(KernelProgramDiagnostic::DuplicateStageOwnerOrdinal);
+            }
+            if reached[position(*next)] {
+                return Err(KernelProgramDiagnostic::DuplicateStageOwnerOrdinal);
+            }
+            reached[position(*next)] = true;
+            realization[position(*next)].push(RealizationStageClaim {
+                covered: proof.clone(),
+                ordinal: next_ordinal,
+            });
+            current = *next;
+            next_ordinal = next_ordinal.saturating_add(1);
+            walked = walked.saturating_add(1);
+        }
+        if walked != edges.len() {
+            return Err(KernelProgramDiagnostic::SkippedStageOwnerOrdinal);
+        }
+        edges.clear();
+    }
+
+    let mut publication: Vec<Vec<PublicationStageClaim>> = vec![Vec::new(); data.stages.len()];
+    for copy in &data.publishing_copies {
+        let Some(output) = data
+            .outputs
+            .iter()
+            .find(|output| output.value == copy.published)
+        else {
+            return Err(KernelProgramDiagnostic::MissingPublicationOwner);
+        };
+        publication[position(copy.publisher)].push(PublicationStageClaim {
+            key: output.key.clone(),
+            component_role: data.values[position(copy.published)].component_role,
+        });
+    }
+
+    for claims in &mut realization {
+        claims.sort_by(|left, right| {
+            left.covered
+                .occurrence()
+                .get()
+                .cmp(&right.covered.occurrence().get())
+                .then_with(|| left.ordinal.cmp(&right.ordinal))
+        });
+    }
+    for claims in &mut publication {
+        claims.sort_by(|left, right| {
+            left.key
+                .as_str()
+                .cmp(right.key.as_str())
+                .then_with(|| left.component_role.cmp(&right.component_role))
+        });
+    }
+    realization
+        .into_iter()
+        .zip(publication)
+        .map(
+            |(realization, publication)| match (realization.is_empty(), publication.is_empty()) {
+                (false, true) => Ok(StageOwner::Realization(realization)),
+                (true, false) => Ok(StageOwner::Publication(publication)),
+                (true, true) => Err(KernelProgramDiagnostic::MissingStageOwner),
+                (false, false) => Err(KernelProgramDiagnostic::AmbiguousStageOwner),
+            },
+        )
+        .collect()
 }
 
 fn position(index: u32) -> usize {

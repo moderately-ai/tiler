@@ -560,6 +560,8 @@ pub struct PartialReduction {
     pub partial: MaterializedValueId,
     /// Materialized value carrying the combined reduction result.
     pub result: MaterializedValueId,
+    /// Canonical occurrence whose next realization stage combines the partials.
+    pub occurrence: SemanticOccurrence,
     /// Partial values produced per result position.
     pub partitions: u64,
     /// Original contributors each partial value combines.
@@ -743,6 +745,33 @@ pub(super) struct StageData {
     pub(super) launch: StageLaunchData,
 }
 
+/// The complete, provenance-derived owner of one physical stage.
+///
+/// This stays an internal projection rather than a fourth public declaration:
+/// the accepted `PartialReduction`, `PublishingCopy`, and
+/// `StagedRealization` records remain the producer-stated obligations.  The
+/// verifier derives this closed subject from those records and proof-bound
+/// coverage, then both identity writers encode it independently.
+#[derive(Clone, Debug)]
+pub(super) enum StageOwner {
+    Realization(Vec<RealizationStageClaim>),
+    Publication(Vec<PublicationStageClaim>),
+}
+
+/// One proof-bound semantic stage a dispatch realizes.
+#[derive(Clone, Debug)]
+pub(super) struct RealizationStageClaim {
+    pub(super) covered: CoveredOccurrence,
+    pub(super) ordinal: u32,
+}
+
+/// One exact output component an administrative publisher writes.
+#[derive(Clone, Debug)]
+pub(super) struct PublicationStageClaim {
+    pub(super) key: OutputKey,
+    pub(super) component_role: Option<EncodedComponentRole>,
+}
+
 /// Storage for one stage access.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct StageAccessData {
@@ -815,6 +844,7 @@ pub(super) struct PartialReductionData {
     pub(super) combiner: u32,
     pub(super) partial: u32,
     pub(super) result: u32,
+    pub(super) occurrence: u32,
     pub(super) partitions: u64,
     pub(super) contributors_per_partition: u64,
 }
@@ -880,6 +910,8 @@ pub(super) struct DerivedProgramFacts {
     pub(super) definitions: Vec<Option<ValueDefinition>>,
     /// Canonical topological stage order of the single-stream execution profile.
     pub(super) execution_order: Vec<u32>,
+    /// Complete canonical owner of every stage, in declaration order.
+    pub(super) stage_owners: Vec<StageOwner>,
 }
 
 /// Opaque canonical bytes identifying one verified kernel program.
@@ -1531,6 +1563,12 @@ impl<'a> PartialReductionRef<'a> {
         }
     }
 
+    /// Returns the occurrence whose next realization stage combines the partials.
+    #[must_use]
+    pub fn occurrence(self) -> SemanticOccurrence {
+        SemanticOccurrence::new(self.data().occurrence)
+    }
+
     /// Returns the partial values produced per result position.
     #[must_use]
     pub fn partitions(self) -> u64 {
@@ -1685,15 +1723,16 @@ impl<'a> ProgramOutputRef<'a> {
     }
 }
 
-/// Cross-reference key domains; the stage key moved to `v2` with proof-bound
-/// coverage, and the other three are unchanged at `v1`.
+/// Cross-reference key domains; the stage key moved to `v3` when complete
+/// provenance-derived ownership replaced coverage as its whole subject, and the
+/// other three are unchanged at `v1`.
 ///
 /// These keys are what dependency edges, value definitions and allocation
 /// bindings name each other by. `complete-program-identity-with-abi-guards-and-routing`
 /// added the entry ABI, the applicability guard and the routing-commit contract
 /// to *program* identity without changing what any of these keys means: a stage
-/// is still identified by the implementation it binds and the coverage it
-/// claims, and its launch geometry is folded beside it in the program encoding
+/// is identified by the implementation it binds and its complete canonical
+/// owner, and its launch geometry is folded beside it in the program encoding
 /// rather than into the key other entities cross-reference it by.
 ///
 /// `v2` is what that coverage now says. Each record writes the occurrence
@@ -1705,11 +1744,11 @@ impl<'a> ProgramOutputRef<'a> {
 /// than a cache-miss obligation. It is taken anyway, because a canonical key
 /// compared on its own is exactly the value whose separator must describe the
 /// bytes that follow it.
-const STAGE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.stage.v2\0";
+const STAGE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.stage.v3\0";
 const VALUE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.value.v1\0";
 const VIEW_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.view.v1\0";
 const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
-/// Program identity domain, currently `v11`.
+/// Program identity domain, currently `v12`.
 ///
 /// `v2` folded the semantic graph, bound implementations, coverage, program
 /// structure, the entry ABI, the applicability guard and the routing-commit
@@ -1816,6 +1855,18 @@ const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
 /// **which occurrence** it continues is not derivable at all, because coverage
 /// records only the occurrence's first stage.
 ///
+/// `v12` makes complete stage ownership part of both the stage and program
+/// grammars. A realization-owned stage writes its nonempty canonical set of
+/// proof-bound `(occurrence, stage ordinal)` claims, retaining stage zero's
+/// `CoveredOccurrence` and every later split or staged continuation; an
+/// administrative publishing copy instead writes its nonempty exact `(output
+/// key, component role)` set. `PartialReduction` now carries the occurrence its
+/// combiner continues, so the verifier derives one unified per-occurrence path,
+/// refuses a foreign root, fork, merge, loop, skipped edge, or mixed owner, and
+/// cannot guess the occurrence from a producer covering several fused ones.
+/// This changes the stage-record grammar itself and appends that occurrence to
+/// each split record, so `v11` must miss rather than reinterpret either record.
+///
 /// **`v11` holds through ADR 0104, and the derivation is the reason rather than
 /// the absence of one.** That record folds the bound graph's identity inside
 /// each executable-coverage record as a fixed-width digest, so every program's
@@ -1841,7 +1892,7 @@ const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
 /// `tiler.artifact-program.v15`, and manifest schema 15.0 one layer up. A domain
 /// stepped without a grammar change would cost a cache miss it had no reading to
 /// protect.
-const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v11\0";
+const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v12\0";
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());
@@ -1935,14 +1986,20 @@ pub(super) struct CanonicalKeys {
 /// Derives the canonical content key of every entity.
 ///
 /// The layering is acyclic by construction: a stage key names only its bound
-/// kernel and coverage, a value key names its defining stage key, a view key
-/// names its base value key, and an allocation key names the value keys it
-/// binds.
+/// kernel and complete canonical owner, a value key names its defining stage
+/// key, a view key names its base value key, and an allocation key names the
+/// value keys it binds.
 pub(super) fn canonical_keys(
     data: &KernelProgramData,
     definitions: &[Option<ValueDefinition>],
+    stage_owners: &[StageOwner],
 ) -> CanonicalKeys {
-    let stages: Vec<Vec<u8>> = data.stages.iter().map(stage_key).collect();
+    let stages: Vec<Vec<u8>> = data
+        .stages
+        .iter()
+        .zip(stage_owners)
+        .map(|(stage, owner)| stage_key(stage, owner))
+        .collect();
     let values: Vec<Vec<u8>> = data
         .values
         .iter()
@@ -1968,24 +2025,52 @@ pub(super) fn canonical_keys(
     }
 }
 
-fn stage_key(stage: &StageData) -> Vec<u8> {
+fn stage_key(stage: &StageData, owner: &StageOwner) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(STAGE_KEY_DOMAIN);
     push_slice(&mut bytes, stage.kernel.canonical_identity().as_bytes());
-    push_len(&mut bytes, stage.coverage.len());
-    for covered in &stage.coverage {
-        // Destructured rather than read through accessors so that a field added
-        // to `CoveredOccurrence` is a compile error here instead of silently
-        // going unfolded. `graph` is bound and discarded deliberately: the
-        // program encoding writes its one bound graph identity once, above.
-        let CoveredOccurrence {
-            graph: _,
-            occurrence,
-            refinement,
-        } = covered;
-        bytes.extend_from_slice(&occurrence.get().to_be_bytes());
-        push_slice(&mut bytes, refinement.as_bytes());
+    push_stage_owner(&mut bytes, owner);
+    bytes
+}
+
+fn push_stage_owner(bytes: &mut Vec<u8>, owner: &StageOwner) {
+    match owner {
+        StageOwner::Realization(claims) => {
+            bytes.push(0x01);
+            push_len(bytes, claims.len());
+            for claim in claims {
+                // Destructure the proof-bound record so widening it fails this
+                // writer rather than silently omitting new proof state.
+                let CoveredOccurrence {
+                    graph: _,
+                    occurrence,
+                    refinement,
+                } = &claim.covered;
+                bytes.extend_from_slice(&claim.ordinal.to_be_bytes());
+                bytes.extend_from_slice(&occurrence.get().to_be_bytes());
+                push_slice(bytes, refinement.as_bytes());
+            }
+        }
+        StageOwner::Publication(claims) => {
+            bytes.push(0x02);
+            push_len(bytes, claims.len());
+            for claim in claims {
+                push_slice(bytes, claim.key.as_str().as_bytes());
+                push_component_role(bytes, claim.component_role);
+            }
+        }
     }
+}
+
+/// Encodes the complete owner subject without a kernel or stage-key domain.
+///
+/// Test-only access lets the IR suite perturb each admitted owner field while
+/// keeping downstream values, allocations, and declaration order out of the
+/// subject by construction.
+#[cfg(test)]
+pub(super) fn encoded_stage_owner_for_test(owner: &StageOwner) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    push_stage_owner(&mut bytes, owner);
     bytes
 }
 
@@ -2156,6 +2241,7 @@ pub(super) fn encode_identity(
     data: &KernelProgramData,
     keys: &CanonicalKeys,
     definitions: &[Option<ValueDefinition>],
+    stage_owners: &[StageOwner],
 ) -> Result<CanonicalKernelProgramIdentity, KernelProgramDiagnostic> {
     let stages = canonical_ids(&keys.stages);
     let values = canonical_ids(&keys.values);
@@ -2175,25 +2261,13 @@ pub(super) fn encode_identity(
     push_slice(&mut bytes, data.semantic_graph.as_bytes());
     arena.encode(&data.abi_expressions, &mut bytes);
 
-    // A stage names only its bound implementation and its proof-bound coverage,
-    // so it depends on no other entity and leads.
+    // A stage names only its bound implementation and complete proof-bound
+    // owner, so it depends on no other entity and leads.
     push_len(&mut bytes, data.stages.len());
-    for stage in &stages.order {
-        let stage = &data.stages[*stage];
+    for stage_index in &stages.order {
+        let stage = &data.stages[*stage_index];
         push_slice(&mut bytes, stage.kernel.canonical_identity().as_bytes());
-        push_len(&mut bytes, stage.coverage.len());
-        for covered in &stage.coverage {
-            // Destructured for the reason `stage_key` is: a widened
-            // `CoveredOccurrence` must stop this build rather than encode less
-            // than the record holds.
-            let CoveredOccurrence {
-                graph: _,
-                occurrence,
-                refinement,
-            } = covered;
-            bytes.extend_from_slice(&occurrence.get().to_be_bytes());
-            push_slice(&mut bytes, refinement.as_bytes());
-        }
+        push_stage_owner(&mut bytes, &stage_owners[*stage_index]);
     }
 
     push_len(&mut bytes, data.values.len());
@@ -2399,6 +2473,7 @@ fn encode_partial_reduction(
     stages.push(&mut bytes, split.combiner);
     values.push(&mut bytes, split.partial);
     values.push(&mut bytes, split.result);
+    bytes.extend_from_slice(&split.occurrence.to_be_bytes());
     bytes.extend_from_slice(&split.partitions.to_be_bytes());
     bytes.extend_from_slice(&split.contributors_per_partition.to_be_bytes());
     bytes

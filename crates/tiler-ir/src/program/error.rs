@@ -590,6 +590,18 @@ pub enum KernelProgramDiagnostic {
     ///
     /// [`ValueRole::Output`]: super::ValueRole::Output
     UncoveringStage,
+    /// No complete provenance-derived canonical owner names a stage.
+    MissingStageOwner,
+    /// A realization continuation names an occurrence with no proof-bound root.
+    ForeignStageOwnerProof,
+    /// Two realization continuations claim the same next stage ordinal.
+    DuplicateStageOwnerOrdinal,
+    /// A realization continuation does not continue the preceding stage.
+    SkippedStageOwnerOrdinal,
+    /// A publishing copy cannot be tied to one exact named output component.
+    MissingPublicationOwner,
+    /// One stage is both a semantic realization and an administrative publisher.
+    AmbiguousStageOwner,
     /// A split reduction's partial value is not initialized by its producer.
     ///
     /// Either no stage writes it, or the writer is not the stage the contract
@@ -704,6 +716,12 @@ impl KernelProgramDiagnostic {
             Self::MissingApplicabilityGuard => "missing-applicability-guard",
             Self::UnreferencedAbiExpression => "unreferenced-abi-expression",
             Self::UncoveringStage => "uncovering-stage",
+            Self::MissingStageOwner => "missing-stage-owner",
+            Self::ForeignStageOwnerProof => "foreign-stage-owner-proof",
+            Self::DuplicateStageOwnerOrdinal => "duplicate-stage-owner-ordinal",
+            Self::SkippedStageOwnerOrdinal => "skipped-stage-owner-ordinal",
+            Self::MissingPublicationOwner => "missing-publication-owner",
+            Self::AmbiguousStageOwner => "ambiguous-stage-owner",
             Self::PartialNotInitializedByProducer => "partial-not-initialized-by-producer",
             Self::PartialResultNotProducedByCombiner => "partial-result-not-produced-by-combiner",
             Self::PartialNotConsumedByCombiner => "partial-not-consumed-by-combiner",

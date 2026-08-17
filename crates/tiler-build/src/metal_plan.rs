@@ -1662,9 +1662,9 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "6196bc5a45d808a63d2a810781a63429886b66dced70ef17d69ab1b91adfc5c3";
+            "d8877dd9284de4e6ea58ec97067008311e90f7df714459b3fd4f9fce8b70447d";
         const CACHE_SUBJECT: &str =
-            "f82b92995b6bb399e2004310c28d9cfd265f2b1fa2c9162c587701eb7e1a3e4f";
+            "da08d9006f071e38244d0ea765f563dce425cb934057d847a0f03bd88b5aa5b8";
         // **Hex step after the feasibility rule-set key v5 → v6.** Descriptor
         // length and fixed content stay at the workgroup-tree-width-policy
         // values: silent profiles write no subgroup section, and the key
@@ -1685,7 +1685,7 @@ mod tests {
         // the redundant `tiler.capability.` text prefix saves eight bytes in
         // this one-provider envelope while the replacement fields are framed
         // independently.
-        const FIXED_CONTENT_BYTES: usize = 77_054;
+        const FIXED_CONTENT_BYTES: usize = 77_096;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
@@ -1759,9 +1759,9 @@ mod tests {
     #[test]
     fn the_authority_ledger_mirrors_the_live_standard_metal_pins() {
         const ARTIFACT_IDENTITY: &str =
-            "6196bc5a45d808a63d2a810781a63429886b66dced70ef17d69ab1b91adfc5c3";
+            "d8877dd9284de4e6ea58ec97067008311e90f7df714459b3fd4f9fce8b70447d";
         const CACHE_SUBJECT: &str =
-            "f82b92995b6bb399e2004310c28d9cfd265f2b1fa2c9162c587701eb7e1a3e4f";
+            "da08d9006f071e38244d0ea765f563dce425cb934057d847a0f03bd88b5aa5b8";
         let ledger = include_str!(
             "../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md"
         );
@@ -1779,7 +1779,7 @@ mod tests {
             "the live pin paragraph does not name CACHE_SUBJECT",
         );
         assert!(
-            today.contains("fixed content is 77,054 bytes"),
+            today.contains("fixed content is 77,096 bytes"),
             "the live pin paragraph does not name FIXED_CONTENT_BYTES",
         );
         assert!(
