@@ -1,7 +1,7 @@
 ---
 id: decide-the-data-dependent-index-representation-public-surface
 title: Decide the data-dependent index representation public surface
-status: todo
+status: in-progress
 priority: p1
 dependencies: [accept-adr-0108-data-dependent-index-coordinate-siting, name-the-fact-source-on-retained-write-ownership-evidence]
 related: [admit-the-selected-data-dependent-index-representation, revise-adr-0108-with-a-complete-data-dependent-index-vertical, admit-an-invocation-scoped-gather-index-validation-receipt]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/reference, implementation/compiler, c
 shared_scopes: [project/tickets]
 paths: [.ticketsplease/decision-queue.md]
 tags: [decision, needs-tom, public-boundary, indexing, identity, correctness]
+claimed_from: todo
+assignee: worker-gather-surface
+lease_expires_at: 1786969799
 ---
 ## User-visible outcome
 
