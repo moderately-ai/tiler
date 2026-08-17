@@ -1,7 +1,7 @@
 ---
 id: honor-the-precise-fp32-metal-compilation-requirement
 title: Honor the precise FP32 Metal compilation requirement
-status: in-progress
+status: done
 priority: p0
 dependencies: []
 related: [decide-the-tiler-metal-public-facade-surface]
@@ -9,9 +9,6 @@ scopes: [implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: worker-precise-fp32
-lease_expires_at: 1786979470
 ---
 ## User-visible outcome
 
@@ -39,3 +36,9 @@ No public type, variant, method visibility, module maturity statement, artifact 
 ## Closes when
 
 Both request derivation and prepared-payload validation accept the precise requirement only under the precise AOT selection; the fast neighbour refuses by the exact cause; the subject perturbation is recorded; focused build/Metal tests, Clippy, rustdoc, ticket lint, citation check, exact-base guard, and the proportional repository gate pass.
+
+## Implementation and review — 2026-08-17
+
+Exact worker commit `5eca21de2b13c6a3882213ee79bc83438b78cdbe` over published base `b085f9dcd95c77ecdf42e93d3e083f02a584a4a8` adds only the typed `PreciseFp32Functions` comparison and its real exponential-unit test. The test proves precise request derivation and prepared-payload validation, then independently proves `Fast` refuses both paths with the exact `PreciseFp32Functions` cause. Before the arm, the positive failed with that refusal; after the arm, changing only the selected FP32-functions subject to `Fast` failed the unchanged positive.
+
+Independent exact-commit review read the complete changed file and all requirement/emission/AOT consumers, reproduced three independent production-subject perturbations, and found no implementation defect. Package test, nextest, check, Clippy with warnings denied, rustdoc with warnings denied, doctest, formatting, lint, citations, diff, and exact-base scope guard all passed. No public surface, emitted source, target fact, payload metadata, identity, schema, pin, Cargo manifest, or lockfile moved. The review separately exposed stale public accessor prose; `correct-metal-numerical-requirements-doc-after-precise-elementary-emission` owns that independent documentation repair rather than widening this P0.

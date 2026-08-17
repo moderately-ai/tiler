@@ -1,7 +1,7 @@
 ---
 id: correct-metal-numerical-requirements-doc-after-precise-elementary-emission
 title: Correct Metal numerical requirements documentation after precise elementary emission
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [honor-the-precise-fp32-metal-compilation-requirement]
@@ -9,6 +9,9 @@ scopes: [implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, numerics]
+claimed_from: todo
+assignee: worker-metal-doc
+lease_expires_at: 1786980291
 ---
 ## User-visible outcome
 
