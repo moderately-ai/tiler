@@ -108,6 +108,7 @@ mod tests {
     use tiler_compiler::session::{
         BudgetRefusal, BudgetResource, CompileFailureClass, NumericalContract,
     };
+    use tiler_ir::semantic::ProviderIdentity;
 
     use crate::profile::declared_workgroup_profile;
     use crate::program::five_op_program;
@@ -184,7 +185,11 @@ mod tests {
             &environment,
         );
         let tally = tally.borrow();
-        assert_eq!(providers.len(), 7, "the exercised specialist population moved");
+        assert_eq!(
+            providers.len(),
+            7,
+            "the exercised specialist population moved"
+        );
         assert_eq!(
             (tally.invocations, tally.proposals, tally.declines),
             (119, 21, 98),
@@ -199,6 +204,58 @@ mod tests {
             tally.raw_outcomes(),
             119,
             "every provider invocation must emit one proposal or decline",
+        );
+        let expected_identities = (0..7)
+            .map(|index| {
+                ProviderIdentity::new("acme", format!("request-boundary-{index}"), 1)
+                    .expect("the expected specialist identity is valid")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tally.provider_tallies().keys().cloned().collect::<Vec<_>>(),
+            expected_identities,
+            "the exact seven attributed specialist identities moved",
+        );
+        for identity in &expected_identities {
+            let provider = tally
+                .provider_tallies()
+                .get(identity)
+                .expect("every expected specialist has an attributed tally");
+            assert_eq!(
+                (
+                    provider.invocations,
+                    provider.proposals,
+                    provider.declines,
+                    provider.baseline_subjects,
+                    provider.coverless_or_unspellable,
+                    provider.raw_outcomes(),
+                ),
+                (17, 3, 14, 3, 14, 17),
+                "specialist {identity} did not reach every one of its seventeen opportunities",
+            );
+        }
+        let attributed = tally.provider_tallies().values().fold(
+            (0_u64, 0_u64, 0_u64, 0_u64, 0_u64),
+            |(invocations, proposals, declines, baselines, coverless), provider| {
+                (
+                    invocations.saturating_add(provider.invocations),
+                    proposals.saturating_add(provider.proposals),
+                    declines.saturating_add(provider.declines),
+                    baselines.saturating_add(provider.baseline_subjects),
+                    coverless.saturating_add(provider.coverless_or_unspellable),
+                )
+            },
+        );
+        assert_eq!(
+            attributed,
+            (
+                tally.invocations,
+                tally.proposals,
+                tally.declines,
+                tally.baseline_subjects,
+                tally.coverless_or_unspellable,
+            ),
+            "the attributed per-provider census did not sum to the aggregate tally",
         );
         assert_eq!(
             (diagnostic.successes, diagnostic.alternatives),
