@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, contracts/numerics, contrac
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, numerics, identity, public-boundary, needs-tom]
-claimed_from: todo
-assignee: worker-contraction-algebra
-lease_expires_at: 1787006417
 ---
 ## User-visible outcome
 
