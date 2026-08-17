@@ -5,14 +5,18 @@ status: todo
 priority: p1
 dependencies: []
 related: [emit-a-route-requirement-from-the-build-producer-so-a-family-authority-refusal-is-drivable, check-synchronization-realization-before-the-routing-commit, separate-metal-launch-index-from-index-and-address-width, declare-a-required-gpu-family-in-the-artifact]
-scopes: [implementation/ir, implementation/artifact, implementation/compiler, implementation/metal, implementation/runtime, implementation/build, contracts/artifacts, implementation/frontend]
+scopes: [implementation/ir, implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
-tags: [correctness, fail-closed, index-arithmetic, artifact-schema, metal, public-boundary, decision, needs-tom]
+tags: [correctness, fail-closed, index-arithmetic, metal, public-boundary, implementation]
 ---
 ## User-visible outcome
 
-A delivered Metal artifact carries the verified program's complete unsigned-64 index-arithmetic requirement once, as part of its derived dispatch/resource record, and a device outside the sourced Apple-family support refuses before routing commitment instead of reaching pipeline creation.
+The two visibility narrowings Tom accepted on the already-landed index-arithmetic carrier and Metal pre-routing check are applied, so the public surface exposes neither a second KIR derivation route nor a raw Apple SDK comparison constant.
+
+## Exact-current delivery audit — 2026-08-17 at `d002cd55406522922e5eb750c8c4d9033dde4469`
+
+The historical carrier, codec, identity, routing, and device-comparison work described below is already present. The current implementation owes exactly two accepted source-visibility changes: `IndexArithmetic::of(KernelType)` becomes crate-private in `tiler-ir`, and `AppleFamilyFloor::apple_constant_value()` becomes crate-private in `tiler-metal`. A complete consumer census finds no out-of-crate caller of either method. The current domains are kernel v8 and artifact/manifest v18/18.0 after unrelated later migrations; this ticket must not restore or rebaseline its historical v7/v16/16.0 pins. No runtime behaviour, artifact byte, identity, schema, support-matrix row, or Apple-family observation changes. The broad historical scopes are therefore removed; only `implementation/ir`, `implementation/metal`, and the shared ticket record remain.
 
 ## Why this is a direct requirement and not a route row
 

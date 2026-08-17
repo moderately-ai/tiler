@@ -1,10 +1,10 @@
 ---
 id: decide-the-tiler-metal-public-facade-surface
 title: Decide the tiler-metal public facade surface
-status: todo
+status: blocked
 priority: p1
-dependencies: [prototype-metal-kir-lowering, check-synchronization-realization-before-the-routing-commit]
-related: [choose-one-owner-for-apple-target-vocabulary, carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit, realize-parallel-reduction-strategies-on-metal]
+dependencies: [prototype-metal-kir-lowering, check-synchronization-realization-before-the-routing-commit, carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit]
+related: [choose-one-owner-for-apple-target-vocabulary, realize-parallel-reduction-strategies-on-metal]
 scopes: [implementation/metal, implementation/metal-aot, contracts/decisions, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
@@ -22,6 +22,10 @@ The `tiler-metal` crate has one accepted exact public facade, or one explicit ty
 - **Verified — no live owner exists.** `git grep -l -F 'whole public surface of \`tiler-metal\`' -- tickets` returns only the terminal prototype ticket. No current decision-queue row owns the facade.
 
 This is not authority to delete the draft labels. Their statement is truthful; the missing piece is the live decision or explicit deferral they promise.
+
+## Current-base correction — 2026-08-17 at `d002cd55406522922e5eb750c8c4d9033dde4469`
+
+The discovery's blanket maturity verdicts are stale even though the quoted source text remains. `tiler_metal::applicability` contains exact subsets accepted by Tom across the macOS-host applicability decisions, while `direct_requirement` has an accepted surface whose final two visibility narrowings remain in `carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit`. `synchronization_requirement` still has no exact-surface acceptance. Later contracts also settle buffer-capacity ownership and require multi-kernel translation-unit consumption semantically; only their exact Rust facade remains undecided. This ticket therefore depends on the visibility correction and must re-audit the complete current public census after it lands. It is not decision-ready from the four discovery bullets alone.
 
 ## Required decision packet
 
