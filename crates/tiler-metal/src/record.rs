@@ -404,10 +404,12 @@ impl MetalTranslationUnit {
     /// Returns the numerical compiler requirements, in ascending governed order.
     ///
     /// A caller compiling this source must select a realization that satisfies
-    /// every requirement. The set is deliberately not a complete flag list:
-    /// `-fmetal-math-fp32-functions` is unconstrained here because this emission
-    /// contains no accuracy-mode-dependent library call, and the offline driver
-    /// still requires the caller to state it explicitly.
+    /// every requirement. The set is deliberately a requirement subset, not a
+    /// complete compiler flag list. Precise `f32` elementary operations add
+    /// [`MetalNumericalRequirement::PreciseFp32Functions`]; a unit containing no
+    /// accuracy-mode-dependent library call carries no requirement for that
+    /// selection. The offline driver still requires the caller to state its
+    /// complete compilation selection explicitly.
     #[must_use]
     pub fn numerical_requirements(&self) -> &[MetalNumericalRequirement] {
         &self.numerical
