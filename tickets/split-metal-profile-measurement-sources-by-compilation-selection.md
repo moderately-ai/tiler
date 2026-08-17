@@ -14,6 +14,10 @@ tags: [metal, target-profiles, provenance, numerics, identity, correction]
 
 Every authoritative Metal profile row cites only the exact compilation selection that produced it. Rows measured under different selections cannot share a source merely because their toolchain and execution environment agree.
 
+## Graph correction — 2026-08-17
+
+Exact-current readiness audit found that the required selection carrier and this source partition cannot land in dependency order as two compiling production revisions: the only production constructor already shares one source across rows whose selections differ, so making the carrier mandatory first would either fail compilation or temporarily misattribute evidence. `carry-required-compilation-selection-identity-on-compile-profile-contexts` now owns the atomic production partition and adds `implementation/build` plus the retained research authority to its scope. This ticket remains the dependent closure/evidence carrier: after that landing, re-audit the exact row population, ledgers, and negative evidence, then close as satisfied or repair any bounded remainder. It must not repeat the production migration independently.
+
 ## Fact
 
 The current `tiler-build` declaration shares one measured source across grid, cost, dispatchability, and numerical rows. The retained grid invocation selected SDK/standard/target but did not make the same explicit O2/safe/precise/contract-off selection used by the projected cost and numerical evidence. Existing authority-ledger prose treats common compiler builds and execution environment as sufficient for sharing; the accepted compilation-selection decision makes that premise false.
