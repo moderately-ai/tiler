@@ -1,17 +1,14 @@
 ---
 id: admit-reassociated-contraction-schedule-alternatives
 title: Admit reassociated and permuted contraction schedule alternatives
-status: in-progress
+status: blocked
 priority: p2
-dependencies: [implement-parallel-reduction-strategies, realize-the-contraction-through-the-appendable-direct-path, decide-the-fixed-strided-contributor-membership-vocabulary]
+dependencies: [implement-parallel-reduction-strategies, realize-the-contraction-through-the-appendable-direct-path, decide-the-fixed-strided-contributor-membership-vocabulary, decide-the-algebraic-capability-authority-for-contraction-splits]
 related: [reduction-semantics-contract, implement-analytical-component-cost-model, realize-the-tiled-contraction-schedule-and-its-metal-emission, enumerate-the-split-reduction-on-the-planning-frontier, admit-a-reassociating-contract-without-contraction]
 scopes: [implementation/compiler, implementation/ir, implementation/metal, implementation/conformance, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, physical-planning, reductions, contraction, numerics]
-claimed_from: todo
-assignee: worker-contraction-split
-lease_expires_at: 1787002503
 ---
 ## User-visible outcome
 
@@ -68,3 +65,13 @@ Tom accepted the exact public carrier in [`decide-the-fixed-strided-contributor-
 ## Closes when
 
 Both alternatives exist, each is admitted only under its own permission with the refusal watched firing for the other, and the contiguous plan reproduces the spike's retained `contiguous_split` candidate bits on the eight-case corpus.
+
+## Independent review stop — 2026-08-17
+
+Exact implementation attempt `648a372f8cbb306df43a4edfc4e14a6211cac7b1` over `07aca5cd8f67824019d8c183fd3a9584ce84b670` is preserved on this ticket's branch and **must not be merged**. It passed its full mechanical gate, but independent strongest-reasoning review found two P1 contract gaps and one P2 work-record gap:
+
+1. **Both alternatives consume an undeclared algebraic capability.** ADR 0014 and `docs/numerical-semantics.md` require capability plus permission. The standard contraction deliberately declares `OperationAlgebraicCapabilities::none()`. The attempted compiler path checks only reassociation/permutation permission, so contiguous silently consumes undeclared ordered associativity and lane-strided additionally consumes a commutativity vocabulary that does not exist. [`decide-the-algebraic-capability-authority-for-contraction-splits`](decide-the-algebraic-capability-authority-for-contraction-splits.md) is now a hard prerequisite; this ticket remains blocked until that exact public/identity authority is accepted.
+2. **The accepted carrier is not projected completely.** `RealizationWitness` exposes partition, order, and arrival but no contributor membership, so the two accepted membership trees are indistinguishable through the witness surface. Its hand-sized topology aggregation test remains at six and omits the new topology. Explanation does not otherwise retain the membership key. The repaired implementation must add the accepted total witness/explanation projection and type-sized census, with independent subject perturbations.
+3. **The attempt recorded no durable ticket Outcome.** A later implementation must record its exact hash, Fact audit, gates, perturbation failures, identity/schema consequences, and unsupported population here before closure.
+
+The reviewer found the attempted partitioning, first-product/root-partial seeds, separate multiply/add and NaN canonicalization, FTZ behavior, barrier, measured cost, Metal source, eight-case oracle, append-only tags, v6 preservation, and old identity pins otherwise coherent. That does not waive either authority gap. The branch remains useful evidence, not an integration candidate.
