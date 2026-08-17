@@ -11,7 +11,7 @@ paths: []
 tags: [implementation, physical-planning, reductions, contraction, numerics]
 claimed_from: todo
 assignee: worker-contraction-split
-lease_expires_at: 1786999769
+lease_expires_at: 1787002503
 ---
 ## User-visible outcome
 
