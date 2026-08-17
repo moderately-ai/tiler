@@ -1,7 +1,7 @@
 ---
 id: ingest-the-checkpoint-as-f32-program-inputs
 title: Ingest the pinned checkpoint as F32 program inputs
-status: in-progress
+status: done
 priority: p1
 dependencies: [define-the-model-weight-binding-manifest, route-an-embedded-artifact-through-a-consumer-storage-seam, reclassify-language-model-work-as-a-conformance-track]
 related: [design-model-ingestion-and-complete-execution, derive-transformer-operation-and-shape-surface, spike-bf16-through-the-second-dtype-seams, drive-the-complete-forward-pass-over-three-artifacts]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ingestion, weights, dtype, consumer, language-model, class-conformance-fixture]
-claimed_from: todo
-assignee: worker-checkpoint-ingest
-lease_expires_at: 1787005622
 ---
 ## User-visible outcome
 
