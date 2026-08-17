@@ -1,7 +1,7 @@
 ---
 id: prove-the-truthful-explain-capacity-budget-refusal-boundary
 title: Prove the truthful explain-capacity budget-refusal boundary
-status: in-progress
+status: done
 priority: p1
 dependencies: [implement-the-truthful-explain-capacity-budget-refusal]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/frontend, research/program-plan
 shared_scopes: [project/tickets]
 paths: []
 tags: [evidence, correctness, explain, public-boundary]
-claimed_from: todo
-assignee: sol-explain-proof
-lease_expires_at: 1786933390
 ---
 
 ## User-visible outcome
