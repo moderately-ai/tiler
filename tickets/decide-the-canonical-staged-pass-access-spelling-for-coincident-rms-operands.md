@@ -1,13 +1,13 @@
 ---
 id: decide-the-canonical-staged-pass-access-spelling-for-coincident-rms-operands
 title: Decide the canonical staged-pass access spelling for coincident RMS operands
-status: todo
+status: awaiting-decision
 priority: p1
 dependencies: [admit-the-rms-normalization-family, accept-the-root-mean-square-scale-realization-law, decide-the-full-list-access-coordinate-for-out-of-list-references]
 related: [repair-retired-declared-input-order-authority-in-request-and-physical-comments, admit-coincident-rms-operands-with-one-coalesced-pass-access]
 scopes: [contracts/decisions, contracts/foundation]
 shared_scopes: [project/tickets]
-paths: []
+paths: [.ticketsplease/decision-queue.md]
 tags: [decision, needs-tom, public-boundary, identity, normalization, schedule]
 ---
 ## User-visible outcome
