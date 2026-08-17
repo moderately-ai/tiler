@@ -1,7 +1,7 @@
 ---
 id: correct-residual-qwen-weight-permutation-products
 title: Correct residual Qwen weight permutation products
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [define-the-model-weight-binding-manifest, design-model-ingestion-and-complete-execution, design-model-level-qualification-and-optimization]
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, language-model, correctness]
+claimed_from: todo
+assignee: worker-qwen-factorial-prose
+lease_expires_at: 1787002444
 ---
 ## User-visible outcome
 
