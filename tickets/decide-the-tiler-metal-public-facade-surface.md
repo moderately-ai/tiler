@@ -1,7 +1,7 @@
 ---
 id: decide-the-tiler-metal-public-facade-surface
 title: Decide the tiler-metal public facade surface
-status: in-progress
+status: done
 priority: p1
 dependencies: [prototype-metal-kir-lowering, check-synchronization-realization-before-the-routing-commit, carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit]
 related: [choose-one-owner-for-apple-target-vocabulary, realize-parallel-reduction-strategies-on-metal, honor-the-precise-fp32-metal-compilation-requirement, apply-the-accepted-tiler-metal-public-facade]
@@ -236,3 +236,10 @@ This ticket is decision research only. It authorizes no public signature change,
 ## Closes when
 
 One exact current-source facade packet passes independent review and Tom accepts it, or a typed deferral records the evidence and trigger that makes future presentation actionable. Every live draft label then has a live owner or accepted disposition.
+
+
+## Accepted decision — 2026-08-18
+
+Tom accepted **the exact minimized whole facade at reviewed packet `459541d239e391eec24efdef6d2e46a612e16d0d`**, in the live coordination session with the orchestrator, relayed first-hand by the coordinator, by replying `agreed, next decision` to the one accept-or-name-the-change question presented in explain-then-recommend form.
+
+The accepted surface is exactly the packet's: every previously accepted subset preserved; the exact target/emitter/immutable-record/typed-diagnostic/synchronization census accepted as the crate's public surface; the three-variant `MetalNumericalRequirement` made exhaustive; exactly eight out-of-crate-unused backend spelling helpers narrowed; and target/AOT vocabulary separation, portfolio semantics, capacity ownership and precedence, all emitted bytes, identities, schemas, layouts, allocations, and runtime/device authority preserved untouched. The independently landed P0 `PreciseFp32Functions` repair is not part of this acceptance and gains no new authority from it. Application flows through `apply-the-accepted-tiler-metal-public-facade`, which this acceptance unblocks.
