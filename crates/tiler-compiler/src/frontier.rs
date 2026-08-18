@@ -94,7 +94,8 @@ use crate::physical::{
 use crate::region::SemanticStage;
 use crate::request::{TargetProfile, TargetProfileKey, VerifiedTargetRequest};
 use crate::target::feasibility::{
-    FeasibilityError, RejectionCause, ResolvedPredicate, UnrealizableSynchronization,
+    DeferredPredicate, ExecutableDeferredTargetSubject, FeasibilityError, RejectionCause,
+    ResolvedPredicate, UnrealizableSynchronization,
 };
 use crate::target::honourability::UnhonouredDimension;
 
@@ -3990,13 +3991,55 @@ fn encode_proposal_identity(
             bytes.push(1);
             push_len(&mut bytes, deferred.predicates().len());
             for predicate in deferred.predicates() {
-                push_slice(&mut bytes, predicate.axis().key().as_bytes());
-                bytes.extend_from_slice(&predicate.required().value().to_be_bytes());
-                push_slice(&mut bytes, &predicate.requirement().canonical_bytes());
+                encode_deferred_predicate(&mut bytes, predicate);
             }
         }
     }
     ImplementationProposalIdentity(bytes)
+}
+
+/// Family tag naming an atomic deferred subject inside a proposal identity.
+///
+/// Written only after [`ATOMIC_DEFERRED_SUBJECT_ESCAPE`], never as a first
+/// token, so it shares no position with the capability arm's key-length frame.
+/// `0x01` is the subgroup-width confirmation; the next atomic family takes the
+/// next value and a decoder-free identity comparison needs nothing else.
+const ATOMIC_DEFERRED_SUBGROUP_WIDTH_CONFIRMATION: u8 = 0x01;
+
+/// The structurally disjoint escape introducing an atomic deferred subject.
+///
+/// A capability arm's record begins with the length frame of its governed axis
+/// key, and every axis key is nonempty, so a zero length frame is a spelling no
+/// capability record can produce. Reserving it as the escape keeps every
+/// previously encodable capability record byte-for-byte and makes the two
+/// families structurally disjoint at their first token — checked by
+/// `atomic_deferred_subjects_are_structurally_disjoint_from_every_axis`.
+const ATOMIC_DEFERRED_SUBJECT_ESCAPE: usize = 0;
+
+/// Appends one deferred predicate's canonical proposal-identity record.
+///
+/// Exhaustive over [`ExecutableDeferredTargetSubject`], so a new proof shape
+/// stops this encoder at compile time. The capability arm retains the exact
+/// pre-enum spelling — length-framed axis key, big-endian required quantity,
+/// length-framed complete requirement — so no existing proposal identity moves.
+/// The atomic arm appends under the escape: the zero frame, the subject-family
+/// tag, the complete canonical subject bytes, then the same required-quantity
+/// and requirement tail the capability arm carries.
+fn encode_deferred_predicate(bytes: &mut Vec<u8>, predicate: &DeferredPredicate) {
+    match predicate.subject() {
+        ExecutableDeferredTargetSubject::CapabilityAxis(axis) => {
+            push_slice(bytes, axis.key().as_bytes());
+            bytes.extend_from_slice(&predicate.requirement().required().to_be_bytes());
+            push_slice(bytes, &predicate.requirement().canonical_bytes());
+        }
+        ExecutableDeferredTargetSubject::SubgroupWidthConfirmation(subject) => {
+            push_len(bytes, ATOMIC_DEFERRED_SUBJECT_ESCAPE);
+            bytes.push(ATOMIC_DEFERRED_SUBGROUP_WIDTH_CONFIRMATION);
+            subject.encode(bytes);
+            bytes.extend_from_slice(&predicate.requirement().required().to_be_bytes());
+            push_slice(bytes, &predicate.requirement().canonical_bytes());
+        }
+    }
 }
 
 fn encode_rejection(rejection: &FrontierRejection) -> Vec<u8> {
@@ -6915,6 +6958,279 @@ mod tests {
                 !identities.contains(&admitted.identity().as_bytes()),
                 "two splits over different extents share one identity"
             );
+        }
+    }
+
+    // ---- Deferred-subject proposal-identity encoding ----------------------
+    //
+    // The accepted strategy is append-only: capability records keep their exact
+    // pre-enum bytes, and atomic subjects arrive under a structurally disjoint
+    // escape. These tests are the byte-level control and the injectivity
+    // evidence for that claim.
+
+    mod deferred_subject_identity {
+        use super::super::{
+            ATOMIC_DEFERRED_SUBGROUP_WIDTH_CONFIRMATION, ATOMIC_DEFERRED_SUBJECT_ESCAPE,
+            DeferredPredicate, ExecutableDeferredTargetSubject, encode_deferred_predicate,
+        };
+        use crate::target::feasibility::CapabilityAxis;
+        use tiler_ir::identity::{push_len, push_slice};
+        use tiler_ir::program::abi::{
+            AvailabilityPhase, PreparedEntryTargetRequirement, TargetPropertyKey,
+            TargetPropertyProviderIdentity, TargetPropertyQuery, TargetPropertyRequirementRelation,
+        };
+        use tiler_ir::schedule::{
+            ArithmeticType, SubgroupRealizationSubject, SubgroupTransfer, SubgroupWidth,
+        };
+
+        const CANONICAL_AXES: [CapabilityAxis; 7] = [
+            CapabilityAxis::GridAxisThreads,
+            CapabilityAxis::WorkgroupThreads,
+            CapabilityAxis::BufferBindings,
+            CapabilityAxis::DeviceAddressSpace,
+            CapabilityAxis::LocalMemoryBytes,
+            CapabilityAxis::IndexArithmeticU64,
+            CapabilityAxis::DeviceAddressWidthBits,
+        ];
+
+        fn requirement(
+            property: &str,
+            namespace: &'static str,
+            name: &'static str,
+            revision: u32,
+            required: u64,
+            relation: TargetPropertyRequirementRelation,
+        ) -> PreparedEntryTargetRequirement {
+            PreparedEntryTargetRequirement::new(
+                TargetPropertyQuery::new(
+                    TargetPropertyKey::new(property).unwrap(),
+                    AvailabilityPhase::PreparedKernelPreflight,
+                    TargetPropertyProviderIdentity::new(namespace, name, revision).unwrap(),
+                )
+                .unwrap(),
+                required,
+                relation,
+            )
+            .unwrap()
+        }
+
+        fn capability_relation(axis: CapabilityAxis) -> TargetPropertyRequirementRelation {
+            match axis {
+                CapabilityAxis::GridAxisThreads
+                | CapabilityAxis::WorkgroupThreads
+                | CapabilityAxis::BufferBindings
+                | CapabilityAxis::LocalMemoryBytes => {
+                    TargetPropertyRequirementRelation::ObservedAtLeastRequired
+                }
+                CapabilityAxis::DeviceAddressSpace | CapabilityAxis::IndexArithmeticU64 => {
+                    TargetPropertyRequirementRelation::RequiredImpliesObserved
+                }
+                CapabilityAxis::DeviceAddressWidthBits => {
+                    TargetPropertyRequirementRelation::ObservedEqualsRequired
+                }
+            }
+        }
+
+        fn capability_predicate(axis: CapabilityAxis) -> DeferredPredicate {
+            DeferredPredicate::new(
+                ExecutableDeferredTargetSubject::CapabilityAxis(axis),
+                requirement(
+                    &format!("tiler.test.prepared-entry.{}", axis.key()),
+                    "tiler",
+                    "test-prepared-properties",
+                    1,
+                    1,
+                    capability_relation(axis),
+                ),
+            )
+            .unwrap()
+        }
+
+        fn subgroup_subject(lanes: u32, arithmetic: ArithmeticType) -> SubgroupRealizationSubject {
+            SubgroupRealizationSubject::new(
+                SubgroupWidth::new(lanes).unwrap(),
+                arithmetic,
+                SubgroupTransfer::InRangeXorShuffle,
+            )
+            .unwrap()
+        }
+
+        fn subgroup_predicate(
+            subject: SubgroupRealizationSubject,
+            property: &str,
+            namespace: &'static str,
+            name: &'static str,
+            revision: u32,
+        ) -> DeferredPredicate {
+            DeferredPredicate::new(
+                ExecutableDeferredTargetSubject::SubgroupWidthConfirmation(subject),
+                requirement(
+                    property,
+                    namespace,
+                    name,
+                    revision,
+                    u64::from(subject.width().get()),
+                    TargetPropertyRequirementRelation::ObservedEqualsRequired,
+                ),
+            )
+            .unwrap()
+        }
+
+        fn encoded(predicate: &DeferredPredicate) -> Vec<u8> {
+            let mut bytes = Vec::new();
+            encode_deferred_predicate(&mut bytes, predicate);
+            bytes
+        }
+
+        /// **The byte-level control.** Every capability record still encodes
+        /// the exact pre-enum spelling: length-framed axis key, big-endian
+        /// required quantity, length-framed complete requirement. An old
+        /// capability proposal identity therefore cannot move.
+        #[test]
+        fn capability_records_keep_their_pre_enum_bytes_exactly() {
+            for axis in CANONICAL_AXES {
+                let predicate = capability_predicate(axis);
+                let mut legacy = Vec::new();
+                push_slice(&mut legacy, axis.key().as_bytes());
+                legacy.extend_from_slice(&predicate.requirement().required().to_be_bytes());
+                push_slice(&mut legacy, &predicate.requirement().canonical_bytes());
+                assert_eq!(
+                    encoded(&predicate),
+                    legacy,
+                    "the {} capability record moved under the subject vocabulary",
+                    axis.key(),
+                );
+            }
+        }
+
+        /// The escape is a spelling no capability record can produce: every
+        /// governed axis key is nonempty, so no capability record begins with
+        /// a zero length frame, and the two families are disjoint at their
+        /// first token.
+        #[test]
+        fn atomic_deferred_subjects_are_structurally_disjoint_from_every_axis() {
+            let mut escape = Vec::new();
+            push_len(&mut escape, ATOMIC_DEFERRED_SUBJECT_ESCAPE);
+            assert_eq!(escape, 0_u64.to_be_bytes());
+            let atomic = encoded(&subgroup_predicate(
+                subgroup_subject(32, ArithmeticType::F32),
+                "tiler.test.prepared-entry.subgroup-width",
+                "tiler",
+                "test-prepared-properties",
+                1,
+            ));
+            assert_eq!(atomic[..8], 0_u64.to_be_bytes());
+            assert_eq!(atomic[8], ATOMIC_DEFERRED_SUBGROUP_WIDTH_CONFIRMATION);
+            for axis in CANONICAL_AXES {
+                assert!(!axis.key().is_empty());
+                let capability = encoded(&capability_predicate(axis));
+                assert_ne!(
+                    capability[..8],
+                    0_u64.to_be_bytes(),
+                    "the {} record spells the reserved escape",
+                    axis.key(),
+                );
+                assert_ne!(capability, atomic);
+            }
+        }
+
+        /// Every field of the atomic subject and its executable requirement is
+        /// identity-bearing: perturbing the width, arithmetic, subject kind, or
+        /// any query component alone moves the bytes. Two perturbations are
+        /// unrepresentable rather than untested: the transfer, because
+        /// [`SubgroupTransfer`] currently has exactly one variant (its tag is
+        /// nevertheless in the encoded subject), and the relation, because a
+        /// subgroup pair with any relation other than exact equality is refused
+        /// at construction — that refusal is the covering test.
+        #[test]
+        fn subgroup_confirmation_identity_folds_every_subject_and_requirement_field() {
+            let baseline = encoded(&subgroup_predicate(
+                subgroup_subject(32, ArithmeticType::F32),
+                "tiler.test.prepared-entry.subgroup-width",
+                "tiler",
+                "test-prepared-properties",
+                1,
+            ));
+            let perturbed = [
+                (
+                    "width",
+                    encoded(&subgroup_predicate(
+                        subgroup_subject(64, ArithmeticType::F32),
+                        "tiler.test.prepared-entry.subgroup-width",
+                        "tiler",
+                        "test-prepared-properties",
+                        1,
+                    )),
+                ),
+                (
+                    "arithmetic",
+                    encoded(&subgroup_predicate(
+                        subgroup_subject(32, ArithmeticType::Bf16),
+                        "tiler.test.prepared-entry.subgroup-width",
+                        "tiler",
+                        "test-prepared-properties",
+                        1,
+                    )),
+                ),
+                (
+                    "subject kind",
+                    encoded(&capability_predicate(CapabilityAxis::WorkgroupThreads)),
+                ),
+                (
+                    "query key",
+                    encoded(&subgroup_predicate(
+                        subgroup_subject(32, ArithmeticType::F32),
+                        "tiler.test.prepared-entry.neighbouring-width",
+                        "tiler",
+                        "test-prepared-properties",
+                        1,
+                    )),
+                ),
+                (
+                    "provider namespace",
+                    encoded(&subgroup_predicate(
+                        subgroup_subject(32, ArithmeticType::F32),
+                        "tiler.test.prepared-entry.subgroup-width",
+                        "neighbour",
+                        "test-prepared-properties",
+                        1,
+                    )),
+                ),
+                (
+                    "provider name",
+                    encoded(&subgroup_predicate(
+                        subgroup_subject(32, ArithmeticType::F32),
+                        "tiler.test.prepared-entry.subgroup-width",
+                        "tiler",
+                        "neighbouring-provider",
+                        1,
+                    )),
+                ),
+                (
+                    "provider revision",
+                    encoded(&subgroup_predicate(
+                        subgroup_subject(32, ArithmeticType::F32),
+                        "tiler.test.prepared-entry.subgroup-width",
+                        "tiler",
+                        "test-prepared-properties",
+                        2,
+                    )),
+                ),
+            ];
+            for (dimension, bytes) in &perturbed {
+                assert_ne!(
+                    &baseline, bytes,
+                    "perturbing {dimension} alone left the identity bytes unchanged",
+                );
+            }
+            for (index, (left_name, left)) in perturbed.iter().enumerate() {
+                for (right_name, right) in &perturbed[index + 1..] {
+                    assert_ne!(
+                        left, right,
+                        "{left_name} and {right_name} collided under the encoding",
+                    );
+                }
+            }
         }
     }
 }

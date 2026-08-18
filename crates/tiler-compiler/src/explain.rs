@@ -73,6 +73,12 @@ use crate::target::honourability::NumericalRefusalEvidence;
 // record's bytes or an existing record's spelling; one marked *unforced* did
 // not, and is labelled so this file's history is not read as its rule.
 //
+// - Event tag 15, the deferred subgroup-width confirmation, with its first
+//   `feasibility:subgroup-width-confirmation:` spelling: appended under the
+//   already-published v11/v9 and correctly moving neither, by the rule above.
+//   Capability tag 8 keeps its bytes exactly — the subgroup arm is a record the
+//   earlier vocabulary could not express, carried whole (width, arithmetic,
+//   transfer, entry, complete requirement) rather than disguised as an axis.
 // - Schema v11, *forced*: an opaque-call proposal's existing binding subject
 //   now writes the exact full access-list coordinate rather than an input role
 //   ordinal. The same parameter names can therefore bind different local reads
@@ -777,6 +783,29 @@ pub(crate) enum ExplainEvent {
         required: Quantity,
         requirement: PreparedEntryTargetRequirement,
     },
+    /// One subgroup-width confirmation admitted through an exact prepared-entry
+    /// query before routing commit.
+    ///
+    /// The complete atomic subject in one record — width, arithmetic, and
+    /// transfer — beside the executable requirement, deliberately not a
+    /// [`Self::DeferredTargetRequirement`] with an invented axis key: the width
+    /// alone could not explain which arithmetic/transfer realization authorized
+    /// the query, and a capability spelling would present the confirmation as
+    /// an independently satisfiable quantitative fact. The required width is
+    /// derived from the subject and checked equal before the record is
+    /// admitted.
+    DeferredSubgroupWidthConfirmation {
+        /// Zero-based program-entry ordinal whose prepared pipeline is queried.
+        entry: u32,
+        /// Literal width in lanes, equal to the requirement's required value.
+        width: u32,
+        /// Exact arithmetic type carried through the transfer.
+        arithmetic: ArithmeticType,
+        /// Governed key of the required transfer.
+        transfer: ReasonCode,
+        /// The complete executable relation and versioned query identity.
+        requirement: PreparedEntryTargetRequirement,
+    },
     /// One numerical dimension assessed against a target's declaration.
     ///
     /// This is the rejection shape ADR 0076 item 5 requires and the record that
@@ -878,6 +907,7 @@ impl ExplainEvent {
             | Self::CompilerFailure { stage, .. } => *stage,
             Self::Feasibility { .. }
             | Self::DeferredTargetRequirement { .. }
+            | Self::DeferredSubgroupWidthConfirmation { .. }
             | Self::NumericalHonourability { .. }
             | Self::SynchronizationRealization { .. }
             | Self::SubgroupRealization { .. } => ExplainStage::TargetFeasibility,
@@ -915,7 +945,10 @@ impl ExplainEvent {
                 outcome: SynchronizationOutcome::Realized { .. },
                 ..
             } => ExplainDisposition::Admitted,
-            Self::DeferredTargetRequirement { .. } => ExplainDisposition::DeferredAdmitted,
+            Self::DeferredTargetRequirement { .. }
+            | Self::DeferredSubgroupWidthConfirmation { .. } => {
+                ExplainDisposition::DeferredAdmitted
+            }
             Self::Check {
                 assessment:
                     PredicateAssessment {
@@ -1117,6 +1150,23 @@ impl ExplainEvent {
             } => {
                 if required.value() != requirement.required() {
                     return Err(ExplainError::RequirementQuantityMismatch);
+                }
+            }
+            // The subject and its requirement are one claim: the required
+            // width is derived from the subject, so a record whose two halves
+            // disagree — or whose relation is not the exact equality ADR 0094
+            // decision 7 states — is refused rather than admitted with a
+            // narrative the requirement contradicts.
+            Self::DeferredSubgroupWidthConfirmation {
+                width, requirement, ..
+            } => {
+                if u64::from(*width) != requirement.required() {
+                    return Err(ExplainError::RequirementQuantityMismatch);
+                }
+                if requirement.relation()
+                    != TargetPropertyRequirementRelation::ObservedEqualsRequired
+                {
+                    return Err(ExplainError::InvalidQuantityRelation);
                 }
             }
             Self::CostAssessment { basis, terms, .. } => {
@@ -2699,6 +2749,33 @@ fn render_event(output: &mut String, event: &ExplainEvent) {
                 provider.revision(),
             );
         }
+        // A first spelling for a record the earlier vocabulary could not
+        // produce; no existing trace renders differently, so the renderer does
+        // not step. The whole atomic subject is on the line for the reason the
+        // `subgroup:` spelling puts it there: a reader must see which
+        // realization authorized the deferred query, not only its width.
+        ExplainEvent::DeferredSubgroupWidthConfirmation {
+            entry,
+            width,
+            arithmetic,
+            transfer,
+            requirement,
+        } => {
+            let query = requirement.query();
+            let provider = query.provider();
+            let _ = write!(
+                output,
+                "feasibility:subgroup-width-confirmation:deferred:entry={entry}:{}:width={width}:arithmetic={}:transfer={}:query={}@{}:provider={}::{}@{}",
+                target_requirement_relation_name(requirement.relation()),
+                arithmetic.canonical_type_key(),
+                transfer.as_str(),
+                query.key().as_str(),
+                availability_phase_name(query.available_at()),
+                provider.namespace(),
+                provider.name(),
+                provider.revision(),
+            );
+        }
         ExplainEvent::NumericalHonourability {
             dimension,
             arithmetic,
@@ -3343,6 +3420,25 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
             encode_quantity(bytes, *required);
             push_slice(bytes, &requirement.canonical_bytes());
         }
+        // Appended tag `15`: tags `1` through `14` keep their values and field
+        // layouts, and tag `8` in particular stays byte-for-byte the capability
+        // spelling — a subgroup confirmation is a record the earlier vocabulary
+        // could not express, never a capability record under a new
+        // interpretation, so the schema does not step.
+        ExplainEvent::DeferredSubgroupWidthConfirmation {
+            entry,
+            width,
+            arithmetic,
+            transfer,
+            requirement,
+        } => {
+            bytes.push(15);
+            bytes.extend_from_slice(&entry.to_be_bytes());
+            bytes.extend_from_slice(&width.to_be_bytes());
+            bytes.push(arithmetic.tag());
+            push_slice(bytes, transfer.as_str().as_bytes());
+            push_slice(bytes, &requirement.canonical_bytes());
+        }
         ExplainEvent::NumericalHonourability {
             dimension,
             arithmetic,
@@ -3815,9 +3911,8 @@ mod tests {
             "deferred-admitted"
         );
         let mut deferred = Vec::new();
-        encode_event(
-            &mut deferred,
-            &deferred_target_requirement_event(DeferredTargetRequirementFixture {
+        let capability_event =
+            deferred_target_requirement_event(DeferredTargetRequirementFixture {
                 entry: 0,
                 predicate: "threads-per-workgroup",
                 required: Quantity::Threads(1),
@@ -3826,9 +3921,29 @@ mod tests {
                 provider_namespace: "tiler",
                 provider_name: "prepared-entry-properties",
                 provider_revision: 1,
-            }),
-        );
+            });
+        encode_event(&mut deferred, &capability_event);
         assert_eq!(deferred[0], 8);
+        // The byte-level control for the deferred-subject generalization: the
+        // whole capability record — tag, entry, framed predicate key, quantity,
+        // framed requirement — keeps its exact pre-subgroup layout, so no
+        // previously encodable capability trace moves.
+        let ExplainEvent::DeferredTargetRequirement {
+            entry,
+            predicate,
+            required,
+            requirement,
+        } = &capability_event
+        else {
+            panic!("the fixture is one capability deferred requirement");
+        };
+        let mut legacy = vec![8];
+        legacy.extend_from_slice(&entry.to_be_bytes());
+        push_slice(&mut legacy, predicate.as_str().as_bytes());
+        legacy.push(required.kind());
+        legacy.extend_from_slice(&required.value().to_be_bytes());
+        push_slice(&mut legacy, &requirement.canonical_bytes());
+        assert_eq!(deferred, legacy, "capability event tag 8 moved");
         // The append the version block's rule was written against: tag 13 is
         // pinned here because it is what makes "appended, and the schema did not
         // step" a checked claim rather than a comment.
@@ -3845,6 +3960,14 @@ mod tests {
         let mut realization = Vec::new();
         encode_event(&mut realization, &synchronization);
         assert_eq!(realization[0], 13);
+        // Tag 15 is the appended subgroup-width confirmation; pinning it holds
+        // "appended, and the schema did not step" to a checked claim.
+        let mut confirmation = Vec::new();
+        encode_event(
+            &mut confirmation,
+            &deferred_subgroup_confirmation_event(DeferredSubgroupConfirmationFixture::default()),
+        );
+        assert_eq!(confirmation[0], 15);
     }
 
     fn encoded_provider(provider: &ProviderRef) -> Vec<u8> {
@@ -4004,6 +4127,177 @@ mod tests {
         assert_eq!(
             mismatched.validate(),
             Err(ExplainError::RequirementQuantityMismatch)
+        );
+    }
+
+    #[derive(Clone, Copy)]
+    struct DeferredSubgroupConfirmationFixture {
+        entry: u32,
+        width: u32,
+        arithmetic: ArithmeticType,
+        transfer: &'static str,
+        required: u64,
+        property: &'static str,
+        relation: TargetPropertyRequirementRelation,
+        provider_namespace: &'static str,
+        provider_name: &'static str,
+        provider_revision: u32,
+    }
+
+    impl Default for DeferredSubgroupConfirmationFixture {
+        fn default() -> Self {
+            Self {
+                entry: 0,
+                width: 32,
+                arithmetic: ArithmeticType::F32,
+                transfer: "in-range-xor-shuffle",
+                required: 32,
+                property: "tiler.test.prepared-entry.subgroup-width.v1",
+                relation: TargetPropertyRequirementRelation::ObservedEqualsRequired,
+                provider_namespace: "tiler",
+                provider_name: "prepared-entry-properties",
+                provider_revision: 1,
+            }
+        }
+    }
+
+    fn deferred_subgroup_confirmation_event(
+        fixture: DeferredSubgroupConfirmationFixture,
+    ) -> ExplainEvent {
+        let query = TargetPropertyQuery::new(
+            TargetPropertyKey::new(fixture.property).unwrap(),
+            AvailabilityPhase::PreparedKernelPreflight,
+            TargetPropertyProviderIdentity::new(
+                fixture.provider_namespace,
+                fixture.provider_name,
+                fixture.provider_revision,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        ExplainEvent::DeferredSubgroupWidthConfirmation {
+            entry: fixture.entry,
+            width: fixture.width,
+            arithmetic: fixture.arithmetic,
+            transfer: ReasonCode::new(fixture.transfer).unwrap(),
+            requirement: PreparedEntryTargetRequirement::new(
+                query,
+                fixture.required,
+                fixture.relation,
+            )
+            .unwrap(),
+        }
+    }
+
+    /// The appended subgroup confirmation carries its complete atomic subject,
+    /// every subject and query field is identity-bearing, and a record whose
+    /// two halves disagree is refused rather than admitted.
+    #[test]
+    fn deferred_subgroup_width_confirmation_identity_and_rendering_are_complete() {
+        let fixture = DeferredSubgroupConfirmationFixture::default();
+        let baseline = deferred_subgroup_confirmation_event(fixture);
+        assert_eq!(baseline.validate(), Ok(()));
+        assert_eq!(baseline.stage(), ExplainStage::TargetFeasibility);
+        assert_eq!(baseline.disposition(), ExplainDisposition::DeferredAdmitted);
+        let mut baseline_identity = Vec::new();
+        encode_event(&mut baseline_identity, &baseline);
+        // Each perturbation moves exactly one field of the subject, the entry,
+        // or the executable query, with the checks unchanged. The width and
+        // required value move together because they are one derived claim; the
+        // case where they disagree is the validation refusal below, not an
+        // identity case. The transfer perturbation uses a neighbouring key
+        // because the governed vocabulary currently has one variant.
+        for (dimension, changed) in [
+            (
+                "entry",
+                deferred_subgroup_confirmation_event(DeferredSubgroupConfirmationFixture {
+                    entry: 1,
+                    ..fixture
+                }),
+            ),
+            (
+                "width",
+                deferred_subgroup_confirmation_event(DeferredSubgroupConfirmationFixture {
+                    width: 64,
+                    required: 64,
+                    ..fixture
+                }),
+            ),
+            (
+                "arithmetic",
+                deferred_subgroup_confirmation_event(DeferredSubgroupConfirmationFixture {
+                    arithmetic: ArithmeticType::Bf16,
+                    ..fixture
+                }),
+            ),
+            (
+                "transfer",
+                deferred_subgroup_confirmation_event(DeferredSubgroupConfirmationFixture {
+                    transfer: "neighbouring-transfer",
+                    ..fixture
+                }),
+            ),
+            (
+                "query key",
+                deferred_subgroup_confirmation_event(DeferredSubgroupConfirmationFixture {
+                    property: "tiler.test.prepared-entry.neighbouring-width.v1",
+                    ..fixture
+                }),
+            ),
+            (
+                "provider namespace",
+                deferred_subgroup_confirmation_event(DeferredSubgroupConfirmationFixture {
+                    provider_namespace: "neighbour",
+                    ..fixture
+                }),
+            ),
+            (
+                "provider name",
+                deferred_subgroup_confirmation_event(DeferredSubgroupConfirmationFixture {
+                    provider_name: "neighbouring-provider",
+                    ..fixture
+                }),
+            ),
+            (
+                "provider revision",
+                deferred_subgroup_confirmation_event(DeferredSubgroupConfirmationFixture {
+                    provider_revision: 2,
+                    ..fixture
+                }),
+            ),
+        ] {
+            let mut changed_identity = Vec::new();
+            encode_event(&mut changed_identity, &changed);
+            assert_ne!(
+                baseline_identity, changed_identity,
+                "perturbing {dimension} alone left the identity bytes unchanged",
+            );
+        }
+
+        let mut rendered = String::new();
+        render_event(&mut rendered, &baseline);
+        assert_eq!(
+            rendered,
+            "feasibility:subgroup-width-confirmation:deferred:entry=0:observed-equals-required:width=32:arithmetic=tiler::f32@1:transfer=in-range-xor-shuffle:query=tiler.test.prepared-entry.subgroup-width.v1@prepared-kernel-preflight:provider=tiler::prepared-entry-properties@1"
+        );
+
+        // The two refusals: a width the requirement does not require, and a
+        // relation that is not the exact equality the confirmation states.
+        assert_eq!(
+            deferred_subgroup_confirmation_event(DeferredSubgroupConfirmationFixture {
+                required: 64,
+                ..fixture
+            })
+            .validate(),
+            Err(ExplainError::RequirementQuantityMismatch)
+        );
+        assert_eq!(
+            deferred_subgroup_confirmation_event(DeferredSubgroupConfirmationFixture {
+                relation: TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+                ..fixture
+            })
+            .validate(),
+            Err(ExplainError::InvalidQuantityRelation)
         );
     }
 

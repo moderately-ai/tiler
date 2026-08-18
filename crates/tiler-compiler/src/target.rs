@@ -4973,6 +4973,12 @@ impl From<FeasibilityError> for TargetProfileBuildError {
             FeasibilityError::MalformedProposal { .. } => Self::MalformedProfile {
                 rule: "unexpected-proposal-validation",
             },
+            // Deferred predicates are minted at assessment, not at profile
+            // construction, so this arm mirrors the proposal one: reachable
+            // only if the feasibility authority's error vocabulary is misused.
+            FeasibilityError::MalformedDeferred { .. } => Self::MalformedProfile {
+                rule: "unexpected-deferred-validation",
+            },
         }
     }
 }

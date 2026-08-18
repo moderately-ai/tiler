@@ -1259,11 +1259,12 @@ impl<'a> PreparedEntryTargetRequirementRef<'a> {
         self.0.entry()
     }
 
-    /// Returns the governed capability-axis key used for diagnostics.
-    #[must_use]
-    pub fn capability_axis(self) -> &'static str {
-        self.0.predicate().axis().key()
-    }
+    // There is deliberately no static-provenance accessor here. The compiler's
+    // deferred subject vocabulary is private; the supported artifact
+    // translation is exactly `entry()` plus the complete generic
+    // `requirement()`, and a public subject view returns to Tom with the named
+    // out-of-crate consumer that needs it
+    // (`generalize-deferred-target-provenance-beyond-capability-axes`).
 
     /// Returns the complete requirement without reconstructing any predicate.
     #[must_use]
@@ -5105,7 +5106,6 @@ mod tests {
         assert_eq!(deferred.len(), selected.kernels().len());
         for (entry, query) in deferred.iter().enumerate() {
             assert_eq!(query.entry(), u32::try_from(entry).unwrap());
-            assert_eq!(query.capability_axis(), "threads-per-workgroup");
             let requirement = query.requirement();
             assert_eq!(requirement.required(), 1);
             assert_eq!(
