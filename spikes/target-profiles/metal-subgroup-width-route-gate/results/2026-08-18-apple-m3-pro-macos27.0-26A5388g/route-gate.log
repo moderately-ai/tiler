@@ -1,0 +1,29 @@
+host: device "Apple M3 Pro", registryID 0x1000004e5, apple9 true, os 27.0 build 26A5388g, arch arm64
+offline: Apple metal version 32023.883 (metalfe-32023.883) | AIR-LLD 32023.883 (metalfe-32023.883) (compatible with legacy metallib linker) | xcode Xcode 26.6 Build version 17F113 | sdk 26.5 (25F70)
+rustc: rustc 1.99.0-nightly (eff8269f7 2026-07-18)
+declaration: tiler.metal.macos-m3pro-apple9.msl4-0.subgroup-f32.v1 states Realized { width: 32, arithmetic: F32, transfer: in-range-xor-shuffle }
+kernel route_pointwise_f32.metal sha256 61b3b8b44e000c75e30facf0972d25fab91a6c0352f24bc472843b9848b89bae
+kernel route_reduce_f32.metal sha256 32794d0b1f279ed26ae3f2769b4bf0b6b959ae0d85aac0dddfad7f86774aeb74
+metallib sha256 2e4838c9a6d0b78de91603fcd9dd0ada950f2731a7b4b41e6427fd4695ba5a19
+case exact-equality-routes:
+  loader asked entry 0 for "tiler.target.prepared-entry.subgroup-width.v1"; answered Quantity(32)
+  loader asked entry 1 for "tiler.target.prepared-entry.subgroup-width.v1"; answered Quantity(32)
+  PASS: widths [32, 32] equal the declared 32, the route committed, and the dispatched output [15.0, 33.0] equals the strict reference
+case mismatch-refuses-pre-commit:
+  loader asked entry 1 for "tiler.target.prepared-entry.subgroup-width.v1"; answered Quantity(32)
+  PASS, refused before the routing commit: UnsatisfiedDeferredPredicate { variant: 0, predicate: 0, entry: 1, subject: PreparedEntryPropertySubject { key: "tiler.target.prepared-entry.subgroup-width.v1", provider_namespace: "tiler", provider_name: "prepared-entry-properties", provider_revision: 1, required: 16, relation: ObservedEqualsRequired }, observed: 32 }
+case unknown-key-refuses-pre-commit:
+  loader asked entry 0 for "tiler.target.prepared-entry.subgroup-width.v1"; answered Quantity(32)
+  loader asked entry 1 for "tiler.target.prepared-entry.subgroup-width.v2"; answered Unrecognized
+  PASS, refused before the routing commit: UnownedPreparedEntryProperty { variant: 0, predicate: 1, entry: 1, subject: PreparedEntryPropertySubject { key: "tiler.target.prepared-entry.subgroup-width.v2", provider_namespace: "tiler", provider_name: "prepared-entry-properties", provider_revision: 1, required: 32, relation: ObservedEqualsRequired } }
+case missing-dispatch-refuses-pre-commit:
+  loader asked entry 0 for "tiler.target.prepared-entry.subgroup-width.v1"; answered Unrecognized
+  PASS, refused before the routing commit: UnownedPreparedEntryProperty { variant: 0, predicate: 0, entry: 0, subject: PreparedEntryPropertySubject { key: "tiler.target.prepared-entry.subgroup-width.v1", provider_namespace: "tiler", provider_name: "prepared-entry-properties", provider_revision: 1, required: 32, relation: ObservedEqualsRequired } }
+case cross-pipeline-substitution-refuses:
+  loader asked entry 1 for "tiler.target.prepared-entry.subgroup-width.v1"; answered Quantity(32)
+  PASS, refused before the routing commit: UnsatisfiedDeferredPredicate { variant: 0, predicate: 0, entry: 1, subject: PreparedEntryPropertySubject { key: "tiler.target.prepared-entry.subgroup-width.v1", provider_namespace: "tiler", provider_name: "prepared-entry-properties", provider_revision: 1, required: 16, relation: ObservedEqualsRequired }, observed: 32 }
+case cross-pipeline-substitution-boundary:
+  loader asked entry 0 for "tiler.target.prepared-entry.subgroup-width.v1"; answered Quantity(32)
+  loader asked entry 1 for "tiler.target.prepared-entry.subgroup-width.v1"; answered Quantity(32)
+  BOUNDARY: on this host the substitution is value-invisible (every prepared width is 32); the value-level discrimination stays device-free
+route gate demonstration: every case behaved as required
