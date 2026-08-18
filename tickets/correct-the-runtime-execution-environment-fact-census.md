@@ -33,3 +33,16 @@ Edit only the glossary row, the runtime module prose, and this ticket's durable 
 ## Closes when
 
 Both current-truth descriptions enumerate all four declared facts, neither says “three” or “and nothing else” while omitting dtype dispatch, rustdoc remains warning-free, and the exact-base ticket/citation/scope gates pass.
+
+## Outcome — 2026-08-17
+
+Delivered over exact base `a3d09993e37c1f16adb2aec7ec3edb3ce56f0df9`. The glossary row and the runtime module's device-free-loading rationale now enumerate target profile, backend, representation, and per-arithmetic-type dtype-dispatch verdicts. Both retain the existing boundary: these are caller declarations used for load and variant eligibility, not live-device attestation; the dtype map does not become the pending ADR 0013 runtime-compatibility identity.
+
+No Rust item, behavior, identity, schema, accepted ADR, or maturity claim changed. The source check rejected both retired incomplete phrases and found the three replacement anchors:
+
+```text
+rg -n 'the host supplies the three facts a load depends|one `RepresentationKey` — and nothing else' crates/tiler-runtime/src/load/host.rs docs/glossary.md
+rg -n 'four declarations a load|one map from each declared `ArithmeticType`|dtype map is eligibility evidence' crates/tiler-runtime/src/load/host.rs docs/glossary.md
+```
+
+The first command returned no matches. The second returned the runtime module declaration and the corrected glossary row. `cargo fmt --check -- crates/tiler-runtime/src/load/host.rs`, `RUSTDOCFLAGS='-D warnings' cargo doc -p tiler-runtime --no-deps`, `tkt lint --format json`, `make citations`, and `git diff --check` passed. The post-commit exact-base `tkt guard` result is recorded with the commit handoff.

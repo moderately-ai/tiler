@@ -4,12 +4,12 @@
 //! # Why the host states its environment rather than the loader discovering it
 //!
 //! Discovery needs a device. The whole value of this crate is that a load is
-//! decidable without one, so the host supplies the three facts a load depends
-//! on — which target profile it offers, which backend family it can execute,
-//! and which executable representation it can consume — and the loader treats
-//! them as given. A host that states them wrongly gets a wrong answer, and that
-//! is the correct division: the loader is not the authority on what a machine
-//! is.
+//! decidable without one, so the host supplies the four declarations a load
+//! depends on — which target profile it offers, which backend family it can
+//! execute, which executable representation it can consume, and how each
+//! arithmetic type resolves for dispatch — and the loader treats them as
+//! given. A host that states them wrongly gets a wrong answer, and that is the
+//! correct division: the loader is not the authority on what a machine is.
 //!
 //! # One explicit backend choice per routing attempt
 //!
