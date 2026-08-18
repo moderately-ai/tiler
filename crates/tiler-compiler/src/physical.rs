@@ -18,8 +18,9 @@ pub(crate) use tiler_ir::schedule::{
     ContractionAxisSource, ContributorCoverage, ContributorOrder, ContributorPartition,
     ExecutionBinding, IndexArithmetic, IndexRegion, KernelSchedule, LaunchPlan, LogicalAccess,
     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
-    PointwiseF32Expression, PointwiseF32Node, ReductionTopology, RegionId, ResourceRequirements,
-    ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
+    PointwiseF32Expression, PointwiseF32Node, ReductionTopology, RegionId,
+    RegionNumericalRequirements, RegionProgram, ResourceRequirements, ScalarProgram,
+    ScheduledRegion, TailPolicy, TensorRole,
 };
 use tiler_ir::schedule::{
     ArithmeticType, ScheduledRegionBuildError, ScheduledRegionBuilder, ScheduledRegionDiagnostic,
@@ -1113,7 +1114,13 @@ fn declared_input_for_verified_access(
             .map(|read| read.input_ordinal),
         NormalizedOutputSubject::Epilogue(epilogue) => {
             if semantic_members == epilogue.members()
-                && matches!(region.index.scalar_program, ScalarProgram::PointwiseF32(_))
+                && matches!(
+                    region.index.program,
+                    RegionProgram::Numerical {
+                        scalar: ScalarProgram::PointwiseF32(_),
+                        ..
+                    }
+                )
             {
                 epilogue
                     .reads()
@@ -1143,16 +1150,25 @@ fn declared_input_for_verified_access(
                 })
             }
         }
-        NormalizedOutputSubject::SerialSum(serial) => match &region.index.scalar_program {
-            ScalarProgram::PointwiseF32(_) => serial
+        NormalizedOutputSubject::SerialSum(serial) => match &region.index.program {
+            RegionProgram::Numerical {
+                scalar: ScalarProgram::PointwiseF32(_),
+                ..
+            } => serial
                 .prologue_reads()
                 .get(position)
                 .map(|(ordinal, _)| *ordinal),
-            ScalarProgram::FusedMultiplyAddSerialSum { .. } => serial
+            RegionProgram::Numerical {
+                scalar: ScalarProgram::FusedMultiplyAddSerialSum { .. },
+                ..
+            } => serial
                 .prologue_reads()
                 .get(position)
                 .map(|(ordinal, _)| *ordinal),
-            ScalarProgram::StrictSerialSum { .. } => (position == 0)
+            RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictSerialSum { .. },
+                ..
+            } => (position == 0)
                 .then(|| serial.contributor_input())
                 .flatten(),
             _ => None,
@@ -1576,11 +1592,15 @@ fn elementwise_region(
             // spellings of one: a `bf16` multiply rounds to eight significand
             // bits and a binary32 one to twenty-four, and only the matching
             // variant carries the expression the recognizer proved.
-            scalar_program: match expression {
-                RecognizedPointwise::F32(expression) => ScalarProgram::PointwiseF32(expression),
-                RecognizedPointwise::Bf16(expression) => ScalarProgram::PointwiseBf16(expression),
+            program: RegionProgram::Numerical {
+                scalar: match expression {
+                    RecognizedPointwise::F32(expression) => ScalarProgram::PointwiseF32(expression),
+                    RecognizedPointwise::Bf16(expression) => {
+                        ScalarProgram::PointwiseBf16(expression)
+                    }
+                },
+                numerical: request.numerical_contract().realization(),
             },
-            numerical: request.numerical_contract().realization(),
         },
         schedule: linear_schedule(elements, OwnershipWitnessId::new(0)),
     }
@@ -1720,14 +1740,16 @@ pub(crate) fn staged_fold_region(
                     output_count: plan.handed_elements,
                 },
             },
-            scalar_program: ScalarProgram::SquaredSerialSumThenEpilogue {
-                axes: plan.axes.clone(),
-                order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
-                empty_identity_bits: 0.0_f32.to_bits(),
-                epilogue: plan.fold_epilogue.clone(),
+            program: RegionProgram::Numerical {
+                scalar: ScalarProgram::SquaredSerialSumThenEpilogue {
+                    axes: plan.axes.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
+                    empty_identity_bits: 0.0_f32.to_bits(),
+                    epilogue: plan.fold_epilogue.clone(),
+                },
+                numerical: request.numerical_contract().realization(),
             },
-            numerical: request.numerical_contract().realization(),
         },
         schedule: KernelSchedule {
             reduction: ReductionTopology::Serial {
@@ -1975,12 +1997,14 @@ pub(crate) fn contraction_region(
                     output_count: normalized.output_elements,
                 },
             },
-            scalar_program: ScalarProgram::StrictTensorContraction {
-                contracted_shape: normalized.contracted_shape.clone(),
-                order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
+            program: RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictTensorContraction {
+                    contracted_shape: normalized.contracted_shape.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
+                },
+                numerical: request.numerical_contract().realization(),
             },
-            numerical: request.numerical_contract().realization(),
         },
         schedule: KernelSchedule {
             reduction: ReductionTopology::Contraction {
@@ -2078,13 +2102,15 @@ pub(crate) fn reduction_region(
                     output_count: serial.output_elements,
                 },
             },
-            scalar_program: ScalarProgram::StrictSerialSum {
-                axes: serial.reduction_axes.clone(),
-                order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
-                empty_identity_bits: 0.0_f32.to_bits(),
+            program: RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictSerialSum {
+                    axes: serial.reduction_axes.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
+                    empty_identity_bits: 0.0_f32.to_bits(),
+                },
+                numerical: request.numerical_contract().realization(),
             },
-            numerical: request.numerical_contract().realization(),
         },
         schedule: KernelSchedule {
             reduction: ReductionTopology::Serial {
@@ -2182,24 +2208,26 @@ pub(crate) fn fused_region(
                     output_count: serial.output_elements,
                 },
             },
-            scalar_program: ScalarProgram::FusedMultiplyAddSerialSum {
-                scale_bits,
-                bias_bits,
-                axes: serial.reduction_axes.clone(),
-                order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
-                empty_identity_bits: 0.0_f32.to_bits(),
-                // Derived from the contract, exactly as the unfused pointwise and
-                // reduction regions derive theirs. Hard-coding `false` here was
-                // invisible while every registered contract forbade both
-                // freedoms, and would have made this candidate fail the schedule
-                // verifier's realization cross-check under one that permits them
-                // — losing the fused plan silently rather than wrongly, but
-                // losing it for a reason no diagnostic would have named.
-                contraction: request.numerical_contract().contraction
-                    != NumericalPermission::Forbidden,
+            program: RegionProgram::Numerical {
+                scalar: ScalarProgram::FusedMultiplyAddSerialSum {
+                    scale_bits,
+                    bias_bits,
+                    axes: serial.reduction_axes.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
+                    empty_identity_bits: 0.0_f32.to_bits(),
+                    // Derived from the contract, exactly as the unfused pointwise and
+                    // reduction regions derive theirs. Hard-coding `false` here was
+                    // invisible while every registered contract forbade both
+                    // freedoms, and would have made this candidate fail the schedule
+                    // verifier's realization cross-check under one that permits them
+                    // — losing the fused plan silently rather than wrongly, but
+                    // losing it for a reason no diagnostic would have named.
+                    contraction: request.numerical_contract().contraction
+                        != NumericalPermission::Forbidden,
+                },
+                numerical: request.numerical_contract().realization(),
             },
-            numerical: request.numerical_contract().realization(),
         },
         schedule: KernelSchedule {
             reduction: ReductionTopology::Serial {
@@ -2619,13 +2647,15 @@ pub(crate) fn partial_reduction_region(
                     output_count: partial_elements,
                 },
             },
-            scalar_program: ScalarProgram::StrictSerialSum {
-                axes: subject.reduction_axes.clone(),
-                order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
-                empty_identity_bits: 0.0_f32.to_bits(),
+            program: RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictSerialSum {
+                    axes: subject.reduction_axes.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
+                    empty_identity_bits: 0.0_f32.to_bits(),
+                },
+                numerical: request.numerical_contract().realization(),
             },
-            numerical: request.numerical_contract().realization(),
         },
         schedule: KernelSchedule {
             reduction: multi_pass_topology(
@@ -2722,13 +2752,15 @@ pub(crate) fn final_reduction_region(
                     output_count: subject.output_elements,
                 },
             },
-            scalar_program: ScalarProgram::StrictSerialSum {
-                axes: axes.clone(),
-                order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
-                empty_identity_bits: 0.0_f32.to_bits(),
+            program: RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictSerialSum {
+                    axes: axes.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
+                    empty_identity_bits: 0.0_f32.to_bits(),
+                },
+                numerical: request.numerical_contract().realization(),
             },
-            numerical: request.numerical_contract().realization(),
         },
         schedule: KernelSchedule {
             reduction: multi_pass_topology(
@@ -2999,13 +3031,15 @@ pub(crate) fn single_workgroup_tree_region(
                     output_count: subject.output_elements,
                 },
             },
-            scalar_program: ScalarProgram::StrictSerialSum {
-                axes: subject.reduction_axes.clone(),
-                order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
-                empty_identity_bits: 0.0_f32.to_bits(),
+            program: RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictSerialSum {
+                    axes: subject.reduction_axes.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
+                    empty_identity_bits: 0.0_f32.to_bits(),
+                },
+                numerical: request.numerical_contract().realization(),
             },
-            numerical: request.numerical_contract().realization(),
         },
         schedule: KernelSchedule {
             threads_per_workgroup,
@@ -3254,7 +3288,14 @@ pub(crate) fn verify_schedule_with_feasibility(
     let verified = ScheduledRegionBuilder::from_region(region)
         .build()
         .map_err(|error| map_schedule_build_error(&error, id))?;
-    if verified.region().index.numerical != request.numerical_contract().realization() {
+    // Arm-aware: an arithmetic region must implement exactly the request's
+    // resolved realization; a partitioned-copy region carries none, which is a
+    // proved absence rather than a mismatch — the request keeps its complete
+    // policy subject, and the copy's own numerical claim is the
+    // `BitPreservingCopy` requirement its resources state.
+    if let Some(numerical) = verified.region().index.program.numerical()
+        && *numerical != request.numerical_contract().realization()
+    {
         return intrinsic("numerical-realization", id);
     }
     verify_region_subject_binding(verified.region(), &semantic_members, subject)?;
@@ -3359,9 +3400,16 @@ fn verify_publishing_copy_binding(
     subject: &VerifiedRequestSubject,
 ) -> Result<(), PhysicalError> {
     let bound = semantic_members.is_empty()
+        // Arm-aware: the publishing copy deliberately remains a `Numerical`
+        // identity-expression region, not a `PartitionedCopy` — a one-member
+        // copy would be a second spelling of it, which the copy vocabulary
+        // refuses by its own member-count rule.
         && matches!(
-            &region.index.scalar_program,
-            ScalarProgram::PointwiseF32(expression) if *expression == identity_expression()
+            &region.index.program,
+            RegionProgram::Numerical {
+                scalar: ScalarProgram::PointwiseF32(expression),
+                ..
+            } if *expression == identity_expression()
         )
         && matches!(
             region.index.accesses.as_slice(),
@@ -3414,7 +3462,15 @@ fn verify_region_output_binding(
     normalized: &NormalizedOutputSubject,
     subject: &VerifiedRequestSubject,
 ) -> Result<(), PhysicalError> {
-    let expected = match (normalized, &region.index.scalar_program) {
+    // A partitioned-copy region binds no recognized output at this base: the
+    // one path from a request to a copy region is the concatenate projection,
+    // whose recognizer and `partitioned-copy-f32.v1` request arm are the plan
+    // ticket's. Refusing under the shared request-binding rule keeps the
+    // reachable copy population empty by construction rather than by absence.
+    let RegionProgram::Numerical { scalar, .. } = &region.index.program else {
+        return intrinsic("request-binding", region.index.id);
+    };
+    let expected = match (normalized, scalar) {
         (NormalizedOutputSubject::Pointwise(normalized), scalar) => {
             // The recognized expression itself, compared whole and *in its own
             // width*. It binds node topology, ordered operands, constant bits,
@@ -3839,9 +3895,11 @@ fn verify_multi_pass_subject_binding(
     let expected = match pass {
         tiler_ir::schedule::ReductionPass::Partial => {
             matches!(
-                &region.index.scalar_program,
-                ScalarProgram::StrictSerialSum { axes, canonical_nan_bits, .. }
-                    if axes == normalized.reduction_axes()
+                &region.index.program,
+                RegionProgram::Numerical {
+                    scalar: ScalarProgram::StrictSerialSum { axes, canonical_nan_bits, .. },
+                    ..
+                } if axes == normalized.reduction_axes()
                         && *canonical_nan_bits
                             == subject.numerical_contract().canonical_arithmetic_nan_bits
             ) && semantic_members == normalized.members().reduction()
@@ -3859,9 +3917,11 @@ fn verify_multi_pass_subject_binding(
         }
         tiler_ir::schedule::ReductionPass::Final => {
             matches!(
-                &region.index.scalar_program,
-                ScalarProgram::StrictSerialSum { canonical_nan_bits, .. }
-                    if *canonical_nan_bits
+                &region.index.program,
+                RegionProgram::Numerical {
+                    scalar: ScalarProgram::StrictSerialSum { canonical_nan_bits, .. },
+                    ..
+                } if *canonical_nan_bits
                         == subject.numerical_contract().canonical_arithmetic_nan_bits
             ) && semantic_members
                 == normalized
@@ -3907,9 +3967,11 @@ fn verify_workgroup_tree_subject_binding(
         return intrinsic("request-binding", region.index.id);
     };
     let expected = matches!(
-        &region.index.scalar_program,
-        ScalarProgram::StrictSerialSum { axes, canonical_nan_bits, .. }
-            if axes == normalized.reduction_axes()
+        &region.index.program,
+        RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictSerialSum { axes, canonical_nan_bits, .. },
+            ..
+        } if axes == normalized.reduction_axes()
                 && *canonical_nan_bits
                     == subject.numerical_contract().canonical_arithmetic_nan_bits
     ) && semantic_members == normalized.members().reduction()
@@ -4296,13 +4358,15 @@ pub(crate) fn region_proposal(
     )
 }
 
-/// Projects every numerical field [`ResourceRequirements`] states onto a
-/// requirement in [`crate::target::honourability::CANONICAL_DIMENSIONS`] order.
+/// Projects the numerical requirement [`ResourceRequirements`] states onto
+/// requirements in [`crate::target::honourability::CANONICAL_DIMENSIONS`] order.
 ///
 /// The population is the owning record, not a counted prefix. Exhaustive
-/// destructure makes a ninth field a build error here; exhaustive match on
-/// [`NumericalDimension`] makes a twelfth governed dimension a build error
-/// until this function says whether the region record carries it.
+/// destructure of the `FloatingPoint` arm makes an eleventh row a build error
+/// here; exhaustive match on [`NumericalDimension`] makes a twelfth governed
+/// dimension a build error until this function says whether the region record
+/// carries it. The `BitPreservingCopy` arm projects the empty set — the proved
+/// absence of reached floating-point arithmetic, never target silence.
 /// Materialization rounding stays off the proposal: it is not on
 /// [`ResourceRequirements`], and inventing a strict value, skipping it because
 /// a strategy does not transform it, or recovering it from the contract key
@@ -4326,19 +4390,13 @@ fn region_numerical_requirements(
     // have drifted apart, which is a malformed proposal rather than an
     // infeasible region: a requirement set that quietly emptied itself would be
     // *vacuously* feasible, proven by every profile.
-    let Some(subject) = crate::policy::arithmetic_subject(arithmetic) else {
-        return Err(FeasibilityError::MalformedProposal {
-            rule: "region-arithmetic-subject",
-        });
-    };
-    let ResourceRequirements {
-        buffer_bindings: _,
-        threads_per_workgroup: _,
-        local_memory_bytes: _,
-        requires_device_memory: _,
-        index_arithmetic: _,
-        synchronization: _,
-        subgroup: _,
+    // The bit-preserving copy states **no** floating-point numerical
+    // requirement: the empty projection is the proved absence of reached
+    // arithmetic, which `derive-target-numerical-feasibility-from-reached-
+    // arithmetic-only` owns consuming as such rather than as target silence.
+    // Decided before the arithmetic subject is resolved, because a copy names
+    // no contract whose subject could be looked up.
+    let RegionNumericalRequirements::FloatingPoint {
         input_subnormals,
         result_subnormals,
         contraction,
@@ -4349,7 +4407,15 @@ fn region_numerical_requirements(
         approximate_intrinsics,
         nan_assumptions,
         infinity_assumptions,
-    } = requirements;
+    } = requirements.numerical
+    else {
+        return Ok(Vec::new());
+    };
+    let Some(subject) = crate::policy::arithmetic_subject(arithmetic) else {
+        return Err(FeasibilityError::MalformedProposal {
+            rule: "region-arithmetic-subject",
+        });
+    };
     let numerical = |dimension, behaviour| {
         NumericalRequirement::new(
             dimension,
@@ -4478,20 +4544,23 @@ mod tests {
             index_arithmetic: IndexArithmetic::CompleteU64,
             synchronization: None,
             subgroup: None,
-            input_subnormals: SubnormalMode::FlushToZero {
-                zero_sign: FlushedZeroSign::PreservesSign,
+            numerical: RegionNumericalRequirements::FloatingPoint {
+                input_subnormals: SubnormalMode::FlushToZero {
+                    zero_sign: FlushedZeroSign::PreservesSign,
+                },
+                result_subnormals: SubnormalMode::Preserve,
+                contraction: NumericalPermission::Permitted,
+                reassociation: NumericalPermission::Forbidden,
+                permutation: NumericalPermission::Permitted,
+                signed_zero: NumericalPermission::Permitted,
+                reciprocal_transform: NumericalPermission::Permitted,
+                approximate_intrinsics:
+                    tiler_ir::schedule::ApproximationEnvelope::BackendElementary,
+                nan_assumptions: ExceptionalValueAssumption::AssumeAbsent {
+                    provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
+                },
+                infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
             },
-            result_subnormals: SubnormalMode::Preserve,
-            contraction: NumericalPermission::Permitted,
-            reassociation: NumericalPermission::Forbidden,
-            permutation: NumericalPermission::Permitted,
-            signed_zero: NumericalPermission::Permitted,
-            reciprocal_transform: NumericalPermission::Permitted,
-            approximate_intrinsics: tiler_ir::schedule::ApproximationEnvelope::BackendElementary,
-            nan_assumptions: ExceptionalValueAssumption::AssumeAbsent {
-                provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
-            },
-            infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
         }
     }
 
@@ -4505,16 +4574,18 @@ mod tests {
             index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
             synchronization: None,
             subgroup: None,
-            input_subnormals: realization.input_subnormals,
-            result_subnormals: realization.result_subnormals,
-            contraction: realization.contraction,
-            reassociation: realization.reassociation,
-            permutation: realization.permutation,
-            signed_zero: realization.signed_zero,
-            reciprocal_transform: realization.reciprocal_transform,
-            approximate_intrinsics: realization.approximate_intrinsics,
-            nan_assumptions: realization.nan_assumptions,
-            infinity_assumptions: realization.infinity_assumptions,
+            numerical: RegionNumericalRequirements::FloatingPoint {
+                input_subnormals: realization.input_subnormals,
+                result_subnormals: realization.result_subnormals,
+                contraction: realization.contraction,
+                reassociation: realization.reassociation,
+                permutation: realization.permutation,
+                signed_zero: realization.signed_zero,
+                reciprocal_transform: realization.reciprocal_transform,
+                approximate_intrinsics: realization.approximate_intrinsics,
+                nan_assumptions: realization.nan_assumptions,
+                infinity_assumptions: realization.infinity_assumptions,
+            },
         }
     }
 
@@ -5034,10 +5105,10 @@ mod tests {
         );
 
         let mut invalid_numerics = regions[0].region().clone();
-        invalid_numerics
-            .index
-            .numerical
-            .canonical_arithmetic_nan_bits ^= 1;
+        let RegionProgram::Numerical { numerical, .. } = &mut invalid_numerics.index.program else {
+            panic!("the fixture region is arithmetic");
+        };
+        numerical.canonical_arithmetic_nan_bits ^= 1;
         assert_eq!(
             verify_schedule(
                 invalid_numerics,
@@ -5057,8 +5128,10 @@ mod tests {
         let (scale, bias) =
             fused_prologue_constants(request.sole_output()).expect("the fixture is affine");
         let mut wrong_expression = regions[0].region().clone();
-        wrong_expression.index.scalar_program =
-            ScalarProgram::PointwiseF32(test_affine_expression(bias, scale));
+        let RegionProgram::Numerical { scalar, .. } = &mut wrong_expression.index.program else {
+            panic!("the fixture region is arithmetic");
+        };
+        *scalar = ScalarProgram::PointwiseF32(test_affine_expression(bias, scale));
         assert_eq!(
             verify_schedule(
                 wrong_expression,
@@ -5087,9 +5160,13 @@ mod tests {
         assert_eq!(region.semantic_members(), expected);
 
         let mut wrong_expression = region.region().clone();
-        wrong_expression.index.scalar_program = ScalarProgram::PointwiseF32(
-            test_affine_expression(2.0_f32.to_bits(), 1.0_f32.to_bits()),
-        );
+        let RegionProgram::Numerical { scalar, .. } = &mut wrong_expression.index.program else {
+            panic!("the fixture region is arithmetic");
+        };
+        *scalar = ScalarProgram::PointwiseF32(test_affine_expression(
+            2.0_f32.to_bits(),
+            1.0_f32.to_bits(),
+        ));
         assert!(matches!(
             verify_schedule(
                 wrong_expression,
@@ -5346,8 +5423,10 @@ mod tests {
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let scheduled = build_fused_scheduled_region(&request).unwrap();
         let mut invalid_schedule = scheduled.region().clone();
-        let ScalarProgram::FusedMultiplyAddSerialSum { contraction, .. } =
-            &mut invalid_schedule.index.scalar_program
+        let RegionProgram::Numerical {
+            scalar: ScalarProgram::FusedMultiplyAddSerialSum { contraction, .. },
+            ..
+        } = &mut invalid_schedule.index.program
         else {
             panic!("expected fused scalar program")
         };
@@ -5387,9 +5466,13 @@ mod tests {
 
         for axes in [vec![Axis::new(1), Axis::new(1)], vec![Axis::new(99)]] {
             let mut malformed = scheduled.region().clone();
-            if let ScalarProgram::FusedMultiplyAddSerialSum {
-                axes: scalar_axes, ..
-            } = &mut malformed.index.scalar_program
+            if let RegionProgram::Numerical {
+                scalar:
+                    ScalarProgram::FusedMultiplyAddSerialSum {
+                        axes: scalar_axes, ..
+                    },
+                ..
+            } = &mut malformed.index.program
             {
                 *scalar_axes = axes.clone();
             }

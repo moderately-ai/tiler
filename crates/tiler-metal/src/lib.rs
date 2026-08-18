@@ -142,7 +142,7 @@
 //!     ApproximationEnvelope, ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
 //!     NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
 //!     OwnershipWitnessId, PointwiseF32ExpressionBuilder, RegionId, ReductionTopology,
-//!     AccessOrdinal, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
+//!     AccessOrdinal, RegionProgram, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
 //!     TensorRole,
 //! };
 //! use tiler_ir::shape::Shape;
@@ -197,21 +197,23 @@
 //! let product = expression.multiply(input, scale)?;
 //! let bias = expression.constant(1.0_f32.to_bits())?;
 //! let root = expression.add(product, bias)?;
-//! builder.scalar_program(ScalarProgram::PointwiseF32(expression.build(root)?))?;
-//! builder.numerical(NumericalRealization::new(
-//!     "tiler.doc.strict-f32",
-//!     0x7fc0_0000,
-//!     SubnormalMode::Preserve,
-//!     SubnormalMode::Preserve,
-//!     NumericalPermission::Forbidden,
-//!     NumericalPermission::Forbidden,
-//!     NumericalPermission::Forbidden,
-//!     NumericalPermission::Forbidden,
-//!     NumericalPermission::Forbidden,
-//!     ApproximationEnvelope::Forbidden,
-//!     ExceptionalValueAssumption::MakeNoAssumption,
-//!     ExceptionalValueAssumption::MakeNoAssumption,
-//! ))?;
+//! builder.program(RegionProgram::Numerical {
+//!     scalar: ScalarProgram::PointwiseF32(expression.build(root)?),
+//!     numerical: NumericalRealization::new(
+//!         "tiler.doc.strict-f32",
+//!         0x7fc0_0000,
+//!         SubnormalMode::Preserve,
+//!         SubnormalMode::Preserve,
+//!         NumericalPermission::Forbidden,
+//!         NumericalPermission::Forbidden,
+//!         NumericalPermission::Forbidden,
+//!         NumericalPermission::Forbidden,
+//!         NumericalPermission::Forbidden,
+//!         ApproximationEnvelope::Forbidden,
+//!         ExceptionalValueAssumption::MakeNoAssumption,
+//!         ExceptionalValueAssumption::MakeNoAssumption,
+//!     ),
+//! })?;
 //! builder.schedule(KernelSchedule {
 //!     binding: ExecutionBinding::GlobalLinearInvocation,
 //!     work_items: 4,

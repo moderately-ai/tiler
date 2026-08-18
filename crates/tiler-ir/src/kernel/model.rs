@@ -17,8 +17,9 @@ use crate::schedule::{AccessOrdinal, BoundsWitnessId, OwnershipWitnessId};
 use crate::schedule::{
     ApproximationEnvelope, CanonicalScheduledRegionIdentity, ExceptionalValueAssumption,
     FlushedZeroSign, IndexArithmetic, NumericalPermission, NumericalRealization,
-    REGION_INDEX_ARITHMETIC, RegionId, ResourceRequirements, SubgroupRealizationSubject,
-    SubnormalFreedom, SubnormalMode, SynchronizationSubject, TensorRole, ValueDomainProvenance,
+    REGION_INDEX_ARITHMETIC, RegionId, RegionNumericalRequirements, ResourceRequirements,
+    SubgroupRealizationSubject, SubnormalFreedom, SubnormalMode, SynchronizationSubject,
+    TensorRole, ValueDomainProvenance,
 };
 use crate::semantic::EncodedComponentRole;
 use crate::shape::Axis;
@@ -2026,23 +2027,56 @@ fn push_synchronization(bytes: &mut Vec<u8>, subject: Option<SynchronizationSubj
     }
 }
 
-fn push_requirements(bytes: &mut Vec<u8>, requirements: &ResourceRequirements) {
+/// Encodes one region's resource requirements into the kernel identity.
+///
+/// # Errors
+///
+/// Returns [`KernelDiagnostic::UnloweredRegionProgram`] for the
+/// bit-preserving-copy numerical arm: the kernel identity grammar carries the
+/// ten floating-point rows every existing kernel wrote, and the copy's own
+/// kernel carrier — tags, rows, and a possible domain step — is
+/// `lower-the-partitioned-copy-region-through-kernel-ir`'s accepted boundary.
+/// Unreachable while `verify_signature` refuses the copy region program ahead
+/// of every encoding, but stated as a typed refusal rather than a panic so a
+/// producer path added later fails closed. The `FloatingPoint` arm writes
+/// byte-for-byte what the ten flat fields wrote, so every existing
+/// `tiler.kernel.v9` identity keeps its exact bytes.
+fn push_requirements(
+    bytes: &mut Vec<u8>,
+    requirements: &ResourceRequirements,
+) -> Result<(), KernelDiagnostic> {
     bytes.extend_from_slice(&requirements.buffer_bindings.to_be_bytes());
     bytes.extend_from_slice(&requirements.threads_per_workgroup.to_be_bytes());
     bytes.extend_from_slice(&requirements.local_memory_bytes.to_be_bytes());
     bytes.push(u8::from(requirements.requires_device_memory));
     push_index_arithmetic(bytes, requirements.index_arithmetic);
     push_synchronization(bytes, requirements.synchronization);
-    push_subnormal(bytes, requirements.input_subnormals);
-    push_subnormal(bytes, requirements.result_subnormals);
-    push_permission(bytes, requirements.contraction);
-    push_permission(bytes, requirements.reassociation);
-    push_permission(bytes, requirements.permutation);
-    push_permission(bytes, requirements.signed_zero);
-    push_permission(bytes, requirements.reciprocal_transform);
-    push_approximation_envelope(bytes, requirements.approximate_intrinsics);
-    push_exceptional_assumption(bytes, requirements.nan_assumptions);
-    push_exceptional_assumption(bytes, requirements.infinity_assumptions);
+    let RegionNumericalRequirements::FloatingPoint {
+        input_subnormals,
+        result_subnormals,
+        contraction,
+        reassociation,
+        permutation,
+        signed_zero,
+        reciprocal_transform,
+        approximate_intrinsics,
+        nan_assumptions,
+        infinity_assumptions,
+    } = requirements.numerical
+    else {
+        return Err(KernelDiagnostic::UnloweredRegionProgram);
+    };
+    push_subnormal(bytes, input_subnormals);
+    push_subnormal(bytes, result_subnormals);
+    push_permission(bytes, contraction);
+    push_permission(bytes, reassociation);
+    push_permission(bytes, permutation);
+    push_permission(bytes, signed_zero);
+    push_permission(bytes, reciprocal_transform);
+    push_approximation_envelope(bytes, approximate_intrinsics);
+    push_exceptional_assumption(bytes, nan_assumptions);
+    push_exceptional_assumption(bytes, infinity_assumptions);
+    Ok(())
 }
 
 fn push_buffer(bytes: &mut Vec<u8>, buffer: &BufferParameter) {
@@ -2396,7 +2430,7 @@ pub(super) fn encode_identity(
         bytes.push(builtin.tag());
     }
     push_numerical(&mut bytes, &data.numerical);
-    push_requirements(&mut bytes, &data.requirements);
+    push_requirements(&mut bytes, &data.requirements)?;
     push_len(&mut bytes, data.values.len());
     for value in &data.values {
         bytes.push(value.value_type.tag());
@@ -2518,7 +2552,19 @@ const fn synchronization_encoded_len(subject: Option<SynchronizationSubject>) ->
 }
 
 /// Mirrors [`push_requirements`].
+///
+/// The copy arm measures zero: the encoder refuses that arm before the
+/// reservation-equality assertion can run, so no length is ever compared
+/// against it.
 fn requirements_encoded_len(requirements: &ResourceRequirements) -> usize {
+    let RegionNumericalRequirements::FloatingPoint {
+        nan_assumptions,
+        infinity_assumptions,
+        ..
+    } = requirements.numerical
+    else {
+        return 0;
+    };
     size_of_val(&requirements.buffer_bindings)
         .saturating_add(size_of_val(&requirements.threads_per_workgroup))
         .saturating_add(size_of_val(&requirements.local_memory_bytes))
@@ -2526,12 +2572,8 @@ fn requirements_encoded_len(requirements: &ResourceRequirements) -> usize {
         // modes, five permissions, and the approximation envelope.
         .saturating_add(10)
         .saturating_add(synchronization_encoded_len(requirements.synchronization))
-        .saturating_add(exceptional_assumption_encoded_len(
-            requirements.nan_assumptions,
-        ))
-        .saturating_add(exceptional_assumption_encoded_len(
-            requirements.infinity_assumptions,
-        ))
+        .saturating_add(exceptional_assumption_encoded_len(nan_assumptions))
+        .saturating_add(exceptional_assumption_encoded_len(infinity_assumptions))
 }
 
 /// Mirrors [`push_constant`]: a discriminant tag and the payload.

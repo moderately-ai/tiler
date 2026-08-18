@@ -19,13 +19,23 @@ use crate::schedule::{
     LocalCoordinateSource, LocalCoordinates, LogicalAccess, MemoryOrdering, NumericalPermission,
     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId, ParticipantRange,
     ParticipantSpace, PhaseId, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
-    ReductionPaddingIdentity, ReductionPass, ReductionTopology, RegionId, ScalarProgram,
-    ScheduledRegionBuilder, StagedElement, StagedRead, StagedSpan, StagedWrite, StagingId,
-    SubgroupRealizationSubject, SubgroupTransfer, SubgroupWidth, SubnormalMode, SyncPointId,
-    SynchronizationKind, SynchronizationPlacement, SynchronizationPoint, SynchronizationScope,
-    SynchronizationSubject, TailPolicy, TensorRole, VerifiedScheduledRegion, WorkgroupStaging,
-    element_count,
+    ReductionPaddingIdentity, ReductionPass, ReductionTopology, RegionId, RegionProgram,
+    ScalarProgram, ScheduledRegionBuilder, StagedElement, StagedRead, StagedSpan, StagedWrite,
+    StagingId, SubgroupRealizationSubject, SubgroupTransfer, SubgroupWidth, SubnormalMode,
+    SyncPointId, SynchronizationKind, SynchronizationPlacement, SynchronizationPoint,
+    SynchronizationScope, SynchronizationSubject, TailPolicy, TensorRole, VerifiedScheduledRegion,
+    WorkgroupStaging, element_count,
 };
+/// The mutable numerical half of a cloned arithmetic region's program.
+fn region_numerical_mut(
+    region: &mut crate::schedule::ScheduledRegion,
+) -> &mut crate::schedule::NumericalRealization {
+    match &mut region.index.program {
+        RegionProgram::Numerical { numerical, .. } => numerical,
+        RegionProgram::PartitionedCopy(_) => panic!("the fixture region is arithmetic"),
+    }
+}
+
 use crate::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
 };
@@ -148,13 +158,15 @@ fn strict_affine_u4_dequantize_region() -> VerifiedScheduledRegion {
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::StrictAffineU4Dequantize {
-            codes_role: STRICT_AFFINE_CODES_ROLE,
-            scale_role: STRICT_AFFINE_SCALE_ROLE,
-            zero_point_role: STRICT_AFFINE_ZERO_POINT_ROLE,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictAffineU4Dequantize {
+                codes_role: STRICT_AFFINE_CODES_ROLE,
+                scale_role: STRICT_AFFINE_SCALE_ROLE,
+                zero_point_role: STRICT_AFFINE_ZERO_POINT_ROLE,
+            },
+            numerical: numerical(),
         })
         .unwrap();
-    builder.numerical(numerical()).unwrap();
     builder
         .schedule(linear_schedule(
             logical_elements,
@@ -259,7 +271,7 @@ fn strict_affine_dequantization_rejects_exceptional_value_absence_assumptions() 
         },
     ] {
         let mut nan_absent = verified.region().clone();
-        nan_absent.index.numerical.nan_assumptions = assumption;
+        region_numerical_mut(&mut nan_absent).nan_assumptions = assumption;
         assert_eq!(
             ScheduledRegionBuilder::from_region(nan_absent)
                 .build()
@@ -269,7 +281,7 @@ fn strict_affine_dequantization_rejects_exceptional_value_absence_assumptions() 
         );
 
         let mut infinity_absent = verified.region().clone();
-        infinity_absent.index.numerical.infinity_assumptions = assumption;
+        region_numerical_mut(&mut infinity_absent).infinity_assumptions = assumption;
         assert_eq!(
             ScheduledRegionBuilder::from_region(infinity_absent)
                 .build()
@@ -345,9 +357,11 @@ fn pointwise_expression_region(
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::PointwiseF32(expression))
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseF32(expression),
+            numerical: numerical(),
+        })
         .unwrap();
-    builder.numerical(numerical()).unwrap();
     builder
         .schedule(linear_schedule(elements, OwnershipWitnessId::new(0)))
         .unwrap();
@@ -447,9 +461,11 @@ fn three_input_region(elements: u64) -> VerifiedScheduledRegion {
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::PointwiseF32(expression))
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseF32(expression),
+            numerical: numerical(),
+        })
         .unwrap();
-    builder.numerical(numerical()).unwrap();
     builder
         .schedule(linear_schedule(elements, OwnershipWitnessId::new(0)))
         .unwrap();
@@ -510,9 +526,11 @@ fn mixed_epilogue_region(elements: u64) -> VerifiedScheduledRegion {
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::PointwiseF32(expression))
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseF32(expression),
+            numerical: numerical(),
+        })
         .unwrap();
-    builder.numerical(numerical()).unwrap();
     builder
         .schedule(linear_schedule(elements, OwnershipWitnessId::new(0)))
         .unwrap();
@@ -732,14 +750,16 @@ fn reduction_region(id: RegionId, input: &Shape, axes: &[Axis]) -> VerifiedSched
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::StrictSerialSum {
-            axes: axes.to_vec(),
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: NAN_BITS,
-            empty_identity_bits: 0.0_f32.to_bits(),
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictSerialSum {
+                axes: axes.to_vec(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: NAN_BITS,
+                empty_identity_bits: 0.0_f32.to_bits(),
+            },
+            numerical: numerical(),
         })
         .unwrap();
-    builder.numerical(numerical()).unwrap();
     builder
         .schedule(KernelSchedule {
             reduction: ReductionTopology::Serial {
@@ -1019,6 +1039,7 @@ fn body_shaping_vocabulary_is_closed(
             LogicalAccess::BroadcastReplication { .. } => "broadcast-replication",
             LogicalAccess::ParametricBroadcast { .. } => "parametric-broadcast",
             LogicalAccess::LiveRowMajor { .. } => "live-row-major",
+            LogicalAccess::PartitionedCopySource => "partitioned-copy-source",
         },
         match topology {
             ReductionTopology::None => "none",
@@ -1065,7 +1086,10 @@ fn the_single_spelling_profile_is_still_narrow_enough_for_derive_and_compare() {
         region.schedule.tail,
         &region.index.accesses[0].map,
         &region.schedule.reduction,
-        &region.index.scalar_program,
+        match &region.index.program {
+            RegionProgram::Numerical { scalar, .. } => scalar,
+            RegionProgram::PartitionedCopy(_) => panic!("the fixture region is arithmetic"),
+        },
     );
     assert_eq!(
         names,
@@ -2216,17 +2240,17 @@ fn cooperative_region() -> VerifiedScheduledRegion {
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::StrictSerialSum {
-            axes: vec![Axis::new(1)],
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: NAN_BITS,
-            empty_identity_bits: 0.0_f32.to_bits(),
-        })
-        .unwrap();
-    builder
-        .numerical(NumericalRealization {
-            reassociation: NumericalPermission::Permitted,
-            ..numerical()
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictSerialSum {
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: NAN_BITS,
+                empty_identity_bits: 0.0_f32.to_bits(),
+            },
+            numerical: NumericalRealization {
+                reassociation: NumericalPermission::Permitted,
+                ..numerical()
+            },
         })
         .unwrap();
     builder
@@ -4153,8 +4177,12 @@ fn squared_fold_region(id: RegionId, epilogue: bool) -> VerifiedScheduledRegion 
             },
         })
         .unwrap();
-    builder.scalar_program(scalar).unwrap();
-    builder.numerical(numerical()).unwrap();
+    builder
+        .program(RegionProgram::Numerical {
+            scalar,
+            numerical: numerical(),
+        })
+        .unwrap();
     builder
         .schedule(KernelSchedule {
             reduction: ReductionTopology::Serial {
@@ -4309,13 +4337,15 @@ fn maximum_reduction_region(id: RegionId) -> VerifiedScheduledRegion {
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::StrictSerialMaximum {
-            axes: axes.to_vec(),
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: NAN_BITS,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictSerialMaximum {
+                axes: axes.to_vec(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: NAN_BITS,
+            },
+            numerical: numerical(),
         })
         .unwrap();
-    builder.numerical(numerical()).unwrap();
     builder
         .schedule(KernelSchedule {
             reduction: ReductionTopology::Serial {
@@ -4409,13 +4439,15 @@ fn maximum_partial_pass_region() -> VerifiedScheduledRegion {
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::StrictSerialMaximum {
-            axes: axes.to_vec(),
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: NAN_BITS,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictSerialMaximum {
+                axes: axes.to_vec(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: NAN_BITS,
+            },
+            numerical: numerical(),
         })
         .unwrap();
-    builder.numerical(numerical()).unwrap();
     builder
         .schedule(KernelSchedule {
             reduction: ReductionTopology::MultiPass {
@@ -4524,13 +4556,15 @@ fn cooperative_maximum_region() -> VerifiedScheduledRegion {
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::StrictSerialMaximum {
-            axes: vec![Axis::new(1)],
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: NAN_BITS,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictSerialMaximum {
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: NAN_BITS,
+            },
+            numerical: numerical(),
         })
         .unwrap();
-    builder.numerical(numerical()).unwrap();
     builder
         .schedule(KernelSchedule {
             threads_per_workgroup: 3,
@@ -4821,9 +4855,11 @@ fn bf16_pointwise_builder(id: RegionId, shape: &Shape) -> ScheduledRegionBuilder
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::PointwiseBf16(bf16_scale_bias_expression()))
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseBf16(bf16_scale_bias_expression()),
+            numerical: bf16_numerical(),
+        })
         .unwrap();
-    builder.numerical(bf16_numerical()).unwrap();
     builder
         .schedule(linear_schedule(elements, OwnershipWitnessId::new(0)))
         .unwrap();
@@ -5061,7 +5097,7 @@ fn a_bf16_region_declaring_the_f32_canonical_nan_payload_is_refused() {
     let mut wrong_width = bf16_pointwise_region(RegionId::new(0), &Shape::from_dims([2, 3]))
         .region()
         .clone();
-    wrong_width.index.numerical.canonical_arithmetic_nan_bits = NAN_BITS;
+    region_numerical_mut(&mut wrong_width).canonical_arithmetic_nan_bits = NAN_BITS;
     assert_eq!(
         ScheduledRegionBuilder::from_region(wrong_width.clone())
             .build()
@@ -5073,7 +5109,7 @@ fn a_bf16_region_declaring_the_f32_canonical_nan_payload_is_refused() {
     // A payload that is the right pattern in the wrong place is refused too: the
     // sixteen bits go in the low half, not the high one a truncating reader
     // would produce.
-    wrong_width.index.numerical.canonical_arithmetic_nan_bits = BF16_NAN_BITS << 16;
+    region_numerical_mut(&mut wrong_width).canonical_arithmetic_nan_bits = BF16_NAN_BITS << 16;
     assert_eq!(
         ScheduledRegionBuilder::from_region(wrong_width.clone())
             .build()
@@ -5084,7 +5120,7 @@ fn a_bf16_region_declaring_the_f32_canonical_nan_payload_is_refused() {
 
     // Restoring the declared payload readmits the region, so the refusal is the
     // payload and not the perturbation having broken the fixture.
-    wrong_width.index.numerical.canonical_arithmetic_nan_bits = BF16_NAN_BITS;
+    region_numerical_mut(&mut wrong_width).canonical_arithmetic_nan_bits = BF16_NAN_BITS;
     assert!(
         ScheduledRegionBuilder::from_region(wrong_width)
             .build()
@@ -5214,13 +5250,15 @@ fn contraction_region(id: RegionId, m: u64, n: u64, k: u64) -> VerifiedScheduled
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::StrictTensorContraction {
-            contracted_shape: contracted.clone(),
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: NAN_BITS,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictTensorContraction {
+                contracted_shape: contracted.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: NAN_BITS,
+            },
+            numerical: numerical(),
         })
         .unwrap();
-    builder.numerical(numerical()).unwrap();
     builder
         .schedule(KernelSchedule {
             reduction: ReductionTopology::Contraction {
@@ -5426,11 +5464,11 @@ fn live_row_major_region(rows: u64) -> VerifiedScheduledRegion {
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::PointwiseF32(scale_bias_expression(
-            SCALE_BITS, BIAS_BITS,
-        )))
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseF32(scale_bias_expression(SCALE_BITS, BIAS_BITS)),
+            numerical: numerical(),
+        })
         .unwrap();
-    builder.numerical(numerical()).unwrap();
     builder
         .schedule(linear_schedule(rows, OwnershipWitnessId::new(0)))
         .unwrap();
@@ -5531,12 +5569,12 @@ fn two_input_pointwise_builder(
         })
         .unwrap();
     builder
-        .scalar_program(two_input_pointwise_program(width))
-        .unwrap();
-    builder
-        .numerical(match width {
-            PointwiseWidth::F32 => numerical(),
-            PointwiseWidth::Bf16 => bf16_numerical(),
+        .program(RegionProgram::Numerical {
+            scalar: two_input_pointwise_program(width),
+            numerical: match width {
+                PointwiseWidth::F32 => numerical(),
+                PointwiseWidth::Bf16 => bf16_numerical(),
+            },
         })
         .unwrap();
     builder
@@ -5908,13 +5946,15 @@ fn live_contraction_region(id: RegionId) -> VerifiedScheduledRegion {
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::StrictTensorContraction {
-            contracted_shape: contracted,
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: NAN_BITS,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictTensorContraction {
+                contracted_shape: contracted,
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: NAN_BITS,
+            },
+            numerical: numerical(),
         })
         .unwrap();
-    builder.numerical(numerical()).unwrap();
     builder
         .schedule(KernelSchedule {
             reduction: ReductionTopology::LiveContraction {
@@ -6506,27 +6546,27 @@ fn cooperative_contraction_region(
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::StrictTensorContraction {
-            contracted_shape: contracted_shape.clone(),
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: NAN_BITS,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictTensorContraction {
+                contracted_shape: contracted_shape.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: NAN_BITS,
+            },
+            numerical: NumericalRealization::new(
+                "tiler.test.strict-f32",
+                NAN_BITS,
+                SubnormalMode::Preserve,
+                SubnormalMode::Preserve,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Permitted,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                ApproximationEnvelope::Forbidden,
+                ExceptionalValueAssumption::MakeNoAssumption,
+                ExceptionalValueAssumption::MakeNoAssumption,
+            ),
         })
-        .unwrap();
-    builder
-        .numerical(NumericalRealization::new(
-            "tiler.test.strict-f32",
-            NAN_BITS,
-            SubnormalMode::Preserve,
-            SubnormalMode::Preserve,
-            NumericalPermission::Forbidden,
-            NumericalPermission::Permitted,
-            NumericalPermission::Forbidden,
-            NumericalPermission::Forbidden,
-            NumericalPermission::Forbidden,
-            ApproximationEnvelope::Forbidden,
-            ExceptionalValueAssumption::MakeNoAssumption,
-            ExceptionalValueAssumption::MakeNoAssumption,
-        ))
         .unwrap();
     let threads = u32::try_from(block * block).expect("256 fits");
     builder

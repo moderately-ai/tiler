@@ -565,7 +565,7 @@ fn encode_manifest(
 
     encode_provenance_tables(&mut bytes, envelope);
     encode_expressions(&mut bytes, envelope);
-    encode_variants(&mut bytes, envelope);
+    encode_variants(&mut bytes, envelope)?;
     // One framed run of the record's own domain-separated canonical bytes,
     // written after the variants whose entries its bindings name. The manifest
     // does not restate the record's layout: `super::super::realization::codec`
@@ -693,7 +693,16 @@ pub(super) fn encode_expressions(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelop
 }
 
 /// Encodes the plan variants in routing priority order.
-fn encode_variants(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
+///
+/// # Errors
+///
+/// Returns [`ArtifactCodecError::ModelObligation`] when an entry's resource
+/// record carries the bit-preserving-copy numerical arm the grammar cannot yet
+/// state; see `push_resources`.
+fn encode_variants(
+    bytes: &mut Vec<u8>,
+    envelope: &ArtifactEnvelope,
+) -> Result<(), ArtifactCodecError> {
     push_len(bytes, envelope.variants().len());
     for variant in envelope.variants() {
         bytes.extend_from_slice(&variant.program_section.to_be_bytes());
@@ -722,7 +731,7 @@ fn encode_variants(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
         encode_route_requirements(bytes, &variant.route_requirements);
         push_len(bytes, variant.entries.len());
         for entry in &variant.entries {
-            encode_entry(bytes, entry);
+            encode_entry(bytes, entry)?;
         }
         push_len(bytes, variant.execution_order.len());
         for entry in &variant.execution_order {
@@ -735,6 +744,7 @@ fn encode_variants(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
             bytes.push(edge.reason.tag());
         }
     }
+    Ok(())
 }
 
 /// Encodes one variant's live-device route requirements in canonical order.
@@ -762,9 +772,15 @@ fn encode_route_requirements(bytes: &mut Vec<u8>, requirements: &[RouteRequireme
 }
 
 /// Encodes one executable entry.
-fn encode_entry(bytes: &mut Vec<u8>, entry: &EntryRow) {
+///
+/// # Errors
+///
+/// Returns [`ArtifactCodecError::ModelObligation`] for the
+/// bit-preserving-copy resource arm; see `push_resources`.
+fn encode_entry(bytes: &mut Vec<u8>, entry: &EntryRow) -> Result<(), ArtifactCodecError> {
     push_slice(bytes, entry.stage.as_bytes());
-    push_resources(bytes, entry.resources);
+    push_resources(bytes, entry.resources)
+        .map_err(|cause| ArtifactCodecError::ModelObligation { cause })?;
     push_numerical(bytes, &entry.numerical);
     push_len(bytes, entry.bindings.len());
     for binding in &entry.bindings {
@@ -806,6 +822,7 @@ fn encode_entry(bytes: &mut Vec<u8>, entry: &EntryRow) {
             bytes.push(abi_type_tag(operand.value_type));
         }
     }
+    Ok(())
 }
 
 /// Encodes one section descriptor per framed section.

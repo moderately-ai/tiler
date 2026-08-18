@@ -308,7 +308,15 @@ fn a_regrouping_bf16_contract_is_refused_at_the_conformance_bridge() {
     // The region verifies under it — the refusal below is the reference's, made
     // about a realization a region genuinely carries, not a schedule-layer one.
     let region = region_under(corpus_elements(), realization_of(regrouping));
-    assert!(region.region().index.numerical.permits_reassociation());
+    assert!(
+        region
+            .region()
+            .index
+            .program
+            .numerical()
+            .expect("the fixture region is arithmetic")
+            .permits_reassociation()
+    );
     assert_eq!(
         conformance_of(&region),
         Err(UnsupportedReferenceContract::ReassociationPermitted),

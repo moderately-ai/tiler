@@ -1064,13 +1064,17 @@ fn parse_entry(
     payloads: usize,
 ) -> Result<EntryRow, ArtifactCodecError> {
     let stage = StageSubject::from_bytes(cursor.slice()?)?;
-    let resources = ResourceRequirements {
-        buffer_bindings: cursor.u32()?,
-        threads_per_workgroup: cursor.u32()?,
-        local_memory_bytes: cursor.u64()?,
-        requires_device_memory: cursor.boolean()?,
-        index_arithmetic: cursor.index_arithmetic()?,
-        synchronization: cursor.synchronization()?,
+    let (buffer_bindings, threads_per_workgroup, local_memory_bytes) =
+        (cursor.u32()?, cursor.u32()?, cursor.u64()?);
+    let requires_device_memory = cursor.boolean()?;
+    let index_arithmetic = cursor.index_arithmetic()?;
+    let synchronization = cursor.synchronization()?;
+    // The wire grammar carries the ten floating-point rows every artifact ever
+    // wrote, so the decoder always constructs the `FloatingPoint` arm: no
+    // encodable artifact can state the bit-preserving-copy absence until the
+    // delivery-state ticket lands its tagged entry row, and `push_resources`
+    // refuses that arm on the way in.
+    let numerical = tiler_ir::schedule::RegionNumericalRequirements::FloatingPoint {
         input_subnormals: cursor.subnormal()?,
         result_subnormals: cursor.subnormal()?,
         contraction: cursor.permission()?,
@@ -1081,6 +1085,15 @@ fn parse_entry(
         approximate_intrinsics: cursor.approximation_envelope()?,
         nan_assumptions: cursor.exceptional_assumption()?,
         infinity_assumptions: cursor.exceptional_assumption()?,
+    };
+    let resources = ResourceRequirements {
+        buffer_bindings,
+        threads_per_workgroup,
+        local_memory_bytes,
+        requires_device_memory,
+        index_arithmetic,
+        synchronization,
+        numerical,
         // The conditional block is physically last even though the model keeps
         // the field beside synchronization. Its absence is distinguished from
         // the following bounded text length, not from the nonzero resource tags

@@ -42,7 +42,7 @@ use tiler_ir::schedule::{
     FencedSpaces, FlushedZeroSign, KernelSchedule, LaunchPlan, LogicalAccess,
     MaterializationRounding, MemoryOrdering, NumericalPermission, NumericalRealization,
     OwnershipProof, OwnershipProofKind, OwnershipWitnessId, PointwiseBf16ExpressionBuilder,
-    PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
+    PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, RegionProgram, ScalarProgram,
     ScheduledRegionBuilder, SubnormalMode, SynchronizationKind, SynchronizationScope,
     SynchronizationSubject, TailPolicy, TensorRole,
 };
@@ -791,17 +791,19 @@ pub(super) fn fused_kernel(scale_bits: u32) -> VerifiedKernel {
         })
         .unwrap();
     region
-        .scalar_program(ScalarProgram::FusedMultiplyAddSerialSum {
-            scale_bits,
-            bias_bits: BIAS_BITS,
-            axes: axes.clone(),
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: CANONICAL_NAN,
-            empty_identity_bits: 0,
-            contraction: false,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::FusedMultiplyAddSerialSum {
+                scale_bits,
+                bias_bits: BIAS_BITS,
+                axes: axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: CANONICAL_NAN,
+                empty_identity_bits: 0,
+                contraction: false,
+            },
+            numerical: strict(),
         })
         .unwrap();
-    region.numerical(strict()).unwrap();
     region
         .schedule(KernelSchedule {
             binding: ExecutionBinding::GlobalLinearInvocation,
@@ -997,9 +999,11 @@ fn pointwise_kernel() -> VerifiedKernel {
     let bias = expression.constant(BIAS_BITS).unwrap();
     let root = expression.add(product, bias).unwrap();
     region
-        .scalar_program(ScalarProgram::PointwiseF32(expression.build(root).unwrap()))
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseF32(expression.build(root).unwrap()),
+            numerical: strict(),
+        })
         .unwrap();
-    region.numerical(strict()).unwrap();
     region
         .schedule(KernelSchedule {
             binding: ExecutionBinding::GlobalLinearInvocation,
@@ -1068,9 +1072,11 @@ fn publication_copy_kernel() -> VerifiedKernel {
     let mut expression = PointwiseF32ExpressionBuilder::new();
     let root = expression.input(AccessOrdinal::FIRST).unwrap();
     region
-        .scalar_program(ScalarProgram::PointwiseF32(expression.build(root).unwrap()))
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseF32(expression.build(root).unwrap()),
+            numerical: strict(),
+        })
         .unwrap();
-    region.numerical(strict()).unwrap();
     region
         .schedule(KernelSchedule {
             binding: ExecutionBinding::GlobalLinearInvocation,
@@ -1148,14 +1154,16 @@ fn reduction_kernel() -> VerifiedKernel {
         })
         .unwrap();
     region
-        .scalar_program(ScalarProgram::StrictSerialSum {
-            axes: axes.clone(),
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: CANONICAL_NAN,
-            empty_identity_bits: 0,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictSerialSum {
+                axes: axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: CANONICAL_NAN,
+                empty_identity_bits: 0,
+            },
+            numerical: strict(),
         })
         .unwrap();
-    region.numerical(strict()).unwrap();
     region
         .schedule(KernelSchedule {
             binding: ExecutionBinding::GlobalLinearInvocation,
@@ -1783,13 +1791,15 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
         })
         .expect("output ownership");
     region
-        .scalar_program(ScalarProgram::StrictAffineU4Dequantize {
-            codes_role: STRICT_AFFINE_CODES_ROLE,
-            scale_role: STRICT_AFFINE_SCALE_ROLE,
-            zero_point_role: STRICT_AFFINE_ZERO_POINT_ROLE,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictAffineU4Dequantize {
+                codes_role: STRICT_AFFINE_CODES_ROLE,
+                scale_role: STRICT_AFFINE_SCALE_ROLE,
+                zero_point_role: STRICT_AFFINE_ZERO_POINT_ROLE,
+            },
+            numerical: strict(),
         })
         .expect("strict-affine scalar program");
-    region.numerical(strict()).expect("numerical contract");
     region
         .schedule(KernelSchedule {
             binding: ExecutionBinding::GlobalLinearInvocation,
@@ -2410,9 +2420,11 @@ fn live_extent_kernel() -> VerifiedKernel {
         })
         .unwrap();
     region
-        .scalar_program(ScalarProgram::PointwiseF32(scale_bias_expression()))
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseF32(scale_bias_expression()),
+            numerical: strict(),
+        })
         .unwrap();
-    region.numerical(strict()).unwrap();
     region
         .schedule(KernelSchedule {
             binding: ExecutionBinding::GlobalLinearInvocation,
@@ -2684,13 +2696,15 @@ fn live_contraction_kernel() -> VerifiedKernel {
         })
         .unwrap();
     region
-        .scalar_program(ScalarProgram::StrictTensorContraction {
-            contracted_shape: contracted,
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: CANONICAL_NAN,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictTensorContraction {
+                contracted_shape: contracted,
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: CANONICAL_NAN,
+            },
+            numerical: strict(),
         })
         .unwrap();
-    region.numerical(strict()).unwrap();
     region
         .schedule(KernelSchedule {
             binding: ExecutionBinding::GlobalLinearInvocation,
@@ -3147,9 +3161,11 @@ impl PointwiseWidth {
             })
             .expect("output ownership");
         region
-            .scalar_program(self.scalar_program())
+            .program(RegionProgram::Numerical {
+                scalar: self.scalar_program(),
+                numerical: self.numerical(),
+            })
             .expect("scalar program");
-        region.numerical(self.numerical()).expect("numerical");
         region
             .schedule(KernelSchedule {
                 binding: ExecutionBinding::GlobalLinearInvocation,
@@ -6029,9 +6045,11 @@ fn baked_dense_kernel(columns: u64) -> VerifiedKernel {
         })
         .unwrap();
     region
-        .scalar_program(ScalarProgram::PointwiseF32(scale_bias_expression()))
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseF32(scale_bias_expression()),
+            numerical: strict(),
+        })
         .unwrap();
-    region.numerical(strict()).unwrap();
     region
         .schedule(KernelSchedule {
             binding: ExecutionBinding::GlobalLinearInvocation,
@@ -7063,7 +7081,8 @@ fn an_entry_records_the_absence_of_a_synchronization_requirement() {
     // The presence byte is written, not omitted: encoding the same resource
     // record with and without it differ by exactly one byte.
     let mut with_absence = Vec::new();
-    super::model::push_resources(&mut with_absence, entry.resources());
+    super::model::push_resources(&mut with_absence, entry.resources())
+        .expect("the arithmetic rows encode");
     let mut without = Vec::new();
     super::model::push_synchronization(&mut without, None);
     assert_eq!(without, vec![0x00], "absence is one recorded byte");

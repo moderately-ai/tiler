@@ -227,8 +227,8 @@ use tiler_ir::schedule::{
     Access, AccessMode, AccessOrdinal, BoundsProof, BoundsProofKind, BoundsWitnessId,
     ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess, NumericalRealization,
     OwnershipProof, OwnershipProofKind, OwnershipWitnessId, PointwiseBf16ExpressionBuilder,
-    RealizationWitness, ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder,
-    TailPolicy, TensorRole, VerifiedScheduledRegion,
+    RealizationWitness, ReductionTopology, RegionId, RegionProgram, ScalarProgram,
+    ScheduledRegionBuilder, TailPolicy, TensorRole, VerifiedScheduledRegion,
 };
 use tiler_ir::semantic::{
     Bf16, Bf16Add, Bf16Constant, Bf16Multiply, CANONICAL_BF16_ARITHMETIC_NAN_BITS, InputKey,
@@ -567,11 +567,19 @@ pub(crate) fn declared_conformance() -> ReferenceNumericalConformance {
 /// Returns [`UnsupportedReferenceContract`] when the region's realization
 /// permits a transform whose result is a set rather than one value, or when its
 /// declared canonical NaN payload contradicts the region's own arithmetic type.
+///
+/// # Panics
+///
+/// Panics for a partitioned-copy region, which declares no realization; every
+/// region this vertical builds is arithmetic.
 pub(crate) fn conformance_of(
     region: &VerifiedScheduledRegion,
 ) -> Result<ReferenceNumericalConformance, UnsupportedReferenceContract> {
     let witness = RealizationWitness::of(region);
-    ReferenceNumericalConformance::from_realization(witness.realization(), witness.accumulation())
+    let realization = witness
+        .realization()
+        .expect("the bf16 vertical's regions are arithmetic and declare a realization");
+    ReferenceNumericalConformance::from_realization(realization, witness.accumulation())
 }
 
 /// Builds the semantic `(x * 1.5) + 0.0` program the oracle evaluates.
@@ -674,11 +682,11 @@ pub(crate) fn region_under(
         })
         .expect("one invocation per output is admitted");
     builder
-        .scalar_program(ScalarProgram::PointwiseBf16(expression))
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseBf16(expression),
+            numerical: realization,
+        })
         .expect("a pointwise bf16 program is admitted");
-    builder
-        .numerical(realization)
-        .expect("the stated realization is admitted");
     builder
         .schedule(KernelSchedule {
             binding: ExecutionBinding::GlobalLinearInvocation,

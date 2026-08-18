@@ -62,7 +62,7 @@ use tiler_ir::schedule::{
     BoundsProofKind, BoundsWitnessId, ExceptionalValueAssumption, ExecutionBinding,
     FlushedZeroSign, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
-    PointwiseBf16ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
+    PointwiseBf16ExpressionBuilder, ReductionTopology, RegionId, RegionProgram, ScalarProgram,
     ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode, TailPolicy, TensorRole,
     VerifiedScheduledRegion,
 };
@@ -870,23 +870,23 @@ fn bf16_region_under(contract: NumericalContract) -> VerifiedScheduledRegion {
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::PointwiseBf16(expression))
-        .unwrap();
-    builder
-        .numerical(NumericalRealization::new(
-            "tiler.test.bf16-region",
-            u32::from(CANONICAL_BF16_ARITHMETIC_NAN_BITS),
-            contract.input_subnormals(),
-            contract.result_subnormals(),
-            contract.contraction(),
-            contract.reassociation(),
-            contract.permutation(),
-            contract.signed_zero(),
-            contract.reciprocal_transform(),
-            contract.approximate_intrinsics(),
-            contract.nan_assumptions(),
-            contract.infinity_assumptions(),
-        ))
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseBf16(expression),
+            numerical: NumericalRealization::new(
+                "tiler.test.bf16-region",
+                u32::from(CANONICAL_BF16_ARITHMETIC_NAN_BITS),
+                contract.input_subnormals(),
+                contract.result_subnormals(),
+                contract.contraction(),
+                contract.reassociation(),
+                contract.permutation(),
+                contract.signed_zero(),
+                contract.reciprocal_transform(),
+                contract.approximate_intrinsics(),
+                contract.nan_assumptions(),
+                contract.infinity_assumptions(),
+            ),
+        })
         .unwrap();
     builder
         .schedule(KernelSchedule {

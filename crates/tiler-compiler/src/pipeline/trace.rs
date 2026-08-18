@@ -2357,7 +2357,9 @@ mod tests {
             DeclaredBehaviour, DimensionBehaviour, HonouringMeans, NumericalDimension,
             UnhonouredDimension, governed_profile_source,
         };
-        use tiler_ir::schedule::{ArithmeticType, NumericalPermission, ResourceRequirements};
+        use tiler_ir::schedule::{
+            ArithmeticType, NumericalPermission, RegionNumericalRequirements, ResourceRequirements,
+        };
 
         let realization = StrictF32NumericalContract::governed().realization();
         let capability = match crate::physical::assess_resources(
@@ -2369,16 +2371,18 @@ mod tests {
                 index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
                 synchronization: None,
                 subgroup: None,
-                input_subnormals: realization.input_subnormals,
-                result_subnormals: realization.result_subnormals,
-                contraction: realization.contraction,
-                reassociation: realization.reassociation,
-                permutation: realization.permutation,
-                signed_zero: realization.signed_zero,
-                reciprocal_transform: realization.reciprocal_transform,
-                approximate_intrinsics: realization.approximate_intrinsics,
-                nan_assumptions: realization.nan_assumptions,
-                infinity_assumptions: realization.infinity_assumptions,
+                numerical: RegionNumericalRequirements::FloatingPoint {
+                    input_subnormals: realization.input_subnormals,
+                    result_subnormals: realization.result_subnormals,
+                    contraction: realization.contraction,
+                    reassociation: realization.reassociation,
+                    permutation: realization.permutation,
+                    signed_zero: realization.signed_zero,
+                    reciprocal_transform: realization.reciprocal_transform,
+                    approximate_intrinsics: realization.approximate_intrinsics,
+                    nan_assumptions: realization.nan_assumptions,
+                    infinity_assumptions: realization.infinity_assumptions,
+                },
             },
             ArithmeticType::F32,
             1,

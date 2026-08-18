@@ -34,8 +34,8 @@
 
 use super::cooperative::ContributorArrival;
 use super::model::{
-    ContributorOrder, ContributorPartition, ReductionPass, ReductionTopology, ScalarProgram,
-    VerifiedScheduledRegion, cooperative_tile, region_arithmetic_type,
+    ContributorOrder, ContributorPartition, ReductionPass, ReductionTopology, RegionProgram,
+    ScalarProgram, VerifiedScheduledRegion, cooperative_tile, region_arithmetic_type,
 };
 use super::numerics::{ArithmeticType, NumericalRealization};
 use super::pointwise::{PointwiseF32Expression, PointwiseF32Node};
@@ -82,8 +82,7 @@ use crate::shape::{Axis, Shape};
 /// available.
 #[derive(Clone, Copy, Debug)]
 pub struct RealizationWitness<'a> {
-    realization: &'a NumericalRealization,
-    program: &'a ScalarProgram,
+    program: &'a RegionProgram,
     reduction: &'a ReductionTopology,
 }
 
@@ -93,21 +92,37 @@ impl<'a> RealizationWitness<'a> {
     pub const fn of(region: &'a VerifiedScheduledRegion) -> Self {
         let region = region.region();
         Self {
-            realization: &region.index.numerical,
-            program: &region.index.scalar_program,
+            program: &region.index.program,
             reduction: &region.schedule.reduction,
         }
     }
 
-    /// The declared numerical realization the witness was aggregated under.
+    /// The declared numerical realization the witness was aggregated under,
+    /// when the region's computation class declares one.
     ///
     /// The two subnormal dimensions — the enumeration's sites 1.1 and 2.1, and
     /// the only two the reference realizes exactly — are read from here rather
     /// than restated as accessors of their own, because
     /// `ReferenceNumericalConformance` already takes them in this shape.
+    ///
+    /// `None` is the partitioned copy's explicit answer: a copy performs no
+    /// arithmetic and declares no realization, so there is no realization for
+    /// a witness to aggregate — a proved absence, not a missing field.
     #[must_use]
-    pub const fn realization(&self) -> &'a NumericalRealization {
-        self.realization
+    pub const fn realization(&self) -> Option<&'a NumericalRealization> {
+        self.program.numerical()
+    }
+
+    /// The scalar program of an arithmetic region, or `None` for the copy.
+    ///
+    /// The internal read every program-classifying accessor below goes
+    /// through, so the copy's "no fold, no expression, no freedom site" answer
+    /// is stated once rather than re-derived per accessor.
+    const fn scalar(&self) -> Option<&'a ScalarProgram> {
+        match self.program {
+            RegionProgram::Numerical { scalar, .. } => Some(scalar),
+            RegionProgram::PartitionedCopy(_) => None,
+        }
     }
 
     /// The contributor combination order, for a topology that states one.
@@ -294,7 +309,13 @@ impl<'a> RealizationWitness<'a> {
     /// contract rather than letting a caller assume otherwise.
     #[must_use]
     pub const fn pointwise_f32(&self) -> Option<&'a PointwiseF32Expression> {
-        match self.program {
+        // A partitioned copy pins no expression: `scalar` answers `None`
+        // explicitly for it, and the match below is exhaustive over the
+        // arithmetic vocabulary alone.
+        let Some(scalar) = self.scalar() else {
+            return None;
+        };
+        match scalar {
             ScalarProgram::PointwiseF32(expression) => Some(expression),
             ScalarProgram::PointwiseBf16(_)
             | ScalarProgram::StrictAffineU4Dequantize { .. }
@@ -320,7 +341,12 @@ impl<'a> RealizationWitness<'a> {
     /// program* and not for every expression a region carries.
     #[must_use]
     pub const fn fold_epilogue(&self) -> Option<&'a PointwiseF32Expression> {
-        match self.program {
+        // A partitioned copy folds nothing, so it carries no epilogue; the
+        // explicit `None` from `scalar` states that rather than defaulting it.
+        let Some(scalar) = self.scalar() else {
+            return None;
+        };
+        match scalar {
             ScalarProgram::SquaredSerialSumThenEpilogue { epilogue, .. } => Some(epilogue),
             ScalarProgram::PointwiseF32(_)
             | ScalarProgram::PointwiseBf16(_)
@@ -364,15 +390,22 @@ impl<'a> RealizationWitness<'a> {
     ///    does with it.
     #[must_use]
     pub fn unpinned_freedom_site(&self) -> Option<UnpinnedFreedomSite> {
-        let contraction_permitted = self.realization.permits_contraction();
-        if contraction_permitted && let Some(operation) = unrecorded_fold_contraction(self.program)
-        {
+        // A partitioned copy has no freedom site, stated explicitly rather
+        // than defaulted: it declares no realization, so no permission exists
+        // to be spent, and it states no fold or expression a spent permission
+        // could reach. Every enumeration site is a (dimension, construct) pair
+        // and the copy carries neither half.
+        let RegionProgram::Numerical { scalar, numerical } = self.program else {
+            return None;
+        };
+        let contraction_permitted = numerical.permits_contraction();
+        if contraction_permitted && let Some(operation) = unrecorded_fold_contraction(scalar) {
             return Some(UnpinnedFreedomSite::ContractionUnrecorded { operation });
         }
         if let Some(reason) = self.unevaluable_realization() {
             return Some(UnpinnedFreedomSite::RealizationNotEvaluable { reason });
         }
-        if contraction_permitted && expression_states_contraction_adjacency(self.program) {
+        if contraction_permitted && expression_states_contraction_adjacency(scalar) {
             return Some(UnpinnedFreedomSite::BackendOrderUndeclared);
         }
         None
@@ -400,10 +433,15 @@ impl<'a> RealizationWitness<'a> {
         {
             return Some(UnevaluableRealization::LoopCarriedCooperativeTile { rounds });
         }
-        if !self.realization.permits_reassociation() {
+        // A copy pins no expression and grants no permission; the explicit
+        // destructure states that rather than defaulting through a helper.
+        let RegionProgram::Numerical { scalar, numerical } = self.program else {
+            return None;
+        };
+        if !numerical.permits_reassociation() {
             return None;
         }
-        match self.program {
+        match scalar {
             ScalarProgram::PointwiseF32(_) | ScalarProgram::PointwiseBf16(_) => {
                 Some(UnevaluableRealization::PointwiseExpression)
             }

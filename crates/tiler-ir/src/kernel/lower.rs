@@ -19,9 +19,9 @@ use crate::schedule::{
     Access, BoundsWitnessId, CanonicalScheduledRegionIdentity, ContributorCoverage,
     ExecutionBinding, LogicalAccess, NumericalRealization, OwnershipWitnessId,
     PointwiseBf16Expression, PointwiseBf16Node, PointwiseF32Expression, PointwiseF32Node,
-    ReductionPass, ReductionTopology, ResourceRequirements, ScalarProgram, ScheduledRegion,
-    TailPolicy, TensorRole, VerifiedScheduledRegion, contributor_count, element_count,
-    live_input_extents,
+    ReductionPass, ReductionTopology, RegionProgram, ResourceRequirements, ScalarProgram,
+    ScheduledRegion, TailPolicy, TensorRole, VerifiedScheduledRegion, contributor_count,
+    element_count, live_input_extents,
 };
 use crate::shape::Shape;
 
@@ -260,6 +260,17 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
     ) {
         return Err(KernelDiagnostic::UnloweredExecutionBinding);
     }
+    // The partitioned-copy region is refused before any body is derived, for
+    // the reason the vector binding is: this profile's canonical bodies
+    // evaluate a scalar program the copy does not carry, and the copy's
+    // guarded-store body and bit-preserving evidence are a separate accepted
+    // boundary (`lower-the-partitioned-copy-region-through-kernel-ir`).
+    // Refusing here covers `derive_canonical` and the refinement gate as well
+    // as direct lowering; silence is not an option because the dispatch is a
+    // total match.
+    let RegionProgram::Numerical { scalar, numerical } = &schedule.index.program else {
+        return Err(KernelDiagnostic::UnloweredRegionProgram);
+    };
     let (reads, write) = boundary_accesses(schedule)?;
     let read = reads.first().ok_or(KernelDiagnostic::ScheduleAccessCount)?;
     // The contributors *one invocation* combines. For a partial pass that is
@@ -297,10 +308,7 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
     };
     // The strict-affine decode addresses its three role-scoped components by the
     // invocation index directly, so it consults no coordinate map.
-    let addressing = if matches!(
-        &schedule.index.scalar_program,
-        ScalarProgram::StrictAffineU4Dequantize { .. }
-    ) {
+    let addressing = if matches!(scalar, ScalarProgram::StrictAffineU4Dequantize { .. }) {
         vec![ReadAddressing::Identity; reads.len()]
     } else {
         reads
@@ -309,10 +317,10 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
             .collect::<Result<Vec<_>, _>>()?
     };
     Ok(CanonicalPlan {
-        scalar: &schedule.index.scalar_program,
+        scalar,
         reads,
         write,
-        numerical: schedule.index.numerical,
+        numerical: *numerical,
         write_tensor: write.tensor,
         read_elements: reads
             .iter()
@@ -732,6 +740,10 @@ fn addressing(
         // refuses rather than inventing a second language or selecting a
         // concrete neighbour.
         LogicalAccess::ParametricBroadcast { .. } => Err(KernelDiagnostic::BodyRefinement),
+        // Unreachable through `plan`, which refuses the copy region program
+        // before any read is addressed; refused by name so a reachable path
+        // added later names the missing carrier rather than a body defect.
+        LogicalAccess::PartitionedCopySource => Err(KernelDiagnostic::UnloweredRegionProgram),
     }
 }
 

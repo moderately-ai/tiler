@@ -19,8 +19,8 @@ use crate::schedule::model::{
     Access, AccessMode, BoundsProof, BoundsProofKind, ContractionAxisSource, ContributorCoverage,
     ContributorOrder, ContributorPartition, ExecutionBinding, KernelSchedule, LaunchPlan,
     LogicalAccess, OwnershipProof, OwnershipProofKind, ReductionPass, ReductionTopology,
-    ScalarProgram, TailPolicy, TensorRole, VerifiedScheduledRegion, partial_reduction_axis,
-    partial_reduction_shape,
+    RegionProgram, ScalarProgram, TailPolicy, TensorRole, VerifiedScheduledRegion,
+    partial_reduction_axis, partial_reduction_shape,
 };
 use crate::schedule::numerics::{
     ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, NumericalPermission,
@@ -161,8 +161,12 @@ fn pointwise_region(
             },
         })
         .unwrap();
-    builder.scalar_program(program).unwrap();
-    builder.numerical(numerical).unwrap();
+    builder
+        .program(RegionProgram::Numerical {
+            scalar: program,
+            numerical,
+        })
+        .unwrap();
     builder
         .schedule(linear_schedule(elements, ReductionTopology::None))
         .unwrap();
@@ -253,8 +257,12 @@ fn serial_region(
             kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 2 },
         })
         .unwrap();
-    builder.scalar_program(program).unwrap();
-    builder.numerical(numerical).unwrap();
+    builder
+        .program(RegionProgram::Numerical {
+            scalar: program,
+            numerical,
+        })
+        .unwrap();
     builder
         .schedule(linear_schedule(
             2,
@@ -396,8 +404,12 @@ fn partial_pass_region(accumulation: ArithmeticType) -> ScheduledRegionBuilder {
             },
         })
         .unwrap();
-    builder.scalar_program(bare_sum()).unwrap();
-    builder.numerical(reassociating_numerical()).unwrap();
+    builder
+        .program(RegionProgram::Numerical {
+            scalar: bare_sum(),
+            numerical: reassociating_numerical(),
+        })
+        .unwrap();
     builder
         .schedule(linear_schedule(
             partial_elements,
@@ -475,14 +487,16 @@ fn final_pass_region() -> ScheduledRegionBuilder {
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::StrictSerialSum {
-            axes: axes.clone(),
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: 0x7fc0_0000,
-            empty_identity_bits: 0.0_f32.to_bits(),
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictSerialSum {
+                axes: axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: 0x7fc0_0000,
+                empty_identity_bits: 0.0_f32.to_bits(),
+            },
+            numerical: reassociating_numerical(),
         })
         .unwrap();
-    builder.numerical(reassociating_numerical()).unwrap();
     builder
         .schedule(linear_schedule(
             2,
@@ -655,8 +669,12 @@ fn cooperative_region(
             kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 2 },
         })
         .unwrap();
-    builder.scalar_program(bare_sum()).unwrap();
-    builder.numerical(numerical).unwrap();
+    builder
+        .program(RegionProgram::Numerical {
+            scalar: bare_sum(),
+            numerical,
+        })
+        .unwrap();
     builder
         .schedule(KernelSchedule {
             threads_per_workgroup: threads,
@@ -768,13 +786,15 @@ fn contraction_region(numerical: NumericalRealization) -> ScheduledRegionBuilder
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::StrictTensorContraction {
-            contracted_shape: contracted.clone(),
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: 0x7fc0_0000,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictTensorContraction {
+                contracted_shape: contracted.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: 0x7fc0_0000,
+            },
+            numerical,
         })
         .unwrap();
-    builder.numerical(numerical).unwrap();
     builder
         .schedule(linear_schedule(
             6,
@@ -825,7 +845,7 @@ fn every_topology_aggregates_the_site_fields_it_states() {
     for region in population {
         assert_eq!(
             RealizationWitness::of(region).realization(),
-            &region.region().index.numerical,
+            region.region().index.program.numerical(),
         );
     }
 
@@ -1247,4 +1267,93 @@ fn a_duplicated_constant_is_a_spelling_the_canonical_form_does_not_collapse() {
         RealizationWitness::of(&repeated).pointwise_f32(),
     );
     assert_ne!(shared.canonical_identity(), repeated.canonical_identity());
+}
+
+/// A partitioned copy pins no realization, no expression, and no freedom site,
+/// and the witness states each absence explicitly rather than defaulting it.
+#[test]
+fn a_partitioned_copy_witness_states_its_absences_explicitly() {
+    use crate::schedule::model::{CopyElement, CopyMember, PartitionedCopyProgram};
+
+    let elements = 6;
+    let mut builder = ScheduledRegionBuilder::new(RegionId::new(0));
+    builder.iteration_shape(Shape::from_dims([2, 3])).unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Input,
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::PartitionedCopySource,
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    for (witness, tensor, count) in [(0, TensorRole::Input, 3), (1, TensorRole::Output, elements)] {
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(witness),
+                tensor,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: count,
+                },
+            })
+            .unwrap();
+    }
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: elements,
+            },
+        })
+        .unwrap();
+    builder
+        .program(RegionProgram::PartitionedCopy(PartitionedCopyProgram {
+            element: CopyElement::F32,
+            axis: Axis::new(0),
+            members: vec![
+                CopyMember {
+                    source: AccessOrdinal::new(0),
+                    extent: 1,
+                },
+                CopyMember {
+                    source: AccessOrdinal::new(0),
+                    extent: 1,
+                },
+            ],
+        }))
+        .unwrap();
+    builder
+        .schedule(linear_schedule(elements, ReductionTopology::None))
+        .unwrap();
+    let copy = verified(builder);
+
+    let witness = RealizationWitness::of(&copy);
+    assert_eq!(witness.realization(), None);
+    assert_eq!(witness.pointwise_f32(), None);
+    assert_eq!(witness.fold_epilogue(), None);
+    assert_eq!(witness.order(), None);
+    assert!(witness.reduced_axes().is_empty());
+    assert_eq!(witness.contracted_shape(), None);
+    assert_eq!(witness.contributor_coverage(), None);
+    assert_eq!(witness.pass(), None);
+    assert_eq!(witness.arrival(), None);
+    assert_eq!(witness.rounds(), None);
+    // A copy moves f32 bit patterns; the derived width answers for the format.
+    assert_eq!(witness.accumulation(), ArithmeticType::F32);
+    // No permission exists to be spent and no construct exists to spend one
+    // at, so no freedom site is open.
+    assert_eq!(witness.unpinned_freedom_site(), None);
 }

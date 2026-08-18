@@ -377,7 +377,8 @@ pub(crate) fn guaranteed_properties_for(
 mod tests {
     use super::*;
     use tiler_ir::schedule::{
-        ApproximationEnvelope, ExceptionalValueAssumption, NumericalPermission, SubnormalMode,
+        ApproximationEnvelope, ExceptionalValueAssumption, NumericalPermission,
+        RegionNumericalRequirements, SubnormalMode,
     };
 
     /// Resources ample enough that only the fault under test can fire.
@@ -390,16 +391,18 @@ mod tests {
             index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
             synchronization: None,
             subgroup: None,
-            input_subnormals: SubnormalMode::Preserve,
-            result_subnormals: SubnormalMode::Preserve,
-            contraction: NumericalPermission::Forbidden,
-            reassociation: NumericalPermission::Forbidden,
-            permutation: NumericalPermission::Forbidden,
-            signed_zero: NumericalPermission::Forbidden,
-            reciprocal_transform: NumericalPermission::Forbidden,
-            approximate_intrinsics: ApproximationEnvelope::Forbidden,
-            nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
-            infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+            numerical: RegionNumericalRequirements::FloatingPoint {
+                input_subnormals: SubnormalMode::Preserve,
+                result_subnormals: SubnormalMode::Preserve,
+                contraction: NumericalPermission::Forbidden,
+                reassociation: NumericalPermission::Forbidden,
+                permutation: NumericalPermission::Forbidden,
+                signed_zero: NumericalPermission::Forbidden,
+                reciprocal_transform: NumericalPermission::Forbidden,
+                approximate_intrinsics: ApproximationEnvelope::Forbidden,
+                nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+            },
         }
     }
 

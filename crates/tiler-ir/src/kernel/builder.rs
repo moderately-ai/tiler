@@ -936,7 +936,7 @@ impl KernelBuilder {
                 owner: self.owner.verified_owner(),
                 region: self.region,
                 schedule_identity: self.schedule_identity,
-                subnormal_freedom: subnormal_freedom_of(&self.schedule.index.scalar_program),
+                subnormal_freedom: subnormal_freedom_of(&self.schedule.index.program),
                 required_nonzero_input_extents: required_nonzero_input_extents(&self.schedule),
                 data,
                 identity,
@@ -1258,9 +1258,13 @@ fn expect_type(expected: KernelType, actual: KernelType) -> Result<(), KernelBui
 
 fn scheduled_access_rank(schedule: &ScheduledRegion, access: &crate::schedule::Access) -> u64 {
     let static_rank = match &access.map {
+        // The copy-source map is grouped with the linear reads: it addresses
+        // its source linearly, and it is never reached by a lowerable kernel —
+        // `plan` and `verify_signature` refuse the copy region program first.
         LogicalAccess::LinearIdentity
         | LogicalAccess::ScalarBroadcast
-        | LogicalAccess::PackedU4LsbZeroTail { .. } => 1,
+        | LogicalAccess::PackedU4LsbZeroTail { .. }
+        | LogicalAccess::PartitionedCopySource => 1,
         LogicalAccess::ReductionContributor { input_shape, .. } => input_shape.rank() as u64,
         LogicalAccess::ContractionOperand { operand_shape, .. }
         | LogicalAccess::ReindexBijection { operand_shape, .. }

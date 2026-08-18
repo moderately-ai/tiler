@@ -322,8 +322,18 @@ fn two_stage_program_has_explicit_temporary_abi_and_routing_commit() {
     assert_eq!(
         artifact.numerical_realizations,
         [
-            scheduled[0].region().index.numerical,
-            scheduled[1].region().index.numerical,
+            *scheduled[0]
+                .region()
+                .index
+                .program
+                .numerical()
+                .expect("an arithmetic stage declares a realization"),
+            *scheduled[1]
+                .region()
+                .index
+                .program
+                .numerical()
+                .expect("an arithmetic stage declares a realization"),
         ]
     );
     assert!(!artifact.semantic_identity.graph().as_bytes().is_empty());

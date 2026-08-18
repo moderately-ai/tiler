@@ -1808,6 +1808,8 @@ mod tests {
         crate::region::form_region_candidates(program, budgets(), contract())
             .expect("the fixture forms regions")
     }
+    use tiler_ir::schedule::RegionNumericalRequirements;
+
     use super::{
         AccessMode, BoundaryDisagreement, CoverFrontiers, GuaranteeFacet, GuaranteedProperties,
         PlanBudgetResource, PlanRejection, RegionBoundary, RegionFrontier, RequiredProperties,
@@ -1954,16 +1956,18 @@ mod tests {
                 index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
                 synchronization: None,
                 subgroup: None,
-                input_subnormals: realization.input_subnormals,
-                result_subnormals: realization.result_subnormals,
-                contraction: realization.contraction,
-                reassociation: realization.reassociation,
-                permutation: realization.permutation,
-                signed_zero: realization.signed_zero,
-                reciprocal_transform: realization.reciprocal_transform,
-                approximate_intrinsics: realization.approximate_intrinsics,
-                nan_assumptions: realization.nan_assumptions,
-                infinity_assumptions: realization.infinity_assumptions,
+                numerical: RegionNumericalRequirements::FloatingPoint {
+                    input_subnormals: realization.input_subnormals,
+                    result_subnormals: realization.result_subnormals,
+                    contraction: realization.contraction,
+                    reassociation: realization.reassociation,
+                    permutation: realization.permutation,
+                    signed_zero: realization.signed_zero,
+                    reciprocal_transform: realization.reciprocal_transform,
+                    approximate_intrinsics: realization.approximate_intrinsics,
+                    nan_assumptions: realization.nan_assumptions,
+                    infinity_assumptions: realization.infinity_assumptions,
+                },
             },
             WorkScaling::Fixed(2),
         )

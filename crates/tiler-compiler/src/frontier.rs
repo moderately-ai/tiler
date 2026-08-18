@@ -74,8 +74,8 @@ use std::fmt;
 
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::schedule::{
-    Access, AccessMode, AccessOrdinal, ResourceRequirements, ScalarProgram, ScheduledRegion,
-    TensorRole,
+    Access, AccessMode, AccessOrdinal, CopyElement, RegionNumericalRequirements, RegionProgram,
+    ResourceRequirements, ScalarProgram, ScheduledRegion, TensorRole,
 };
 use tiler_ir::semantic::ProviderIdentity;
 
@@ -674,7 +674,7 @@ fn derive_boundary_contract(
         return Err(NO_BOUNDARY_DOMAIN_RULE);
     }
     let carrier =
-        boundary_carrier(&region.index.scalar_program).ok_or(UNMODELLED_BOUNDARY_CARRIER_RULE)?;
+        boundary_carrier(&region.index.program).ok_or(UNMODELLED_BOUNDARY_CARRIER_RULE)?;
     let mut requirements = Vec::new();
     let mut guarantees = Vec::new();
     for access in &region.index.accesses {
@@ -750,8 +750,8 @@ fn derive_subprogram_boundary_contract(
         // Per stage rather than once for the chain: a stage's boundary values
         // are its own program's, and the handoff between two stages is checked
         // by shape below rather than assumed to share a carrier.
-        let carrier = boundary_carrier(&region.index.scalar_program)
-            .ok_or(UNMODELLED_BOUNDARY_CARRIER_RULE)?;
+        let carrier =
+            boundary_carrier(&region.index.program).ok_or(UNMODELLED_BOUNDARY_CARRIER_RULE)?;
         let last = position + 1 == stages.len();
         let mut owed = handoff;
         for access in &region.index.accesses {
@@ -877,28 +877,50 @@ fn subprogram_resources(stages: &[VerifiedScheduledRegion]) -> Option<ResourceRe
             (Some(left), Some(right)) if left == right => Some(left),
             (Some(_), Some(_)) => return None,
         };
+        // The numerical requirement is refused on disagreement for the reason
+        // index arithmetic is, not inherited from stage zero silently: it is a
+        // classed sum rather than a quantity, so "the largest of them" is
+        // undefined, and two stages carrying different arms — or different
+        // floating-point rows — state requirements one record cannot say.
+        // Every stage of an admitted subprogram implements one request
+        // contract today, so the refusal is unreachable; the arm that notices
+        // a disagreement has to exist before one does.
+        if peak.numerical != stage.numerical {
+            return None;
+        }
     }
     Some(peak)
 }
 
 /// The physical storage carrier every boundary value of `program` has.
 ///
-/// The region's scalar program is what fixes this, and it can always be asked:
-/// `IndexRegion::scalar_program` is a required field, so there is no region
-/// whose carrier is unknown because the program is absent. `tiler-ir`'s
+/// The region's program is what fixes this, and it can always be asked:
+/// `IndexRegion::program` is a required field, so there is no region whose
+/// carrier is unknown because the program is absent. `tiler-ir`'s
 /// `verify_signature` derives each buffer's kernel type from the same match, so
 /// this states the physical carrier beside a type map that already exists rather
 /// than introducing a second authority for what a region's elements are.
 ///
-/// Exhaustive with no wildcard arm, deliberately: [`ScalarProgram`] is not
-/// `#[non_exhaustive]` precisely so that a new program is a build error at every
-/// site that must classify it, and a carrier guessed for an unrecognized program
-/// is the silently-wrong answer this derivation exists to prevent.
+/// Exhaustive with no wildcard arm, deliberately: [`RegionProgram`] and
+/// [`ScalarProgram`] are not `#[non_exhaustive]` precisely so that a new
+/// program is a build error at every site that must classify it, and a carrier
+/// guessed for an unrecognized program is the silently-wrong answer this
+/// derivation exists to prevent. The partitioned copy answers from its element
+/// format: the bits it moves are `f32` bit patterns, so its boundary carrier
+/// is the four-byte `f32` one.
 ///
 /// `None` means the program's boundary values do not share one carrier, which is
 /// a refusal rather than a defect — see [`UNMODELLED_BOUNDARY_CARRIER_RULE`].
-const fn boundary_carrier(program: &ScalarProgram) -> Option<StorageScalar> {
-    match program {
+const fn boundary_carrier(program: &RegionProgram) -> Option<StorageScalar> {
+    let scalar = match program {
+        RegionProgram::Numerical { scalar, .. } => scalar,
+        RegionProgram::PartitionedCopy(copy) => {
+            return match copy.element {
+                CopyElement::F32 => Some(StorageScalar::F32),
+            };
+        }
+    };
+    match scalar {
         ScalarProgram::PointwiseF32(_)
         | ScalarProgram::StrictSerialSum { .. }
         | ScalarProgram::SquaredSerialSum { .. }
@@ -2483,15 +2505,34 @@ pub(crate) fn enumerate_frontier(
                     // caller ruled out.
                     let declared = registered.declaration().resources();
                     let contract = request.numerical_contract().realization();
-                    if declared.input_subnormals != contract.input_subnormals
-                        || declared.result_subnormals != contract.result_subnormals
-                        || declared.contraction != contract.contraction
-                        || declared.reassociation != contract.reassociation
-                        || declared.permutation != contract.permutation
-                        || declared.signed_zero != contract.signed_zero
-                        || declared.nan_assumptions != contract.nan_assumptions
-                        || declared.infinity_assumptions != contract.infinity_assumptions
-                    {
+                    // A call declaration always states the floating-point
+                    // rows; a declaration somehow carrying the copy arm
+                    // matches no arithmetic contract and is refused with the
+                    // same mismatch cause.
+                    let declared_matches = match declared.numerical {
+                        RegionNumericalRequirements::FloatingPoint {
+                            input_subnormals,
+                            result_subnormals,
+                            contraction,
+                            reassociation,
+                            permutation,
+                            signed_zero,
+                            nan_assumptions,
+                            infinity_assumptions,
+                            ..
+                        } => {
+                            input_subnormals == contract.input_subnormals
+                                && result_subnormals == contract.result_subnormals
+                                && contraction == contract.contraction
+                                && reassociation == contract.reassociation
+                                && permutation == contract.permutation
+                                && signed_zero == contract.signed_zero
+                                && nan_assumptions == contract.nan_assumptions
+                                && infinity_assumptions == contract.infinity_assumptions
+                        }
+                        RegionNumericalRequirements::BitPreservingCopy => false,
+                    };
+                    if !declared_matches {
                         rejections.push(FrontierRejection::OpaqueCall {
                             provider: provenance.clone(),
                             proposal: (**proposed).clone(),
@@ -4118,7 +4159,8 @@ mod tests {
     };
     use tiler_ir::schedule::{
         AccessMode, AccessOrdinal, ContributorOrder, ExceptionalValueAssumption,
-        NumericalPermission, ScalarProgram, ScheduledRegion, SubnormalMode, TensorRole,
+        NumericalPermission, RegionNumericalRequirements, RegionProgram, ScalarProgram,
+        ScheduledRegion, SubnormalMode, TensorRole,
     };
     use tiler_ir::semantic::EncodedComponentRole;
     use tiler_ir::semantic::{
@@ -4294,14 +4336,16 @@ mod tests {
         );
         // Exact feasibility resources are derived from the verified region.
         assert_eq!(admitted.resources().buffer_bindings, 2);
-        assert_eq!(
-            admitted.resources().input_subnormals,
-            SubnormalMode::Preserve
-        );
-        assert_eq!(
-            admitted.resources().contraction,
-            NumericalPermission::Forbidden
-        );
+        let RegionNumericalRequirements::FloatingPoint {
+            input_subnormals,
+            contraction,
+            ..
+        } = admitted.resources().numerical
+        else {
+            panic!("an arithmetic region derives floating-point requirement rows");
+        };
+        assert_eq!(input_subnormals, SubnormalMode::Preserve);
+        assert_eq!(contraction, NumericalPermission::Forbidden);
         // The feasibility admission carries resolved predicates as evidence.
         assert!(!admitted.admission().proven().is_empty());
         // The fused region reads an Input boundary and produces the Output boundary.
@@ -4353,7 +4397,7 @@ mod tests {
         let scheduled = admitted
             .scheduled()
             .expect("the fused proposal carries a scheduled region");
-        let carrier = boundary_carrier(&scheduled.region().index.scalar_program)
+        let carrier = boundary_carrier(&scheduled.region().index.program)
             .expect("the fused region's boundary values share one carrier");
         let derived = crate::boundary::ByteAlignment::natural_for(carrier);
         assert_eq!(u64::from(derived.bytes()), carrier.byte_width());
@@ -4404,14 +4448,14 @@ mod tests {
     fn the_boundary_carrier_is_derived_from_the_scalar_program() {
         for program in [serial_sum_program(), fused_multiply_add_program()] {
             assert_eq!(
-                boundary_carrier(&program),
+                boundary_carrier(&arithmetic_program(program.clone())),
                 Some(StorageScalar::F32),
                 "{program:?} stopped reporting the f32 carrier its buffers have"
             );
         }
 
         assert_eq!(
-            boundary_carrier(&bf16_pointwise_program()),
+            boundary_carrier(&arithmetic_program(bf16_pointwise_program())),
             Some(StorageScalar::Bf16),
             "a bf16 region's boundary values are carried in two bytes"
         );
@@ -4436,6 +4480,16 @@ mod tests {
     }
 
     /// The `(x * 3.0) + (-0.0)` BF16 pointwise program.
+    /// Wraps a scalar fixture in the arithmetic arm for carrier probes; the
+    /// realization is irrelevant to the carrier and the governed strict one is
+    /// at hand.
+    fn arithmetic_program(scalar: ScalarProgram) -> RegionProgram {
+        RegionProgram::Numerical {
+            scalar,
+            numerical: crate::request::StrictF32NumericalContract::governed().realization(),
+        }
+    }
+
     fn bf16_pointwise_program() -> ScalarProgram {
         use tiler_ir::schedule::{AccessOrdinal, PointwiseBf16ExpressionBuilder};
         let mut expression = PointwiseBf16ExpressionBuilder::new();
@@ -4469,7 +4523,7 @@ mod tests {
             zero_point_role: EncodedComponentRole::new(2),
         };
         assert_eq!(
-            boundary_carrier(&mixed),
+            boundary_carrier(&arithmetic_program(mixed)),
             None,
             "a program binding U8 and F32 boundary values was given one carrier"
         );
@@ -4800,7 +4854,14 @@ mod tests {
             }
             fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
                 let mut region = fused_region(context.request());
-                region.index.numerical.canonical_arithmetic_nan_bits ^= 1;
+                match &mut region.index.program {
+                    RegionProgram::Numerical { numerical, .. } => {
+                        numerical.canonical_arithmetic_nan_bits ^= 1;
+                    }
+                    RegionProgram::PartitionedCopy(_) => {
+                        panic!("the fused fixture is arithmetic")
+                    }
+                }
                 ProviderOffer::proposing(vec![ImplementationProposal::new(
                     ProposalBody::ScheduledKernel(Box::new(region)),
                     governed_applicability(),
@@ -5086,16 +5147,18 @@ mod tests {
                 index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
                 synchronization: None,
                 subgroup: None,
-                input_subnormals: SubnormalMode::Preserve,
-                result_subnormals: SubnormalMode::Preserve,
-                contraction: NumericalPermission::Forbidden,
-                reassociation: NumericalPermission::Forbidden,
-                permutation: NumericalPermission::Forbidden,
-                signed_zero: NumericalPermission::Forbidden,
-                reciprocal_transform: NumericalPermission::Forbidden,
-                approximate_intrinsics: ApproximationEnvelope::Forbidden,
-                nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
-                infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                numerical: RegionNumericalRequirements::FloatingPoint {
+                    input_subnormals: SubnormalMode::Preserve,
+                    result_subnormals: SubnormalMode::Preserve,
+                    contraction: NumericalPermission::Forbidden,
+                    reassociation: NumericalPermission::Forbidden,
+                    permutation: NumericalPermission::Forbidden,
+                    signed_zero: NumericalPermission::Forbidden,
+                    reciprocal_transform: NumericalPermission::Forbidden,
+                    approximate_intrinsics: ApproximationEnvelope::Forbidden,
+                    nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                    infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                },
             },
             WorkScaling::Fixed(1),
         )
@@ -5574,16 +5637,18 @@ mod tests {
             index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
             synchronization: None,
             subgroup: None,
-            input_subnormals: contract.input_subnormals,
-            result_subnormals: contract.result_subnormals,
-            contraction: contract.contraction,
-            reassociation: contract.reassociation,
-            permutation: contract.permutation,
-            signed_zero: contract.signed_zero,
-            reciprocal_transform: contract.reciprocal_transform,
-            approximate_intrinsics: contract.approximate_intrinsics,
-            nan_assumptions: contract.nan_assumptions,
-            infinity_assumptions: contract.infinity_assumptions,
+            numerical: RegionNumericalRequirements::FloatingPoint {
+                input_subnormals: contract.input_subnormals,
+                result_subnormals: contract.result_subnormals,
+                contraction: contract.contraction,
+                reassociation: contract.reassociation,
+                permutation: contract.permutation,
+                signed_zero: contract.signed_zero,
+                reciprocal_transform: contract.reciprocal_transform,
+                approximate_intrinsics: contract.approximate_intrinsics,
+                nan_assumptions: contract.nan_assumptions,
+                infinity_assumptions: contract.infinity_assumptions,
+            },
         }
     }
 
@@ -5753,16 +5818,18 @@ mod tests {
                 index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
                 synchronization: None,
                 subgroup: None,
-                input_subnormals: SubnormalMode::Preserve,
-                result_subnormals: SubnormalMode::Preserve,
-                contraction: NumericalPermission::Forbidden,
-                reassociation: NumericalPermission::Forbidden,
-                permutation: NumericalPermission::Forbidden,
-                signed_zero: NumericalPermission::Forbidden,
-                reciprocal_transform: NumericalPermission::Forbidden,
-                approximate_intrinsics: ApproximationEnvelope::Forbidden,
-                nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
-                infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                numerical: RegionNumericalRequirements::FloatingPoint {
+                    input_subnormals: SubnormalMode::Preserve,
+                    result_subnormals: SubnormalMode::Preserve,
+                    contraction: NumericalPermission::Forbidden,
+                    reassociation: NumericalPermission::Forbidden,
+                    permutation: NumericalPermission::Forbidden,
+                    signed_zero: NumericalPermission::Forbidden,
+                    reciprocal_transform: NumericalPermission::Forbidden,
+                    approximate_intrinsics: ApproximationEnvelope::Forbidden,
+                    nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                    infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                },
             },
             WorkScaling::Fixed(1),
         )
@@ -5856,16 +5923,18 @@ mod tests {
                 index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
                 synchronization: None,
                 subgroup: None,
-                input_subnormals: SubnormalMode::Preserve,
-                result_subnormals: SubnormalMode::Preserve,
-                contraction: NumericalPermission::Forbidden,
-                reassociation: NumericalPermission::Forbidden,
-                permutation: NumericalPermission::Forbidden,
-                signed_zero: NumericalPermission::Forbidden,
-                reciprocal_transform: NumericalPermission::Forbidden,
-                approximate_intrinsics: ApproximationEnvelope::Forbidden,
-                nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
-                infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                numerical: RegionNumericalRequirements::FloatingPoint {
+                    input_subnormals: SubnormalMode::Preserve,
+                    result_subnormals: SubnormalMode::Preserve,
+                    contraction: NumericalPermission::Forbidden,
+                    reassociation: NumericalPermission::Forbidden,
+                    permutation: NumericalPermission::Forbidden,
+                    signed_zero: NumericalPermission::Forbidden,
+                    reciprocal_transform: NumericalPermission::Forbidden,
+                    approximate_intrinsics: ApproximationEnvelope::Forbidden,
+                    nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                    infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                },
             },
             WorkScaling::Fixed(1),
         )
@@ -5909,7 +5978,12 @@ mod tests {
 
         // Permitting contraction where the governed contract forbids it.
         let mut resources = strict_call_resources();
-        resources.contraction = NumericalPermission::Permitted;
+        let RegionNumericalRequirements::FloatingPoint { contraction, .. } =
+            &mut resources.numerical
+        else {
+            panic!("the strict call resources are floating-point");
+        };
+        *contraction = NumericalPermission::Permitted;
         let declaration = call_declaration(resources);
 
         let mut registry = OpaqueCallRegistry::new();
@@ -5982,16 +6056,18 @@ mod tests {
                 index_arithmetic: tiler_ir::schedule::IndexArithmetic::CompleteU64,
                 synchronization: None,
                 subgroup: None,
-                input_subnormals: SubnormalMode::Preserve,
-                result_subnormals: SubnormalMode::Preserve,
-                contraction: NumericalPermission::Forbidden,
-                reassociation: NumericalPermission::Forbidden,
-                permutation: NumericalPermission::Forbidden,
-                signed_zero: NumericalPermission::Forbidden,
-                reciprocal_transform: NumericalPermission::Forbidden,
-                approximate_intrinsics: ApproximationEnvelope::Forbidden,
-                nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
-                infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                numerical: RegionNumericalRequirements::FloatingPoint {
+                    input_subnormals: SubnormalMode::Preserve,
+                    result_subnormals: SubnormalMode::Preserve,
+                    contraction: NumericalPermission::Forbidden,
+                    reassociation: NumericalPermission::Forbidden,
+                    permutation: NumericalPermission::Forbidden,
+                    signed_zero: NumericalPermission::Forbidden,
+                    reciprocal_transform: NumericalPermission::Forbidden,
+                    approximate_intrinsics: ApproximationEnvelope::Forbidden,
+                    nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                    infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                },
             },
             WorkScaling::PerElementOf("x"),
         )

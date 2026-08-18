@@ -38,10 +38,15 @@ pub enum ScheduleComponent {
     IterationShape,
     /// The write-ownership proof.
     OwnershipProof,
-    /// The scalar program.
-    ScalarProgram,
-    /// The numerical realization.
-    NumericalRealization,
+    /// The region program.
+    ///
+    /// The single slot that replaced the former scalar-program and
+    /// numerical-realization pair (accepted 2026-08-18): a region carrying a
+    /// copy program plus a realization, an arithmetic program without one, and
+    /// an unclassified empty state are unrepresentable in the builder, so
+    /// there is no mutual-exclusion diagnostic because there is no expressible
+    /// mixed state.
+    RegionProgram,
     /// The kernel schedule.
     KernelSchedule,
 }
@@ -195,6 +200,16 @@ pub enum ScheduledRegionDiagnostic {
     VectorLaneBinding {
         /// The violated fixed-vector map rule.
         rule: VectorLaneRule,
+    },
+    /// A partitioned-copy region violated one of its own admission rules.
+    ///
+    /// The rule is carried rather than collapsed, for the reason
+    /// [`Self::CooperativeTile`] gives: a copy can fail in eleven structurally
+    /// different ways and a producer needs to know which fact it got wrong
+    /// (ADR 0048's explainability obligation).
+    PartitionedCopy {
+        /// The violated partitioned-copy rule.
+        rule: PartitionedCopyRule,
     },
 }
 
@@ -495,6 +510,96 @@ impl fmt::Display for VectorLaneRule {
 }
 impl Error for VectorLaneRule {}
 
+/// One violated admission rule of a partitioned-copy region.
+///
+/// **Accepted public surface** (2026-08-18, under
+/// `decide-the-partitioned-copy-scheduled-region-public-surface`): exactly
+/// these eleven rules at the review-corrected precedence. Payloads are
+/// deliberately none beyond the rule, matching [`CooperativeTileRule`]'s
+/// convention: the recoverable builder plus the rule name locates the defect,
+/// and payload-bearing variants can land additively because the enum is
+/// `#[non_exhaustive]`.
+///
+/// There is deliberately no `partitioned-copy-element` rule, under the stated
+/// unreachable-refusal convention: `CopyElement` is closed at one variant, so
+/// no constructible region presents another element and a rule for it could
+/// never be watched failing. Overlap, gaps, and wrong prefix offsets have no
+/// rule either, because they are unrepresentable — offsets are derived prefix
+/// sums, so the one expressible coverage defect is a wrong extent total,
+/// refused by [`Self::CoverageSum`]; the projection layer that re-derives the
+/// accepted index law owns the typed refusals for displaced roots.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum PartitionedCopyRule {
+    /// The copy's reduction is not `None`, its binding is not
+    /// `GlobalLinearInvocation`, or its tail is not `Exact`.
+    ///
+    /// Three clauses in one watchable rule, as defence in depth: a blocked
+    /// binding and a predicated tail are also refused by the shared gates
+    /// ahead of this dispatch, so the reduction clause and the fixed-vector
+    /// binding clause are the independently reachable ones at this base.
+    Topology,
+    /// A read whose boundary is not an input, or carrying a component role.
+    ReadTensor,
+    /// An owning write whose boundary is not a program output, or carrying a
+    /// component role.
+    WriteTensor,
+    /// Fewer than two members, or more than
+    /// [`MAX_PARTITIONED_COPY_MEMBERS`](crate::schedule::MAX_PARTITIONED_COPY_MEMBERS).
+    MemberCount,
+    /// A copy axis position at or beyond the iteration rank.
+    AxisRange,
+    /// A member ordinal that resolves to no access, to the write, or to a read
+    /// not carrying the fieldless copy-source map.
+    SourceReference,
+    /// First references of member sources not forming the dense ascending run
+    /// over the reads.
+    ///
+    /// The canonicality rule that gives one meaning one identity: without it,
+    /// permuting the read list and renumbering ordinals spells one program
+    /// twice.
+    SourceOrder,
+    /// A read no member references.
+    UnreferencedSource,
+    /// A prefix sum or derived source element count overflowing `u64`.
+    ExtentOverflow,
+    /// Member extents whose checked sum is not the axis extent — the one
+    /// representable coverage defect, covering both would-be gap and would-be
+    /// overlap.
+    CoverageSum,
+    /// Members referencing one read with disagreeing extents, or a read's
+    /// bounds-proof element count disagreeing with the derived source element
+    /// count.
+    SourceShape,
+}
+
+impl PartitionedCopyRule {
+    /// Returns the stable rule identifier for this partitioned-copy failure.
+    #[must_use]
+    pub const fn rule(self) -> &'static str {
+        match self {
+            Self::Topology => "partitioned-copy-topology",
+            Self::ReadTensor => "partitioned-copy-read-tensor",
+            Self::WriteTensor => "partitioned-copy-write-tensor",
+            Self::MemberCount => "partitioned-copy-member-count",
+            Self::AxisRange => "partitioned-copy-axis-range",
+            Self::SourceReference => "partitioned-copy-source-reference",
+            Self::SourceOrder => "partitioned-copy-source-order",
+            Self::UnreferencedSource => "partitioned-copy-unreferenced-source",
+            Self::ExtentOverflow => "partitioned-copy-extent-overflow",
+            Self::CoverageSum => "partitioned-copy-coverage-sum",
+            Self::SourceShape => "partitioned-copy-source-shape",
+        }
+    }
+}
+
+impl fmt::Display for PartitionedCopyRule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.rule())
+    }
+}
+impl Error for PartitionedCopyRule {}
+
 /// One violated rule of a reduction topology's contributor coverage.
 ///
 /// Exact-coverage and padded-coverage failures are named separately so a
@@ -656,6 +761,7 @@ impl ScheduledRegionDiagnostic {
             Self::ContributorCoverage { rule } => rule.rule(),
             Self::BlockedWorkgroup { rule } => rule.rule(),
             Self::VectorLaneBinding { rule } => rule.rule(),
+            Self::PartitionedCopy { rule } => rule.rule(),
         }
     }
 }

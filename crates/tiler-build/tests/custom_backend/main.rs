@@ -1907,7 +1907,8 @@ fn wide_kernel() -> VerifiedKernel {
         BoundsWitnessId, ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan,
         LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
         OwnershipProofKind, OwnershipWitnessId, PointwiseF32ExpressionBuilder, ReductionTopology,
-        RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+        RegionId, RegionProgram, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
+        TensorRole,
     };
 
     let mut region = ScheduledRegionBuilder::new(RegionId::new(0));
@@ -1962,24 +1963,24 @@ fn wide_kernel() -> VerifiedKernel {
     let root = expression.add(first, second).expect("the pointwise sum");
     let expression = expression.build(root).expect("the expression verifies");
     region
-        .scalar_program(ScalarProgram::PointwiseF32(expression))
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseF32(expression),
+            numerical: NumericalRealization::new(
+                "tiler.test.scalar-host-wide",
+                0x7fc0_0000,
+                SubnormalMode::Preserve,
+                SubnormalMode::Preserve,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                ApproximationEnvelope::Forbidden,
+                ExceptionalValueAssumption::MakeNoAssumption,
+                ExceptionalValueAssumption::MakeNoAssumption,
+            ),
+        })
         .expect("the scalar program binds");
-    region
-        .numerical(NumericalRealization::new(
-            "tiler.test.scalar-host-wide",
-            0x7fc0_0000,
-            SubnormalMode::Preserve,
-            SubnormalMode::Preserve,
-            NumericalPermission::Forbidden,
-            NumericalPermission::Forbidden,
-            NumericalPermission::Forbidden,
-            NumericalPermission::Forbidden,
-            NumericalPermission::Forbidden,
-            ApproximationEnvelope::Forbidden,
-            ExceptionalValueAssumption::MakeNoAssumption,
-            ExceptionalValueAssumption::MakeNoAssumption,
-        ))
-        .expect("the numerical realization binds");
     region
         .schedule(KernelSchedule {
             binding: ExecutionBinding::GlobalLinearInvocation,

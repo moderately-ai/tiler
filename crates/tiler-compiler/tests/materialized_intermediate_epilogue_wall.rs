@@ -96,8 +96,8 @@ use tiler_ir::schedule::{
     ExecutionBinding, IndexRegion, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
     PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId,
-    ScalarProgram, ScheduledRegion, ScheduledRegionBuilder, ScheduledRegionDiagnostic,
-    SubnormalMode, TailPolicy, TensorRole,
+    RegionProgram, ScalarProgram, ScheduledRegion, ScheduledRegionBuilder,
+    ScheduledRegionDiagnostic, SubnormalMode, TailPolicy, TensorRole,
 };
 use tiler_ir::semantic::{
     CANONICAL_F32_ARITHMETIC_NAN_BITS, ContractionIndex, ContractionIndexStructure, F32,
@@ -555,8 +555,10 @@ fn elementwise_region(reads: &[TensorRole], elements: u64) -> ScheduledRegion {
                     output_count: elements,
                 },
             },
-            scalar_program: ScalarProgram::PointwiseF32(product_expression(reads.len())),
-            numerical: strict_f32_realization(),
+            program: RegionProgram::Numerical {
+                scalar: ScalarProgram::PointwiseF32(product_expression(reads.len())),
+                numerical: strict_f32_realization(),
+            },
         },
         schedule: linear_schedule(elements, OwnershipWitnessId::new(0)),
     }
@@ -727,13 +729,15 @@ fn a_strict_serial_sum_region_may_write_a_materialized_intermediate() {
                     output_count: outputs,
                 },
             },
-            scalar_program: ScalarProgram::StrictSerialSum {
-                axes: axes.clone(),
-                order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: CANONICAL_F32_ARITHMETIC_NAN_BITS,
-                empty_identity_bits: 0.0_f32.to_bits(),
+            program: RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictSerialSum {
+                    axes: axes.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: CANONICAL_F32_ARITHMETIC_NAN_BITS,
+                    empty_identity_bits: 0.0_f32.to_bits(),
+                },
+                numerical: strict_f32_realization(),
             },
-            numerical: strict_f32_realization(),
         },
         schedule: KernelSchedule {
             reduction: ReductionTopology::Serial {
@@ -867,12 +871,14 @@ fn a_contraction_region_can_already_write_a_materialized_intermediate() {
                     output_count: outputs,
                 },
             },
-            scalar_program: ScalarProgram::StrictTensorContraction {
-                contracted_shape: contracted_shape.clone(),
-                order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: CANONICAL_F32_ARITHMETIC_NAN_BITS,
+            program: RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictTensorContraction {
+                    contracted_shape: contracted_shape.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: CANONICAL_F32_ARITHMETIC_NAN_BITS,
+                },
+                numerical: strict_f32_realization(),
             },
-            numerical: strict_f32_realization(),
         },
         schedule: KernelSchedule {
             reduction: ReductionTopology::Contraction {

@@ -571,8 +571,14 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                                     .iter()
                                     .try_fold(bounds, |(low, high), stage| {
                                         let region = &stage.region().index;
+                                        // A partitioned-copy region declares no
+                                        // contract key, so its width is
+                                        // unanswerable here and the whole
+                                        // component reports `Unknown` — the
+                                        // fail-closed cost answer rather than a
+                                        // guessed element size.
                                         let width = crate::request::contract_key_element_bytes(
-                                            region.numerical.profile_key,
+                                            region.program.numerical()?.profile_key,
                                         )?;
                                         let points = element_count(&region.iteration_shape).ok()?;
                                         let bytes = points.checked_mul(width)?;

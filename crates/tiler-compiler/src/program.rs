@@ -2349,9 +2349,16 @@ fn verify_entry(
         rule: "stage-id-overflow",
     })?;
     let stage_id = StageId(index);
-    if stage.kernel().requirements() != scheduled.requirements()
-        || stage.kernel().numerical() != scheduled.region().index.numerical
-    {
+    // Arm-aware: an arithmetic region's kernel must preserve exactly the
+    // region's realization; a partitioned-copy region declares none, and no
+    // kernel can realize one until its lowering lands, so a stage claiming a
+    // copy region fails the same entry-contract rule rather than comparing
+    // against a realization that does not exist.
+    let numerical_matches = match scheduled.region().index.program.numerical() {
+        Some(numerical) => stage.kernel().numerical() == *numerical,
+        None => false,
+    };
+    if stage.kernel().requirements() != scheduled.requirements() || !numerical_matches {
         return Err(ProgramError::Abi {
             rule: "entry-contract",
             stage: stage_id,
