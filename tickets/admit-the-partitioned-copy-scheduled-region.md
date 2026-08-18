@@ -1,7 +1,7 @@
 ---
 id: admit-the-partitioned-copy-scheduled-region
 title: Admit the partitioned-copy scheduled region
-status: blocked
+status: in-progress
 priority: p1
 dependencies: [repair-the-scheduled-vocabulary-census-and-concatenate-law-standing, decide-the-partitioned-copy-scheduled-region-public-surface]
 related: [lower-the-partitioned-copy-region-through-kernel-ir, lower-the-concatenate-occurrence-through-partitioned-writes]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, contracts/foundation, contr
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, schedule, concatenate, ownership, public-boundary]
+claimed_from: todo
+assignee: worker-partitioned-copy-region
+lease_expires_at: 1787079967
 ---
 ## Outcome
 
