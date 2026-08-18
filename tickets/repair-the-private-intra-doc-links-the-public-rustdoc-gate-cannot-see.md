@@ -1,7 +1,7 @@
 ---
 id: repair-the-private-intra-doc-links-the-public-rustdoc-gate-cannot-see
 title: Repair the private intra-doc links the public rustdoc gate cannot see
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [state-the-rule-that-a-deterministic-budget-is-a-derivation]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: worker-doc-links
-lease_expires_at: 1787068079
 ---
 ## User-visible outcome
 
