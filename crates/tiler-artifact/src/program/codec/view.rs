@@ -70,13 +70,14 @@
 //! a decoded artifact exists yet. Adding one is additive; guessing its shape now
 //! would commit the boundary to it.
 //!
+use super::super::environment::PlanDeterminismScope;
 use super::super::expr::{AbiEvaluationError, AbiFacts, AbiType, AbiValue, evaluate, node_type};
 use super::super::keys::{BackendEntryKey, FeasibilityRuleSetRef, TargetProfileRef};
 use super::super::model::{
-    BackendPayloadDescriptor, BindingData, BindingKind, BindingTarget, BindingTargetData,
-    CanonicalArtifactProgramIdentity, DeferredPredicateData, InterfaceComponentData,
-    InterfaceEntryData, RoutingPolicy, StageDependencyData, StageDependencyReason,
-    VerifiedArtifactProgram,
+    ArtifactEnvelopeDigest, BackendPayloadDescriptor, BindingData, BindingKind, BindingTarget,
+    BindingTargetData, CanonicalArtifactProgramIdentity, DeferredPredicateData,
+    InterfaceComponentData, InterfaceEntryData, RoutingPolicy, StageDependencyData,
+    StageDependencyReason, VerifiedArtifactProgram,
 };
 use super::super::realization::DeliveredRealizationRecord;
 use super::super::requirement::RouteRequirement;
@@ -140,6 +141,10 @@ impl VerifiedArtifactProgram {
 /// rejected.
 pub fn decode_artifact(bytes: &[u8]) -> Result<DecodedArtifact, ArtifactCodecFailure> {
     let envelope = decode(bytes).map_err(ArtifactCodecFailure::from)?;
+    // Derived once from the exact input bytes, observable only on successful
+    // complete decode: a rejected envelope yields no digest, so no caller can
+    // hold an object-bearing stability subject for bytes nothing validated.
+    let envelope_digest = ArtifactEnvelopeDigest::derive(bytes);
     // Parsed once here rather than on every lookup. `super::validate` already
     // proved each carried subject parses and that its bytes are the payload's
     // declared identity, so this cannot fail for an envelope that decoded; the
@@ -158,6 +163,7 @@ pub fn decode_artifact(bytes: &[u8]) -> Result<DecodedArtifact, ArtifactCodecFai
     }
     Ok(DecodedArtifact {
         envelope,
+        envelope_digest,
         payload_metadata,
     })
 }
@@ -169,6 +175,11 @@ pub fn decode_artifact(bytes: &[u8]) -> Result<DecodedArtifact, ArtifactCodecFai
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DecodedArtifact {
     envelope: ArtifactEnvelope,
+    /// The governed digest over the exact bytes this view was decoded from.
+    ///
+    /// Derived by [`decode_artifact`] after complete validation, so holding
+    /// this view is the evidence behind the digest.
+    envelope_digest: ArtifactEnvelopeDigest,
     /// Parsed compilation subject of each payload, aligned with `payloads()`.
     ///
     /// A function of the envelope rather than a second authority over it: it is
@@ -203,6 +214,17 @@ impl DecodedArtifact {
     #[must_use]
     pub fn features(&self) -> &[String] {
         self.envelope.features()
+    }
+
+    /// Returns the governed digest over the exact bytes this view decoded from.
+    ///
+    /// The **object-bearing** identity of ADR 0013's plan-deterministic scope:
+    /// unlike [`Self::identity`], which excludes emitted object bytes, this
+    /// digest covers the complete encoded envelope, executable sections
+    /// included, so two relinkings of one artifact are two stability subjects.
+    #[must_use]
+    pub const fn envelope_digest(&self) -> &ArtifactEnvelopeDigest {
+        &self.envelope_digest
     }
 
     /// Returns the routing policy the artifact declares.
@@ -547,6 +569,18 @@ impl<'a> DecodedVariant<'a> {
     #[must_use]
     pub fn feasibility_rules(self) -> &'a FeasibilityRuleSetRef {
         &self.data().feasibility_rules
+    }
+
+    /// Returns the plan-determinism scope claimed at one delivery position.
+    ///
+    /// `None` for a position past the artifact's delivery positions. A decode
+    /// proved every variant carries exactly one cell per position and that a
+    /// `Plan` cell is structurally coherent; whether a claimed cell is
+    /// *executable* remains the runtime's adapter-bound attestation, which no
+    /// decoded byte can supply.
+    #[must_use]
+    pub fn plan_determinism_scope(self, delivery: usize) -> Option<PlanDeterminismScope> {
+        self.data().scope.get(delivery).copied()
     }
 
     /// Returns the additional requirements this route places on a live device.
@@ -1275,6 +1309,7 @@ impl From<ArtifactCodecError> for ArtifactCodecFailure {
             | ArtifactCodecError::InvalidOperationKey { .. }
             | ArtifactCodecError::InvalidInterfaceKey { .. }
             | ArtifactCodecError::InvalidProviderIdentity { .. }
+            | ArtifactCodecError::InvalidTargetEnvironment { .. }
             | ArtifactCodecError::InvalidShape { .. }
             | ArtifactCodecError::InvalidAlignment { .. }
             | ArtifactCodecError::UnknownTag { .. } => Self::Malformed { detail },

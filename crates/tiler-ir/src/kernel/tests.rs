@@ -7126,3 +7126,46 @@ fn tail_and_guarded_load_tags_are_identity_bearing() {
         predicated_kernel.canonical_identity().as_bytes()
     );
 }
+
+/// A moved topology field separates schedule and kernel identity together.
+///
+/// The ADR 0013 topology perturbation at the layers this crate owns: the
+/// single-round and loop-carried cooperative regions differ only in the
+/// coherent field set a verifiable `rounds` change forces — the round count,
+/// its per-round contributor partition, and its round-boundary synchronization
+/// — while inputs, accesses, and expression stay the fixture's own bytes. The
+/// scheduled-region identities separate, each lowered kernel retains exactly
+/// its own region's identity, and the kernel identities separate with them,
+/// which is the chain that carries a topology choice into kernel-program,
+/// artifact, and envelope identity. The per-field population — that *every*
+/// cooperative tile field separates scheduled-region identity on its own — is
+/// `schedule::builder`'s `every_cooperative_tile_field_separates_scheduled_region_identity`.
+#[test]
+fn a_topology_change_separates_schedule_and_kernel_identity_together() {
+    let single = cooperative_region();
+    let multi = multi_round_cooperative_region();
+    assert_ne!(
+        single.canonical_identity().as_bytes(),
+        multi.canonical_identity().as_bytes(),
+        "two topologies are two scheduled-region identities",
+    );
+    let single_kernel =
+        lower_scheduled_region(&single).expect("the single-round cooperative region lowers");
+    let multi_kernel =
+        lower_scheduled_region(&multi).expect("the loop-carried cooperative region lowers");
+    assert_eq!(
+        single_kernel.scheduled_region_identity().as_bytes(),
+        single.canonical_identity().as_bytes(),
+        "a kernel retains exactly its own region's identity",
+    );
+    assert_eq!(
+        multi_kernel.scheduled_region_identity().as_bytes(),
+        multi.canonical_identity().as_bytes(),
+        "a kernel retains exactly its own region's identity",
+    );
+    assert_ne!(
+        single_kernel.canonical_identity().as_bytes(),
+        multi_kernel.canonical_identity().as_bytes(),
+        "the topology choice is folded through kernel identity",
+    );
+}

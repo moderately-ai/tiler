@@ -97,8 +97,10 @@ use tiler_artifact::program::{
 
 use crate::load::{
     DecodedProgram, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceQualification,
-    LiveDeviceRequest, LoadRejection, Preflight, PreparedEntryObservation, RoutePreparation,
-    RoutedDispatch, RoutedEntry, TargetPropertyRequest,
+    LiveDeviceRequest, LiveTargetEnvironmentAttestation, LoadRejection, Preflight,
+    PreparedEntryObservation, RoutePreparation, RoutedDispatch, RoutedEntry,
+    TargetEnvironmentAssessment, TargetEnvironmentObservation, TargetEnvironmentSupport,
+    TargetPropertyRequest,
 };
 
 use std::error::Error;
@@ -289,6 +291,35 @@ pub trait RuntimeAdapter {
     /// Returns [`Self::Refusal`] when no context could be bound. Nothing has been
     /// routed and a fallback is permitted.
     fn bind_execution_context(&mut self) -> Result<ExecutionEnvironment, Self::Refusal>;
+
+    /// Exposes this adapter's target-environment descriptor schema, if any.
+    ///
+    /// The ADR 0013 registration point, and deliberately not a registry: ADR
+    /// 0090 forbids a runtime-adapter registry, so the consumer's independent
+    /// selection of this adapter *is* the registration. There is no permissive
+    /// default — [`TargetEnvironmentSupport::Unsupported`] filters every
+    /// claimed `Plan` cell while leaving `Unclaimed` alternatives routable, so
+    /// an adapter that cannot stand behind an exact provider schema answers
+    /// `Unsupported` rather than guessing.
+    fn target_environment_support(&self) -> TargetEnvironmentSupport<'_>;
+
+    /// Observes the bound context's canonical target-environment descriptor.
+    ///
+    /// Called only after [`Self::bind_execution_context`] succeeded and only
+    /// when the loaded delivery contains a claimed `Plan` cell. The return
+    /// value is an **assertion, not an attestation**: the loader validates it
+    /// against this adapter's own registered schema and privately mints the
+    /// [`LiveTargetEnvironmentAttestation`]; nothing an adapter returns can
+    /// mint one directly.
+    ///
+    /// Answer [`TargetEnvironmentObservation::Unavailable`] when the bound
+    /// context cannot be observed. That filters the claimed cells — it is not
+    /// a context failure and does not fail the route, so a lower-ranked
+    /// `Unclaimed` candidate still routes.
+    fn observe_target_environment(
+        &mut self,
+        context: &LiveExecutionContext,
+    ) -> TargetEnvironmentObservation;
 
     /// Validates one routed entry's carried payload from its own bytes.
     ///
@@ -523,10 +554,84 @@ pub fn route_with_adapter<A: RuntimeAdapter>(
             .map_err(AdapterRouteFailure::Context)?,
     );
 
+    // The ADR 0013 attestation, minted before selection so the exact attested
+    // compatibility identity can filter claimed `Plan` cells ahead of their
+    // guards. The observation is requested only when a claimed cell exists,
+    // and only `bind_execution_context` failure is a context failure: an
+    // unsupported provider, an unavailable observation, or an invalid
+    // descriptor filters the claimed cells while `Unclaimed` candidates stay
+    // routable.
+    //
+    // The support accessor is read twice on the observing path because the
+    // schema borrow must end before `observe_target_environment` takes the
+    // adapter mutably; both reads are of the same registration, which the
+    // trait documents as a pure accessor.
+    let observation = if program.contains_plan_cell()
+        && matches!(
+            adapter.target_environment_support(),
+            TargetEnvironmentSupport::Registered(_)
+        ) {
+        Some(adapter.observe_target_environment(&context))
+    } else {
+        None
+    };
+    let assessment = if program.contains_plan_cell() {
+        match (adapter.target_environment_support(), observation) {
+            (TargetEnvironmentSupport::Unsupported, _) => {
+                TargetEnvironmentAssessment::ProviderUnavailable
+            }
+            // Reachable only through a support accessor that answered
+            // `Unsupported` before the observation read and `Registered`
+            // after it — a registration the trait documents as pure. Fail
+            // closed as an unavailable observation rather than trust a
+            // registration that moved between two reads of one routing
+            // attempt.
+            (TargetEnvironmentSupport::Registered(schema), None) => {
+                TargetEnvironmentAssessment::ObservationUnavailable {
+                    provider: schema.provider().clone(),
+                    schema: schema.schema_version(),
+                    reason: "target-environment-support-not-stable-across-reads".to_owned(),
+                }
+            }
+            (TargetEnvironmentSupport::Registered(schema), Some(observation)) => {
+                match observation {
+                    TargetEnvironmentObservation::Unavailable { reason } => {
+                        TargetEnvironmentAssessment::ObservationUnavailable {
+                            provider: schema.provider().clone(),
+                            schema: schema.schema_version(),
+                            reason,
+                        }
+                    }
+                    TargetEnvironmentObservation::Observed(descriptor) => {
+                        match schema.validate_canonical_descriptor(descriptor.as_bytes()) {
+                            Err(reason) => TargetEnvironmentAssessment::InvalidObservedDescriptor {
+                                provider: schema.provider().clone(),
+                                schema: schema.schema_version(),
+                                reason,
+                            },
+                            Ok(()) => TargetEnvironmentAssessment::Attested {
+                                schema,
+                                attestation: LiveTargetEnvironmentAttestation::new(
+                                    schema.provider().clone(),
+                                    schema.schema_version(),
+                                    descriptor,
+                                ),
+                            },
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // No claimed cell anywhere at this delivery: nothing to attest, and
+        // the adapter is not asked to observe.
+        TargetEnvironmentAssessment::DeviceFree
+    };
+
     // Every comparison in this call belongs to the loader. The observed
     // environment is an input to it, never a substitute for it.
     let qualification: LiveDeviceQualification<'_> =
-        program.prepare(context.observed(), expected, facts)?;
+        program.prepare_with_environment(context.observed(), expected, facts, &assessment)?;
 
     // ADR 0090 item 8, at the earliest point the object bytes exist and the
     // latest point at which refusing still costs nothing. Per entry, because

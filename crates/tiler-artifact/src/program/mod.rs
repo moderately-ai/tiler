@@ -361,6 +361,9 @@
 //!         descriptor: TargetProfileDescriptorDigest::from_bytes([0x01, 0x02])?,
 //!     },
 //!     execution_policy: ArtifactExecutionPolicy::NativeImage,
+//!     // No declared target environment: this walk-through claims no ADR 0013
+//!     // plan determinism, so its route stays `Unclaimed`.
+//!     environment: None,
 //! })?;
 //!
 //! // The variant declares only artifact-owned facts. Every ABI binding below —
@@ -496,6 +499,7 @@
 
 mod builder;
 mod codec;
+mod environment;
 mod error;
 mod expr;
 mod facts;
@@ -538,6 +542,12 @@ pub use tiler_ir::program::{
 // dependency closure is fixed at `[tiler-artifact]` under ADR 0081 could neither
 // read nor state a locus without it.
 pub use tiler_ir::program::SemanticOccurrence;
+// Re-exported for the reason [`BufferAccess`] is: a target-environment
+// declaration is keyed by one, `TargetEnvironmentDeclaration::provider` hands
+// one back, and a runtime whose dependency closure ADR 0081 fixes at
+// `[tiler-artifact]` could neither read nor compare a provider identity
+// without it.
+pub use tiler_ir::semantic::ProviderIdentity;
 
 pub use codec::{
     ArtifactCodecFailure, DecodedArtifact, DecodedBinding, DecodedComponent,
@@ -591,6 +601,24 @@ pub(crate) use codec::{
     ENVELOPE_DIGEST_DOMAIN, IDENTITY_DIGEST_DOMAIN, MANIFEST_DIGEST_DOMAIN, MANIFEST_DOMAIN,
     PAYLOAD_IDENTITY_DOMAIN, PAYLOAD_METADATA_DOMAIN, SECTION_DIGEST_DOMAIN,
 };
+// The ADR 0013 stability-subject carrier's artifact half
+// (`decide-the-adr-0013-plan-determinism-stability-subject`, accepted
+// 2026-08-18): provider-versioned target-environment declarations, the
+// registered schema contract, the validated-declaration and receipt mints, the
+// complete compatibility identity, and the per-delivery scope vocabulary. The
+// packet names these exact items and this owner.
+// The compatibility-identity domain separator, reachable under test so
+// `crate::domains` can enumerate it beside every other governed domain.
+#[cfg(test)]
+pub(crate) use environment::TARGET_ENVIRONMENT_COMPATIBILITY_DOMAIN;
+pub use environment::{
+    CanonicalTargetEnvironmentCompatibilityIdentity, MAX_TARGET_ENVIRONMENT_DESCRIPTOR_BYTES,
+    MAX_TARGET_ENVIRONMENT_REASON_BYTES, PayloadPlanDeterminismReceipt,
+    PayloadPlanDeterminismRefusal, PayloadPlanDeterminismVerifier, PlanDeterminismScope,
+    TargetEnvironmentDeclaration, TargetEnvironmentDeclarationError, TargetEnvironmentDescriptor,
+    TargetEnvironmentDescriptorSchema, TargetEnvironmentReasonCode,
+    TargetEnvironmentReasonCodeError, ValidatedTargetEnvironmentDeclaration,
+};
 pub use error::{
     AbiExprUse, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind, ArtifactKeyKind,
     ArtifactLimitKind, ArtifactVerificationError, ProvenanceField, RecordedArtifactIdentityError,
@@ -614,12 +642,12 @@ pub(crate) use model::{
     ARTIFACT_DOMAIN, DEFERRED_KEY_DOMAIN, PAYLOAD_KEY_DOMAIN, PROVIDER_KEY_DOMAIN, STAGE_KEY_DOMAIN,
 };
 pub use model::{
-    AbiExprRef, AbiExprView, ArtifactExecutionPolicy, ArtifactInputRef, ArtifactOutputRef,
-    ArtifactSchema, BackendEntryRef, BackendPayloadDescriptor, BindingKind, BindingRef,
-    BindingTarget, CanonicalArtifactProgramIdentity, DeferredPredicateRef, EntryRef,
-    InterfaceComponentRef, LoweringCapabilitySubject, RecordedArtifactProgramIdentity,
-    RoutingPolicy, SchemaVersion, SelectedProvider, StageDependencyReason, VariantRef,
-    VerifiedArtifactProgram,
+    AbiExprRef, AbiExprView, ArtifactEnvelopeDigest, ArtifactExecutionPolicy, ArtifactInputRef,
+    ArtifactOutputRef, ArtifactSchema, BackendEntryRef, BackendPayloadDescriptor, BindingKind,
+    BindingRef, BindingTarget, CanonicalArtifactProgramIdentity, DeferredPredicateRef, EntryRef,
+    InterfaceComponentRef, LoweringCapabilitySubject, RecordedArtifactEnvelopeDigest,
+    RecordedArtifactProgramIdentity, RoutingPolicy, SchemaVersion, SelectedProvider,
+    StageDependencyReason, VariantRef, VerifiedArtifactProgram,
 };
 pub use realization::codec::{
     ArtifactCrossCheck, OrderedSubject as RealizationOrderedSubject, RealizationCodecError,

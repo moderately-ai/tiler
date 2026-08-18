@@ -32,7 +32,8 @@ use tiler_artifact::program::{RouteRequirement, RouteResourceDimension, TargetPr
 use tiler_runtime::adapter::{LiveExecutionContext, RuntimeAdapter};
 use tiler_runtime::load::{
     ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight,
-    PreparedEntryObservation, RoutedDispatch, RoutedEntry, TargetPropertyRequest,
+    PreparedEntryObservation, RoutedDispatch, RoutedEntry, TargetEnvironmentObservation,
+    TargetEnvironmentSupport, TargetPropertyRequest,
 };
 
 use crate::image::{
@@ -255,6 +256,23 @@ impl RuntimeAdapter for ScalarHostAdapter {
     fn bind_execution_context(&mut self) -> Result<ExecutionEnvironment, Self::Refusal> {
         self.stages.push(Stage::Bind);
         Ok(self.environment.clone())
+    }
+
+    /// Registers no schema: this fixture backend claims no ADR 0013 authority,
+    /// so every claimed cell would filter while `Unclaimed` routes stay
+    /// routable — the honest default the trait deliberately has no other.
+    fn target_environment_support(&self) -> TargetEnvironmentSupport<'_> {
+        TargetEnvironmentSupport::Unsupported
+    }
+
+    /// Never reached while no schema is registered; unavailable regardless.
+    fn observe_target_environment(
+        &mut self,
+        _context: &LiveExecutionContext,
+    ) -> TargetEnvironmentObservation {
+        TargetEnvironmentObservation::Unavailable {
+            reason: "this fixture registers no target-environment schema".to_owned(),
+        }
     }
 
     fn validate_payload(

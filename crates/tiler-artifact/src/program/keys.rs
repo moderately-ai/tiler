@@ -164,8 +164,10 @@ pub const MAX_TARGET_PROFILE_DESCRIPTOR_BYTES: usize = 64 * 1_024;
 ///
 /// Equal to `tiler_compiler::target::TargetProfileKey`'s admitted set by
 /// design; the module documentation states why the alphabets reconcile and the
-/// byte bounds deliberately do not.
-fn admits(byte: u8) -> bool {
+/// byte bounds deliberately do not. Module-visible because the
+/// target-environment reason code shares this exact alphabet rather than
+/// minting a second one.
+pub(super) fn admits(byte: u8) -> bool {
     byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-' | b'_')
 }
 

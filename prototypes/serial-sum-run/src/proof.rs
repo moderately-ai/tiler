@@ -6327,6 +6327,9 @@ mod tests {
                 // so the fixture declares a native image for the accepted
                 // neighbour to exist at all.
                 ArtifactExecutionPolicy::NativeImage,
+                // No target-environment declaration: this probe backend claims
+                // no ADR 0013 authority, so its routes stay `Unclaimed`.
+                None,
                 PayloadContent {
                     metadata: PayloadMetadata {
                         source_representation: RepresentationKey::new("tiler.probe.source")

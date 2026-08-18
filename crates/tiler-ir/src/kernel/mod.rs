@@ -162,6 +162,7 @@
 //! ```
 
 mod builder;
+mod determinism;
 mod error;
 mod handles;
 mod lower;
@@ -169,6 +170,10 @@ mod model;
 mod verify;
 
 pub use builder::{KernelBuilder, SerialLoopParameters, SerialLoopResults};
+// The ADR 0013 plan-determinism witness: the accepted stability-subject
+// carrier's IR proof owner (`decide-the-adr-0013-plan-determinism-stability-subject`,
+// accepted 2026-08-18). The packet names these exact items and this owner.
+pub use determinism::{PlanDeterminismRefusal, PlanDeterminismWitness, verify_plan_determinism};
 pub use error::{
     KernelBuildError, KernelComponent, KernelDiagnostic, KernelEntityKind, KernelLimitKind,
     KernelLoweringError, KernelVerificationError, VerifiedKernelHandleError,

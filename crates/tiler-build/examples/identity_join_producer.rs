@@ -61,7 +61,7 @@ use tiler_artifact::program::{
     VerifiedArtifactProgram,
 };
 use tiler_build::{
-    BackendEntryDeclaration, CompiledPayloads, DeclaredPayload,
+    BackendEntryDeclaration, CompiledPayloads, DeclaredPayload, PlanDeterminismDeclaration,
     accept_or_publish_delivered_payload_artifact, assemble_plan_artifact,
 };
 use tiler_cache::expansion::{ExpansionCache, Resolution};
@@ -780,6 +780,7 @@ fn assemble_pending(
     assemble_plan_artifact(
         semantic,
         plan,
+        PlanDeterminismDeclaration::Unclaimed,
         |builder, profile| {
             let compatibility = payload_compatibility(variant, &profile)?;
             builder
@@ -790,6 +791,7 @@ fn assemble_pending(
                     compatibility,
                     execution_policy: ArtifactExecutionPolicy::NativeImage,
                     digest: digest.clone(),
+                    environment: None,
                 })
                 .map(|payload| vec![payload])
         },
@@ -819,6 +821,7 @@ fn assemble_carried(
     assemble_plan_artifact(
         semantic,
         plan,
+        PlanDeterminismDeclaration::Unclaimed,
         |builder, profile| {
             let compatibility = payload_compatibility(variant, &profile)?;
             builder
@@ -828,6 +831,7 @@ fn assemble_carried(
                     PAYLOAD_SCHEMA,
                     compatibility,
                     ArtifactExecutionPolicy::NativeImage,
+                    None,
                     content.take().expect("the payload is declared once"),
                 )
                 .map(|payload| vec![payload])

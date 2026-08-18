@@ -386,6 +386,7 @@
 //! #         descriptor: TargetProfileDescriptorDigest::from_bytes([0x01, 0x02])?,
 //! #     },
 //! #     execution_policy: ArtifactExecutionPolicy::NativeImage,
+//! #     environment: None,
 //! # })?;
 //! #
 //! # // The variant declares only artifact-owned facts. Every ABI binding below —

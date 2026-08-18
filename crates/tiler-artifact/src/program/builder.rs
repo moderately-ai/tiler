@@ -24,7 +24,12 @@ use tiler_ir::semantic::{
 };
 use tiler_ir::shape::{Axis, Shape};
 
+use tiler_ir::kernel::PlanDeterminismWitness;
+
 use super::codec::{ArtifactEnvelope, PayloadContent, PayloadMetadata};
+use super::environment::{
+    PayloadPlanDeterminismReceipt, PlanDeterminismScope, TargetEnvironmentDeclaration,
+};
 use super::error::{
     AbiExprUse, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind, ArtifactLimitKind,
     ArtifactVerificationError, invalid_handle, limit,
@@ -353,6 +358,10 @@ impl ArtifactProgramBuilder {
     /// Returns [`ArtifactBuildError::DuplicatePayload`] for a descriptor this
     /// artifact already declares, a structural-limit error, or the identity
     /// error the digest constructor produced.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the accepted ADR 0013 carrier adds the optional target-environment declaration to the exact accepted declaration shape; a parameter struct would be a second spelling of `BackendPayloadDescriptor`"
+    )]
     pub fn push_pending_payload(
         &mut self,
         backend: BackendKey,
@@ -360,6 +369,7 @@ impl ArtifactProgramBuilder {
         payload_schema: SchemaVersion,
         compatibility: TargetProfileRef,
         execution_policy: ArtifactExecutionPolicy,
+        environment: Option<TargetEnvironmentDeclaration>,
         metadata: &PayloadMetadata,
     ) -> Result<PayloadId, ArtifactBuildError> {
         self.push_payload(BackendPayloadDescriptor {
@@ -369,6 +379,7 @@ impl ArtifactProgramBuilder {
             digest: metadata.identity()?,
             compatibility,
             execution_policy,
+            environment,
         })
     }
 
@@ -394,6 +405,10 @@ impl ArtifactProgramBuilder {
     /// # Errors
     ///
     /// Returns the errors [`Self::push_pending_payload`] returns.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors `push_pending_payload`, whose reasoned allow above is the shared rationale"
+    )]
     pub fn push_carried_payload(
         &mut self,
         backend: BackendKey,
@@ -401,6 +416,7 @@ impl ArtifactProgramBuilder {
         payload_schema: SchemaVersion,
         compatibility: TargetProfileRef,
         execution_policy: ArtifactExecutionPolicy,
+        environment: Option<TargetEnvironmentDeclaration>,
         content: PayloadContent,
     ) -> Result<PayloadId, ArtifactBuildError> {
         let id = self.push_pending_payload(
@@ -409,6 +425,7 @@ impl ArtifactProgramBuilder {
             payload_schema,
             compatibility,
             execution_policy,
+            environment,
             &content.metadata,
         )?;
         let position = self.payloads.len() - 1;
@@ -724,6 +741,15 @@ impl ArtifactProgramBuilder {
         if let Some(entry) = entries.first() {
             self.delivery_positions = Some(entry.implementation.payloads.len());
         }
+        // Every cell opens `Unclaimed`. Only the proof-bound
+        // [`Self::publish_plan`] can flip one, so no spec field, bool, or raw
+        // declaration reaches a determinism claim.
+        let scope = vec![
+            PlanDeterminismScope::Unclaimed;
+            entries
+                .first()
+                .map_or(0, |entry| entry.implementation.payloads.len())
+        ];
         self.variants.push(VariantData {
             program: program.clone(),
             guard,
@@ -732,6 +758,7 @@ impl ArtifactProgramBuilder {
             deferred,
             route_requirements: Vec::new(),
             entries,
+            scope,
         });
         Ok(id)
     }
@@ -789,6 +816,136 @@ impl ArtifactProgramBuilder {
             ArtifactLimitKind::RouteRequirements,
         )?;
         self.variants[index].route_requirements.push(requirement);
+        Ok(())
+    }
+
+    /// Publishes the ADR 0013 `Plan` claim for one variant at one delivery position.
+    ///
+    /// The proof-bound join the accepted stability-subject carrier requires:
+    /// an IR witness over exactly this variant's verified kernel program, and
+    /// one backend receipt per entry's selected payload at this position, every
+    /// receipt binding the witnessed program, the payload's compilation
+    /// subject, the carried object's governed section digest, and one shared
+    /// complete target-environment compatibility identity. Low-level
+    /// construction cannot pass a bool or a raw declaration as proof, because
+    /// both argument types are privately minted.
+    ///
+    /// Transactional: every obligation is checked before any cell moves, so a
+    /// refused claim leaves the draft exactly as it was. Other positions may
+    /// remain [`PlanDeterminismScope::Unclaimed`] — a missing provider for one
+    /// family must not erase an independently supported family.
+    ///
+    /// # Errors
+    ///
+    /// Returns a handle error for a variant this builder did not mint;
+    /// [`ArtifactBuildError::StructuralLimit`] on
+    /// [`ArtifactLimitKind::DeliveryPositions`] for a position past the
+    /// artifact's own; or the exact plan-determinism refusals —
+    /// [`ArtifactBuildError::MissingPlanDeterminismWitness`],
+    /// [`ArtifactBuildError::MissingTargetEnvironmentDeclaration`],
+    /// [`ArtifactBuildError::MissingPayloadPlanDeterminismReceipt`],
+    /// [`ArtifactBuildError::PlanDeterminismProgramMismatch`],
+    /// [`ArtifactBuildError::PlanDeterminismPayloadMismatch`], and
+    /// [`ArtifactBuildError::PlanDeterminismEnvironmentMismatch`].
+    pub fn publish_plan(
+        &mut self,
+        variant: VariantId,
+        delivery: usize,
+        witness: &PlanDeterminismWitness<'_>,
+        receipts: &[PayloadPlanDeterminismReceipt],
+    ) -> Result<(), ArtifactBuildError> {
+        let index = self.resolve_variant(variant)?;
+        let positions = self.variants[index].scope.len();
+        if delivery >= positions {
+            return Err(ArtifactBuildError::StructuralLimit {
+                resource: ArtifactLimitKind::DeliveryPositions,
+                actual: delivery.saturating_add(1),
+                limit: positions,
+            });
+        }
+        let held = &self.variants[index];
+        let program_identity = held.program.canonical_identity().as_bytes();
+        if witness.kernel_program_identity().as_bytes() != program_identity {
+            return Err(ArtifactBuildError::MissingPlanDeterminismWitness { variant: index });
+        }
+        let mut first: Option<(usize, &PayloadPlanDeterminismReceipt)> = None;
+        for (entry, data) in held.entries.iter().enumerate() {
+            let payload = usize_of(data.implementation.payloads[delivery]);
+            let descriptor = &self.payloads[payload];
+            let Some(declaration) = &descriptor.environment else {
+                return Err(ArtifactBuildError::MissingTargetEnvironmentDeclaration {
+                    variant: index,
+                    delivery,
+                    entry,
+                });
+            };
+            let receipt = receipts
+                .iter()
+                .find(|receipt| *receipt.payload_subject() == descriptor.digest)
+                .ok_or(ArtifactBuildError::MissingPayloadPlanDeterminismReceipt {
+                    variant: index,
+                    delivery,
+                    entry,
+                })?;
+            if receipt.kernel_program_identity() != program_identity {
+                return Err(ArtifactBuildError::PlanDeterminismProgramMismatch {
+                    variant: index,
+                    delivery,
+                    entry,
+                });
+            }
+            // The object binding. A `Plan` claim fixes exact executable
+            // objects through the envelope digest, so the object must be
+            // carried and must be the one the receipt bound.
+            let Some(content) = &self.payload_content[payload] else {
+                return Err(ArtifactBuildError::PlanDeterminismPayloadMismatch {
+                    variant: index,
+                    delivery,
+                    entry,
+                });
+            };
+            if *receipt.object_section_digest()
+                != super::codec::payload_code_section_digest(&content.code)
+            {
+                return Err(ArtifactBuildError::PlanDeterminismPayloadMismatch {
+                    variant: index,
+                    delivery,
+                    entry,
+                });
+            }
+            // The receipt's identity must be the one this payload's own
+            // declaration resolves to under its own profile, backend, and
+            // representation; a self-pair reports the disagreement.
+            let environment = receipt.environment();
+            if environment.target_profile() != &descriptor.compatibility
+                || environment.backend() != &descriptor.backend
+                || environment.representation() != &descriptor.representation
+                || environment.provider() != declaration.provider()
+                || environment.descriptor_schema() != declaration.descriptor_schema()
+                || environment.descriptor() != declaration.descriptor()
+            {
+                return Err(ArtifactBuildError::PlanDeterminismEnvironmentMismatch {
+                    variant: index,
+                    delivery,
+                    first_entry: entry,
+                    entry,
+                });
+            }
+            match &first {
+                None => first = Some((entry, receipt)),
+                Some((first_entry, held_receipt)) => {
+                    if environment.as_bytes() != held_receipt.environment().as_bytes() {
+                        return Err(ArtifactBuildError::PlanDeterminismEnvironmentMismatch {
+                            variant: index,
+                            delivery,
+                            first_entry: *first_entry,
+                            entry,
+                        });
+                    }
+                }
+            }
+        }
+        self.variants[index].scope[delivery] = PlanDeterminismScope::Plan;
         Ok(())
     }
 

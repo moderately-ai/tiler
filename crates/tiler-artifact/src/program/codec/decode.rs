@@ -574,7 +574,10 @@ fn read_payloads(
     cursor: &mut Cursor<'_>,
 ) -> Result<(Vec<BackendPayloadDescriptor>, Vec<Option<PayloadSections>>), ArtifactCodecError> {
     let rows = cursor.vec(MAX_ARTIFACT_PAYLOADS, CodecLimitKind::Payloads, |cursor| {
-        let descriptor = BackendPayloadDescriptor {
+        let mut descriptor = BackendPayloadDescriptor {
+            // Written by the trailing environment run below; the wire orders
+            // the declaration after the content reference.
+            environment: None,
             backend: BackendKey::from_owned(cursor.text()?)
                 .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?,
             representation: RepresentationKey::from_owned(cursor.text()?)
@@ -599,6 +602,40 @@ fn read_payloads(
             tag => {
                 return Err(ArtifactCodecError::UnknownTag {
                     subject: TagSubject::PayloadContent,
+                    tag,
+                });
+            }
+        };
+        descriptor.environment = match cursor.u8()? {
+            0x00 => None,
+            0x01 => {
+                let provider = cursor.provider()?;
+                let descriptor_schema = SchemaVersion::new(cursor.u16()?, cursor.u16()?);
+                // Bounded before the grammar sees it, so a hostile length is
+                // refused as the budget it exceeded rather than as a model
+                // rule. The grammar then re-proves the bound and the nonzero
+                // schema major; semantic provider validation is deliberately
+                // unavailable to a neutral decoder.
+                let bytes = cursor.slice()?;
+                codec_limit(
+                    bytes.len(),
+                    super::super::MAX_TARGET_ENVIRONMENT_DESCRIPTOR_BYTES,
+                    CodecLimitKind::TargetEnvironmentDescriptorBytes,
+                )?;
+                let descriptor = super::super::TargetEnvironmentDescriptor::new(bytes)
+                    .map_err(|cause| ArtifactCodecError::InvalidTargetEnvironment { cause })?;
+                Some(
+                    super::super::TargetEnvironmentDeclaration::new(
+                        provider,
+                        descriptor_schema,
+                        descriptor,
+                    )
+                    .map_err(|cause| ArtifactCodecError::InvalidTargetEnvironment { cause })?,
+                )
+            }
+            tag => {
+                return Err(ArtifactCodecError::UnknownTag {
+                    subject: TagSubject::TargetEnvironmentPresence,
                     tag,
                 });
             }
@@ -881,6 +918,19 @@ fn parse_variants(
         let rank = u64::try_from(variants.len()).expect("supported usize fits u64");
         let execution_order = parse_execution_order(cursor, rank, entries.len())?;
         let dependencies = parse_dependencies(cursor, rank, entries.len(), &execution_order)?;
+        let scope = cursor.vec(
+            MAX_DELIVERY_POSITIONS,
+            CodecLimitKind::PlanDeterminismScopeCells,
+            |cursor| {
+                let tag = cursor.u8()?;
+                super::super::environment::PlanDeterminismScope::from_tag(tag).ok_or(
+                    ArtifactCodecError::UnknownTag {
+                        subject: TagSubject::PlanDeterminismScope,
+                        tag,
+                    },
+                )
+            },
+        )?;
         variants.push(VariantRow {
             program_section,
             guard,
@@ -891,6 +941,7 @@ fn parse_variants(
             entries,
             execution_order,
             dependencies,
+            scope,
         });
     }
     Ok(variants)

@@ -85,8 +85,27 @@ pub(crate) use model::{
 pub use tiler_digest::{DIGEST_BYTES, Digest, DigestAlgorithm};
 // The external envelope digest stays crate-private: it names one published
 // encoding of an artifact, which only `crate::proof`'s sidecar association
-// needs.
+// and the typed `ArtifactEnvelopeDigest` mints need.
 pub(crate) use encode::envelope_digest;
+
+/// Derives the governed section digest one object would carry as payload code.
+///
+/// Crate-visible so a payload plan-determinism receipt can bind the exact
+/// emitted object bytes under the same digest the envelope's section table
+/// carries for them, rather than under a second, drifting association.
+pub(crate) fn payload_code_section_digest(object_bytes: &[u8]) -> Digest {
+    let kind = model::SectionKind::BackendPayloadCode;
+    let schema = kind.schema();
+    DigestAlgorithm::GOVERNED.digest_qualified(
+        encode::SECTION_DIGEST_DOMAIN,
+        &[
+            &[kind.tag()],
+            &schema.major().to_be_bytes(),
+            &schema.minor().to_be_bytes(),
+        ],
+        object_bytes,
+    )
+}
 // Every governed domain this container admits, reachable under test so
 // `crate::domains` can enumerate the crate's whole set in one place. The two
 // framing tags are here for the same reason the digest domains are: each opens a

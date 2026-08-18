@@ -30,8 +30,8 @@ use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::semantic::{BuildError, InputKey, OutputKey};
 
 use crate::program::{
-    ArtifactCodecFailure, DIGEST_BYTES, Digest, DigestAlgorithm, VerifiedArtifactProgram,
-    decode_artifact, envelope_digest,
+    ArtifactCodecFailure, Digest, DigestAlgorithm, RecordedArtifactEnvelopeDigest,
+    VerifiedArtifactProgram, decode_artifact,
 };
 
 use super::budget::{
@@ -671,7 +671,7 @@ pub(super) fn derive_identity(
     bytes.extend_from_slice(&MANIFEST_SCHEMA.0.to_be_bytes());
     bytes.extend_from_slice(&MANIFEST_SCHEMA.1.to_be_bytes());
     push_slice(&mut bytes, &data.artifact_identity);
-    bytes.extend_from_slice(&data.envelope_digest);
+    bytes.extend_from_slice(data.envelope_digest.as_bytes());
     push_slice(&mut bytes, data.subjects.semantic.as_bytes());
     push_slice(&mut bytes, data.subjects.numerical.as_bytes());
     push_slice(&mut bytes, data.subjects.reference.as_bytes());
@@ -783,7 +783,7 @@ fn encode_manifest(
     bytes.extend_from_slice(&MANIFEST_SCHEMA.0.to_be_bytes());
     bytes.extend_from_slice(&MANIFEST_SCHEMA.1.to_be_bytes());
     push_slice(&mut bytes, &data.artifact_identity);
-    bytes.extend_from_slice(&data.envelope_digest);
+    bytes.extend_from_slice(data.envelope_digest.as_bytes());
     push_slice(&mut bytes, data.subjects.semantic.as_bytes());
     push_slice(&mut bytes, data.subjects.numerical.as_bytes());
     push_slice(&mut bytes, data.subjects.reference.as_bytes());
@@ -921,9 +921,9 @@ impl DecodedProofSidecar {
         self.sidecar.artifact_identity_bytes()
     }
 
-    /// Returns the digest of the exact envelope bytes this sidecar names.
+    /// Returns the recorded digest of the envelope bytes this sidecar names.
     #[must_use]
-    pub const fn envelope_digest(&self) -> &[u8; DIGEST_BYTES] {
+    pub const fn envelope_digest(&self) -> &RecordedArtifactEnvelopeDigest {
         self.sidecar.envelope_digest()
     }
 
@@ -1002,7 +1002,12 @@ impl DecodedProofSidecar {
     /// envelope, or [`ProofAssociationError::ArtifactIdentityMismatch`] when
     /// they encode a different artifact.
     pub fn bind_to_envelope(&self, envelope_bytes: &[u8]) -> Result<(), ProofAssociationError> {
-        if envelope_digest(envelope_bytes) != *self.envelope_digest() {
+        if !self
+            .envelope_digest()
+            .matches(&crate::program::ArtifactEnvelopeDigest::derive(
+                envelope_bytes,
+            ))
+        {
             return Err(ProofAssociationError::EnvelopeDigestMismatch);
         }
         let artifact = decode_artifact(envelope_bytes)
@@ -1114,7 +1119,7 @@ struct PayloadDescriptor {
 /// Everything the manifest carries except its derived payload descriptors.
 struct DecodedBody {
     artifact_identity: Vec<u8>,
-    envelope_digest: [u8; DIGEST_BYTES],
+    envelope_digest: RecordedArtifactEnvelopeDigest,
     subjects: ProofSubjects,
     input_keys: Vec<InputKey>,
     output_keys: Vec<OutputKey>,
@@ -1153,7 +1158,7 @@ fn parse_manifest(bytes: &[u8]) -> Result<ParsedManifest, ProofCodecError> {
         });
     }
     let artifact_identity = cursor.slice()?.to_vec();
-    let envelope_digest: [u8; DIGEST_BYTES] = cursor.array()?;
+    let envelope_digest = RecordedArtifactEnvelopeDigest::from_wire(cursor.array()?);
     let subjects = ProofSubjects {
         semantic: subject(&mut cursor)?,
         numerical: subject(&mut cursor)?,

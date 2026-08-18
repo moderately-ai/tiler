@@ -39,12 +39,14 @@ use std::fmt;
 use tiler_runtime::adapter::{LiveExecutionContext, RuntimeAdapter};
 use tiler_runtime::load::{
     DTypeDispatch, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight,
-    PreparedEntryObservation, RoutedDispatch, RoutedEntry, TargetPropertyRequest,
+    PreparedEntryObservation, RoutedDispatch, RoutedEntry, TargetEnvironmentObservation,
+    TargetEnvironmentSupport, TargetPropertyRequest,
 };
 
 use tiler_artifact::program::{
-    ArithmeticType, BackendKey, RepresentationKey, RouteRequirement, RouteResourceDimension,
-    TargetProfileRef,
+    ArithmeticType, BackendKey, ProviderIdentity, RepresentationKey, RouteRequirement,
+    RouteResourceDimension, SchemaVersion, TargetEnvironmentDescriptor,
+    TargetEnvironmentDescriptorSchema, TargetEnvironmentReasonCode, TargetProfileRef,
 };
 
 use crate::fixture;
@@ -70,12 +72,61 @@ pub enum Stage {
     PrepareEntries,
     /// One prepared entry's target property was reported.
     ObservePreparedEntry,
+    /// The bound context's target environment was observed.
+    ObserveTargetEnvironment,
     /// The dispatch was sized and its capacity checked, acquiring nothing.
     PlanDispatch,
     /// The committed route's storage was allocated and bound.
     AllocateDispatch,
     /// The committed route was encoded, run, and observed.
     Dispatch,
+}
+
+/// One test provider's registered target-environment descriptor schema.
+///
+/// The scalar host's whole authority claim is byte equality with one exact
+/// canonical spelling: the process *is* the execution-environment class its
+/// schema names, which is the strongest claim a single-process interpreter can
+/// honestly make and exactly the shape the ADR 0013 contract requires a
+/// provider to prove before registering positive support.
+#[derive(Clone, Debug)]
+pub struct ScalarEnvironmentSchema {
+    /// Provider identity, with its exact nonzero revision.
+    pub provider: ProviderIdentity,
+    /// Exact schema version.
+    pub schema: SchemaVersion,
+    /// The canonical descriptor spellings this schema admits, one per class.
+    ///
+    /// Each admitted value is the exactly-one canonical spelling of its own
+    /// environment class; a second class is a second member of this set, never
+    /// a second spelling of the first. That is what makes a declared-versus-
+    /// observed class mismatch representable while validation still accepts
+    /// exactly one byte spelling per class.
+    pub admitted: Vec<Vec<u8>>,
+}
+
+impl TargetEnvironmentDescriptorSchema for ScalarEnvironmentSchema {
+    fn provider(&self) -> &ProviderIdentity {
+        &self.provider
+    }
+
+    fn schema_version(&self) -> SchemaVersion {
+        self.schema
+    }
+
+    fn validate_canonical_descriptor(
+        &self,
+        descriptor: &[u8],
+    ) -> Result<(), TargetEnvironmentReasonCode> {
+        if self.admitted.iter().any(|value| value == descriptor) {
+            Ok(())
+        } else {
+            Err(
+                TargetEnvironmentReasonCode::new("scalar-host.not-the-canonical-spelling")
+                    .expect("a literal governed reason code"),
+            )
+        }
+    }
 }
 
 /// One measured target family's dtype-dispatchability row.
@@ -298,6 +349,29 @@ pub struct ScalarHostAdapter {
     profile: TargetProfileRef,
     backend: BackendKey,
     representation: RepresentationKey,
+    /// The plan-determinism subject the preflight published, as canonical bytes.
+    ///
+    /// Captured at [`RuntimeAdapter::plan_dispatch`] so a test can compare what
+    /// the pre-commit stage saw against what crossed the commit.
+    subject_at_plan: Option<Vec<u8>>,
+    /// The plan-determinism subject the committed route carried, as canonical
+    /// bytes. Captured at [`RuntimeAdapter::dispatch`].
+    subject_at_dispatch: Option<Vec<u8>>,
+    /// The subject's projected kernel-program identity, captured beside it.
+    subject_kernel_program: Option<Vec<u8>>,
+    /// The provider schema this adapter registers, if any.
+    ///
+    /// `None` is the default and the honest state of a backend with no
+    /// accepted target-environment authority; a test that exercises the
+    /// positive ADR 0013 path installs one with
+    /// [`Self::registering_environment_schema`].
+    environment_schema: Option<ScalarEnvironmentSchema>,
+    /// What `observe_target_environment` answers, when a schema is registered.
+    ///
+    /// `None` observes the registered schema's own canonical descriptor — the
+    /// live process really is the class the schema names, which is this test
+    /// backend's whole authority claim.
+    environment_observation: Option<TargetEnvironmentObservation>,
     /// Which dtypes this host's family states it can dispatch.
     ///
     /// An adapter field rather than a fixture constant, because it is the one
@@ -354,6 +428,11 @@ impl ScalarHostAdapter {
             profile: fixture::profile(),
             backend: fixture::backend(),
             representation: fixture::representation(),
+            subject_at_plan: None,
+            subject_at_dispatch: None,
+            subject_kernel_program: None,
+            environment_schema: None,
+            environment_observation: None,
             dtype_dispatch: fixture::dispatches_f32_and_bf16(),
             input,
             invocation_budget: 64,
@@ -396,8 +475,44 @@ impl ScalarHostAdapter {
         self
     }
 
+    /// Returns the same adapter registering one provider descriptor schema.
+    ///
+    /// The independent selection ADR 0090 makes the registration mechanism: a
+    /// consumer that links an adapter exposing this schema is what turns a
+    /// declared environment into an attestable one.
+    #[must_use]
+    pub fn registering_environment_schema(mut self, schema: ScalarEnvironmentSchema) -> Self {
+        self.environment_schema = Some(schema);
+        self
+    }
+
+    /// Returns the same adapter answering one fixed observation.
+    #[must_use]
+    pub fn observing_environment(mut self, observation: TargetEnvironmentObservation) -> Self {
+        self.environment_observation = Some(observation);
+        self
+    }
+
     fn perturbed_by(&self, perturbation: Perturbation) -> bool {
         self.perturbation == Some(perturbation)
+    }
+
+    /// Returns the subject the pre-commit preflight published, if any.
+    #[must_use]
+    pub fn subject_at_plan(&self) -> Option<&[u8]> {
+        self.subject_at_plan.as_deref()
+    }
+
+    /// Returns the subject the committed route carried, if any.
+    #[must_use]
+    pub fn subject_at_dispatch(&self) -> Option<&[u8]> {
+        self.subject_at_dispatch.as_deref()
+    }
+
+    /// Returns the subject's projected kernel-program identity, if any.
+    #[must_use]
+    pub fn subject_kernel_program(&self) -> Option<&[u8]> {
+        self.subject_kernel_program.as_deref()
     }
 
     /// Returns the shared-allocation pairs this planner backed, in route order.
@@ -540,6 +655,39 @@ impl RuntimeAdapter for ScalarHostAdapter {
             },
             dtype_dispatch: self.dtype_dispatch.clone(),
         })
+    }
+
+    /// Registers the configured provider schema, or none.
+    fn target_environment_support(&self) -> TargetEnvironmentSupport<'_> {
+        match &self.environment_schema {
+            None => TargetEnvironmentSupport::Unsupported,
+            Some(schema) => TargetEnvironmentSupport::Registered(schema),
+        }
+    }
+
+    /// Observes the configured descriptor, or the registered canonical one.
+    fn observe_target_environment(
+        &mut self,
+        _context: &LiveExecutionContext,
+    ) -> TargetEnvironmentObservation {
+        self.stages.push(Stage::ObserveTargetEnvironment);
+        if let Some(observation) = &self.environment_observation {
+            return observation.clone();
+        }
+        match &self.environment_schema {
+            Some(schema) => TargetEnvironmentObservation::Observed(
+                TargetEnvironmentDescriptor::new(
+                    schema
+                        .admitted
+                        .first()
+                        .expect("the fixture schema admits at least one class"),
+                )
+                .expect("the fixture descriptor is bounded"),
+            ),
+            None => TargetEnvironmentObservation::Unavailable {
+                reason: "no schema is registered".to_owned(),
+            },
+        }
     }
 
     fn validate_payload(
@@ -693,6 +841,14 @@ impl RuntimeAdapter for ScalarHostAdapter {
         preflight: &Preflight<'_>,
     ) -> Result<(), Self::Refusal> {
         self.stages.push(Stage::PlanDispatch);
+        // Recorded so a test can compare the subject the pre-commit stage
+        // published against the one the committed route carries.
+        self.subject_at_plan = preflight
+            .plan_determinism_subject()
+            .map(|subject| subject.canonical_identity().as_bytes().to_vec());
+        self.subject_kernel_program = preflight
+            .plan_determinism_subject()
+            .map(|subject| subject.kernel_program_identity().to_vec());
 
         // The byte a slot must reach through, counted from the start of the
         // allocation rather than from the start of the value: a binding may
@@ -883,6 +1039,11 @@ impl RuntimeAdapter for ScalarHostAdapter {
         routed: &RoutedDispatch<'_>,
     ) -> Result<Self::Completion, Self::Failure> {
         self.stages.push(Stage::Dispatch);
+        // Recorded beside the pre-commit capture: the two must be one value,
+        // because the subject is carried unchanged across the one-way commit.
+        self.subject_at_dispatch = routed
+            .plan_determinism_subject()
+            .map(|subject| subject.canonical_identity().as_bytes().to_vec());
         // The order the committed route published, front to back. Reversing it
         // is a perturbation rather than a choice: the route's entries are
         // ordered by the data dependencies the packaged program proved, so a

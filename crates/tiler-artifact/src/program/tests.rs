@@ -21,7 +21,8 @@ use tiler_ir::index::{
     multiply_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
 };
 use tiler_ir::kernel::{
-    KernelType, MAX_KERNEL_IDENTITY_BYTES, VerifiedKernel, lower_scheduled_region,
+    KernelType, MAX_KERNEL_IDENTITY_BYTES, PlanDeterminismWitness, VerifiedKernel,
+    lower_scheduled_region, verify_plan_determinism,
 };
 use tiler_ir::program::abi::{
     ExprNode, PreparedEntryTargetRequirement, TargetPropertyProviderIdentity, TargetPropertyQuery,
@@ -87,6 +88,13 @@ use super::{
     RouteResourceDimension, RouteResourceRequirement, SchemaVersion, SelectedProvider,
     TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, TargetPropertyKey,
     VariantSpec, VerifiedArtifactProgram,
+};
+use super::{
+    ArtifactLimitKind, PayloadContent, PayloadEntryMapping, PayloadMetadata,
+    PayloadPlanDeterminismReceipt, PayloadPlanDeterminismRefusal, PayloadPlanDeterminismVerifier,
+    PayloadPlatform, PayloadProvenance, PayloadSdkIdentity, PlanDeterminismScope,
+    TargetEnvironmentDeclaration, TargetEnvironmentDescriptor, TargetEnvironmentDescriptorSchema,
+    TargetEnvironmentReasonCode, ToolComponent, ValidatedTargetEnvironmentDeclaration, VariantId,
 };
 use super::{
     DeliveredRealizationBuilder, DeliveredRealizationRecord, DimensionBehaviour, EntryRealization,
@@ -2006,6 +2014,7 @@ fn lowering_subject(
 
 pub(super) fn payload(tag: u8) -> BackendPayloadDescriptor {
     BackendPayloadDescriptor {
+        environment: None,
         backend: BackendKey::new("tiler.metal").unwrap(),
         representation: RepresentationKey::new("metallib").unwrap(),
         payload_schema: SchemaVersion::new(1, 0),
@@ -2183,6 +2192,7 @@ pub(crate) fn strict_affine_u4_dequantize_artifact() -> VerifiedArtifactProgram 
         .expect("selected provider");
     let payload = draft
         .push_payload(BackendPayloadDescriptor {
+            environment: None,
             backend: BackendKey::new("tiler.test.target-neutral").expect("backend"),
             representation: RepresentationKey::new("structural-kir-record")
                 .expect("representation"),
@@ -5686,8 +5696,8 @@ fn empty_extent_lists_do_not_move_previously_encodable_artifact_bytes() {
         "two no-extent artifacts must keep one identity",
     );
     assert!(
-        super::model::ARTIFACT_DOMAIN.ends_with(b"v19\0"),
-        "the elementary-dimension step owns v19; empty extent lists still write no bytes",
+        super::model::ARTIFACT_DOMAIN.ends_with(b"v20\0"),
+        "the ADR 0013 stability-subject step owns v20; empty extent lists still write no bytes",
     );
     let with = live_extent_artifact();
     assert_ne!(
@@ -7448,4 +7458,581 @@ fn the_artifact_storage_encoding_is_injective_over_its_constructible_domain() {
         }
     }
     assert_eq!(seen.len(), 7);
+}
+
+// -------------------------------------------------------------------------
+// Plan-determinism claims (ADR 0013)
+// -------------------------------------------------------------------------
+
+/// The claim fixtures' one canonical environment descriptor spelling.
+pub(super) const CLAIM_DESCRIPTOR: &[u8] = b"process-arithmetic-v1";
+
+/// The exact object bytes the claim fixtures carry and bind.
+pub(super) const CLAIM_OBJECT: &[u8] = b"claim fixture object bytes";
+
+fn claim_provider() -> ProviderIdentity {
+    ProviderIdentity::new("tiler-test", "environment-authority", 3).unwrap()
+}
+
+/// One raw fixture declaration over `descriptor`.
+pub(super) fn claim_declaration_of(descriptor: &[u8]) -> TargetEnvironmentDeclaration {
+    TargetEnvironmentDeclaration::new(
+        claim_provider(),
+        SchemaVersion::new(1, 0),
+        TargetEnvironmentDescriptor::new(descriptor).unwrap(),
+    )
+    .unwrap()
+}
+
+pub(super) fn claim_declaration() -> TargetEnvironmentDeclaration {
+    claim_declaration_of(CLAIM_DESCRIPTOR)
+}
+
+/// The producer-side schema registration a declaration validates against.
+///
+/// Derived from the declaration itself, as a producer derives it from its own
+/// registration: the artifact layer's join needs a validated declaration, not
+/// agreement with any particular consumer's adapter.
+struct ClaimSchema {
+    provider: ProviderIdentity,
+    schema: SchemaVersion,
+    admitted: Vec<u8>,
+}
+
+impl TargetEnvironmentDescriptorSchema for ClaimSchema {
+    fn provider(&self) -> &ProviderIdentity {
+        &self.provider
+    }
+
+    fn schema_version(&self) -> SchemaVersion {
+        self.schema
+    }
+
+    fn validate_canonical_descriptor(
+        &self,
+        descriptor: &[u8],
+    ) -> Result<(), TargetEnvironmentReasonCode> {
+        if descriptor == self.admitted {
+            Ok(())
+        } else {
+            Err(TargetEnvironmentReasonCode::new("descriptor-not-canonical").unwrap())
+        }
+    }
+}
+
+fn validated(declaration: &TargetEnvironmentDeclaration) -> ValidatedTargetEnvironmentDeclaration {
+    let schema = ClaimSchema {
+        provider: declaration.provider().clone(),
+        schema: declaration.descriptor_schema(),
+        admitted: declaration.descriptor().as_bytes().to_vec(),
+    };
+    declaration.validate(&schema).unwrap()
+}
+
+/// A verifier whose backend judgment accepts; the receipt's bound values are
+/// still minted by the artifact layer from the exact inputs, which is what the
+/// join tests below exercise.
+struct TrustingVerifier;
+
+impl PayloadPlanDeterminismVerifier for TrustingVerifier {
+    fn assess(
+        &self,
+        _witness: &PlanDeterminismWitness<'_>,
+        _descriptor: &BackendPayloadDescriptor,
+        _object_bytes: &[u8],
+        _declaration: &ValidatedTargetEnvironmentDeclaration,
+    ) -> Result<(), PayloadPlanDeterminismRefusal> {
+        Ok(())
+    }
+}
+
+/// One carried payload's compilation subject, keyed to one entry.
+///
+/// The provenance mirrors the codec suite's known-valid record; `entry_key`
+/// and `source` differ per payload so two payloads in one artifact never
+/// collide on the metadata-derived content digest.
+fn claim_metadata(entry_key: &[u8], source: &[u8]) -> PayloadMetadata {
+    PayloadMetadata {
+        source_representation: RepresentationKey::new("metal-source").unwrap(),
+        source: source.to_vec(),
+        provenance: PayloadProvenance {
+            toolchain: "tiler.toolchain.apple-metal".to_owned(),
+            target: "air64-apple-macosx26.0".to_owned(),
+            family: "apple-macos".to_owned(),
+            language: "metal3.2".to_owned(),
+            platform: PayloadPlatform::VersionedSdk {
+                deployment_major: 26,
+                deployment_minor: 0,
+                sdk: PayloadSdkIdentity {
+                    name: "macosx".to_owned(),
+                    version: "26.0".to_owned(),
+                    build: "26A5388g".to_owned(),
+                },
+            },
+            components: vec![ToolComponent {
+                role: "compiler".to_owned(),
+                version: "32023.883".to_owned(),
+            }],
+            compile_flags: vec!["-fmetal-math-mode=safe".to_owned()],
+            link_flags: Vec::new(),
+        },
+        entries: vec![PayloadEntryMapping {
+            entry_key: BackendEntryKey::from_bytes(entry_key).unwrap(),
+            symbol: format!(
+                "tiler_{}_0",
+                std::str::from_utf8(entry_key).expect("fixture keys are ASCII")
+            ),
+            transports: vec![0, 1],
+        }],
+        obligations: Vec::new(),
+    }
+}
+
+pub(super) fn claim_payload_content(entry_key: &[u8], code: &[u8]) -> PayloadContent {
+    PayloadContent {
+        metadata: claim_metadata(entry_key, b"kernel void claim() {}"),
+        code: code.to_vec(),
+    }
+}
+
+/// The exact descriptor `push_carried_payload` records for a claim payload.
+///
+/// Reconstructed from the same inputs because the draft does not expose its
+/// payload table; the digest is the metadata-derived compilation subject, so
+/// this names the same payload the builder holds.
+fn claim_descriptor(
+    content: &PayloadContent,
+    environment: Option<TargetEnvironmentDeclaration>,
+) -> BackendPayloadDescriptor {
+    BackendPayloadDescriptor {
+        backend: BackendKey::new("tiler.metal").unwrap(),
+        representation: RepresentationKey::new("metallib").unwrap(),
+        payload_schema: SchemaVersion::new(1, 0),
+        digest: content.identity().unwrap(),
+        compatibility: profile(),
+        execution_policy: ArtifactExecutionPolicy::NativeImage,
+        environment,
+    }
+}
+
+/// Drives one claim attempt over the canonical one-entry fused fixture.
+///
+/// Everything up to the claim is shared: a carried (or pending) payload
+/// declaring `environment`, the fused program's variant, and the realization
+/// record. `drive` then runs the join under test and the fixture builds, so a
+/// refused claim also proves the refusal left the draft coherent.
+fn with_claim_draft(
+    environment: Option<TargetEnvironmentDeclaration>,
+    carried: bool,
+    drive: impl FnOnce(&mut ArtifactProgramBuilder, VariantId, &VerifiedKernelProgram),
+) -> VerifiedArtifactProgram {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let provider = lowering_provider(1);
+    let compilation = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, compilation).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+    let content = claim_payload_content(b"fused", CLAIM_OBJECT);
+    let payload = if carried {
+        draft
+            .push_carried_payload(
+                BackendKey::new("tiler.metal").unwrap(),
+                RepresentationKey::new("metallib").unwrap(),
+                SchemaVersion::new(1, 0),
+                profile(),
+                ArtifactExecutionPolicy::NativeImage,
+                environment,
+                content,
+            )
+            .unwrap()
+    } else {
+        draft
+            .push_pending_payload(
+                BackendKey::new("tiler.metal").unwrap(),
+                RepresentationKey::new("metallib").unwrap(),
+                SchemaVersion::new(1, 0),
+                profile(),
+                ArtifactExecutionPolicy::NativeImage,
+                environment,
+                &content.metadata,
+            )
+            .unwrap()
+    };
+    let formulas = formulas(&mut draft);
+    let variant_id = draft
+        .push_variant(&program, variant(&formulas, payload, b"fused"))
+        .unwrap();
+    declare_realization(&mut draft, &program);
+    drive(&mut draft, variant_id, &program);
+    draft.build().unwrap()
+}
+
+/// Mints the receipt a correct producer holds for the canonical claim fixture.
+fn claim_receipt(witness: PlanDeterminismWitness<'_>) -> PayloadPlanDeterminismReceipt {
+    let declaration = claim_declaration();
+    let content = claim_payload_content(b"fused", CLAIM_OBJECT);
+    let descriptor = claim_descriptor(&content, Some(declaration.clone()));
+    TrustingVerifier
+        .verify(
+            &witness,
+            &descriptor,
+            CLAIM_OBJECT,
+            &validated(&declaration),
+        )
+        .unwrap()
+}
+
+/// The complete proof-bound claim over the canonical fixture.
+pub(super) fn claimed_artifact() -> VerifiedArtifactProgram {
+    with_claim_draft(
+        Some(claim_declaration()),
+        true,
+        |draft, variant, program| {
+            let witness = verify_plan_determinism(program).unwrap();
+            let receipt = claim_receipt(witness);
+            draft
+                .publish_plan(variant, 0, &witness, &[receipt])
+                .unwrap();
+        },
+    )
+}
+
+/// The same fixture with the claim never published.
+fn unclaimed_twin() -> VerifiedArtifactProgram {
+    with_claim_draft(Some(claim_declaration()), true, |_, _, _| {})
+}
+
+/// A published claim flips exactly the claimed cell, and moves identity.
+///
+/// The identity assertion is the load-bearing one: a `Plan` claim widens what
+/// the artifact promises, so a claimed artifact and its unclaimed twin must
+/// never share a canonical identity — otherwise a cache could serve the
+/// unclaimed build for the claimed subject.
+#[test]
+fn a_published_plan_claim_marks_its_cell_and_moves_artifact_identity() {
+    let claimed = claimed_artifact();
+    let unclaimed = unclaimed_twin();
+    let cell = claimed.variants().next().unwrap();
+    assert_eq!(
+        cell.plan_determinism_scope(0),
+        Some(PlanDeterminismScope::Plan)
+    );
+    let twin_cell = unclaimed.variants().next().unwrap();
+    assert_eq!(
+        twin_cell.plan_determinism_scope(0),
+        Some(PlanDeterminismScope::Unclaimed)
+    );
+    assert_ne!(
+        claimed.canonical_identity().as_bytes(),
+        unclaimed.canonical_identity().as_bytes(),
+        "a claim that does not move identity is invisible to every cache and pin"
+    );
+}
+
+/// A claim at a delivery position the variant does not carry is refused.
+#[test]
+fn a_plan_claim_beyond_the_delivery_positions_is_refused() {
+    with_claim_draft(
+        Some(claim_declaration()),
+        true,
+        |draft, variant, program| {
+            let witness = verify_plan_determinism(program).unwrap();
+            let receipt = claim_receipt(witness);
+            assert_eq!(
+                draft.publish_plan(variant, 1, &witness, &[receipt]),
+                Err(ArtifactBuildError::StructuralLimit {
+                    resource: ArtifactLimitKind::DeliveryPositions,
+                    actual: 2,
+                    limit: 1,
+                })
+            );
+        },
+    );
+}
+
+/// A witness over some other program cannot claim this variant.
+#[test]
+fn a_witness_for_another_program_is_refused_as_missing() {
+    let semantic = semantic_program();
+    let other = fused_program(&semantic, OTHER_SCALE_BITS);
+    with_claim_draft(
+        Some(claim_declaration()),
+        true,
+        |draft, variant, program| {
+            assert_ne!(
+                program.canonical_identity().as_bytes(),
+                other.canonical_identity().as_bytes(),
+                "the negative control requires two distinct programs"
+            );
+            let witness = verify_plan_determinism(&other).unwrap();
+            let receipt = claim_receipt(witness);
+            assert_eq!(
+                draft.publish_plan(variant, 0, &witness, &[receipt]),
+                Err(ArtifactBuildError::MissingPlanDeterminismWitness { variant: 0 })
+            );
+        },
+    );
+}
+
+/// A payload that declares no environment cannot be claimed.
+#[test]
+fn a_claim_without_a_target_environment_declaration_is_refused() {
+    with_claim_draft(None, true, |draft, variant, program| {
+        let witness = verify_plan_determinism(program).unwrap();
+        let receipt = claim_receipt(witness);
+        assert_eq!(
+            draft.publish_plan(variant, 0, &witness, &[receipt]),
+            Err(ArtifactBuildError::MissingTargetEnvironmentDeclaration {
+                variant: 0,
+                delivery: 0,
+                entry: 0,
+            })
+        );
+    });
+}
+
+/// A claim with no receipt naming the payload's compilation subject is refused.
+#[test]
+fn a_claim_without_a_payload_receipt_is_refused() {
+    with_claim_draft(
+        Some(claim_declaration()),
+        true,
+        |draft, variant, program| {
+            let witness = verify_plan_determinism(program).unwrap();
+            assert_eq!(
+                draft.publish_plan(variant, 0, &witness, &[]),
+                Err(ArtifactBuildError::MissingPayloadPlanDeterminismReceipt {
+                    variant: 0,
+                    delivery: 0,
+                    entry: 0,
+                })
+            );
+        },
+    );
+}
+
+/// A receipt bound to another program's identity is refused at the join.
+///
+/// The publishing witness matches the variant, so the disagreement is between
+/// the receipt and the witness — the case where a producer reused a receipt
+/// minted for a different compilation.
+#[test]
+fn a_receipt_for_another_program_is_refused_as_a_program_mismatch() {
+    let semantic = semantic_program();
+    let other = fused_program(&semantic, OTHER_SCALE_BITS);
+    with_claim_draft(
+        Some(claim_declaration()),
+        true,
+        |draft, variant, program| {
+            let stale = verify_plan_determinism(&other).unwrap();
+            let receipt = claim_receipt(stale);
+            let witness = verify_plan_determinism(program).unwrap();
+            assert_eq!(
+                draft.publish_plan(variant, 0, &witness, &[receipt]),
+                Err(ArtifactBuildError::PlanDeterminismProgramMismatch {
+                    variant: 0,
+                    delivery: 0,
+                    entry: 0,
+                })
+            );
+        },
+    );
+}
+
+/// An uncarried payload cannot be claimed even with a matching receipt.
+///
+/// The claim fixes exact executable objects through the envelope digest, so a
+/// payload whose object is still pending has nothing the claim could bind.
+#[test]
+fn a_pending_payload_cannot_be_claimed() {
+    with_claim_draft(
+        Some(claim_declaration()),
+        false,
+        |draft, variant, program| {
+            let witness = verify_plan_determinism(program).unwrap();
+            let receipt = claim_receipt(witness);
+            assert_eq!(
+                draft.publish_plan(variant, 0, &witness, &[receipt]),
+                Err(ArtifactBuildError::PlanDeterminismPayloadMismatch {
+                    variant: 0,
+                    delivery: 0,
+                    entry: 0,
+                })
+            );
+        },
+    );
+}
+
+/// A receipt over different object bytes than the carried ones is refused.
+#[test]
+fn a_receipt_over_other_object_bytes_is_refused_as_a_payload_mismatch() {
+    with_claim_draft(
+        Some(claim_declaration()),
+        true,
+        |draft, variant, program| {
+            let witness = verify_plan_determinism(program).unwrap();
+            let declaration = claim_declaration();
+            let content = claim_payload_content(b"fused", CLAIM_OBJECT);
+            let descriptor = claim_descriptor(&content, Some(declaration.clone()));
+            let receipt = TrustingVerifier
+                .verify(
+                    &witness,
+                    &descriptor,
+                    b"a relinked object the receipt never saw",
+                    &validated(&declaration),
+                )
+                .unwrap();
+            assert_eq!(
+                draft.publish_plan(variant, 0, &witness, &[receipt]),
+                Err(ArtifactBuildError::PlanDeterminismPayloadMismatch {
+                    variant: 0,
+                    delivery: 0,
+                    entry: 0,
+                })
+            );
+        },
+    );
+}
+
+/// A receipt bound to a different environment than the payload declares.
+///
+/// The self-pair (`first_entry == entry`) names the receipt/declaration
+/// disagreement: the verifier attested one environment, the payload row
+/// declares another, and neither is allowed to win silently.
+#[test]
+fn a_receipt_for_another_environment_is_refused_as_a_self_paired_mismatch() {
+    with_claim_draft(
+        Some(claim_declaration()),
+        true,
+        |draft, variant, program| {
+            let witness = verify_plan_determinism(program).unwrap();
+            let attested = claim_declaration_of(b"process-arithmetic-v2");
+            let content = claim_payload_content(b"fused", CLAIM_OBJECT);
+            let descriptor = claim_descriptor(&content, Some(attested.clone()));
+            let receipt = TrustingVerifier
+                .verify(&witness, &descriptor, CLAIM_OBJECT, &validated(&attested))
+                .unwrap();
+            assert_eq!(
+                draft.publish_plan(variant, 0, &witness, &[receipt]),
+                Err(ArtifactBuildError::PlanDeterminismEnvironmentMismatch {
+                    variant: 0,
+                    delivery: 0,
+                    first_entry: 0,
+                    entry: 0,
+                })
+            );
+        },
+    );
+}
+
+/// Drives one claim over the two-entry partial-window fixture.
+///
+/// Each entry carries its own payload declaring its entry of `declarations`,
+/// with a receipt each entry's verifier minted against its own declaration, so
+/// each entry is individually coherent. Returns the publication outcome and
+/// the built artifact — refused or not, the draft stays buildable.
+fn two_entry_claim(
+    declarations: [TargetEnvironmentDeclaration; 2],
+) -> (Result<(), ArtifactBuildError>, VerifiedArtifactProgram) {
+    let semantic = semantic_program();
+    let program = partial_window_program(&semantic);
+    let provider = lowering_provider(1);
+    let compilation = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, compilation).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+
+    let mut entries = Vec::new();
+    let mut receipts = Vec::new();
+    for (key, declaration) in [&b"pointwise"[..], &b"reduction"[..]]
+        .into_iter()
+        .zip(declarations)
+    {
+        let content = claim_payload_content(key, CLAIM_OBJECT);
+        let descriptor = claim_descriptor(&content, Some(declaration.clone()));
+        let payload = draft
+            .push_carried_payload(
+                BackendKey::new("tiler.metal").unwrap(),
+                RepresentationKey::new("metallib").unwrap(),
+                SchemaVersion::new(1, 0),
+                profile(),
+                ArtifactExecutionPolicy::NativeImage,
+                Some(declaration.clone()),
+                content,
+            )
+            .unwrap();
+        entries.push(EntrySpec {
+            bindings: vec![
+                BindingSpec {
+                    kind: BindingKind::Buffer,
+                },
+                BindingSpec {
+                    kind: BindingKind::Buffer,
+                },
+            ],
+            launch: LaunchSpec {
+                zero_work_skips_dispatch: true,
+                preconditions: Vec::new(),
+            },
+            implementation: BackendEntryRef {
+                payloads: vec![payload],
+                entry_key: BackendEntryKey::from_bytes(key).unwrap(),
+            },
+        });
+        let witness = verify_plan_determinism(&program).unwrap();
+        receipts.push(
+            TrustingVerifier
+                .verify(
+                    &witness,
+                    &descriptor,
+                    CLAIM_OBJECT,
+                    &validated(&declaration),
+                )
+                .unwrap(),
+        );
+    }
+    let variant_id = draft
+        .push_variant(
+            &program,
+            VariantSpec {
+                target_profile: profile(),
+                feasibility_rules: rules(),
+                deferred_predicates: Vec::new(),
+                entries,
+            },
+        )
+        .unwrap();
+    declare_realization(&mut draft, &program);
+    let witness = verify_plan_determinism(&program).unwrap();
+    let outcome = draft.publish_plan(variant_id, 0, &witness, &receipts);
+    (outcome, draft.build().unwrap())
+}
+
+/// A coherently claimed two-entry artifact, for the codec suite's forgeries.
+pub(super) fn claimed_two_entry_artifact() -> VerifiedArtifactProgram {
+    let (outcome, artifact) = two_entry_claim([claim_declaration(), claim_declaration()]);
+    outcome.expect("agreeing declarations publish");
+    artifact
+}
+
+/// Two entries whose payloads declare different environments cannot share one
+/// claimed cell.
+///
+/// Each entry is individually coherent — its receipt matches its own payload's
+/// declaration — so what refuses the claim is exactly the cross-entry
+/// agreement obligation, reported as the disagreeing pair.
+#[test]
+fn a_claim_across_entries_with_disagreeing_environments_is_refused() {
+    let (outcome, _) = two_entry_claim([
+        claim_declaration(),
+        claim_declaration_of(b"process-arithmetic-v2"),
+    ]);
+    assert_eq!(
+        outcome,
+        Err(ArtifactBuildError::PlanDeterminismEnvironmentMismatch {
+            variant: 0,
+            delivery: 0,
+            first_entry: 0,
+            entry: 1,
+        })
+    );
 }

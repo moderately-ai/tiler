@@ -67,6 +67,15 @@ pub(super) fn check_budgets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactC
         MAX_ARTIFACT_PAYLOADS,
         CodecLimitKind::Payloads,
     )?;
+    for payload in envelope.payloads() {
+        if let Some(declaration) = &payload.environment {
+            codec_limit(
+                declaration.descriptor().as_bytes().len(),
+                super::super::MAX_TARGET_ENVIRONMENT_DESCRIPTOR_BYTES,
+                CodecLimitKind::TargetEnvironmentDescriptorBytes,
+            )?;
+        }
+    }
     codec_limit(
         envelope.expressions().len(),
         MAX_ABI_EXPRESSIONS,
@@ -104,6 +113,11 @@ pub(super) fn check_budgets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactC
             variant.route_requirements.len(),
             MAX_ROUTE_REQUIREMENTS,
             CodecLimitKind::RouteRequirements,
+        )?;
+        codec_limit(
+            variant.scope.len(),
+            super::super::MAX_DELIVERY_POSITIONS,
+            CodecLimitKind::PlanDeterminismScopeCells,
         )?;
         for requirement in &variant.route_requirements {
             if let RouteRequirement::BackendFeature(feature) = requirement {
@@ -183,6 +197,10 @@ fn check_text_budgets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecEr
     for payload in envelope.payloads() {
         texts.push(payload.backend.as_str());
         texts.push(payload.representation.as_str());
+        if let Some(declaration) = &payload.environment {
+            texts.push(declaration.provider().namespace());
+            texts.push(declaration.provider().name());
+        }
     }
     for variant in envelope.variants() {
         texts.push(variant.profile.key.as_str());

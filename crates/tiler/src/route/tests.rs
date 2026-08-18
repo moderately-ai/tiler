@@ -27,7 +27,7 @@ use crate::runtime::adapter::{AdapterRouteFailure, LiveExecutionContext, Runtime
 use crate::runtime::load::{
     DTypeDispatch, DTypeDispatchResolution, ExecutionEnvironment, LiveDeviceObservation,
     LiveDeviceRequest, Preflight, PreparedEntryObservation, RoutedDispatch, RoutedEntry,
-    TargetPropertyRequest,
+    TargetEnvironmentObservation, TargetEnvironmentSupport, TargetPropertyRequest,
 };
 use crate::value::{
     AdapterCapability, BindError, DispatchAdapter, OperandAxis, RegionRequest, ResultRequest,
@@ -43,7 +43,7 @@ use crate::value::{
 /// restatement cannot produce, so a domain bump turns each of them into a
 /// `MalformedRouteFacts` failure naming the identity rather than into a silent
 /// pass.
-const IDENTITY_DOMAIN: &[u8] = b"tiler.artifact-program.v19\0";
+const IDENTITY_DOMAIN: &[u8] = b"tiler.artifact-program.v20\0";
 
 /// A consumer-shaped value, so a region has something to bind and build.
 ///
@@ -139,6 +139,22 @@ impl RuntimeAdapter for NoDevice<'_> {
     type Refusal = String;
     type Failure = String;
     type Completion = ();
+
+    /// Registers no schema: a consumer that links no backend claims no ADR
+    /// 0013 authority.
+    fn target_environment_support(&self) -> TargetEnvironmentSupport<'_> {
+        TargetEnvironmentSupport::Unsupported
+    }
+
+    /// Unreachable while binding refuses; unavailable regardless.
+    fn observe_target_environment(
+        &mut self,
+        _context: &LiveExecutionContext,
+    ) -> TargetEnvironmentObservation {
+        TargetEnvironmentObservation::Unavailable {
+            reason: "no backend is linked".to_owned(),
+        }
+    }
 
     /// Refuses, and reports what the seam handed it while doing so.
     ///

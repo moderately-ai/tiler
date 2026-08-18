@@ -3725,6 +3725,7 @@ fn every_wired_authority_emits_its_typed_explain_records() {
             ("compile.plan.boundary", 2),
             ("schedule.plan-regions", 2),
             ("kernel.plan-refinement", 2),
+            ("program.plan-determinism.v1", 2),
             ("program.plan-verified", 2),
             ("artifact.plan-construction", 2),
             ("target.buffer-bindings", 3),

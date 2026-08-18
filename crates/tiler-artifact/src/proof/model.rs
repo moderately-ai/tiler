@@ -21,7 +21,7 @@ use std::fmt;
 
 use tiler_ir::semantic::{InputKey, OutputKey};
 
-use crate::program::DIGEST_BYTES;
+use crate::program::RecordedArtifactEnvelopeDigest;
 
 use super::{MAX_PROOF_CASE_KEY_BYTES, MAX_PROOF_SUBJECT_BYTES};
 
@@ -246,7 +246,11 @@ pub(crate) struct ProofSidecarData {
     /// cannot and must not work around.
     pub(crate) artifact_identity: Vec<u8>,
     /// Digest over the exact encoded bytes of the associated envelope.
-    pub(crate) envelope_digest: [u8; DIGEST_BYTES],
+    ///
+    /// Held as the recorded assertion type: a sidecar's carried digest is what
+    /// a producer wrote down, and only re-derivation over the caller's own
+    /// envelope bytes turns it into evidence.
+    pub(crate) envelope_digest: RecordedArtifactEnvelopeDigest,
     pub(crate) subjects: ProofSubjects,
     /// The artifact's declared inputs, in the artifact's own interface order.
     pub(crate) input_keys: Vec<InputKey>,
@@ -320,9 +324,13 @@ impl VerifiedProofSidecar {
         &self.data.artifact_identity
     }
 
-    /// Returns the digest of the exact envelope bytes this sidecar names.
+    /// Returns the recorded digest of the envelope bytes this sidecar names.
+    ///
+    /// An assertion, not evidence: compare it against a digest re-derived from
+    /// the exact envelope bytes in hand, which is what
+    /// [`bind_to_envelope`](super::DecodedProofSidecar::bind_to_envelope) does.
     #[must_use]
-    pub const fn envelope_digest(&self) -> &[u8; DIGEST_BYTES] {
+    pub const fn envelope_digest(&self) -> &RecordedArtifactEnvelopeDigest {
         &self.data.envelope_digest
     }
 
