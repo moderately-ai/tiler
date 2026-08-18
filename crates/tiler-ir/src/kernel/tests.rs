@@ -352,6 +352,33 @@ fn pointwise_expression_region(
     builder.build().unwrap()
 }
 
+/// The accepted fixed-vector map carrier is representable and verified, and
+/// deliberately not executable: the canonical lowering refuses it under its
+/// own rule rather than deriving a scalar body the binding does not state.
+/// Everything downstream of the schedule consumes verified kernels, so this
+/// one refusal is what keeps the carrier non-executable end to end while
+/// lane-shaped KIR, target requirements, and the real CPU approach are absent.
+#[test]
+fn the_fixed_vector_map_carrier_is_refused_by_the_lowering_by_name() {
+    let scheduled = pointwise_region(RegionId::new(3), &Shape::from_dims([6]));
+    let mut region = scheduled.region().clone();
+    region.schedule.binding = ExecutionBinding::FixedVectorMap {
+        lanes: crate::schedule::VectorLaneCount::new(2).expect("an admitted lane width"),
+    };
+    region.schedule.launch.grid_threads = 3;
+    let vectored = ScheduledRegionBuilder::from_region(region)
+        .build()
+        .expect("the accepted carrier passes intrinsic verification");
+    let error = lower_scheduled_region(&vectored).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            KernelLoweringError::Verification(KernelDiagnostic::UnloweredExecutionBinding)
+        ),
+        "expected the named unlowered-binding refusal, got {error:?}"
+    );
+}
+
 /// The approved `(a * b) + c` region over three distinct input tensors.
 fn three_input_region(elements: u64) -> VerifiedScheduledRegion {
     let mut expression = PointwiseF32ExpressionBuilder::new();
@@ -968,6 +995,13 @@ fn body_shaping_vocabulary_is_closed(
         match binding {
             ExecutionBinding::GlobalLinearInvocation => "global-linear-invocation",
             ExecutionBinding::BlockedWorkgroup { .. } => "blocked-workgroup",
+            // Widens the vocabulary without widening the *lowered* profile:
+            // `plan` refuses this binding as `unlowered-execution-binding`
+            // before any body is derived, so no scheduled region carrying it
+            // has even one legal body, let alone two. Trigger re-checked and
+            // not fired; see `revisit-kernel-body-single-spelling-gate`'s
+            // 2026-08-18 log entry.
+            ExecutionBinding::FixedVectorMap { .. } => "fixed-vector-map",
         },
         match tail {
             TailPolicy::Exact => "exact",

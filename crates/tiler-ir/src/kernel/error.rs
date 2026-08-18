@@ -364,6 +364,21 @@ pub enum KernelDiagnostic {
     /// other than the first, which `IndexLessThan` cannot select. Refusing is
     /// what keeps "representable" and "lowered" different claims.
     CooperativeLoweringShape,
+    /// The region's execution binding has no lowered kernel realization.
+    ///
+    /// Representable, not lowered — the same separation
+    /// [`Self::PaddedContributorCoverage`] keeps for coverage. The intrinsic
+    /// verifier admits
+    /// [`ExecutionBinding::FixedVectorMap`](crate::schedule::ExecutionBinding::FixedVectorMap)
+    /// as an accepted schedule carrier, but the lane-shaped SSA values and
+    /// exact unmasked memory operations its body needs are a separate accepted
+    /// boundary (`admit-fixed-vector-ssa-and-unmasked-memory-into-kernel-ir`),
+    /// so this profile has no body for it. Refusing by name is what keeps the
+    /// carrier non-executable rather than scalarized: emitting one scalar
+    /// invocation per packet would compute `N / W` of the region's `N`
+    /// outputs, and emitting one per output would execute a launch identity
+    /// the schedule does not state.
+    UnloweredExecutionBinding,
     /// The structured loops do not realize the scheduled reduction topology.
     ReductionContract,
     /// The reduction contributor domain is malformed.
@@ -416,6 +431,7 @@ impl KernelDiagnostic {
             Self::UndischargedAntiDependency => "undischarged-anti-dependency",
             Self::PaddedContributorCoverage => "padded-contributor-coverage",
             Self::CooperativeLoweringShape => "cooperative-lowering-shape",
+            Self::UnloweredExecutionBinding => "unlowered-execution-binding",
             Self::ReductionContract => "reduction-contract",
             Self::ContributorDomain => "contributor-domain",
             Self::ElementCountOverflow => "element-count-overflow",

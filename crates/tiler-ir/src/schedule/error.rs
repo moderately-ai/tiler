@@ -181,6 +181,21 @@ pub enum ScheduledRegionDiagnostic {
         /// The violated blocked-map rule.
         rule: BlockedWorkgroupRule,
     },
+    /// A fixed-vector map binding violated one of its own admission rules.
+    ///
+    /// Separate from [`Self::LaunchCoverage`] for the reason
+    /// [`Self::BlockedWorkgroup`] is: launch coverage is the exact-cover
+    /// equality every binding shares, and these name the vector map itself —
+    /// a nondivisible domain, a wrong packet population, packet arithmetic
+    /// that overflows, an unsupported reduction pairing, or a tail the
+    /// binding does not admit. Each rule is separately perturbable, and the
+    /// verifier never rounds the iteration count, masks implicitly, peels a
+    /// scalar tail, or asks a target to repair intrinsic coverage in place of
+    /// one of these refusals.
+    VectorLaneBinding {
+        /// The violated fixed-vector map rule.
+        rule: VectorLaneRule,
+    },
 }
 
 /// One violated rule of a cooperative workgroup tile's dataflow.
@@ -373,6 +388,113 @@ impl fmt::Display for BlockedWorkgroupRule {
 }
 impl Error for BlockedWorkgroupRule {}
 
+/// Why one checked [`super::VectorLaneCount`] could not be formed.
+///
+/// The two widths are refused for different reasons and named separately, so
+/// a producer told "invalid" cannot mistake it for "spelled the scalar map a
+/// second way" or the reverse.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum VectorLaneCountError {
+    /// Zero lanes name no packet; the width is invalid outright.
+    Zero,
+    /// One lane is the existing scalar map under another spelling.
+    ///
+    /// Packet `p` lane `0` owning output `p` is exactly
+    /// [`super::ExecutionBinding::GlobalLinearInvocation`], so admitting the
+    /// width would give one schedule two spellings and two identities.
+    ScalarSpelling,
+}
+
+impl VectorLaneCountError {
+    /// Returns the stable identifier naming this construction failure.
+    #[must_use]
+    pub const fn rule(self) -> &'static str {
+        match self {
+            Self::Zero => "vector-lane-count-zero",
+            Self::ScalarSpelling => "vector-lane-count-scalar-spelling",
+        }
+    }
+}
+
+impl fmt::Display for VectorLaneCountError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.rule())
+    }
+}
+impl Error for VectorLaneCountError {}
+
+/// One violated admission rule of a fixed-vector map binding.
+///
+/// Each variant is a property the schedule *states*, so each is separately
+/// perturbable: a producer can state a nondivisible domain, a launch that
+/// keeps `grid_threads = N`, a packet product that overflows, an unadmitted
+/// topology pairing, or a non-`Exact` tail, and each is refused under its own
+/// name. Lane counts of zero and one are deliberately *not* among these:
+/// [`super::VectorLaneCount`]'s constructor makes them unrepresentable, so a
+/// verifier rule for them could never fail.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum VectorLaneRule {
+    /// The iteration count is not a multiple of the lane count.
+    ///
+    /// `Exact` coverage means exactly that; the verifier never rounds, masks,
+    /// or peels. A nondivisible domain waits for the accepted predicated-tail
+    /// or scalar-epilogue successor rather than executing approximately.
+    NondivisibleCoverage,
+    /// The packet-population product `grid_threads * lanes` overflowed `u64`.
+    ///
+    /// Separate from [`Self::PacketPopulation`] for the reason the coverage
+    /// rules separate overflow from inequality: a product that does not exist
+    /// is not a wrong count, and reporting it as one would name a defect the
+    /// producer cannot act on.
+    PacketArithmeticOverflow,
+    /// The launch does not state exactly `N / lanes` packets.
+    ///
+    /// The accepted launch identity: `work_items = N` logical scalar outputs
+    /// and `grid_threads = N / lanes` executing packets. This is the rule that
+    /// refuses `grid_threads = N` with a reinterpreted builtin — a launch
+    /// claiming `N` invocations while executing `N * lanes` lane positions.
+    PacketPopulation,
+    /// The binding is paired with a reduction topology it does not admit.
+    ///
+    /// The accepted slice covers the map alone: the pointwise
+    /// [`super::ReductionTopology::None`] and the strict serial fold across
+    /// independent outputs, [`super::ReductionTopology::Serial`]. Every other
+    /// pairing — split passes, contractions, cooperative tiles — awaits its
+    /// own accepted boundary and real consumer.
+    UnsupportedReduction,
+    /// The binding is paired with a tail policy other than
+    /// [`super::TailPolicy::Exact`].
+    ///
+    /// Predicated fixed-map tails are a separate accepted successor requiring
+    /// lane-mask KIR and exact masked-memory target facts; until that lands,
+    /// `Exact` is the only admitted tail and every other is refused by name
+    /// rather than approximated.
+    ExactTailRequired,
+}
+
+impl VectorLaneRule {
+    /// Returns the stable rule identifier for this fixed-vector map failure.
+    #[must_use]
+    pub const fn rule(self) -> &'static str {
+        match self {
+            Self::NondivisibleCoverage => "fixed-vector-map-nondivisible-coverage",
+            Self::PacketArithmeticOverflow => "fixed-vector-map-packet-arithmetic-overflow",
+            Self::PacketPopulation => "fixed-vector-map-packet-population",
+            Self::UnsupportedReduction => "fixed-vector-map-unsupported-reduction",
+            Self::ExactTailRequired => "fixed-vector-map-exact-tail-required",
+        }
+    }
+}
+
+impl fmt::Display for VectorLaneRule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.rule())
+    }
+}
+impl Error for VectorLaneRule {}
+
 /// One violated rule of a reduction topology's contributor coverage.
 ///
 /// Exact-coverage and padded-coverage failures are named separately so a
@@ -533,6 +655,7 @@ impl ScheduledRegionDiagnostic {
             Self::Synchronization { rule } => rule.rule(),
             Self::ContributorCoverage { rule } => rule.rule(),
             Self::BlockedWorkgroup { rule } => rule.rule(),
+            Self::VectorLaneBinding { rule } => rule.rule(),
         }
     }
 }
