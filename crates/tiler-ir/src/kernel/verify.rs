@@ -49,7 +49,8 @@ pub(super) fn access_elements(
         BoundsProofKind::LinearRange { element_count } => {
             if matches!(
                 access.map,
-                crate::schedule::LogicalAccess::LiveRowMajor { .. }
+                crate::schedule::LogicalAccess::LiveRowMajorSource { .. }
+                    | crate::schedule::LogicalAccess::LiveRowMajor
             ) || (matches!(
                 access.map,
                 crate::schedule::LogicalAccess::ContractionOperand { .. }
@@ -392,9 +393,15 @@ fn access_rank(access: &Access, schedule: &ScheduledRegion) -> u64 {
         crate::schedule::LogicalAccess::ParametricBroadcast { operand_shape, .. } => {
             operand_shape.rank() as u64
         }
-        crate::schedule::LogicalAccess::LiveRowMajor { inner_axis } => {
+        crate::schedule::LogicalAccess::LiveRowMajorSource { inner_axis } => {
             u64::from(inner_axis.get()).saturating_add(1)
         }
+        // The fieldless consumer's rank is a derivation from the containing
+        // region's unique source marker, never a defaulted axis; a markerless
+        // region answers rank zero so every named axis is refused as out of
+        // range, which is the fail-closed direction.
+        crate::schedule::LogicalAccess::LiveRowMajor => crate::schedule::live_source_axis(schedule)
+            .map_or(0, |axis| u64::from(axis.get()).saturating_add(1)),
     }
 }
 
@@ -1602,10 +1609,7 @@ fn verify_effects(
                 }
                 if effect.loop_depth != 0
                     && !(effect.loop_depth == 1
-                        && matches!(
-                            write.map,
-                            crate::schedule::LogicalAccess::LiveRowMajor { .. }
-                        ))
+                        && matches!(write.map, crate::schedule::LogicalAccess::LiveRowMajor))
                 {
                     return Err(KernelDiagnostic::OutputCoverage);
                 }
@@ -1636,7 +1640,8 @@ fn verify_reduction(
             let live_row_major = reads.iter().any(|read| {
                 matches!(
                     read.map,
-                    crate::schedule::LogicalAccess::LiveRowMajor { .. }
+                    crate::schedule::LogicalAccess::LiveRowMajorSource { .. }
+                        | crate::schedule::LogicalAccess::LiveRowMajor
                 )
             });
             if walk.loops.is_empty() || (live_row_major && walk.loops.len() == 1) {

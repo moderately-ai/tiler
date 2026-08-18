@@ -19,13 +19,11 @@ use super::cooperative::{
     StagedSpan, VisibilityEdge,
 };
 use super::error::{
-    BlockedWorkgroupRule, ContributorCoverageRule, CooperativeTileRule, PartitionedCopyRule,
-    ScheduleBuildError, ScheduleComponent, ScheduleLimitKind, ScheduledRegionBuildError,
-    ScheduledRegionDiagnostic, VectorLaneRule,
+    BlockedWorkgroupRule, ContributorCoverageRule, CooperativeTileRule, LiveRowMajorSourceRule,
+    PartitionedCopyRule, ScheduleBuildError, ScheduleComponent, ScheduleLimitKind,
+    ScheduledRegionBuildError, ScheduledRegionDiagnostic, VectorLaneRule,
 };
-#[cfg(test)]
-use super::handles::AccessOrdinal;
-use super::handles::{RegionId, StagingId};
+use super::handles::{AccessOrdinal, RegionId, StagingId};
 use super::model::{
     Access, AccessMode, BoundsProof, BoundsProofKind, CanonicalScheduledRegionIdentity,
     ContractionAxisSource, ContributorCoverage, ContributorOrder, ContributorPartition,
@@ -1297,13 +1295,19 @@ fn verify_pointwise_region(
     if reads.is_empty() || reads.len() != input_count {
         return Err(ScheduledRegionDiagnostic::AccessCount);
     }
+    // The source-relation gate runs before the broad access-contract and
+    // refinement gates, so a marker-count, marker-role, or missing-consumer
+    // defect is named under its own dedicated rule rather than collapsing into
+    // `AccessContract` or `NumericalOrAccessRefinement` — the accepted
+    // precedence the fieldless-marker surface states.
+    verify_live_row_major_source(reads, write)?;
     if reads
         .iter()
         .any(|read| read.mode != AccessMode::Read || read.ownership.is_some())
         || write.mode != AccessMode::Write
         || !matches!(
             write.map,
-            LogicalAccess::LinearIdentity | LogicalAccess::LiveRowMajor { .. }
+            LogicalAccess::LinearIdentity | LogicalAccess::LiveRowMajor
         )
         || write.ownership != Some(region.schedule.output_owner)
     {
@@ -1318,46 +1322,92 @@ fn verify_pointwise_region(
         || !reads
             .iter()
             .all(|read| pointwise_read_map_is_admissible(&read.map, &region.index.iteration_shape))
-        || !pointwise_accesses_choose_one_addressing_regime(reads, write)
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
     Ok(())
 }
 
-/// Returns whether all pointwise boundary effects use one emitted topology.
+/// Verifies the source-bound live-row-major relation of one pointwise region.
 ///
-/// Static reads may each keep their own admitted coordinate relation: canonical
-/// lowering derives their offsets independently inside the ordinary invocation
-/// guard. A live row-major region is different. It has one body-wide loop bound,
-/// stride, and element offset, so every read and the owning write must state the
-/// same live axis. No access becomes authority for a sibling here; disagreement
-/// is refused before a verified region or canonical identity exists.
-fn pointwise_accesses_choose_one_addressing_regime(reads: &[Access], write: &Access) -> bool {
-    match &write.map {
-        LogicalAccess::LinearIdentity => reads
-            .iter()
-            .all(|read| !matches!(read.map, LogicalAccess::LiveRowMajor { .. })),
-        LogicalAccess::LiveRowMajor { inner_axis } => reads.iter().all(|read| {
-            matches!(
-                &read.map,
-                LogicalAccess::LiveRowMajor {
-                    inner_axis: read_axis
-                } if read_axis == inner_axis
-            )
-        }),
-        LogicalAccess::ScalarBroadcast
-        | LogicalAccess::PackedU4LsbZeroTail { .. }
-        | LogicalAccess::ReductionContributor { .. }
-        | LogicalAccess::ContractionOperand { .. }
-        | LogicalAccess::ReindexBijection { .. }
-        | LogicalAccess::BroadcastReplication { .. }
-        | LogicalAccess::ParametricBroadcast { .. }
-        // The copy-source map belongs to the partitioned-copy gate alone; a
-        // pointwise write carrying it would claim a derivation no pointwise
-        // region states.
-        | LogicalAccess::PartitionedCopySource => false,
+/// **Accepted public surface** (2026-08-18, under
+/// `decide-the-source-bound-live-row-major-access-surface`): the fieldless
+/// contextual marker's four rules at the accepted first-failure precedence —
+/// marker count, then the unique marker's role and mode, then complete
+/// live-relation coverage. An all-static region has no source obligation and
+/// passes untouched; static reads keep their own admitted coordinate relations
+/// under the refinement gate below.
+///
+/// Once any selected live relation appears, canonical lowering has one
+/// body-wide loop bound, stride, and element offset, so every pointwise read
+/// and the owning write must state the relation: exactly one
+/// [`LogicalAccess::LiveRowMajorSource`] input read declares the region's
+/// runtime extent operand and every other access carries the fieldless
+/// [`LogicalAccess::LiveRowMajor`] consumer marker. No access becomes
+/// authority for a sibling here — a consumer stores no axis to disagree with,
+/// and the disagreement states the retired contextual relation could spell are
+/// unrepresentable on this surface.
+///
+/// This replaces the landed
+/// `refuse-mixed-pointwise-live-row-major-access-relations-before-lowering`
+/// broad refusal: the mixed static/live subjects it closed under
+/// `NumericalOrAccessRefinement` now fail here as exact
+/// [`LiveRowMajorSourceRule::ConsumerMissingRelation`] coordinates, still
+/// before any verified region or canonical identity exists.
+fn verify_live_row_major_source(
+    reads: &[Access],
+    write: &Access,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    let is_live = |map: &LogicalAccess| {
+        matches!(
+            map,
+            LogicalAccess::LiveRowMajorSource { .. } | LogicalAccess::LiveRowMajor
+        )
+    };
+    if !reads.iter().any(|read| is_live(&read.map)) && !is_live(&write.map) {
+        return Ok(());
     }
+    let source_rule =
+        |rule: LiveRowMajorSourceRule| ScheduledRegionDiagnostic::LiveRowMajorSource { rule };
+    let ordinal = |position: usize| {
+        AccessOrdinal::new(u32::try_from(position).expect("verified access count is bounded"))
+    };
+    let accesses = || reads.iter().chain(std::iter::once(write));
+    // Rule 1: marker count. No marker leaves fieldless consumers with no axis
+    // authority; a second marker would be a second runtime extent authority.
+    let mut markers = accesses()
+        .enumerate()
+        .filter(|(_, access)| matches!(access.map, LogicalAccess::LiveRowMajorSource { .. }));
+    let Some((first, marker)) = markers.next() else {
+        return Err(source_rule(LiveRowMajorSourceRule::Missing));
+    };
+    if let Some((second, _)) = markers.next() {
+        return Err(source_rule(LiveRowMajorSourceRule::Multiple {
+            first: ordinal(first),
+            second: ordinal(second),
+        }));
+    }
+    // Rule 2: marker role and mode. The unique marker must be an input read —
+    // a source on the owning write, an intermediate, or an output declares a
+    // runtime input-axis operand no program input backs.
+    if !matches!(marker.tensor, TensorRole::Input) || marker.mode != AccessMode::Read {
+        return Err(source_rule(LiveRowMajorSourceRule::SourceNotInputRead {
+            source: ordinal(first),
+        }));
+    }
+    // Rule 3: complete live-relation coverage over every read and the final
+    // write, at the first offending access in access order.
+    if let Some((position, _)) = accesses()
+        .enumerate()
+        .find(|(_, access)| !is_live(&access.map))
+    {
+        return Err(source_rule(
+            LiveRowMajorSourceRule::ConsumerMissingRelation {
+                access: ordinal(position),
+            },
+        ));
+    }
+    Ok(())
 }
 
 /// Returns whether one pointwise region's reads use admissible boundary categories.
@@ -1408,8 +1458,10 @@ fn reads_bind_boundary_tensors_in_order(reads: &[Access]) -> bool {
 /// - [`LogicalAccess::ParametricBroadcast`], the accepted sourced carrier.
 ///   Structural rank agreement is checked here; the environment proof is
 ///   [`super::parametric::interpret_parametric_broadcast`].
-/// - [`LogicalAccess::LiveRowMajor`], provided the region-wide regime check
-///   above proves every access names the same live inner axis.
+/// - [`LogicalAccess::LiveRowMajorSource`] and the fieldless
+///   [`LogicalAccess::LiveRowMajor`] consumer, provided the source gate above
+///   already proved exactly one input-read marker and complete live-relation
+///   coverage.
 ///
 /// Both structural maps must state the region's own iteration shape as their
 /// result shape. That is what stops a region from carrying an access relation
@@ -1426,7 +1478,9 @@ fn pointwise_read_map_is_admissible(
     iteration_shape: &crate::shape::Shape,
 ) -> bool {
     match map {
-        LogicalAccess::LinearIdentity | LogicalAccess::LiveRowMajor { .. } => true,
+        LogicalAccess::LinearIdentity
+        | LogicalAccess::LiveRowMajorSource { .. }
+        | LogicalAccess::LiveRowMajor => true,
         LogicalAccess::ReindexBijection {
             operand_shape,
             result_shape,
@@ -3070,9 +3124,14 @@ fn bounds_proof_refines_access(
         (BoundsProofKind::LinearRange { element_count }, LogicalAccess::LinearIdentity) => {
             owned_output_positions(region).is_some_and(|owned| *element_count == owned)
         }
-        (BoundsProofKind::LinearRange { element_count }, LogicalAccess::LiveRowMajor { .. }) => {
-            *element_count == 0
-        }
+        // Both live relations record the same absence: the buffer is sized by
+        // the live inner extent the schedule does not specialize, so the proof
+        // is a zero linear range for the source marker and every consumer
+        // alike.
+        (
+            BoundsProofKind::LinearRange { element_count },
+            LogicalAccess::LiveRowMajorSource { .. } | LogicalAccess::LiveRowMajor,
+        ) => *element_count == 0,
         (BoundsProofKind::LinearRange { element_count }, LogicalAccess::ScalarBroadcast) => {
             *element_count == 1
         }

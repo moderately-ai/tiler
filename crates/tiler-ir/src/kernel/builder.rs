@@ -1270,7 +1270,16 @@ fn scheduled_access_rank(schedule: &ScheduledRegion, access: &crate::schedule::A
         | LogicalAccess::ReindexBijection { operand_shape, .. }
         | LogicalAccess::BroadcastReplication { operand_shape, .. } => operand_shape.rank() as u64,
         LogicalAccess::ParametricBroadcast { operand_shape, .. } => operand_shape.rank() as u64,
-        LogicalAccess::LiveRowMajor { inner_axis } => u64::from(inner_axis.get()).saturating_add(1),
+        LogicalAccess::LiveRowMajorSource { inner_axis } => {
+            u64::from(inner_axis.get()).saturating_add(1)
+        }
+        // The fieldless consumer's rank is a derivation from the containing
+        // region's unique source marker, never a defaulted axis. A region with
+        // no marker answers rank zero, so every axis a producer could name is
+        // refused as out of range — the fail-closed direction; intrinsic
+        // verification refuses such a region before a kernel over it verifies.
+        LogicalAccess::LiveRowMajor => crate::schedule::live_source_axis(schedule)
+            .map_or(0, |axis| u64::from(axis.get()).saturating_add(1)),
     };
     if matches!(
         schedule.schedule.reduction,

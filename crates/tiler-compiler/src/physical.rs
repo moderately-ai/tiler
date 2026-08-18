@@ -2,8 +2,12 @@ use std::error::Error;
 use std::fmt;
 
 use tiler_ir::index::IndexRealizationLaw;
-use tiler_ir::semantic::{AttributeFieldId, CanonicalIntegerWidth, CanonicalValueView, F32};
-use tiler_ir::shape::{Axis, Shape};
+use tiler_ir::semantic::{
+    AttributeFieldId, CanonicalIntegerWidth, CanonicalValueView, F32, InputKey,
+};
+use tiler_ir::shape::{
+    Axis, BindingSource, Shape, ShapeSymbol, SourcedExtent, SourcedShape, decode_shape_env_subject,
+};
 
 // The target-neutral scheduled-region IR and the backend-consumable structured
 // kernel IR, with their intrinsic verifiers and canonical identities, live in
@@ -29,9 +33,9 @@ use tiler_ir::schedule::{
 use crate::region::SemanticStage;
 use crate::request::{
     BoundaryRead, DeclaredInputOrdinal, NormalizedContraction, NormalizedContractionRead,
-    NormalizedEpilogue, NormalizedOutput, NormalizedOutputSubject, NormalizedSerialSum,
-    NormalizedStaged, NumericalPermission, RecognizedPointwise, StrictF32NumericalContract,
-    TargetProfile, VerifiedRequestSubject, VerifiedTargetRequest,
+    NormalizedEpilogue, NormalizedOutput, NormalizedOutputSubject, NormalizedPointwise,
+    NormalizedSerialSum, NormalizedStaged, NumericalPermission, RecognizedPointwise,
+    StrictF32NumericalContract, TargetProfile, VerifiedRequestSubject, VerifiedTargetRequest,
 };
 use crate::target::feasibility::UnrealizableSynchronization;
 use crate::target::feasibility::{
@@ -1095,7 +1099,7 @@ pub(crate) fn output_elements_for_region(
     let normalized = subject.normalized().outputs().iter().find(|normalized| {
         verify_region_output_binding(region, semantic_members, normalized, subject).is_ok()
     })?;
-    tiler_ir::schedule::element_count(published_shape(normalized)).ok()
+    tiler_ir::schedule::element_count(published_shape(normalized)?).ok()
 }
 
 fn declared_input_for_verified_access(
@@ -1400,6 +1404,269 @@ pub(crate) fn build_fused_scheduled_region(
     verify_schedule(fused, members, request)
 }
 
+/// The one authored symbol of an admitted live pointwise domain, or `None`.
+///
+/// The admitted population is rank one over exactly one authored
+/// [`SourcedExtent::Symbol`]; a static domain, a higher rank, and any extent
+/// kind this vocabulary does not name all answer `None` and stay with their
+/// existing owners — the static path, or the typed schedule-stage refusal.
+pub(crate) fn live_pointwise_symbol(shape: &SourcedShape) -> Option<ShapeSymbol> {
+    if shape.as_static().is_some() || shape.rank() != 1 {
+        return None;
+    }
+    shape.extents().next().and_then(|extent| match extent {
+        SourcedExtent::Symbol(symbol) => Some(symbol),
+        // Unreachable while normalization collapses an all-literal boundary to
+        // the static representation; refused rather than assumed because
+        // `SourcedExtent` is `#[non_exhaustive]` and a later source kind has
+        // no live spelling until it earns one.
+        _ => None,
+    })
+}
+
+/// The decoded exact root of one live symbol: a declared input and its axis.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LiveExtentRoot {
+    pub(crate) input: InputKey,
+    pub(crate) axis: Axis,
+}
+
+/// Decodes and revalidates one retained shape-environment identity's canonical
+/// bytes and resolves `symbol`'s root as an exact input dimension.
+///
+/// This is the production decode mapping the accepted source-bound surface
+/// states: the compiler obtains the root **only** by decoding
+/// `semantic_identity().shape_environment().as_bytes()` through the public
+/// [`decode_shape_env_subject`] — it never retains or reconstructs an
+/// `ExtentSources` object, and shared schedule IR never carries the symbol or
+/// the environment identity (ADR 0070).
+///
+/// # Errors
+///
+/// Every failure is the existing compiler rule `request-binding`, fail-closed:
+/// a [`tiler_ir::shape::ShapeEnvSubjectError`] (truncated, bad-domain,
+/// malformed, or non-canonical bytes), a symbol the decoded subject does not
+/// bind, and a root that is not [`BindingSource::InputDimension`] — a static
+/// root, an interface parameter, a target property, or a source kind admitted
+/// later. No arm defaults an empty environment, picks a first binding, or
+/// substitutes a proved-equal symbol.
+pub(crate) fn decode_live_extent_root(
+    environment: &[u8],
+    symbol: &ShapeSymbol,
+    region: RegionId,
+) -> Result<LiveExtentRoot, PhysicalError> {
+    let binding_failure = || PhysicalError::Intrinsic {
+        rule: "request-binding",
+        region,
+    };
+    let subject = decode_shape_env_subject(environment).map_err(|_| binding_failure())?;
+    let (_, binding) = subject
+        .bindings
+        .iter()
+        .find(|(declared, _)| declared == symbol)
+        .ok_or_else(binding_failure)?;
+    match binding.source() {
+        BindingSource::InputDimension { input, axis } => Ok(LiveExtentRoot {
+            input: input.clone(),
+            axis: *axis,
+        }),
+        // Named exhaustively: a root class without an accepted runtime-operand
+        // realization fails closed rather than nominating a source the program
+        // never authored, and a widened `BindingSource` is a build error here
+        // instead of a silent admission.
+        BindingSource::Static(_)
+        | BindingSource::InterfaceParameter { .. }
+        | BindingSource::TargetProperty { .. } => Err(binding_failure()),
+    }
+}
+
+/// The dense read position that realizes one live root, or `None` when the
+/// root's declared input is not among the region's own dense reads or the root
+/// axis leaves the shared rank-one domain.
+///
+/// The exact declared input, never a first input or a proved-equal neighbour:
+/// the fixture whose environment roots `n` at `a[0]` must place its source
+/// marker on the read of `a`, and a program whose root binding names an input
+/// the expression never reads densely has no source access to mark — the
+/// "source absent from the region" population that stays refused.
+pub(crate) fn live_source_read_position(
+    pointwise: &NormalizedPointwise,
+    root: &LiveExtentRoot,
+) -> Option<usize> {
+    if usize::try_from(root.axis.get()).ok()? >= pointwise.shape.rank() {
+        return None;
+    }
+    let ordinal = pointwise
+        .input_keys
+        .iter()
+        .position(|key| key == &root.input)
+        .and_then(|position| u32::try_from(position).ok())
+        .map(DeclaredInputOrdinal::new)?;
+    pointwise
+        .reads
+        .iter()
+        .position(|(declared, map)| *declared == ordinal && *map == LogicalAccess::LinearIdentity)
+}
+
+/// Whether the recognized program is the admitted source-bound live population.
+///
+/// Exactly one recognized whole-program pointwise output whose domain is rank
+/// one over one authored symbol, in `f32`, whose decoded root is an input
+/// dimension one of the region's own dense reads realizes. Everything else —
+/// reductions, contractions, staged families, structural maps, higher ranks,
+/// several symbols or outputs, non-input roots, unread root inputs — answers
+/// `false` and keeps the typed schedule-stage refusal.
+pub(crate) fn admits_source_bound_live_schedule(request: &VerifiedTargetRequest) -> bool {
+    let [output] = request.normalized().outputs() else {
+        return false;
+    };
+    let NormalizedOutput::Pointwise(pointwise) = output else {
+        return false;
+    };
+    let Some(symbol) = live_pointwise_symbol(&pointwise.shape) else {
+        return false;
+    };
+    if !matches!(pointwise.expression, RecognizedPointwise::F32(_)) {
+        return false;
+    }
+    let Ok(root) = decode_live_extent_root(
+        request.semantic_identity().shape_environment().as_bytes(),
+        &symbol,
+        RegionId::new(0),
+    ) else {
+        return false;
+    };
+    live_source_read_position(pointwise, &root).is_some()
+}
+
+/// Builds the canonical source-bound live elementwise region for one admitted
+/// symbolic request.
+///
+/// The accepted fieldless-marker spelling: a rank-zero static outer domain of
+/// one work item, every read and the final write inside the one live inner
+/// loop, the exact root-realizing read carrying
+/// [`LogicalAccess::LiveRowMajorSource`] with the decoded root axis, and every
+/// other access the fieldless [`LogicalAccess::LiveRowMajor`] consumer. Bounds
+/// proofs record the unspecialized live buffers as zero linear ranges, exactly
+/// as the accepted live-operand vocabulary states, and the launch is one
+/// static outer invocation whose inner loop is the runtime operand — at
+/// `n == 0` it enters a zero-trip loop and executes no element access.
+///
+/// Nothing here reads `ExtentSources::determined` or any bound value: the
+/// symbol's root arrives only through the retained identity bytes, so a
+/// binding that also proves `n == 4` builds byte-identical schedule content to
+/// the unbound neighbour rather than the literal `[4]` plan.
+///
+/// # Panics
+///
+/// Panics when the request is outside the admitted population — a root that
+/// does not decode, a root input the region does not read densely, or a
+/// non-`f32` expression. All are invalid compiler output rather than caller
+/// errors: the schedule-stage gate admits exactly the population
+/// [`admits_source_bound_live_schedule`] states before any cover reaches this
+/// builder, which is the same discipline the static arm's own
+/// static-iteration-domain expectation applies.
+fn live_pointwise_region(
+    request: &VerifiedTargetRequest,
+    pointwise: &NormalizedPointwise,
+    write: RegionWrite,
+) -> (ScheduledRegion, Vec<SemanticStage>) {
+    let symbol = live_pointwise_symbol(&pointwise.shape)
+        .expect("the symbolic schedule gate admits one rank-one authored symbol");
+    let root = decode_live_extent_root(
+        request.semantic_identity().shape_environment().as_bytes(),
+        &symbol,
+        RegionId::new(0),
+    )
+    .expect("the symbolic schedule gate admits a decodable input-dimension root");
+    let source = live_source_read_position(pointwise, &root)
+        .expect("the symbolic schedule gate admits a program whose root input is read densely");
+    let RecognizedPointwise::F32(expression) = &pointwise.expression else {
+        panic!("the symbolic schedule gate admits the f32 pointwise population");
+    };
+    let write_tensor = write.tensor();
+    let write_witness = u32::try_from(pointwise.reads.len()).unwrap_or(u32::MAX);
+    let witness =
+        |position: usize| BoundsWitnessId::new(u32::try_from(position).unwrap_or(u32::MAX));
+    let mut accesses: Vec<Access> = pointwise
+        .reads
+        .iter()
+        .enumerate()
+        .map(|(position, (_, map))| {
+            // Only a dense read has a live realization; a structural relation
+            // over a symbolic domain is refused at recognition and the
+            // parametric carrier is walled at `spell_region`, so a mapped read
+            // reaching here is invalid compiler output.
+            assert_eq!(
+                *map,
+                LogicalAccess::LinearIdentity,
+                "the admitted live population reads its shared domain densely"
+            );
+            Access {
+                tensor: TensorRole::Input,
+                component_role: None,
+                mode: AccessMode::Read,
+                map: if position == source {
+                    LogicalAccess::LiveRowMajorSource {
+                        inner_axis: root.axis,
+                    }
+                } else {
+                    LogicalAccess::LiveRowMajor
+                },
+                bounds: witness(position),
+                ownership: None,
+            }
+        })
+        .collect();
+    let mut bounds_proofs: Vec<BoundsProof> = pointwise
+        .reads
+        .iter()
+        .enumerate()
+        .map(|(position, _)| BoundsProof {
+            id: witness(position),
+            tensor: TensorRole::Input,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange { element_count: 0 },
+        })
+        .collect();
+    accesses.push(Access {
+        tensor: write_tensor,
+        component_role: None,
+        mode: AccessMode::Write,
+        map: LogicalAccess::LiveRowMajor,
+        bounds: BoundsWitnessId::new(write_witness),
+        ownership: Some(OwnershipWitnessId::new(0)),
+    });
+    bounds_proofs.push(BoundsProof {
+        id: BoundsWitnessId::new(write_witness),
+        tensor: write_tensor,
+        component_role: None,
+        kind: BoundsProofKind::LinearRange { element_count: 0 },
+    });
+    let region = ScheduledRegion {
+        index: IndexRegion {
+            id: RegionId::new(0),
+            // The static outer product of the rank-one live domain is the
+            // empty shape: its element product is one, so exactly one static
+            // invocation owns the whole live inner loop.
+            iteration_shape: Shape::from_dims([]),
+            accesses,
+            bounds_proofs,
+            ownership_proof: OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: write_tensor,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 1 },
+            },
+            program: RegionProgram::Numerical {
+                scalar: ScalarProgram::PointwiseF32(expression.clone()),
+                numerical: request.numerical_contract().realization(),
+            },
+        },
+        schedule: linear_schedule(1, OwnershipWitnessId::new(0)),
+    };
+    (region, pointwise.members.clone())
+}
+
 /// Builds the canonical elementwise scheduled region for one request.
 ///
 /// This constructs the raw, not-yet-verified region and its recognized
@@ -1444,6 +1711,12 @@ pub(crate) fn pointwise_region(
 ) -> (ScheduledRegion, Vec<SemanticStage>) {
     let (shape, elements, expression, members, recognized_reads) =
         if let Some(pointwise) = output.pointwise() {
+            // A symbolic domain has no static launch geometry to bake; its
+            // admitted rank-one population is realized as the accepted
+            // source-bound live schedule instead.
+            if pointwise.shape.as_static().is_none() {
+                return live_pointwise_region(request, pointwise, write);
+            }
             (
                 pointwise
                     .shape
@@ -3434,7 +3707,9 @@ fn verify_publishing_copy_binding(
             .normalized()
             .outputs()
             .iter()
-            .any(|normalized| published_shape(normalized) == &region.index.iteration_shape);
+            .any(|normalized| {
+                published_shape(normalized).is_some_and(|shape| shape == &region.index.iteration_shape)
+            });
     if bound {
         Ok(())
     } else {
@@ -3442,17 +3717,19 @@ fn verify_publishing_copy_binding(
     }
 }
 
-/// Returns the domain one recognized output publishes.
-fn published_shape(normalized: &NormalizedOutputSubject) -> &Shape {
+/// Returns the static domain one recognized output publishes.
+///
+/// `None` is a symbolic pointwise domain, whose published extent is a runtime
+/// fact no static shape states. Both callers fail closed on it: a publishing
+/// copy cannot bind a domain it cannot compare, and a per-output-element work
+/// count cannot be derived — neither may substitute a bound value.
+fn published_shape(normalized: &NormalizedOutputSubject) -> Option<&Shape> {
     match normalized {
-        NormalizedOutputSubject::Pointwise(normalized) => normalized
-            .shape
-            .as_static()
-            .expect("a scheduled pointwise region has a static iteration domain"),
-        NormalizedOutputSubject::SerialSum(normalized) => normalized.output_shape(),
-        NormalizedOutputSubject::Contraction(normalized) => &normalized.output_shape,
-        NormalizedOutputSubject::Epilogue(normalized) => normalized.shape(),
-        NormalizedOutputSubject::Staged(normalized) => &normalized.occurrence().output_shape,
+        NormalizedOutputSubject::Pointwise(normalized) => normalized.shape.as_static(),
+        NormalizedOutputSubject::SerialSum(normalized) => Some(normalized.output_shape()),
+        NormalizedOutputSubject::Contraction(normalized) => Some(&normalized.output_shape),
+        NormalizedOutputSubject::Epilogue(normalized) => Some(normalized.shape()),
+        NormalizedOutputSubject::Staged(normalized) => Some(&normalized.occurrence().output_shape),
     }
 }
 
@@ -3492,13 +3769,19 @@ fn verify_region_output_binding(
                 _ => false,
             };
             carries
-                && normalized.shape.as_static().is_some_and(|shape| {
-                    element_count(shape, region.index.id).ok() == Some(normalized.elements)
-                        && region.index.iteration_shape == *shape
-                })
                 && semantic_members == normalized.members
                 && region.index.id == RegionId::new(0)
-                && elementwise_reads_match(&region.index.accesses, &normalized.reads)
+                && match normalized.shape.as_static() {
+                    Some(shape) => {
+                        element_count(shape, region.index.id).ok() == Some(normalized.elements)
+                            && region.index.iteration_shape == *shape
+                            && elementwise_reads_match(&region.index.accesses, &normalized.reads)
+                    }
+                    // A symbolic domain binds only the accepted source-bound
+                    // live realization, proved from the retained identity
+                    // bytes rather than from anything the region carries.
+                    None => live_pointwise_binding_matches(region, normalized, subject),
+                }
         }
         (
             NormalizedOutputSubject::Contraction(normalized),
@@ -3792,6 +4075,67 @@ fn verify_region_output_binding(
         return intrinsic("request-binding", region.index.id);
     }
     Ok(())
+}
+
+/// Re-derives one live pointwise region's complete source-bound realization
+/// from the recognized subject and the retained identity bytes.
+///
+/// The independent compiler half of the accepted surface's two proofs:
+/// intrinsic verification already proved the structural relation — one marker,
+/// input read, complete coverage — and this proves the marker sits on the
+/// *right* access. The root arrives only through
+/// [`decode_live_extent_root`] over
+/// `subject.semantic_identity().shape_environment().as_bytes()`, so a
+/// hand-built region cannot nominate `b[0]` for a fixture whose authority is
+/// `a[0]`, equate proved-equal symbols, or bake a bound value: rank, axis
+/// number, equality of runtime values, and declaration order alone prove
+/// nothing here.
+///
+/// Answering `false` surfaces as the existing `request-binding` refusal, which
+/// is where every decode error, absent root, non-input-dimension root, and
+/// source/key/axis mismatch belongs.
+fn live_pointwise_binding_matches(
+    region: &ScheduledRegion,
+    normalized: &NormalizedPointwise,
+    subject: &VerifiedRequestSubject,
+) -> bool {
+    let Some(symbol) = live_pointwise_symbol(&normalized.shape) else {
+        return false;
+    };
+    if !matches!(normalized.expression, RecognizedPointwise::F32(_)) {
+        return false;
+    }
+    let Ok(root) = decode_live_extent_root(
+        subject.semantic_identity().shape_environment().as_bytes(),
+        &symbol,
+        region.index.id,
+    ) else {
+        return false;
+    };
+    let Some(source) = live_source_read_position(normalized, &root) else {
+        return false;
+    };
+    let Some((write, reads)) = region.index.accesses.split_last() else {
+        return false;
+    };
+    region.index.iteration_shape.rank() == 0
+        && reads.len() == normalized.reads.len()
+        && reads.iter().enumerate().all(|(position, access)| {
+            access.tensor == TensorRole::Input
+                && normalized
+                    .reads
+                    .get(position)
+                    .is_some_and(|(_, map)| *map == LogicalAccess::LinearIdentity)
+                && access.map
+                    == if position == source {
+                        LogicalAccess::LiveRowMajorSource {
+                            inner_axis: root.axis,
+                        }
+                    } else {
+                        LogicalAccess::LiveRowMajor
+                    }
+        })
+        && write.map == LogicalAccess::LiveRowMajor
 }
 
 /// Re-derives one epilogue region's reads from the recognized read list.

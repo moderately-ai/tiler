@@ -1,4 +1,4 @@
-error: the compiler recognizes this region and cannot schedule a launch over a symbolic extent, so it has no plan at all (the check that refused is `symbolic-extent`). A `deliver` statement compiles the region during this expansion, and the compiler can launch only when every iteration extent is a literal. Declare literal extents, or state `fallback-only` to expand with the semantic fallback on every target
+error: the compiler formed and verified a live schedule over this region's symbolic extent and cannot yet package it, so it has no plan at all (the check that refused is `named-output-symbolic`). A `deliver` statement packages the compiled plan into an artifact during this expansion, and the artifact envelope cannot yet carry a live-extent output. Declare literal extents, or state `fallback-only` to expand with the semantic fallback on every target
   --> tests/facade/fail/deliver_selects_an_artifact_family.rs:33:9
    |
 33 |         deliver macos;

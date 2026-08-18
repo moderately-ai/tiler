@@ -3425,6 +3425,18 @@ impl VerifiedRequestSubject {
         self.numerical_contract
     }
 
+    /// The retained verified semantic identity this subject binds.
+    ///
+    /// The live-row-major request binding decodes the identity's canonical
+    /// shape-environment bytes through the public `decode_shape_env_subject`
+    /// to prove a symbol's exact root; exposing the retained identity rather
+    /// than a second stored association keeps the environment's one authority
+    /// the identity bytes themselves (ADR 0070's boundary: shared schedule IR
+    /// carries no `ShapeSymbol` or `ShapeEnvIdentity`).
+    pub(crate) const fn semantic_identity(&self) -> &SemanticIdentity {
+        &self.semantic_identity
+    }
+
     pub(crate) fn canonical_explain_subject_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         // The enclosing domain steps to `v6` because `SemanticIdentity` gained
@@ -12567,10 +12579,21 @@ mod tests {
     }
 
     fn request_environment(bound_to: Option<u64>) -> Arc<ShapeEnv> {
+        request_environment_rooted("a", bound_to)
+    }
+
+    /// The fixture environment with `n` rooted at `input[0]`.
+    ///
+    /// The root input is a parameter because the live source projection must
+    /// follow the environment's exact root rather than the first declared
+    /// input, and only a fixture that can move the root can watch that.
+    fn request_environment_rooted(input: &str, bound_to: Option<u64>) -> Arc<ShapeEnv> {
         let mut draft = ShapeEnvBuilder::new();
         let declared = request_symbol("n");
         draft.declare(declared.clone()).unwrap();
-        draft.bind(&declared, request_axis_binding("a", 0)).unwrap();
+        draft
+            .bind(&declared, request_axis_binding(input, 0))
+            .unwrap();
         if let Some(value) = bound_to {
             draft
                 .require(SemanticInputConstraint::new(
@@ -12582,6 +12605,29 @@ mod tests {
                 ))
                 .unwrap();
         }
+        Arc::new(draft.build().unwrap())
+    }
+
+    /// An environment whose `n` is rooted at an interface parameter, not an
+    /// input dimension — a valid authored program outside the admitted live
+    /// population.
+    fn interface_parameter_environment() -> Arc<ShapeEnv> {
+        let mut draft = ShapeEnvBuilder::new();
+        let declared = request_symbol("n");
+        draft.declare(declared.clone()).unwrap();
+        draft
+            .bind(
+                &declared,
+                RootBinding::new(
+                    BindingSource::InterfaceParameter {
+                        key: tiler_ir::shape::InterfaceParameterKey::new("len").unwrap(),
+                    },
+                    AvailabilityPhase::LiveDevicePreflight,
+                    FactProvenance::RuntimeValidated,
+                )
+                .unwrap(),
+            )
+            .unwrap();
         Arc::new(draft.build().unwrap())
     }
 
@@ -12690,27 +12736,112 @@ mod tests {
         );
     }
 
-    /// An unsupported symbolic case names the extent; the literal neighbour compiles.
+    /// The verified target request of one symbolic fixture, and its program.
+    fn symbolic_target(bound_to: Option<u64>) -> (SemanticProgram, VerifiedTargetRequest) {
+        let program = symbolic_three_input_elementwise(bound_to);
+        let target = verify_planned_request(CompilationRequest::governed(&program))
+            .expect("the admitted symbolic population verifies")
+            .for_target(0)
+            .expect("one governed target");
+        (program, target)
+    }
+
+    /// The canonical live region and members of one symbolic target request.
+    fn live_region_of(
+        target: &VerifiedTargetRequest,
+    ) -> (
+        crate::physical::ScheduledRegion,
+        Vec<crate::region::SemanticStage>,
+    ) {
+        let [output] = target.normalized().outputs() else {
+            panic!("the fixture declares one output");
+        };
+        crate::physical::pointwise_region(
+            target,
+            output,
+            crate::physical::RegionWrite::ProgramOutput,
+        )
+    }
+
+    /// A still-unsupported symbolic population names the extent at schedule;
+    /// the literal neighbour compiles.
     ///
-    /// Same-shape elementwise now reaches region formation; scheduled-region
-    /// construction still cannot plan a launch over the symbol. Watched failing
-    /// under a deliberate perturbation: reporting that refuse as
-    /// `UnsupportedCapability { rule: "region-vocabulary" }` drops the extent
-    /// from the diagnostic.
+    /// The admitted rank-one population no longer reaches this refusal — its
+    /// own test below proves the decline moved to program assembly — so the
+    /// subjects here are the populations the accepted surface leaves refused:
+    /// a mixed-rank domain, a symbol rooted at an interface parameter, and a
+    /// root input the region never reads densely. Each is perturbed
+    /// independently of the parametric-broadcast exception, so a missing
+    /// broadcast is provably not the only way a symbol reaches a plan.
     #[test]
-    fn an_unsupported_symbolic_case_names_the_extent_and_the_literal_neighbour_compiles() {
-        let symbolic = symbolic_three_input_elementwise(None);
-        let extent = first_symbolic_extent(&symbolic);
-        assert_eq!(extent, SourcedExtent::Symbol(request_symbol("n")));
-        match crate::pipeline::compile(CompilationRequest::governed(&symbolic)) {
-            Err(error) => {
-                assert_eq!(
-                    scheduled_symbolic_extent(&error),
-                    Some(&extent),
-                    "an unsupported symbolic case must name the extent, got {error}"
-                );
-            }
-            Ok(_) => panic!("an unsupported symbolic case must name the extent, got a product"),
+    fn unsupported_symbolic_populations_keep_the_named_schedule_refusal() {
+        // Rank two with one symbolic axis: same-shape, recognized, refused.
+        let mixed_rank = three_input_elementwise_with(
+            Some(request_environment(None)),
+            &[
+                SourcedExtent::Symbol(request_symbol("n")),
+                SourcedExtent::Static(Extent::new(4)),
+            ],
+        );
+        let extent = first_symbolic_extent(&mixed_rank);
+        match crate::pipeline::compile(CompilationRequest::governed(&mixed_rank)) {
+            Err(error) => assert_eq!(
+                scheduled_symbolic_extent(&error),
+                Some(&extent),
+                "a higher-rank symbolic domain must keep the schedule refusal, got {error}"
+            ),
+            Ok(_) => panic!("a higher-rank symbolic domain must keep the schedule refusal"),
+        }
+
+        // A non-input root: the environment roots `n` at an interface
+        // parameter, which has no accepted runtime input-axis realization.
+        let parameter_rooted = three_input_elementwise_with(
+            Some(interface_parameter_environment()),
+            &[SourcedExtent::Symbol(request_symbol("n"))],
+        );
+        let extent = first_symbolic_extent(&parameter_rooted);
+        match crate::pipeline::compile(CompilationRequest::governed(&parameter_rooted)) {
+            Err(error) => assert_eq!(
+                scheduled_symbolic_extent(&error),
+                Some(&extent),
+                "a non-input-rooted symbol must keep the schedule refusal, got {error}"
+            ),
+            Ok(_) => panic!("a non-input-rooted symbol must keep the schedule refusal"),
+        }
+
+        // A root input the region never reads: `b + c` declares `a` and roots
+        // `n` there, but no dense read realizes `a[0]`, so there is no access
+        // for the source marker to sit on.
+        let unread_root = {
+            let mut builder = SemanticProgramBuilder::try_standard_with_shape_environment(
+                request_environment(None),
+            )
+            .unwrap();
+            let inputs: Vec<_> = ["a", "b", "c"]
+                .into_iter()
+                .map(|key| {
+                    builder
+                        .input_sourced::<F32>(
+                            InputKey::new(key).unwrap(),
+                            vec![SourcedExtent::Symbol(request_symbol("n"))],
+                        )
+                        .unwrap()
+                })
+                .collect();
+            let root = F32Add::apply(&mut builder, inputs[1], inputs[2]).unwrap();
+            builder
+                .output(OutputKey::new("result").unwrap(), root)
+                .unwrap();
+            builder.build().unwrap()
+        };
+        let extent = first_symbolic_extent(&unread_root);
+        match crate::pipeline::compile(CompilationRequest::governed(&unread_root)) {
+            Err(error) => assert_eq!(
+                scheduled_symbolic_extent(&error),
+                Some(&extent),
+                "an unread root input must keep the schedule refusal, got {error}"
+            ),
+            Ok(_) => panic!("an unread root input must keep the schedule refusal"),
         }
 
         let literal = literal_three_input_elementwise(4);
@@ -12718,11 +12849,319 @@ mod tests {
             .expect("the literal neighbour of the symbolic elementwise program still compiles");
     }
 
+    /// A distinct proved-equal symbol does not widen the exact-shape population.
+    ///
+    /// The environment declares `m`, roots it at `b[0]`, and proves `n == m`;
+    /// the recognizer still compares exact `SourcedShape`, so the program is
+    /// refused at strategy rather than admitted through the live schedule on a
+    /// solver fact.
+    #[test]
+    fn a_proved_equal_symbol_does_not_widen_the_admitted_population() {
+        let environment = {
+            let mut draft = ShapeEnvBuilder::new();
+            let n = request_symbol("n");
+            let m = request_symbol("m");
+            draft.declare(n.clone()).unwrap();
+            draft.declare(m.clone()).unwrap();
+            draft.bind(&n, request_axis_binding("a", 0)).unwrap();
+            draft.bind(&m, request_axis_binding("b", 0)).unwrap();
+            draft
+                .require(SemanticInputConstraint::new(
+                    ExtentRelation::equal(ExtentTerm::Symbol(n), ExtentTerm::Symbol(m)),
+                    FactProvenance::FrontendRequired,
+                ))
+                .unwrap();
+            Arc::new(draft.build().unwrap())
+        };
+        let mut builder =
+            SemanticProgramBuilder::try_standard_with_shape_environment(environment).unwrap();
+        let a = builder
+            .input_sourced::<F32>(
+                InputKey::new("a").unwrap(),
+                vec![SourcedExtent::Symbol(request_symbol("n"))],
+            )
+            .unwrap();
+        let b = builder
+            .input_sourced::<F32>(
+                InputKey::new("b").unwrap(),
+                vec![SourcedExtent::Symbol(request_symbol("m"))],
+            )
+            .unwrap();
+        let root = F32Add::apply(&mut builder, a, b).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let refusal = verify_planned_request(CompilationRequest::governed(&program))
+            .expect_err("a differently spelled proved-equal symbol must refuse at recognition");
+        assert_eq!(
+            refusal.to_string(),
+            "compile.unsupported.strategy.elementwise-shape: no installed capability can \
+             compile this valid semantic program",
+            "neither spelling equality nor proves_equal may widen the exact-shape population"
+        );
+    }
+
+    /// The admitted population forms the verified source-bound live schedule.
+    ///
+    /// The accepted fieldless spelling, end to end at the physical layer: a
+    /// rank-zero static outer domain of one work item, the exact root-realizing
+    /// read carrying `LiveRowMajorSource` at the decoded `a[0]` root, every
+    /// other read and the final write the fieldless consumer, one derived
+    /// input-extent operand, checked request binding, feasibility, and a
+    /// lowered kernel consuming exactly that operand. The retained request
+    /// still names the authored `n`, and a binding that proves `n == 4`
+    /// changes none of the schedule bytes while the literal `[4]` neighbour's
+    /// differ — the specialization boundary held from both sides.
+    #[test]
+    fn the_admitted_symbolic_population_forms_a_verified_source_bound_live_schedule() {
+        use tiler_ir::schedule::LogicalAccess;
+
+        let (_, target) = symbolic_target(None);
+        assert_eq!(
+            target.normalized().first_symbolic_extent(),
+            Some(SourcedExtent::Symbol(request_symbol("n"))),
+            "the retained compiler request still names the authored symbol",
+        );
+        let root = crate::physical::decode_live_extent_root(
+            target.semantic_identity().shape_environment().as_bytes(),
+            &request_symbol("n"),
+            tiler_ir::schedule::RegionId::new(0),
+        )
+        .expect("the retained identity bytes decode to the root");
+        assert_eq!(root.input, InputKey::new("a").unwrap());
+        assert_eq!(root.axis, Axis::new(0));
+
+        let (region, members) = live_region_of(&target);
+        assert_eq!(region.index.iteration_shape.rank(), 0, "empty static outer");
+        assert_eq!(region.schedule.work_items, 1, "one static outer invocation");
+        let maps: Vec<LogicalAccess> = region
+            .index
+            .accesses
+            .iter()
+            .map(|access| access.map.clone())
+            .collect();
+        assert_eq!(
+            maps,
+            vec![
+                LogicalAccess::LiveRowMajorSource {
+                    inner_axis: Axis::new(0)
+                },
+                LogicalAccess::LiveRowMajor,
+                LogicalAccess::LiveRowMajor,
+                LogicalAccess::LiveRowMajor,
+            ],
+            "one source marker on the root read, fieldless consumers elsewhere, \
+             the final write included",
+        );
+
+        let verified = crate::physical::verify_schedule_with_feasibility(
+            region.clone(),
+            members.clone(),
+            &target,
+        )
+        .expect("the source-bound live schedule verifies and binds");
+        assert_eq!(
+            tiler_ir::schedule::live_input_extents(verified.region()),
+            vec![(tiler_ir::schedule::AccessOrdinal::new(0), Axis::new(0))],
+            "the marker is the region's one runtime extent operand",
+        );
+        let kernel = crate::physical::lower_structured_kernel(&verified)
+            .expect("the live schedule lowers to a verified kernel");
+        let operands: Vec<_> = kernel.input_extents().collect();
+        assert_eq!(operands.len(), 1);
+        assert_eq!(
+            operands[0].access,
+            tiler_ir::schedule::AccessOrdinal::new(0)
+        );
+        assert_eq!(operands[0].axis, Axis::new(0));
+
+        // The bound-symbol neighbour: `n == 4` proved, schedule bytes exact.
+        let (_, bound_target) = symbolic_target(Some(4));
+        let (bound_region, bound_members) = live_region_of(&bound_target);
+        let bound = crate::physical::verify_schedule_with_feasibility(
+            bound_region,
+            bound_members,
+            &bound_target,
+        )
+        .expect("a bound symbol still verifies as the symbol");
+        assert_eq!(
+            verified.canonical_identity().as_bytes(),
+            bound.canonical_identity().as_bytes(),
+            "a binding that proves n == 4 must not move the schedule bytes",
+        );
+
+        // The literal `[4]` neighbour is a different schedule.
+        let literal = literal_three_input_elementwise(4);
+        let literal_target = verify_planned_request(CompilationRequest::governed(&literal))
+            .unwrap()
+            .for_target(0)
+            .unwrap();
+        let (literal_region, literal_members) = live_region_of(&literal_target);
+        let literal_verified = crate::physical::verify_schedule_with_feasibility(
+            literal_region,
+            literal_members,
+            &literal_target,
+        )
+        .expect("the literal neighbour verifies");
+        assert_ne!(
+            verified.canonical_identity().as_bytes(),
+            literal_verified.canonical_identity().as_bytes(),
+            "the live schedule and the baked [4] schedule are different subjects",
+        );
+    }
+
+    /// The source marker projects to the environment's root, never the first
+    /// input.
+    ///
+    /// Rebinding `n` to `c[0]` with the access order unchanged moves the
+    /// marker to read position 2; positions 0 and 1 become fieldless
+    /// consumers.
+    #[test]
+    fn the_source_marker_follows_the_environment_root_not_the_first_input() {
+        use tiler_ir::schedule::LogicalAccess;
+
+        let program = three_input_elementwise_with(
+            Some(request_environment_rooted("c", None)),
+            &[SourcedExtent::Symbol(request_symbol("n"))],
+        );
+        let target = verify_planned_request(CompilationRequest::governed(&program))
+            .unwrap()
+            .for_target(0)
+            .unwrap();
+        let (region, members) = live_region_of(&target);
+        let maps: Vec<LogicalAccess> = region
+            .index
+            .accesses
+            .iter()
+            .map(|access| access.map.clone())
+            .collect();
+        assert_eq!(
+            maps,
+            vec![
+                LogicalAccess::LiveRowMajor,
+                LogicalAccess::LiveRowMajor,
+                LogicalAccess::LiveRowMajorSource {
+                    inner_axis: Axis::new(0)
+                },
+                LogicalAccess::LiveRowMajor,
+            ],
+            "the marker moved to access 2 with the root, not stayed first",
+        );
+        crate::physical::verify_schedule_with_feasibility(region, members, &target)
+            .expect("the c-rooted live schedule verifies and binds");
+    }
+
+    /// A hand-built region whose marker sits on the wrong access is refused as
+    /// `request-binding`: intrinsic verification cannot see the semantic root,
+    /// and the compiler binding proves it independently.
+    #[test]
+    fn a_forged_source_marker_position_fails_request_binding() {
+        use tiler_ir::schedule::LogicalAccess;
+
+        let (_, target) = symbolic_target(None);
+        let (mut region, members) = live_region_of(&target);
+        // The fixture's root is `a[0]`, access 0. Nominate `b` instead.
+        region.index.accesses[0].map = LogicalAccess::LiveRowMajor;
+        region.index.accesses[1].map = LogicalAccess::LiveRowMajorSource {
+            inner_axis: Axis::new(0),
+        };
+        let refusal = crate::physical::verify_schedule_with_feasibility(region, members, &target)
+            .expect_err("a marker off the decoded root must not bind");
+        assert_eq!(
+            refusal.to_string(),
+            "schedule.intrinsic.request-binding: region 0 rejected",
+            "equal runtime values cannot replace the exact a[0] authority",
+        );
+    }
+
+    /// A launch minted over the determined representative extent cannot bind
+    /// the symbolic subject: plan specialization stays forbidden and its
+    /// refusal stays reachable.
+    #[test]
+    fn a_specialized_representative_launch_fails_request_binding() {
+        let (_, target) = symbolic_target(Some(4));
+        // The literal `[4]` region a folding formation step would mint.
+        let literal = literal_three_input_elementwise(4);
+        let literal_target = verify_planned_request(CompilationRequest::governed(&literal))
+            .unwrap()
+            .for_target(0)
+            .unwrap();
+        let (specialized, members) = live_region_of(&literal_target);
+        assert_eq!(
+            specialized.schedule.work_items, 4,
+            "the specialized region launches over the bound value",
+        );
+        let refusal =
+            crate::physical::verify_schedule_with_feasibility(specialized, members, &target)
+                .expect_err("a [4] launch must not bind the symbolic subject");
+        assert_eq!(
+            refusal.to_string(),
+            "schedule.intrinsic.request-binding: region 0 rejected",
+            "ExtentSources::determined never supplies schedule geometry",
+        );
+    }
+
+    /// Truncated and bad-domain identity-subject bytes fail as the existing
+    /// compiler `request-binding` through the production decode mapping.
+    #[test]
+    fn corrupted_identity_subject_bytes_fail_as_request_binding() {
+        let (_, target) = symbolic_target(None);
+        let bytes = target
+            .semantic_identity()
+            .shape_environment()
+            .as_bytes()
+            .to_vec();
+        let region = tiler_ir::schedule::RegionId::new(0);
+
+        let truncated = crate::physical::decode_live_extent_root(
+            &bytes[..bytes.len() - 1],
+            &request_symbol("n"),
+            region,
+        )
+        .expect_err("truncated identity bytes must not decode");
+        assert_eq!(
+            truncated.to_string(),
+            "schedule.intrinsic.request-binding: region 0 rejected",
+            "a truncated subject is the existing compiler request-binding refusal",
+        );
+
+        let mut bad_domain = bytes.clone();
+        // The domain separator is length-framed at the front; flipping a byte
+        // inside it is a subject from another domain.
+        bad_domain[8] ^= 0xff;
+        let bad =
+            crate::physical::decode_live_extent_root(&bad_domain, &request_symbol("n"), region)
+                .expect_err("bad-domain identity bytes must not decode");
+        assert_eq!(
+            bad.to_string(),
+            "schedule.intrinsic.request-binding: region 0 rejected",
+            "a bad-domain subject is the existing compiler request-binding refusal",
+        );
+
+        // An absent symbol on well-formed bytes is the same fail-closed rule:
+        // no arm defaults an environment or selects another binding.
+        let absent = crate::physical::decode_live_extent_root(
+            &bytes,
+            &ShapeSymbol::new(SymbolScope::new("program/0").unwrap(), "absent").unwrap(),
+            region,
+        )
+        .expect_err("an undeclared symbol must not resolve a root");
+        assert_eq!(
+            absent.to_string(),
+            "schedule.intrinsic.request-binding: region 0 rejected",
+        );
+    }
+
     /// A bound symbol is not folded into the logical plan.
     ///
     /// The environment pins `n` to 4. The program still names the symbol, the
-    /// request still carries that environment, and compilation still refuses
-    /// the symbol rather than emitting a `[4]` plan.
+    /// request still carries that environment, and compilation forms the live
+    /// schedule as the symbol — never a `[4]` plan — before declining at the
+    /// same program-assembly wall the unbound neighbour hits. The exact
+    /// identity claim (bound and unbound schedule bytes equal, literal `[4]`
+    /// bytes different) is
+    /// `the_admitted_symbolic_population_forms_a_verified_source_bound_live_schedule`'s.
     #[test]
     fn a_compiled_plan_does_not_fold_a_bound_extent_value() {
         let bound = symbolic_three_input_elementwise(Some(4));
@@ -12750,13 +13189,19 @@ mod tests {
             Err(error) => {
                 assert_eq!(
                     scheduled_symbolic_extent(&error),
-                    Some(&extent),
-                    "a bound symbol must still be refused as the symbol, not compiled as 4, got {error}"
+                    None,
+                    "a bound symbol passes schedule formation as the symbol, got {error}"
+                );
+                assert_eq!(
+                    error.to_string(),
+                    "compile.unsupported.program-assembly.named-output-symbolic: no installed \
+                     capability can compile this valid semantic program",
+                    "the bound symbol declines at packaging, never as a [4] product",
                 );
             }
-            Ok(_) => panic!(
-                "a bound symbol must still be refused as the symbol, not compiled as 4, got a product"
-            ),
+            Ok(_) => {
+                panic!("a bound symbol must decline at the program-assembly wall, not compile as 4")
+            }
         }
 
         let literal = literal_three_input_elementwise(4);
@@ -12764,15 +13209,23 @@ mod tests {
             .expect("the literal [4] neighbour still compiles");
     }
 
-    /// The admitted symbolic elementwise neighbour reaches region formation.
+    /// The admitted symbolic population passes real schedule formation and
+    /// declines at the next true wall: the program-assembly packaging gate.
     ///
-    /// `compile()` records the formed graph, then declines at scheduled-region
-    /// construction because `IndexRegion` still requires a fixed launch
-    /// geometry. The graph itself still names `n`.
+    /// The former schedule-geometry refuse — `UnsupportedSymbolicExtent {
+    /// phase: "schedule", rule: "symbolic-extent" }` — is gone for this
+    /// population: its verified source-bound live plan is formed, bound, and
+    /// selected, and what remains missing is the packaged kernel program,
+    /// whose shared builder keeps "no symbolic program reaches a packaged
+    /// artifact" its own typed property until the live-extent artifact
+    /// envelope lands. Deliberately perturbed during development: restoring
+    /// the old unconditional gate makes this fail with
+    /// `compile.schedule.symbolic-extent: program/0::n is a symbolic extent
+    /// this capability cannot plan over`, which is the exact refusal the new
+    /// path removed.
     #[test]
-    fn a_symbolic_elementwise_neighbour_reaches_region_formation() {
+    fn the_admitted_symbolic_population_declines_at_program_assembly_not_schedule() {
         let symbolic = symbolic_three_input_elementwise(None);
-        let extent = first_symbolic_extent(&symbolic);
         crate::region::RegionGraph::from_program(&symbolic)
             .expect("region-graph construction must record a sourced boundary");
         crate::region::form_region_candidates(
@@ -12786,12 +13239,19 @@ mod tests {
             Err(error) => {
                 assert_eq!(
                     scheduled_symbolic_extent(&error),
-                    Some(&extent),
-                    "compile of the admitted symbolic population must decline past strategy naming the extent, got {error}"
+                    None,
+                    "the admitted population must pass the schedule gate, got {error}"
+                );
+                assert_eq!(
+                    error.to_string(),
+                    "compile.unsupported.program-assembly.named-output-symbolic: no installed \
+                     capability can compile this valid semantic program",
+                    "the next true wall is the packaging gate, typed as a capability gap",
                 );
             }
             Ok(_) => panic!(
-                "compile of the admitted symbolic population must decline past strategy naming the extent, got a product"
+                "the admitted population declines at the program-assembly wall until the \
+                 live-extent artifact envelope lands, got a product"
             ),
         }
 

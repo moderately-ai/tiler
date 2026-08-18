@@ -577,17 +577,19 @@ fn a_contract_this_declaration_cannot_honour_is_refused_at_the_target() {
 /// frontend-local refuse, and the compiler's typed decline is what the
 /// consumer sees.
 ///
-/// Same-shape elementwise constructs and is recognized; `compile()` then
-/// declines at schedule because `IndexRegion` still requires a fixed launch
-/// geometry. Lifting the frontend gate must not convert that into a silent
-/// fallback or a compiled plan specialized on a representative extent. The
-/// stated cache root does not exist and could not be created, so a case that
-/// reached backend work would fail differently.
+/// Same-shape elementwise constructs and is recognized; since the accepted
+/// source-bound live schedule landed, `compile()` forms, verifies, and selects
+/// its live plan and then declines at program packaging — the next true wall —
+/// because the artifact envelope cannot yet carry a live-extent output.
+/// Lifting the schedule gate must not convert that into a silent fallback or
+/// a compiled plan specialized on a representative extent. The stated cache
+/// root does not exist and could not be created, so a case that reached
+/// backend work would fail differently.
 ///
-/// Watched failing under the retired `AotRefusal::SymbolicExtent` gate: handing
-/// this program to `deliver` used to return that variant before `compile()`
-/// ran. After the lift, the same program is `AotRefusal::Compile` with
-/// rule `symbolic-extent`.
+/// Watched failing under the retired `AotRefusal::SymbolicExtent` gate, then
+/// under the retired schedule-stage `symbolic-extent` refuse: handing this
+/// program to `deliver` used to name each of those before the layer behind it
+/// widened. It is now `AotRefusal::Compile` with rule `named-output-symbolic`.
 #[test]
 fn a_symbolic_region_reaches_the_compilers_typed_decline() {
     let program = symbolic_approved_region();
@@ -615,20 +617,24 @@ fn a_symbolic_region_reaches_the_compilers_typed_decline() {
         matches!(
             source.class(),
             CompileFailureClass::UnsupportedCapability {
-                rule: "symbolic-extent",
+                rule: "named-output-symbolic",
             }
         ),
-        "the compiler must name the symbolic-extent schedule refuse, got {:?}",
+        "the compiler must name the program-assembly packaging wall, got {:?}",
         source.class(),
     );
     let diagnostic = refusal.to_string();
     assert!(
-        diagnostic.contains("cannot schedule a launch over a symbolic extent"),
-        "the diagnostic must name the declined case, not an unrecognized program: {diagnostic}",
+        diagnostic.contains("formed and verified a live schedule"),
+        "the diagnostic must say the schedule exists and packaging is the wall: {diagnostic}",
     );
     assert!(
-        diagnostic.contains("`symbolic-extent`"),
+        diagnostic.contains("`named-output-symbolic`"),
         "the diagnostic must carry the compiler's rule key: {diagnostic}",
+    );
+    assert!(
+        !diagnostic.contains("cannot schedule a launch over a symbolic extent"),
+        "the retired schedule-geometry text must not name this admitted population: {diagnostic}",
     );
     assert!(
         !diagnostic.contains("needs every extent to be known at expansion time"),

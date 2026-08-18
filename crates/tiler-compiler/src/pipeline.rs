@@ -1967,10 +1967,19 @@ fn compile_target_with_explain(
     let region_root = region_records.summary;
     if let Some(extent) = verified.normalized().first_symbolic_extent() {
         // A sourced broadcast must reach physical selection so a provider that
-        // cannot implement the carrier declines under its own named rule.
-        // Same-shape elementwise without that carrier still cannot launch over
-        // a symbol: IndexRegion requires a fixed geometry.
-        if !verified.normalized().carries_parametric_broadcast() {
+        // cannot implement the carrier declines under its own named rule, and
+        // the admitted whole-program rank-one same-shape `f32` population with
+        // an input-dimension-rooted symbol continues into real schedule
+        // formation: its plan is the accepted source-bound live schedule, so
+        // `IndexRegion`'s fixed geometry holds a rank-zero static outer domain
+        // and the symbol never reaches shared schedule IR. Every other
+        // symbolic population keeps this typed refusal — a mixed or higher
+        // rank, several symbols or outputs, a non-`f32` width, a static,
+        // interface-parameter, or target-property root, and a root input the
+        // region never reads densely.
+        if !verified.normalized().carries_parametric_broadcast()
+            && !crate::physical::admits_source_bound_live_schedule(verified)
+        {
             return Err(target_failure(
                 CompileError::from(RequestError::UnsupportedSymbolicExtent {
                     phase: "schedule",

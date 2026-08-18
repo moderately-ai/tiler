@@ -808,8 +808,21 @@ impl CoverAssembly {
                 })?
                 // Physical assembly sizes every allocation and view from this
                 // shape, so a symbolic one has nothing to size. Refused by its
-                // own rule rather than folded into the handle failure above,
-                // because the program is well formed and only unschedulable.
+                // own rule rather than folded into the handle failure above.
+                //
+                // Since the accepted source-bound live schedule landed, the
+                // admitted rank-one symbolic population reaches this refusal
+                // *schedulable*: its verified live plan was formed, bound, and
+                // selected upstream, and what remains missing is the packaged
+                // program — the shared kernel-program builder's own
+                // `SymbolicInterfaceExtent` rule keeps "no symbolic program
+                // reaches a packaged artifact" a property of that type until
+                // `package-the-admitted-live-schedule-into-a-symbolic-kernel-program`
+                // represents the shape-environment subject in kernel-program
+                // and artifact identity. Declining here, under the same typed
+                // program-assembly capability class, is what keeps that
+                // identity boundary owned by its ticket rather than lifted as
+                // an implementation fallback.
                 .as_static()
                 .ok_or_else(|| {
                     AssemblyRefusal::missing(regions[*position].label(), "named-output-symbolic")

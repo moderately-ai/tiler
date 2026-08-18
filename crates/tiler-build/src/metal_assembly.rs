@@ -977,7 +977,7 @@ mod tests {
                 tensor: TensorRole::Input,
                 component_role: None,
                 mode: AccessMode::Read,
-                map: LogicalAccess::LiveRowMajor { inner_axis: inner },
+                map: LogicalAccess::LiveRowMajorSource { inner_axis: inner },
                 bounds: BoundsWitnessId::new(0),
                 ownership: None,
             })
@@ -987,7 +987,7 @@ mod tests {
                 tensor: TensorRole::Intermediate,
                 component_role: None,
                 mode: AccessMode::Write,
-                map: LogicalAccess::LiveRowMajor { inner_axis: inner },
+                map: LogicalAccess::LiveRowMajor,
                 bounds: BoundsWitnessId::new(1),
                 ownership: Some(OwnershipWitnessId::new(0)),
             })
