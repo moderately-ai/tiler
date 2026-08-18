@@ -1,7 +1,7 @@
 ---
 id: decide-the-semantic-order-contract-for-relaxed-contractions
 title: Decide the semantic order contract for relaxed contractions
-status: in-progress
+status: todo
 priority: p1
 dependencies: []
 related: [decide-the-algebraic-capability-authority-for-contraction-splits, admit-reassociated-contraction-schedule-alternatives, decide-the-adr-0013-plan-determinism-stability-subject, implement-the-adr-0013-plan-determinism-stability-subject]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/reference, c
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, numerics, identity, public-boundary, needs-tom]
-claimed_from: todo
-assignee: worker-contraction-semantics
-lease_expires_at: 1787016723
 ---
 ## User-visible outcome
 
