@@ -58,7 +58,13 @@
 //! target and is reported as a
 //! [`MetalNumericalGap`](crate::record::MetalNumericalGap).
 //!
-//! Every public item here is a reviewed *draft* boundary (ADR 0074 §7).
+//! Every public item here is an accepted boundary: Tom accepted the crate's
+//! exact public facade on 2026-08-18 under ADR 0075, with the provenance
+//! recorded in `tickets/decide-the-tiler-metal-public-facade-surface.md`.
+//! [`emit_translation_unit`](crate::emit::emit_translation_unit) is this
+//! module's whole public surface. Accepted
+//! is not stabilized — ADR 0075's pre-alpha posture keeps a later source break
+//! cheap, explicit, and reviewed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;

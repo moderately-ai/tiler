@@ -10,7 +10,15 @@
 //! verifier owns refinement, the schedule owns reduction order, and the target
 //! profile owns feasibility.
 //!
-//! Every public item here is a reviewed *draft* boundary (ADR 0074 §7).
+//! Every public item here is an accepted boundary: Tom accepted the crate's
+//! exact public facade on 2026-08-18 under ADR 0075, with the provenance
+//! recorded in `tickets/decide-the-tiler-metal-public-facade-surface.md`. The
+//! classification vocabularies' `as_str` helpers are crate-private under that
+//! acceptance — each duplicated the text its `Display` renders — while the
+//! structured variants and
+//! [`MetalEmitError::rule`](crate::diagnostic::MetalEmitError::rule) remain
+//! the public inspection routes. Accepted is not stabilized — ADR 0075's pre-alpha
+//! posture keeps a later source break cheap, explicit, and reviewed.
 
 use core::fmt;
 use std::error::Error;
@@ -28,6 +36,21 @@ use crate::target::MetalUnstatedSubnormalArithmetic;
 /// Each family in the structured kernel IR is a bounded vocabulary that will
 /// grow. A widened family reaches this backend as an unrecognized member and is
 /// rejected here rather than silently emitted as something else.
+///
+/// The `as_str` rule suffix is crate-private under the accepted facade;
+/// [`fmt::Display`] renders the same stable text:
+///
+/// ```compile_fail,E0624
+/// use tiler_metal::diagnostic::MetalOperationFamily;
+///
+/// let _ = MetalOperationFamily::Builtin.as_str();
+/// ```
+///
+/// ```
+/// use tiler_metal::diagnostic::MetalOperationFamily;
+///
+/// assert_eq!(MetalOperationFamily::Builtin.to_string(), "builtin");
+/// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum MetalOperationFamily {
@@ -45,8 +68,10 @@ pub enum MetalOperationFamily {
 
 impl MetalOperationFamily {
     /// Returns the stable rule suffix naming this family.
+    ///
+    /// Crate-private under the accepted facade; `Display` renders this text.
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Builtin => "builtin",
             Self::Constant => "constant",
@@ -69,6 +94,26 @@ impl fmt::Display for MetalOperationFamily {
 /// spaces, and ordering separately. Metal's barrier builtins couple execution
 /// scope to the visibility they establish, so a portable specification can be
 /// unrealizable even though each of its parts is individually meaningful.
+///
+/// The `as_str` rule suffix is crate-private under the accepted facade; the
+/// structured variants carry the rejected dimensions, and [`fmt::Display`]
+/// renders the same stable text:
+///
+/// ```compile_fail,E0624
+/// use tiler_ir::kernel::BarrierOrdering;
+/// use tiler_metal::diagnostic::BarrierRejection;
+///
+/// let rejection = BarrierRejection::Ordering { ordering: BarrierOrdering::AcquireRelease };
+/// let _ = rejection.as_str();
+/// ```
+///
+/// ```
+/// use tiler_ir::kernel::BarrierOrdering;
+/// use tiler_metal::diagnostic::BarrierRejection;
+///
+/// let rejection = BarrierRejection::Ordering { ordering: BarrierOrdering::AcquireRelease };
+/// assert_eq!(rejection.to_string(), "ordering");
+/// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub enum BarrierRejection {
@@ -103,8 +148,10 @@ pub enum BarrierRejection {
 
 impl BarrierRejection {
     /// Returns the stable rule suffix naming this rejection.
+    ///
+    /// Crate-private under the accepted facade; `Display` renders this text.
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::ExecutionScope { .. } => "execution-scope",
             Self::MemoryVisibility { .. } => "memory-visibility",

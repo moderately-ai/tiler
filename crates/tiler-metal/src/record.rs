@@ -20,7 +20,11 @@
 //! fail closed with an explainable reason instead of naming a flag that would
 //! not honour the contract or inheriting a measurement made for another dtype.
 //!
-//! Every public item here is a reviewed *draft* boundary (ADR 0074 §7).
+//! Every public item here is an accepted boundary: Tom accepted the crate's
+//! exact public facade on 2026-08-18 under ADR 0075, with the provenance
+//! recorded in `tickets/decide-the-tiler-metal-public-facade-surface.md`.
+//! Accepted is not stabilized — ADR 0075's pre-alpha posture keeps a later
+//! source break cheap, explicit, and reviewed.
 
 use core::fmt;
 
@@ -47,8 +51,21 @@ use crate::target::{
 /// immediates, one arithmetic operation per statement, and an integer-only NaN
 /// predicate — is deliberately absent from this set, because it holds under
 /// every math mode.
+///
+/// **This is an ADR 0074 convention 5b type and is deliberately exhaustive.**
+/// It carried `#[non_exhaustive]` only while no consumer outside this crate
+/// mapped it. `tiler-build`'s payload assembly must now map each emitted
+/// requirement to the exact compiler selection that honours it, and a wildcard
+/// arm there could only guess: declaring an unknown requirement unsatisfied
+/// refuses a selection that may honour it exactly — which is how an emitted
+/// `PreciseFp32Functions` was refused under the precise selection before the
+/// map became total — while declaring it satisfied would compile source under
+/// a selection that does not deliver its obligation. 5b resolves that against
+/// convention 3 by keeping the enum exhaustive, so adding a requirement is a
+/// build failure at every out-of-crate total map rather than a silent wrong
+/// verdict in either direction. Adding a variant here is source-breaking for
+/// those maps by design; `cargo check` enumerates them.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
 pub enum MetalNumericalRequirement {
     /// `-fmetal-math-mode=safe`.
     ///
