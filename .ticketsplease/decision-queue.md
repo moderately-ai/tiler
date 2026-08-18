@@ -141,12 +141,12 @@ Updated 2026-08-18: the compilation-selection provenance packet was parked as it
 - Strongest counterpoint: key migration and a consequential public surface for a capability whose algebraic proof is not yet accepted; strict-forever costs nothing now.
 - Presentation order and release trigger: behind items 6–15 and the item-10 policy answer. Present the packet's one question (strict forever vs complete successor replacement). If Tom selects the successor, the ADR-0013 chain (item 15) and the algebraic-authority reopening are prerequisites the packet already wires.
 
-## 17. Compilation-selection provenance public and wire surface — reviewed, held for queue order
+## 17. Compilation-selection provenance public and wire surface — ACCEPTED 2026-08-18 (packet body + adapter retirement)
 
 - Tickets: `decide-the-compilation-selection-provenance-public-and-wire-surface` (`p1`, `awaiting-decision`); related carrier work blocked on it plus `resolve-the-retained-metal-profile-measurement-invocation-authority`.
 - Packet evidence: packet landed at `5c978455`, merged `442f5238`. A recorded independent review landed 2026-08-18 at `3a265735`, merged `dcf21f47`, re-parked at `bab6f6d2`: all nine audit Facts re-derived from source, both live-domain perturbations re-executed with quoted failure text, adapter census rerun supporting the retirement recommendation, one rendered-view anchor repaired. Verdict: **ready for Tom as-is**.
 - Recommendation (from the packet): accept the separate compile-profile context/evidence vocabulary and every exact common surface/tag/domain/ownership rule; one binary adapter subdecision remains, retirement recommended from the consumer census; the retained grid/cost authority ticket must be resolved alongside.
-- Presentation order and release trigger: behind the reviewed queue. Present the packet's binary adapter question together with its acceptance.
+- RESOLVED — accepted 2026-08-18 in the live coordination session: the packet body plus the adapter-retirement branch; provenance recorded on the decision ticket, which is `done`. The carrier stays blocked on `resolve-the-retained-metal-profile-measurement-invocation-authority`, which this acceptance renders dispatchable as its own decision/research node.
 
 ## 18. Partitioned-copy scheduled-region public surface — reviewed, held for queue order
 

@@ -1,7 +1,7 @@
 ---
 id: decide-the-compilation-selection-provenance-public-and-wire-surface
 title: Decide the compilation-selection provenance public and wire surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [record-the-compilation-selection-in-target-measurement-provenance, refuse-unknown-fact-source-provenance-schemas-in-artifact-decode]
 related: [carry-required-compilation-selection-identity-on-compile-profile-contexts, split-metal-profile-measurement-sources-by-compilation-selection, resolve-the-retained-metal-profile-measurement-invocation-authority]
@@ -598,3 +598,10 @@ Where the audit labels a verdict **False**, the verdict below applies to the aud
 ### Verdict
 
 **Ready for Tom as-is**, with the single anchor repair made here. Every audit verdict re-derives from source at this base; the frontier is complete and its eliminations hold; the adapter census supports the retirement recommendation while retention remains a real nondominated alternative; the carrier's double block is present in the graph; and every quoted ceiling, census, domain constant, and refusal text reproduces, including both live-domain perturbations re-executed independently.
+
+
+## Accepted decision — 2026-08-18
+
+Tom accepted, in the live coordination session with the orchestrator (relayed first-hand by the coordinator, reply `agreed, next decision`), **the complete packet body and the adapter retirement branch**: the separate compile-profile context/evidence vocabulary with every exact common surface, tag, domain, ownership rule, and control as packeted and reviewed (`3a265735`), and — for the one binary subdecision — **retire** the public `declare_metal_f32_subnormal_behaviour` adapter, whose only production caller becomes private with it, per the review-rerun consumer census. Generic caller-authored profiles remain supported and carry no Metal-production authentication claim.
+
+The implementation carrier remains blocked on `resolve-the-retained-metal-profile-measurement-invocation-authority` exactly as the packet's stop boundary states; this acceptance does not touch the grid/cost authority question.
