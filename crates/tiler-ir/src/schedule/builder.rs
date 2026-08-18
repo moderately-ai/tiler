@@ -21,6 +21,7 @@ use super::cooperative::{
 use super::error::{
     BlockedWorkgroupRule, ContributorCoverageRule, CooperativeTileRule, ScheduleBuildError,
     ScheduleComponent, ScheduleLimitKind, ScheduledRegionBuildError, ScheduledRegionDiagnostic,
+    VectorLaneRule,
 };
 #[cfg(test)]
 use super::handles::AccessOrdinal;
@@ -398,11 +399,26 @@ fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagn
     }
     match schedule.tail {
         TailPolicy::Exact => {
-            if schedule.launch.grid_threads != iteration_count {
+            // The exact grid population is the binding's invocation
+            // population. The scalar and blocked bindings run one invocation
+            // per iteration coordinate; the fixed-vector map runs one packet
+            // per `lanes` coordinates, and its packet arithmetic is proved in
+            // the binding match below rather than compared against a count it
+            // is deliberately not equal to.
+            if !matches!(schedule.binding, ExecutionBinding::FixedVectorMap { .. })
+                && schedule.launch.grid_threads != iteration_count
+            {
                 return Err(ScheduledRegionDiagnostic::LaunchCoverage);
             }
         }
         TailPolicy::Predicated => {
+            // The fixed-vector map admits `Exact` alone, refused under its own
+            // name before the cooperative pairing rule: a producer that asked
+            // for a predicated vector tail needs to be told the tail is the
+            // defect, not the topology.
+            if matches!(schedule.binding, ExecutionBinding::FixedVectorMap { .. }) {
+                return Err(vector_lane(VectorLaneRule::ExactTailRequired));
+            }
             if !matches!(
                 schedule.reduction,
                 ReductionTopology::CooperativeContraction { .. }
@@ -419,6 +435,54 @@ fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagn
                 ReductionTopology::CooperativeContraction { .. }
             ) {
                 return Err(blocked(BlockedWorkgroupRule::BindingRequired));
+            }
+        }
+        // The accepted fixed-vector map slice: `Exact` tail (proved above),
+        // the map-parallel topologies alone, checked `N mod W == 0`, and the
+        // accepted launch identity `work_items = N`, `grid_threads = N / W`.
+        // Packet `p`, lane `l` owns output `p * W + l`, which stays inside the
+        // domain exactly because the division is exact. Nothing here reads
+        // the numerical realization: grouping independent outputs into
+        // packets changes no operand, rounding site, or contributor order
+        // (ADR 0093 decision 2), so no permission is consulted or consumed.
+        // Nothing here consults a target either — every fact is the region's
+        // own literal `N`, `W`, and launch.
+        ExecutionBinding::FixedVectorMap { lanes } => {
+            match schedule.reduction {
+                ReductionTopology::None | ReductionTopology::Serial { .. } => {}
+                // Refused by name, not by wildcard semantics: every other
+                // topology awaits its own accepted vector boundary, and the
+                // arms are spelled out so a topology added later is a build
+                // error here rather than a silent admission.
+                ReductionTopology::MultiPass { .. }
+                | ReductionTopology::Contraction { .. }
+                | ReductionTopology::LiveContraction { .. }
+                | ReductionTopology::CooperativeWorkgroup { .. }
+                | ReductionTopology::CooperativeContraction { .. } => {
+                    return Err(vector_lane(VectorLaneRule::UnsupportedReduction));
+                }
+            }
+            let lane_count = lanes.get();
+            // Divisibility is a fact of `N` and `W` alone, decided before the
+            // launch is read so a nondivisible domain is named as such rather
+            // than as whatever launch the producer happened to state. A zero
+            // domain is a multiple of every admitted width and dispatches
+            // nothing under `zero_work_skips_dispatch`.
+            if !iteration_count.is_multiple_of(lane_count) {
+                return Err(vector_lane(VectorLaneRule::NondivisibleCoverage));
+            }
+            // The launch is checked as `grid_threads * W == N` with checked
+            // multiplication rather than as a division, so an overflowing
+            // packet product and a wrong packet count are distinct refusals.
+            // With divisibility already proved, equality holds exactly for
+            // `grid_threads = N / W` — and `grid_threads = N` with a
+            // reinterpreted builtin is exactly what the second refusal
+            // catches, for every `W >= 2` the lane type can hold.
+            let Some(covered) = schedule.launch.grid_threads.checked_mul(lane_count) else {
+                return Err(vector_lane(VectorLaneRule::PacketArithmeticOverflow));
+            };
+            if covered != iteration_count {
+                return Err(vector_lane(VectorLaneRule::PacketPopulation));
             }
         }
         ExecutionBinding::BlockedWorkgroup { block, workgroups } => {
@@ -2650,6 +2714,10 @@ const fn blocked(rule: BlockedWorkgroupRule) -> ScheduledRegionDiagnostic {
     ScheduledRegionDiagnostic::BlockedWorkgroup { rule }
 }
 
+const fn vector_lane(rule: VectorLaneRule) -> ScheduledRegionDiagnostic {
+    ScheduledRegionDiagnostic::VectorLaneBinding { rule }
+}
+
 /// Decides a cooperative tile's participant space and its agreement with the
 /// launch.
 ///
@@ -3908,6 +3976,215 @@ mod tests {
         assert_eq!(
             error.diagnostics(),
             [ScheduledRegionDiagnostic::LaunchCoverage]
+        );
+    }
+
+    /// Returns an admitted lane count for the accepted fixed-vector map tests.
+    fn admitted_lanes(width: u64) -> super::super::model::VectorLaneCount {
+        super::super::model::VectorLaneCount::new(width).expect("an admitted lane width")
+    }
+
+    /// Rebinds a builder's schedule to the fixed-vector map with the accepted
+    /// launch identity: `work_items` untouched, `grid_threads` as stated.
+    fn into_fixed_vector_map(builder: &mut ScheduledRegionBuilder, width: u64, grid_threads: u64) {
+        let schedule = builder.schedule.as_mut().expect("schedule was set");
+        schedule.binding = ExecutionBinding::FixedVectorMap {
+            lanes: admitted_lanes(width),
+        };
+        schedule.launch.grid_threads = grid_threads;
+    }
+
+    /// The accepted exact fixed-vector map admits pointwise work under a fully
+    /// strict contract: `work_items = N`, `grid_threads = N / W`, and no
+    /// numerical permission is consumed or required by grouping independent
+    /// outputs into packets.
+    #[test]
+    fn the_fixed_vector_map_admits_exact_pointwise_work_under_a_strict_contract() {
+        let mut builder = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6);
+        into_fixed_vector_map(&mut builder, 2, 3);
+        let verified = builder.build().unwrap();
+        assert_eq!(verified.region().schedule.work_items, 6);
+        assert_eq!(verified.region().schedule.launch.grid_threads, 3);
+        // The ownership population stays the scalar-output population: packet
+        // `p`, lane `l` is the one owning invocation of output `2p + l`.
+        assert_eq!(
+            verified.region().index.ownership_proof.kind,
+            OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 6 }
+        );
+        // The strict contract passes through untouched — the admission read
+        // none of it, so nothing was consumed, relaxed, or newly required.
+        let requirements = verified.requirements();
+        assert_eq!(requirements.contraction, NumericalPermission::Forbidden);
+        assert_eq!(requirements.reassociation, NumericalPermission::Forbidden);
+        assert_eq!(requirements.permutation, NumericalPermission::Forbidden);
+        assert_eq!(requirements.signed_zero, NumericalPermission::Forbidden);
+    }
+
+    /// The strict serial fold across independent outputs is the second and
+    /// last admitted pairing: the fold inside each output stays serial and
+    /// order-preserving, and the lanes group only the independent outputs.
+    #[test]
+    fn the_fixed_vector_map_admits_the_strict_serial_fold_across_independent_outputs() {
+        let mut builder = serial_reduction_builder(ScalarProgram::StrictSerialSum {
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7fc0_0000,
+            empty_identity_bits: 0,
+        });
+        into_fixed_vector_map(&mut builder, 2, 1);
+        let verified = builder.build().unwrap();
+        assert_eq!(verified.region().schedule.work_items, 2);
+        assert_eq!(verified.region().schedule.launch.grid_threads, 1);
+        assert_eq!(
+            verified.requirements().reassociation,
+            NumericalPermission::Forbidden
+        );
+        assert_eq!(
+            verified.requirements().permutation,
+            NumericalPermission::Forbidden
+        );
+    }
+
+    /// Lane counts zero and one are refused at construction, each under its
+    /// own name: invalidity and the duplicate scalar spelling are different
+    /// refusals a producer must be able to tell apart.
+    #[test]
+    fn lane_counts_zero_and_one_are_refused_at_construction_by_name() {
+        use crate::schedule::error::VectorLaneCountError;
+
+        let zero = super::super::model::VectorLaneCount::new(0).unwrap_err();
+        assert_eq!(zero, VectorLaneCountError::Zero);
+        assert_eq!(zero.rule(), "vector-lane-count-zero");
+        let one = super::super::model::VectorLaneCount::new(1).unwrap_err();
+        assert_eq!(one, VectorLaneCountError::ScalarSpelling);
+        assert_eq!(one.rule(), "vector-lane-count-scalar-spelling");
+        assert_eq!(
+            super::super::model::VectorLaneCount::new(2).unwrap().get(),
+            2
+        );
+    }
+
+    /// `N mod W != 0` is refused by its own rule: the verifier never rounds
+    /// the iteration count, masks implicitly, or peels a scalar tail.
+    #[test]
+    fn a_nondivisible_fixed_vector_domain_is_refused_by_name() {
+        let mut builder = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6);
+        into_fixed_vector_map(&mut builder, 4, 1);
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::VectorLaneBinding {
+                rule: VectorLaneRule::NondivisibleCoverage
+            }]
+        );
+    }
+
+    /// `grid_threads = N` with a reinterpreted builtin is exactly the launch
+    /// identity the acceptance forbids, and it is refused as a wrong packet
+    /// population rather than admitted for an emitter to reinterpret.
+    #[test]
+    fn a_fixed_vector_launch_keeping_the_scalar_grid_is_refused() {
+        let mut builder = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6);
+        into_fixed_vector_map(&mut builder, 2, 6);
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::VectorLaneBinding {
+                rule: VectorLaneRule::PacketPopulation
+            }]
+        );
+    }
+
+    /// An overflowing packet product is a product that does not exist, named
+    /// apart from a wrong packet count.
+    #[test]
+    fn overflowing_fixed_vector_packet_arithmetic_is_refused_by_name() {
+        let mut builder = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6);
+        into_fixed_vector_map(&mut builder, 2, u64::MAX);
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::VectorLaneBinding {
+                rule: VectorLaneRule::PacketArithmeticOverflow
+            }]
+        );
+    }
+
+    /// A wrong output-owner population keeps its existing independent refusal:
+    /// the ownership proof must still cover exactly the `N` scalar outputs.
+    #[test]
+    fn a_fixed_vector_region_with_a_wrong_owner_population_is_refused() {
+        let mut builder = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6);
+        into_fixed_vector_map(&mut builder, 2, 3);
+        builder
+            .ownership_proof
+            .as_mut()
+            .expect("proof was set")
+            .kind = OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 3 };
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::ProofReference]
+        );
+    }
+
+    /// Every unadmitted reduction/binding pairing is one refusal, reached
+    /// independently of coverage and launch arithmetic.
+    #[test]
+    fn an_unsupported_fixed_vector_reduction_pairing_is_refused_by_name() {
+        let mut builder = contraction_builder();
+        into_fixed_vector_map(&mut builder, 2, 2);
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::VectorLaneBinding {
+                rule: VectorLaneRule::UnsupportedReduction
+            }]
+        );
+    }
+
+    /// The fixed-vector map admits `Exact` alone; a predicated tail is refused
+    /// under the binding's own rule rather than as a launch-coverage failure.
+    #[test]
+    fn a_non_exact_fixed_vector_tail_is_refused_by_name() {
+        let mut builder = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6);
+        into_fixed_vector_map(&mut builder, 2, 3);
+        builder.schedule.as_mut().expect("schedule was set").tail = TailPolicy::Predicated;
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::VectorLaneBinding {
+                rule: VectorLaneRule::ExactTailRequired
+            }]
+        );
+    }
+
+    /// Perturbing the binding tag and the lane count each separates canonical
+    /// identity, isolated on a zero domain where every other schedule byte —
+    /// including the packet population — is identical.
+    #[test]
+    fn the_fixed_vector_binding_tag_and_lane_count_separate_identity() {
+        let scalar = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 0]), 0)
+            .build()
+            .unwrap();
+        let mut two = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 0]), 0);
+        into_fixed_vector_map(&mut two, 2, 0);
+        let two = two.build().unwrap();
+        let mut three = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 0]), 0);
+        into_fixed_vector_map(&mut three, 3, 0);
+        let three = three.build().unwrap();
+
+        // Binding tag: the vector region differs from the scalar one although
+        // work items, launch, accesses, program, and contract are all equal.
+        assert_ne!(
+            scalar.canonical_identity().as_bytes(),
+            two.canonical_identity().as_bytes()
+        );
+        // Lane count: two widths are two programs and never share bytes.
+        assert_ne!(
+            two.canonical_identity().as_bytes(),
+            three.canonical_identity().as_bytes()
+        );
+        // The appended arm is a tag plus a fixed-width count: the vector
+        // encoding is exactly eight bytes (the lane count) longer than the
+        // scalar one, so the widening moved no earlier field.
+        assert_eq!(
+            two.canonical_identity().as_bytes().len(),
+            scalar.canonical_identity().as_bytes().len() + 8
         );
     }
 

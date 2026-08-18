@@ -162,6 +162,7 @@ pub use error::{
     BlockedWorkgroupRule, ContributorCoverageRule, ContributorError,
     CooperativeContractionAdmission, CooperativeTileRule, ElementCountOverflow, ScheduleBuildError,
     ScheduleComponent, ScheduleLimitKind, ScheduledRegionBuildError, ScheduledRegionDiagnostic,
+    VectorLaneCountError, VectorLaneRule,
 };
 pub use handles::{
     AccessOrdinal, BoundsWitnessId, OwnershipWitnessId, PhaseId, RegionId, StagingId, SyncPointId,
@@ -171,7 +172,7 @@ pub use model::{
     ContractionAxisSource, ContributorCoverage, ContributorOrder, ContributorPartition,
     ExecutionBinding, IndexArithmetic, IndexRegion, KernelSchedule, LaunchPlan, LogicalAccess,
     OwnershipProof, OwnershipProofKind, ReductionPaddingIdentity, ReductionPass, ReductionTopology,
-    ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
+    ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy, TensorRole, VectorLaneCount,
     VerifiedScheduledRegion, axes_are_canonical, broadcast_decodes_are_replicating,
     contributor_count, cooperative_local_memory_bytes, cooperative_tile, element_count,
     live_input_extents, partial_reduction_axis, partial_reduction_shape,

@@ -247,6 +247,19 @@ pub(super) fn derive_canonical(
 }
 
 fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnostic> {
+    // The fixed-vector map is refused before any body is derived: this
+    // profile's canonical bodies are scalar, and the lane-shaped values and
+    // memory operations a packet body needs are a separate accepted boundary.
+    // Refusing here — rather than deriving the scalar body the binding does
+    // not state — is what keeps the accepted carrier non-executable instead of
+    // silently scalarized, and it covers `derive_canonical` and the
+    // refinement gate as well as direct lowering.
+    if matches!(
+        schedule.schedule.binding,
+        ExecutionBinding::FixedVectorMap { .. }
+    ) {
+        return Err(KernelDiagnostic::UnloweredExecutionBinding);
+    }
     let (reads, write) = boundary_accesses(schedule)?;
     let read = reads.first().ok_or(KernelDiagnostic::ScheduleAccessCount)?;
     // The contributors *one invocation* combines. For a partial pass that is

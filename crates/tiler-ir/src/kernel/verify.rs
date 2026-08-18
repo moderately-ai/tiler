@@ -494,6 +494,16 @@ fn verify_signature(
         ExecutionBinding::GlobalLinearInvocation | ExecutionBinding::BlockedWorkgroup { .. } => {
             vec![Builtin::GlobalInvocationIndex]
         }
+        // No builtin set realizes the fixed-vector map: its packet body needs
+        // lane-shaped KIR that is a separate accepted boundary, so a producer
+        // kernel opened against one is refused by name rather than verified
+        // against a scalar reading of the packet launch. The canonical
+        // lowering refuses the same binding in `plan`, so the refinement gate
+        // could never accept such a body either; this earlier, named refusal
+        // is what keeps the diagnostic actionable.
+        ExecutionBinding::FixedVectorMap { .. } => {
+            return Err(KernelDiagnostic::UnloweredExecutionBinding);
+        }
     };
     if cooperative_tile(&schedule.schedule.reduction).is_some() {
         expected_builtins.push(Builtin::LocalInvocationIndex);

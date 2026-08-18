@@ -13,7 +13,7 @@ use super::cooperative::{
     ContributorArrival, CooperativePhase, CooperativeTile, LocalCoordinates, ParticipantRange,
     ParticipantSpace, StagedRead, StagedSpan, StagedWrite, WorkgroupStaging,
 };
-use super::error::{ContributorError, ElementCountOverflow};
+use super::error::{ContributorError, ElementCountOverflow, VectorLaneCountError};
 use super::handles::{AccessOrdinal, BoundsWitnessId, OwnershipWitnessId, RegionId};
 use super::numerics::{
     ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
@@ -800,6 +800,53 @@ pub struct IndexRegion {
     pub numerical: NumericalRealization,
 }
 
+/// A literal fixed-vector lane count.
+///
+/// **Accepted public surface.** Tom accepted this exact spelling on 2026-08-12
+/// under [`admit-vector-lane-bindings-into-the-schedule-vocabulary`]: a checked
+/// `u64` constructor requiring at least two lanes and a `get` reader, and
+/// nothing else. There is deliberately no power-of-two rule, architecture
+/// preset, default, or independent lane-count cap.
+///
+/// [`admit-vector-lane-bindings-into-the-schedule-vocabulary`]: ../../../../../tickets/admit-vector-lane-bindings-into-the-schedule-vocabulary.md
+///
+/// The two refused widths are refused for different reasons and named
+/// separately. Zero lanes name no packet, so the width is invalid outright.
+/// One lane is the existing scalar map — packet `p` lane `0` owning output
+/// `p` *is* [`ExecutionBinding::GlobalLinearInvocation`] — and admitting it
+/// would give one schedule two spellings and two identities, which is the
+/// canonicality rule [`broadcast_decodes_are_replicating`] states for its own
+/// degenerate case.
+///
+/// The invariant is established at construction rather than re-checked by the
+/// intrinsic verifier: the field is private and every constructor path refuses
+/// the two widths, so a verifier check for them could never fail — the same
+/// reasoning [`super::ParticipantSpace`] applies to its rank bound.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct VectorLaneCount(u64);
+
+impl VectorLaneCount {
+    /// Constructs a literal lane count of at least two.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VectorLaneCountError::Zero`] for zero lanes and
+    /// [`VectorLaneCountError::ScalarSpelling`] for one, each by name.
+    pub const fn new(lanes: u64) -> Result<Self, VectorLaneCountError> {
+        match lanes {
+            0 => Err(VectorLaneCountError::Zero),
+            1 => Err(VectorLaneCountError::ScalarSpelling),
+            lanes => Ok(Self(lanes)),
+        }
+    }
+
+    /// The lane count, always at least two.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
 /// How a region binds execution coordinates to iteration coordinates.
 ///
 /// `#[non_exhaustive]` under ADR 0074 convention 5a: every out-of-crate
@@ -838,6 +885,51 @@ pub enum ExecutionBinding {
         block: Shape,
         /// Per-axis workgroup-grid extents, in the same order.
         workgroups: Shape,
+    },
+    /// One fixed-width vector packet per `lanes` consecutive iteration
+    /// coordinates of a map-parallel region.
+    ///
+    /// **Accepted public surface.** Tom accepted this exact spelling on
+    /// 2026-08-12 under
+    /// [`admit-vector-lane-bindings-into-the-schedule-vocabulary`], the first
+    /// schedule construct of [ADR 0093](../../../../docs/decisions/0093-bind-vector-lanes-to-the-map-or-the-contributor-partition.md):
+    /// a lane over the *map*, never the contributor partition, a horizontal
+    /// reduction, a scalable vector, a worker thread, or a backend instruction
+    /// choice. The name states the axis it binds.
+    ///
+    /// [`admit-vector-lane-bindings-into-the-schedule-vocabulary`]: ../../../../../tickets/admit-vector-lane-bindings-into-the-schedule-vocabulary.md
+    ///
+    /// Packet `p`, lane `l` owns scalar output `p * lanes + l`. The launch
+    /// identity follows the accepted correction: [`KernelSchedule::work_items`]
+    /// stays the `N` logical scalar outputs, and [`LaunchPlan::grid_threads`]
+    /// is the exact packet population `N / lanes`, because `grid_threads`'
+    /// invariant is the number of executing invocations. No implementation may
+    /// keep `grid_threads = N` and ask an emitter to reinterpret the builtin —
+    /// that would execute `N * lanes` lane positions under a launch identity
+    /// claiming only `N` outputs — and the intrinsic verifier refuses exactly
+    /// that spelling by its own packet-population rule.
+    ///
+    /// The first admitted combination is deliberately narrow: [`TailPolicy::Exact`]
+    /// alone, over [`ReductionTopology::None`] and [`ReductionTopology::Serial`]
+    /// — the pointwise map and the strict serial fold across independent
+    /// outputs — with checked `N mod lanes == 0`. Grouping independent outputs
+    /// into packets changes no operand, rounding site, or contributor order
+    /// (ADR 0093 decision 2), so the admission consumes no numerical
+    /// permission and the verifier never reads one to decide it. Predicated
+    /// tails, scalar epilogues, contributor partitions, and scalable maps are
+    /// separate accepted successors and do not reinterpret this variant.
+    ///
+    /// The carrier is not yet executable. Lane-shaped KIR, exact target
+    /// requirements, provider-versioned execution and numerical evidence,
+    /// artifact delivery, host qualification, and a real native `tiler-cpu` /
+    /// `tiler-cpu-runtime` approach are all absent, so the kernel lowering and
+    /// the refinement gate refuse this binding by
+    /// `unlowered-execution-binding` rather than scalarizing it. Absence of an
+    /// emission leaves the plan non-executable; it never authorizes a
+    /// fallback.
+    FixedVectorMap {
+        /// Literal lane count, checked at construction to be at least two.
+        lanes: VectorLaneCount,
     },
 }
 
@@ -2947,6 +3039,23 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
             bytes.push(0x02);
             push_shape(bytes, block);
             push_shape(bytes, workgroups);
+        }
+        // Appended binding tag, re-derived at `tiler.schedule.v6`: `0x01` and
+        // `0x02` keep their meanings and every earlier field keeps its
+        // position, so a region carrying either earlier binding encodes the
+        // same bytes it did before this arm existed and the schedule identity
+        // domain deliberately does not step. A reader that reaches `0x03` is
+        // reading a binding the earlier vocabulary could not express, never an
+        // earlier binding reinterpreted — old encodings carry only `0x01` or
+        // `0x02` at this decode-determined position. The lane count is a
+        // fixed-width big-endian `u64`, so the fields after the binding stay
+        // at determined positions and two maps differing only in width differ
+        // in these bytes; the `v4` counterexample (an append absorbed by a
+        // following length-framed field) does not arise, because nothing
+        // variable-length precedes the payload within this arm.
+        ExecutionBinding::FixedVectorMap { lanes } => {
+            bytes.push(0x03);
+            bytes.extend_from_slice(&lanes.get().to_be_bytes());
         }
     }
     bytes.extend_from_slice(&schedule.work_items.to_be_bytes());
