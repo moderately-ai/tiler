@@ -10,8 +10,8 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [metal, target-profiles, provenance, measurement, identity, decision, needs-tom]
 claimed_from: todo
-assignee: worker-invocation-authority
-lease_expires_at: 1787088563
+assignee: worker-invocation-authority-review
+lease_expires_at: 1787089576
 ---
 ## User-visible outcome
 
