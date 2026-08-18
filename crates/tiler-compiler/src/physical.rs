@@ -4059,6 +4059,16 @@ impl AdmissionEvidence {
     ) -> Option<&crate::target::feasibility::RealizedSynchronization> {
         self.proven().synchronization()
     }
+
+    /// The subgroup realization already established at compile time.
+    ///
+    /// `None` for a region that requires none. A `Some` here never stands
+    /// alone on the compile path: the same assessment that established it
+    /// minted the deferred prepared-width confirmation this evidence's
+    /// [`Self::deferred`] carries (ADR 0094 decision 7).
+    pub(crate) const fn subgroup(&self) -> Option<&crate::target::feasibility::RealizedSubgroup> {
+        self.proven().subgroup()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4654,6 +4664,7 @@ mod tests {
             honourability,
             checked.synchronization().to_vec(),
             checked.subgroup().to_vec(),
+            checked.subgroup_query().cloned(),
         )
         .expect("dropping one honourability row keeps the profile well formed");
         let proposal = super::region_proposal(strict_resources(), ArithmeticType::F32, 1)

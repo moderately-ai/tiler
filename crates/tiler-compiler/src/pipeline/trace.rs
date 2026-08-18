@@ -1670,6 +1670,39 @@ pub(super) fn record_target_admissions(
                 record_cause(cause),
             )?;
         }
+        // The one atomic subgroup realization, on the synchronization block's
+        // terms: one record for the whole subject, and no record at all when
+        // the region requires none. On the compile path this admission never
+        // stands alone — the deferred loop above already recorded the
+        // prepared-width confirmation the same assessment minted.
+        if let Some(realized) = admitted.subgroup() {
+            cause = explain_step(
+                (|| -> Result<_, CompileError> {
+                    let subject = explain.subject(SubjectKind::Region, &key)?;
+                    let event = subgroup_event(
+                        realized.subject(),
+                        crate::explain::SynchronizationOutcome::Realized {
+                            profile: crate::explain::SubjectKey::new(
+                                realized.fact().provenance().profile().key(),
+                            )?,
+                        },
+                    )?;
+                    Ok(explain.push_detail(
+                        RuleRef::builtin(format!(
+                            "target.subgroup.{}",
+                            realized.subject().transfer().key()
+                        ))?,
+                        vec![subject],
+                        event,
+                        vec![cause],
+                    )?)
+                })(),
+                ExplainStage::TargetFeasibility,
+                SubjectKind::Region,
+                &key,
+                record_cause(cause),
+            )?;
+        }
     }
     Ok(cause)
 }

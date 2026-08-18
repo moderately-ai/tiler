@@ -1661,10 +1661,19 @@ mod tests {
     /// [`assemble_plan_artifact`]: crate::assemble_plan_artifact
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
+        // **Hex step after the feasibility rule-set key v6 → v7**, the prepared
+        // subgroup-width confirmation vocabulary. Both identities fold the
+        // recorded rule-set key, so both move; descriptor length and fixed
+        // content stay, because this profile stays silent about subgroups —
+        // writing neither the subgroup-realization nor the subgroup-width-query
+        // section — and `v7` keeps `v6`'s byte length. The superseded pair was
+        // `d8877dd9284de4e6ea58ec97067008311e90f7df714459b3fd4f9fce8b70447d` /
+        // `da08d9006f071e38244d0ea765f563dce425cb934057d847a0f03bd88b5aa5b8`
+        // at the same 77,096 bytes.
         const ARTIFACT_IDENTITY: &str =
-            "d8877dd9284de4e6ea58ec97067008311e90f7df714459b3fd4f9fce8b70447d";
+            "7024654cdc51ea3a0f5d8c6c6f24ef603a9faae03fdf081bf497fee025284ac0";
         const CACHE_SUBJECT: &str =
-            "da08d9006f071e38244d0ea765f563dce425cb934057d847a0f03bd88b5aa5b8";
+            "44ce29d76c7b4d9fe188269ae898a3dcd9729db1ae256fab65086896d2e2145f";
         // **Hex step after the feasibility rule-set key v5 → v6.** Descriptor
         // length and fixed content stay at the workgroup-tree-width-policy
         // values: silent profiles write no subgroup section, and the key
