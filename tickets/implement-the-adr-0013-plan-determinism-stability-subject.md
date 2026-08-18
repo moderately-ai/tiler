@@ -1,7 +1,7 @@
 ---
 id: implement-the-adr-0013-plan-determinism-stability-subject
 title: Implement the ADR 0013 plan-determinism stability subject
-status: in-progress
+status: done
 priority: p1
 dependencies: [decide-the-adr-0013-plan-determinism-stability-subject]
 related: [decide-the-semantic-order-contract-for-relaxed-contractions]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/artifact, implementation/compiler, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, identity]
-claimed_from: todo
-assignee: worker-adr0013-carrier
-lease_expires_at: 1787084139
 ---
 ## Outcome
 
