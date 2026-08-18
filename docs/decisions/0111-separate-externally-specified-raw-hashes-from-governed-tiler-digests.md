@@ -6,7 +6,7 @@ title: "Separate externally specified raw hashes from governed Tiler digests"
 topics: ["digest", "identity", "conformance", "testing", "public-boundary"]
 catalog_group: "artifacts-build-toolchains"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "implemented"
 applies_to: ["tiler.contract.architecture", "tiler.contract.artifact-abi"]
 evidence: ["tiler.research.scheduling.first-metal-contraction-realizations", "tiler.research.artifacts.manifest-fixed-content-growth"]
 depends_on: ["ADR-0074", "ADR-0104", "ADR-0106"]
@@ -15,7 +15,9 @@ ticket: "route-the-two-hand-rolled-test-hashes-through-the-digest-crate-or-recor
 
 # 0111: Separate externally specified raw hashes from governed Tiler digests
 
-**Status:** accepted by Tom on 2026-08-12 in the live coordination session. The implementation remains owned by [`route-the-two-hand-rolled-test-hashes-through-the-digest-crate-or-record-why-not`](../../tickets/route-the-two-hand-rolled-test-hashes-through-the-digest-crate-or-record-why-not.md).
+**Status:** accepted by Tom on 2026-08-12 in the live coordination session; implemented on 2026-08-18 by [`route-the-two-hand-rolled-test-hashes-through-the-digest-crate-or-record-why-not`](../../tickets/route-the-two-hand-rolled-test-hashes-through-the-digest-crate-or-record-why-not.md), which records the per-site evidence and the demonstrated perturbations.
+
+**Implementation note — 2026-08-18.** Everything decided below is in force. `ExternalDigest` and `DigestAlgorithm::digest_external_record` are the public surface; both result paths run one private `compress` dispatch, so the workspace holds one SHA implementation and no consumer depends on `sha2`. All four copies are deleted and every caller spells `Sha256`. Retained external digest strings are byte-identical. Two mechanisms hold the boundary that prose cannot: `ExternalDigest` carries `compile_fail` doctests for the absent wire constructor, both `From` directions, the cross-type comparison, and the return-type substitution; and `crates/tiler-digest/tests/one_sha_implementation.rs` censuses the workspace member sources for any second SHA implementation or `sha2` reach, and the four migrated callers for the governed alias and the empty-domain spelling. The direct edges this decision requires are declared and appear in `docs/architecture.md`'s live block.
 
 ## Context
 

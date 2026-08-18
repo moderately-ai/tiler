@@ -66,6 +66,14 @@ One hard requirement travels with the first anti-goal because the first content 
 
 The declared set is the vertical a run crosses, and `tiler-cache` and `tiler-digest` are reached transitively and deliberately not named. That is the same discipline ADR 0081 item 2 applied when it kept `tiler-ir` off the loader's row: recording a transitive reach as a direct edge claims a dependency the source does not have.
 
+**Corrected on 2026-08-18 — neither crate is transitive-only any more, and the discipline this paragraph states is what required both changes.** The sentence describes the source as it stood at acceptance, and both halves have since moved.
+
+`tiler-cache` moved first and independently of this ticket. `crates/tiler-conformance/Cargo.toml` declares it and states why: `src/publication.rs` names `ExpansionCache`, because `accept_or_publish_metal_plan` is the only public path from a checked plan to a verified artifact and it takes a cache. That edge was already declared before this correction was written; the sentence above simply had not been revisited.
+
+`tiler-digest` moved when [ADR 0111](0111-separate-externally-specified-raw-hashes-from-governed-tiler-digests.md) was implemented. `crates/tiler-conformance/src/envelope.rs` now names `DigestAlgorithm::digest_external_record` to reproduce the L3 realization probe's retained raw `CC_SHA256` records, replacing a SHA-256 implementation this crate carried locally. ADR 0111 states the rule that decides the edge — a source file that names a crate's public item owns a direct Cargo edge — and records that it deliberately corrects this statement.
+
+So the correction *applies* the discipline above rather than relaxing it. Both reaches stopped being transitive, and continuing to omit the edges would have claimed the source does not name what it names, which is the same error in the opposite direction from the one the paragraph warns about. Both are normal rather than development edges for the reason item 2 gives: each calling path runs from what the crate is for rather than from tests alone. The live dependency graph is in [`docs/architecture.md`](../architecture.md), which carries the same correction; this record's accepted text above is retained as written.
+
 The empty reverse-dependent set is what keeps the normal edges from being a cost anyone pays, and it is therefore part of the decision rather than an observation about today's manifests. A crate that acquired a reverse dependent would be exporting a conformance harness as a library, which is a public-boundary decision under ADR 0075 and not something an edge may arrive at by accident.
 
 ### 3. The frontend is unreachable from here, and that was verified rather than assumed

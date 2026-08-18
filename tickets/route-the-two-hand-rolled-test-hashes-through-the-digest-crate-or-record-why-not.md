@@ -40,6 +40,73 @@ Tom accepted [ADR 0111](../docs/decisions/0111-separate-externally-specified-raw
 
 **Id note.** The stable ticket id still says “two”. Keep it for graph identity; the title and body carry the corrected population.
 
+## Re-audit at the implementation base `f15a1e40` — 2026-08-18
+
+Every Fact above was re-read at this ticket's own base before any edit. Seven verified, one imprecise and repaired.
+
+- **“False population and close condition” — verified.** Still exactly four handwritten copies in Cargo-workspace members, and no fifth appeared in the week since the audit. `grep -rnE "0x6a09_?e667|0x428a_?2f98" --include="*.rs" crates/ prototypes/` returned the four named files and nothing else. **The audit's own grep would have missed them.** The dispatched command was `grep -rn "0x6a09e667\|sha256\|Sha256" crates/ prototypes/ --include="*.rs" -l`; the four copies spell the initial value `0x6a09_e667` with a digit separator, so only the `sha256` alternative matched them, while `0x6a09e667` matched nothing under `crates/` at all. The separator-tolerant pattern is what the delivered census uses, for exactly this reason.
+- **“Verified common subject” — verified.** All four hash `to_le_bytes()` of `f32` bit patterns in row-major order and compare the lowercase result with a retained `CC_SHA256` record.
+- **“Verified producer distinction” — verified.** Unchanged; centralizing the algorithm did not merge any result producer with its expected value.
+- **“False future-compatibility premise” — verified as stated.** `DigestAlgorithm::GOVERNED` is `Self::Sha256` at `crates/tiler-digest/src/lib.rs`, anchor `pub const GOVERNED: Self`, documented “The algorithm this build of the workspace writes.” Every migrated caller names `Sha256`.
+- **“Verified authority conflict” — verified.** Confirmed at the source: before this work `tiler-digest` exposed only `digest` and `digest_qualified`, and its only `b""` uses were test fixtures.
+- **“Verified reachability with a contract correction” — verified, and both corrections were owed.** `contraction_conformance` is behind `#[cfg(test)] mod contraction_conformance;` in `crates/tiler-compiler/src/governed.rs`; the reference copy is an integration test. Conformance and the prototype use theirs from device-reaching paths. ADR 0106 and `docs/architecture.md` both carried the transitive-only statement and both now carry dated corrections.
+- **“Verified identity consequence” — verified and preserved.** No retained string, artifact schema, digest tag, identity domain, cache key, or canonical encoding moved. The domain censuses are untouched; `tiler-digest` still owns no governed domain.
+- **“Verified independent byte-order check” — verified.** `crates/tiler-conformance/src/envelope/tests.rs`, anchor `the_digest_helper_reproduces_the_published_vectors`, still checks little-endian `1.0f32`, rejects the big-endian spelling, and rejects element reordering. It now runs against the shared path unmodified.
+- **“Imprecise residual description” — IMPRECISE, repaired.** The audit says “the three standalone spike exceptions”. The true standalone population is **eleven source files**: two carry handwritten SHA-256 (`spikes/artifacts/artifact_envelope.rs`, `spikes/cache/cache_harness.rs`, neither inside a Cargo package), and **nine** reach `sha2` directly across **seven** spike packages — `spikes/artifacts/decoder-allocation` (harness and package), `spikes/target-profiles/metal-subgroup-width-route-gate`, `spikes/target-profiles/metal-thread-execution-width`, `spikes/program-planning/qwen3-checkpoint-f32-inputs`, `spikes/program-planning/physical-frontier-budget-calibration`, and `spikes/program-planning/reduction-partition-calibration` (four files). The audit named only the decoder-allocation harness among the `sha2` users. The direction of the error matters: the residual is **larger** than recorded, so a reader taking “three” as the exception budget would have found unexplained hits. None are Cargo-workspace members, so ADR 0111's exclusion still holds for all eleven and the delivered census reaches none of them by construction rather than by exclusion.
+
+Reproduce the repaired residual count:
+
+```sh
+grep -rlE "0x6a09_?e667" spikes/ --include="*.rs"        # 2
+grep -rlE "use sha2|sha2::" spikes/ --include="*.rs"     # 9
+grep -rl sha2 spikes/ --include="Cargo.toml"             # 7
+```
+
+## Delivery — 2026-08-18, commit `34425c7f`
+
+### Digest authority
+
+`DigestAlgorithm::compress` is now the one private dispatch; `digest_qualified` and the new `digest_external_record` both run it and differ only in the result they wrap, so no second SHA implementation exists and no consumer depends on `sha2`. `ExternalDigest` is opaque, fixed width, and exposes `as_bytes` and a lowercase `label` only — no public constructor, `from_wire`, `From`/`Into`, comparison bridge, or serialization with `Digest`. The published FIPS-vector reproduction moved onto the external path; the governed-domain, qualified-preimage, tag, padding-branch, padding-residue, and throughput tests stayed on their own subjects. Three tests were added at the owning surface: the two paths agree byte for byte on the same message (the only place a second implementation would be visible, since the result types cannot be compared), the external rendering is fixed-width lowercase, and a reproduction depends on its bytes.
+
+### Site-by-site migration
+
+Every site keeps its `to_le_bytes()` pre-image and its retained strings verbatim; only the algorithm source changed.
+
+| site | edge added | evidence run |
+| --- | --- | --- |
+| `crates/tiler-compiler/src/governed/contraction_conformance.rs` | dev | `the_contraction_agrees_with_the_reference_and_the_retained_measurement` + 3 others: 4 passed |
+| `crates/tiler-reference/tests/contraction_profile_cells.rs` | dev | 9 passed with `--run-ignored all`, including `the_staged_oracle_reproduces_every_retained_profile_digest` — all six retained cell digests reproduced |
+| `crates/tiler-conformance/src/envelope.rs` | normal | 83 passed, including the byte-order and element-order case |
+| `prototypes/serial-sum-run/src/proof.rs` | normal | 46 passed; the run-time `require_digest_vectors` check is retained, because a proof binary runs on a device host where the test suite need not have |
+
+The two crate-test FIPS assertions and the prototype's run-time vector check were kept rather than deleted. They no longer duplicate the algorithm's suite — they pin the *selection*: that the variant this caller named is FIPS SHA-256, which is a different claim from `tiler-digest`'s claim about its implementation.
+
+### Drift check
+
+`crates/tiler-digest/tests/one_sha_implementation.rs`. It parses the workspace member array from the root manifest (floor of 16 members, each verified to hold a manifest), walks every `.rs` file under those members (floor of 200; **460** found, 458 outside `tiler-digest`), and matches a comment-stripped, whitespace-free view. It refuses any SHA-256 constant or `sha2` reach outside `tiler-digest`, and separately requires each of the four migrated callers to name `digest_external_record` and to name neither `GOVERNED` nor `digest(b""` in code. It lives in `tiler-digest` rather than beside the other workspace censuses in `crates/tiler/tests/` because the one-authority property is this crate's own; it reads sibling sources as files and adds no dependency edge.
+
+### Documents
+
+ADR 0111 `implementation_status` → `implemented`, with a dated implementation note. ADR 0106 §2 keeps its accepted text and gains a dated correction. `docs/architecture.md`'s dependency block now matches `cargo metadata` exactly for all sixteen members, its ADR 0111 paragraph moved from “not yet implemented” to implemented, and its conformance paragraph carries the same correction.
+
+**A second stale claim was found while correcting the first.** ADR 0106 and `docs/architecture.md` both said `tiler-cache` was reached transitively and not named, and both were already false before this ticket: `crates/tiler-conformance/Cargo.toml` declares `tiler-cache` and explains why (`src/publication.rs` names `ExpansionCache`). The architecture dependency block also omitted `tiler-cache` from the `tiler-conformance` row. Both are corrected here because the correction to the same sentence could not be written truthfully otherwise.
+
+### Perturbations, with the text each produced
+
+Each was applied to the subject and reverted; every quoted line is from the run.
+
+1. **`to_le_bytes()` → `to_be_bytes()`, conformance byte-order case.** `envelope::tests::the_digest_helper_reproduces_the_published_vectors` failed: `assertion left == right failed / left: "de620abd6d3615746360c1d15ce3a56291236d37424124054a49d25e947ffc4d" / right: "e00e5eb9444182f352323374ef4e08ebcb784725fdd4fd612d7730540b3e0c8c"`.
+2. **`to_le_bytes()` → `to_be_bytes()`, compiler retained comparison.** `w_decode_kv: the reference does not reproduce the retained `direct` result / left: "7d252713146f43b9794765597e8dd59ad662e5576331ba3848673e4570368709" / right: "79810ce471cbd6cd05e5c0c30ea6023e74b997bd5b349212b71cd4a23fe8701f"` — the right-hand side is the retained record, unchanged.
+3. **Governed non-empty-domain substituted for the external path** (`GOVERNED.digest(b"tiler.probe.result\0", ...)`). The compiler's retained comparison failed at its selection pin first: `the digest helper reproduces the published empty-string vector / left: "0244549d475dad6ba7fbbbe896015a1dd555d749474041199e3e10ff54036e9c" / right: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"`.
+4. **This same perturbation initially passed the census, and that is why the matcher changed.** rustfmt wraps the call, so `GOVERNED` and `.digest` land on different lines and the single-line anchor spanned neither — the AGENTS.md failure mode for a matcher that cannot see a construct that wraps. After moving to a whitespace-free comment-stripped view it fails: `crates/tiler-compiler/...: reproduces an externally specified raw digest record and must reach it through DigestAlgorithm::digest_external_record; it no longer names that path`.
+5. **Each census assertion perturbed separately**, so no one of them is carrying the others:
+   - alias, external path retained: `crates/tiler-conformance/src/envelope.rs names DigestAlgorithm::GOVERNED in code, which means the algorithm this build of Tiler writes.`
+   - empty domain, no alias: `crates/tiler-reference/tests/contraction_profile_cells.rs digests under the empty domain, which spells a raw external subject as a governed Tiler one`.
+   - implementation constant in an unrelated member: `the Cargo workspace must hold exactly one SHA implementation, in crates/tiler-digest, and these source(s) reach or transcribe another: crates/tiler-cache/src/lib.rs contains 0x6a09_e667`.
+   - direct `sha2` reach: same assertion, `crates/tiler-cache/src/lib.rs contains sha2::`.
+   - member array truncated: both tests failed with `the root manifest parsed to 1 workspace member(s), which is fewer than the sixteen this census was written against`.
+6. **The missing conversion is compiled, not documented.** Adding `impl From<ExternalDigest> for Digest` made the doctest report `Test compiled successfully, but it's marked compile_fail.` Two intended error codes were also wrong on first writing and said so loudly — `Some expected error codes were not found: ["E0603"]` (the real code is `E0423`) and `["E0277"]` for the comparison case (the real code is `E0308`, because `Digest` implements `PartialEq` only against itself). Both are corrected and pinned.
+
 ## Required delivery
 
 ### Digest authority

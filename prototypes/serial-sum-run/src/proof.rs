@@ -174,6 +174,7 @@ use tiler_compiler::session::{
     PlanAlternative, compile,
 };
 use tiler_compiler::target::{TargetRequest, TargetRequestError};
+use tiler_digest::DigestAlgorithm;
 use tiler_ir::program::abi::{AbiRoot, ExprNode};
 use tiler_ir::program::{ValueRole, VerifiedKernelProgram};
 use tiler_ir::schedule::ContributorPartition;
@@ -4312,176 +4313,33 @@ fn result_digest(bits: &[u32]) -> String {
     sha256_hex(&bytes)
 }
 
-/// FIPS 180-4 SHA-256 over a byte string, as lowercase hexadecimal.
+/// Reproduces the retained record's raw SHA-256 over `message`.
 ///
-/// **Written out here rather than reached for, and the reason is scope rather
-/// than preference.** `sha2` is a workspace dependency and `tiler-artifact` —
-/// which this crate already takes — owns the governed artifact digest, but that
-/// API digests under a mandatory domain separator and cannot express the raw
-/// pre-image the probe hashed, while adding `sha2` to this manifest would edit
-/// `Cargo.lock`, which this work does not own.
-/// `crates/tiler-compiler/src/governed/contraction_conformance.rs` reached the
-/// same conclusion for the same reason and this is the same implementation.
+/// **Reached rather than written out, and the result type is what makes that
+/// safe.** The retained `result_sha256` is an externally specified raw record —
+/// the realization probe's host handed the result buffer to `CC_SHA256` — so it
+/// carries no Tiler domain and the governed entry point cannot express its
+/// pre-image. [ADR 0111](../../../docs/decisions/0111-separate-externally-specified-raw-hashes-from-governed-tiler-digests.md)
+/// gave that subject its own opaque result on the one algorithm authority and
+/// deleted the SHA-256 implementation this module used to carry.
 ///
-/// It is checked against the two published FIPS 180-4 vectors before any
+/// The variant is spelled `Sha256` rather than [`DigestAlgorithm::GOVERNED`]
+/// deliberately: `GOVERNED` means the algorithm this build of Tiler writes,
+/// while the retained record means SHA-256 permanently, so routing old evidence
+/// through the alias would let a future writer-policy change reinterpret it.
+///
+/// It is still checked against the two published FIPS 180-4 vectors before any
 /// comparison rests on it, by `the_digest_helper_reproduces_the_published_vectors`
-/// in this module's tests and again at run time in [`prove_contraction`]: a digest function that
-/// silently computed something else would make every retained-value comparison
-/// disagree, and a reader would have no way to tell that from a device defect.
-///
+/// in this module's tests and again at run time in [`prove_contraction`]. The
+/// run-time half is the one that does not become redundant: this is a proof
+/// binary an operator runs on a device host, where the workspace's test suite
+/// need not have run at all, and a digest function computing something else would
+/// make every retained-value comparison disagree in a way a reader could not tell
+/// from a device defect.
 fn sha256_hex(message: &[u8]) -> String {
-    use std::fmt::Write as _;
-
-    const K: [u32; 64] = [
-        0x428a_2f98,
-        0x7137_4491,
-        0xb5c0_fbcf,
-        0xe9b5_dba5,
-        0x3956_c25b,
-        0x59f1_11f1,
-        0x923f_82a4,
-        0xab1c_5ed5,
-        0xd807_aa98,
-        0x1283_5b01,
-        0x2431_85be,
-        0x550c_7dc3,
-        0x72be_5d74,
-        0x80de_b1fe,
-        0x9bdc_06a7,
-        0xc19b_f174,
-        0xe49b_69c1,
-        0xefbe_4786,
-        0x0fc1_9dc6,
-        0x240c_a1cc,
-        0x2de9_2c6f,
-        0x4a74_84aa,
-        0x5cb0_a9dc,
-        0x76f9_88da,
-        0x983e_5152,
-        0xa831_c66d,
-        0xb003_27c8,
-        0xbf59_7fc7,
-        0xc6e0_0bf3,
-        0xd5a7_9147,
-        0x06ca_6351,
-        0x1429_2967,
-        0x27b7_0a85,
-        0x2e1b_2138,
-        0x4d2c_6dfc,
-        0x5338_0d13,
-        0x650a_7354,
-        0x766a_0abb,
-        0x81c2_c92e,
-        0x9272_2c85,
-        0xa2bf_e8a1,
-        0xa81a_664b,
-        0xc24b_8b70,
-        0xc76c_51a3,
-        0xd192_e819,
-        0xd699_0624,
-        0xf40e_3585,
-        0x106a_a070,
-        0x19a4_c116,
-        0x1e37_6c08,
-        0x2748_774c,
-        0x34b0_bcb5,
-        0x391c_0cb3,
-        0x4ed8_aa4a,
-        0x5b9c_ca4f,
-        0x682e_6ff3,
-        0x748f_82ee,
-        0x78a5_636f,
-        0x84c8_7814,
-        0x8cc7_0208,
-        0x90be_fffa,
-        0xa450_6ceb,
-        0xbef9_a3f7,
-        0xc671_78f2,
-    ];
-    let mut state: [u32; 8] = [
-        0x6a09_e667,
-        0xbb67_ae85,
-        0x3c6e_f372,
-        0xa54f_f53a,
-        0x510e_527f,
-        0x9b05_688c,
-        0x1f83_d9ab,
-        0x5be0_cd19,
-    ];
-    let mut padded = message.to_vec();
-    padded.push(0x80);
-    while padded.len() % 64 != 56 {
-        padded.push(0);
-    }
-    let bit_length = u64::try_from(message.len())
-        .expect("a message length fits in u64")
-        .wrapping_mul(8);
-    padded.extend_from_slice(&bit_length.to_be_bytes());
-
-    let (blocks, remainder) = padded.as_chunks::<64>();
-    debug_assert!(
-        remainder.is_empty(),
-        "the padding makes the length a multiple of 64"
-    );
-    for block in blocks {
-        let mut schedule = [0_u32; 64];
-        let (words, _) = block.as_chunks::<4>();
-        for (slot, bytes) in schedule.iter_mut().zip(words) {
-            *slot = u32::from_be_bytes(*bytes);
-        }
-        for index in 16..64 {
-            let s0 = schedule[index - 15].rotate_right(7)
-                ^ schedule[index - 15].rotate_right(18)
-                ^ (schedule[index - 15] >> 3);
-            let s1 = schedule[index - 2].rotate_right(17)
-                ^ schedule[index - 2].rotate_right(19)
-                ^ (schedule[index - 2] >> 10);
-            schedule[index] = schedule[index - 16]
-                .wrapping_add(s0)
-                .wrapping_add(schedule[index - 7])
-                .wrapping_add(s1);
-        }
-        // The eight working variables, indexed rather than named: the standard
-        // calls them `a` through `h`, and eight single-letter bindings is a
-        // readability rule this workspace holds even where the source it
-        // transcribes does not.
-        let mut working = state;
-        for index in 0..64 {
-            let s1 = working[4].rotate_right(6)
-                ^ working[4].rotate_right(11)
-                ^ working[4].rotate_right(25);
-            let choice = (working[4] & working[5]) ^ (!working[4] & working[6]);
-            let temp1 = working[7]
-                .wrapping_add(s1)
-                .wrapping_add(choice)
-                .wrapping_add(K[index])
-                .wrapping_add(schedule[index]);
-            let s0 = working[0].rotate_right(2)
-                ^ working[0].rotate_right(13)
-                ^ working[0].rotate_right(22);
-            let majority =
-                (working[0] & working[1]) ^ (working[0] & working[2]) ^ (working[1] & working[2]);
-            let temp2 = s0.wrapping_add(majority);
-            working = [
-                temp1.wrapping_add(temp2),
-                working[0],
-                working[1],
-                working[2],
-                working[3].wrapping_add(temp1),
-                working[4],
-                working[5],
-                working[6],
-            ];
-        }
-        for (slot, value) in state.iter_mut().zip(working) {
-            *slot = slot.wrapping_add(value);
-        }
-    }
-    let mut hex = String::with_capacity(64);
-    for byte in state.iter().flat_map(|word| word.to_be_bytes()) {
-        let _ = write!(hex, "{byte:02x}");
-    }
-    hex
+    DigestAlgorithm::Sha256
+        .digest_external_record(message)
+        .label()
 }
 
 /// Proves the published two-input contraction end to end through the accepted route.
@@ -5057,7 +4915,7 @@ fn run() -> Result<(), ProofError> {
     Ok(())
 }
 
-/// Requires the local digest helper to reproduce the published SHA-256 vectors.
+/// Requires this build's digest path to reproduce the published SHA-256 vectors.
 ///
 /// A comparison against a sixty-four character constant passes trivially if the
 /// bytes never reach it, and fails opaquely if the function hashing them is not
@@ -5240,7 +5098,7 @@ enum ProofError {
         embedded: String,
         retained: &'static str,
     },
-    /// The local SHA-256 helper does not reproduce a published FIPS 180-4 vector.
+    /// This build's SHA-256 path does not reproduce a published FIPS 180-4 vector.
     ///
     /// Separate from every comparison that uses it: a digest function computing
     /// something other than SHA-256 makes every retained-value comparison fail,

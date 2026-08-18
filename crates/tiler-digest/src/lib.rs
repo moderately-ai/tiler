@@ -60,6 +60,32 @@
 //! module; both are qualified digests and say so now, and the general form is
 //! gone rather than promoted across a crate boundary.
 //!
+//! # Two result subjects, and why the type system separates them
+//!
+//! [ADR 0111](../../../docs/decisions/0111-separate-externally-specified-raw-hashes-from-governed-tiler-digests.md)
+//! admits a second *subject* here without admitting a second algorithm. Some
+//! evidence this workspace compares against was digested by an outside
+//! authority — the L3 realization probe's host handed a result buffer to
+//! `CC_SHA256` and recorded the lowercase result — and reproducing that record
+//! means hashing exactly the bytes it hashed, with no Tiler domain in front of
+//! them. Prefixing a `tiler.*` domain would ask a different question and
+//! invalidate every retained comparison.
+//!
+//! The tempting spelling, `GOVERNED.digest(b"", bytes)`, is refused for two
+//! independent reasons. It publishes the empty byte string as an ordinary
+//! domain on an API whose governed subjects all carry a real one, which is the
+//! discipline that entry point exists to hold. And [`DigestAlgorithm::GOVERNED`]
+//! means *the algorithm this build writes*, while the retained record means
+//! SHA-256 permanently — so a future writer-policy change would silently
+//! reinterpret old evidence.
+//!
+//! [`DigestAlgorithm::digest_external_record`] therefore returns
+//! [`ExternalDigest`], which is a different type from [`Digest`] and converts to
+//! it in neither direction. The two travel through the same private
+//! implementation dispatch and diverge only at the result, so there is one SHA
+//! implementation in this workspace and still no way to hand a raw external
+//! reproduction to an API documented to carry governed Tiler content.
+//!
 //! # The domain-separation discipline
 //!
 //! A domain is a prefix of the pre-image, so separation rests on no admitted
@@ -161,6 +187,45 @@ impl DigestAlgorithm {
     /// distinguished them positionally.
     #[must_use]
     pub fn digest_qualified(self, domain: &[u8], qualifiers: &[&[u8]], bytes: &[u8]) -> Digest {
+        Digest(self.compress(domain, qualifiers, bytes))
+    }
+
+    /// Reproduces an externally specified raw digest record over `bytes`.
+    ///
+    /// The pre-image is `bytes` and nothing else: no domain, no qualifier, no
+    /// framing. That is what the subject requires — an outside authority
+    /// digested exactly these bytes and published the result, and reproducing
+    /// its record means asking its question rather than a Tiler one.
+    ///
+    /// **Name the variant the external record names.** The retained `CC_SHA256`
+    /// corpus this workspace compares against says SHA-256, so its callers spell
+    /// [`DigestAlgorithm::Sha256`]. [`DigestAlgorithm::GOVERNED`] is *not* that
+    /// authority even while it aliases the same variant: it means the algorithm
+    /// this build of Tiler writes, so calling through it would let a future
+    /// writer-policy change silently reinterpret evidence an outside record
+    /// already fixed. Spelling the variant makes that case a compile error
+    /// instead — the exact algorithm either remains available or the caller
+    /// stops building.
+    ///
+    /// The result is an [`ExternalDigest`] rather than a [`Digest`] because it
+    /// is not a Tiler identity: it names no governed subject, carries no domain,
+    /// and may not flow into an API documented to carry governed content.
+    #[must_use]
+    pub fn digest_external_record(self, bytes: &[u8]) -> ExternalDigest {
+        ExternalDigest(self.compress(&[], &[], bytes))
+    }
+
+    /// The one implementation dispatch both public result paths run.
+    ///
+    /// Private because the pre-image it accepts is unconstrained, and an
+    /// unconstrained pre-image is exactly what the public surface refuses to
+    /// express: a caller that could pass any domain, any qualifiers, and any
+    /// body would carry the unambiguity obligation the two governed shapes hold
+    /// in their signatures. Each public entry point discharges that obligation
+    /// before reaching here — [`Self::digest_qualified`] by requiring
+    /// fixed-width qualifiers ahead of one trailing run, and
+    /// [`Self::digest_external_record`] by admitting no prefix at all.
+    fn compress(self, domain: &[u8], qualifiers: &[&[u8]], bytes: &[u8]) -> [u8; DIGEST_BYTES] {
         match self {
             Self::Sha256 => {
                 let mut state = sha2::Sha256::new();
@@ -169,7 +234,7 @@ impl DigestAlgorithm {
                     state.update(qualifier);
                 }
                 state.update(bytes);
-                Digest(state.finalize().into())
+                state.finalize().into()
             }
         }
     }
@@ -207,19 +272,9 @@ impl Digest {
     }
 
     /// Returns the lowercase hexadecimal rendering, for diagnostics and fixtures.
-    ///
-    /// Indexed from a sixteen-character table rather than converted, so the
-    /// four-bit value that selects a character cannot be out of range and there
-    /// is no unreachable failure to document or to handle.
     #[must_use]
     pub fn label(&self) -> String {
-        const DIGITS: [u8; 16] = *b"0123456789abcdef";
-        let mut rendered = String::with_capacity(DIGEST_BYTES * 2);
-        for byte in self.0 {
-            rendered.push(char::from(DIGITS[usize::from(byte >> 4)]));
-            rendered.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
-        }
-        rendered
+        label_of(&self.0)
     }
 }
 
@@ -232,19 +287,171 @@ impl fmt::Debug for Digest {
     }
 }
 
+/// Opaque fixed-width reproduction of an externally specified raw digest record.
+///
+/// Derived by [`DigestAlgorithm::digest_external_record`] alone. There is no
+/// public constructor, so no caller can assemble one naming bytes that were
+/// never hashed — the same rule [`Digest`] holds (ADR 0074 convention 2).
+///
+/// # What this type refuses, and why the refusals are the type
+///
+/// This is *not* a Tiler identity. It reproduces bytes an outside authority
+/// digested and published; its provenance and trustworthiness are that
+/// authority's responsibility, and nothing here makes the record authentic.
+/// [ADR 0111](../../../docs/decisions/0111-separate-externally-specified-raw-hashes-from-governed-tiler-digests.md)
+/// therefore keeps the two subject classes mutually exclusive in the public type
+/// system rather than in prose, and the whole mechanism is what is *absent*:
+/// there is no `from_wire`, no `From` or `Into` in either direction, no
+/// cross-type comparison, and no serialization pairing it with [`Digest`].
+///
+/// A missing conversion is only a boundary if it stays missing, so each refusal
+/// is compiled. There is no wire constructor (`E0599`):
+///
+/// ```compile_fail,E0599
+/// use tiler_digest::ExternalDigest;
+/// let claimed = ExternalDigest::from_wire([0_u8; 32]);
+/// ```
+///
+/// The tuple field is private, so the type cannot be built directly either
+/// (`E0423`):
+///
+/// ```compile_fail,E0423
+/// use tiler_digest::ExternalDigest;
+/// let claimed = ExternalDigest([0_u8; 32]);
+/// ```
+///
+/// A governed digest does not convert into one (`E0277`):
+///
+/// ```compile_fail,E0277
+/// use tiler_digest::{DigestAlgorithm, ExternalDigest};
+/// let governed = DigestAlgorithm::GOVERNED.digest(b"tiler.a\0", b"payload");
+/// let external: ExternalDigest = governed.into();
+/// ```
+///
+/// Nor does one convert into a governed digest (`E0277`):
+///
+/// ```compile_fail,E0277
+/// use tiler_digest::{Digest, DigestAlgorithm};
+/// let external = DigestAlgorithm::Sha256.digest_external_record(b"payload");
+/// let governed: Digest = external.into();
+/// ```
+///
+/// The two cannot be compared, so a retained external record can never be
+/// mistaken for agreement with a governed subject (`E0308` — [`Digest`]
+/// implements `PartialEq` only against itself, so the right operand is a type
+/// error rather than a missing-trait one):
+///
+/// ```compile_fail,E0308
+/// use tiler_digest::DigestAlgorithm;
+/// let governed = DigestAlgorithm::GOVERNED.digest(b"tiler.a\0", b"payload");
+/// let external = DigestAlgorithm::Sha256.digest_external_record(b"payload");
+/// let _ = governed == external;
+/// ```
+///
+/// And the external entry point cannot be bound where a governed digest is
+/// expected (`E0308`):
+///
+/// ```compile_fail,E0308
+/// use tiler_digest::{Digest, DigestAlgorithm};
+/// let governed: Digest = DigestAlgorithm::Sha256.digest_external_record(b"payload");
+/// ```
+///
+/// What the type *does* admit is the observation an evidence consumer needs —
+/// exact bytes and a lowercase label — and comparison with another reproduction
+/// of the same kind:
+///
+/// ```
+/// use tiler_digest::DigestAlgorithm;
+/// let external = DigestAlgorithm::Sha256.digest_external_record(b"abc");
+/// assert_eq!(
+///     external.label(),
+///     "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+/// );
+/// assert_eq!(external, DigestAlgorithm::Sha256.digest_external_record(b"abc"));
+/// assert_eq!(external.as_bytes().len(), tiler_digest::DIGEST_BYTES);
+/// ```
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ExternalDigest([u8; DIGEST_BYTES]);
+
+impl ExternalDigest {
+    /// Returns the exact reproduced bytes.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; DIGEST_BYTES] {
+        &self.0
+    }
+
+    /// Returns the lowercase hexadecimal rendering.
+    ///
+    /// Lowercase because that is the spelling the external records this
+    /// reproduces are written in, so a retained string compares directly.
+    #[must_use]
+    pub fn label(&self) -> String {
+        label_of(&self.0)
+    }
+}
+
+impl fmt::Debug for ExternalDigest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("ExternalDigest")
+            .field(&self.label())
+            .finish()
+    }
+}
+
+/// Renders digest bytes as lowercase hexadecimal.
+///
+/// Indexed from a sixteen-character table rather than converted, so the four-bit
+/// value that selects a character cannot be out of range and there is no
+/// unreachable failure to document or to handle.
+///
+/// Shared by both result types deliberately. The rendering is a property of the
+/// width rather than of the subject, and two copies could only ever differ —
+/// which, for [`ExternalDigest`], would mean a retained comparison failing on
+/// case or padding rather than on the bytes it is about.
+fn label_of(bytes: &[u8; DIGEST_BYTES]) -> String {
+    const DIGITS: [u8; 16] = *b"0123456789abcdef";
+    let mut rendered = String::with_capacity(DIGEST_BYTES * 2);
+    for byte in bytes {
+        rendered.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        rendered.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    rendered
+}
+
 #[cfg(test)]
 mod tests {
-    use super::DigestAlgorithm;
+    use super::{DIGEST_BYTES, DigestAlgorithm, ExternalDigest};
 
-    /// Digests one byte run under the empty domain, unqualified.
+    /// Reproduces one externally specified raw record, as a lowercase label.
+    ///
+    /// **This is the entry point a published FIPS vector belongs on**, and it
+    /// moved here when [`ExternalDigest`] was admitted. A published vector is
+    /// precisely an externally specified raw digest over an exact byte run: it
+    /// carries no Tiler domain and its algorithm is fixed by the publisher
+    /// rather than by this build's writer policy. Comparing it used to require
+    /// spelling the empty domain on the governed entry point — the one
+    /// convention ADR 0111 refuses to publish — so the case that most needed a
+    /// raw path was the one arguing hardest for an empty-domain habit.
     ///
     /// Deliberately the crate's own entry point and not the internals of
     /// whatever implements SHA-256: these cases pin the bytes this crate
-    /// *publishes*, which is the contract artifact identity rests on, and they
-    /// must keep meaning the same thing when the implementation behind it is
-    /// replaced. The empty domain is what lets a published FIPS vector be
-    /// compared at all — every governed subject carries a real one.
+    /// *publishes*, and they must keep meaning the same thing when the
+    /// implementation behind them is replaced.
     fn hex(bytes: &[u8]) -> String {
+        DigestAlgorithm::Sha256
+            .digest_external_record(bytes)
+            .label()
+    }
+
+    /// Digests one byte run under the empty domain, unqualified.
+    ///
+    /// Retained only for the self-consistency cases below, whose subject is the
+    /// *governed* pre-image assembly rather than the algorithm's published
+    /// output. Every governed subject in the workspace carries a real domain;
+    /// the empty one here is a test fixture and not a convention this crate
+    /// offers.
+    fn governed_hex(bytes: &[u8]) -> String {
         DigestAlgorithm::GOVERNED.digest(b"", bytes).label()
     }
 
@@ -269,6 +476,73 @@ mod tests {
         );
     }
 
+    /// The external path is the same implementation, not a second one.
+    ///
+    /// **This is the property that keeps the workspace at one SHA authority.**
+    /// The two entry points return types that deliberately cannot be compared,
+    /// so nothing else in the workspace can observe that they agree — and if
+    /// they were ever backed by different code, every consumer would keep
+    /// passing while the crate quietly held two algorithms. Comparing the raw
+    /// bytes is the one place that difference is visible, which is why it is
+    /// asserted inside the crate that owns both.
+    ///
+    /// The pre-images coincide because a governed digest under the empty domain
+    /// with no qualifiers is the bare byte run, which is exactly what an
+    /// external record's pre-image is. That coincidence is what makes the
+    /// comparison meaningful and is *not* an invitation to spell it at a call
+    /// site: the empty domain reaches the governed entry point only from this
+    /// module's fixtures.
+    #[test]
+    fn the_external_path_and_the_governed_path_share_one_implementation() {
+        for message in [b"".as_slice(), b"abc", &[0x5a_u8; 200]] {
+            assert_eq!(
+                DigestAlgorithm::Sha256
+                    .digest_external_record(message)
+                    .as_bytes(),
+                DigestAlgorithm::GOVERNED.digest(b"", message).as_bytes(),
+                "the external and governed paths disagree on a {} byte message, so this crate \
+                 is running two SHA implementations rather than one",
+                message.len(),
+            );
+        }
+    }
+
+    /// An external reproduction is fixed width and lowercase hexadecimal.
+    ///
+    /// The retained records this reproduces are lowercase, fixed-width strings,
+    /// so a comparison against one is only sound if the rendering matches on
+    /// both counts. Asserted rather than assumed because a mismatch here would
+    /// fail every retained comparison at once and read as a device defect.
+    #[test]
+    fn an_external_reproduction_renders_at_the_retained_width_and_case() {
+        let external: ExternalDigest = DigestAlgorithm::Sha256.digest_external_record(b"abc");
+        let label = external.label();
+        assert_eq!(label.len(), DIGEST_BYTES * 2);
+        assert!(
+            label
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+            "{label}",
+        );
+        assert_eq!(
+            format!("{external:?}"),
+            format!("ExternalDigest(\"{label}\")")
+        );
+    }
+
+    /// Distinct byte runs reproduce distinct external records.
+    ///
+    /// The trivial property, and the one that fails loudly if the external path
+    /// ever stopped reaching its argument — a reproduction that ignored its
+    /// bytes would satisfy nothing else here except by accident.
+    #[test]
+    fn an_external_reproduction_depends_on_its_bytes() {
+        assert_ne!(
+            DigestAlgorithm::Sha256.digest_external_record(b"payload"),
+            DigestAlgorithm::Sha256.digest_external_record(b"payloae"),
+        );
+    }
+
     /// Padding has three branches; these lengths take each one.
     #[test]
     fn every_padding_branch_agrees_with_a_single_shot_digest() {
@@ -281,7 +555,7 @@ mod tests {
             );
             assert_eq!(
                 split.label(),
-                hex(&message),
+                governed_hex(&message),
                 "chunked and single-shot digests disagree at length {length}",
             );
         }

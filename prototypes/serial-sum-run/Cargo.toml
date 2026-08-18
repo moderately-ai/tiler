@@ -22,6 +22,13 @@ tiler-artifact.workspace = true
 # this edge is what removes the last derived host statement.
 tiler-build.workspace = true
 tiler-compiler.workspace = true
+# A normal edge rather than a development one because `src/proof.rs` names
+# `DigestAlgorithm::digest_external_record` from the proof body itself, which is
+# what runs on a device host. It reproduces the L3 realization probe's retained
+# raw `CC_SHA256` record; ADR 0111 admitted that typed raw-external result and
+# deleted the SHA-256 implementation this binary used to carry, on the rule that
+# a source file naming a crate's public item owns a direct Cargo edge.
+tiler-digest.workspace = true
 tiler-ir.workspace = true
 tiler-metal.workspace = true
 tiler-metal-aot.workspace = true
