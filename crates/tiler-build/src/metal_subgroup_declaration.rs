@@ -66,6 +66,8 @@
 //!
 //! Every public item here is a reviewed *draft* boundary (ADR 0074 §7 / ADR
 //! 0075): built and tested at full fidelity while Tom reviews the surface.
+//!
+//! [`BoundMetalCompileDeclaration`]: crate::BoundMetalCompileDeclaration
 
 use core::fmt;
 use std::error::Error;

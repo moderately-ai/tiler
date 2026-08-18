@@ -592,8 +592,7 @@ pub struct PartialReduction {
 /// writes the [`ValueRole::Output`] value the interface publishes. That second
 /// dispatch computes no operation of the bound graph — it copies — so, exactly
 /// like a split reduction's final pass, it needs a declaration for
-/// [`KernelProgramDiagnostic::UncoveringStage`](super::KernelProgramDiagnostic::UncoveringStage)
-/// to admit it.
+/// [`KernelProgramDiagnostic::UncoveringStage`] to admit it.
 ///
 /// It states a contract rather than inferring one from the stage count: which
 /// stage defines the copied value, which stage publishes it, and which two values
@@ -635,9 +634,7 @@ pub struct PublishingCopy {
 /// first dispatch claims the occurrence — whole-program coverage is keyed on
 /// [`SemanticOccurrence`] and refuses one occurrence twice — so every later
 /// dispatch computes no operation the program's coverage names, and needs a
-/// declaration for
-/// [`KernelProgramDiagnostic::UncoveringStage`](super::KernelProgramDiagnostic::UncoveringStage)
-/// to admit it.
+/// declaration for [`KernelProgramDiagnostic::UncoveringStage`] to admit it.
 ///
 /// It is a third declaration beside [`PartialReduction`] and [`PublishingCopy`]
 /// rather than a widening of either, because it states a different fact. A split

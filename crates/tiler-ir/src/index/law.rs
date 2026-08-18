@@ -854,6 +854,8 @@ impl IndexRealizationLaw {
 ///
 /// A result type that is not nominal names no arithmetic and is refused, which
 /// is strictly tighter than the `f32`-only test this replaced.
+///
+/// [`ArithmeticType::canonical_type_key`]: crate::schedule::ArithmeticType::canonical_type_key
 fn governs_result_arithmetic(subject: &IndexRefinementSubject) -> bool {
     let [result] = subject.results() else {
         // Not a single-result subject. Every template here refuses one by its

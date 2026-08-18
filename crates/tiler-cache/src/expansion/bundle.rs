@@ -49,7 +49,7 @@
 //! remove, or alter retained text and stay valid. What optionality buys is that a
 //! build which retains and a build which does not agree about one entry, because
 //! the key is a function of the subject alone.
-//! [`DebugRetention`](super::DebugRetention) states the whole identity argument.
+//! [`DebugRetention`] states the whole identity argument.
 
 use core::fmt;
 use core::ops::Range;

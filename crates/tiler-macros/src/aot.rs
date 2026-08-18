@@ -92,7 +92,7 @@
 //! driver is `air64-apple-macos26.0` at `-std=metal4.0`.
 //!
 //! A stated selection therefore has to *equal* that target, family by family,
-//! and [`buildable_target`] is where that is checked. Equality rather than
+//! and [`require_buildable`] is where that is checked. Equality rather than
 //! compatibility, because both halves of the triple are consumer-visible
 //! promises: a selection naming macOS 14.0 and an artifact compiled for macOS
 //! 26.0 would deliver, under a `#[cfg(target_os = "macos")]` gate that cannot

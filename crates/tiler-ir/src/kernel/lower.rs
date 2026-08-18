@@ -1784,8 +1784,7 @@ fn emit_cooperative_contraction(
 /// `rounds - 1` times and therefore belongs at the head of the loop body rather
 /// than the tail. At the tail it would leave the peeled round's reads unordered
 /// against the loop's first rewrite, and
-/// [`KernelDiagnostic::UnorderedStagedRewrite`](super::error::KernelDiagnostic::UnorderedStagedRewrite)
-/// is what refuses that.
+/// [`KernelDiagnostic::UnorderedStagedRewrite`] is what refuses that.
 ///
 /// **The staged fold is outside every predicate, and that is what makes the
 /// accumulator expressible at all.** A predicated region produces no values, so a

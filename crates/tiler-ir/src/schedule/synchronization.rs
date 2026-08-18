@@ -10,7 +10,7 @@
 //! evidence its convergence rests.
 //!
 //! A tile whose staging is rewritten between rounds carries a second derived
-//! class, [`AntiDependencyEdge`](super::AntiDependencyEdge), and a point
+//! class, [`AntiDependencyEdge`], and a point
 //! discharges one exactly as it discharges a visibility edge — from where it
 //! sits, never from a declared edge set.
 //!
@@ -63,8 +63,8 @@ use super::handles::{PhaseId, SyncPointId};
 /// **Only [`Self::ControlBarrier`] is admitted, and the rest are refused with a
 /// named rule rather than left unstatable.** The distinction matters twice.
 /// A schedule that names one is rejected as
-/// [`SynchronizationRule::UnadmittedKind`](super::SynchronizationRule::UnadmittedKind)
-/// instead of silently lowering as a barrier. And the kind is part of
+/// [`SynchronizationRule::UnadmittedKind`] instead of silently lowering as a
+/// barrier. And the kind is part of
 /// [`SynchronizationSubject`], so a target fact declaring a realization of some
 /// *other* kind can never satisfy a control barrier's requirement — which is a
 /// composition a single-variant vocabulary could not even express, let alone

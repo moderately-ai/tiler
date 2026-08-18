@@ -100,6 +100,8 @@
 //! assumes. An artifact whose entries are realized by *different* objects at one
 //! position is expressible in the artifact model and is deliberately not
 //! orchestrated here.
+//!
+//! [`DecodedEntry::payload`]: tiler_artifact::program::DecodedEntry::payload
 
 use std::error::Error;
 use std::fmt;

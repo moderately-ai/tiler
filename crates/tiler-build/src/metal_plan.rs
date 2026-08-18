@@ -28,6 +28,8 @@
 //! declaration `p` prepared is not assumed either: the cache seam compares each
 //! position's decoded metadata against the compilation prepared for it, and two
 //! objects placed the other way round disagree on the AOT target triple.
+//!
+//! [`Compilation`]: tiler_compiler::session::Compilation
 
 use std::error::Error;
 use std::fmt;

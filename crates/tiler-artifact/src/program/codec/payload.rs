@@ -86,7 +86,7 @@
 //! to a check rather than to a convention.
 //!
 //! An entry mapping likewise carries the neutral
-//! [`BackendEntryKey`](super::super::BackendEntryKey), the backend's own symbol
+//! [`BackendEntryKey`], the backend's own symbol
 //! text, and the ordered transport slots its bindings occupy. The artifact layer
 //! never interprets a symbol or a slot; what it proves is that the mapping
 //! *covers* every backend entry key the artifact's executable entries name, and
@@ -692,7 +692,7 @@ impl ProvenanceDraft {
     /// Rejoins the fields read at fixed positions with the resolved shape.
     ///
     /// The platform values the draft carries are consumed by
-    /// [`decode_platform`], which either promotes them into the versioned shape
+    /// [`Self::platform`], which either promotes them into the versioned shape
     /// or proves they were unstated, so this takes the resolved shape rather
     /// than choosing one.
     fn resolve(self, platform: PayloadPlatform) -> PayloadProvenance {

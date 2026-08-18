@@ -282,7 +282,7 @@ impl DecodedArtifact {
     /// Returns the packaged plan variants in routing priority order.
     ///
     /// Declaration order is meaning under
-    /// [`RoutingPolicy::StablePriority`](super::super::RoutingPolicy::StablePriority):
+    /// [`RoutingPolicy::StablePriority`]:
     /// a consumer evaluates each variant's applicability guard in this order and
     /// takes the first that holds.
     #[must_use]

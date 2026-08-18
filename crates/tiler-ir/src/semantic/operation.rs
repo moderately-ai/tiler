@@ -1163,6 +1163,8 @@ impl OperationInferenceError {
     /// Crate-private: a public provider cannot stamp a host environment verdict.
     /// The builder and registry re-derive every [`BuildError::ExtentSource`] from
     /// their own validation or comparison.
+    ///
+    /// [`BuildError::ExtentSource`]: super::BuildError::ExtentSource
     #[must_use]
     pub(crate) fn from_extent_source(error: ExtentSourceError) -> Self {
         Self {

@@ -16,13 +16,13 @@
 //!
 //! - `tiler::multiply-f32@1`, `tiler::add-f32@1`, `tiler::strict-serial-sum-f32@1`,
 //!   and `tiler::strict-tensor-contraction-f32@1` name
-//!   [`ArithmeticType::F32`](tiler_ir::schedule::ArithmeticType::F32) and apply it
+//!   [`ArithmeticType::F32`] and apply it
 //!   at every operand and every produced value;
 //! - `tiler::silu-f32@1`, `tiler::rms-norm-f32@1`, and `tiler::softmax-f32@1` name
 //!   the same and apply it at each step of their pinned compositions, which their
 //!   own declared subnormal facts record as reachable;
 //! - `tiler::multiply-bf16@1` and `tiler::add-bf16@1` name
-//!   [`ArithmeticType::Bf16`](tiler_ir::schedule::ArithmeticType::Bf16) and realize
+//!   [`ArithmeticType::Bf16`] and realize
 //!   the same two declared dimensions over BF16's value set, because their
 //!   arithmetic is exact rational with one rounding rather than a host binary32
 //!   composition. **That third case is what a two-way division into "host binary32"
@@ -249,7 +249,7 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
 /// It validates a *representation* and deliberately not a range. Whether a
 /// coordinate names a row of the source is a question about the occurrence's
 /// gathered axis, which a value validator does not see and which
-/// [`GatherF32Reference`](crate::structural::GatherF32Reference) is the named
+/// [`GatherF32Reference`] is the named
 /// enforcement boundary for. A validator that guessed a bound here would refuse
 /// values that are in range for one occurrence and out of range for another.
 struct U32ValueValidator;

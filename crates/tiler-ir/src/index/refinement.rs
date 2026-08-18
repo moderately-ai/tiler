@@ -1486,7 +1486,7 @@ impl IndexRefinementDomainProof {
 /// realization makes stage and realization indistinguishable, and a reader who
 /// learned an accessor there would otherwise carry that reading into the first
 /// chain met. That is still most of what a reader sees — ten of
-/// [`IndexRealizationLaw`](super::IndexRealizationLaw)'s thirteen variants are
+/// [`IndexRealizationLaw`]'s thirteen variants are
 /// single-region — but it is no longer all of it: the standard semantic
 /// authority registers staged laws for `tiler::rms-norm-f32@1` and
 /// `tiler::softmax-f32@1`, so a chain reaches these accessors from the governed
