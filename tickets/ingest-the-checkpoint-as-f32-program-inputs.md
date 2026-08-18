@@ -102,8 +102,9 @@ subnormal values`), changed widened bytes (`widened payload digest mismatch`),
 and a Bf16 storage value offered to an F32 input
 (`tiler.bind.storage-scalar-mismatch`). A BF16 subnormal separately produces
 `subnormal=1` while remaining admitted. `cargo test -- --nocapture` prints all
-six refusals; `rg -n '\\bCast\\b' spikes/program-planning/qwen3-checkpoint-f32-inputs`
-has no matches.
+six refusals. The no-Cast scan is reachable: `printf 'Cast\n' | rg -n
+'\bCast\b'` prints `1:Cast`, while `rg -n '\bCast\b'
+spikes/program-planning/qwen3-checkpoint-f32-inputs` exits 1 with no matches.
 
 **Checks.** `cargo test -- --nocapture`, `cargo clippy --all-targets -- -D
 warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`, `tkt lint`,
