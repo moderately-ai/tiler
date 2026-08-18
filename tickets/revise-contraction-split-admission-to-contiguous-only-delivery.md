@@ -20,7 +20,7 @@ The 2026-08-18 acceptance in [`decide-the-semantic-order-contract-for-relaxed-co
 
 ## Required revision
 
-- Reduce the deliverable to the contiguous split; move lane-strided admission behind the trigger already recorded there (an accepted fold-commutativity declaration in a future successor key generation plus permutation permission), keeping the preserved attempt and the membership-vocabulary decision as evidence.
+- Reduce the deliverable to the contiguous split; move lane-strided admission behind its trigger — an accepted fold-commutativity declaration in a future successor key generation plus independently resolved permutation permission — and record that trigger in the admission ticket, which does not yet state it (*corrected by independent review 2026-08-18: the trigger is recorded in the accepted semantic packet's downstream item (6) and the reopened authority packet, not in the admission ticket*). Keep the preserved attempt and the membership-vocabulary decision as evidence.
 - Carry the reopened authority packet's verifier contract: descriptor decode plus effective-profile resolution as the two-fact join; a new appended algebraic `StrategyDeclineCause` variant with a stable reason key naming the missing dimension, distinct from `NumericalPermissionRefused`; lane-strided refused algebraically, not numerically; provider-output recheck before frontier admission.
 - Update `Closes when` so it no longer requires the lane-strided plan, while retaining the contiguous-plan bit-reproduction obligation on the eight-case corpus and the witness/explanation membership-projection repair from the 2026-08-17 review stop.
 
