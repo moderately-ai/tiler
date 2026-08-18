@@ -2505,7 +2505,20 @@ pub(super) fn push_subgroup_requirement(
     }
 }
 
-pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirements) {
+/// Encodes one entry's resource requirements into the artifact grammar.
+///
+/// # Errors
+///
+/// Returns [`ArtifactDiagnostic::BitPreservingCopyResources`] for the copy
+/// numerical arm: the grammar carries the ten floating-point rows every
+/// existing artifact wrote, and the copy's tagged entry row plus its schema
+/// step belong to the accepted delivery-state boundary. The `FloatingPoint`
+/// arm writes byte-for-byte what the ten flat fields wrote, so every existing
+/// artifact's bytes and identity stay exact under the current schema.
+pub(super) fn push_resources(
+    bytes: &mut Vec<u8>,
+    resources: ResourceRequirements,
+) -> Result<(), ArtifactDiagnostic> {
     let ResourceRequirements {
         buffer_bindings,
         threads_per_workgroup,
@@ -2514,6 +2527,9 @@ pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirement
         index_arithmetic,
         synchronization,
         subgroup,
+        numerical,
+    } = resources;
+    let tiler_ir::schedule::RegionNumericalRequirements::FloatingPoint {
         input_subnormals,
         result_subnormals,
         contraction,
@@ -2524,7 +2540,10 @@ pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirement
         approximate_intrinsics,
         nan_assumptions,
         infinity_assumptions,
-    } = resources;
+    } = numerical
+    else {
+        return Err(ArtifactDiagnostic::BitPreservingCopyResources);
+    };
     bytes.extend_from_slice(&buffer_bindings.to_be_bytes());
     bytes.extend_from_slice(&threads_per_workgroup.to_be_bytes());
     bytes.extend_from_slice(&local_memory_bytes.to_be_bytes());
@@ -2542,6 +2561,7 @@ pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirement
     bytes.push(exceptional_assumption_tag(nan_assumptions));
     bytes.push(exceptional_assumption_tag(infinity_assumptions));
     push_subgroup_requirement(bytes, subgroup);
+    Ok(())
 }
 
 pub(super) fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalFacts) {
@@ -2987,7 +3007,7 @@ fn push_entry(
     preconditions: &[u32],
     payload_keys: &[Vec<u8>],
 ) -> Result<(), ArtifactDiagnostic> {
-    push_resources(bytes, entry.resources);
+    push_resources(bytes, entry.resources)?;
     push_numerical(bytes, &entry.numerical);
     push_len(bytes, entry.bindings.len());
     for binding in &entry.bindings {

@@ -112,7 +112,8 @@ use tiler_ir::schedule::{
     ContractionAxisSource, ContributorOrder, ExecutionBinding, F32NumericalContractKey,
     KernelSchedule, LaunchPlan, LogicalAccess, NumericalRealization, OwnershipProof,
     OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
-    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, TailPolicy, TensorRole,
+    ReductionTopology, RegionId, RegionProgram, ScalarProgram, ScheduledRegionBuilder, TailPolicy,
+    TensorRole,
 };
 use tiler_ir::semantic::{
     Bf16, CanonicalField, CanonicalValue, F32, F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant,
@@ -1613,17 +1614,19 @@ fn fused_kernel() -> VerifiedKernel {
         })
         .expect("the ownership proof");
     region
-        .scalar_program(ScalarProgram::FusedMultiplyAddSerialSum {
-            scale_bits: SCALE_BITS,
-            bias_bits: BIAS_BITS,
-            axes: axes.clone(),
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: CANONICAL_NAN,
-            empty_identity_bits: 0,
-            contraction: false,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::FusedMultiplyAddSerialSum {
+                scale_bits: SCALE_BITS,
+                bias_bits: BIAS_BITS,
+                axes: axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: CANONICAL_NAN,
+                empty_identity_bits: 0,
+                contraction: false,
+            },
+            numerical: strict(),
         })
         .expect("the scalar program");
-    region.numerical(strict()).expect("the realization");
     region
         .schedule(KernelSchedule {
             binding: ExecutionBinding::GlobalLinearInvocation,
@@ -1704,11 +1707,11 @@ fn live_row_major_kernel() -> VerifiedKernel {
     let bias = expression.constant(BIAS_BITS).expect("bias");
     let root = expression.add(product, bias).expect("root");
     region
-        .scalar_program(ScalarProgram::PointwiseF32(
-            expression.build(root).expect("expression"),
-        ))
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseF32(expression.build(root).expect("expression")),
+            numerical: strict(),
+        })
         .expect("scalar");
-    region.numerical(strict()).expect("numerical");
     region
         .schedule(KernelSchedule {
             binding: ExecutionBinding::GlobalLinearInvocation,
@@ -1914,13 +1917,15 @@ fn live_contraction_kernel() -> VerifiedKernel {
         })
         .expect("ownership");
     region
-        .scalar_program(ScalarProgram::StrictTensorContraction {
-            contracted_shape: contracted,
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: CANONICAL_NAN,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictTensorContraction {
+                contracted_shape: contracted,
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: CANONICAL_NAN,
+            },
+            numerical: strict(),
         })
         .expect("strict contraction");
-    region.numerical(strict()).expect("numerical");
     region
         .schedule(KernelSchedule {
             binding: ExecutionBinding::GlobalLinearInvocation,
@@ -2292,9 +2297,11 @@ fn pointwise_kernel() -> VerifiedKernel {
         })
         .expect("the ownership proof");
     region
-        .scalar_program(ScalarProgram::PointwiseF32(scale_bias_expression()))
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseF32(scale_bias_expression()),
+            numerical: strict(),
+        })
         .expect("the scalar program");
-    region.numerical(strict()).expect("the realization");
     region
         .schedule(KernelSchedule {
             binding: ExecutionBinding::GlobalLinearInvocation,
@@ -2377,14 +2384,16 @@ fn reduction_kernel() -> VerifiedKernel {
         })
         .expect("the ownership proof");
     region
-        .scalar_program(ScalarProgram::StrictSerialSum {
-            axes: axes.clone(),
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: CANONICAL_NAN,
-            empty_identity_bits: 0,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictSerialSum {
+                axes: axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: CANONICAL_NAN,
+                empty_identity_bits: 0,
+            },
+            numerical: strict(),
         })
         .expect("the scalar program");
-    region.numerical(strict()).expect("the realization");
     region
         .schedule(KernelSchedule {
             binding: ExecutionBinding::GlobalLinearInvocation,

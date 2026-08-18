@@ -10,8 +10,8 @@ use tiler_ir::schedule::{
     BoundsWitnessId, ContractionAxisSource, ContributorOrder, ExceptionalValueAssumption,
     ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
-    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
-    TensorRole, VerifiedScheduledRegion, element_count,
+    ReductionTopology, RegionId, RegionProgram, ScalarProgram, ScheduledRegionBuilder,
+    SubnormalMode, TailPolicy, TensorRole, VerifiedScheduledRegion, element_count,
 };
 use tiler_ir::shape::{Axis, Shape};
 
@@ -117,13 +117,15 @@ fn live_contraction_region() -> VerifiedScheduledRegion {
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::StrictTensorContraction {
-            contracted_shape: contracted,
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: NAN_BITS,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictTensorContraction {
+                contracted_shape: contracted,
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: NAN_BITS,
+            },
+            numerical: numerical(),
         })
         .unwrap();
-    builder.numerical(numerical()).unwrap();
     builder
         .schedule(KernelSchedule {
             reduction: ReductionTopology::LiveContraction {
@@ -211,13 +213,15 @@ fn baked_contraction_region(k: u64) -> VerifiedScheduledRegion {
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::StrictTensorContraction {
-            contracted_shape: contracted.clone(),
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: NAN_BITS,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictTensorContraction {
+                contracted_shape: contracted.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: NAN_BITS,
+            },
+            numerical: numerical(),
         })
         .unwrap();
-    builder.numerical(numerical()).unwrap();
     builder
         .schedule(KernelSchedule {
             reduction: ReductionTopology::Contraction {

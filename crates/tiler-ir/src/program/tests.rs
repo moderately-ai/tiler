@@ -19,7 +19,7 @@ use crate::schedule::{
     KernelSchedule, LaunchPlan, LogicalAccess, MaterializationRounding, NumericalPermission,
     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
     PointwiseBf16ExpressionBuilder, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId,
-    ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+    RegionProgram, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
     VerifiedScheduledRegion,
 };
 use crate::semantic::{
@@ -160,11 +160,11 @@ fn pointwise_region(region: u32, scale_bits: u32) -> VerifiedScheduledRegion {
         })
         .expect("ownership proof");
     builder
-        .scalar_program(ScalarProgram::PointwiseF32(scale_bias_expression(
-            scale_bits,
-        )))
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseF32(scale_bias_expression(scale_bits)),
+            numerical: strict(),
+        })
         .expect("scalar program");
-    builder.numerical(strict()).expect("numerical realization");
     builder
         .schedule(linear_schedule(count, OwnershipWitnessId::new(0)))
         .expect("schedule");
@@ -234,14 +234,16 @@ fn reduction_region(region: u32) -> VerifiedScheduledRegion {
         })
         .expect("ownership proof");
     builder
-        .scalar_program(ScalarProgram::StrictSerialSum {
-            axes: axes.clone(),
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: CANONICAL_NAN,
-            empty_identity_bits: 0,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictSerialSum {
+                axes: axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: CANONICAL_NAN,
+                empty_identity_bits: 0,
+            },
+            numerical: strict(),
         })
         .expect("scalar program");
-    builder.numerical(strict()).expect("numerical realization");
     builder
         .schedule(KernelSchedule {
             reduction: ReductionTopology::Serial {
@@ -429,13 +431,15 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
         })
         .expect("ownership proof");
     builder
-        .scalar_program(ScalarProgram::StrictAffineU4Dequantize {
-            codes_role: STRICT_AFFINE_CODES_ROLE,
-            scale_role: STRICT_AFFINE_SCALE_ROLE,
-            zero_point_role: STRICT_AFFINE_ZERO_POINT_ROLE,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictAffineU4Dequantize {
+                codes_role: STRICT_AFFINE_CODES_ROLE,
+                scale_role: STRICT_AFFINE_SCALE_ROLE,
+                zero_point_role: STRICT_AFFINE_ZERO_POINT_ROLE,
+            },
+            numerical: strict(),
         })
         .expect("scalar program");
-    builder.numerical(strict()).expect("numerical contract");
     builder
         .schedule(linear_schedule(logical_elements, owner))
         .expect("schedule");
@@ -4005,9 +4009,11 @@ fn bf16_output_region() -> VerifiedScheduledRegion {
         })
         .expect("ownership proof");
     builder
-        .scalar_program(ScalarProgram::PointwiseBf16(expression))
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseBf16(expression),
+            numerical: bf16_numerical(),
+        })
         .expect("scalar program");
-    builder.numerical(bf16_numerical()).expect("numerical");
     builder
         .schedule(linear_schedule(count, OwnershipWitnessId::new(0)))
         .expect("schedule");
@@ -4575,13 +4581,15 @@ fn live_contraction_kernel_for_program() -> VerifiedKernel {
         })
         .expect("ownership");
     region
-        .scalar_program(ScalarProgram::StrictTensorContraction {
-            contracted_shape: contracted,
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: CANONICAL_NAN,
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictTensorContraction {
+                contracted_shape: contracted,
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: CANONICAL_NAN,
+            },
+            numerical: strict(),
         })
         .expect("strict contraction");
-    region.numerical(strict()).expect("numerical");
     region
         .schedule(KernelSchedule {
             reduction: ReductionTopology::LiveContraction {

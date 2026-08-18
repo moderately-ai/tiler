@@ -58,8 +58,8 @@
 //!     ExceptionalValueAssumption, ExecutionBinding, AccessOrdinal, KernelSchedule, LaunchPlan,
 //!     LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
 //!     OwnershipProofKind, OwnershipWitnessId, PointwiseF32ExpressionBuilder, RegionId,
-//!     ReductionTopology, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
-//!     TensorRole,
+//!     RegionProgram, ReductionTopology, ScalarProgram, ScheduledRegionBuilder, SubnormalMode,
+//!     TailPolicy, TensorRole,
 //! };
 //! use tiler_ir::shape::Shape;
 //!
@@ -105,21 +105,23 @@
 //! let product = expression.multiply(input, scale)?;
 //! let bias = expression.constant(1.0_f32.to_bits())?;
 //! let root = expression.add(product, bias)?;
-//! builder.scalar_program(ScalarProgram::PointwiseF32(expression.build(root)?))?;
-//! builder.numerical(NumericalRealization::new(
-//!     "tiler.doc.strict-f32",
-//!     0x7fc0_0000,
-//!     SubnormalMode::Preserve,
-//!     SubnormalMode::Preserve,
-//!     NumericalPermission::Forbidden,
-//!     NumericalPermission::Forbidden,
-//!     NumericalPermission::Forbidden,
-//!     NumericalPermission::Forbidden,
-//!     NumericalPermission::Forbidden,
-//!     ApproximationEnvelope::Forbidden,
-//!     ExceptionalValueAssumption::MakeNoAssumption,
-//!     ExceptionalValueAssumption::MakeNoAssumption,
-//! ))?;
+//! builder.program(RegionProgram::Numerical {
+//!     scalar: ScalarProgram::PointwiseF32(expression.build(root)?),
+//!     numerical: NumericalRealization::new(
+//!         "tiler.doc.strict-f32",
+//!         0x7fc0_0000,
+//!         SubnormalMode::Preserve,
+//!         SubnormalMode::Preserve,
+//!         NumericalPermission::Forbidden,
+//!         NumericalPermission::Forbidden,
+//!         NumericalPermission::Forbidden,
+//!         NumericalPermission::Forbidden,
+//!         NumericalPermission::Forbidden,
+//!         ApproximationEnvelope::Forbidden,
+//!         ExceptionalValueAssumption::MakeNoAssumption,
+//!         ExceptionalValueAssumption::MakeNoAssumption,
+//!     ),
+//! })?;
 //! builder.schedule(KernelSchedule {
 //!     binding: ExecutionBinding::GlobalLinearInvocation,
 //!     work_items: 4,
@@ -162,9 +164,9 @@ pub use cooperative::{
 };
 pub use error::{
     BlockedWorkgroupRule, ContributorCoverageRule, ContributorError,
-    CooperativeContractionAdmission, CooperativeTileRule, ElementCountOverflow, ScheduleBuildError,
-    ScheduleComponent, ScheduleLimitKind, ScheduledRegionBuildError, ScheduledRegionDiagnostic,
-    VectorLaneCountError, VectorLaneRule,
+    CooperativeContractionAdmission, CooperativeTileRule, ElementCountOverflow,
+    PartitionedCopyRule, ScheduleBuildError, ScheduleComponent, ScheduleLimitKind,
+    ScheduledRegionBuildError, ScheduledRegionDiagnostic, VectorLaneCountError, VectorLaneRule,
 };
 pub use handles::{
     AccessOrdinal, BoundsWitnessId, OwnershipWitnessId, PhaseId, RegionId, StagingId, SyncPointId,
@@ -172,13 +174,14 @@ pub use handles::{
 pub use model::{
     Access, AccessMode, AxisDecode, BoundsProof, BoundsProofKind, CanonicalScheduledRegionIdentity,
     ContractionAxisSource, ContributorCoverage, ContributorOrder, ContributorPartition,
-    ExecutionBinding, IndexArithmetic, IndexRegion, KernelSchedule, LaunchPlan, LogicalAccess,
-    OwnershipProof, OwnershipProofKind, ReductionPaddingIdentity, ReductionPass, ReductionTopology,
-    ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy, TensorRole, VectorLaneCount,
-    VerifiedScheduledRegion, axes_are_canonical, broadcast_decodes_are_replicating,
-    contributor_count, cooperative_local_memory_bytes, cooperative_tile, element_count,
-    live_input_extents, partial_reduction_axis, partial_reduction_shape,
-    reindex_decodes_are_bijective,
+    CopyElement, CopyMember, ExecutionBinding, IndexArithmetic, IndexRegion, KernelSchedule,
+    LaunchPlan, LogicalAccess, OwnershipProof, OwnershipProofKind, PartitionedCopyProgram,
+    ReductionPaddingIdentity, ReductionPass, ReductionTopology, RegionNumericalRequirements,
+    RegionProgram, ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
+    VectorLaneCount, VerifiedScheduledRegion, axes_are_canonical,
+    broadcast_decodes_are_replicating, contributor_count, cooperative_local_memory_bytes,
+    cooperative_tile, element_count, live_input_extents, partial_reduction_axis,
+    partial_reduction_shape, reindex_decodes_are_bijective,
 };
 pub(crate) use model::{REGION_INDEX_ARITHMETIC, subnormal_freedom_of};
 pub use numerics::{
@@ -222,6 +225,13 @@ pub use witness::{
 pub const MAX_SCHEDULE_ACCESSES: usize = 4_096;
 /// Maximum bounds proofs admitted by one scheduled region.
 pub const MAX_SCHEDULE_BOUNDS_PROOFS: usize = 4_096;
+/// Maximum ordered members admitted by one partitioned-copy program.
+///
+/// An enumeration bound in the sense the cooperative bounds are: the verifier
+/// walks members once, and the bound keeps that walk and the member frame
+/// finite. It is not a population claim — the reachable population stays the
+/// governed concatenate arity range at the compiler boundary.
+pub const MAX_PARTITIONED_COPY_MEMBERS: usize = 4_096;
 /// Maximum participants admitted by one cooperative workgroup tile.
 ///
 /// The bound exists so the tile's disjointness and coverage rules can be decided

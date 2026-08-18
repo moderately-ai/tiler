@@ -377,6 +377,23 @@ pub enum LogicalAccess {
         /// bound.
         inner_axis: Axis,
     },
+    /// One partitioned-copy read: the whole source, addressed by the copy's
+    /// derived member rectangle.
+    ///
+    /// **Accepted public surface.** Tom accepted this exact fieldless spelling
+    /// on 2026-08-18 under
+    /// [`decide-the-partitioned-copy-scheduled-region-public-surface`].
+    ///
+    /// [`decide-the-partitioned-copy-scheduled-region-public-surface`]: ../../../../../tickets/decide-the-partitioned-copy-scheduled-region-public-surface.md
+    ///
+    /// Fieldless deliberately: which members read this source, at which derived
+    /// destination offsets, over which derived source shape are all total
+    /// functions of the region's [`PartitionedCopyProgram`], so a field here
+    /// would be a second spelling two regions could disagree in — the rule the
+    /// cooperative tile's underived visibility edges already state. The map is
+    /// admissible only on a [`RegionProgram::PartitionedCopy`] region's reads;
+    /// every other program family's admission refuses it by name.
+    PartitionedCopySource,
 }
 
 /// One logical tensor access performed by a scheduled region.
@@ -771,12 +788,177 @@ pub enum ScalarProgram {
     },
 }
 
+/// The computation class one scheduled region performs, and the state that
+/// class carries.
+///
+/// **Accepted public surface.** Tom accepted this exact spelling on 2026-08-18
+/// under [`decide-the-partitioned-copy-scheduled-region-public-surface`]: a
+/// field-replacing sum on [`IndexRegion`], so a region carrying a copy program
+/// plus a numerical realization, an arithmetic region without one, and an
+/// unclassified empty state are all unrepresentable rather than
+/// representable-and-refused.
+///
+/// [`decide-the-partitioned-copy-scheduled-region-public-surface`]: ../../../../../tickets/decide-the-partitioned-copy-scheduled-region-public-surface.md
+///
+/// **Do not add `#[non_exhaustive]`.** An ADR 0074 convention 5b type for the
+/// reason [`ScalarProgram`] states at its own definition: `tiler-compiler`'s
+/// `physical.rs` and `frontier.rs` map the program totally from outside this
+/// crate, so a third computation class must stop those builds rather than reach
+/// a wildcard that answers for a program it was never checked against.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RegionProgram {
+    /// An arithmetic region: a scalar program evaluated per output under a
+    /// declared numerical realization.
+    Numerical {
+        /// Scalar program evaluated per output.
+        scalar: ScalarProgram,
+        /// Preserved numerical realization.
+        numerical: NumericalRealization,
+    },
+    /// A partitioned bit-preserving copy: no arithmetic, no realization.
+    ///
+    /// The variant carries no [`NumericalRealization`] deliberately — a copy
+    /// performs no arithmetic, so a realization here would mint an identity for
+    /// arithmetic no kernel performs, and an optional one would conflate
+    /// missing with proved inapplicability (both eliminated by the accepted
+    /// 2026-08-12 concatenate decision).
+    PartitionedCopy(PartitionedCopyProgram),
+}
+
+impl RegionProgram {
+    /// Returns the declared numerical realization, when this program class
+    /// carries one.
+    ///
+    /// The total replacement for every former `region.index.numerical` read:
+    /// `None` is the copy arm's proved absence of a realization, not a missing
+    /// field.
+    #[must_use]
+    pub const fn numerical(&self) -> Option<&NumericalRealization> {
+        match self {
+            Self::Numerical { numerical, .. } => Some(numerical),
+            Self::PartitionedCopy(_) => None,
+        }
+    }
+}
+
+/// One partitioned bit-preserving copy over a single concatenated axis.
+///
+/// **Accepted public surface** (2026-08-18, same record as [`RegionProgram`]).
+/// Ordered members are semantic identity — `members[k]` is concatenate operand
+/// `k`, never deduplicated, so `concat(x, x)` is two members over one
+/// deduplicated read. Destination offsets, member source shapes, and
+/// destination rectangles are **derived, never stored**: a field a producer
+/// could set beside its derivation is a second spelling two regions could
+/// disagree in.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PartitionedCopyProgram {
+    /// The one bit-preserved element format.
+    pub element: CopyElement,
+    /// The concatenated axis of the iteration domain.
+    pub axis: Axis,
+    /// Ordered operand members, one per concatenate operand.
+    pub members: Vec<CopyMember>,
+}
+
+impl PartitionedCopyProgram {
+    /// Returns the exclusive prefix sums of the member extents, or `None` when
+    /// a sum overflows `u64`.
+    ///
+    /// Entry `k` is member `k`'s destination offset on the copy axis. Derived
+    /// on demand rather than stored, so intervals `[offset_k, offset_k +
+    /// extent_k)` are adjacent by construction and the only representable
+    /// coverage defect is a wrong extent total.
+    #[must_use]
+    pub fn member_offsets(&self) -> Option<Vec<u64>> {
+        let mut offsets = Vec::with_capacity(self.members.len());
+        let mut running = 0_u64;
+        for member in &self.members {
+            offsets.push(running);
+            running = running.checked_add(member.extent)?;
+        }
+        Some(offsets)
+    }
+
+    /// Returns member `k`'s whole-source shape: the iteration shape with the
+    /// copy axis's extent replaced by the member's extent.
+    ///
+    /// `None` when the member index or the copy axis is out of range.
+    #[must_use]
+    pub fn member_source_shape(&self, iteration_shape: &Shape, member: usize) -> Option<Shape> {
+        let member = self.members.get(member)?;
+        let axis = usize::try_from(self.axis.get()).ok()?;
+        if axis >= iteration_shape.rank() {
+            return None;
+        }
+        let extents = iteration_shape
+            .extents()
+            .iter()
+            .enumerate()
+            .map(|(position, extent)| {
+                if position == axis {
+                    crate::shape::Extent::new(member.extent)
+                } else {
+                    *extent
+                }
+            });
+        Shape::try_new(extents).ok()
+    }
+}
+
+/// One ordered member of a partitioned copy: which read it copies from, and
+/// how much of the copy axis it owns.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct CopyMember {
+    /// The read access this member copies from, by ordinal into the region's
+    /// access list.
+    pub source: AccessOrdinal,
+    /// This member's extent on the copy axis.
+    pub extent: u64,
+}
+
+/// The element format a partitioned copy bit-preserves.
+///
+/// Closed at one variant deliberately: widening to another dtype is an
+/// identity-visible act — a new variant, a new tag, and build errors at every
+/// encoder and total match — never a field a producer could vary. **Do not add
+/// `#[non_exhaustive]`** (ADR 0074 convention 5b, same reason as
+/// [`RegionProgram`]).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum CopyElement {
+    /// IEEE-754 binary32 bit patterns, moved unchanged.
+    F32,
+}
+
+impl CopyElement {
+    /// Returns the canonical identity tag naming this element format.
+    ///
+    /// Written by an exhaustive match rather than read from the discriminant,
+    /// so adding or reordering a variant is a build error here instead of a
+    /// silent change to every identity ever produced (ADR 0074 convention 3).
+    #[must_use]
+    pub const fn tag(self) -> u8 {
+        match self {
+            Self::F32 => 0x01,
+        }
+    }
+
+    /// Returns the storage width of one element, in bytes.
+    ///
+    /// The load/store width the derivation KIR reads.
+    #[must_use]
+    pub const fn storage_bytes(self) -> u64 {
+        match self {
+            Self::F32 => 4,
+        }
+    }
+}
+
 /// The bounded index region a schedule maps onto a target machine.
 ///
 /// This carries the iteration domain, logical accesses, bounds and ownership
-/// proofs, the scalar program, and the numerical realization. It deliberately
-/// does not carry any semantic-graph correlation; binding a region to semantic
-/// occurrences is a separate compiler-owned refinement (ADR 0070).
+/// proofs, and the region program. It deliberately does not carry any
+/// semantic-graph correlation; binding a region to semantic occurrences is a
+/// separate compiler-owned refinement (ADR 0070).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IndexRegion {
     /// Planning ordinal, excluded from canonical identity.
@@ -785,20 +967,19 @@ pub struct IndexRegion {
     pub iteration_shape: Shape,
     /// Logical accesses: the region's reads, followed by its one owning write.
     ///
-    /// The read count is the scalar program's rather than a constant — one per
+    /// The read count is the region program's rather than a constant — one per
     /// expression leaf for a pointwise family, exactly one for a serial
-    /// reduction, two for a contraction, three for the affine `u4` dequantize —
-    /// and `verify_intrinsic` refuses a list whose length disagrees with the
+    /// reduction, two for a contraction, three for the affine `u4` dequantize,
+    /// one per distinct source boundary for a partitioned copy — and
+    /// `verify_intrinsic` refuses a list whose length disagrees with the
     /// family the region declares.
     pub accesses: Vec<Access>,
     /// Bounds proofs, one per access.
     pub bounds_proofs: Vec<BoundsProof>,
     /// The single write-ownership proof.
     pub ownership_proof: OwnershipProof,
-    /// Scalar program evaluated per output.
-    pub scalar_program: ScalarProgram,
-    /// Preserved numerical realization.
-    pub numerical: NumericalRealization,
+    /// The computation class and its state.
+    pub program: RegionProgram,
 }
 
 /// A literal fixed-vector lane count.
@@ -1540,24 +1721,74 @@ pub enum IndexArithmetic {
     CompleteU64,
 }
 
+/// The numerical requirement one region's computation class states.
+///
+/// **Accepted public surface** (2026-08-18, the same record as
+/// [`RegionProgram`]): the former ten flat floating-point fields of
+/// [`ResourceRequirements`] become one required sum, so a copy region's
+/// requirements cannot fabricate a floating-point row and an arithmetic
+/// region's cannot omit one.
+///
+/// **Do not add `#[non_exhaustive]`.** An ADR 0074 convention 5b type: the
+/// kernel-identity encoder, the artifact wire codec, and the compiler's
+/// feasibility projection each map this totally from outside this crate, so a
+/// third arm must stop those builds rather than reach a wildcard.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RegionNumericalRequirements {
+    /// The region performs floating-point arithmetic and requires each declared
+    /// dimension honoured, carried forward per dimension rather than as one
+    /// summary bit. A single `requires_strict_f32` boolean cannot name which
+    /// dimension a target failed to honour, and the boolean these replaced was
+    /// derived from contraction and reassociation alone — so a
+    /// subnormal-preserving contract that permitted both transforms reported no
+    /// strict-`f32` requirement at all (ADR 0076 item 3).
+    ///
+    /// The realization's `profile_key` and canonical NaN bits are deliberately
+    /// not repeated here: they name the governing contract and a produced value
+    /// rather than a behaviour a target profile declares honourability for, and
+    /// they remain on the region's [`NumericalRealization`].
+    FloatingPoint {
+        /// Subnormal input handling the region's declared realization requires.
+        input_subnormals: SubnormalMode,
+        /// Subnormal result handling the region's declared realization requires.
+        result_subnormals: SubnormalMode,
+        /// Whether the region's declared realization permits contraction.
+        contraction: NumericalPermission,
+        /// Whether the region's declared realization permits reassociation.
+        reassociation: NumericalPermission,
+        /// Whether the region's declared realization permits contributor
+        /// permutation.
+        permutation: NumericalPermission,
+        /// Whether the region's declared realization permits signed-zero
+        /// elimination.
+        signed_zero: NumericalPermission,
+        /// Whether the region's declared realization permits reciprocal
+        /// replacement.
+        reciprocal_transform: NumericalPermission,
+        /// The approximate-intrinsic envelope the region's declared realization
+        /// authorizes.
+        approximate_intrinsics: ApproximationEnvelope,
+        /// The region's declared NaN-absence assumption.
+        nan_assumptions: ExceptionalValueAssumption,
+        /// The region's declared infinity-absence assumption.
+        infinity_assumptions: ExceptionalValueAssumption,
+    },
+    /// The region moves bits and performs no floating-point arithmetic, so it
+    /// states **no** floating-point requirement — a proved absence, not target
+    /// silence. Consumption as proved absence is owned by
+    /// `derive-target-numerical-feasibility-from-reached-arithmetic-only`.
+    BitPreservingCopy,
+}
+
 /// Exact or proven resource requirements derived from a verified schedule.
 ///
 /// These feed a separate phased target-feasibility assessment; deriving them is
 /// part of intrinsic verification and never a target decision (ADR 0007).
 ///
-/// The ten numerical fields carry the region's declared realization forward
-/// per dimension rather than as one summary bit. A single `requires_strict_f32`
-/// boolean cannot name which dimension a target failed to honour, and the
-/// boolean these replaced was derived from contraction and reassociation alone
-/// — so a subnormal-preserving contract that permitted both transforms reported
-/// no strict-`f32` requirement at all (ADR 0076 item 3). A feasibility
-/// authority composes each dimension against what a target profile declares it
-/// honours.
-///
-/// The realization's `profile_key` and canonical NaN bits are deliberately not
-/// repeated here: they name the governing contract and a produced value rather
-/// than a behaviour a target profile declares honourability for, and they
-/// remain on the region's [`NumericalRealization`].
+/// The structural fields stay unconditional — a copy still binds buffers,
+/// launches threads, and computes coordinates — while the numerical requirement
+/// is the [`RegionNumericalRequirements`] sum the region's computation class
+/// determines.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ResourceRequirements {
     /// Distinct buffer bindings required at the entry point.
@@ -1616,27 +1847,13 @@ pub struct ResourceRequirements {
     /// subgroup KIR emission is a separate ticket — so every region produced
     /// here carries `None`.
     pub subgroup: Option<SubgroupRealizationSubject>,
-    /// Subnormal input handling the region's declared realization requires.
-    pub input_subnormals: SubnormalMode,
-    /// Subnormal result handling the region's declared realization requires.
-    pub result_subnormals: SubnormalMode,
-    /// Whether the region's declared realization permits contraction.
-    pub contraction: NumericalPermission,
-    /// Whether the region's declared realization permits reassociation.
-    pub reassociation: NumericalPermission,
-    /// Whether the region's declared realization permits contributor permutation.
-    pub permutation: NumericalPermission,
-    /// Whether the region's declared realization permits signed-zero elimination.
-    pub signed_zero: NumericalPermission,
-    /// Whether the region's declared realization permits reciprocal replacement.
-    pub reciprocal_transform: NumericalPermission,
-    /// The approximate-intrinsic envelope the region's declared realization
-    /// authorizes.
-    pub approximate_intrinsics: ApproximationEnvelope,
-    /// The region's declared NaN-absence assumption.
-    pub nan_assumptions: ExceptionalValueAssumption,
-    /// The region's declared infinity-absence assumption.
-    pub infinity_assumptions: ExceptionalValueAssumption,
+    /// The numerical requirement the region's computation class states.
+    ///
+    /// Required rather than optional: an arithmetic region always states its
+    /// floating-point rows and a copy region always states their proved
+    /// absence, so no producer can encode a silence a feasibility authority
+    /// would then have to interpret.
+    pub numerical: RegionNumericalRequirements,
 }
 
 /// Opaque canonical bytes identifying one verified scheduled region.
@@ -1716,17 +1933,27 @@ impl VerifiedScheduledRegion {
     /// answer.
     #[must_use]
     pub const fn subnormal_freedom(&self) -> SubnormalFreedom {
-        subnormal_freedom_of(&self.region.index.scalar_program)
+        subnormal_freedom_of(&self.region.index.program)
     }
 }
 
-/// Classifies one scalar program's subnormal freedom.
+/// Classifies one region program's subnormal freedom.
 ///
 /// The single definition both [`VerifiedScheduledRegion::subnormal_freedom`]
 /// and the structured-kernel lowering read, so a kernel's answer cannot drift
 /// from the region's.
-pub(crate) const fn subnormal_freedom_of(program: &ScalarProgram) -> SubnormalFreedom {
-    match program {
+pub(crate) const fn subnormal_freedom_of(program: &RegionProgram) -> SubnormalFreedom {
+    let scalar = match program {
+        RegionProgram::Numerical { scalar, .. } => scalar,
+        // A copy performs no arithmetic and so produces no new subnormal — but
+        // it moves bit patterns a flushing target could still alter at some
+        // other site, and nothing here proves it cannot, so `Unproven` is the
+        // fail-closed answer. A copy-specific freedom claim would need its own
+        // KIR-level bit-preservation evidence and belongs to the feasibility
+        // ticket if ever needed.
+        RegionProgram::PartitionedCopy(_) => return SubnormalFreedom::Unproven,
+    };
+    match scalar {
         ScalarProgram::StrictAffineU4Dequantize { .. } => {
             SubnormalFreedom::StrictAffineNormalScaleDecode
         }
@@ -1768,8 +1995,24 @@ pub(crate) const fn subnormal_freedom_of(program: &ScalarProgram) -> SubnormalFr
 /// in the compiler is, and it refuses the decode rather than answering for it.
 ///
 /// Exhaustive, so a new scalar program states its own width here instead of
-/// inheriting whichever one it resembles.
-pub(super) const fn region_arithmetic_type(program: &ScalarProgram) -> ArithmeticType {
+/// inheriting whichever one it resembles. The copy arm answers for its element
+/// format — a copy computes nothing, but the bits it moves are one format's,
+/// and that format is what a signature or carrier derivation needs.
+pub(super) const fn region_arithmetic_type(program: &RegionProgram) -> ArithmeticType {
+    match program {
+        RegionProgram::Numerical { scalar, .. } => scalar_arithmetic_type(scalar),
+        RegionProgram::PartitionedCopy(copy) => match copy.element {
+            CopyElement::F32 => ArithmeticType::F32,
+        },
+    }
+}
+
+/// The arithmetic type one scalar program's own operations are performed at.
+///
+/// The scalar half of [`region_arithmetic_type`], split out because the
+/// accumulation-width and padding-identity gates compare against a *fold's*
+/// width, and a fold exists only on the arithmetic arm.
+pub(super) const fn scalar_arithmetic_type(program: &ScalarProgram) -> ArithmeticType {
     match program {
         ScalarProgram::PointwiseBf16(_) => ArithmeticType::Bf16,
         ScalarProgram::PointwiseF32(_)
@@ -2133,6 +2376,25 @@ pub(crate) const REGION_INDEX_ARITHMETIC: IndexArithmetic = IndexArithmetic::Com
 /// if it were real.
 pub(super) fn derive_requirements(region: &ScheduledRegion) -> ResourceRequirements {
     let buffer_bindings = u32::try_from(region.index.accesses.len()).unwrap_or(u32::MAX);
+    // The numerical requirement is the region program's own class: an
+    // arithmetic region carries every declared dimension forward, and a copy
+    // region states the proved absence of a floating-point requirement rather
+    // than fabricating strict rows for arithmetic no kernel performs.
+    let numerical = match &region.index.program {
+        RegionProgram::Numerical { numerical, .. } => RegionNumericalRequirements::FloatingPoint {
+            input_subnormals: numerical.input_subnormals,
+            result_subnormals: numerical.result_subnormals,
+            contraction: numerical.contraction,
+            reassociation: numerical.reassociation,
+            permutation: numerical.permutation,
+            signed_zero: numerical.signed_zero,
+            reciprocal_transform: numerical.reciprocal_transform,
+            approximate_intrinsics: numerical.approximate_intrinsics,
+            nan_assumptions: numerical.nan_assumptions,
+            infinity_assumptions: numerical.infinity_assumptions,
+        },
+        RegionProgram::PartitionedCopy(_) => RegionNumericalRequirements::BitPreservingCopy,
+    };
     ResourceRequirements {
         buffer_bindings,
         threads_per_workgroup: region.schedule.threads_per_workgroup,
@@ -2141,16 +2403,7 @@ pub(super) fn derive_requirements(region: &ScheduledRegion) -> ResourceRequireme
         index_arithmetic: REGION_INDEX_ARITHMETIC,
         synchronization: cooperative_synchronization_requirement(&region.schedule.reduction),
         subgroup: None,
-        input_subnormals: region.index.numerical.input_subnormals,
-        result_subnormals: region.index.numerical.result_subnormals,
-        contraction: region.index.numerical.contraction,
-        reassociation: region.index.numerical.reassociation,
-        permutation: region.index.numerical.permutation,
-        signed_zero: region.index.numerical.signed_zero,
-        reciprocal_transform: region.index.numerical.reciprocal_transform,
-        approximate_intrinsics: region.index.numerical.approximate_intrinsics,
-        nan_assumptions: region.index.numerical.nan_assumptions,
-        infinity_assumptions: region.index.numerical.infinity_assumptions,
+        numerical,
     }
 }
 
@@ -2199,6 +2452,27 @@ const TAG_PARAMETRIC_BROADCAST: u8 = 0x08;
 /// schedule identity domain deliberately does not step. A reader that reaches
 /// `0x09` is reading an access the earlier vocabulary could not express.
 const TAG_LIVE_ROW_MAJOR: u8 = 0x09;
+/// Logical-access tag of a partitioned copy's fieldless source map.
+///
+/// Appended at the next **free** value rather than at `0x0A`, and the gap is a
+/// reconciliation across three same-day accepted decisions, not an oversight.
+/// The accepted source-bound live-row-major surface
+/// (`decide-the-source-bound-live-row-major-access-surface`, 2026-08-18)
+/// reserves `0x0A` for `LiveRowMajorSource` and `0x0B` for its fieldless
+/// consumer marker while retiring `0x09`; the accepted data-dependent-index
+/// surface (`decide-the-data-dependent-index-representation-public-surface`,
+/// 2026-08-18) reserves `0x0C` for `GatherSource` and itself records that
+/// "`0x0A` and `0x0B` remain reserved by the earlier live-row-major decision
+/// packet … a gap is preferable to colliding reviewed identities". The
+/// partitioned-copy packet, drafted before those reservations were visible to
+/// it, named `0x0A`; taking it would collide two reviewed identity
+/// assignments, so this tag takes `0x0D`, the next value no accepted record
+/// claims. The injectivity argument is unchanged: `0x01`–`0x09` are the only
+/// bytes any `tiler.schedule.v7` region ever writes at the access-map
+/// position, `0x0A`–`0x0C` are reserved-and-unwritten at this base, so a
+/// reader that reaches `0x0D` is reading an access the earlier vocabulary
+/// could not express and no previously encodable region's bytes move.
+const TAG_PARTITIONED_COPY_SOURCE: u8 = 0x0D;
 const TAG_LINEAR_RANGE: u8 = 0x11;
 const TAG_REDUCTION_DOMAIN: u8 = 0x12;
 const TAG_SCALAR_SERIAL_SUM: u8 = 0x22;
@@ -2266,6 +2540,34 @@ const TAG_SCALAR_POINTWISE_BF16: u8 = 0x29;
 /// The node run cannot be confused with `0x24`'s: a run is read only inside the
 /// scalar-program variant that framed it, exactly as the `bf16` node space is.
 const TAG_SCALAR_SQUARED_SUM_EPILOGUE: u8 = 0x2A;
+/// Program-position tag of the partitioned bit-preserving copy.
+///
+/// Appended after `TAG_SCALAR_SQUARED_SUM_EPILOGUE` (`0x2A`), and the schedule
+/// identity domain deliberately does not step — the argument re-derived at
+/// `tiler.schedule.v7` rather than carried from the packet's `v6` base:
+///
+/// 1. *Cross-arm discrimination.* Every field before the program position —
+///    domain, framed shape, framed access list, framed proof list, fixed-width
+///    ownership record — is framed and self-delimiting, so two encodings parse
+///    to the same program-byte offset. At that offset every `v7`-encodable
+///    region writes one of `0x22`–`0x2A`; `0x2B` is a byte no earlier region
+///    can carry, so no old identity can equal a new one and no reader
+///    reinterprets old bytes.
+/// 2. *Within-arm recoverability.* The element tag and the four-byte axis are
+///    fixed-width at fixed positions; the member run is length-framed with
+///    fixed-width twelve-byte records, so every source ordinal and extent is
+///    recoverable at a frame-determined position. Two copy programs differing
+///    in element, axis, member count, any member's source, or any member's
+///    extent differ in these bytes.
+/// 3. *Equal meanings encode equally.* Offsets, source shapes, and destination
+///    rectangles are derived and never written; the `partitioned-copy-
+///    source-order` rule pins one read order per meaning; member order is
+///    itself semantic. One program meaning therefore has exactly one encoding.
+///
+/// No numerical record follows this arm — the copy carries none — and the
+/// schedule record follows directly, separated by the frame the member run
+/// closes.
+const TAG_REGION_PARTITIONED_COPY: u8 = 0x2B;
 const TAG_REDUCTION_NONE: u8 = 0x31;
 const TAG_REDUCTION_SERIAL: u8 = 0x32;
 /// Reduction-topology tag of a split, multi-dispatch reduction pass.
@@ -2426,6 +2728,10 @@ fn push_logical_access(bytes: &mut Vec<u8>, access: &LogicalAccess) {
             bytes.push(TAG_LIVE_ROW_MAJOR);
             bytes.extend_from_slice(&inner_axis.get().to_be_bytes());
         }
+        // Fieldless: the tag alone, because everything a reader could ask of
+        // this map is a derivation from the region's copy program. See
+        // `TAG_PARTITIONED_COPY_SOURCE` for the tag-value reconciliation.
+        LogicalAccess::PartitionedCopySource => bytes.push(TAG_PARTITIONED_COPY_SOURCE),
     }
 }
 
@@ -3338,10 +3644,43 @@ pub(super) fn encode_identity(region: &ScheduledRegion) -> CanonicalScheduledReg
     let OwnershipProofKind::OneGlobalInvocationPerOutput { output_count } =
         region.index.ownership_proof.kind;
     bytes.extend_from_slice(&output_count.to_be_bytes());
-    push_scalar_program(&mut bytes, &region.index.scalar_program);
-    push_numerical(&mut bytes, &region.index.numerical);
+    // The program position: the `Numerical` arm writes byte-for-byte what the
+    // two former required fields wrote — the scalar program, then the numerical
+    // record — so every previously encodable region keeps its exact bytes; the
+    // copy arm writes a sequence no earlier region could carry. See
+    // `TAG_REGION_PARTITIONED_COPY` for the appended-tag injectivity argument.
+    match &region.index.program {
+        RegionProgram::Numerical { scalar, numerical } => {
+            push_scalar_program(&mut bytes, scalar);
+            push_numerical(&mut bytes, numerical);
+        }
+        RegionProgram::PartitionedCopy(program) => {
+            push_partitioned_copy(&mut bytes, program);
+        }
+    }
     push_schedule(&mut bytes, &region.schedule);
     CanonicalScheduledRegionIdentity(bytes)
+}
+
+/// Encodes the partitioned-copy program arm.
+///
+/// In order: the program-position tag; one element tag byte via
+/// [`CopyElement::tag`]; the copy axis as four big-endian bytes; one framed
+/// member run — a [`push_len`] count, then exactly that many fixed-width
+/// twelve-byte records of four-byte source ordinal plus eight-byte extent,
+/// both big-endian. Derived quantities — offsets, source shapes, destination
+/// rectangles — are deliberately never written: nothing beyond the semantic
+/// fields reaches the bytes, so two programs equal in meaning cannot differ in
+/// identity.
+fn push_partitioned_copy(bytes: &mut Vec<u8>, program: &PartitionedCopyProgram) {
+    bytes.push(TAG_REGION_PARTITIONED_COPY);
+    bytes.push(program.element.tag());
+    bytes.extend_from_slice(&program.axis.get().to_be_bytes());
+    push_len(bytes, program.members.len());
+    for member in &program.members {
+        bytes.extend_from_slice(&member.source.get().to_be_bytes());
+        bytes.extend_from_slice(&member.extent.to_be_bytes());
+    }
 }
 
 #[cfg(test)]
@@ -3429,6 +3768,25 @@ mod tests {
             assert_eq!(bytes.len(), expected, "{assumption:?} changed width");
         }
         assert_injective(&EXCEPTIONAL_ASSUMPTIONS, push_exceptional_assumption);
+    }
+
+    /// The copy-element tag is injective over its one inhabitant.
+    ///
+    /// Exhaustive finite evidence over a domain of size one, exactly as the
+    /// contributor-order claim below: the population assertion is what fails —
+    /// deliberately — on the day a second element format lands and its tag and
+    /// storage width must be stated rather than inherited.
+    #[test]
+    fn the_copy_element_tag_is_injective_over_its_whole_domain() {
+        const ELEMENTS: [super::CopyElement; std::mem::variant_count::<super::CopyElement>()] =
+            [super::CopyElement::F32];
+
+        assert_eq!(ELEMENTS.len(), 1);
+        assert_injective_fixed_width(&ELEMENTS, 1, |bytes, element: super::CopyElement| {
+            bytes.push(element.tag());
+        });
+        assert_eq!(super::CopyElement::F32.tag(), 0x01);
+        assert_eq!(super::CopyElement::F32.storage_bytes(), 4);
     }
 
     /// The contributor-order encoder is injective over its one inhabitant.

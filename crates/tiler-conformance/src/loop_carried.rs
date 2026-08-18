@@ -55,8 +55,9 @@ use tiler_ir::schedule::{
     ContributorArrival, ContributorCoverage, ContributorOrder, ContributorPartition,
     ConvergenceEvidence, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
-    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SynchronizationPlacement,
-    SynchronizationPoint, TailPolicy, TensorRole, VerifiedScheduledRegion, workgroup_tree_tile,
+    ReductionTopology, RegionId, RegionProgram, ScalarProgram, ScheduledRegionBuilder,
+    SynchronizationPlacement, SynchronizationPoint, TailPolicy, TensorRole,
+    VerifiedScheduledRegion, workgroup_tree_tile,
 };
 use tiler_ir::semantic::{CANONICAL_F32_ARITHMETIC_NAN_BITS, F32};
 use tiler_ir::shape::{Axis, Shape};
@@ -257,14 +258,16 @@ fn cooperative_region(contributors_per_partition: u64, rounds: u64) -> VerifiedS
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::StrictSerialSum {
-            axes: axes.clone(),
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: CANONICAL_F32_ARITHMETIC_NAN_BITS,
-            empty_identity_bits: 0.0_f32.to_bits(),
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictSerialSum {
+                axes: axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: CANONICAL_F32_ARITHMETIC_NAN_BITS,
+                empty_identity_bits: 0.0_f32.to_bits(),
+            },
+            numerical: declared_realization(),
         })
         .unwrap();
-    builder.numerical(declared_realization()).unwrap();
     let mut tile = workgroup_tree_tile(PARTICIPANTS).expect("the canonical tree tile");
     if rounds > 1 {
         tile.rounds = rounds;

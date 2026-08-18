@@ -39,6 +39,7 @@ use std::collections::BTreeMap;
 use tiler_ir::kernel::{BinaryOp, CompareOp, ConvertOp, KernelConstant, OperationView, UnaryOp};
 use tiler_ir::program::abi::{AvailabilityPhase, TargetPropertyRequirementRelation};
 use tiler_ir::program::{DependencyReasonView, ValueRole};
+use tiler_ir::schedule::RegionProgram;
 use tiler_ir::semantic::{
     Bf16, Bf16Add, Bf16Constant, Bf16Multiply, CANONICAL_F32_ARITHMETIC_NAN_BITS, ContractionIndex,
     ContractionIndexStructure, F32, F32Add, F32Constant, F32Multiply, F32TensorContraction,
@@ -4627,31 +4628,30 @@ fn bf16_scheduled_region(elements: u64) -> tiler_ir::schedule::VerifiedScheduled
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::PointwiseBf16(expression))
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseBf16(expression),
+            numerical: NumericalRealization::new(
+                "tiler.test.strict-bf16",
+                u32::from(tiler_ir::semantic::CANONICAL_BF16_ARITHMETIC_NAN_BITS),
+                SubnormalMode::Preserve,
+                SubnormalMode::Preserve,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                ApproximationEnvelope::Forbidden,
+                ExceptionalValueAssumption::MakeNoAssumption,
+                ExceptionalValueAssumption::MakeNoAssumption,
+            ),
+        })
         .unwrap();
     // The accepted `tiler.contract.bf16.v1` strict vector, restated as the
     // region's own realization: preserving subnormals in both dimensions, every
     // numeric-reshaping permission withheld, no exceptional value assumed
     // absent, and the family's canonical arithmetic NaN payload zero-extended
     // into the thirty-two-bit field. `NumericalContract::STRICT_BF16` resolves
-    // exactly these dimensions; the region carries them rather than the contract
-    // because a schedule preserves a realization, not a caller's request.
-    builder
-        .numerical(NumericalRealization::new(
-            "tiler.test.strict-bf16",
-            u32::from(tiler_ir::semantic::CANONICAL_BF16_ARITHMETIC_NAN_BITS),
-            SubnormalMode::Preserve,
-            SubnormalMode::Preserve,
-            NumericalPermission::Forbidden,
-            NumericalPermission::Forbidden,
-            NumericalPermission::Forbidden,
-            NumericalPermission::Forbidden,
-            NumericalPermission::Forbidden,
-            ApproximationEnvelope::Forbidden,
-            ExceptionalValueAssumption::MakeNoAssumption,
-            ExceptionalValueAssumption::MakeNoAssumption,
-        ))
-        .unwrap();
+    // exactly these dimensions;
     builder
         .schedule(KernelSchedule {
             binding: ExecutionBinding::GlobalLinearInvocation,

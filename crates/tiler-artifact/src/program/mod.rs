@@ -117,8 +117,8 @@
 //! #     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ExecutionBinding,
 //! #     F32NumericalContractKey, AccessOrdinal, KernelSchedule, LaunchPlan, LogicalAccess,
 //! #     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
-//! #     PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
-//! #     ScheduledRegionBuilder, TailPolicy, TensorRole,
+//! #     PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, RegionProgram,
+//! #     ScalarProgram, ScheduledRegionBuilder, TailPolicy, TensorRole,
 //! # };
 //! # use tiler_ir::semantic::{F32, F32Multiply, SemanticProgramBuilder};
 //! # use tiler_ir::shape::{Extent, Shape};
@@ -239,21 +239,23 @@
 //! # let first = expression.input(AccessOrdinal::new(0))?;
 //! # let second = expression.input(AccessOrdinal::new(1))?;
 //! # let root = expression.multiply(first, second)?;
-//! # schedule.scalar_program(ScalarProgram::PointwiseF32(expression.build(root)?))?;
-//! # schedule.numerical(NumericalRealization::new(
-//! #     "tiler.doc.strict-f32",
-//! #     0x7fc0_0000,
-//! #     SubnormalMode::Preserve,
-//! #     SubnormalMode::Preserve,
-//! #     NumericalPermission::Forbidden,
-//! #     NumericalPermission::Forbidden,
-//! #     NumericalPermission::Forbidden,
-//! #     NumericalPermission::Forbidden,
-//! #     NumericalPermission::Forbidden,
-//! #     ApproximationEnvelope::Forbidden,
-//! #     ExceptionalValueAssumption::MakeNoAssumption,
-//! #     ExceptionalValueAssumption::MakeNoAssumption,
-//! # ))?;
+//! # schedule.program(RegionProgram::Numerical {
+//! #     scalar: ScalarProgram::PointwiseF32(expression.build(root)?),
+//! #     numerical: NumericalRealization::new(
+//! #         "tiler.doc.strict-f32",
+//! #         0x7fc0_0000,
+//! #         SubnormalMode::Preserve,
+//! #         SubnormalMode::Preserve,
+//! #         NumericalPermission::Forbidden,
+//! #         NumericalPermission::Forbidden,
+//! #         NumericalPermission::Forbidden,
+//! #         NumericalPermission::Forbidden,
+//! #         NumericalPermission::Forbidden,
+//! #         ApproximationEnvelope::Forbidden,
+//! #         ExceptionalValueAssumption::MakeNoAssumption,
+//! #         ExceptionalValueAssumption::MakeNoAssumption,
+//! #     ),
+//! # })?;
 //! # schedule.schedule(KernelSchedule {
 //! #     binding: ExecutionBinding::GlobalLinearInvocation,
 //! #     work_items: 6,

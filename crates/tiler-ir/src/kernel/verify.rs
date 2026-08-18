@@ -364,9 +364,13 @@ fn verify_input_extents(
 
 fn access_rank(access: &Access, schedule: &ScheduledRegion) -> u64 {
     match &access.map {
+        // The copy-source map is grouped with the linear reads: it addresses
+        // its source linearly, and it is never reached by a verifiable kernel —
+        // `verify_signature` refuses the copy region program first.
         crate::schedule::LogicalAccess::LinearIdentity
         | crate::schedule::LogicalAccess::ScalarBroadcast
-        | crate::schedule::LogicalAccess::PackedU4LsbZeroTail { .. } => 1,
+        | crate::schedule::LogicalAccess::PackedU4LsbZeroTail { .. }
+        | crate::schedule::LogicalAccess::PartitionedCopySource => 1,
         crate::schedule::LogicalAccess::ReductionContributor { input_shape, .. } => {
             input_shape.rank() as u64
         }
@@ -419,8 +423,21 @@ fn verify_signature(
     // declared as one type and checked against another. The *arities* stay
     // written out per family, because an arity read back from the region would
     // agree with whatever the region declared.
-    let element_type = region_element_type(&schedule.index.scalar_program);
-    let expected_types: Vec<KernelType> = match schedule.index.scalar_program {
+    // The copy region is refused before any buffer is compared, for the reason
+    // `plan` refuses it in `lower`: this profile's signatures are derived from
+    // a scalar program the copy does not carry, and its own kernel carrier is
+    // a separate accepted boundary. Refusing by name here keeps a producer
+    // kernel opened against a copy region from being verified against a
+    // signature the region never states.
+    let crate::schedule::RegionProgram::Numerical {
+        scalar,
+        numerical: region_numerical,
+    } = &schedule.index.program
+    else {
+        return Err(KernelDiagnostic::UnloweredRegionProgram);
+    };
+    let element_type = region_element_type(scalar);
+    let expected_types: Vec<KernelType> = match *scalar {
         crate::schedule::ScalarProgram::StrictAffineU4Dequantize { .. } => {
             vec![KernelType::U8, KernelType::F32, KernelType::U8]
         }
@@ -511,7 +528,7 @@ fn verify_signature(
     if data.admitted_builtins != expected_builtins {
         return Err(KernelDiagnostic::BuiltinContract);
     }
-    if data.numerical != schedule.index.numerical {
+    if data.numerical != *region_numerical {
         return Err(KernelDiagnostic::NumericalRealization);
     }
     if data.requirements != derived {

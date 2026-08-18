@@ -507,7 +507,7 @@ mod tests {
         BoundsWitnessId, ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan,
         LogicalAccess, NumericalPermission, NumericalRealization as DeclaredNumericalRealization,
         OwnershipProof, OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression,
-        PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
+        PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, RegionProgram, ScalarProgram,
         ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
     };
     use tiler_ir::semantic::{F32, InputKey, OutputKey, ProviderIdentity, SemanticProgramBuilder};
@@ -604,24 +604,24 @@ mod tests {
             })
             .expect("the ownership proof binds");
         builder
-            .scalar_program(ScalarProgram::PointwiseF32(expression))
+            .program(RegionProgram::Numerical {
+                scalar: ScalarProgram::PointwiseF32(expression),
+                numerical: DeclaredNumericalRealization::new(
+                    "tiler.test.metal-assembly",
+                    0x7fc0_0000,
+                    SubnormalMode::Preserve,
+                    SubnormalMode::Preserve,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                    ApproximationEnvelope::Forbidden,
+                    ExceptionalValueAssumption::MakeNoAssumption,
+                    ExceptionalValueAssumption::MakeNoAssumption,
+                ),
+            })
             .expect("the scalar program binds");
-        builder
-            .numerical(DeclaredNumericalRealization::new(
-                "tiler.test.metal-assembly",
-                0x7fc0_0000,
-                SubnormalMode::Preserve,
-                SubnormalMode::Preserve,
-                NumericalPermission::Forbidden,
-                NumericalPermission::Forbidden,
-                NumericalPermission::Forbidden,
-                NumericalPermission::Forbidden,
-                NumericalPermission::Forbidden,
-                ApproximationEnvelope::Forbidden,
-                ExceptionalValueAssumption::MakeNoAssumption,
-                ExceptionalValueAssumption::MakeNoAssumption,
-            ))
-            .expect("the numerical realization binds");
         builder
             .schedule(KernelSchedule {
                 binding: ExecutionBinding::GlobalLinearInvocation,
@@ -995,27 +995,27 @@ mod tests {
             })
             .expect("ownership");
         builder
-            .scalar_program(ScalarProgram::PointwiseF32(scale_then_bias_expression(
-                1.0_f32.to_bits(),
-                0.0_f32.to_bits(),
-            )))
+            .program(RegionProgram::Numerical {
+                scalar: ScalarProgram::PointwiseF32(scale_then_bias_expression(
+                    1.0_f32.to_bits(),
+                    0.0_f32.to_bits(),
+                )),
+                numerical: DeclaredNumericalRealization::new(
+                    "tiler.test.metal-assembly",
+                    0x7fc0_0000,
+                    SubnormalMode::Preserve,
+                    SubnormalMode::Preserve,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                    ApproximationEnvelope::Forbidden,
+                    ExceptionalValueAssumption::MakeNoAssumption,
+                    ExceptionalValueAssumption::MakeNoAssumption,
+                ),
+            })
             .expect("scalar");
-        builder
-            .numerical(DeclaredNumericalRealization::new(
-                "tiler.test.metal-assembly",
-                0x7fc0_0000,
-                SubnormalMode::Preserve,
-                SubnormalMode::Preserve,
-                NumericalPermission::Forbidden,
-                NumericalPermission::Forbidden,
-                NumericalPermission::Forbidden,
-                NumericalPermission::Forbidden,
-                NumericalPermission::Forbidden,
-                ApproximationEnvelope::Forbidden,
-                ExceptionalValueAssumption::MakeNoAssumption,
-                ExceptionalValueAssumption::MakeNoAssumption,
-            ))
-            .expect("numerical");
         builder
             .schedule(KernelSchedule {
                 binding: ExecutionBinding::GlobalLinearInvocation,
@@ -1089,27 +1089,27 @@ mod tests {
             })
             .expect("ownership");
         builder
-            .scalar_program(ScalarProgram::PointwiseF32(scale_then_bias_expression(
-                1.0_f32.to_bits(),
-                0.0_f32.to_bits(),
-            )))
+            .program(RegionProgram::Numerical {
+                scalar: ScalarProgram::PointwiseF32(scale_then_bias_expression(
+                    1.0_f32.to_bits(),
+                    0.0_f32.to_bits(),
+                )),
+                numerical: DeclaredNumericalRealization::new(
+                    "tiler.test.metal-assembly",
+                    0x7fc0_0000,
+                    SubnormalMode::Preserve,
+                    SubnormalMode::Preserve,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                    NumericalPermission::Forbidden,
+                    ApproximationEnvelope::Forbidden,
+                    ExceptionalValueAssumption::MakeNoAssumption,
+                    ExceptionalValueAssumption::MakeNoAssumption,
+                ),
+            })
             .expect("scalar");
-        builder
-            .numerical(DeclaredNumericalRealization::new(
-                "tiler.test.metal-assembly",
-                0x7fc0_0000,
-                SubnormalMode::Preserve,
-                SubnormalMode::Preserve,
-                NumericalPermission::Forbidden,
-                NumericalPermission::Forbidden,
-                NumericalPermission::Forbidden,
-                NumericalPermission::Forbidden,
-                NumericalPermission::Forbidden,
-                ApproximationEnvelope::Forbidden,
-                ExceptionalValueAssumption::MakeNoAssumption,
-                ExceptionalValueAssumption::MakeNoAssumption,
-            ))
-            .expect("numerical");
         builder
             .schedule(KernelSchedule {
                 binding: ExecutionBinding::GlobalLinearInvocation,

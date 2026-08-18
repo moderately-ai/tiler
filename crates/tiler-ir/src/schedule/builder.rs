@@ -19,9 +19,9 @@ use super::cooperative::{
     StagedSpan, VisibilityEdge,
 };
 use super::error::{
-    BlockedWorkgroupRule, ContributorCoverageRule, CooperativeTileRule, ScheduleBuildError,
-    ScheduleComponent, ScheduleLimitKind, ScheduledRegionBuildError, ScheduledRegionDiagnostic,
-    VectorLaneRule,
+    BlockedWorkgroupRule, ContributorCoverageRule, CooperativeTileRule, PartitionedCopyRule,
+    ScheduleBuildError, ScheduleComponent, ScheduleLimitKind, ScheduledRegionBuildError,
+    ScheduledRegionDiagnostic, VectorLaneRule,
 };
 #[cfg(test)]
 use super::handles::AccessOrdinal;
@@ -30,18 +30,18 @@ use super::model::{
     Access, AccessMode, BoundsProof, BoundsProofKind, CanonicalScheduledRegionIdentity,
     ContractionAxisSource, ContributorCoverage, ContributorOrder, ContributorPartition,
     ExecutionBinding, IndexRegion, KernelSchedule, LogicalAccess, OwnershipProof,
-    OwnershipProofKind, ReductionPaddingIdentity, ReductionPass, ReductionTopology,
+    OwnershipProofKind, ReductionPaddingIdentity, ReductionPass, ReductionTopology, RegionProgram,
     ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
     VerifiedScheduledRegion, contributor_count, cooperative_tile, derive_requirements,
     element_count, encode_identity, partial_reduction_axis, partial_reduction_shape,
-    region_arithmetic_type,
+    scalar_arithmetic_type,
 };
 use super::numerics::{ArithmeticType, ExceptionalValueAssumption, NumericalRealization};
 use super::synchronization::{ConvergenceEvidence, SynchronizationRule, required_subject};
 use super::{
     MAX_COOPERATIVE_PARTICIPANTS, MAX_COOPERATIVE_PHASE_ACCESSES, MAX_COOPERATIVE_PHASES,
     MAX_COOPERATIVE_ROUNDS, MAX_COOPERATIVE_STAGING_SLOTS, MAX_COOPERATIVE_SYNCHRONIZATION_POINTS,
-    MAX_SCHEDULE_ACCESSES, MAX_SCHEDULE_BOUNDS_PROOFS,
+    MAX_PARTITIONED_COPY_MEMBERS, MAX_SCHEDULE_ACCESSES, MAX_SCHEDULE_BOUNDS_PROOFS,
 };
 use crate::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
@@ -60,8 +60,7 @@ pub struct ScheduledRegionBuilder {
     accesses: Vec<Access>,
     bounds_proofs: Vec<BoundsProof>,
     ownership_proof: Option<OwnershipProof>,
-    scalar_program: Option<ScalarProgram>,
-    numerical: Option<NumericalRealization>,
+    program: Option<RegionProgram>,
     schedule: Option<KernelSchedule>,
 }
 
@@ -75,8 +74,7 @@ impl ScheduledRegionBuilder {
             accesses: Vec::new(),
             bounds_proofs: Vec::new(),
             ownership_proof: None,
-            scalar_program: None,
-            numerical: None,
+            program: None,
             schedule: None,
         }
     }
@@ -94,8 +92,7 @@ impl ScheduledRegionBuilder {
             accesses: index.accesses,
             bounds_proofs: index.bounds_proofs,
             ownership_proof: Some(index.ownership_proof),
-            scalar_program: Some(index.scalar_program),
-            numerical: Some(index.numerical),
+            program: Some(index.program),
             schedule: Some(schedule),
         }
     }
@@ -159,30 +156,18 @@ impl ScheduledRegionBuilder {
         )
     }
 
-    /// Sets the scalar program.
+    /// Sets the region program.
+    ///
+    /// The single slot that replaced the former scalar-program and
+    /// numerical-realization pair: an arithmetic program arrives with its
+    /// realization and a copy program arrives without one, so no mixed or
+    /// half-classified state is expressible in the builder.
     ///
     /// # Errors
     ///
     /// Returns [`ScheduleBuildError::ComponentAlreadySet`] if already set.
-    pub fn scalar_program(&mut self, program: ScalarProgram) -> Result<(), ScheduleBuildError> {
-        set_once(
-            &mut self.scalar_program,
-            program,
-            ScheduleComponent::ScalarProgram,
-        )
-    }
-
-    /// Sets the preserved numerical realization.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ScheduleBuildError::ComponentAlreadySet`] if already set.
-    pub fn numerical(&mut self, numerical: NumericalRealization) -> Result<(), ScheduleBuildError> {
-        set_once(
-            &mut self.numerical,
-            numerical,
-            ScheduleComponent::NumericalRealization,
-        )
+    pub fn program(&mut self, program: RegionProgram) -> Result<(), ScheduleBuildError> {
+        set_once(&mut self.program, program, ScheduleComponent::RegionProgram)
     }
 
     /// Sets the normalized kernel schedule.
@@ -241,13 +226,10 @@ impl ScheduledRegionBuilder {
         let ownership_proof = self
             .ownership_proof
             .ok_or(incomplete(ScheduleComponent::OwnershipProof))?;
-        let scalar_program = self
-            .scalar_program
+        let program = self
+            .program
             .clone()
-            .ok_or(incomplete(ScheduleComponent::ScalarProgram))?;
-        let numerical = self
-            .numerical
-            .ok_or(incomplete(ScheduleComponent::NumericalRealization))?;
+            .ok_or(incomplete(ScheduleComponent::RegionProgram))?;
         let schedule = self
             .schedule
             .clone()
@@ -259,8 +241,7 @@ impl ScheduledRegionBuilder {
                 accesses: self.accesses.clone(),
                 bounds_proofs: self.bounds_proofs.clone(),
                 ownership_proof,
-                scalar_program,
-                numerical,
+                program,
             },
             schedule,
         })
@@ -525,7 +506,16 @@ fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagn
             schedule.threads_per_workgroup,
         )?;
     }
-    match &region.index.scalar_program {
+    let scalar = match &region.index.program {
+        // The copy gate owns everything after the shared launch, binding, and
+        // participant gates above; its rule order is the accepted
+        // partitioned-copy precedence.
+        RegionProgram::PartitionedCopy(program) => {
+            return verify_partitioned_copy(region, program);
+        }
+        RegionProgram::Numerical { scalar, .. } => scalar,
+    };
+    match scalar {
         ScalarProgram::StrictAffineU4Dequantize { .. } => {
             let [codes, scale, zero_point, write] = region.index.accesses.as_slice() else {
                 return Err(ScheduledRegionDiagnostic::AccessCount);
@@ -579,6 +569,203 @@ fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagn
     }
 }
 
+/// The arithmetic-arm view every numerical-family verifier reads through.
+///
+/// Fail-closed rather than assumed: every caller runs under the dispatch that
+/// already destructured the `Numerical` arm, so the refusal is unreachable
+/// today — but a verifier internal reached some other way must refuse the copy
+/// arm rather than answer for arithmetic the region does not declare.
+fn numerical_program(
+    region: &ScheduledRegion,
+) -> Result<(&ScalarProgram, &NumericalRealization), ScheduledRegionDiagnostic> {
+    match &region.index.program {
+        RegionProgram::Numerical { scalar, numerical } => Ok((scalar, numerical)),
+        RegionProgram::PartitionedCopy(_) => {
+            Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)
+        }
+    }
+}
+
+/// Shorthand for the one carried-rule constructor the copy gate uses.
+const fn partitioned_copy(rule: PartitionedCopyRule) -> ScheduledRegionDiagnostic {
+    ScheduledRegionDiagnostic::PartitionedCopy { rule }
+}
+
+/// Verifies a partitioned bit-preserving copy region.
+///
+/// The rule order is the accepted first-failure precedence: `Topology`, the
+/// shared access-count/contract gates, `ReadTensor`, `WriteTensor`, one call to
+/// the unchanged [`verify_proof_records`], then `MemberCount`, `AxisRange`,
+/// `SourceReference`, `SourceOrder`, `ExtentOverflow`, `CoverageSum`,
+/// `SourceShape`, and `UnreferencedSource`.
+///
+/// The partition theorem — member intervals pairwise disjoint and jointly
+/// exhaustive over the axis extent — is re-derived here rather than encoded or
+/// caller-supplied: offsets are checked exclusive prefix sums, so the intervals
+/// are adjacent by construction and the one representable coverage defect is a
+/// wrong extent total. A caller cannot mint proof authority because no proof
+/// field exists for a caller to fill; the write references the region's one
+/// [`OwnershipProofKind::OneGlobalInvocationPerOutput`], which is literally
+/// true of the copy — the iteration domain is the output domain and each
+/// invocation performs one guarded store.
+fn verify_partitioned_copy(
+    region: &ScheduledRegion,
+    program: &super::model::PartitionedCopyProgram,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    // Topology: the copy admits exactly one schedule shape. The blocked
+    // binding and the predicated tail are also refused by the shared gates
+    // ahead of this dispatch; the reduction clause and the fixed-vector
+    // binding clause are the independently watchable ones.
+    if !matches!(region.schedule.reduction, ReductionTopology::None)
+        || !matches!(
+            region.schedule.binding,
+            ExecutionBinding::GlobalLinearInvocation
+        )
+        || !matches!(region.schedule.tail, TailPolicy::Exact)
+    {
+        return Err(partitioned_copy(PartitionedCopyRule::Topology));
+    }
+    // Shared access count: at least one read, then the one owning write.
+    let Some((write, reads)) = region.index.accesses.split_last() else {
+        return Err(ScheduledRegionDiagnostic::AccessCount);
+    };
+    if reads.is_empty() {
+        return Err(ScheduledRegionDiagnostic::AccessCount);
+    }
+    // Shared access contract: modes, ownership placement, the write's map, and
+    // `output_owner` agreement — exactly what the pointwise contract checks.
+    // The read maps are deliberately not checked here: a referenced read's map
+    // is `SourceReference`'s clause and an unreferenced read is refused
+    // outright, so map totality is owned by the copy rules below.
+    if reads
+        .iter()
+        .any(|read| read.mode != AccessMode::Read || read.ownership.is_some())
+        || write.mode != AccessMode::Write
+        || write.map != LogicalAccess::LinearIdentity
+        || write.ownership != Some(region.schedule.output_owner)
+    {
+        return Err(ScheduledRegionDiagnostic::AccessContract);
+    }
+    // Boundary categories, refused by name per side.
+    if reads
+        .iter()
+        .any(|read| read.tensor != TensorRole::Input || read.component_role.is_some())
+    {
+        return Err(partitioned_copy(PartitionedCopyRule::ReadTensor));
+    }
+    if write.tensor != TensorRole::Output || write.component_role.is_some() {
+        return Err(partitioned_copy(PartitionedCopyRule::WriteTensor));
+    }
+    // Shared proof gates: one call to the unchanged `verify_proof_records`,
+    // whose `LinearRange`/copy-source refinement arm is structural — the
+    // fieldless map cannot name the member-derived count from inside
+    // `bounds_proof_refines_access`, so exactness is `SourceShape`'s below.
+    let read_refs: Vec<&Access> = reads.iter().collect();
+    verify_proof_records(region, &read_refs, write)?;
+    if program.members.len() < 2 || program.members.len() > MAX_PARTITIONED_COPY_MEMBERS {
+        return Err(partitioned_copy(PartitionedCopyRule::MemberCount));
+    }
+    let Some(axis) = usize::try_from(program.axis.get())
+        .ok()
+        .filter(|axis| *axis < region.index.iteration_shape.rank())
+    else {
+        return Err(partitioned_copy(PartitionedCopyRule::AxisRange));
+    };
+    // Every member names a read — never the write, never a dangling ordinal —
+    // and the read it names carries the fieldless copy-source map.
+    for member in &program.members {
+        let Ok(position) = usize::try_from(member.source.get()) else {
+            return Err(partitioned_copy(PartitionedCopyRule::SourceReference));
+        };
+        let Some(read) = reads.get(position) else {
+            return Err(partitioned_copy(PartitionedCopyRule::SourceReference));
+        };
+        if read.map != LogicalAccess::PartitionedCopySource {
+            return Err(partitioned_copy(PartitionedCopyRule::SourceReference));
+        }
+    }
+    // Canonical read order: the sequence of first references of member sources
+    // must be exactly the dense ascending run `0, 1, 2, ...` — the rule that
+    // gives one meaning one identity. It is a prefix requirement over the
+    // reads; a read outside the referenced prefix is `UnreferencedSource`'s
+    // below.
+    let mut next_first_reference = 0_u32;
+    for member in &program.members {
+        let source = member.source.get();
+        if source == next_first_reference {
+            next_first_reference += 1;
+        } else if source > next_first_reference {
+            return Err(partitioned_copy(PartitionedCopyRule::SourceOrder));
+        }
+    }
+    // Derived quantities under checked arithmetic: prefix sums and per-member
+    // source element counts. Overflow is refused before any comparison uses a
+    // wrapped value.
+    if program.member_offsets().is_none() {
+        return Err(partitioned_copy(PartitionedCopyRule::ExtentOverflow));
+    }
+    let mut member_source_elements = Vec::with_capacity(program.members.len());
+    for position in 0..program.members.len() {
+        let Some(shape) = program.member_source_shape(&region.index.iteration_shape, position)
+        else {
+            // Unreachable once the axis gate above passed; refusing under the
+            // axis rule keeps the cause named if it ever is reached.
+            return Err(partitioned_copy(PartitionedCopyRule::AxisRange));
+        };
+        let Ok(elements) = element_count(&shape) else {
+            return Err(partitioned_copy(PartitionedCopyRule::ExtentOverflow));
+        };
+        member_source_elements.push(elements);
+    }
+    // Coverage: the checked extent total must be the axis extent exactly. With
+    // derived prefix offsets the intervals are adjacent by construction, so
+    // this one equality is the whole partition theorem — no gap or overlap is
+    // representable.
+    let axis_extent = region.index.iteration_shape.extents()[axis].get();
+    let mut extent_sum = 0_u64;
+    for member in &program.members {
+        let Some(sum) = extent_sum.checked_add(member.extent) else {
+            return Err(partitioned_copy(PartitionedCopyRule::ExtentOverflow));
+        };
+        extent_sum = sum;
+    }
+    if extent_sum != axis_extent {
+        return Err(partitioned_copy(PartitionedCopyRule::CoverageSum));
+    }
+    // Source shapes: members sharing one read must agree on its extent, and
+    // the read's bounds-proof element count must equal the derived source
+    // element count — the exactness the structural refinement arm deferred.
+    let mut read_extents: Vec<Option<u64>> = vec![None; reads.len()];
+    for (member, elements) in program.members.iter().zip(&member_source_elements) {
+        let Ok(position) = usize::try_from(member.source.get()) else {
+            return Err(partitioned_copy(PartitionedCopyRule::SourceReference));
+        };
+        match read_extents[position] {
+            None => {
+                read_extents[position] = Some(member.extent);
+                let proof = &region.index.bounds_proofs[position];
+                let BoundsProofKind::LinearRange { element_count } = &proof.kind else {
+                    return Err(partitioned_copy(PartitionedCopyRule::SourceShape));
+                };
+                if *element_count != *elements {
+                    return Err(partitioned_copy(PartitionedCopyRule::SourceShape));
+                }
+            }
+            Some(extent) => {
+                if extent != member.extent {
+                    return Err(partitioned_copy(PartitionedCopyRule::SourceShape));
+                }
+            }
+        }
+    }
+    // Every read is referenced: with `SourceOrder`'s dense-prefix rule already
+    // proved, an unreferenced read is exactly one past the referenced prefix.
+    if usize::try_from(next_first_reference).ok() != Some(reads.len()) {
+        return Err(partitioned_copy(PartitionedCopyRule::UnreferencedSource));
+    }
+    Ok(())
+}
+
 /// Verifies a two-operand strict tensor contraction region.
 ///
 /// Every obligation is stated against the region's *own* three declarations of
@@ -596,7 +783,7 @@ fn verify_contraction(
         contracted_shape,
         order,
         ..
-    } = &region.index.scalar_program
+    } = numerical_program(region)?.0
     else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
@@ -621,7 +808,7 @@ fn verify_contraction(
     else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
-    let numerical = &region.index.numerical;
+    let numerical = numerical_program(region)?.1;
     if contracted_shape != scheduled_contracted
         || order != scheduled_order
         || *permits_reassociation != numerical.permits_reassociation()
@@ -756,11 +943,11 @@ fn verify_live_contraction(
         contracted_shape,
         order,
         ..
-    } = &region.index.scalar_program
+    } = numerical_program(region)?.0
     else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
-    let numerical = &region.index.numerical;
+    let numerical = numerical_program(region)?.1;
     if contracted_shape.rank() != 0
         || order != scheduled_order
         || *permits_reassociation != numerical.permits_reassociation()
@@ -890,11 +1077,11 @@ fn verify_cooperative_contraction(
         contracted_shape,
         order,
         ..
-    } = &region.index.scalar_program
+    } = numerical_program(region)?.0
     else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
-    let numerical = &region.index.numerical;
+    let numerical = numerical_program(region)?.1;
     if contracted_shape != scheduled_contracted
         || order != scheduled_order
         || *permits_reassociation != numerical.permits_reassociation()
@@ -903,7 +1090,7 @@ fn verify_cooperative_contraction(
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
-    verify_accumulation_width(*accumulation, &region.index.scalar_program)?;
+    verify_accumulation_width(*accumulation, numerical_program(region)?.0)?;
     let contracted_points = element_count(contracted_shape)
         .map_err(|_| ScheduledRegionDiagnostic::ShapeProductOverflow)?;
     if contracted_points == 0 {
@@ -1064,7 +1251,7 @@ fn verify_pointwise_bf16(
     write: &Access,
 ) -> Result<(), ScheduledRegionDiagnostic> {
     if u32::from(crate::semantic::CANONICAL_BF16_ARITHMETIC_NAN_BITS)
-        != region.index.numerical.canonical_arithmetic_nan_bits
+        != numerical_program(region)?.1.canonical_arithmetic_nan_bits
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
@@ -1165,7 +1352,11 @@ fn pointwise_accesses_choose_one_addressing_regime(reads: &[Access], write: &Acc
         | LogicalAccess::ContractionOperand { .. }
         | LogicalAccess::ReindexBijection { .. }
         | LogicalAccess::BroadcastReplication { .. }
-        | LogicalAccess::ParametricBroadcast { .. } => false,
+        | LogicalAccess::ParametricBroadcast { .. }
+        // The copy-source map belongs to the partitioned-copy gate alone; a
+        // pointwise write carrying it would claim a derivation no pointwise
+        // region states.
+        | LogicalAccess::PartitionedCopySource => false,
     }
 }
 
@@ -1262,11 +1453,15 @@ fn pointwise_read_map_is_admissible(
         // A scalar broadcast reads a rank-zero parameter and belongs to the
         // decode program; a packed carrier belongs to it too; and the two
         // reduction relations address a contributor domain a pointwise region
-        // does not have.
+        // does not have. The partitioned-copy source map is refused by name
+        // for the accepted reason: it is a derivation of a copy program a
+        // pointwise region does not carry, so admitting it here would let the
+        // map leak into arithmetic regions.
         LogicalAccess::ScalarBroadcast
         | LogicalAccess::PackedU4LsbZeroTail { .. }
         | LogicalAccess::ReductionContributor { .. }
-        | LogicalAccess::ContractionOperand { .. } => false,
+        | LogicalAccess::ContractionOperand { .. }
+        | LogicalAccess::PartitionedCopySource => false,
     }
 }
 
@@ -1281,11 +1476,11 @@ fn verify_strict_affine_u4_dequantize(
         codes_role,
         scale_role,
         zero_point_role,
-    } = &region.index.scalar_program
+    } = numerical_program(region)?.0
     else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
-    let numerical = region.index.numerical;
+    let numerical = *numerical_program(region)?.1;
     if *codes_role != STRICT_AFFINE_CODES_ROLE
         || *scale_role != STRICT_AFFINE_SCALE_ROLE
         || *zero_point_role != STRICT_AFFINE_ZERO_POINT_ROLE
@@ -1368,7 +1563,7 @@ fn verify_serial_semantics(
     read: &Access,
     write: &Access,
 ) -> Result<(), ScheduledRegionDiagnostic> {
-    let numerical = &region.index.numerical;
+    let numerical = numerical_program(region)?.1;
     let ReductionTopology::Serial {
         axes: scheduled_axes,
         order: scheduled_order,
@@ -1387,7 +1582,7 @@ fn verify_serial_semantics(
     else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
-    let family = split_family(&region.index.scalar_program)
+    let family = split_family(numerical_program(region)?.0)
         .ok_or(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
     let read_tensor = family
         .read_tensor(FamilyTopology::Serial)
@@ -1429,7 +1624,7 @@ fn verify_serial_semantics(
     // family does not: the expression is valid, its one leaf is the accumulator,
     // and it transforms that leaf instead of respelling `SquaredSerialSum`.
     if let ScalarProgram::SquaredSerialSumThenEpilogue { epilogue, .. } =
-        &region.index.scalar_program
+        numerical_program(region)?.0
         && (!epilogue.is_valid()
             || epilogue.input_count() != 1
             || matches!(
@@ -1723,7 +1918,7 @@ fn verify_accumulation_width(
     declared: ArithmeticType,
     program: &ScalarProgram,
 ) -> Result<(), ScheduledRegionDiagnostic> {
-    let required = region_arithmetic_type(program);
+    let required = scalar_arithmetic_type(program);
     if declared != required {
         return Err(ScheduledRegionDiagnostic::AccumulationWidth { declared, required });
     }
@@ -1833,7 +2028,7 @@ fn verify_padding_identity(
     program: &ScalarProgram,
     numerical: &NumericalRealization,
 ) -> Result<(), ScheduledRegionDiagnostic> {
-    let required = region_arithmetic_type(program);
+    let required = scalar_arithmetic_type(program);
     if identity.arithmetic_type() != required {
         return Err(coverage_rule(
             ContributorCoverageRule::ArithmeticTypeMismatch,
@@ -2010,12 +2205,12 @@ fn verify_multi_pass_semantics(
     else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
-    let family = split_family(&region.index.scalar_program)
+    let family = split_family(numerical_program(region)?.0)
         .ok_or(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
     let read_tensor = family
         .read_tensor(FamilyTopology::MultiPass(*pass))
         .ok_or(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
-    let numerical = &region.index.numerical;
+    let numerical = numerical_program(region)?.1;
     // Reassociation is what a split of an order-*sensitive* fold consumes, and it
     // is checked on its own: contributor order is preserved by construction, so a
     // permitted permutation neither grants nor substitutes for this permission.
@@ -2032,7 +2227,7 @@ fn verify_multi_pass_semantics(
     // The accumulator, refused under its own name. Checked after the permissions
     // so a region wrong on both reports the permission, which is the ordering
     // the cooperative gate already follows for `ArrivalPermission`.
-    verify_accumulation_width(*accumulation, &region.index.scalar_program)?;
+    verify_accumulation_width(*accumulation, numerical_program(region)?.0)?;
 
     let LogicalAccess::ReductionContributor {
         input_shape,
@@ -2082,8 +2277,8 @@ fn verify_multi_pass_semantics(
                 *coverage,
                 contributors,
                 1,
-                &region.index.scalar_program,
-                &region.index.numerical,
+                numerical_program(region)?.0,
+                numerical_program(region)?.1,
             )?;
             region.index.iteration_shape == partial_shape
                 && CommittedTensor::Exactly(TensorRole::Intermediate).admits(write.tensor)
@@ -2148,12 +2343,12 @@ fn verify_cooperative_semantics(
     else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
-    let family = split_family(&region.index.scalar_program)
+    let family = split_family(numerical_program(region)?.0)
         .ok_or(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
     let read_tensor = family
         .read_tensor(FamilyTopology::Cooperative)
         .ok_or(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
-    let numerical = &region.index.numerical;
+    let numerical = numerical_program(region)?.1;
     // Reassociation is what a split of an order-sensitive fold consumes, exactly
     // as it is for a multi-pass one, and for those families it is required rather
     // than merely recorded: a contract that forbids reassociation forbids the
@@ -2168,7 +2363,7 @@ fn verify_cooperative_semantics(
     }
     // The region's own element width, refused under its own name, for the reason
     // the multi-pass gate above states.
-    verify_accumulation_width(*accumulation, &region.index.scalar_program)?;
+    verify_accumulation_width(*accumulation, numerical_program(region)?.0)?;
     // The second permission, checked on its own and only where the arrival
     // actually consumes it. The order matters: a permitted-but-unrealizable
     // arrival must reach the admission rule below rather than be reported as a
@@ -2271,8 +2466,8 @@ fn verify_cooperative_semantics(
         *coverage,
         contributors,
         tile.rounds,
-        &region.index.scalar_program,
-        &region.index.numerical,
+        numerical_program(region)?.0,
+        numerical_program(region)?.1,
     )?;
     // The iteration domain appends one axis per *participant*, not one per
     // partition of the whole fold: the launch runs one invocation per (output,
@@ -2957,6 +3152,12 @@ fn bounds_proof_refines_access(
         ) => operand_shape.as_static().is_some_and(|shape| {
             super::model::element_count(shape).is_ok_and(|elements| *element_count == elements)
         }),
+        // Structural pairing only: the fieldless copy-source map cannot say
+        // which member-derived source element count applies, and this
+        // function's signature carries no access ordinal to look one up with.
+        // The exact element-count agreement is owned by the
+        // `partitioned-copy-source-shape` rule in the copy gate.
+        (BoundsProofKind::LinearRange { .. }, LogicalAccess::PartitionedCopySource) => true,
         _ => false,
     }
 }
@@ -3137,7 +3338,9 @@ mod tests {
     use crate::schedule::handles::{
         BoundsWitnessId, OwnershipWitnessId, PhaseId, StagingId, SyncPointId,
     };
-    use crate::schedule::model::{ContributorOrder, ContributorPartition, LaunchPlan};
+    use crate::schedule::model::{
+        ContributorOrder, ContributorPartition, LaunchPlan, RegionNumericalRequirements,
+    };
     use crate::schedule::numerics::{
         ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
         NumericalPermission, SubnormalMode, ValueDomainProvenance,
@@ -3215,6 +3418,75 @@ mod tests {
         )
     }
 
+    /// Overrides the scalar half of an already-seeded arithmetic program.
+    ///
+    /// The direct-field spelling these tests used before the program became a
+    /// sum; panicking on an unseeded or copy-classified builder keeps a
+    /// fixture defect loud instead of silently minting a program.
+    fn set_scalar(builder: &mut ScheduledRegionBuilder, scalar: ScalarProgram) {
+        match builder.program.as_mut() {
+            Some(RegionProgram::Numerical { scalar: slot, .. }) => *slot = scalar,
+            Some(RegionProgram::PartitionedCopy(_)) | None => {
+                panic!("seed an arithmetic program before overriding its scalar half")
+            }
+        }
+    }
+
+    /// Overrides the numerical half of an already-seeded arithmetic program.
+    fn set_numerical(builder: &mut ScheduledRegionBuilder, numerical: NumericalRealization) {
+        match builder.program.as_mut() {
+            Some(RegionProgram::Numerical {
+                numerical: slot, ..
+            }) => *slot = numerical,
+            Some(RegionProgram::PartitionedCopy(_)) | None => {
+                panic!("seed an arithmetic program before overriding its numerical half")
+            }
+        }
+    }
+
+    /// The floating-point rows an arithmetic fixture's requirements derive.
+    ///
+    /// A read-side mirror of the sum, so per-dimension assertions stay one
+    /// field access; the copy arm panics because every fixture using this is
+    /// arithmetic.
+    struct FloatRows {
+        input_subnormals: SubnormalMode,
+        result_subnormals: SubnormalMode,
+        contraction: NumericalPermission,
+        reassociation: NumericalPermission,
+        permutation: NumericalPermission,
+        signed_zero: NumericalPermission,
+        nan_assumptions: ExceptionalValueAssumption,
+        infinity_assumptions: ExceptionalValueAssumption,
+    }
+
+    fn float_rows(requirements: &ResourceRequirements) -> FloatRows {
+        let RegionNumericalRequirements::FloatingPoint {
+            input_subnormals,
+            result_subnormals,
+            contraction,
+            reassociation,
+            permutation,
+            signed_zero,
+            nan_assumptions,
+            infinity_assumptions,
+            ..
+        } = requirements.numerical
+        else {
+            panic!("an arithmetic fixture derives floating-point requirement rows");
+        };
+        FloatRows {
+            input_subnormals,
+            result_subnormals,
+            contraction,
+            reassociation,
+            permutation,
+            signed_zero,
+            nan_assumptions,
+            infinity_assumptions,
+        }
+    }
+
     fn scale_bias_expression(
         scale_bits: u32,
         bias_bits: u32,
@@ -3281,12 +3553,14 @@ mod tests {
             })
             .unwrap();
         builder
-            .scalar_program(ScalarProgram::PointwiseF32(scale_bias_expression(
-                2.0_f32.to_bits(),
-                1.0_f32.to_bits(),
-            )))
+            .program(RegionProgram::Numerical {
+                scalar: ScalarProgram::PointwiseF32(scale_bias_expression(
+                    2.0_f32.to_bits(),
+                    1.0_f32.to_bits(),
+                )),
+                numerical: strict_numerical(),
+            })
             .unwrap();
-        builder.numerical(strict_numerical()).unwrap();
         builder
             .schedule(KernelSchedule {
                 binding: ExecutionBinding::GlobalLinearInvocation,
@@ -3317,18 +3591,36 @@ mod tests {
         // than as a predicate, so a feasibility authority can name the exact
         // dimension a target failed to honour (ADR 0076 item 3).
         let requirements = verified.requirements();
-        assert_eq!(requirements.input_subnormals, SubnormalMode::Preserve);
-        assert_eq!(requirements.result_subnormals, SubnormalMode::Preserve);
-        assert_eq!(requirements.contraction, NumericalPermission::Forbidden);
-        assert_eq!(requirements.reassociation, NumericalPermission::Forbidden);
-        assert_eq!(requirements.permutation, NumericalPermission::Forbidden);
-        assert_eq!(requirements.signed_zero, NumericalPermission::Forbidden);
         assert_eq!(
-            requirements.nan_assumptions,
+            float_rows(&requirements).input_subnormals,
+            SubnormalMode::Preserve
+        );
+        assert_eq!(
+            float_rows(&requirements).result_subnormals,
+            SubnormalMode::Preserve
+        );
+        assert_eq!(
+            float_rows(&requirements).contraction,
+            NumericalPermission::Forbidden
+        );
+        assert_eq!(
+            float_rows(&requirements).reassociation,
+            NumericalPermission::Forbidden
+        );
+        assert_eq!(
+            float_rows(&requirements).permutation,
+            NumericalPermission::Forbidden
+        );
+        assert_eq!(
+            float_rows(&requirements).signed_zero,
+            NumericalPermission::Forbidden
+        );
+        assert_eq!(
+            float_rows(&requirements).nan_assumptions,
             ExceptionalValueAssumption::MakeNoAssumption
         );
         assert_eq!(
-            requirements.infinity_assumptions,
+            float_rows(&requirements).infinity_assumptions,
             ExceptionalValueAssumption::MakeNoAssumption
         );
     }
@@ -3343,25 +3635,40 @@ mod tests {
     #[test]
     fn a_relaxed_transform_contract_still_carries_its_subnormal_obligation() {
         let mut builder = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6);
-        builder.numerical = Some(NumericalRealization::new(
-            "tiler.test.relaxed-transforms-preserved-subnormals",
-            0x7fc0_0000,
-            SubnormalMode::Preserve,
-            SubnormalMode::Preserve,
-            NumericalPermission::Permitted,
-            NumericalPermission::Permitted,
-            NumericalPermission::Forbidden,
-            NumericalPermission::Forbidden,
-            NumericalPermission::Forbidden,
-            ApproximationEnvelope::Forbidden,
-            ExceptionalValueAssumption::MakeNoAssumption,
-            ExceptionalValueAssumption::MakeNoAssumption,
-        ));
+        set_numerical(
+            &mut builder,
+            NumericalRealization::new(
+                "tiler.test.relaxed-transforms-preserved-subnormals",
+                0x7fc0_0000,
+                SubnormalMode::Preserve,
+                SubnormalMode::Preserve,
+                NumericalPermission::Permitted,
+                NumericalPermission::Permitted,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                ApproximationEnvelope::Forbidden,
+                ExceptionalValueAssumption::MakeNoAssumption,
+                ExceptionalValueAssumption::MakeNoAssumption,
+            ),
+        );
         let carried = builder.build().unwrap().requirements();
-        assert_eq!(carried.contraction, NumericalPermission::Permitted);
-        assert_eq!(carried.reassociation, NumericalPermission::Permitted);
-        assert_eq!(carried.input_subnormals, SubnormalMode::Preserve);
-        assert_eq!(carried.result_subnormals, SubnormalMode::Preserve);
+        assert_eq!(
+            float_rows(&carried).contraction,
+            NumericalPermission::Permitted
+        );
+        assert_eq!(
+            float_rows(&carried).reassociation,
+            NumericalPermission::Permitted
+        );
+        assert_eq!(
+            float_rows(&carried).input_subnormals,
+            SubnormalMode::Preserve
+        );
+        assert_eq!(
+            float_rows(&carried).result_subnormals,
+            SubnormalMode::Preserve
+        );
     }
 
     #[test]
@@ -3453,9 +3760,11 @@ mod tests {
             })
             .unwrap();
         builder
-            .scalar_program(ScalarProgram::PointwiseF32(expression))
+            .program(RegionProgram::Numerical {
+                scalar: ScalarProgram::PointwiseF32(expression),
+                numerical: strict_numerical(),
+            })
             .unwrap();
-        builder.numerical(strict_numerical()).unwrap();
         builder
             .schedule(linear_schedule(elements, OwnershipWitnessId::new(0)))
             .unwrap();
@@ -3680,7 +3989,7 @@ mod tests {
         builder.accesses.remove(2);
         builder.bounds_proofs.remove(2);
         builder.accesses[2].bounds = BoundsWitnessId::new(3);
-        builder.scalar_program = Some(ScalarProgram::PointwiseF32(squared));
+        set_scalar(&mut builder, ScalarProgram::PointwiseF32(squared));
         let two = builder.build().unwrap();
 
         assert_ne!(
@@ -3693,7 +4002,7 @@ mod tests {
         expression: super::super::PointwiseF32Expression,
     ) -> Vec<u8> {
         let mut builder = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6);
-        builder.scalar_program = Some(ScalarProgram::PointwiseF32(expression));
+        set_scalar(&mut builder, ScalarProgram::PointwiseF32(expression));
         builder
             .build()
             .unwrap()
@@ -3905,7 +4214,10 @@ mod tests {
         let mut seen: Vec<CanonicalScheduledRegionIdentity> = Vec::new();
         for realization in realizations {
             let mut candidate = region.clone();
-            candidate.index.numerical = realization;
+            let RegionProgram::Numerical { numerical, .. } = &mut candidate.index.program else {
+                panic!("the fixture region is arithmetic");
+            };
+            *numerical = realization;
             let identity = encode_identity(&candidate);
             assert!(
                 !seen.contains(&identity),
@@ -4026,10 +4338,22 @@ mod tests {
         // The strict contract passes through untouched — the admission read
         // none of it, so nothing was consumed, relaxed, or newly required.
         let requirements = verified.requirements();
-        assert_eq!(requirements.contraction, NumericalPermission::Forbidden);
-        assert_eq!(requirements.reassociation, NumericalPermission::Forbidden);
-        assert_eq!(requirements.permutation, NumericalPermission::Forbidden);
-        assert_eq!(requirements.signed_zero, NumericalPermission::Forbidden);
+        assert_eq!(
+            float_rows(&requirements).contraction,
+            NumericalPermission::Forbidden
+        );
+        assert_eq!(
+            float_rows(&requirements).reassociation,
+            NumericalPermission::Forbidden
+        );
+        assert_eq!(
+            float_rows(&requirements).permutation,
+            NumericalPermission::Forbidden
+        );
+        assert_eq!(
+            float_rows(&requirements).signed_zero,
+            NumericalPermission::Forbidden
+        );
     }
 
     /// The strict serial fold across independent outputs is the second and
@@ -4048,11 +4372,11 @@ mod tests {
         assert_eq!(verified.region().schedule.work_items, 2);
         assert_eq!(verified.region().schedule.launch.grid_threads, 1);
         assert_eq!(
-            verified.requirements().reassociation,
+            float_rows(&verified.requirements()).reassociation,
             NumericalPermission::Forbidden
         );
         assert_eq!(
-            verified.requirements().permutation,
+            float_rows(&verified.requirements()).permutation,
             NumericalPermission::Forbidden
         );
     }
@@ -4338,14 +4662,16 @@ mod tests {
             })
             .unwrap();
         builder
-            .scalar_program(ScalarProgram::StrictSerialSum {
-                axes: vec![Axis::new(1)],
-                order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: 0x7fc0_0000,
-                empty_identity_bits: 0.0_f32.to_bits(),
+            .program(RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictSerialSum {
+                    axes: vec![Axis::new(1)],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: 0x7fc0_0000,
+                    empty_identity_bits: 0.0_f32.to_bits(),
+                },
+                numerical: reassociating_numerical(),
             })
             .unwrap();
-        builder.numerical(reassociating_numerical()).unwrap();
         builder
             .schedule(KernelSchedule {
                 reduction: ReductionTopology::MultiPass {
@@ -4427,8 +4753,12 @@ mod tests {
                 kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 2 },
             })
             .unwrap();
-        builder.scalar_program(scalar).unwrap();
-        builder.numerical(strict_numerical()).unwrap();
+        builder
+            .program(RegionProgram::Numerical {
+                scalar,
+                numerical: strict_numerical(),
+            })
+            .unwrap();
         builder
             .schedule(KernelSchedule {
                 reduction: ReductionTopology::Serial {
@@ -4510,13 +4840,15 @@ mod tests {
             })
             .unwrap();
         builder
-            .scalar_program(ScalarProgram::StrictTensorContraction {
-                contracted_shape: contracted.clone(),
-                order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: 0x7fc0_0000,
+            .program(RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictTensorContraction {
+                    contracted_shape: contracted.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: 0x7fc0_0000,
+                },
+                numerical: strict_numerical(),
             })
             .unwrap();
-        builder.numerical(strict_numerical()).unwrap();
         builder
             .schedule(KernelSchedule {
                 reduction: ReductionTopology::Contraction {
@@ -4618,13 +4950,15 @@ mod tests {
             })
             .unwrap();
         builder
-            .scalar_program(ScalarProgram::StrictTensorContraction {
-                contracted_shape: contracted,
-                order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: 0x7fc0_0000,
+            .program(RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictTensorContraction {
+                    contracted_shape: contracted,
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: 0x7fc0_0000,
+                },
+                numerical: strict_numerical(),
             })
             .unwrap();
-        builder.numerical(strict_numerical()).unwrap();
         builder
             .schedule(KernelSchedule {
                 reduction: ReductionTopology::LiveContraction {
@@ -4741,8 +5075,11 @@ mod tests {
             .build()
             .expect("a squaring fold with a scalar epilogue verifies");
         assert!(matches!(
-            region.region().index.scalar_program,
-            ScalarProgram::SquaredSerialSumThenEpilogue { .. }
+            region.region().index.program,
+            RegionProgram::Numerical {
+                scalar: ScalarProgram::SquaredSerialSumThenEpilogue { .. },
+                ..
+            }
         ));
         // One read and one write, exactly as the bare fold declares: the
         // epilogue's leaf is the folded value, so it binds no buffer.
@@ -4871,7 +5208,7 @@ mod tests {
         // program exchanged for the epilogue-carrying one, so the family is the
         // only difference between an admitted region and this refusal.
         let mut split = squared_partial_pass_builder(SPLIT);
-        split.scalar_program = Some(squared_sum_with_epilogue(scale_epilogue()));
+        set_scalar(&mut split, squared_sum_with_epilogue(scale_epilogue()));
         assert_eq!(
             split.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
@@ -4895,8 +5232,11 @@ mod tests {
             .build()
             .expect("an extrema serial pass verifies");
         assert!(matches!(
-            region.region().index.scalar_program,
-            ScalarProgram::StrictSerialMaximum { .. }
+            region.region().index.program,
+            RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictSerialMaximum { .. },
+                ..
+            }
         ));
     }
 
@@ -5031,12 +5371,15 @@ mod tests {
     fn into_extrema_split(builder: &mut ScheduledRegionBuilder, axes: Vec<Axis>, read: TensorRole) {
         builder.accesses[0].tensor = read;
         builder.bounds_proofs[0].tensor = read;
-        builder.scalar_program = Some(ScalarProgram::StrictSerialMaximum {
-            axes,
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: 0x7fc0_0000,
-        });
-        builder.numerical = Some(strict_numerical());
+        set_scalar(
+            builder,
+            ScalarProgram::StrictSerialMaximum {
+                axes,
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: 0x7fc0_0000,
+            },
+        );
+        set_numerical(builder, strict_numerical());
         let Some(ReductionTopology::MultiPass {
             permits_reassociation,
             ..
@@ -5096,7 +5439,7 @@ mod tests {
         );
         builder.accesses[0].tensor = TensorRole::Input;
         builder.bounds_proofs[0].tensor = TensorRole::Input;
-        builder.scalar_program = Some(maximum_scalar());
+        set_scalar(&mut builder, maximum_scalar());
         builder
     }
 
@@ -5123,18 +5466,18 @@ mod tests {
         assert_eq!(combine.region().schedule.work_items, 2);
         // The split is admitted without spending anything, which is the claim.
         assert_eq!(
-            partial.requirements().reassociation,
+            float_rows(&partial.requirements()).reassociation,
             NumericalPermission::Forbidden
         );
         assert_eq!(
-            partial.requirements().permutation,
+            float_rows(&partial.requirements()).permutation,
             NumericalPermission::Forbidden
         );
 
         // The perturbation that fires: the same split of the sum, under the same
         // strict realization, is still refused.
         let mut summed = partial_pass_builder(SPLIT);
-        summed.numerical = Some(strict_numerical());
+        set_numerical(&mut summed, strict_numerical());
         let Some(ReductionTopology::MultiPass {
             permits_reassociation,
             ..
@@ -5167,7 +5510,7 @@ mod tests {
             .expect("an extrema tile verifies under a strict contract");
         assert_eq!(verified.requirements().local_memory_bytes, 12);
         assert_eq!(
-            verified.requirements().reassociation,
+            float_rows(&verified.requirements()).reassociation,
             NumericalPermission::Forbidden
         );
 
@@ -5264,7 +5607,7 @@ mod tests {
     #[test]
     fn an_extrema_partial_pass_respelled_as_a_sum_verifies_as_that_sum() {
         let mut summed = extrema_partial_builder(SPLIT);
-        summed.numerical = Some(reassociating_numerical());
+        set_numerical(&mut summed, reassociating_numerical());
         let Some(ReductionTopology::MultiPass {
             permits_reassociation,
             ..
@@ -5279,7 +5622,7 @@ mod tests {
         // split of the extrema fold does not: without it the region would be
         // refused for the permission and say nothing about the boundary role.
         *permits_reassociation = true;
-        summed.scalar_program = Some(bare_sum(vec![Axis::new(1)]));
+        set_scalar(&mut summed, bare_sum(vec![Axis::new(1)]));
         let summed = summed
             .build()
             .expect("a bare sum folding the first input is a coherent partial pass");
@@ -5523,14 +5866,16 @@ mod tests {
             })
             .unwrap();
         builder
-            .scalar_program(ScalarProgram::StrictSerialSum {
-                axes: axes.clone(),
-                order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: 0x7fc0_0000,
-                empty_identity_bits: 0.0_f32.to_bits(),
+            .program(RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictSerialSum {
+                    axes: axes.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: 0x7fc0_0000,
+                    empty_identity_bits: 0.0_f32.to_bits(),
+                },
+                numerical: reassociating_numerical(),
             })
             .unwrap();
-        builder.numerical(reassociating_numerical()).unwrap();
         builder
             .schedule(KernelSchedule {
                 reduction: ReductionTopology::MultiPass {
@@ -5580,11 +5925,11 @@ mod tests {
         assert_eq!(combine.requirements().local_memory_bytes, 0);
         // The split reports the freedom it consumes and only that freedom.
         assert_eq!(
-            partial.requirements().reassociation,
+            float_rows(&partial.requirements()).reassociation,
             NumericalPermission::Permitted
         );
         assert_eq!(
-            partial.requirements().permutation,
+            float_rows(&partial.requirements()).permutation,
             NumericalPermission::Forbidden
         );
     }
@@ -5711,7 +6056,7 @@ mod tests {
         if !matches!(program, ScalarProgram::StrictSerialMaximum { .. }) {
             return;
         }
-        builder.numerical = Some(strict_numerical());
+        set_numerical(builder, strict_numerical());
         match &mut builder
             .schedule
             .as_mut()
@@ -5743,7 +6088,7 @@ mod tests {
         let mut builder = partial_pass_builder(SPLIT);
         read_from(&mut builder, read_tensor);
         declare_family_reassociation(&mut builder, &program);
-        builder.scalar_program = Some(program);
+        set_scalar(&mut builder, program);
         builder
     }
 
@@ -5754,7 +6099,7 @@ mod tests {
         let mut builder = cooperative_builder(cooperative_tile_fixture());
         read_from(&mut builder, read_tensor);
         declare_family_reassociation(&mut builder, &program);
-        builder.scalar_program = Some(program);
+        set_scalar(&mut builder, program);
         builder
     }
 
@@ -5919,11 +6264,10 @@ mod tests {
                 output_count: output_elements,
             };
 
-        match builder
-            .scalar_program
-            .as_mut()
-            .expect("the serial fixture has a scalar program")
-        {
+        let Some(RegionProgram::Numerical { scalar, .. }) = builder.program.as_mut() else {
+            panic!("the serial fixture has an arithmetic program")
+        };
+        match scalar {
             ScalarProgram::StrictSerialSum {
                 axes: scalar_axes, ..
             }
@@ -6340,14 +6684,14 @@ mod tests {
             .expect("the serial affine fold reads input one");
 
         let mut partial = partial_pass_builder(SPLIT);
-        partial.scalar_program = Some(affine.clone());
+        set_scalar(&mut partial, affine.clone());
         read_from(&mut partial, TensorRole::Input);
         partial
             .build()
             .expect("the affine partial pass reads input one");
 
         let mut cooperative = cooperative_builder(cooperative_tile_fixture());
-        cooperative.scalar_program = Some(affine);
+        set_scalar(&mut cooperative, affine);
         read_from(&mut cooperative, TensorRole::Input);
         cooperative
             .build()
@@ -6373,7 +6717,7 @@ mod tests {
         };
 
         let mut partial = partial_pass_builder(SPLIT);
-        partial.scalar_program = Some(affine.clone());
+        set_scalar(&mut partial, affine.clone());
         assert_eq!(
             partial.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
@@ -6381,7 +6725,7 @@ mod tests {
         );
 
         let mut cooperative = cooperative_builder(cooperative_tile_fixture());
-        cooperative.scalar_program = Some(affine);
+        set_scalar(&mut cooperative, affine);
         assert_eq!(
             cooperative.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
@@ -6435,7 +6779,7 @@ mod tests {
             empty_identity_bits: 0.0_f32.to_bits(),
         };
         let mut cooperative = cooperative_builder(cooperative_tile_fixture());
-        cooperative.scalar_program = Some(squared);
+        set_scalar(&mut cooperative, squared);
         read_from(&mut cooperative, TensorRole::Intermediate);
         assert_eq!(
             cooperative.build().unwrap_err().diagnostics(),
@@ -6534,7 +6878,7 @@ mod tests {
     #[test]
     fn a_split_is_rejected_when_reassociation_is_denied() {
         for mut builder in [partial_pass_builder(SPLIT), final_pass_builder(SPLIT)] {
-            builder.numerical = Some(strict_numerical());
+            set_numerical(&mut builder, strict_numerical());
             let ReductionTopology::MultiPass {
                 permits_reassociation,
                 ..
@@ -6560,10 +6904,13 @@ mod tests {
     #[test]
     fn permutation_neither_admits_nor_blocks_a_split() {
         let mut permuting_only = partial_pass_builder(SPLIT);
-        permuting_only.numerical = Some(NumericalRealization {
-            permutation: NumericalPermission::Permitted,
-            ..strict_numerical()
-        });
+        set_numerical(
+            &mut permuting_only,
+            NumericalRealization {
+                permutation: NumericalPermission::Permitted,
+                ..strict_numerical()
+            },
+        );
         let ReductionTopology::MultiPass {
             permits_reassociation,
             permits_permutation,
@@ -6788,10 +7135,13 @@ mod tests {
     #[test]
     fn plus_zero_is_neutral_when_signed_zero_elimination_is_permitted() {
         let mut builder = padded_partial(POS_ZERO);
-        builder.numerical = Some(NumericalRealization {
-            signed_zero: NumericalPermission::Permitted,
-            ..reassociating_numerical()
-        });
+        set_numerical(
+            &mut builder,
+            NumericalRealization {
+                signed_zero: NumericalPermission::Permitted,
+                ..reassociating_numerical()
+            },
+        );
         builder
             .build()
             .expect("+0.0 is observably neutral under signed-zero elimination");
@@ -6992,12 +7342,15 @@ mod tests {
         let mut builder = partial_pass_builder(partition);
         builder.accesses[0].tensor = TensorRole::Input;
         builder.bounds_proofs[0].tensor = TensorRole::Input;
-        builder.scalar_program = Some(ScalarProgram::SquaredSerialSum {
-            axes: vec![Axis::new(1)],
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: 0x7fc0_0000,
-            empty_identity_bits: 0.0_f32.to_bits(),
-        });
+        set_scalar(
+            &mut builder,
+            ScalarProgram::SquaredSerialSum {
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: 0x7fc0_0000,
+                empty_identity_bits: 0.0_f32.to_bits(),
+            },
+        );
         builder
     }
 
@@ -7008,8 +7361,11 @@ mod tests {
             .build()
             .expect("a squaring-prologue partial pass verifies");
         assert!(matches!(
-            region.region().index.scalar_program,
-            ScalarProgram::SquaredSerialSum { .. }
+            region.region().index.program,
+            RegionProgram::Numerical {
+                scalar: ScalarProgram::SquaredSerialSum { .. },
+                ..
+            }
         ));
     }
 
@@ -7056,15 +7412,22 @@ mod tests {
     #[test]
     fn the_squaring_prologue_may_not_carry_the_final_pass() {
         let mut builder = final_pass_builder(SPLIT);
-        builder.scalar_program = Some(ScalarProgram::SquaredSerialSum {
-            axes: match &builder.scalar_program {
-                Some(ScalarProgram::StrictSerialSum { axes, .. }) => axes.clone(),
-                other => panic!("expected the final pass's serial sum, not {other:?}"),
+        let axes = match &builder.program {
+            Some(RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictSerialSum { axes, .. },
+                ..
+            }) => axes.clone(),
+            other => panic!("expected the final pass's serial sum, not {other:?}"),
+        };
+        set_scalar(
+            &mut builder,
+            ScalarProgram::SquaredSerialSum {
+                axes,
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: 0x7fc0_0000,
+                empty_identity_bits: 0.0_f32.to_bits(),
             },
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: 0x7fc0_0000,
-            empty_identity_bits: 0.0_f32.to_bits(),
-        });
+        );
         assert_eq!(
             builder.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
@@ -7086,12 +7449,15 @@ mod tests {
         let mut bare = squared_partial_pass_builder(SPLIT);
         bare.accesses[0].tensor = TensorRole::Intermediate;
         bare.bounds_proofs[0].tensor = TensorRole::Intermediate;
-        bare.scalar_program = Some(ScalarProgram::StrictSerialSum {
-            axes: vec![Axis::new(1)],
-            order: ContributorOrder::OriginalAxisLexicographic,
-            canonical_nan_bits: 0x7fc0_0000,
-            empty_identity_bits: 0.0_f32.to_bits(),
-        });
+        set_scalar(
+            &mut bare,
+            ScalarProgram::StrictSerialSum {
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: 0x7fc0_0000,
+                empty_identity_bits: 0.0_f32.to_bits(),
+            },
+        );
         let bare = bare.build().expect("the bare pass verifies");
         assert_ne!(squared.canonical_identity(), bare.canonical_identity());
     }
@@ -7432,14 +7798,16 @@ mod tests {
             })
             .unwrap();
         builder
-            .scalar_program(ScalarProgram::StrictSerialSum {
-                axes: vec![Axis::new(1)],
-                order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: 0x7fc0_0000,
-                empty_identity_bits: 0.0_f32.to_bits(),
+            .program(RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictSerialSum {
+                    axes: vec![Axis::new(1)],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: 0x7fc0_0000,
+                    empty_identity_bits: 0.0_f32.to_bits(),
+                },
+                numerical,
             })
             .unwrap();
-        builder.numerical(numerical).unwrap();
         let threads = u32::try_from(participants).expect("the fixture's width fits u32");
         builder
             .schedule(KernelSchedule {
@@ -7533,11 +7901,11 @@ mod tests {
         );
         // The split it consumes, and only that split.
         assert_eq!(
-            verified.requirements().reassociation,
+            float_rows(&verified.requirements()).reassociation,
             NumericalPermission::Permitted
         );
         assert_eq!(
-            verified.requirements().permutation,
+            float_rows(&verified.requirements()).permutation,
             NumericalPermission::Forbidden
         );
     }
@@ -8712,14 +9080,16 @@ mod tests {
             })
             .unwrap();
         serial
-            .scalar_program(ScalarProgram::StrictSerialSum {
-                axes: vec![Axis::new(1)],
-                order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: 0x7fc0_0000,
-                empty_identity_bits: 0.0_f32.to_bits(),
+            .program(RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictSerialSum {
+                    axes: vec![Axis::new(1)],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: 0x7fc0_0000,
+                    empty_identity_bits: 0.0_f32.to_bits(),
+                },
+                numerical: strict_numerical(),
             })
             .unwrap();
-        serial.numerical(strict_numerical()).unwrap();
         serial
             .schedule(KernelSchedule {
                 reduction: ReductionTopology::Serial {
@@ -8736,10 +9106,14 @@ mod tests {
             .build()
             .expect("the empty reduction verifies");
         assert_eq!(empty.requirements().local_memory_bytes, 0);
-        let ScalarProgram::StrictSerialSum {
-            empty_identity_bits,
+        let RegionProgram::Numerical {
+            scalar:
+                ScalarProgram::StrictSerialSum {
+                    empty_identity_bits,
+                    ..
+                },
             ..
-        } = &empty.region().index.scalar_program
+        } = &empty.region().index.program
         else {
             panic!("expected a strict serial sum")
         };
@@ -9085,13 +9459,15 @@ mod tests {
             })
             .unwrap();
         builder
-            .scalar_program(ScalarProgram::StrictTensorContraction {
-                contracted_shape: contracted.clone(),
-                order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: 0x7fc0_0000,
+            .program(RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictTensorContraction {
+                    contracted_shape: contracted.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: 0x7fc0_0000,
+                },
+                numerical: reassociating_numerical(),
             })
             .unwrap();
-        builder.numerical(reassociating_numerical()).unwrap();
         let threads = u32::try_from(TILE_PARTICIPANTS).expect("256 fits u32");
         builder
             .schedule(KernelSchedule {
@@ -9374,13 +9750,15 @@ mod tests {
             })
             .unwrap();
         builder
-            .scalar_program(ScalarProgram::StrictTensorContraction {
-                contracted_shape: contracted_shape.clone(),
-                order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: 0x7fc0_0000,
+            .program(RegionProgram::Numerical {
+                scalar: ScalarProgram::StrictTensorContraction {
+                    contracted_shape: contracted_shape.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    canonical_nan_bits: 0x7fc0_0000,
+                },
+                numerical: reassociating_numerical(),
             })
             .unwrap();
-        builder.numerical(reassociating_numerical()).unwrap();
         let threads = u32::try_from(TILE_PARTICIPANTS).expect("256 fits u32");
         builder
             .schedule(KernelSchedule {
@@ -9582,5 +9960,536 @@ mod tests {
             ),
             Ok(0)
         );
+    }
+
+    // ---- Partitioned-copy region evidence ----------------------------------
+    //
+    // The accepted 2026-08-18 surface: the field-replacing `RegionProgram` sum,
+    // program-owned members with derived checked prefix offsets, the fieldless
+    // copy-source map, and the eleven `partitioned-copy-*` rules at the
+    // review-corrected precedence. Every fixture below drives the intrinsic
+    // verifier by construction; the projection from the accepted index law —
+    // and its overlap/gap/wrong-prefix refusals over displaced roots — belongs
+    // to `plan-concatenate-through-one-partitioned-copy-entry`.
+
+    use crate::schedule::model::{CopyElement, CopyMember, PartitionedCopyProgram};
+
+    /// Builds a verifiable partitioned-copy region.
+    ///
+    /// `members[k]` is `(source ordinal, extent)`. One read per distinct
+    /// ordinal (dense `0..reads`), each carrying the fieldless copy-source map
+    /// and a `LinearRange` proof of its member-derived source element count;
+    /// the one owning write is a program output under `LinearIdentity`.
+    fn partitioned_copy_builder(
+        shape: &Shape,
+        axis: u32,
+        members: &[(u32, u64)],
+    ) -> ScheduledRegionBuilder {
+        let elements = element_count(shape).expect("the fixture domain is finite");
+        let reads = members
+            .iter()
+            .map(|(source, _)| source + 1)
+            .max()
+            .unwrap_or(0);
+        let mut builder = ScheduledRegionBuilder::new(RegionId::new(0));
+        builder.iteration_shape(shape.clone()).unwrap();
+        for read in 0..reads {
+            builder
+                .push_access(Access {
+                    tensor: TensorRole::Input,
+                    component_role: None,
+                    mode: AccessMode::Read,
+                    map: LogicalAccess::PartitionedCopySource,
+                    bounds: BoundsWitnessId::new(read),
+                    ownership: None,
+                })
+                .unwrap();
+        }
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Output,
+                component_role: None,
+                mode: AccessMode::Write,
+                map: LogicalAccess::LinearIdentity,
+                bounds: BoundsWitnessId::new(reads),
+                ownership: Some(OwnershipWitnessId::new(0)),
+            })
+            .unwrap();
+        for read in 0..reads {
+            let extent = members
+                .iter()
+                .find(|(source, _)| *source == read)
+                .map_or(0, |(_, extent)| *extent);
+            let source_elements = shape
+                .extents()
+                .iter()
+                .enumerate()
+                .map(|(position, source_extent)| {
+                    if position == usize::try_from(axis).unwrap() {
+                        extent
+                    } else {
+                        source_extent.get()
+                    }
+                })
+                .try_fold(1_u64, u64::checked_mul)
+                .expect("the fixture source domain is finite");
+            builder
+                .push_bounds_proof(BoundsProof {
+                    id: BoundsWitnessId::new(read),
+                    tensor: TensorRole::Input,
+                    component_role: None,
+                    kind: BoundsProofKind::LinearRange {
+                        element_count: source_elements,
+                    },
+                })
+                .unwrap();
+        }
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(reads),
+                tensor: TensorRole::Output,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: elements,
+                },
+            })
+            .unwrap();
+        builder
+            .ownership_proof(OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: TensorRole::Output,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                    output_count: elements,
+                },
+            })
+            .unwrap();
+        builder
+            .program(RegionProgram::PartitionedCopy(PartitionedCopyProgram {
+                element: CopyElement::F32,
+                axis: Axis::new(axis),
+                members: members
+                    .iter()
+                    .map(|(source, extent)| CopyMember {
+                        source: AccessOrdinal::new(*source),
+                        extent: *extent,
+                    })
+                    .collect(),
+            }))
+            .unwrap();
+        builder
+            .schedule(linear_schedule(elements, OwnershipWitnessId::new(0)))
+            .unwrap();
+        builder
+    }
+
+    /// The one partitioned-copy diagnostic each perturbation below must name.
+    #[track_caller]
+    fn assert_copy_rule(builder: ScheduledRegionBuilder, rule: &str) {
+        let diagnostics = builder.build().unwrap_err().diagnostics().to_vec();
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(diagnostics[0].rule(), rule, "{diagnostics:?}");
+    }
+
+    /// Recorded canonical identity of the arity-2 `[2, 3]` axis-0 copy fixture.
+    ///
+    /// One member per operand at extents 1 + 1 over two distinct reads. Pinned
+    /// so a later payload or tag move fails this pin rather than only the
+    /// injectivity arguments.
+    const ARITY_TWO_COPY_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e76370000000000000000020000000000000002000000000000000300000000000000030100010d00000000000100010d0000000100030002010000000201000000000000000000000003000000000100110000000000000003000000010100110000000000000003000000020300110000000000000006000000000300000000000000062b010000000000000000000000020000000000000000000000010000000100000000000000010100000000000000060000000101000000003100000000000000060000000101";
+
+    #[test]
+    fn an_arity_two_partitioned_copy_verifies_and_derives_the_copy_requirements() {
+        let verified = partitioned_copy_builder(&Shape::from_dims([4, 5]), 0, &[(0, 1), (1, 3)])
+            .build()
+            .expect("an arity-2 partitioned copy verifies");
+        // Structural rows stay unconditional; the numerical requirement is the
+        // proved absence, never a fabricated strict row.
+        let requirements = verified.requirements();
+        assert_eq!(requirements.buffer_bindings, 3);
+        assert!(requirements.requires_device_memory);
+        assert_eq!(
+            requirements.numerical,
+            RegionNumericalRequirements::BitPreservingCopy
+        );
+        assert_eq!(requirements.synchronization, None);
+        assert_eq!(requirements.local_memory_bytes, 0);
+        // The fail-closed freedom answer: nothing proves a copy's payloads
+        // bounded away from the subnormal range.
+        assert_eq!(
+            verified.subnormal_freedom(),
+            crate::schedule::SubnormalFreedom::Unproven
+        );
+    }
+
+    #[test]
+    fn an_arity_eight_partitioned_copy_verifies_at_every_axis_position() {
+        // Arity 8 with unequal extents, including a zero-extent member that
+        // stays in identity and executes no access.
+        let extents = [3, 1, 0, 2, 5, 1, 4, 2];
+        let members: Vec<(u32, u64)> = extents
+            .iter()
+            .enumerate()
+            .map(|(source, extent)| (u32::try_from(source).unwrap(), *extent))
+            .collect();
+        let total: u64 = extents.iter().sum();
+        for axis in 0..3_u32 {
+            let mut dims = [2_u64, 3, 4];
+            dims[usize::try_from(axis).unwrap()] = total;
+            let verified = partitioned_copy_builder(&Shape::from_dims(dims), axis, &members)
+                .build()
+                .expect("an arity-8 partitioned copy verifies at every axis position");
+            assert_eq!(verified.region().index.accesses.len(), 9);
+        }
+    }
+
+    #[test]
+    fn an_all_zero_partitioned_copy_verifies_and_skips_dispatch() {
+        let verified = partitioned_copy_builder(&Shape::from_dims([0, 3]), 0, &[(0, 0), (1, 0)])
+            .build()
+            .expect("an all-zero partitioned copy verifies");
+        assert_eq!(verified.region().schedule.work_items, 0);
+        assert!(verified.region().schedule.launch.zero_work_skips_dispatch);
+    }
+
+    #[test]
+    fn a_repeated_operand_copy_is_two_members_over_one_deduplicated_read() {
+        // `concat(x, x)`: two ordered members, one boundary read.
+        let verified = partitioned_copy_builder(&Shape::from_dims([4, 3]), 0, &[(0, 2), (0, 2)])
+            .build()
+            .expect("concat(x, x) verifies as two members over one read");
+        assert_eq!(verified.region().index.accesses.len(), 2);
+    }
+
+    /// A legal reorder of otherwise-identical operand extents is a different
+    /// program with a different canonical identity: member order is semantic.
+    #[test]
+    fn reordering_members_moves_the_canonical_identity() {
+        let forward = partitioned_copy_builder(&Shape::from_dims([4, 5]), 0, &[(0, 1), (1, 3)])
+            .build()
+            .expect("the forward order verifies");
+        let reordered = partitioned_copy_builder(&Shape::from_dims([4, 5]), 0, &[(0, 3), (1, 1)])
+            .build()
+            .expect("the reordered program verifies");
+        assert_ne!(
+            forward.canonical_identity().as_bytes(),
+            reordered.canonical_identity().as_bytes()
+        );
+    }
+
+    #[test]
+    fn the_arity_two_copy_has_its_recorded_canonical_identity() {
+        let verified = partitioned_copy_builder(&Shape::from_dims([2, 3]), 0, &[(0, 1), (1, 1)])
+            .build()
+            .expect("the pinned fixture verifies");
+        let mut hex = String::new();
+        for byte in verified.canonical_identity().as_bytes() {
+            write!(hex, "{byte:02x}").unwrap();
+        }
+        assert_eq!(hex, ARITY_TWO_COPY_IDENTITY_HEX);
+    }
+
+    /// Cross-arm discrimination at the program position, on equal prefixes.
+    ///
+    /// Two regions sharing every byte before the program position — same
+    /// shape, accesses, proofs, and ownership — first diverge exactly at the
+    /// program tag: `0x24` (pointwise) against `0x2B` (partitioned copy). The
+    /// arithmetic twin is deliberately unverifiable (a pointwise region may
+    /// not carry the copy-source map), so the control encodes both directly:
+    /// injectivity is a property of the encoder over every encodable region,
+    /// not only the verifiable ones.
+    #[test]
+    fn the_copy_and_numerical_arms_first_diverge_at_the_program_position_byte() {
+        let copy = partitioned_copy_builder(&Shape::from_dims([2, 3]), 0, &[(0, 1), (0, 1)])
+            .build()
+            .expect("the copy twin verifies");
+        let copy_bytes = copy.canonical_identity().as_bytes().to_vec();
+        let mut twin = copy.region().clone();
+        twin.index.program = RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseF32(scale_bias_expression(
+                2.0_f32.to_bits(),
+                1.0_f32.to_bits(),
+            )),
+            numerical: strict_numerical(),
+        };
+        let twin_bytes = encode_identity(&twin);
+        let twin_bytes = twin_bytes.as_bytes();
+        let diverge = copy_bytes
+            .iter()
+            .zip(twin_bytes)
+            .position(|(copy, twin)| copy != twin)
+            .expect("the two arms cannot share an identity");
+        assert_eq!(copy_bytes[diverge], 0x2b, "the copy arm's program tag");
+        assert_eq!(twin_bytes[diverge], 0x24, "the pointwise program tag");
+    }
+
+    /// Against the pinned strict-`f32` identity the first divergence sits at
+    /// the first read's access-map byte, ahead of the program position: the
+    /// copy read carries the appended `0x0d` map tag where the pinned region's
+    /// read is `0x01` (`LinearIdentity`). The packet's byte control named the
+    /// program-position byte, which no fixture can realize against this pin —
+    /// the access map is encoded first — so the realizable control is stated
+    /// and the program-position discrimination is proved on equal prefixes
+    /// above.
+    #[test]
+    fn against_the_pinned_strict_identity_the_copy_first_diverges_at_the_access_map_byte() {
+        let copy = partitioned_copy_builder(&Shape::from_dims([2, 3]), 0, &[(0, 1), (0, 1)])
+            .build()
+            .expect("the two-access copy fixture verifies");
+        let copy_bytes = copy.canonical_identity().as_bytes();
+        let pinned: Vec<u8> = (0..STRICT_F32_REGION_IDENTITY_HEX.len())
+            .step_by(2)
+            .map(|index| {
+                u8::from_str_radix(&STRICT_F32_REGION_IDENTITY_HEX[index..index + 2], 16).unwrap()
+            })
+            .collect();
+        let diverge = copy_bytes
+            .iter()
+            .zip(&pinned)
+            .position(|(copy, pinned)| copy != pinned)
+            .expect("a copy and an arithmetic region cannot share an identity");
+        // Domain (18) + framed shape (8 + 16) + access count (8) + the first
+        // access's role, component, and mode bytes (3) = 53: the map tag.
+        assert_eq!(diverge, 53);
+        assert_eq!(copy_bytes[diverge], 0x0d, "the appended copy-source tag");
+        assert_eq!(pinned[diverge], 0x01, "the pinned read's linear identity");
+    }
+
+    #[test]
+    fn a_builder_missing_only_the_program_reports_the_region_program_component() {
+        let mut builder = partitioned_copy_builder(&Shape::from_dims([4]), 0, &[(0, 1), (1, 3)]);
+        builder.program = None;
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::IncompleteRegion {
+                component: ScheduleComponent::RegionProgram,
+            }]
+        );
+    }
+
+    #[test]
+    fn derived_offsets_and_source_shapes_answer_and_refuse_overflow_by_absence() {
+        let program = PartitionedCopyProgram {
+            element: CopyElement::F32,
+            axis: Axis::new(0),
+            members: vec![
+                CopyMember {
+                    source: AccessOrdinal::new(0),
+                    extent: 1,
+                },
+                CopyMember {
+                    source: AccessOrdinal::new(1),
+                    extent: 3,
+                },
+            ],
+        };
+        assert_eq!(program.member_offsets(), Some(vec![0, 1]));
+        let shape = Shape::from_dims([4, 5]);
+        assert_eq!(
+            program.member_source_shape(&shape, 1),
+            Some(Shape::from_dims([3, 5]))
+        );
+        assert_eq!(program.member_source_shape(&shape, 2), None);
+        let overflowing = PartitionedCopyProgram {
+            element: CopyElement::F32,
+            axis: Axis::new(0),
+            members: vec![
+                CopyMember {
+                    source: AccessOrdinal::new(0),
+                    extent: u64::MAX,
+                },
+                CopyMember {
+                    source: AccessOrdinal::new(1),
+                    extent: 2,
+                },
+            ],
+        };
+        assert_eq!(overflowing.member_offsets(), None);
+    }
+
+    // Each of the eleven rules, reached independently: the perturbation breaks
+    // exactly the fact the rule guards, and the failure text is the rule's own
+    // stable identifier.
+
+    #[test]
+    fn a_copy_with_a_serial_reduction_is_refused_by_topology() {
+        let mut builder = partitioned_copy_builder(&Shape::from_dims([4, 5]), 0, &[(0, 1), (1, 3)]);
+        let schedule = builder.schedule.as_mut().unwrap();
+        schedule.reduction = ReductionTopology::Serial {
+            axes: vec![Axis::new(0)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            permits_reassociation: false,
+            permits_permutation: false,
+        };
+        assert_copy_rule(builder, "partitioned-copy-topology");
+    }
+
+    /// The binding clause of the topology rule, watched through the one
+    /// binding the shared gates admit over `ReductionTopology::None`: the
+    /// fixed-vector map. The blocked binding and the predicated tail are
+    /// refused by the shared gates ahead of the copy dispatch, so the
+    /// reduction clause and this one are the independently reachable clauses.
+    #[test]
+    fn a_copy_under_a_fixed_vector_binding_is_refused_by_topology() {
+        let mut builder = partitioned_copy_builder(&Shape::from_dims([4, 5]), 0, &[(0, 1), (1, 3)]);
+        let schedule = builder.schedule.as_mut().unwrap();
+        schedule.binding = ExecutionBinding::FixedVectorMap {
+            lanes: admitted_lanes(2),
+        };
+        schedule.launch.grid_threads = 10;
+        assert_copy_rule(builder, "partitioned-copy-topology");
+    }
+
+    #[test]
+    fn a_copy_reading_an_intermediate_is_refused_by_read_tensor() {
+        let mut builder = partitioned_copy_builder(&Shape::from_dims([4, 5]), 0, &[(0, 1), (1, 3)]);
+        builder.accesses[0].tensor = TensorRole::Intermediate;
+        builder.bounds_proofs[0].tensor = TensorRole::Intermediate;
+        assert_copy_rule(builder, "partitioned-copy-read-tensor");
+    }
+
+    #[test]
+    fn a_copy_writing_an_intermediate_is_refused_by_write_tensor() {
+        let mut builder = partitioned_copy_builder(&Shape::from_dims([4, 5]), 0, &[(0, 1), (1, 3)]);
+        builder.accesses[2].tensor = TensorRole::Intermediate;
+        builder.bounds_proofs[2].tensor = TensorRole::Intermediate;
+        builder.ownership_proof.as_mut().unwrap().tensor = TensorRole::Intermediate;
+        assert_copy_rule(builder, "partitioned-copy-write-tensor");
+    }
+
+    #[test]
+    fn a_single_member_copy_is_refused_by_member_count() {
+        // Dropping one member of an arity-2 fixture leaves one member: the
+        // count rule fires ahead of the coverage sum.
+        let mut builder = partitioned_copy_builder(&Shape::from_dims([4, 5]), 0, &[(0, 1), (1, 3)]);
+        let Some(RegionProgram::PartitionedCopy(program)) = builder.program.as_mut() else {
+            panic!("the fixture is a partitioned copy");
+        };
+        program.members.pop();
+        assert_copy_rule(builder, "partitioned-copy-member-count");
+    }
+
+    #[test]
+    fn an_out_of_rank_axis_is_refused_by_axis_range() {
+        let mut builder = partitioned_copy_builder(&Shape::from_dims([4, 5]), 0, &[(0, 1), (1, 3)]);
+        let Some(RegionProgram::PartitionedCopy(program)) = builder.program.as_mut() else {
+            panic!("the fixture is a partitioned copy");
+        };
+        program.axis = Axis::new(2);
+        assert_copy_rule(builder, "partitioned-copy-axis-range");
+    }
+
+    #[test]
+    fn a_member_naming_the_write_is_refused_by_source_reference() {
+        let mut builder = partitioned_copy_builder(&Shape::from_dims([4, 5]), 0, &[(0, 1), (1, 3)]);
+        let Some(RegionProgram::PartitionedCopy(program)) = builder.program.as_mut() else {
+            panic!("the fixture is a partitioned copy");
+        };
+        // Ordinal 2 is the write's position in the access list.
+        program.members[1].source = AccessOrdinal::new(2);
+        assert_copy_rule(builder, "partitioned-copy-source-reference");
+    }
+
+    #[test]
+    fn a_permuted_read_list_is_refused_by_source_order() {
+        // First references 1 then 0: one meaning would otherwise have two
+        // identities under a permuted read list with renumbered ordinals.
+        let mut builder = partitioned_copy_builder(&Shape::from_dims([4, 5]), 0, &[(0, 3), (1, 1)]);
+        let Some(RegionProgram::PartitionedCopy(program)) = builder.program.as_mut() else {
+            panic!("the fixture is a partitioned copy");
+        };
+        program.members[0].source = AccessOrdinal::new(1);
+        program.members[1].source = AccessOrdinal::new(0);
+        assert_copy_rule(builder, "partitioned-copy-source-order");
+    }
+
+    #[test]
+    fn an_unreferenced_read_is_refused_by_unreferenced_source() {
+        let mut builder = partitioned_copy_builder(&Shape::from_dims([4, 5]), 0, &[(0, 1), (1, 3)]);
+        // A third read no member references, spliced in ahead of the write
+        // with its structural proof.
+        builder.accesses.insert(
+            2,
+            Access {
+                tensor: TensorRole::Input,
+                component_role: None,
+                mode: AccessMode::Read,
+                map: LogicalAccess::PartitionedCopySource,
+                bounds: BoundsWitnessId::new(3),
+                ownership: None,
+            },
+        );
+        builder.bounds_proofs.insert(
+            2,
+            BoundsProof {
+                id: BoundsWitnessId::new(3),
+                tensor: TensorRole::Input,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange { element_count: 0 },
+            },
+        );
+        assert_copy_rule(builder, "partitioned-copy-unreferenced-source");
+    }
+
+    #[test]
+    fn an_overflowing_extent_is_refused_by_extent_overflow() {
+        let mut builder = partitioned_copy_builder(&Shape::from_dims([4, 5]), 0, &[(0, 1), (1, 3)]);
+        let Some(RegionProgram::PartitionedCopy(program)) = builder.program.as_mut() else {
+            panic!("the fixture is a partitioned copy");
+        };
+        program.members[0].extent = u64::MAX;
+        program.members[1].extent = 2;
+        assert_copy_rule(builder, "partitioned-copy-extent-overflow");
+    }
+
+    #[test]
+    fn a_wrong_extent_total_is_refused_by_coverage_sum_and_the_compensated_domain_passes() {
+        // One member's extent moved by one: the only representable coverage
+        // defect, covering both the would-be gap and the would-be overlap.
+        let mut short = partitioned_copy_builder(&Shape::from_dims([4, 5]), 0, &[(0, 1), (1, 3)]);
+        let Some(RegionProgram::PartitionedCopy(program)) = short.program.as_mut() else {
+            panic!("the fixture is a partitioned copy");
+        };
+        program.members[1].extent = 2;
+        assert_copy_rule(short, "partitioned-copy-coverage-sum");
+        // Dropping one member of an arity-3 fixture is the same defect at a
+        // legal member count.
+        let mut dropped =
+            partitioned_copy_builder(&Shape::from_dims([6, 5]), 0, &[(0, 1), (1, 3), (2, 2)]);
+        let Some(RegionProgram::PartitionedCopy(program)) = dropped.program.as_mut() else {
+            panic!("the fixture is a partitioned copy");
+        };
+        program.members.pop();
+        dropped.accesses.remove(2);
+        dropped.bounds_proofs.remove(2);
+        dropped.accesses[2].bounds = BoundsWitnessId::new(2);
+        dropped.bounds_proofs[2].id = BoundsWitnessId::new(2);
+        assert_copy_rule(dropped, "partitioned-copy-coverage-sum");
+        // The compensated axis extent readmits the perturbed extents, so the
+        // refusal above is the coverage fact and not a broken fixture.
+        partitioned_copy_builder(&Shape::from_dims([3, 5]), 0, &[(0, 1), (1, 2)])
+            .build()
+            .expect("the compensated domain verifies");
+    }
+
+    #[test]
+    fn disagreeing_member_extents_and_a_wrong_proof_count_are_refused_by_source_shape() {
+        // Two members of one read with disagreeing extents.
+        let mut disagreeing =
+            partitioned_copy_builder(&Shape::from_dims([5, 3]), 0, &[(0, 2), (0, 3)]);
+        let Some(RegionProgram::PartitionedCopy(_)) = disagreeing.program.as_mut() else {
+            panic!("the fixture is a partitioned copy");
+        };
+        assert_copy_rule(disagreeing, "partitioned-copy-source-shape");
+        // A read's bounds-proof element count disagreeing with the derived
+        // source element count — the exactness the structural refinement arm
+        // deliberately defers to this rule.
+        let mut wrong_proof =
+            partitioned_copy_builder(&Shape::from_dims([4, 5]), 0, &[(0, 1), (1, 3)]);
+        let BoundsProofKind::LinearRange { element_count } = &mut wrong_proof.bounds_proofs[0].kind
+        else {
+            panic!("the fixture proof is a linear range");
+        };
+        *element_count += 1;
+        assert_copy_rule(wrong_proof, "partitioned-copy-source-shape");
     }
 }

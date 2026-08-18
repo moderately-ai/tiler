@@ -379,6 +379,19 @@ pub enum KernelDiagnostic {
     /// outputs, and emitting one per output would execute a launch identity
     /// the schedule does not state.
     UnloweredExecutionBinding,
+    /// The region's program class has no lowered kernel realization.
+    ///
+    /// Representable, not lowered — the same separation
+    /// [`Self::UnloweredExecutionBinding`] keeps for the vector binding. The
+    /// intrinsic schedule verifier admits the partitioned-copy region as an
+    /// accepted carrier, but its guarded-store body, bit-preserving numerical
+    /// evidence, and identity tags are a separate accepted boundary
+    /// (`lower-the-partitioned-copy-region-through-kernel-ir`), so this
+    /// profile has no body for it and no kernel-identity row for its
+    /// requirements. Refusing by name is what keeps the carrier
+    /// non-executable rather than lowered against a scalar program the region
+    /// does not carry.
+    UnloweredRegionProgram,
     /// The structured loops do not realize the scheduled reduction topology.
     ReductionContract,
     /// The reduction contributor domain is malformed.
@@ -432,6 +445,7 @@ impl KernelDiagnostic {
             Self::PaddedContributorCoverage => "padded-contributor-coverage",
             Self::CooperativeLoweringShape => "cooperative-lowering-shape",
             Self::UnloweredExecutionBinding => "unlowered-execution-binding",
+            Self::UnloweredRegionProgram => "unlowered-region-program",
             Self::ReductionContract => "reduction-contract",
             Self::ContributorDomain => "contributor-domain",
             Self::ElementCountOverflow => "element-count-overflow",

@@ -541,7 +541,7 @@ fn an_absent_subgroup_preserves_the_legacy_resource_bytes_exactly() {
     assert_eq!(resources.subgroup, None);
 
     let mut bytes = Vec::new();
-    push_resources(&mut bytes, resources);
+    push_resources(&mut bytes, resources).expect("the arithmetic rows encode");
     assert_eq!(
         bytes,
         [
@@ -3392,21 +3392,25 @@ fn a_decoded_artifact_carries_everything_one_dispatch_needs() {
         entry.numerical().infinity_assumptions(),
         ExceptionalValueAssumption::MakeNoAssumption,
     );
+    let tiler_ir::schedule::RegionNumericalRequirements::FloatingPoint {
+        permutation,
+        signed_zero,
+        nan_assumptions,
+        infinity_assumptions,
+        ..
+    } = entry.resources().numerical
+    else {
+        panic!("a packaged arithmetic entry carries floating-point resource rows");
+    };
+    assert_eq!(permutation, NumericalPermission::Forbidden);
+    assert_eq!(signed_zero, NumericalPermission::Forbidden);
     assert_eq!(
-        entry.resources().permutation,
-        NumericalPermission::Forbidden,
+        nan_assumptions,
+        ExceptionalValueAssumption::MakeNoAssumption
     );
     assert_eq!(
-        entry.resources().signed_zero,
-        NumericalPermission::Forbidden,
-    );
-    assert_eq!(
-        entry.resources().nan_assumptions,
-        ExceptionalValueAssumption::MakeNoAssumption,
-    );
-    assert_eq!(
-        entry.resources().infinity_assumptions,
-        ExceptionalValueAssumption::MakeNoAssumption,
+        infinity_assumptions,
+        ExceptionalValueAssumption::MakeNoAssumption
     );
     assert!(entry.zero_work_skips_dispatch());
     assert_eq!(entry.launch_preconditions().len(), 0);

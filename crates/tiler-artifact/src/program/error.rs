@@ -846,6 +846,16 @@ pub enum ArtifactDiagnostic {
         /// The record codec's own typed cause.
         cause: Box<RealizationCodecError>,
     },
+    /// An entry's resources carry the bit-preserving-copy numerical arm, which
+    /// the artifact grammar cannot yet state.
+    ///
+    /// The wire and identity grammars carry the ten floating-point rows every
+    /// existing artifact wrote; the copy's tagged entry row and its schema
+    /// step are `admit-an-explicit-non-arithmetic-region-and-delivery-state`'s
+    /// accepted boundary. Unreachable while canonical lowering refuses the
+    /// copy region upstream, but stated as a typed refusal rather than a panic
+    /// so a producer path added later fails closed.
+    BitPreservingCopyResources,
 }
 
 impl ArtifactDiagnostic {
@@ -869,6 +879,7 @@ impl ArtifactDiagnostic {
             // a consumer that surfaces this reads which of the record's
             // nineteen rules refused, not merely that one did.
             Self::DeliveredRealization { cause } => cause.rule(),
+            Self::BitPreservingCopyResources => "bit-preserving-copy-resources",
         }
     }
 }
@@ -892,7 +903,8 @@ impl Error for ArtifactDiagnostic {
             | Self::AmbiguousCanonicalKey { .. }
             | Self::IdentityLimit { .. }
             | Self::MissingDeliveredRealization
-            | Self::DeliveredRealizationEntryOutOfRange { .. } => None,
+            | Self::DeliveredRealizationEntryOutOfRange { .. }
+            | Self::BitPreservingCopyResources => None,
         }
     }
 }

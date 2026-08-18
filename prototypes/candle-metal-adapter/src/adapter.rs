@@ -1749,8 +1749,8 @@ mod tests {
     use objc2_metal::{MTLBindingType, MTLCommandBufferStatus};
     use tiler_ir::schedule::{
         ApproximationEnvelope, ExceptionalValueAssumption, FencedSpaces, IndexArithmetic,
-        MemoryOrdering, NumericalPermission, ResourceRequirements, SubnormalMode,
-        SynchronizationKind, SynchronizationScope, SynchronizationSubject,
+        MemoryOrdering, NumericalPermission, RegionNumericalRequirements, ResourceRequirements,
+        SubnormalMode, SynchronizationKind, SynchronizationScope, SynchronizationSubject,
     };
     use tiler_metal::applicability::{MetalGpuFamily, MetalGpuFamilySupport};
 
@@ -1797,16 +1797,18 @@ mod tests {
             index_arithmetic,
             synchronization,
             subgroup: None,
-            input_subnormals: SubnormalMode::Preserve,
-            result_subnormals: SubnormalMode::Preserve,
-            contraction: NumericalPermission::Forbidden,
-            reassociation: NumericalPermission::Forbidden,
-            permutation: NumericalPermission::Forbidden,
-            signed_zero: NumericalPermission::Forbidden,
-            reciprocal_transform: NumericalPermission::Forbidden,
-            approximate_intrinsics: ApproximationEnvelope::Forbidden,
-            nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
-            infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+            numerical: RegionNumericalRequirements::FloatingPoint {
+                input_subnormals: SubnormalMode::Preserve,
+                result_subnormals: SubnormalMode::Preserve,
+                contraction: NumericalPermission::Forbidden,
+                reassociation: NumericalPermission::Forbidden,
+                permutation: NumericalPermission::Forbidden,
+                signed_zero: NumericalPermission::Forbidden,
+                reciprocal_transform: NumericalPermission::Forbidden,
+                approximate_intrinsics: ApproximationEnvelope::Forbidden,
+                nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+            },
         }
     }
 
