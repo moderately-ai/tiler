@@ -1,7 +1,7 @@
 ---
 id: publish-the-backend-provider-conformance-suite
 title: Publish the backend-provider conformance suite
-status: blocked
+status: deferred
 priority: p1
 dependencies: [exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio, decide-the-backend-provider-conformance-harness-public-surface, package-selected-physical-implementation-provenance-in-artifact-identity, carry-required-compilation-selection-identity-on-compile-profile-contexts, make-explain-dispositions-assertable-by-a-conformance-suite]
 related: [compile-extension-spike-fixtures-in-the-gate, audit-backend-authoring-against-all-thirteen-responsibilities]
@@ -43,3 +43,12 @@ Every public provider component has positive and negative conformance coverage, 
 - Link the suite from the provider-composition contract, public API docs, correctness contract, and example providers.
 - File backend-specific performance qualification separately; conformance must not turn cost measurements into correctness authority.
 - Keep untrusted/dynamically loaded plugin certification deferred.
+
+
+## Deferred — 2026-08-18
+
+The owning decision (`decide-the-backend-provider-conformance-harness-public-surface`) was accepted as an exact typed deferral: no public conformance spelling now. This carrier defers on that decision's named reopening trigger rather than dispatching on the decision ticket's completion.
+
+## Trigger check log
+
+- 2026-08-18 — **not fired.** The trigger is one second independently authored backend fixture sharing the portfolio's neutral, non-self-certifying structural and execution subjects. No such fixture exists in-tree. Reproduce: enumerate independently authored fixtures under `crates/tiler-conformance/` and compare their structural/execution subjects for a shared non-self-certifying pair.

@@ -1,7 +1,7 @@
 ---
 id: decide-the-backend-provider-conformance-harness-public-surface
 title: Decide the backend-provider conformance harness public surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio]
 related: [publish-the-backend-provider-conformance-suite, audit-backend-authoring-against-all-thirteen-responsibilities, specify-the-consumer-neutral-backend-provider-composition-contract, make-explain-dispositions-assertable-by-a-conformance-suite]
@@ -143,3 +143,10 @@ The repaired packet at `ed1d557170ff8a2afb0fac11a39765dfc5b83a00` received an in
 ## Closes when
 
 Tom accepts one exact current-source facade or an explicit typed deferral with a trigger; the suite, explain, provenance, and selection dependencies then reflect that answer without a cycle or an implicit coverage gap.
+
+
+## Accepted decision — 2026-08-18
+
+Tom accepted **the exact typed deferral** at reviewed packet `ed1d557170ff8a2afb0fac11a39765dfc5b83a00`, in the live coordination session with the orchestrator, relayed first-hand by the coordinator, by replying `agreed, next decision` to the accept-or-reopen question presented in explain-then-recommend form.
+
+No public Rust spelling leaves `tiler-conformance` now: no `pub mod`, re-export, trait, report, result, fixture, builder, constructor, error, completion token, or environment-policy type; no provider/adaptor registry; no conformance-owned whole-backend bundle. The private test-only gate continues unchanged. The recorded reopening trigger is one second independently authored backend fixture sharing the same neutral, non-self-certifying structural and execution subjects as the portfolio; that evidence alone reopens the partial-facade question, and the two held carriers then expand only their named rows. The carriers `publish-the-backend-provider-conformance-suite` and `make-explain-dispositions-assertable-by-a-conformance-suite` move to `deferred` with that trigger rather than becoming dispatchable, because this decision's completion means "do not build now", not "build".

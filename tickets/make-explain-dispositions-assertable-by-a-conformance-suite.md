@@ -1,7 +1,7 @@
 ---
 id: make-explain-dispositions-assertable-by-a-conformance-suite
 title: Make explain dispositions assertable by a conformance suite
-status: blocked
+status: deferred
 priority: p2
 dependencies: [decide-the-backend-provider-conformance-harness-public-surface]
 related: [audit-backend-authoring-against-all-thirteen-responsibilities, drive-an-external-physical-implementation-provider-through-compilation]
