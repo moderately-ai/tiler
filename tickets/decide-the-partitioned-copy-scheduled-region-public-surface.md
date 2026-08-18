@@ -1,7 +1,7 @@
 ---
 id: decide-the-partitioned-copy-scheduled-region-public-surface
 title: Decide the partitioned-copy scheduled-region public surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [admit-the-concatenate-family-into-the-scheduled-region-vocabulary, accept-the-partitioned-concatenate-realization-law]
 related: [admit-the-partitioned-copy-scheduled-region, admit-an-explicit-non-arithmetic-region-and-delivery-state, lower-the-partitioned-copy-region-through-kernel-ir, plan-concatenate-through-one-partitioned-copy-entry]
@@ -376,3 +376,12 @@ Both packet nextest commands reproduced exactly — 5 passed and 4 passed, zero 
 ### Verdict
 
 **Ready for Tom with the repairs above, which are made in place.** The recommended surface itself — the field-replacing exhaustive `RegionProgram` sum, program-owned members with derived checked prefix offsets, the fieldless `PartitionedCopySource` map, the closed one-variant `CopyElement`, the eleven rules, tags `0x2B`/`0x0A` preserving `tiler.schedule.v6`, and the governed static-F32 population with its exclusions — survives independent derivation unchanged, and the dominance claim stands: no repaired discrepancy touches the frontier ordering, the eliminations, or the draft question's content. The repairs correct the migration census, one false row, one unrealizable precedence detail, and one imprecise drift sentence.
+
+
+## Accepted decision — 2026-08-18
+
+Tom accepted **the exact reviewed surface at `1b271867`** in the live coordination session with the orchestrator, relayed first-hand by the coordinator, by replying `agreed, next decision` to the accept-or-name-the-change question presented in explain-then-recommend form.
+
+The accepted surface is exactly the packet's recommended option as repaired by the independent review: the field-replacing exhaustive `RegionProgram::{Numerical { scalar, numerical }, PartitionedCopy(PartitionedCopyProgram)}` sum; program-owned `CopyMember { source: AccessOrdinal, extent: u64 }` members with derived checked prefix offsets (never stored); the closed one-variant `CopyElement::F32`; the fieldless `LogicalAccess::PartitionedCopySource`; the single `program(RegionProgram)` builder slot; the eleven `partitioned-copy-*` rules at the corrected realizable precedence; appended identity tags `0x2B` (program position) and `0x0A` (access position) preserving `tiler.schedule.v6` byte-for-byte with both existing pins unmodified; the framed `partitioned-copy-f32.v1` request arm; `MAX_PARTITIONED_COPY_MEMBERS = 4_096`; the `ResourceRequirements` numerical sum (`FloatingPoint { … } | BitPreservingCopy`) landing with the schedule ticket; and the initial population of exactly governed static-F32 `tiler::concatenate-f32@1` at arities 2..=8 with every listed fail-closed exclusion. The review-completed migration census (kernel-identity encoder byte preservation under `tiler.kernel-program.v12`, artifact wire codec under schema 16.0, `subprogram_resources` refuse-on-disagreement, and the setter/literal call-site population) is part of the accepted implementation obligation.
+
+The recorded reversal evidence stands: implementation showing the compiler projection cannot distinguish overlap/gap/wrong-prefix causes with typed rules reopens the derived-versus-carried-offsets choice. Implementation flows through `admit-the-partitioned-copy-scheduled-region` and its downstream graph, which this acceptance unblocks.
