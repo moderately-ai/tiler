@@ -1,7 +1,7 @@
 ---
 id: size-the-deferred-subject-axis-censuses-from-the-type
 title: Size the deferred-subject axis censuses from the type
-status: todo
+status: in-progress
 priority: p2
 dependencies: [carry-subgroup-width-through-exact-prepared-entry-equality]
 related: [generalize-deferred-target-provenance-beyond-capability-axes]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: worker-axis-census
+lease_expires_at: 1787066399
 ---
 ## User-visible outcome
 
