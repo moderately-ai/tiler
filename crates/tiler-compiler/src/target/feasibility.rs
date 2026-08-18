@@ -1070,6 +1070,22 @@ impl CheckedTargetProfile {
                 rule: "duplicate-query",
             });
         }
+        // One complete executable query contract answers one static subject.
+        // Two axes sharing an identical contract would let a single later
+        // observation discharge two different deferred subjects with no way to
+        // attribute the answer, which is the conflation the canonical deferred
+        // set refuses downstream; refusing it here keeps that refusal
+        // unreachable from any checked profile.
+        for (index, left) in queries.iter().enumerate() {
+            if queries[index + 1..]
+                .iter()
+                .any(|right| left.query == right.query)
+            {
+                return Err(FeasibilityError::MalformedProfile {
+                    rule: "duplicate-query-contract",
+                });
+            }
+        }
         if queries
             .iter()
             .any(|query| facts.iter().any(|fact| fact.axis == query.axis))
@@ -1496,7 +1512,16 @@ impl CheckedTargetProfile {
                         target_property_relation(axis.relation()),
                     )
                     .expect("a checked profile declares a phase- and axis-valid query");
-                    deferred.push(DeferredPredicate { axis, requirement });
+                    deferred.push(
+                        DeferredPredicate::new(
+                            ExecutableDeferredTargetSubject::CapabilityAxis(axis),
+                            requirement,
+                        )
+                        .expect(
+                            "a checked proposal requires an axis-admissible quantity and the \
+                             relation was derived from the axis at this site",
+                        ),
+                    );
                 }
                 AxisResolution::NoPath => unknown.push(UnknownPredicate { axis, required }),
             }
@@ -1571,26 +1596,22 @@ impl CheckedTargetProfile {
             });
         }
         if !deferred.is_empty() || !deferred_dimensions.is_empty() {
-            deferred.sort_by(|left, right| {
-                left.phase()
-                    .cmp(&right.phase())
-                    .then(left.axis.cmp(&right.axis))
-            });
-            deferred_dimensions.sort_by(|left, right| {
-                left.phase()
-                    .cmp(&right.phase())
-                    .then(left.dimension().cmp(&right.dimension()))
-            });
-            return FeasibilityOutcome::Deferred(DeferredSet {
-                proven: ProvenEvidence {
-                    predicates: proven,
-                    honoured,
-                    synchronization: realized,
-                    subgroup: realized_subgroup,
-                },
-                predicates: deferred,
-                dimensions: deferred_dimensions,
-            });
+            return FeasibilityOutcome::Deferred(
+                DeferredSet::new(
+                    ProvenEvidence {
+                        predicates: proven,
+                        honoured,
+                        synchronization: realized,
+                        subgroup: realized_subgroup,
+                    },
+                    deferred,
+                    deferred_dimensions,
+                )
+                .expect(
+                    "a checked proposal states each axis once and a checked profile \
+                     declares each executable query contract once",
+                ),
+            );
         }
         FeasibilityOutcome::Proven(ProvenEvidence {
             predicates: proven,
@@ -2061,22 +2082,117 @@ impl ResolvedPredicate {
     }
 }
 
+/// The static subject one executable deferred predicate confirms later.
+///
+/// Private, closed, and exhaustive, accepted through
+/// `generalize-deferred-target-provenance-beyond-capability-axes`: the two
+/// variants partition executable deferred predicates by proof shape — a
+/// quantitative relation over one governed axis, or a later confirmation
+/// attached to one already-proven atomic realization. A future proof shape adds
+/// a variant here and stops every same-crate encoder, sorter, explainer, and
+/// validator at compile time. There is deliberately no public view of this
+/// vocabulary; the artifact boundary forwards only the exact entry and the
+/// complete generic [`PreparedEntryTargetRequirement`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ExecutableDeferredTargetSubject {
+    /// A quantitative capability axis whose resolving fact arrives later.
+    CapabilityAxis(CapabilityAxis),
+    /// The prepared-pipeline width confirmation of one complete atomic subgroup
+    /// realization (ADR 0094 decision 7).
+    ///
+    /// The arm carries the whole subject rather than the width it implies,
+    /// because the width alone could not explain which arithmetic/transfer
+    /// realization authorized the query, and a caller must never supply the
+    /// subject and the required width independently.
+    SubgroupWidthConfirmation(SubgroupRealizationSubject),
+}
+
+impl ExecutableDeferredTargetSubject {
+    /// The compiler-owned canonical key deferred collections sort by.
+    ///
+    /// Family-tagged so the two proof shapes never interleave, and built from
+    /// each subject's own identity tags rather than a derived enum ordering, so
+    /// a field reorder in a subject type cannot silently reorder canonical
+    /// collections. Capability-axis descriptor tags are ascending in the axes'
+    /// derived order (checked by test), so a capability-only population keeps
+    /// the exact `(phase, axis)` order it had before this vocabulary existed.
+    pub(crate) fn canonical_key(self) -> Vec<u8> {
+        match self {
+            Self::CapabilityAxis(axis) => vec![0x01, axis.tag()],
+            Self::SubgroupWidthConfirmation(subject) => {
+                let mut key = vec![0x02];
+                subject.encode(&mut key);
+                key
+            }
+        }
+    }
+}
+
 /// A predicate whose resolving fact is admissible only from a later phase.
+///
+/// Constructed only through [`DeferredPredicate::new`], which validates the
+/// subject/requirement pair atomically. A pair that disagrees is malformed
+/// compiler output — never a deferred route, a fallback, or a normalized
+/// value.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DeferredPredicate {
-    axis: CapabilityAxis,
+    subject: ExecutableDeferredTargetSubject,
     requirement: PreparedEntryTargetRequirement,
 }
 
 impl DeferredPredicate {
-    /// The axis this predicate ranges over.
-    pub(crate) const fn axis(&self) -> CapabilityAxis {
-        self.axis
+    /// Builds one deferred predicate, validating the pair as one claim.
+    ///
+    /// The capability arm must retain its governed axis relation and an
+    /// axis-admissible quantity. The subgroup arm derives its required width
+    /// from the complete atomic subject: the requirement must compare by
+    /// [`TargetPropertyRequirementRelation::ObservedEqualsRequired`] and
+    /// require exactly the subject's width — a floor would admit a wider
+    /// device that does not execute the lane arithmetic the schedule verified
+    /// (ADR 0094 decision 7). Both arms are prepared-entry scoped by type:
+    /// [`PreparedEntryTargetRequirement::new`] already refuses any query not
+    /// available at [`AvailabilityPhase::PreparedKernelPreflight`].
+    pub(crate) fn new(
+        subject: ExecutableDeferredTargetSubject,
+        requirement: PreparedEntryTargetRequirement,
+    ) -> Result<Self, FeasibilityError> {
+        match subject {
+            ExecutableDeferredTargetSubject::CapabilityAxis(axis) => {
+                if requirement.relation() != target_property_relation(axis.relation()) {
+                    return Err(FeasibilityError::MalformedDeferred {
+                        rule: "deferred-capability-relation",
+                    });
+                }
+                if !axis.admits(requirement.required()) {
+                    return Err(FeasibilityError::MalformedDeferred {
+                        rule: "deferred-capability-quantity",
+                    });
+                }
+            }
+            ExecutableDeferredTargetSubject::SubgroupWidthConfirmation(subject) => {
+                if requirement.relation()
+                    != TargetPropertyRequirementRelation::ObservedEqualsRequired
+                {
+                    return Err(FeasibilityError::MalformedDeferred {
+                        rule: "deferred-subgroup-relation",
+                    });
+                }
+                if requirement.required() != u64::from(subject.width().get()) {
+                    return Err(FeasibilityError::MalformedDeferred {
+                        rule: "deferred-subgroup-width",
+                    });
+                }
+            }
+        }
+        Ok(Self {
+            subject,
+            requirement,
+        })
     }
 
-    /// The required quantity.
-    pub(crate) fn required(&self) -> Quantity {
-        self.axis.quantity(self.requirement.required())
+    /// The static subject this predicate confirms later.
+    pub(crate) const fn subject(&self) -> ExecutableDeferredTargetSubject {
+        self.subject
     }
 
     /// The earliest phase that can resolve the predicate.
@@ -2246,19 +2362,71 @@ impl Rejection {
 pub(crate) struct DeferredSet {
     /// Checks already proven before the remaining queries can run.
     proven: ProvenEvidence,
-    /// Canonical: sorted by `(phase, axis)`.
+    /// Canonical: sorted by phase, then the compiler-owned canonical subject
+    /// key ([`ExecutableDeferredTargetSubject::canonical_key`]).
     predicates: Vec<DeferredPredicate>,
     /// Canonical: sorted by `(phase, dimension)`.
     dimensions: Vec<DeferredDimension>,
 }
 
 impl DeferredSet {
+    /// Builds one canonical deferred set, validating the executable population.
+    ///
+    /// Sorts both families canonically, then rejects a duplicate exact subject
+    /// and two different static subjects that mint the same complete executable
+    /// query — either would let one later observation stand for two claims with
+    /// no way to attribute the answer. Deferred numerical dimensions stay a
+    /// separate non-executable family; nothing here mixes the two.
+    pub(crate) fn new(
+        proven: ProvenEvidence,
+        predicates: Vec<DeferredPredicate>,
+        dimensions: Vec<DeferredDimension>,
+    ) -> Result<Self, FeasibilityError> {
+        let mut predicates = predicates;
+        let mut dimensions = dimensions;
+        predicates.sort_by(|left, right| {
+            left.phase().cmp(&right.phase()).then_with(|| {
+                left.subject()
+                    .canonical_key()
+                    .cmp(&right.subject().canonical_key())
+            })
+        });
+        if predicates
+            .windows(2)
+            .any(|pair| pair[0].subject() == pair[1].subject())
+        {
+            return Err(FeasibilityError::MalformedDeferred {
+                rule: "duplicate-deferred-subject",
+            });
+        }
+        for (index, left) in predicates.iter().enumerate() {
+            if predicates[index + 1..]
+                .iter()
+                .any(|right| left.requirement().query() == right.requirement().query())
+            {
+                return Err(FeasibilityError::MalformedDeferred {
+                    rule: "conflicting-deferred-query",
+                });
+            }
+        }
+        dimensions.sort_by(|left, right| {
+            left.phase()
+                .cmp(&right.phase())
+                .then(left.dimension().cmp(&right.dimension()))
+        });
+        Ok(Self {
+            proven,
+            predicates,
+            dimensions,
+        })
+    }
+
     /// The evidence already established before the deferred checks resolve.
     pub(crate) const fn proven(&self) -> &ProvenEvidence {
         &self.proven
     }
 
-    /// The deferred capability predicates, canonical `(phase, axis)` order.
+    /// The deferred executable predicates, in canonical order.
     pub(crate) fn predicates(&self) -> &[DeferredPredicate] {
         &self.predicates
     }
@@ -2414,6 +2582,14 @@ pub(crate) enum FeasibilityError {
     },
     /// A candidate proposal was declared inconsistently.
     MalformedProposal { rule: &'static str },
+    /// A deferred subject/requirement pairing or population was inconsistent.
+    ///
+    /// This is malformed *compiler output* rather than a malformed input: the
+    /// compiler mints every deferred predicate, so a subject whose derived
+    /// requirement disagrees with it — or a population carrying a duplicate
+    /// subject or a query shared by two subjects — is refused where it is
+    /// minted, never deferred, defaulted, or normalized.
+    MalformedDeferred { rule: &'static str },
 }
 
 #[cfg(test)]
@@ -3364,6 +3540,285 @@ mod tests {
         ));
     }
 
+    // ---- The typed executable deferred subject ----------------------------
+    //
+    // The vocabulary is private and closed; these tests are its construction
+    // authority's perturbation evidence. Each perturbation changes exactly one
+    // half of a subject/requirement pair while the checks stay unchanged, so a
+    // refusal names the disagreement the perturbation introduced.
+
+    /// One prepared-entry requirement over a named test property.
+    fn prepared_requirement(
+        property: &str,
+        required: u64,
+        relation: TargetPropertyRequirementRelation,
+    ) -> PreparedEntryTargetRequirement {
+        PreparedEntryTargetRequirement::new(
+            TargetPropertyQuery::new(
+                TargetPropertyKey::new(property).unwrap(),
+                AvailabilityPhase::PreparedKernelPreflight,
+                TargetPropertyProviderIdentity::new("tiler", "test-prepared-properties", 1)
+                    .unwrap(),
+            )
+            .unwrap(),
+            required,
+            relation,
+        )
+        .unwrap()
+    }
+
+    /// The canonical-key equivalence the sort order relies on: axis descriptor
+    /// tags ascend with the derived axis order, so a capability-only deferred
+    /// population keeps the exact `(phase, axis)` order it had before the
+    /// subject vocabulary existed.
+    #[test]
+    fn capability_axis_descriptor_tags_ascend_with_the_derived_order() {
+        for pair in CANONICAL_AXES.windows(2) {
+            assert!(
+                pair[0] < pair[1] && pair[0].tag() < pair[1].tag(),
+                "{:?} and {:?} disagree between derived order and descriptor tag",
+                pair[0],
+                pair[1],
+            );
+        }
+    }
+
+    /// The capability arm retains its governed axis relation and quantity.
+    #[test]
+    fn a_capability_deferred_pair_keeps_its_governed_relation_and_quantity() {
+        let subject =
+            ExecutableDeferredTargetSubject::CapabilityAxis(CapabilityAxis::WorkgroupThreads);
+        assert!(
+            DeferredPredicate::new(
+                subject,
+                prepared_requirement(
+                    "tiler.test.prepared-entry.threads",
+                    4,
+                    TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+                ),
+            )
+            .is_ok()
+        );
+        // Perturb the relation alone: an exact comparison is not the governed
+        // ceiling relation of a threads axis.
+        assert_eq!(
+            DeferredPredicate::new(
+                subject,
+                prepared_requirement(
+                    "tiler.test.prepared-entry.threads",
+                    4,
+                    TargetPropertyRequirementRelation::ObservedEqualsRequired,
+                ),
+            ),
+            Err(FeasibilityError::MalformedDeferred {
+                rule: "deferred-capability-relation"
+            })
+        );
+        // Perturb the quantity alone: a zero width is not admissible for the
+        // exact address-width axis, whatever the relation says.
+        assert_eq!(
+            DeferredPredicate::new(
+                ExecutableDeferredTargetSubject::CapabilityAxis(
+                    CapabilityAxis::DeviceAddressWidthBits,
+                ),
+                prepared_requirement(
+                    "tiler.test.prepared-entry.address-bits",
+                    0,
+                    TargetPropertyRequirementRelation::ObservedEqualsRequired,
+                ),
+            ),
+            Err(FeasibilityError::MalformedDeferred {
+                rule: "deferred-capability-quantity"
+            })
+        );
+    }
+
+    /// The subgroup arm derives its required width from the complete atomic
+    /// subject; no caller supplies the subject and the width independently.
+    #[test]
+    fn a_subgroup_confirmation_derives_its_requirement_from_the_complete_subject() {
+        let subject =
+            ExecutableDeferredTargetSubject::SubgroupWidthConfirmation(required_subgroup());
+        let confirmation = DeferredPredicate::new(
+            subject,
+            prepared_requirement(
+                "tiler.test.prepared-entry.subgroup-width",
+                32,
+                TargetPropertyRequirementRelation::ObservedEqualsRequired,
+            ),
+        )
+        .expect("the derived pair is one coherent claim");
+        assert_eq!(
+            confirmation.phase(),
+            AvailabilityPhase::PreparedKernelPreflight
+        );
+        assert_eq!(confirmation.requirement().required(), 32);
+        // Perturb the relation alone: a floor admits a wider device that does
+        // not execute the lane arithmetic the schedule verified.
+        assert_eq!(
+            DeferredPredicate::new(
+                subject,
+                prepared_requirement(
+                    "tiler.test.prepared-entry.subgroup-width",
+                    32,
+                    TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+                ),
+            ),
+            Err(FeasibilityError::MalformedDeferred {
+                rule: "deferred-subgroup-relation"
+            })
+        );
+        // Perturb the required value alone: 64 is not the subject's width, and
+        // the mismatch is malformed compiler output rather than a deferred
+        // route, a fallback, or a normalized value.
+        assert_eq!(
+            DeferredPredicate::new(
+                subject,
+                prepared_requirement(
+                    "tiler.test.prepared-entry.subgroup-width",
+                    64,
+                    TargetPropertyRequirementRelation::ObservedEqualsRequired,
+                ),
+            ),
+            Err(FeasibilityError::MalformedDeferred {
+                rule: "deferred-subgroup-width"
+            })
+        );
+    }
+
+    /// A canonical deferred population carries each exact subject once, and one
+    /// executable query answers one subject.
+    #[test]
+    fn a_deferred_set_rejects_duplicate_subjects_and_shared_queries() {
+        let subgroup = |property: &str| {
+            DeferredPredicate::new(
+                ExecutableDeferredTargetSubject::SubgroupWidthConfirmation(required_subgroup()),
+                prepared_requirement(
+                    property,
+                    32,
+                    TargetPropertyRequirementRelation::ObservedEqualsRequired,
+                ),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            DeferredSet::new(
+                ProvenEvidence::default(),
+                vec![
+                    subgroup("tiler.test.prepared-entry.subgroup-width"),
+                    subgroup("tiler.test.prepared-entry.subgroup-width-second-query"),
+                ],
+                Vec::new(),
+            ),
+            Err(FeasibilityError::MalformedDeferred {
+                rule: "duplicate-deferred-subject"
+            })
+        );
+        // Two *different* static subjects minting one executable query: a
+        // single later observation could then discharge both with no way to
+        // attribute the answer.
+        let capability = DeferredPredicate::new(
+            ExecutableDeferredTargetSubject::CapabilityAxis(CapabilityAxis::WorkgroupThreads),
+            prepared_requirement(
+                "tiler.test.prepared-entry.shared",
+                32,
+                TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            DeferredSet::new(
+                ProvenEvidence::default(),
+                vec![capability, subgroup("tiler.test.prepared-entry.shared")],
+                Vec::new(),
+            ),
+            Err(FeasibilityError::MalformedDeferred {
+                rule: "conflicting-deferred-query"
+            })
+        );
+    }
+
+    /// Sorted by phase, then the compiler-owned canonical subject key: the
+    /// capability family keeps its axis order and every atomic subject follows
+    /// it, whatever order the population was minted in.
+    #[test]
+    fn deferred_predicates_sort_by_phase_then_canonical_subject_key() {
+        let capability = |axis: CapabilityAxis, property: &str| {
+            DeferredPredicate::new(
+                ExecutableDeferredTargetSubject::CapabilityAxis(axis),
+                prepared_requirement(property, 2, target_property_relation(axis.relation())),
+            )
+            .unwrap()
+        };
+        let subgroup = DeferredPredicate::new(
+            ExecutableDeferredTargetSubject::SubgroupWidthConfirmation(required_subgroup()),
+            prepared_requirement(
+                "tiler.test.prepared-entry.subgroup-width",
+                32,
+                TargetPropertyRequirementRelation::ObservedEqualsRequired,
+            ),
+        )
+        .unwrap();
+        let set = DeferredSet::new(
+            ProvenEvidence::default(),
+            vec![
+                subgroup.clone(),
+                capability(
+                    CapabilityAxis::BufferBindings,
+                    "tiler.test.prepared-entry.bindings",
+                ),
+                capability(
+                    CapabilityAxis::WorkgroupThreads,
+                    "tiler.test.prepared-entry.threads",
+                ),
+            ],
+            Vec::new(),
+        )
+        .unwrap();
+        let keys: Vec<_> = set
+            .predicates()
+            .iter()
+            .map(|predicate| predicate.subject().canonical_key())
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                ExecutableDeferredTargetSubject::CapabilityAxis(CapabilityAxis::WorkgroupThreads)
+                    .canonical_key(),
+                ExecutableDeferredTargetSubject::CapabilityAxis(CapabilityAxis::BufferBindings)
+                    .canonical_key(),
+                subgroup.subject().canonical_key(),
+            ],
+            "capability arms keep axis order and atomic subjects follow the family tag",
+        );
+    }
+
+    /// One complete executable query contract answers one static subject, and
+    /// the profile is where a shared contract is refused.
+    #[test]
+    fn a_profile_declaring_one_query_contract_on_two_axes_is_malformed() {
+        let shared = TargetPropertyQuery::new(
+            TargetPropertyKey::new("tiler.test.query.shared").unwrap(),
+            AvailabilityPhase::PreparedKernelPreflight,
+            TargetPropertyProviderIdentity::new("tiler", "test-target-properties", 1).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            CheckedTargetProfile::new_with_queries(
+                identity(),
+                Vec::new(),
+                vec![
+                    CapabilityQuery::new(CapabilityAxis::WorkgroupThreads, shared.clone()),
+                    CapabilityQuery::new(CapabilityAxis::BufferBindings, shared),
+                ],
+                Vec::new(),
+            ),
+            Err(FeasibilityError::MalformedProfile {
+                rule: "duplicate-query-contract"
+            })
+        );
+    }
+
     /// The bounded serial-Sum baseline: every axis resolvable at compile time.
     fn baseline_profile() -> CheckedTargetProfile {
         let id = identity();
@@ -4076,11 +4531,11 @@ mod tests {
             deferred
                 .predicates()
                 .iter()
-                .map(DeferredPredicate::axis)
+                .map(DeferredPredicate::subject)
                 .collect::<Vec<_>>(),
             vec![
-                CapabilityAxis::WorkgroupThreads,
-                CapabilityAxis::BufferBindings,
+                ExecutableDeferredTargetSubject::CapabilityAxis(CapabilityAxis::WorkgroupThreads),
+                ExecutableDeferredTargetSubject::CapabilityAxis(CapabilityAxis::BufferBindings),
             ]
         );
         assert_eq!(

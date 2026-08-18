@@ -1563,16 +1563,41 @@ pub(super) fn record_target_admissions(
             for predicate in deferred.predicates() {
                 cause = explain_step(
                     (|| -> Result<_, CompileError> {
+                        // Exhaustive over the typed deferred subject, so a new
+                        // proof shape stops this producer at compile time
+                        // instead of rendering under a borrowed spelling. The
+                        // capability arm keeps the exact record it always
+                        // wrote; the subgroup arm carries its complete atomic
+                        // subject, never a width disguised as an axis.
+                        use crate::target::feasibility::ExecutableDeferredTargetSubject;
+                        let (rule, event) = match predicate.subject() {
+                            ExecutableDeferredTargetSubject::CapabilityAxis(axis) => (
+                                format!("target.{}", axis.key()),
+                                ExplainEvent::DeferredTargetRequirement {
+                                    entry,
+                                    predicate: PredicateKey::new(axis.key())?,
+                                    required: axis.quantity(predicate.requirement().required()),
+                                    requirement: predicate.requirement().clone(),
+                                },
+                            ),
+                            ExecutableDeferredTargetSubject::SubgroupWidthConfirmation(subject) => {
+                                (
+                                    "target.subgroup-width-confirmation".to_owned(),
+                                    ExplainEvent::DeferredSubgroupWidthConfirmation {
+                                        entry,
+                                        width: subject.width().get(),
+                                        arithmetic: subject.arithmetic(),
+                                        transfer: ReasonCode::new(subject.transfer().key())?,
+                                        requirement: predicate.requirement().clone(),
+                                    },
+                                )
+                            }
+                        };
                         let subject = explain.subject(SubjectKind::Region, &key)?;
                         Ok(explain.push_detail(
-                            RuleRef::builtin(format!("target.{}", predicate.axis().key()))?,
+                            RuleRef::builtin(rule)?,
                             vec![subject],
-                            ExplainEvent::DeferredTargetRequirement {
-                                entry,
-                                predicate: PredicateKey::new(predicate.axis().key())?,
-                                required: predicate.required(),
-                                requirement: predicate.requirement().clone(),
-                            },
+                            event,
                             vec![cause],
                         )?)
                     })(),

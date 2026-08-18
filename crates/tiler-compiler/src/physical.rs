@@ -4407,6 +4407,10 @@ fn feasibility_intrinsic(error: &FeasibilityError, region: RegionId) -> Physical
         // before any candidate is considered, and no other plan makes it
         // describable.
         FeasibilityError::DescriptorTooLong { .. } => "target-profile-descriptor-too-long",
+        // A deferred subject whose derived requirement disagrees with it is
+        // malformed compiler output; it fails closed here exactly as the other
+        // intrinsic contract violations do.
+        FeasibilityError::MalformedDeferred { .. } => "target-deferred-malformed",
     };
     PhysicalError::Intrinsic { rule, region }
 }
