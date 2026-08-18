@@ -1078,18 +1078,115 @@ impl BudgetResource {
     }
 }
 
+/// Every deterministic budget one compilation request is bound to.
+///
+/// # The rule: a budget is one of exactly two things, and it must say which
+///
+/// **An authoring-side derivation names its formula and the declaration the
+/// formula is over.** [`Self::governed`] carries both for each of the eight
+/// derived fields, so a reader asks that function why a number is what it is and
+/// never has to guess. It is a derivation somebody re-runs when the owning
+/// declaration moves, *not* a computation this compiler performs: `governed` is
+/// a nullary `const fn` returning integer literals, nothing here reads a
+/// submitted program, and no field is tracked or recomputed while a request
+/// compiles. A derived bound tracks its declaration only for as long as the next
+/// author re-derives it.
+///
+/// **A literal policy cap names the unit of work it counts, what its stop
+/// removes, and its evidence status.** All six literal fields are *uncalibrated
+/// deterministic policy literals*: the source states what each bounds and what
+/// its stop preserves, and no accepted decision, retained measurement, or source
+/// derivation establishes why any of the numbers is exactly the one written.
+/// That is what they may be called, and it is all they may be called — a literal
+/// must never be relabelled as derived or as measured, and choosing or changing
+/// one is its own measurement decision with its own identity accounting.
+///
+/// Both kinds are equally binding at compile time. The distinction is about
+/// *provenance*, not about strength.
+///
+/// # The classification, total over the fourteen fields
+///
+/// Derived (eight): `semantic_values`, `semantic_operations`, `regions`,
+/// `host_expression_nodes`, and `buffers` are formulas over the governed
+/// profile's widest admitted program declaration; `region_members`,
+/// `region_boundary_outputs`, and `region_live_values` are formulas over those
+/// five, because a region is a subset of the program it covers.
+///
+/// Literal (six): `normalization_rewrites`, `region_candidates_per_seed`,
+/// `region_expansions`, `region_covers`, `region_cover_expansions`, and
+/// `physical_plan_combinations`.
+///
+/// # What exhaustion costs, which cuts across the two kinds
+///
+/// A reader must not infer the stop effect from the provenance. Four classes:
+///
+/// - **Program bounds** (`semantic_values`, `semantic_operations`, `regions`,
+///   `host_expression_nodes`, `buffers`) refuse a *submitted program* at
+///   [`check_program_budgets`], before any target is consulted.
+/// - **Region-shape bounds** (`region_members`, `region_boundary_outputs`,
+///   `region_live_values`) declare the largest region this profile forms at all,
+///   so a program whose only implementable cover needs a bigger one has no plan
+///   under them however long the search runs.
+/// - **Alternative-preserving search caps** (`normalization_rewrites`,
+///   `region_candidates_per_seed`, `region_expansions`, `region_covers`,
+///   `region_cover_expansions`) cost an alternative and never coverage, because
+///   what they bound sits strictly between extremes their stage emits
+///   unconditionally: normalization retains the verified input, region formation
+///   emits every singleton region and the whole-program region before growth,
+///   and cover enumeration retains the fully-materialized and fused covers.
+/// - **A truncating cap** (`physical_plan_combinations`) has no such extreme to
+///   fall back on and may remove *every* complete plan. Its own field
+///   documentation states the accepted contract.
+///
+/// Whether a refusal's reported number is exact, an envelope, or a lower bound is
+/// a separate question again, answered by [`BudgetResource::refusal`].
+///
+/// # Identity
+///
+/// Every field is written into the canonical request subject by
+/// [`VerifiedRequestSubject::canonical_explain_subject_bytes`], so any value
+/// change moves every governed compilation's request and evidence subject —
+/// including programs nowhere near the bound — because a budget is a property of
+/// the request rather than of the plan chosen for it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct DeterministicBudgets {
+    /// Values a submitted program may declare and produce.
+    ///
+    /// Derived; [`Self::governed`] states the formula and the declaration.
+    /// [`check_program_budgets`] refuses the program that exceeds it.
     pub(crate) semantic_values: u32,
+    /// Semantic occurrences a submitted program may declare.
+    ///
+    /// Derived; [`Self::governed`] states the formula and the declaration.
+    /// [`check_program_budgets`] refuses the program that exceeds it.
     pub(crate) semantic_operations: u32,
+    /// Dispatch regions the widest plan for a submitted program may assemble.
+    ///
+    /// Derived; [`Self::governed`] states the formula and the declaration. The
+    /// compared actual is a planning envelope computed before a plan is chosen,
+    /// so a particular reachable plan may use less.
     pub(crate) regions: u32,
+    /// Host expression nodes the widest plan for a submitted program may spell.
+    ///
+    /// Derived; [`Self::governed`] states the formula and the declaration. The
+    /// compared actual is a planning envelope, as for `regions`.
     pub(crate) host_expression_nodes: u32,
+    /// Buffers the widest plan for a submitted program may bind.
+    ///
+    /// Derived; [`Self::governed`] states the formula and the declaration. The
+    /// compared actual is a planning envelope, as for `regions`.
     pub(crate) buffers: u32,
     /// Rewrites the deterministic normalization stage may commit.
     ///
     /// Normalization visits each verified operation exactly once, so its
     /// traversal is already bounded by `semantic_operations`. This is the
     /// stage's own explicit budget over committed rewrites.
+    ///
+    /// **Uncalibrated policy literal.** The work unit is one committed rewrite
+    /// in one proposed alternative, bounded per alternative rather than summed
+    /// across them. A stop abandons the whole rewrite run and returns nothing,
+    /// so the verified input survives and only alternatives are lost. Nothing
+    /// establishes why the number is exactly what it is.
     pub(crate) normalization_rewrites: u32,
     /// Semantic occurrences admitted in one region candidate.
     ///
@@ -1108,8 +1205,13 @@ pub(crate) struct DeterministicBudgets {
     /// `region_boundary_outputs` from the declared output count.
     pub(crate) region_members: u32,
     /// Retained boundary outputs admitted for one region candidate.
+    ///
+    /// Derived from the declared output count; see `region_members` above for
+    /// why all three shape bounds are derivations and what their refusal means.
     pub(crate) region_boundary_outputs: u32,
     /// Boundary and member-result values live across one region candidate.
+    ///
+    /// Derived from `semantic_values`; see `region_members` above.
     pub(crate) region_live_values: u32,
     /// Grown candidates admitted for one seed occurrence.
     ///
@@ -1117,6 +1219,10 @@ pub(crate) struct DeterministicBudgets {
     /// region — are emitted before growth starts and neither is bounded by this
     /// budget, so exhausting it loses the partitions discovered between them
     /// rather than either end.
+    ///
+    /// **Uncalibrated policy literal.** The work unit is one grown candidate
+    /// admitted for one seed. Nothing establishes why the number is exactly
+    /// what it is.
     pub(crate) region_candidates_per_seed: u32,
     /// Candidate expansion attempts admitted for one compilation request.
     ///
@@ -1128,16 +1234,59 @@ pub(crate) struct DeterministicBudgets {
     /// candidate last, so a twelve-operation chain exhausted this bound before
     /// forming the one region the profile could implement and the compilation
     /// refused.
+    ///
+    /// **Uncalibrated policy literal.** The work unit is one candidate
+    /// expansion attempt across the whole request. Nothing establishes why the
+    /// number is exactly what it is.
     pub(crate) region_expansions: u32,
     /// Distinct legal complete covers retained for one enumeration request.
     ///
     /// The fully-materialized and fused covers are retained unconditionally, so
     /// exhausting this bound loses additional discovered partitions rather than
     /// either extreme.
+    ///
+    /// **Uncalibrated policy literal.** The work unit is one retained distinct
+    /// legal complete cover. Nothing establishes why the number is exactly what
+    /// it is.
     pub(crate) region_covers: u32,
     /// Partition-search expansion attempts admitted for one cover enumeration.
+    ///
+    /// Carries the same alternative-preserving guarantee as `region_covers`, and
+    /// for the same reason: both cover extremes are retained before the
+    /// partition search runs.
+    ///
+    /// **Uncalibrated policy literal.** The work unit is one partition-search
+    /// expansion attempt. Nothing establishes why the number is exactly what it
+    /// is.
     pub(crate) region_cover_expansions: u64,
     /// Complete-plan combinations admitted for one cover source.
+    ///
+    /// **This is the one budget whose exhaustion can remove every complete
+    /// plan, and Tom accepted that contract on 2026-08-11.** The value bounds
+    /// attempted Cartesian implementation combinations for one cover.
+    /// `crate::selection::enumerate_cover_plans` stops before assembling the
+    /// combination that would exceed it, records a typed
+    /// `crate::selection::PlanBudgetStop`, and retains every valid plan
+    /// assembled before that point — which may be none. An empty
+    /// `crate::selection::SelectedPortfolio` is the ordinary result of an
+    /// explicitly bounded search, not a fallback.
+    ///
+    /// Unlike region formation and cover enumeration, this layer has no
+    /// privileged valid plan to retain outside the bounded search. Region and
+    /// cover extremes are verified *coverage* objects; selection instead
+    /// receives locally feasible per-region implementation frontiers, and
+    /// `crate::selection::assemble_plan` is the first authority that proves
+    /// their cross-region boundary compatibility. The first combination in
+    /// canonical identity order can therefore disagree while a later one
+    /// composes, so a reserved attempt would neither guarantee a plan nor honour
+    /// the stated limit. When no harder target refusal exists and no valid
+    /// complete plan was retained, compilation returns `BudgetExhausted` naming
+    /// `physical-plan-combinations`; it does not claim the program is
+    /// infeasible and does not switch backend, target, or strategy family.
+    ///
+    /// **Uncalibrated policy literal.** The work unit is one attempted complete
+    /// combination for one cover source. Nothing establishes why the number is
+    /// exactly what it is.
     pub(crate) physical_plan_combinations: u64,
 }
 
@@ -1229,11 +1378,7 @@ impl DeterministicBudgets {
     /// bounded nothing and the program it refuses is the one it was written to
     /// refuse.
     ///
-    /// `limit` and `reported` are `u64` because the internal
-    /// stop records are: the two search budgets `DeterministicBudgets` declares
-    /// as `u64` cannot be narrowed to `u32` without reporting a saturated
-    /// number as though it were the declared bound, and a `usize` demand would
-    /// make the width of a public refusal a property of the host.
+    /// The four in the per-output derivation is the measured stage count of the
     /// widest chain, taken from
     /// `crate::pipeline::tests::the_widest_assembled_plan_is_the_split_reduction_with_its_epilogue`,
     /// whose reassociation-forbidding neighbour is what attributes the fourth
