@@ -1,7 +1,7 @@
 ---
 id: generalize-deferred-target-provenance-beyond-capability-axes
 title: Generalize deferred target provenance beyond quantitative capability axes
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-an-atomic-subgroup-realization-subject-to-target-profiles]
 related: [decide-the-prepared-subgroup-width-equality-gate, carry-subgroup-width-through-exact-prepared-entry-equality]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, contracts/optimizer, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, feasibility, provenance, public-boundary, identity, decision, needs-tom]
+claimed_from: todo
+assignee: worker-deferred-provenance
+lease_expires_at: 1787060886
 ---
 ## User-visible outcome
 

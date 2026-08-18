@@ -1,7 +1,7 @@
 ---
 id: decide-the-partitioned-copy-scheduled-region-public-surface
 title: Decide the partitioned-copy scheduled-region public surface
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-the-concatenate-family-into-the-scheduled-region-vocabulary, accept-the-partitioned-concatenate-realization-law]
 related: [admit-the-partitioned-copy-scheduled-region, admit-an-explicit-non-arithmetic-region-and-delivery-state, lower-the-partitioned-copy-region-through-kernel-ir, plan-concatenate-through-one-partitioned-copy-entry]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, contracts/foundation, contr
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, needs-tom, public-boundary, schedule, concatenate, identity, verification]
+claimed_from: todo
+assignee: worker-partitioned-copy-surface
+lease_expires_at: 1787060886
 ---
 ## Outcome
 

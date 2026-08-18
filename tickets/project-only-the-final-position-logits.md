@@ -1,7 +1,7 @@
 ---
 id: project-only-the-final-position-logits
 title: Project only the final position's logits
-status: todo
+status: in-progress
 priority: p2
 dependencies: [assemble-the-embedding-and-vocabulary-projection-programs, reclassify-language-model-work-as-a-conformance-track, admit-the-sub-tensor-selection-family]
 related: [design-model-ingestion-and-complete-execution, own-operation-family-support-matrix, design-model-level-qualification-and-optimization, admit-a-position-selecting-slice-for-the-rotary-table]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/reference, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, slice, logits, residency, language-model, class-conformance-fixture]
+claimed_from: todo
+assignee: worker-final-logits
+lease_expires_at: 1787060886
 ---
 ## User-visible outcome
 
