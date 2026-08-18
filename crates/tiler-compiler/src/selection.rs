@@ -1810,8 +1810,8 @@ mod tests {
     }
     use super::{
         AccessMode, BoundaryDisagreement, CoverFrontiers, GuaranteeFacet, GuaranteedProperties,
-        PlanRejection, RegionBoundary, RegionFrontier, RequiredProperties, RequirementFacet,
-        SelectionError, TensorRole, reconcile_boundaries, select_physical_plans,
+        PlanBudgetResource, PlanRejection, RegionBoundary, RegionFrontier, RequiredProperties,
+        RequirementFacet, SelectionError, TensorRole, reconcile_boundaries, select_physical_plans,
         verify_selected_plan, verify_selected_portfolio,
     };
     use crate::boundary::StorageScalar;
@@ -2587,6 +2587,202 @@ mod tests {
                 ..
             } if unsatisfied.property() == BoundaryProperty::Materialization
         )));
+    }
+
+    /// Exhausting `physical_plan_combinations` can remove *every* complete plan,
+    /// which is the one budget stop with no retained extreme behind it.
+    ///
+    /// The cover is known completable: the whole search is a single combination
+    /// and it composes, as
+    /// `a_complete_plan_joins_a_two_region_cover_with_a_boundary_handoff` shows
+    /// under the governed budgets. At a zero cap the enumerator stops before
+    /// assembling that combination, so the portfolio is empty and the typed stop
+    /// is the only account of what was lost. The perturbation moves **only** the
+    /// cap, to one, and the same combination is retained — so what the empty
+    /// portfolio demonstrates is the budget and not a broken fixture.
+    #[test]
+    fn a_zero_combination_cap_empties_a_completable_cover() {
+        let program = serial_sum_program();
+        let request = request_for(&program);
+        let cover = cover_with_partitions(&program, &[vec![0, 1, 2, 3], vec![4]]);
+        let select = |physical_plan_combinations: u64| {
+            let source = CoverFrontiers::new(
+                &cover,
+                vec![
+                    pointwise_frontier(&request, "pw", PhysicalCostEstimate::structural(1, 6, 0)),
+                    reduction_frontier(&request, "rd", PhysicalCostEstimate::structural(1, 2, 0)),
+                ],
+            );
+            select_physical_plans(
+                &program,
+                DeterministicBudgets {
+                    physical_plan_combinations,
+                    ..budgets()
+                },
+                &formation_of(&program),
+                cover_policy(),
+                &[source],
+            )
+            .expect("a truncating cap is not a compiler fault")
+        };
+
+        let truncated = select(0);
+        assert!(
+            truncated.is_empty(),
+            "a zero combination cap must retain no complete plan",
+        );
+        assert_eq!(
+            truncated.budget_stops().len(),
+            1,
+            "the one truncated cover must record one stop",
+        );
+        let stop = &truncated.budget_stops()[0];
+        assert_eq!(stop.resource, PlanBudgetResource::Combinations);
+        assert_eq!(stop.limit, 0);
+        // The first refused demand, which is a lower bound on the unexplored
+        // combinations rather than their count.
+        assert_eq!(stop.actual, 1);
+        assert_eq!(
+            stop.cover.as_slice(),
+            cover.identity().as_bytes(),
+            "the stop must name the cover whose enumeration it stopped",
+        );
+        assert!(
+            truncated.rejections().is_empty(),
+            "nothing was attempted, so nothing may be reported as refused on its merits",
+        );
+
+        let retained = select(1);
+        assert_eq!(
+            retained.plans().len(),
+            1,
+            "moving only the cap to one must retain the known compatible combination",
+        );
+        assert!(
+            retained.budget_stops().is_empty(),
+            "one attempt covers the whole search, so nothing was truncated",
+        );
+        verify_selected_portfolio(&program, &formation_of(&program), cover_policy(), &retained)
+            .unwrap();
+    }
+
+    /// The canonically first combination can disagree where a later one composes,
+    /// so canonical identity order is not a retained baseline complete plan.
+    ///
+    /// This is the case that eliminates "reserve one attempt outside the cap" as
+    /// an alternative to the accepted truncation contract. The producer region
+    /// admits two implementations — an opaque call that may return an alias view,
+    /// which the materialized consumer refuses, and a scheduled region, which it
+    /// accepts — and `enumerate_cover_plans` walks them in the order
+    /// `ImplementationFrontier::admitted` sorts them, which is canonical identity
+    /// order and not a compatibility order. One reserved attempt would be spent
+    /// on the combination that fails.
+    #[test]
+    fn a_later_combination_composes_where_the_canonically_first_one_disagrees() {
+        let program = serial_sum_program();
+        let request = request_for(&program);
+        let cover = cover_with_partitions(&program, &[vec![0, 1, 2, 3], vec![4]]);
+        let producer = || {
+            frontier_with_opaque(
+                &request,
+                FrontierRegionSubject::new(
+                    "pointwise",
+                    request.serial_sum().members.pointwise().to_vec(),
+                    crate::physical::RegionWrite::Materialized,
+                ),
+                "aliasing-producer",
+                crate::effects::Aliasing::MayAliasInputs,
+                Some(pointwise_raw(&request)),
+            )
+        };
+
+        // The precondition is read from the frontier rather than assumed. If
+        // canonical identity order ever places the compatible body first this
+        // fails loudly, because the case would then demonstrate nothing.
+        let frontier = producer();
+        assert_eq!(
+            frontier.frontier().admitted().len(),
+            2,
+            "the producer region must offer both an opaque and a scheduled body",
+        );
+        assert!(
+            frontier.frontier().admitted()[0].body().opaque().is_some(),
+            "canonical identity order no longer places the incompatible opaque body first, \
+             so this case no longer shows a first combination that fails; re-derive the fixture",
+        );
+
+        let select = |physical_plan_combinations: u64| {
+            let source = CoverFrontiers::new(
+                &cover,
+                vec![
+                    producer(),
+                    reduction_frontier(
+                        &request,
+                        "materialized-consumer",
+                        PhysicalCostEstimate::structural(1, 2, 0),
+                    ),
+                ],
+            );
+            select_physical_plans(
+                &program,
+                DeterministicBudgets {
+                    physical_plan_combinations,
+                    ..budgets()
+                },
+                &formation_of(&program),
+                cover_policy(),
+                &[source],
+            )
+            .expect("a truncating cap is not a compiler fault")
+        };
+
+        // The complete search reaches both combinations: the first disagrees and
+        // the second is retained.
+        let complete = select(budgets().physical_plan_combinations);
+        assert!(
+            complete.budget_stops().is_empty(),
+            "the governed cap admits both combinations",
+        );
+        assert_eq!(
+            complete.plans().len(),
+            1,
+            "exactly one combination composes"
+        );
+        assert!(
+            complete.plans()[0]
+                .selections()
+                .iter()
+                .all(|selection| selection.implementation().body().opaque().is_none()),
+            "the retained plan must be the scheduled combination, not the aliasing one",
+        );
+        assert!(
+            complete
+                .rejections()
+                .iter()
+                .any(|rejection| matches!(rejection, PlanRejection::BoundaryDisagreement { .. })),
+            "the incompatible combination must be reported rather than dropped",
+        );
+
+        // One attempt is spent on the combination that disagrees, so a cap of one
+        // retains nothing even though a compatible combination exists one step
+        // further on.
+        let one_attempt = select(1);
+        assert!(
+            one_attempt.is_empty(),
+            "the single admitted attempt was the combination that does not compose",
+        );
+        assert!(
+            one_attempt
+                .rejections()
+                .iter()
+                .any(|rejection| matches!(rejection, PlanRejection::BoundaryDisagreement { .. })),
+            "the attempted combination's disagreement must still be recorded",
+        );
+        assert_eq!(one_attempt.budget_stops().len(), 1);
+        let stop = &one_attempt.budget_stops()[0];
+        assert_eq!(stop.resource, PlanBudgetResource::Combinations);
+        assert_eq!(stop.limit, 1);
+        assert_eq!(stop.actual, 2);
     }
 
     /// A cover region with no admitted implementation is a valid no-plan result,
