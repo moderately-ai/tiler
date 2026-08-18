@@ -167,3 +167,11 @@ Updated 2026-08-18: the compilation-selection provenance packet was parked as it
 ## 20. Tensor-contraction successor public surface — next in this chain
 
 - Ticket: `accept-the-tensor-contraction-successor-public-surface` (`p1`, filed 2026-08-18 at the item-16 acceptance). The exact drafted descriptor/profile/witness/evaluator surface from the reviewed packet awaits its own accept-with-exclusions-or-revise question. The implementation carrier `replace-the-standard-contraction-key-with-the-accepted-successor` is blocked on it plus the ADR-0013 carrier.
+
+## 21. Retained Metal measurement invocation authority — reviewed, held for queue order
+
+- Ticket: `resolve-the-retained-metal-profile-measurement-invocation-authority` (`p1`, `awaiting-decision`); the compilation-selection implementation carrier is blocked on it plus the accepted item 17.
+- Packet evidence: authored 2026-08-18 at `c068d24f`, independently reviewed at `6dcd49da` (all Facts re-derived including an 18-op/26-row census recount, both population evidence chains, and the byte-for-byte toolchain reachability under `/Applications/Xcode.app`; one minor wording repair). Verdict: ready for Tom.
+- The situation: the retained grid row's selection is exact but non-production and unbound to its run; the cost row's harness hash is unavailable; and no host matches the ledger's execution row any more (this M4 Max is on `26A5406e`), though the offline toolchain row remains byte-identically reachable. Every retain/reconstruct/inherit option is eliminated fail-closed.
+- The one combined question (populations are dependency-linked: cost is unreachable if the grid row withdraws): **(R, R)** — authorize one re-measurement session on this host, offline row via Xcode.app, execution row truthfully re-declared at the current build, both harnesses driven through the production `CompileRequest` so the selection identity derives from the executed request; records pin harness hash and base; stop conditions per population. Fallbacks: (R grid, W cost) for a minimal session; (W, W) withdraws both fail-closed (grid withdrawal makes every plan refuse). Recommendation: **(R, R)**. Note this is a measurement-session authorization — the evidence-environment rule makes it Tom's either way.
+- Presentation order: behind items 19 and 20.

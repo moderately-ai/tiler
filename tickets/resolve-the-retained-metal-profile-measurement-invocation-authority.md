@@ -1,7 +1,7 @@
 ---
 id: resolve-the-retained-metal-profile-measurement-invocation-authority
 title: Resolve the retained Metal profile measurement invocation authority
-status: in-progress
+status: awaiting-decision
 priority: p1
 dependencies: [decide-the-compilation-selection-provenance-public-and-wire-surface]
 related: [carry-required-compilation-selection-identity-on-compile-profile-contexts, split-metal-profile-measurement-sources-by-compilation-selection]
@@ -9,9 +9,6 @@ scopes: [implementation/build, implementation/metal-aot, research/target-profile
 shared_scopes: [project/tickets]
 paths: []
 tags: [metal, target-profiles, provenance, measurement, identity, decision, needs-tom]
-claimed_from: todo
-assignee: worker-invocation-authority-review
-lease_expires_at: 1787089576
 ---
 ## User-visible outcome
 
