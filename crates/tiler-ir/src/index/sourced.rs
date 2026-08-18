@@ -44,6 +44,7 @@
 //! [`ExtentSources::admit`]: crate::shape::ExtentSources::admit
 //! [`ExtentSourceError`]: crate::shape::ExtentSourceError
 //! [`EXTENT_PHASE_CEILING`]: crate::shape::EXTENT_PHASE_CEILING
+//! [`ShapeEnv`]: crate::shape::ShapeEnv
 //! [`IndexRegionBuilder`]: super::IndexRegionBuilder
 
 use super::{IndexBuildError, IndexInteger};

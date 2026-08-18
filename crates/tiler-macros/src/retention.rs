@@ -15,7 +15,7 @@
 //! [`DebugRetention`]'s own vocabulary, and `stage_retention` states it: "Failing
 //! a successful compilation over a diagnostic would make a warning a compilation
 //! input in the only way that actually matters." A retention exists *because* the
-//! compilation succeeded — a failing stage takes [`crate::aot::retained`]'s
+//! compilation succeeded — a failing stage takes `crate::aot::retained`'s
 //! family-scoped `compile_error!` path instead and never reaches here. So the
 //! only text this module can ever hold is text from a compilation that produced a
 //! validated artifact the cache accepted. Reporting sits after that acceptance
@@ -91,7 +91,7 @@
 //! read-back. It is `pub(crate)` and adds no public item. The tool's own bytes
 //! are written exactly through [`SpokenRetention::write_to`]; provenance,
 //! invalid-UTF-8 status, and truncation totals sit outside that run.
-//! [`RetainedText::Display`] remains the cache's public lossy view and is not
+//! [`RetainedText`]'s `Display` remains the cache's public lossy view and is not
 //! this path. The note names only the completed AOT/cache phase.
 
 use std::io;

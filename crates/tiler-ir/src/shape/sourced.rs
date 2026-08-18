@@ -103,7 +103,7 @@
 //! rather than at any one consumer:
 //!
 //! - **A semantic output extent is the quoted case.** The clause above is about
-//!   "initial output shape[s]", which is a semantic-layer quantity, and it names
+//!   "initial output shape\[s\]", which is a semantic-layer quantity, and it names
 //!   them outright. Nothing has to be inferred. It is stated first because it is
 //!   the rule the other three read across from rather than re-derive.
 //!   [`SemanticProgramBuilder::input_resolved_sourced`](crate::semantic::SemanticProgramBuilder::input_resolved_sourced)

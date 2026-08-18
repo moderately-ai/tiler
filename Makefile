@@ -107,8 +107,24 @@ test:
 	cargo nextest run --workspace --locked
 	cargo test --workspace --doc --locked --quiet
 
+# Two commands, for the same reason the `test` target above keeps two: each
+# renders a page set the other never sees. The first run documents only the
+# public surface, so no diagnostic about a private or `pub(crate)` item can
+# reach it -- `tiler-compiler` alone declares five `pub` modules out of forty-odd
+# in `lib.rs`, and that is the AGENTS.md case about a check whose subject is out
+# of frame rather than a check that is failing to notice.
+#
+# The second is not a replacement. Keeping the public run is what states that
+# the *shipped* documentation is clean, which is a different claim from the
+# internal one: a future rustdoc treating a lint differently between the two
+# modes would silently retire the public claim if the private run were the only
+# one. Nothing is lost either way -- `rustdoc::private_intra_doc_links` fires in
+# both modes, with a different note under `--document-private-items` -- and cost
+# is not the argument: measured on `tiler-compiler` with a warm target
+# directory, 1.28s public against 1.52s private.
 doc:
 	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
+	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --locked
 
 # What CI runs, and what to run before pushing to main.
 full: check doc

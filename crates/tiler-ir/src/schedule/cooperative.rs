@@ -615,8 +615,7 @@ pub struct CooperativeTile {
     pub staging: Vec<WorkgroupStaging>,
     /// Phases, in ascending [`PhaseId`] order.
     pub phases: Vec<CooperativePhase>,
-    /// Synchronization points, in ascending
-    /// [`SyncPointId`](super::SyncPointId) order.
+    /// Synchronization points, in ascending [`SyncPointId`] order.
     ///
     /// Declared rather than derived, because *where* to order a handoff is a
     /// physical decision with more than one correct answer — a tile with three
@@ -625,7 +624,7 @@ pub struct CooperativeTile {
     /// What is derived is which edges each point discharges, so the declaration
     /// is checked against the dependency rather than trusted beside it. That
     /// holds for both evidence classes: a point at
-    /// [`SynchronizationPlacement::RoundBoundary`](super::SynchronizationPlacement::RoundBoundary)
+    /// [`SynchronizationPlacement::RoundBoundary`]
     /// orders every [`AntiDependencyEdge`] the tile has, and on a tile with
     /// enough phases an ordinary boundary may already fall between a read and
     /// the next round's rewrite.

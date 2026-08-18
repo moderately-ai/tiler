@@ -12,7 +12,7 @@
 //!
 //! So the host value is a **candidate**, never the answer. [`certified_rsqrt_f32`]
 //! brackets `1/sqrt(t)` with the crate's exact-rational
-//! [`rsqrt_enclosure`](crate::accuracy::rsqrt_enclosure) and admits the candidate
+//! [`rsqrt_enclosure`] and admits the candidate
 //! only when the bracket lies strictly inside the candidate's own
 //! round-to-nearest interval. When the bracket straddles a rounding boundary the
 //! reference refuses with

@@ -33,7 +33,7 @@ use super::MAX_KERNEL_IDENTITY_BYTES;
 ///
 /// `v6` gives the fixed resource-requirement record its synchronization
 /// requirement — the complete
-/// [`SynchronizationSubject`](crate::schedule::SynchronizationSubject) a
+/// [`SynchronizationSubject`] a
 /// region's schedule obliges a target to realize, or its canonical absence.
 /// The field lands at the end of a record that is *followed* by the value-type
 /// table and the whole body, so a `v5` reader would consume the presence tag as
@@ -923,7 +923,7 @@ impl BarrierOrdering {
 /// They are deliberately **not** one authority. The schedule point is the
 /// obligation and this is a declaration of it; whole-kernel verification
 /// projects the four fields onto the point's
-/// [`SynchronizationSubject`](crate::schedule::SynchronizationSubject) through
+/// [`SynchronizationSubject`] through
 /// one total mapping and requires equality, exactly as a kernel's declared
 /// [`ResourceRequirements`] is proven equal to the derived record rather than
 /// being trusted beside it. Equal field shapes did not make these one concept

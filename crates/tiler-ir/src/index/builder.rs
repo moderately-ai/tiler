@@ -1188,7 +1188,7 @@ impl IndexRegionBuilder {
     /// so does interval propagation, so an access whose coordinate carries one
     /// is proved by another argument or retains its bound as an explicit
     /// obligation under
-    /// [`IndexDomainUnknownReason::InsufficientFacts`](super::IndexDomainUnknownReason::InsufficientFacts).
+    /// [`IndexDomainUnknownReason::InsufficientFacts`].
     /// That is ADR 0046's permission to "conservatively decline semi-affine
     /// maps they cannot analyze", taken rather than approximated.
     ///

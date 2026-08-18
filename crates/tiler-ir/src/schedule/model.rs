@@ -526,7 +526,7 @@ pub enum ScalarProgram {
     ///
     /// A variant of its own rather than a width field on [`Self::PointwiseF32`],
     /// and the separation is the same one
-    /// [`PointwiseBf16Expression`](super::PointwiseBf16Expression) states: the
+    /// [`PointwiseBf16Expression`] states: the
     /// two vocabularies are different node sets, their constants are different
     /// widths, and the arithmetic each names belongs to a different registered
     /// operation family. Every consumer that classifies a region by dtype —
@@ -1823,7 +1823,7 @@ pub struct ResourceRequirements {
     /// no explain row, and no artifact field, so a target that declares nothing
     /// about synchronization is *feasible* for such a region rather than merely
     /// untested. A `Some` is the complete
-    /// [`SynchronizationSubject`](super::SynchronizationSubject) one atomic
+    /// [`SynchronizationSubject`] one atomic
     /// target fact must equal; it is deliberately not five independent
     /// dimensions, because each of them is separately true of some realization
     /// and their conjunction is what the region actually needs.

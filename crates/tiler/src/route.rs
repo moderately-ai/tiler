@@ -63,7 +63,7 @@
 //! exist. [`crate::value::DispatchAdapter`] yields the storage and builds the
 //! integration's own [`RuntimeAdapter`](crate::runtime::adapter::RuntimeAdapter), so
 //! [`dispatch_embedded_route`] hands both to
-//! [`route_with_adapter`](crate::runtime::adapter::route_with_adapter) and the
+//! [`route_with_adapter`] and the
 //! route reaches `Preflight::commit`.
 //!
 //! **The commit is not this crate's to take, and that is deliberate.** Nothing
@@ -398,7 +398,7 @@ fn checked_length<A: DispatchAdapter>(
 /// pending
 ///
 /// The environment built here is an **input** to
-/// [`DispatchAdapter::dispatcher`](crate::value::DispatchAdapter::dispatcher):
+/// [`DispatchAdapter::dispatcher`]:
 /// [`dispatch_embedded_route`] must have it before the integration's adapter
 /// exists, so there is no point on this path at which a device could be
 /// consulted, and this crate holds none of its own in any case. Emitting the row

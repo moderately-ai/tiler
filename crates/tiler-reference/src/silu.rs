@@ -11,7 +11,7 @@
 //!
 //! So the host value is a **candidate**, never the answer. [`certified_exp_f32`]
 //! brackets `e^t` with the crate's exact-rational
-//! [`exp_enclosure`](crate::accuracy::exp_enclosure) and admits the candidate only
+//! [`exp_enclosure`] and admits the candidate only
 //! when the bracket lies strictly inside the candidate's own round-to-nearest
 //! interval — which proves the candidate *is* the correctly rounded binary32
 //! value. When the bracket straddles a rounding boundary the reference refuses
@@ -32,7 +32,7 @@
 //!
 //! # The two shortcuts, and why each is exact rather than approximate
 //!
-//! [`exp_enclosure`](crate::accuracy::exp_enclosure) bounds the magnitude of the
+//! [`exp_enclosure`] bounds the magnitude of the
 //! result it will compute and refuses past it, so it does not cover every finite
 //! binary32 argument. Two guards close that gap, and both are exact inequalities
 //! rather than tolerances:

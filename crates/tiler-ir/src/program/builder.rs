@@ -952,7 +952,7 @@ impl KernelProgramBuilder {
 
     /// Moves the arena into a [`KernelProgramData`], emptying the builder.
     ///
-    /// As in [`super::super::kernel::builder`], the builder is recoverable
+    /// As in `crate::kernel::builder`, the builder is recoverable
     /// rather than consistent between this and [`Self::restore_data`], and
     /// [`Self::build`] is the only caller. Verification reads the assembled
     /// value, so nothing observes the window.

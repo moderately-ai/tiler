@@ -24,7 +24,7 @@
 //!
 //! # The trigger, and the bound it carries
 //!
-//! [`crate::aot::open_cache`] probes the root it has just opened, before the
+//! `crate::aot::open_cache` probes the root it has just opened, before the
 //! expansion uses it, and at most once per process. *Before* rather than after,
 //! because the loudest symptom this reports is a cache that never publishes: a
 //! probe gated on a publication the way the eviction sweep is would stay silent
