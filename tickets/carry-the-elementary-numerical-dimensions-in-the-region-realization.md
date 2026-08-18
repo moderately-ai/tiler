@@ -1,7 +1,7 @@
 ---
 id: carry-the-elementary-numerical-dimensions-in-the-region-realization
 title: Carry the elementary numerical dimensions in the region realization
-status: todo
+status: in-progress
 priority: p2
 dependencies: [carry-every-realized-dimension-through-region-feasibility]
 related: [admit-the-silu-activation-family, admit-the-rms-normalization-family, admit-the-softmax-family, require-both-elementary-evidence-halves-before-target-admission]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, identity, feasibility, decision, needs-tom, public-boundary]
+claimed_from: todo
+assignee: worker-elementary-dimensions
+lease_expires_at: 1787069610
 ---
 
 # Carry the elementary numerical dimensions in the region realization
