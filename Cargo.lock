@@ -1744,6 +1744,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
+ "tiler-digest",
  "tiler-ir",
  "tiler-reference",
 ]
@@ -1757,6 +1758,7 @@ dependencies = [
  "tiler-build",
  "tiler-cache",
  "tiler-compiler",
+ "tiler-digest",
  "tiler-ir",
  "tiler-metal",
  "tiler-metal-aot",
@@ -1844,6 +1846,7 @@ dependencies = [
  "tiler-artifact",
  "tiler-build",
  "tiler-compiler",
+ "tiler-digest",
  "tiler-ir",
  "tiler-metal",
  "tiler-metal-aot",
@@ -1855,6 +1858,7 @@ dependencies = [
 name = "tiler-reference"
 version = "0.0.0"
 dependencies = [
+ "tiler-digest",
  "tiler-ir",
 ]
 

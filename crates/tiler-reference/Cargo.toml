@@ -15,5 +15,16 @@ doc = true
 [dependencies]
 tiler-ir.workspace = true
 
+# `tiler-digest` is a *development* edge because the only source here that names
+# it is `tests/contraction_profile_cells.rs`, an integration test. That test
+# reproduces the L3 realization probe's retained raw `CC_SHA256` records through
+# `DigestAlgorithm::digest_external_record`; ADR 0111 admitted that typed path
+# and deleted the SHA-256 implementation the test used to carry, on the rule that
+# a source file naming a crate's public item owns a direct Cargo edge. The crate
+# is already in this one's normal closure through `tiler-ir`, so the edge adds
+# nothing to a consumer's build graph — it states what source reaches.
+[dev-dependencies]
+tiler-digest.workspace = true
+
 [lints]
 workspace = true

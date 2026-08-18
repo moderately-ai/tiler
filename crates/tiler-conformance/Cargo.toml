@@ -36,6 +36,18 @@ doc = true
 # and not a conformance one. Crossing the real acceptance path is also what the
 # routed half is evidence about.
 #
+# `tiler-digest` is a direct edge rather than a transitive one because
+# `src/envelope.rs` names `DigestAlgorithm::digest_external_record` to reproduce
+# the L3 realization probe's retained raw `CC_SHA256` records, and the path that
+# calls it runs from the device-reaching half rather than from tests alone -- so
+# it is a normal edge on the same rule as every other row here. ADR 0111 admitted
+# the typed raw-external result and deleted the SHA-256 implementation this crate
+# used to carry, on the rule that a source file naming a crate's public item owns
+# a direct Cargo edge. That deliberately corrects ADR 0106's statement that
+# `tiler-digest` is reached only transitively and deliberately not named: the
+# statement described the source as it then stood, and both that record and
+# `docs/architecture.md` now carry dated corrections saying so.
+#
 # `tiler` and `tiler-macros` are absent and must stay absent. The crate header
 # states why, and `crates/tiler/tests/dependency_direction.rs` is what enforces
 # it -- against `Cargo.lock`, which merges normal and development edges into one
@@ -45,6 +57,7 @@ tiler-artifact.workspace = true
 tiler-build.workspace = true
 tiler-cache.workspace = true
 tiler-compiler.workspace = true
+tiler-digest.workspace = true
 tiler-ir.workspace = true
 tiler-metal.workspace = true
 tiler-metal-aot.workspace = true

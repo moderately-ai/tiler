@@ -83,17 +83,19 @@
 //! [`integrate-the-contraction-vertical-into-the-runtime`](../../../../tickets/integrate-the-contraction-vertical-into-the-runtime.md)
 //! owns it.
 //!
-//! # Why the digest helper is written out here
+//! # Where the digest comes from
 //!
-//! `sha2` is a workspace dependency, but adding it to this crate would edit
-//! `Cargo.lock`, which this work does not own. The implementation below is
-//! therefore local to this test module and is checked against the two published
-//! FIPS 180-4 vectors before any comparison rests on it — a digest function that
-//! silently computed something else would make every retained-value assertion
-//! agree with itself.
+//! [`tiler_digest::DigestAlgorithm::digest_external_record`], reached through
+//! this crate's development dependency on `tiler-digest`. The retained
+//! `result_sha256` is an externally specified raw record — the probe's host
+//! handed the result buffer to `CC_SHA256` — so it carries no Tiler domain and
+//! its algorithm is fixed by the record rather than by this build's writer
+//! policy. [ADR 0111](../../../../docs/decisions/0111-separate-externally-specified-raw-hashes-from-governed-tiler-digests.md)
+//! is what gave that subject a typed path and deleted the copy this module used
+//! to carry; the variant is spelled `Sha256` rather than `GOVERNED` because the
+//! record means SHA-256 permanently.
 
-use std::fmt::Write as _;
-
+use tiler_digest::DigestAlgorithm;
 use tiler_ir::index::{IndexRefinementSubject, NumericalContractIdentity};
 use tiler_ir::semantic::{
     ContractionIndex, ContractionIndexStructure, F32, F32TensorContraction, InputKey, OutputKey,
@@ -299,6 +301,18 @@ fn element_bits(elements: &[ReferenceElement]) -> Vec<u32> {
 fn result_digest(bits: &[u32]) -> String {
     let bytes: Vec<u8> = bits.iter().flat_map(|value| value.to_le_bytes()).collect();
     sha256_hex(&bytes)
+}
+
+/// Reproduces the retained record's raw SHA-256 over `message`.
+///
+/// One line over [`tiler_digest`], kept as a named helper because the call sites
+/// below read as digests of a subject rather than as algorithm selection. The
+/// variant is spelled explicitly: [`DigestAlgorithm::GOVERNED`] tracks whatever
+/// this build of Tiler writes, while the retained record means SHA-256.
+fn sha256_hex(message: &[u8]) -> String {
+    DigestAlgorithm::Sha256
+        .digest_external_record(message)
+        .label()
 }
 
 /// Evaluates one contraction through the registered reference operation.
@@ -610,161 +624,4 @@ fn the_four_prefill_cells_are_refused_by_the_unstaged_fold_and_reached_by_the_st
         "{}: the staged fold does not reproduce the retained `direct` result",
         cell.id
     );
-}
-
-/// FIPS 180-4 SHA-256 over a byte string, as lowercase hexadecimal.
-///
-/// Local to this module for the reason the module documentation states, and
-/// checked against the two published vectors before anything rests on it.
-fn sha256_hex(message: &[u8]) -> String {
-    const K: [u32; 64] = [
-        0x428a_2f98,
-        0x7137_4491,
-        0xb5c0_fbcf,
-        0xe9b5_dba5,
-        0x3956_c25b,
-        0x59f1_11f1,
-        0x923f_82a4,
-        0xab1c_5ed5,
-        0xd807_aa98,
-        0x1283_5b01,
-        0x2431_85be,
-        0x550c_7dc3,
-        0x72be_5d74,
-        0x80de_b1fe,
-        0x9bdc_06a7,
-        0xc19b_f174,
-        0xe49b_69c1,
-        0xefbe_4786,
-        0x0fc1_9dc6,
-        0x240c_a1cc,
-        0x2de9_2c6f,
-        0x4a74_84aa,
-        0x5cb0_a9dc,
-        0x76f9_88da,
-        0x983e_5152,
-        0xa831_c66d,
-        0xb003_27c8,
-        0xbf59_7fc7,
-        0xc6e0_0bf3,
-        0xd5a7_9147,
-        0x06ca_6351,
-        0x1429_2967,
-        0x27b7_0a85,
-        0x2e1b_2138,
-        0x4d2c_6dfc,
-        0x5338_0d13,
-        0x650a_7354,
-        0x766a_0abb,
-        0x81c2_c92e,
-        0x9272_2c85,
-        0xa2bf_e8a1,
-        0xa81a_664b,
-        0xc24b_8b70,
-        0xc76c_51a3,
-        0xd192_e819,
-        0xd699_0624,
-        0xf40e_3585,
-        0x106a_a070,
-        0x19a4_c116,
-        0x1e37_6c08,
-        0x2748_774c,
-        0x34b0_bcb5,
-        0x391c_0cb3,
-        0x4ed8_aa4a,
-        0x5b9c_ca4f,
-        0x682e_6ff3,
-        0x748f_82ee,
-        0x78a5_636f,
-        0x84c8_7814,
-        0x8cc7_0208,
-        0x90be_fffa,
-        0xa450_6ceb,
-        0xbef9_a3f7,
-        0xc671_78f2,
-    ];
-    let mut state: [u32; 8] = [
-        0x6a09_e667,
-        0xbb67_ae85,
-        0x3c6e_f372,
-        0xa54f_f53a,
-        0x510e_527f,
-        0x9b05_688c,
-        0x1f83_d9ab,
-        0x5be0_cd19,
-    ];
-    let mut padded = message.to_vec();
-    padded.push(0x80);
-    while padded.len() % 64 != 56 {
-        padded.push(0);
-    }
-    let bit_length = u64::try_from(message.len())
-        .expect("a message length fits in u64")
-        .wrapping_mul(8);
-    padded.extend_from_slice(&bit_length.to_be_bytes());
-
-    let (blocks, remainder) = padded.as_chunks::<64>();
-    debug_assert!(
-        remainder.is_empty(),
-        "the padding makes the length a multiple of 64"
-    );
-    for block in blocks {
-        let mut schedule = [0_u32; 64];
-        let (words, _) = block.as_chunks::<4>();
-        for (slot, bytes) in schedule.iter_mut().zip(words) {
-            *slot = u32::from_be_bytes(*bytes);
-        }
-        for index in 16..64 {
-            let s0 = schedule[index - 15].rotate_right(7)
-                ^ schedule[index - 15].rotate_right(18)
-                ^ (schedule[index - 15] >> 3);
-            let s1 = schedule[index - 2].rotate_right(17)
-                ^ schedule[index - 2].rotate_right(19)
-                ^ (schedule[index - 2] >> 10);
-            schedule[index] = schedule[index - 16]
-                .wrapping_add(s0)
-                .wrapping_add(schedule[index - 7])
-                .wrapping_add(s1);
-        }
-        // The eight working variables, indexed rather than named: the standard
-        // calls them `a` through `h`, and eight single-letter bindings is a
-        // readability rule this workspace holds even where the source it
-        // transcribes does not.
-        let mut working = state;
-        for index in 0..64 {
-            let s1 = working[4].rotate_right(6)
-                ^ working[4].rotate_right(11)
-                ^ working[4].rotate_right(25);
-            let choice = (working[4] & working[5]) ^ (!working[4] & working[6]);
-            let temp1 = working[7]
-                .wrapping_add(s1)
-                .wrapping_add(choice)
-                .wrapping_add(K[index])
-                .wrapping_add(schedule[index]);
-            let s0 = working[0].rotate_right(2)
-                ^ working[0].rotate_right(13)
-                ^ working[0].rotate_right(22);
-            let majority =
-                (working[0] & working[1]) ^ (working[0] & working[2]) ^ (working[1] & working[2]);
-            let temp2 = s0.wrapping_add(majority);
-            working = [
-                temp1.wrapping_add(temp2),
-                working[0],
-                working[1],
-                working[2],
-                working[3].wrapping_add(temp1),
-                working[4],
-                working[5],
-                working[6],
-            ];
-        }
-        for (slot, value) in state.iter_mut().zip(working) {
-            *slot = slot.wrapping_add(value);
-        }
-    }
-    let mut hex = String::with_capacity(64);
-    for byte in state.iter().flat_map(|word| word.to_be_bytes()) {
-        let _ = write!(hex, "{byte:02x}");
-    }
-    hex
 }
