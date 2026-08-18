@@ -1,7 +1,7 @@
 ---
 id: apply-the-accepted-tiler-metal-public-facade
 title: Apply the accepted tiler-metal public facade
-status: blocked
+status: in-progress
 priority: p1
 dependencies: [decide-the-tiler-metal-public-facade-surface, honor-the-precise-fp32-metal-compilation-requirement]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/metal, implementation/build, contracts/decisions, contra
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: worker-facade-application
+lease_expires_at: 1787088563
 ---
 ## User-visible outcome
 
