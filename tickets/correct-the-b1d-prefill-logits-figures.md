@@ -1,7 +1,7 @@
 ---
 id: correct-the-b1d-prefill-logits-figures
 title: Correct the B1-d prefill logits figures the off-by-4096 seeded
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [project-only-the-final-position-logits, admit-a-position-selecting-slice-for-the-rotary-table, scope-the-sequence-extending-tensor-family, design-model-level-qualification-and-optimization]
@@ -9,9 +9,6 @@ scopes: [research/program-planning, research/shapes, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, documentation, program-planning, residency]
-claimed_from: todo
-assignee: worker-b1d-figures
-lease_expires_at: 1787062049
 ---
 ## User-visible outcome
 
@@ -89,3 +86,5 @@ Every live site states the recomputed figures; `grep -rn "4,978,634,752\|10,895,
 The L6 record carries two of the first two figures because it took two notes — one at the logits contract and one under the residency table — and each retires the pair it substituted. Every other hit in `docs/` and `tickets/` is in one of the four excluded dated records or in this ticket, whose own counts are deliberately not pinned here because stating them would change them.
 
 **Not done, deliberately.** The four excluded dated records are untouched, including `tickets/project-only-the-final-position-logits.md`, whose `## Out-of-scope defect` paragraph relays the same "ten files" count this ticket carried; that ticket is `done` and is excluded by name, so the count is noted here rather than repaired there. The `(4.6361 GiB)` rendering question is escalated above rather than settled.
+
+**Coordinator decision — 2026-08-18, at closure.** The escalated GiB rendering question is settled without a sweep: in this corpus the exact byte figure is the authoritative value and a four-decimal GiB parenthetical is a non-normative reader convenience, not a Fact a check or decision may rest on — the compiled guard deliberately asserts only the integers. No rounding-versus-truncation convention is imposed retroactively; the three live `(4.6361 GiB)` renderings stand as approximations of 4.63615274 GiB (off by less than one part in 46,000), and neither dated nor live records are churned over the fourth decimal. A future record that needs a normative derived unit must state the derivation beside the bytes, as the residency tables already do. This is an internal documentation convention with one dominant answer, not a reserved decision.
