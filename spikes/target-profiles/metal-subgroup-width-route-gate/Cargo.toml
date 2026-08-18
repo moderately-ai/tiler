@@ -1,0 +1,29 @@
+[package]
+name = "metal-subgroup-width-route-gate"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Its own workspace root, following the sibling target-profile spikes: `make`
+# never reaches here and this spike's dependency set is its own. The path
+# dependencies below resolve their `[lints]` and `workspace = true` entries
+# through the repository workspace they belong to.
+[workspace]
+
+[dependencies]
+# The same binding the conformance and prototype routes dispatch through.
+metal = "0.33.0"
+sha2 = "0.10"
+tiler-artifact = { path = "../../../crates/tiler-artifact" }
+tiler-build = { path = "../../../crates/tiler-build" }
+tiler-ir = { path = "../../../crates/tiler-ir" }
+tiler-runtime = { path = "../../../crates/tiler-runtime" }
+
+[lints.rust]
+# `deny` rather than `forbid`, following `metal-grid-axis-extent`: reading an
+# `MTLBuffer` back has no safe route through the binding, so exactly two sites
+# (the operand write and the result read) opt in by name under ADR 0079.
+unsafe_code = "deny"
+
+[lints.clippy]
+all = "warn"

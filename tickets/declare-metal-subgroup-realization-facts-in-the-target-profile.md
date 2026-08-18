@@ -11,7 +11,7 @@ paths: []
 tags: [target-profiles, metal, subgroup, execution-hierarchy, feasibility, public-boundary, decision, needs-tom]
 claimed_from: todo
 assignee: worker-metal-subgroup-facts
-lease_expires_at: 1787066399
+lease_expires_at: 1787067519
 ---
 ## User-visible outcome
 
