@@ -1,17 +1,14 @@
 ---
 id: decide-the-adr-0013-plan-determinism-stability-subject
 title: Decide the ADR 0013 plan-determinism stability subject
-status: in-progress
+status: awaiting-decision
 priority: p1
 dependencies: []
 related: [decide-the-semantic-order-contract-for-relaxed-contractions]
 scopes: [implementation/ir, implementation/artifact, implementation/compiler, implementation/runtime, contracts/numerics, contracts/artifacts, contracts/decisions]
 shared_scopes: [project/tickets]
-paths: []
+paths: [.ticketsplease/decision-queue.md]
 tags: [decision, numerics, identity, public-boundary, needs-tom]
-claimed_from: todo
-assignee: worker-determinism-surface
-lease_expires_at: 1787017405
 ---
 ## Outcome
 
@@ -201,7 +198,7 @@ The provider schema is checked twice for different authorities: build validates 
 | More generic research | Stop condition met for the outer subject. It cannot manufacture the missing Metal observer. Provider-specific research remains a prerequisite to enabling each provider, not a reason to leave the generic type/refusal boundary ambiguous. | Reopen the generic choice for a concrete provider that cannot fit one exact bounded descriptor/attestation or a multi-context execution model that invalidates the singular environment class. |
 | Defer | Process fallback only. Execution stays soundly `Unclaimed`, but the implementation and relaxed-topology graph remain blocked. | Appropriate only if review finds a named missing invariant; unchanged external evidence is not itself a new trade-off. |
 
-One answer dominates among solutions that satisfy the accepted carrier: the provider-versioned subject. There is therefore no new Tom question to queue or present. The LiveRow question remains the sole presented question.
+One answer dominates among solutions that satisfy the accepted carrier: the provider-versioned subject. Tom still owns acceptance of this consequential public and wire boundary, so the packet needs only an accept-or-retain-typed-refusal question rather than a manufactured multi-option choice. It is queued behind the already presented LiveRow question and is not presented concurrently.
 
 ## Host cost, unsupported population, and graph boundary
 
@@ -217,7 +214,7 @@ The following remain typed `Unclaimed` or refused:
 - portable bitwise determinism, cross-artifact or recompilation equality, cross-rank or cross-delivery equality, environment widening, changed inputs/bindings, and inference from a live device identifier; and
 - provider descriptor schemas whose exact fields, canonicalization, observer, authority, bounds, or revision policy have not separately been accepted.
 
-No new provider ticket is queued here: ADR 0086 deliberately records no concrete Metal observer and already owns the evidence trigger. When that trigger fires, work must split into a provider-specific schema/authority decision and its implementation before Metal changes from `Unsupported`. The implementation carrier must also heal the separate glossary omission of `ExecutionEnvironment::dtype_dispatch`; that wording repair is not evidence for including dtype in the new identity. This packet changes no ticket status, dependency, queue, accepted ADR, or preserved failed work.
+No new provider ticket is queued here: ADR 0086 deliberately records no concrete Metal observer and already owns the evidence trigger. When that trigger fires, work must split into a provider-specific schema/authority decision and its implementation before Metal changes from `Unsupported`. The implementation carrier must also heal the separate glossary omission of `ExecutionEnvironment::dtype_dispatch`; that wording repair is not evidence for including dtype in the new identity. This packet changes no dependency, accepted ADR, or preserved failed work; after independent exact-commit review passed with no findings, only this ticket's `awaiting-decision` state and its held queue row were added.
 
 ## Required implementation perturbations
 
