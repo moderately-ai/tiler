@@ -10,8 +10,8 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [research, compiler, planner, identity, decision, needs-tom]
 claimed_from: todo
-assignee: worker-materialized-producer
-lease_expires_at: 1787089728
+assignee: worker-materialized-producer-review
+lease_expires_at: 1787091279
 ---
 ## User-visible outcome
 
