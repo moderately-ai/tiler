@@ -1,7 +1,7 @@
 ---
 id: decide-the-compilation-selection-provenance-public-and-wire-surface
 title: Decide the compilation-selection provenance public and wire surface
-status: todo
+status: in-progress
 priority: p1
 dependencies: [record-the-compilation-selection-in-target-measurement-provenance, refuse-unknown-fact-source-provenance-schemas-in-artifact-decode]
 related: [carry-required-compilation-selection-identity-on-compile-profile-contexts, split-metal-profile-measurement-sources-by-compilation-selection]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, needs-tom, public-boundary, provenance, identity, metal]
+claimed_from: todo
+assignee: worker-compilation-selection-surface
+lease_expires_at: 1787020465
 ---
 ## User-visible outcome
 
