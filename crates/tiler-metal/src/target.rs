@@ -13,9 +13,18 @@
 //! contract keys them by device, bundle, entry point, and pipeline descriptor,
 //! so a pure emitter cannot and must not decide them.
 //!
-//! Every public item here is a reviewed *draft* boundary (ADR 0074 §7): the
-//! surface is built and tested at full fidelity while the facade is under
-//! review, and it says so rather than pretending to be accepted.
+//! Every public item here is an accepted boundary: Tom accepted the crate's
+//! exact public facade on 2026-08-18 under ADR 0075, with the provenance
+//! recorded in `tickets/decide-the-tiler-metal-public-facade-surface.md`. That
+//! acceptance made the backend spelling helpers crate-private — the launch
+//! index's attribute and declared-type text, and the `as_str` of the
+//! arithmetic-type and subnormal-behaviour vocabularies — because they expose
+//! implementation text or duplicate `Display` without enabling a distinct
+//! supported caller.
+//! [`MetalSubnormalArithmetic::subnormal_mode`](crate::target::MetalSubnormalArithmetic::subnormal_mode)
+//! was separately ratified earlier as the owner-side total projection and is
+//! unchanged. Accepted is not stabilized — ADR 0075's pre-alpha posture keeps
+//! a later source break cheap, explicit, and reviewed.
 //!
 //! # The Apple target vocabulary is deliberately owned twice
 //!
@@ -327,6 +336,38 @@ impl fmt::Display for MetalDeploymentMinimum {
 /// `-std=metal3.1`), declaring `[[thread_position_in_grid]]` as `ulong` is
 /// rejected: `type 'ulong' (aka 'unsigned long') is not valid for attribute
 /// 'thread_position_in_grid'`. Declaring it as `uint` compiles.
+///
+/// The variant is the whole external vocabulary: a caller selects a
+/// realization and reads the selection back structurally, and the emitted
+/// source is where the spelling appears. The MSL attribute and declared-type
+/// text are crate-private under the accepted facade, so an external caller
+/// cannot mint a second spelling authority:
+///
+/// ```compile_fail,E0624
+/// use tiler_metal::target::LaunchIndexRealization;
+///
+/// let _ = LaunchIndexRealization::ThreadPositionInGridUInt.attribute();
+/// ```
+///
+/// ```compile_fail,E0624
+/// use tiler_metal::target::LaunchIndexRealization;
+///
+/// let _ = LaunchIndexRealization::ThreadPositionInGridUInt.declared_type();
+/// ```
+///
+/// The structured route stays open — the selection is matchable, with the
+/// wildcard this `#[non_exhaustive]` vocabulary requires:
+///
+/// ```
+/// use tiler_metal::target::{LaunchIndexRealization, MetalEmissionRealization};
+///
+/// let emission =
+///     MetalEmissionRealization::new(LaunchIndexRealization::ThreadPositionInGridUInt);
+/// assert!(matches!(
+///     emission.launch_index,
+///     LaunchIndexRealization::ThreadPositionInGridUInt,
+/// ));
+/// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum LaunchIndexRealization {
@@ -336,16 +377,22 @@ pub enum LaunchIndexRealization {
 
 impl LaunchIndexRealization {
     /// Returns the MSL attribute spelling this realization uses.
+    ///
+    /// Crate-private under the accepted facade: the spelling is emission's
+    /// authority, and a caller that could read it apart from emitted source
+    /// could also restate it.
     #[must_use]
-    pub const fn attribute(self) -> &'static str {
+    pub(crate) const fn attribute(self) -> &'static str {
         match self {
             Self::ThreadPositionInGridUInt => "thread_position_in_grid",
         }
     }
 
     /// Returns the MSL type the attributed parameter is declared with.
+    ///
+    /// Crate-private for the same reason as [`Self::attribute`].
     #[must_use]
-    pub const fn declared_type(self) -> &'static str {
+    pub(crate) const fn declared_type(self) -> &'static str {
         match self {
             Self::ThreadPositionInGridUInt => "uint",
         }
@@ -392,12 +439,41 @@ impl MetalEmissionRealization {
 /// and quantized format, are unmeasured; dtypes disagreeing establishes that the
 /// flush *depends on* the dtype and establishes nothing about which dtypes
 /// flush. Adding a variant is a build error at this type's private `index` map
-/// and at [`Self::ALL`], never a silent inheritance of another type's fact.
+/// and at its crate-private `ALL` inventory, never a silent inheritance of
+/// another type's fact.
 ///
 /// These are MSL arithmetic types, not [`tiler_ir::kernel::KernelType`] values.
 /// The structured kernel IR resolves one floating-point element type today;
 /// this vocabulary is the target's, and it is what the *measurements* are
 /// indexed by.
+///
+/// The `ALL`/`COUNT` inventory and the `as_str` text are crate-private under
+/// the accepted facade — the census sizes this crate's own fact record, and
+/// the stable text is what [`fmt::Display`] already renders:
+///
+/// ```compile_fail,E0624
+/// use tiler_metal::target::MetalFloatArithmeticType;
+///
+/// let _ = MetalFloatArithmeticType::F32.as_str();
+/// ```
+///
+/// ```compile_fail,E0624
+/// use tiler_metal::target::MetalFloatArithmeticType;
+///
+/// let _ = MetalFloatArithmeticType::ALL;
+/// ```
+///
+/// ```compile_fail,E0624
+/// use tiler_metal::target::MetalFloatArithmeticType;
+///
+/// let _ = MetalFloatArithmeticType::COUNT;
+/// ```
+///
+/// ```
+/// use tiler_metal::target::MetalFloatArithmeticType;
+///
+/// assert_eq!(MetalFloatArithmeticType::Bf16.to_string(), "bf16");
+/// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum MetalFloatArithmeticType {
@@ -424,14 +500,17 @@ impl MetalFloatArithmeticType {
     /// matters beyond the list itself: [`Self::COUNT`] sizes the
     /// [`MetalSubnormalArithmeticFacts`] slot array, so a short `ALL` would
     /// leave the new type with no slot to state a fact in.
-    pub const ALL: [Self; core::mem::variant_count::<Self>()] = [Self::F32, Self::F16, Self::Bf16];
+    pub(crate) const ALL: [Self; core::mem::variant_count::<Self>()] =
+        [Self::F32, Self::F16, Self::Bf16];
 
     /// How many arithmetic types this vocabulary names.
-    pub const COUNT: usize = Self::ALL.len();
+    pub(crate) const COUNT: usize = Self::ALL.len();
 
     /// Returns a stable lowercase identifier for this arithmetic type.
+    ///
+    /// Crate-private under the accepted facade; `Display` renders this text.
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::F32 => "f32",
             Self::F16 => "f16",
@@ -517,6 +596,26 @@ impl fmt::Display for MetalUnstatedSubnormalArithmetic {
 /// [`MetalSubnormalArithmeticFacts`] entry, and the entry's
 /// [`MetalFloatArithmeticType`] key is the dtype. See that record for the
 /// per-type measurements.
+///
+/// The `as_str` text is crate-private under the accepted facade; the
+/// structured variants and the accepted [`Self::subnormal_mode`] projection
+/// are the consumption routes, and [`fmt::Display`] renders the same stable
+/// text:
+///
+/// ```compile_fail,E0624
+/// use tiler_metal::target::MetalSubnormalArithmetic;
+///
+/// let _ = MetalSubnormalArithmetic::PreservesSubnormals.as_str();
+/// ```
+///
+/// ```
+/// use tiler_metal::target::MetalSubnormalArithmetic;
+///
+/// assert_eq!(
+///     MetalSubnormalArithmetic::PreservesSubnormals.to_string(),
+///     "preserves-subnormals",
+/// );
+/// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum MetalSubnormalArithmetic {
@@ -562,8 +661,10 @@ impl MetalSubnormalArithmetic {
     }
 
     /// Returns a stable lowercase identifier for this behaviour.
+    ///
+    /// Crate-private under the accepted facade; `Display` renders this text.
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::FlushesToZero {
                 zero_sign: MetalFlushedZeroSign::PreservesSign,

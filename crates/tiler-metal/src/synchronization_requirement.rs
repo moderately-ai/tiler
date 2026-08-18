@@ -49,12 +49,16 @@
 //! construct for, while a rejected spelling is a construct Metal declines to
 //! couple that way.
 //!
-//! # Draft boundary
+//! # Accepted boundary
 //!
-//! Every public item here is a reviewed *draft* boundary under ADR 0074 §7 and
-//! ADR 0075, prepared under
-//! `tickets/check-synchronization-realization-before-the-routing-commit.md`. Its
-//! exact surface returns to Tom for acceptance before it is treated as accepted.
+//! Every public item here is an accepted boundary: Tom accepted the crate's
+//! exact public facade — this module's current surface included, exactly as
+//! prepared under
+//! `tickets/check-synchronization-realization-before-the-routing-commit.md` —
+//! on 2026-08-18 under ADR 0075, with the provenance recorded in
+//! `tickets/decide-the-tiler-metal-public-facade-surface.md`. Accepted is not
+//! stabilized — ADR 0075's pre-alpha posture keeps a later source break cheap,
+//! explicit, and reviewed.
 
 use core::fmt;
 use std::error::Error;

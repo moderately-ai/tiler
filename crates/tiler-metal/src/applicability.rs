@@ -119,7 +119,17 @@
 //! and forwards each enumerator to its own `supportsFamily`, so the families
 //! probed and the family named are one authority rather than two.
 //!
-//! Every public item here is a reviewed *draft* boundary (ADR 0074 §7).
+//! Every public item here is an accepted boundary, and this module's
+//! provenance predates the whole-crate acceptance: Tom accepted the exact
+//! host-applicability packet at `6c1cd1e`
+//! (`tickets/validate-macos-metal-profile-host-applicability.md`), the
+//! exhaustive-family/raw-constant correction is recorded by
+//! `close-the-metal-gpu-family-out-of-crate-total-map`, and the fallible
+//! observer by `decide-the-unnameable-gpu-enumerator-channel`. The 2026-08-18
+//! whole-facade acceptance
+//! (`tickets/decide-the-tiler-metal-public-facade-surface.md`) preserved this
+//! surface byte for byte. Accepted is not stabilized — ADR 0075's pre-alpha
+//! posture keeps a later source break cheap, explicit, and reviewed.
 
 use core::fmt;
 use std::error::Error;

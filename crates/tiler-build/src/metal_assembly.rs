@@ -334,6 +334,13 @@ fn validate_numerical_selection(
 ) -> Result<(), MetalAssemblyError> {
     unit.require_declared_realization()?;
     for requirement in unit.numerical_requirements() {
+        // Total over the deliberately exhaustive requirement vocabulary (ADR
+        // 0074 convention 5b): each emitted requirement names the one compiler
+        // selection that honours it, so there is no verdict a wildcard could
+        // derive for an unknown requirement — refusing it rejects a selection
+        // that may honour it exactly, and accepting it compiles source under a
+        // selection that does not deliver its obligation. A widened vocabulary
+        // is a build error here instead.
         let satisfied = match requirement {
             MetalNumericalRequirement::SafeMathMode => numerical.math_mode == MathMode::Safe,
             MetalNumericalRequirement::NoFloatingPointContraction => {
@@ -342,7 +349,6 @@ fn validate_numerical_selection(
             MetalNumericalRequirement::PreciseFp32Functions => {
                 numerical.fp32_functions == Fp32Functions::Precise
             }
-            _ => false,
         };
         if !satisfied {
             return Err(MetalAssemblyError::UnsatisfiedNumericalRequirement {

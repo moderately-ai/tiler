@@ -129,11 +129,23 @@
 //!
 //! # Boundary status
 //!
-//! Most public items in this crate are reviewed *draft* boundaries under ADR
-//! 0074 §7: they are built and tested at full fidelity while the facade is
-//! under review. [`direct_requirement`] is the accepted exception: ADR 0075
-//! accepted its exact public comparison surface, while keeping the raw SDK
-//! enumerator private to this crate.
+//! Every public item in this crate is an accepted boundary: Tom accepted the
+//! exact minimized whole facade on 2026-08-18 under ADR 0075, with the
+//! provenance recorded in
+//! `tickets/decide-the-tiler-metal-public-facade-surface.md` and the
+//! application carried by `tickets/apply-the-accepted-tiler-metal-public-facade.md`.
+//! Three subsets carry their own earlier, separately recorded acceptance and
+//! were preserved byte for byte: [`direct_requirement`] (through
+//! `carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit`),
+//! [`applicability`] (the packet at `6c1cd1e` plus its recorded corrections),
+//! and the ratified [`target::MetalSubnormalArithmetic::subnormal_mode`]
+//! projection. The acceptance also narrowed eight out-of-crate-unused backend
+//! spelling helpers to crate visibility and made
+//! [`record::MetalNumericalRequirement`] exhaustive; each owning module
+//! records its own consequence. Accepted is not stabilized — ADR 0075's
+//! pre-alpha posture keeps a later source break cheap, explicit, and
+//! reviewed, and acceptance says the boundary is intentional rather than
+//! accidental.
 //!
 //! ```
 //! use tiler_ir::kernel::lower_scheduled_region;
