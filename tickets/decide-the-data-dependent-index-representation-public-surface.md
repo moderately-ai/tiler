@@ -1,7 +1,7 @@
 ---
 id: decide-the-data-dependent-index-representation-public-surface
 title: Decide the data-dependent index representation public surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [accept-adr-0108-data-dependent-index-coordinate-siting, name-the-fact-source-on-retained-write-ownership-evidence]
 related: [admit-the-selected-data-dependent-index-representation, revise-adr-0108-with-a-complete-data-dependent-index-vertical, admit-an-invocation-scoped-gather-index-validation-receipt]
@@ -464,3 +464,8 @@ The separate receipt ticket remains the sole owner of dynamic validation and run
 **Proposal — recommend B, literal-only plus the source-side reference and the explicit narrow ADR amendment above.** It is the smallest useful vertical aligned with the family current source actually supports, keeps symbolic operands under their existing named refusal, makes detached association O(1), and preserves the mandatory dynamic stop without inventing receipt authority. The four serialized bytes per gather are preferable to making every relation consumer depend on complete-list context. Sourced participation reopens only after the named authority prerequisite, not merely after a workload request.
 
 After independent exact-commit review, ask Tom one question: **Should Tiler keep A the current typed deferral, or accept the literal-only gather surface with the explicit ADR 0108 schedule-ordinal amendment using B source-side `index_access` (recommended) or C fieldless canonical association?**
+
+
+## Accepted decision — 2026-08-18
+
+Tom accepted **option B, literal-only with the source-side `index_access` field**, in the live coordination session with the orchestrator, relayed first-hand by the coordinator, by replying `agreed, next decision` to the packet's three-way question presented in explain-then-recommend form. The accepted surface is exactly the reviewed packet at `a25f4268b768f1b0391db34798676f910d4f1660`: literal source/index/result-domain shapes only, the three exact public `gather_read` refusals for each nonliteral dimension, the four-byte source-side association without widening the measured `LogicalAccess`, declared association checked in normalized request/stage/program identity, the named narrow ADR 0108 schedule-clause amendment, and the KIR `body-refinement` wall with no kernel/artifact/Metal/cache/dispatch route. Sourced boundary/domain gather support remains a separate future decision; the recorded reversal (proof that every detached consumer owns the full list at no cost) reopens the source-side-versus-fieldless choice as a new decision. Acceptance is recorded before any production Rust change; implementation flows through `admit-the-selected-data-dependent-index-representation`, which this acceptance unblocks.
