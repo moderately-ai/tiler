@@ -1,7 +1,7 @@
 ---
 id: decide-the-algebraic-capability-authority-for-contraction-splits
 title: Decide the algebraic capability authority for contraction splits
-status: in-progress
+status: awaiting-decision
 priority: p1
 dependencies: [decide-the-semantic-order-contract-for-relaxed-contractions]
 related: [accept-the-tensor-contraction-successor-public-surface, replace-the-standard-contraction-key-with-the-accepted-successor, admit-reassociated-contraction-schedule-alternatives, revise-contraction-split-admission-to-contiguous-only-delivery]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, contracts/numerics, contrac
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, numerics, identity, public-boundary, needs-tom]
-claimed_from: todo
-assignee: worker-algebraic-review
-lease_expires_at: 1787096894
 ---
 ## User-visible outcome
 
