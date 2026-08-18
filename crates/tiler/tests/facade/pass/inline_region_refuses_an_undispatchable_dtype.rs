@@ -36,8 +36,8 @@ use tiler::artifact::program::ArithmeticType;
 use tiler::runtime::adapter::{LiveExecutionContext, RuntimeAdapter};
 use tiler::runtime::load::{
     DTypeDispatchResolution, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest,
-    Preflight, PreparedEntryObservation, RoutedDispatch, RoutedEntry, TargetPropertyRequest,
-    TargetEnvironmentObservation, TargetEnvironmentSupport,
+    Preflight, PreparedEntryObservation, RoutedDispatch, RoutedEntry, TargetEnvironmentObservation,
+    TargetEnvironmentSupport, TargetPropertyRequest,
 };
 use tiler::value::{
     AdapterCapability, DispatchAdapter, RegionRequest, ResultRequest, StorageScalar, Tensor,

@@ -35,7 +35,7 @@ This ticket does not decide the target-environment compatibility identity, selec
 
 ## Implementation record — 2026-08-18 (worker-adr0013-carrier)
 
-Implemented at branch `tkt/implement-the-adr-0013-plan-determinism-stability-subject` from exact base `48515ddf77e0e1ac533a56defe57eaad27a93c3a`; the implementation commit is `c77aab39` (this ticket record lands in the following commit on the same branch). Merging, closure, and integration stay with the coordinator.
+Implemented at branch `tkt/implement-the-adr-0013-plan-determinism-stability-subject` from exact base `48515ddf77e0e1ac533a56defe57eaad27a93c3a`; the implementation commit is `c77aab39`, this record follows it, and the branch head handed to the coordinator is the commit that also reorders three trybuild facade fixture imports for the `make full` fmt floor. Merging, closure, and integration stay with the coordinator.
 
 The four scopes added to the frontmatter (`implementation/build`, `implementation/frontend`, `implementation/candle`, `research/target-profiles`) are scheduling metadata required by the authorized work, not scope expansion: the accepted carrier names `assemble_plan_artifact` (tiler-build), and the new required `RuntimeAdapter` methods reach every adapter implementor — the `tiler` facade's trybuild fixtures and route tests, and the Candle prototype adapter — while the standard-Metal pin mirror lives in `docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md`. `contracts/numerics` was declared but needed no edit: `docs/numerical-semantics.md` ("The initial scoped guarantee is **plan deterministic**") already states exactly the subject implemented here.
 

@@ -47,8 +47,8 @@ use std::rc::Rc;
 use tiler::runtime::adapter::{LiveExecutionContext, RuntimeAdapter};
 use tiler::runtime::load::{
     ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight,
-    PreparedEntryObservation, RoutedDispatch, RoutedEntry, TargetPropertyRequest,
-    TargetEnvironmentObservation, TargetEnvironmentSupport,
+    PreparedEntryObservation, RoutedDispatch, RoutedEntry, TargetEnvironmentObservation,
+    TargetEnvironmentSupport, TargetPropertyRequest,
 };
 use tiler::value::{
     AdapterCapability, DispatchAdapter, RegionRequest, ResultRequest, StorageScalar, Tensor,
