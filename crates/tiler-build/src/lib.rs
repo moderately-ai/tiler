@@ -70,6 +70,7 @@ mod metal_declaration;
 mod metal_payload;
 mod metal_plan;
 mod metal_profile;
+mod metal_subgroup_declaration;
 mod payload_cache;
 mod plan_artifact;
 pub mod realization;
@@ -89,6 +90,9 @@ pub use metal_plan::{
     AcceptedMetalPlanArtifact, MetalPlanBuildError, accept_or_publish_metal_plan,
 };
 pub use metal_profile::{MetalF32TargetProfileError, declare_metal_f32_subnormal_behaviour};
+pub use metal_subgroup_declaration::{
+    BoundMetalSubgroupDeclaration, BoundMetalSubgroupDeclarationError,
+};
 pub use payload_cache::{
     AcceptedArtifact, CompiledPayloads, DeclaredPayload, DeliveredPayloadCacheError,
     DeliveredPayloadProtocolError, accept_or_publish_delivered_payload_artifact,

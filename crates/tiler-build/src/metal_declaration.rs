@@ -139,26 +139,33 @@ use crate::{MetalF32TargetProfileError, declare_metal_f32_subnormal_behaviour};
 /// moved. The Xcode distribution and the SDK carry producer-defined roles: they
 /// are not compilers, and folding them into the code-generator's version string
 /// would make two different changes look like one.
+///
+/// `pub(crate)` because [`crate::metal_subgroup_declaration`] transcribes the
+/// same four offline components for a measurement whose *execution* host
+/// differs; sharing the row shape keeps "same toolchain, different device" a
+/// statement two records make in one vocabulary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct OfflineToolchainRow {
-    compiler_version: &'static str,
-    compiler_build: &'static str,
-    linker_version: &'static str,
-    linker_build: &'static str,
-    xcode_version: &'static str,
-    xcode_build: &'static str,
-    sdk_version: &'static str,
-    sdk_build: &'static str,
+pub(crate) struct OfflineToolchainRow {
+    pub(crate) compiler_version: &'static str,
+    pub(crate) compiler_build: &'static str,
+    pub(crate) linker_version: &'static str,
+    pub(crate) linker_build: &'static str,
+    pub(crate) xcode_version: &'static str,
+    pub(crate) xcode_build: &'static str,
+    pub(crate) sdk_version: &'static str,
+    pub(crate) sdk_build: &'static str,
 }
 
 /// The ledger's execution environment, the host that ran the measured kernels.
+///
+/// `pub(crate)` for the same reason as [`OfflineToolchainRow`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ExecutionRow {
-    platform: &'static str,
-    platform_version: &'static str,
-    platform_build: &'static str,
-    architecture: &'static str,
-    hardware: &'static str,
+pub(crate) struct ExecutionRow {
+    pub(crate) platform: &'static str,
+    pub(crate) platform_version: &'static str,
+    pub(crate) platform_build: &'static str,
+    pub(crate) architecture: &'static str,
+    pub(crate) hardware: &'static str,
 }
 
 /// Every ledger row this declaration is assembled from, in one place.
@@ -420,9 +427,17 @@ const MSL_ADDRESS_SPACE_REFERENCE: &str = "apple.metal-shading-language.4-0.devi
 /// sharing one reference would leave neither able to say which section moved.
 const MSL_BARRIER_REFERENCE: &str = "apple.metal-shading-language.4-0.threadgroup-barrier";
 /// Provider of the prepared-entry property the workgroup query names.
-const PREPARED_ENTRY_PROVIDER_NAMESPACE: &str = "tiler";
+///
+/// `pub(crate)`: the subgroup-width query in
+/// [`crate::metal_subgroup_declaration`] is answered by the same provider
+/// family, and two spellings of one provider would let them drift apart.
+pub(crate) const PREPARED_ENTRY_PROVIDER_NAMESPACE: &str = "tiler";
 /// Property family the prepared-entry workgroup query is answered from.
-const PREPARED_ENTRY_PROVIDER_NAME: &str = "prepared-entry-properties";
+pub(crate) const PREPARED_ENTRY_PROVIDER_NAME: &str = "prepared-entry-properties";
+/// Producer-defined compiler role naming the Xcode distribution.
+pub(crate) const OFFLINE_DISTRIBUTION_ROLE: &str = "tiler.metal.offline-toolchain-distribution";
+/// Producer-defined compiler role naming the platform SDK.
+pub(crate) const OFFLINE_SDK_ROLE: &str = "tiler.metal.offline-platform-sdk";
 
 /// One checked, versioned macOS Metal compile-time declaration.
 ///
@@ -1030,13 +1045,13 @@ fn measured_source(
             Some(offline.linker_build.to_owned()),
         )?,
         TargetCompilerBuild::new(
-            producer_defined("tiler.metal.offline-toolchain-distribution")?,
+            producer_defined(OFFLINE_DISTRIBUTION_ROLE)?,
             "apple.xcode".to_owned(),
             offline.xcode_version.to_owned(),
             Some(offline.xcode_build.to_owned()),
         )?,
         TargetCompilerBuild::new(
-            producer_defined("tiler.metal.offline-platform-sdk")?,
+            producer_defined(OFFLINE_SDK_ROLE)?,
             "apple.macos-sdk".to_owned(),
             offline.sdk_version.to_owned(),
             Some(offline.sdk_build.to_owned()),

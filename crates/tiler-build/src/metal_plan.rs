@@ -1768,9 +1768,9 @@ mod tests {
     #[test]
     fn the_authority_ledger_mirrors_the_live_standard_metal_pins() {
         const ARTIFACT_IDENTITY: &str =
-            "d8877dd9284de4e6ea58ec97067008311e90f7df714459b3fd4f9fce8b70447d";
+            "7024654cdc51ea3a0f5d8c6c6f24ef603a9faae03fdf081bf497fee025284ac0";
         const CACHE_SUBJECT: &str =
-            "da08d9006f071e38244d0ea765f563dce425cb934057d847a0f03bd88b5aa5b8";
+            "44ce29d76c7b4d9fe188269ae898a3dcd9729db1ae256fab65086896d2e2145f";
         let ledger = include_str!(
             "../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md"
         );
