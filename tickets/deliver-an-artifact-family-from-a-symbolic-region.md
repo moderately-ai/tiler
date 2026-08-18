@@ -3,7 +3,7 @@ id: deliver-an-artifact-family-from-a-symbolic-region
 title: Deliver an artifact family from a region with symbolic extents
 status: todo
 priority: p1
-dependencies: [admit-live-extent-operands-to-payload-indexing, admit-symbolic-extents-through-schedule-formation]
+dependencies: [admit-live-extent-operands-to-payload-indexing, admit-symbolic-extents-through-schedule-formation, package-the-admitted-live-schedule-into-a-symbolic-kernel-program]
 related: [carry-symbolic-extents-into-the-semantic-program, prototype-inline-aot-integration-proof, carry-live-extent-operands-through-the-artifact-envelope, prove-one-live-extent-artifact-payload-and-pipeline-at-two-n, admit-symbolic-extents-through-compiler-region-formation, admit-symbolic-extents-through-schedule-formation]
 scopes: [implementation/frontend, contracts/integrations]
 shared_scopes: [project/tickets]
@@ -83,3 +83,7 @@ Subject, not assertion: restoring `program_interface_is_symbolic` before `compil
 ```
 the diagnostic must name the declined case, not an unrecognized program: this region denotes a whole program the compiler does not recognize
 ```
+
+## Current-base correction — 2026-08-18, on `tkt/admit-symbolic-extents-through-schedule-formation`
+
+The schedule dependency landed and moved this ticket's wall. **False now — `compile()` no longer declines the admitted population at schedule.** The accepted fieldless source-bound live surface (`decide-the-source-bound-live-row-major-access-surface`, accepted 2026-08-18) is implemented: the recognized same-shape rank-one symbolic elementwise program forms, verifies, binds, and selects its live plan, and `deliver macos;` now sees `CompileFailureClass::UnsupportedCapability { rule: "named-output-symbolic" }` — the program-assembly packaging wall — rendered as "the compiler formed and verified a live schedule over this region's symbolic extent and cannot yet package it". The trybuild golden `deliver_selects_an_artifact_family.stderr` and `a_symbolic_region_reaches_the_compilers_typed_decline` carry the new text. The durable anchors `A sourced broadcast must reach physical selection` and the retired `IndexRegion requires a fixed geometry` sentence describe the pre-landing state only. Packaging is the added dependency [`package-the-admitted-live-schedule-into-a-symbolic-kernel-program`](package-the-admitted-live-schedule-into-a-symbolic-kernel-program.md); populations outside the admitted slice still decline at schedule under `symbolic-extent`.

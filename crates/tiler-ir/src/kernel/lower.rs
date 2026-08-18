@@ -21,7 +21,7 @@ use crate::schedule::{
     PointwiseBf16Expression, PointwiseBf16Node, PointwiseF32Expression, PointwiseF32Node,
     ReductionPass, ReductionTopology, RegionProgram, ResourceRequirements, ScalarProgram,
     ScheduledRegion, TailPolicy, TensorRole, VerifiedScheduledRegion, contributor_count,
-    element_count, live_input_extents,
+    element_count, live_input_extents, live_source_axis,
 };
 use crate::shape::Shape;
 
@@ -308,12 +308,19 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
     };
     // The strict-affine decode addresses its three role-scoped components by the
     // invocation index directly, so it consults no coordinate map.
+    //
+    // The live axis is resolved once from the region's unique source marker and
+    // threaded into every read's addressing, because the fieldless consumer
+    // carries no axis of its own: its stride and loop bound are the checked
+    // containing region's, exactly the contextual interpretation the accepted
+    // fieldless-marker surface states.
+    let live = live_source_axis(schedule);
     let addressing = if matches!(scalar, ScalarProgram::StrictAffineU4Dequantize { .. }) {
         vec![ReadAddressing::Identity; reads.len()]
     } else {
         reads
             .iter()
-            .map(|read| addressing(read, &schedule.schedule.reduction))
+            .map(|read| addressing(read, &schedule.schedule.reduction, live))
             .collect::<Result<Vec<_>, _>>()?
     };
     Ok(CanonicalPlan {
@@ -639,15 +646,26 @@ fn barrier_spelling(point: &crate::schedule::SynchronizationPoint) -> Option<Bar
 }
 
 /// Resolves how the read access computes its element offset.
+///
+/// `live` is the containing region's unique source-marker axis, resolved once
+/// by the caller. The fieldless consumer is interpreted through it and never
+/// through a default: a consumer with no marker to consume is a region the
+/// intrinsic verifier refuses, so the refusal here is the fail-closed backstop
+/// for a body derived outside that gate rather than a reachable lowering.
 fn addressing(
     read: &Access,
     reduction: &ReductionTopology,
+    live: Option<crate::shape::Axis>,
 ) -> Result<ReadAddressing, KernelDiagnostic> {
     match &read.map {
         LogicalAccess::LinearIdentity => Ok(ReadAddressing::Identity),
-        LogicalAccess::LiveRowMajor { inner_axis } => Ok(ReadAddressing::LiveRowMajor {
+        LogicalAccess::LiveRowMajorSource { inner_axis } => Ok(ReadAddressing::LiveRowMajor {
             inner_axis: *inner_axis,
         }),
+        LogicalAccess::LiveRowMajor => match live {
+            Some(inner_axis) => Ok(ReadAddressing::LiveRowMajor { inner_axis }),
+            None => Err(KernelDiagnostic::BodyRefinement),
+        },
         LogicalAccess::ScalarBroadcast | LogicalAccess::PackedU4LsbZeroTail { .. } => {
             Err(KernelDiagnostic::BodyRefinement)
         }

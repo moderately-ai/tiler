@@ -610,24 +610,38 @@ impl IndexAccessLoweringProvider for GovernedPointwise {
         if occurrence.operands().len() != 2 {
             return Err(occurrence_error("pointwise-operand-arity"));
         }
-        let shape = result.shape().clone();
+        // The authored sourced boundary throughout, compared exactly: a
+        // same-shape symbolic occurrence keeps its symbols as written, and the
+        // per-axis comparison below never consults an environment — two
+        // differently spelled proved-equal symbols are two different
+        // boundaries, exactly as the recognizer's own exact-shape rule states.
+        let shape = result.sourced_shape().clone();
         let result_type = result.value_type().clone();
         let inputs: Vec<_> = occurrence.inputs().to_vec();
         let operands = occurrence.operands().to_vec();
 
-        let dimensions = declare_parallel_domain(context, &shape)?;
+        // Sourced dimensions, so a symbolic axis stays the declared symbol the
+        // index layer already admits (the same crate-internal path the sourced
+        // slice and parametric broadcast lowerings use) and a literal axis
+        // stays a literal.
+        let mut dimensions = Vec::with_capacity(shape.rank());
+        for extent in shape.extents() {
+            dimensions.push(context.sourced_dimension(DomainRole::Parallel, extent)?);
+        }
         let coordinates = dimension_expressions(context, &dimensions)?;
         let mut tensors = Vec::with_capacity(inputs.len());
         for input in &inputs {
-            tensors.push(context.input_tensor(input.value_type().clone(), input.shape().clone())?);
+            tensors.push(
+                context.sourced_input_tensor(input.value_type().clone(), input.sourced_shape())?,
+            );
         }
         let mut values = Vec::with_capacity(operands.len());
         for position in &operands {
             let boundary = &inputs[*position];
             let tensor = tensors[*position];
-            let value = if boundary.shape() == &shape {
+            let value = if boundary.sourced_shape() == &shape {
                 context.read(tensor, &dimensions, &coordinates)?
-            } else if boundary.shape().rank() == 0 {
+            } else if boundary.sourced_shape().rank() == 0 {
                 context.read(tensor, &[], &[])?
             } else {
                 return Err(occurrence_error("pointwise-broadcast"));
@@ -640,7 +654,7 @@ impl IndexAccessLoweringProvider for GovernedPointwise {
             &values,
         )?;
         let value = single_result(&applied, self.scalar.rule())?;
-        let output = context.output_tensor(result_type, shape)?;
+        let output = context.sourced_output_tensor(result_type, &shape)?;
         let write = context.write(output, &dimensions, &coordinates)?;
         context.output(write, value)
     }

@@ -358,25 +358,63 @@ pub enum LogicalAccess {
         /// Exact identity of the environment that interprets the mapping.
         environment: crate::shape::ShapeEnvIdentity,
     },
-    /// One invocation owns a static outer coordinate and loops the live inner
-    /// extent of this tensor.
+    /// The one live-inner-loop **source**: this input read addresses its tensor
+    /// by the live row-major relation and marks its `inner_axis` as the
+    /// region's single runtime extent operand. One invocation owns a static
+    /// outer coordinate and loops the live inner extent.
     ///
-    /// **Accepted public surface.** Tom accepted this exact spelling on
-    /// 2026-08-13 under [`accept-the-live-extent-operand-public-surface`].
-    /// Dependents may treat this variant as accepted vocabulary.
+    /// **Accepted public surface.** Tom accepted this exact fieldless-marker
+    /// spelling on 2026-08-18 under
+    /// [`decide-the-source-bound-live-row-major-access-surface`], replacing the
+    /// 2026-08-13 contextual `LiveRowMajor { inner_axis }` relation whole: the
+    /// source and every consumer are disjoint explicit variants, and the
+    /// retired relation's tag `0x09` is never reinterpreted.
     ///
-    /// [`accept-the-live-extent-operand-public-surface`]: ../../../../../tickets/accept-the-live-extent-operand-public-surface.md
+    /// [`decide-the-source-bound-live-row-major-access-surface`]: ../../../../../tickets/decide-the-source-bound-live-row-major-access-surface.md
     ///
     /// The inner axis is an
     /// [`crate::program::abi::AbiRoot::InputExtent`] consumed in the payload
     /// rather than specialized into the schedule. The iteration domain is the
     /// static outer product; the live inner extent is not a schedule identity
-    /// value.
-    LiveRowMajor {
+    /// value. Intrinsic verification requires exactly one source per live
+    /// pointwise region, on a [`TensorRole::Input`] read, and requires every
+    /// other pointwise read and the final write to carry the fieldless
+    /// [`Self::LiveRowMajor`] consumer marker — the four
+    /// [`super::LiveRowMajorSourceRule`]s are that relation's own diagnostics.
+    LiveRowMajorSource {
         /// Axis of this tensor whose live extent is the inner stride and loop
         /// bound.
         inner_axis: Axis,
     },
+    /// One live-inner-loop **consumer**: this access is driven by the loop the
+    /// region's unique [`Self::LiveRowMajorSource`] marker declares.
+    ///
+    /// **Accepted public surface** (2026-08-18, the same record as
+    /// [`Self::LiveRowMajorSource`]). Fieldless deliberately: in the admitted
+    /// exact same-shape rank-one population the unique verified marker's axis
+    /// is the only axis a consumer could name, so a repeated `inner_axis` or a
+    /// `source_access` handle here would be a second authority that can
+    /// disagree — the axis-mismatch and dangling-reference failure states are
+    /// unrepresentable rather than representable-and-refused. Interpreting a
+    /// consumer therefore requires the containing verified region's unique
+    /// marker; a constructed region carrying consumers and no marker reports
+    /// [`super::LiveRowMajorSourceRule::Missing`].
+    ///
+    /// A unit variant cannot acquire an `inner_axis` or `source_access` field
+    /// without a reviewed public decision, and each spelling below must stay a
+    /// build error (`E0559`: the variant has no such field):
+    ///
+    /// ```compile_fail,E0559
+    /// use tiler_ir::schedule::LogicalAccess;
+    /// use tiler_ir::shape::Axis;
+    /// let _ = LogicalAccess::LiveRowMajor { inner_axis: Axis::new(0) };
+    /// ```
+    ///
+    /// ```compile_fail,E0559
+    /// use tiler_ir::schedule::{AccessOrdinal, LogicalAccess};
+    /// let _ = LogicalAccess::LiveRowMajor { source_access: AccessOrdinal::FIRST };
+    /// ```
+    LiveRowMajor,
     /// One partitioned-copy read: the whole source, addressed by the copy's
     /// derived member rectangle.
     ///
@@ -1670,6 +1708,13 @@ pub struct ScheduledRegion {
 /// than stored beside them, so a region that names no live extent stays the
 /// same subject it was. Canonical order is `(access ordinal, axis)`.
 ///
+/// A live pointwise region contributes exactly its unique
+/// [`LogicalAccess::LiveRowMajorSource`] marker's coordinate; the fieldless
+/// [`LogicalAccess::LiveRowMajor`] consumers deliberately contribute nothing,
+/// because the marker is the region's one runtime extent authority and a
+/// per-consumer operand would re-derive three operands for one runtime fact —
+/// the `UnusedInputExtent` state the accepted source surface exists to remove.
+///
 /// # Panics
 ///
 /// Panics only if a directly constructed, unverified region contains more than
@@ -1678,7 +1723,7 @@ pub struct ScheduledRegion {
 pub fn live_input_extents(schedule: &ScheduledRegion) -> Vec<(AccessOrdinal, Axis)> {
     let mut extents = Vec::new();
     for (position, access) in schedule.index.accesses.iter().enumerate() {
-        if let LogicalAccess::LiveRowMajor { inner_axis } = &access.map
+        if let LogicalAccess::LiveRowMajorSource { inner_axis } = &access.map
             && matches!(access.tensor, TensorRole::Input)
         {
             let position = u32::try_from(position).expect("verified access count is bounded");
@@ -1696,6 +1741,34 @@ pub fn live_input_extents(schedule: &ScheduledRegion) -> Vec<(AccessOrdinal, Axi
     extents.sort_by_key(|(access, axis)| (access.get(), axis.get()));
     extents.dedup();
     extents
+}
+
+/// The unique live-row-major source marker's inner axis, when the region
+/// carries one on an input read.
+///
+/// The one derivation the fieldless [`LogicalAccess::LiveRowMajor`] consumer is
+/// interpreted through: a consumer's stride, loop bound, and element offset are
+/// the marker's, so every reader takes the checked containing region rather
+/// than a detached map. `None` is a region with no admissible marker — the
+/// intrinsic verifier refuses a live pointwise region in that state, so a
+/// `None` beside a consumer never reaches a verified product, and consumers of
+/// this helper fail closed on it rather than defaulting an axis.
+///
+/// Deliberately first-match over input reads: intrinsic verification proves at
+/// most one marker exists, and an unverified region carrying two is refused
+/// under `live-row-major-source-multiple` before any identity or lowering
+/// exists for this derivation to mislead.
+pub(crate) fn live_source_axis(schedule: &ScheduledRegion) -> Option<Axis> {
+    schedule.index.accesses.iter().find_map(|access| {
+        if let LogicalAccess::LiveRowMajorSource { inner_axis } = &access.map
+            && matches!(access.tensor, TensorRole::Input)
+            && matches!(access.mode, AccessMode::Read)
+        {
+            Some(*inner_axis)
+        } else {
+            None
+        }
+    })
 }
 
 /// The index arithmetic one region's coordinate computation requires of a target.
@@ -2445,33 +2518,57 @@ const TAG_BROADCAST_REPLICATION: u8 = 0x07;
 /// region's bytes move and the schedule identity domain deliberately does not
 /// step.
 const TAG_PARAMETRIC_BROADCAST: u8 = 0x08;
-/// Logical-access tag of a live-inner-extent row-major map.
+/// Logical-access tag of the live-inner-extent row-major **source** marker.
 ///
-/// Appended exactly as `0x08` was. `0x01` through `0x08` keep their tags and
-/// their field layouts, so no previously encodable region's bytes move and the
-/// schedule identity domain deliberately does not step. A reader that reaches
-/// `0x09` is reading an access the earlier vocabulary could not express.
-const TAG_LIVE_ROW_MAJOR: u8 = 0x09;
+/// `0x09` was the retired contextual `LiveRowMajor { inner_axis }` relation the
+/// accepted 2026-08-18 source-bound surface
+/// (`decide-the-source-bound-live-row-major-access-surface`) replaced whole,
+/// and it stays permanently unassigned: reusing it — for this marker, for the
+/// consumer, or for any later map — would reinterpret every retained all-live
+/// identity value under a changed payload. The source takes the fresh `0x0A`
+/// that decision reserved for it, so a reader that reaches `0x0A` is reading
+/// an access the earlier vocabulary could not express, never a retired access
+/// under a new interpretation. Every live schedule identity value moves with
+/// this replacement — the old five-byte `0x09` run becomes `0x0A` plus the
+/// axis on the source and the bare `0x0B` on each consumer — while every
+/// static region keeps its exact bytes, so the schedule identity domain
+/// deliberately does not step.
+const TAG_LIVE_ROW_MAJOR_SOURCE: u8 = 0x0A;
+/// Logical-access tag of the fieldless live-inner-loop **consumer** marker.
+///
+/// The second fresh value the accepted 2026-08-18 source-bound surface
+/// reserved. A tag of its own rather than a payload flag on `0x0A`, because
+/// the source and a consumer are different relations — one declares the
+/// region's runtime extent operand and the other consumes it — and one tag
+/// would make that distinction a payload interpretation. The tag alone is the
+/// whole encoding: the consumer is deliberately fieldless, so everything a
+/// reader could ask of it is a derivation from the containing region's unique
+/// `0x0A` marker. Sharing `0x0A` here instead would make a source and a
+/// consumer indistinguishable at the byte level and is exactly the collision
+/// the whole-vocabulary injectivity test refuses.
+const TAG_LIVE_ROW_MAJOR_CONSUMER: u8 = 0x0B;
 /// Logical-access tag of a partitioned copy's fieldless source map.
 ///
 /// Appended at the next **free** value rather than at `0x0A`, and the gap is a
 /// reconciliation across three same-day accepted decisions, not an oversight.
 /// The accepted source-bound live-row-major surface
 /// (`decide-the-source-bound-live-row-major-access-surface`, 2026-08-18)
-/// reserves `0x0A` for `LiveRowMajorSource` and `0x0B` for its fieldless
-/// consumer marker while retiring `0x09`; the accepted data-dependent-index
-/// surface (`decide-the-data-dependent-index-representation-public-surface`,
+/// assigned `0x0A` to `LiveRowMajorSource` and `0x0B` to its fieldless
+/// consumer marker — both now written above — while retiring `0x09`; the
+/// accepted data-dependent-index surface
+/// (`decide-the-data-dependent-index-representation-public-surface`,
 /// 2026-08-18) reserves `0x0C` for `GatherSource` and itself records that
 /// "`0x0A` and `0x0B` remain reserved by the earlier live-row-major decision
 /// packet … a gap is preferable to colliding reviewed identities". The
 /// partitioned-copy packet, drafted before those reservations were visible to
 /// it, named `0x0A`; taking it would collide two reviewed identity
 /// assignments, so this tag takes `0x0D`, the next value no accepted record
-/// claims. The injectivity argument is unchanged: `0x01`–`0x09` are the only
-/// bytes any `tiler.schedule.v7` region ever writes at the access-map
-/// position, `0x0A`–`0x0C` are reserved-and-unwritten at this base, so a
-/// reader that reaches `0x0D` is reading an access the earlier vocabulary
-/// could not express and no previously encodable region's bytes move.
+/// claims. The injectivity argument is unchanged: `0x01`–`0x08`, `0x0A`, and
+/// `0x0B` are the only bytes a `tiler.schedule.v7` region now writes at the
+/// access-map position, `0x09` is retired-and-never-reused, `0x0C` is
+/// reserved-and-unwritten at this base, so a reader that reaches `0x0D` is
+/// reading an access the earlier vocabulary could not express and no
+/// previously encodable region's bytes move.
 const TAG_PARTITIONED_COPY_SOURCE: u8 = 0x0D;
 const TAG_LINEAR_RANGE: u8 = 0x11;
 const TAG_REDUCTION_DOMAIN: u8 = 0x12;
@@ -2724,10 +2821,14 @@ fn push_logical_access(bytes: &mut Vec<u8>, access: &LogicalAccess) {
             push_slice(bytes, mapping.canonical_encoding().as_bytes());
             push_slice(bytes, environment.as_bytes());
         }
-        LogicalAccess::LiveRowMajor { inner_axis } => {
-            bytes.push(TAG_LIVE_ROW_MAJOR);
+        LogicalAccess::LiveRowMajorSource { inner_axis } => {
+            bytes.push(TAG_LIVE_ROW_MAJOR_SOURCE);
             bytes.extend_from_slice(&inner_axis.get().to_be_bytes());
         }
+        // Fieldless: the tag alone, because everything a reader could ask of a
+        // consumer is a derivation from the region's unique `0x0A` marker. See
+        // `TAG_LIVE_ROW_MAJOR_CONSUMER` for why it is not a payload of `0x0A`.
+        LogicalAccess::LiveRowMajor => bytes.push(TAG_LIVE_ROW_MAJOR_CONSUMER),
         // Fieldless: the tag alone, because everything a reader could ask of
         // this map is a derivation from the region's copy program. See
         // `TAG_PARTITIONED_COPY_SOURCE` for the tag-value reconciliation.

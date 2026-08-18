@@ -66,6 +66,25 @@ use tiler_ir::shape::{Extent, Shape, SourcedExtent};
 /// must keep the environment-free builder, or its identity would disagree with
 /// the law.
 fn occurrence_needs_shape_environment(subject: &IndexRefinementSubject) -> bool {
+    // The compiler-side mirror of the law registry's own third condition
+    // (`subject_boundaries_name_a_symbol` beside the parametric-broadcast and
+    // source-bearing-slice arms in `tiler_ir::index`): an occurrence whose own
+    // boundaries name a declared symbol — the admitted same-shape symbolic
+    // pointwise population — builds symbolic dimensions, which the canonical
+    // builder admits only against the program's environment. A static
+    // neighbour in an environment-carrying program names no symbol on its own
+    // boundaries and keeps the environment-free builder.
+    if subject
+        .inputs()
+        .iter()
+        .any(|boundary| boundary.sourced_shape().as_static().is_none())
+        || subject
+            .results()
+            .iter()
+            .any(|boundary| boundary.sourced_shape().as_static().is_none())
+    {
+        return true;
+    }
     if subject.operation() == &broadcast_f32_op() {
         let Some(value) = subject.attributes().get(BROADCAST_AXIS_MAPPING_ATTRIBUTE) else {
             return false;

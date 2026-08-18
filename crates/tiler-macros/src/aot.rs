@@ -499,11 +499,13 @@ impl fmt::Display for AotRefusal {
 /// think a different target would help.
 fn rendered_refusal(class: CompileFailureClass, scope: &str) -> String {
     match class {
-        // Same-shape symbolic elementwise is recognized and formed; `compile()`
-        // then declines at schedule because `IndexRegion` still requires a
-        // fixed launch geometry. That is not an unrecognized program shape, and
-        // naming the general recognizer here would send a consumer to rewrite a
-        // region the compiler already accepted.
+        // A symbolic population outside the admitted source-bound live slice —
+        // a higher rank, a non-input-rooted symbol, an unread root input —
+        // is recognized and formed; `compile()` then declines at schedule
+        // because no accepted live relation expresses it. That is not an
+        // unrecognized program shape, and naming the general recognizer here
+        // would send a consumer to rewrite a region the compiler already
+        // accepted.
         CompileFailureClass::UnsupportedCapability {
             rule: "symbolic-extent",
         } => format!(
@@ -512,6 +514,24 @@ fn rendered_refusal(class: CompileFailureClass, scope: &str) -> String {
              `deliver` statement compiles the region during this expansion, and the compiler can \
              launch only when every iteration extent is a literal. Declare literal extents, or \
              state `fallback-only` to expand with the semantic fallback on every target"
+        ),
+        // The admitted same-shape rank-one symbolic elementwise population now
+        // passes real schedule formation — its verified source-bound live plan
+        // is formed, bound, and selected — and declines at program packaging:
+        // the kernel program and artifact envelope cannot yet carry a
+        // live-extent output, which is
+        // `carry-live-extent-operands-through-the-artifact-envelope`'s work.
+        // Naming the schedule here would send a consumer to shrink a plan the
+        // compiler already scheduled.
+        CompileFailureClass::UnsupportedCapability {
+            rule: "named-output-symbolic",
+        } => format!(
+            "the compiler formed and verified a live schedule over this region's symbolic \
+             extent and cannot yet package it, so it has no plan {scope} (the check that \
+             refused is `named-output-symbolic`). A `deliver` statement packages the compiled \
+             plan into an artifact during this expansion, and the artifact envelope cannot yet \
+             carry a live-extent output. Declare literal extents, or state `fallback-only` to \
+             expand with the semantic fallback on every target"
         ),
         CompileFailureClass::UnsupportedCapability { rule } => format!(
             "this region denotes a whole program the compiler does not recognize, so it has no \

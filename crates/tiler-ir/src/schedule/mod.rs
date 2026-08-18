@@ -165,8 +165,9 @@ pub use cooperative::{
 pub use error::{
     BlockedWorkgroupRule, ContributorCoverageRule, ContributorError,
     CooperativeContractionAdmission, CooperativeTileRule, ElementCountOverflow,
-    PartitionedCopyRule, ScheduleBuildError, ScheduleComponent, ScheduleLimitKind,
-    ScheduledRegionBuildError, ScheduledRegionDiagnostic, VectorLaneCountError, VectorLaneRule,
+    LiveRowMajorSourceRule, PartitionedCopyRule, ScheduleBuildError, ScheduleComponent,
+    ScheduleLimitKind, ScheduledRegionBuildError, ScheduledRegionDiagnostic, VectorLaneCountError,
+    VectorLaneRule,
 };
 pub use handles::{
     AccessOrdinal, BoundsWitnessId, OwnershipWitnessId, PhaseId, RegionId, StagingId, SyncPointId,
@@ -183,7 +184,7 @@ pub use model::{
     cooperative_tile, element_count, live_input_extents, partial_reduction_axis,
     partial_reduction_shape, reindex_decodes_are_bijective,
 };
-pub(crate) use model::{REGION_INDEX_ARITHMETIC, subnormal_freedom_of};
+pub(crate) use model::{REGION_INDEX_ARITHMETIC, live_source_axis, subnormal_freedom_of};
 pub use numerics::{
     ApproximationEnvelope, ArithmeticType, BF16_NUMERICAL_CONTRACT_KEY_DOMAIN,
     Bf16NumericalContractKey, ExceptionalValueAssumption, F32_NUMERICAL_CONTRACT_KEY_DOMAIN,

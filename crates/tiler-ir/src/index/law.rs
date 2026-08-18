@@ -633,7 +633,8 @@ impl IndexRealizationLaw {
         let mut builder = match subject.shape_environment() {
             Some(environment)
                 if broadcast_subject_is_parametric(self, subject)
-                    || slice_subject_is_source_bearing(self, subject) =>
+                    || slice_subject_is_source_bearing(self, subject)
+                    || subject_boundaries_name_a_symbol(subject) =>
             {
                 IndexRegionBuilder::new_with_shape_environment(
                     scalars.clone(),
@@ -1117,12 +1118,15 @@ fn realize_pointwise(
     let [result] = context.subject.results() else {
         return Err(unsupported("pointwise-result-arity"));
     };
-    let result = ((*result).value_type().clone(), (*result).shape().clone());
+    let result = (
+        (*result).value_type().clone(),
+        (*result).sourced_shape().clone(),
+    );
     let inputs = context
         .subject
         .inputs()
         .iter()
-        .map(|input| (input.value_type().clone(), input.shape().clone()))
+        .map(|input| (input.value_type().clone(), input.sourced_shape().clone()))
         .collect::<Vec<_>>();
     let operands = context.subject.operands().to_vec();
     emit_pointwise(context, scalar, &inputs, &operands, &result)
@@ -1138,19 +1142,27 @@ fn realize_pointwise(
 fn emit_pointwise(
     context: &mut LawContext<'_>,
     scalar: ScalarOpKey,
-    inputs: &[(ResolvedValueType, Shape)],
+    inputs: &[(ResolvedValueType, crate::shape::SourcedShape)],
     operands: &[usize],
-    result: &(ResolvedValueType, Shape),
+    result: &(ResolvedValueType, crate::shape::SourcedShape),
 ) -> Result<(), IndexRealizationLawError> {
     if operands.len() != 2 {
         return Err(unsupported("pointwise-operand-arity"));
     }
+    // The authored sourced boundary throughout: a same-shape symbolic domain
+    // keeps its symbols as written — the sourced dimension below is the
+    // declared symbol, never a bound value — and the exact per-boundary
+    // comparison consults no environment, so two differently spelled
+    // proved-equal symbols stay two different boundaries.
     let shape = result.1.clone();
-    let dimensions = declare_parallel_domain(context, &shape)?;
+    let mut dimensions = Vec::with_capacity(shape.rank());
+    for extent in shape.extents() {
+        dimensions.push(context.sourced_dimension(DomainRole::Parallel, extent)?);
+    }
     let coordinates = dimension_expressions(context, &dimensions)?;
     let mut tensors = Vec::with_capacity(inputs.len());
     for (value_type, input_shape) in inputs {
-        tensors.push(context.tensor(TensorRole::Input, value_type.clone(), input_shape.clone())?);
+        tensors.push(context.sourced_tensor(TensorRole::Input, value_type.clone(), input_shape)?);
     }
     let mut values = Vec::with_capacity(2);
     for position in operands.iter().copied() {
@@ -1171,7 +1183,7 @@ fn emit_pointwise(
         &context.apply(scalar, ScalarAttributes::empty(), &values)?,
         "pointwise",
     )?;
-    let output = context.tensor(TensorRole::Output, result.0.clone(), shape)?;
+    let output = context.sourced_tensor(TensorRole::Output, result.0.clone(), &shape)?;
     let write = context.write(output, &dimensions, &coordinates)?;
     context.output(write, value)
 }
@@ -1543,12 +1555,12 @@ fn realize_staged_sum_then_pointwise(
             &[
                 (
                     elementwise.value_type().clone(),
-                    elementwise.shape().clone(),
+                    elementwise.shape().clone().into(),
                 ),
-                (folded.value_type().clone(), intermediate_shape),
+                (folded.value_type().clone(), intermediate_shape.into()),
             ],
             &[0, 1],
-            &(result.value_type().clone(), result.shape().clone()),
+            &(result.value_type().clone(), result.shape().clone().into()),
         )?;
     }
     let apply = apply.build().map_err(IndexRealizationLawError::Build)?;
@@ -1990,6 +2002,27 @@ fn realize_reindex(
     let write = context.write(output, &dimensions, &coordinates)?;
     context.output(write, value)
 }
+/// Returns whether one occurrence's own boundaries name a declared symbol.
+///
+/// The third condition that opens the environment-carrying builder, beside the
+/// parametric broadcast and the source-bearing slice: a same-shape symbolic
+/// pointwise occurrence declares its domain through symbolic dimensions, which
+/// the builder admits only against the program's own environment. A neighbour
+/// occurrence that merely lives in a program *with* an environment names no
+/// symbol on its own boundaries and keeps the environment-free builder, so its
+/// identity does not move — the caveat the earlier two conditions already
+/// state.
+pub(crate) fn subject_boundaries_name_a_symbol(subject: &IndexRefinementSubject) -> bool {
+    subject
+        .inputs()
+        .iter()
+        .any(|boundary| boundary.sourced_shape().as_static().is_none())
+        || subject
+            .results()
+            .iter()
+            .any(|boundary| boundary.sourced_shape().as_static().is_none())
+}
+
 fn slice_subject_is_source_bearing(
     law: &IndexRealizationLaw,
     subject: &IndexRefinementSubject,

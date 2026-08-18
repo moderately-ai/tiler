@@ -10,6 +10,7 @@ use std::error::Error;
 use std::fmt;
 
 use super::ScheduledRegionBuilder;
+use super::handles::AccessOrdinal;
 use super::numerics::ArithmeticType;
 
 /// A governed structural resource in the scheduled-region profile.
@@ -210,6 +211,25 @@ pub enum ScheduledRegionDiagnostic {
     PartitionedCopy {
         /// The violated partitioned-copy rule.
         rule: PartitionedCopyRule,
+    },
+    /// A live pointwise region violated the source-bound live-row-major
+    /// relation.
+    ///
+    /// **Accepted public surface** (2026-08-18, under
+    /// `decide-the-source-bound-live-row-major-access-surface`): exactly the
+    /// four [`LiveRowMajorSourceRule`]s at the accepted precedence — marker
+    /// count, marker role/mode, then complete live-relation coverage.
+    ///
+    /// A dedicated arm rather than [`Self::AccessContract`] or
+    /// [`Self::NumericalOrAccessRefinement`], because missing, multiple, and
+    /// misplaced sources are cross-access referential-integrity failures even
+    /// when each access is locally well formed: a `LinearIdentity` consumer is
+    /// fine on its own terms, and its defect is that the containing region
+    /// executes it inside a selected live loop. Each rule has a different
+    /// producer repair and carries the coordinates needed to make it.
+    LiveRowMajorSource {
+        /// The violated source-relation rule.
+        rule: LiveRowMajorSourceRule,
     },
 }
 
@@ -600,6 +620,79 @@ impl fmt::Display for PartitionedCopyRule {
 }
 impl Error for PartitionedCopyRule {}
 
+/// One violated rule of the source-bound live-row-major relation.
+///
+/// **Accepted public surface** (2026-08-18, under
+/// `decide-the-source-bound-live-row-major-access-surface`): exactly these four
+/// rules for the fieldless contextual marker. The precedence is marker count
+/// ([`Self::Missing`] / [`Self::Multiple`]), then the unique marker's role and
+/// mode ([`Self::SourceNotInputRead`]), then complete live-relation coverage
+/// ([`Self::ConsumerMissingRelation`]); an all-static region has no source
+/// obligation. There is deliberately no `AxisMismatch` and no reference rule:
+/// the fieldless consumer stores no axis and no handle, so neither failure
+/// state is representable on this surface — total-local and referenced
+/// consumers were the eliminated candidates that could express them.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum LiveRowMajorSourceRule {
+    /// A live relation is present and no access carries the source marker.
+    ///
+    /// What is absent is the region's one runtime extent authority: fieldless
+    /// consumers alone name no axis to loop over.
+    Missing,
+    /// Two accesses carry the source marker; the region would have two runtime
+    /// extent authorities.
+    Multiple {
+        /// The first marker, in access order.
+        first: AccessOrdinal,
+        /// The second marker, in access order.
+        second: AccessOrdinal,
+    },
+    /// The unique source marker is not a [`super::TensorRole::Input`] read.
+    ///
+    /// A marker on the owning write, an intermediate, or an output declares a
+    /// runtime input-axis operand no program input backs.
+    SourceNotInputRead {
+        /// The marker's position in the region's complete access list.
+        source: AccessOrdinal,
+    },
+    /// A pointwise access inside the selected live loop does not carry the
+    /// selected live relation.
+    ///
+    /// The first read or final write, in access order, whose map is neither the
+    /// unique source marker nor the fieldless consumer. Lowering has one
+    /// body-wide live loop and one offset per boundary effect, so an access
+    /// that did not state the relation would be executed against an access
+    /// relation the region never proved.
+    ConsumerMissingRelation {
+        /// The offending access's position in the region's complete access
+        /// list, the final write included.
+        access: AccessOrdinal,
+    },
+}
+
+impl LiveRowMajorSourceRule {
+    /// Returns the stable rule identifier for this source-relation failure.
+    #[must_use]
+    pub const fn rule(self) -> &'static str {
+        match self {
+            Self::Missing => "live-row-major-source-missing",
+            Self::Multiple { .. } => "live-row-major-source-multiple",
+            Self::SourceNotInputRead { .. } => "live-row-major-source-not-input-read",
+            Self::ConsumerMissingRelation { .. } => {
+                "live-row-major-source-consumer-missing-relation"
+            }
+        }
+    }
+}
+
+impl fmt::Display for LiveRowMajorSourceRule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.rule())
+    }
+}
+impl Error for LiveRowMajorSourceRule {}
+
 /// One violated rule of a reduction topology's contributor coverage.
 ///
 /// Exact-coverage and padded-coverage failures are named separately so a
@@ -762,6 +855,7 @@ impl ScheduledRegionDiagnostic {
             Self::BlockedWorkgroup { rule } => rule.rule(),
             Self::VectorLaneBinding { rule } => rule.rule(),
             Self::PartitionedCopy { rule } => rule.rule(),
+            Self::LiveRowMajorSource { rule } => rule.rule(),
         }
     }
 }
