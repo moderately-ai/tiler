@@ -77,7 +77,7 @@ The six exact numeric values are a separate evidence gap, not a hidden third dec
 
 ## Delivery record — 2026-08-18, from base `c82888d5698af0fad46004f4753969621d108929`
 
-The work landed on `tkt/state-the-rule-that-a-deterministic-budget-is-a-derivation` as `d395f0e9b4243b539a7f564d66e9adf57c2bfca9`, whose five changed files are `crates/tiler-compiler/src/request.rs`, `crates/tiler-compiler/src/selection.rs`, `docs/compiler/optimizer.md`, `docs/research/region-search/rewrite-search-formalism.md`, and this ticket. `tkt guard` against that commit reports `under_declared: []` and `conflict: false` over the four declared scopes.
+The work landed on `tkt/state-the-rule-that-a-deterministic-budget-is-a-derivation` starting at `d395f0e9b4243b539a7f564d66e9adf57c2bfca9`, which carries the whole source and document change; the commits after it on this branch are this record and one cross-reference repair in the optimizer document. Read the branch tip, and integrate the hash the worker reports rather than a hash quoted here, since this file is itself part of what each commit changes. Across the branch exactly five files move: `crates/tiler-compiler/src/request.rs`, `crates/tiler-compiler/src/selection.rs`, `docs/compiler/optimizer.md`, `docs/research/region-search/rewrite-search-formalism.md`, and this ticket. `tkt guard` reports `under_declared: []` and `conflict: false` over the four declared scopes; its `severity: warn` is the 125 declared-area overlaps with open siblings, which `ticketsplease.toml` leaves non-gating.
 
 Each required-work bullet, with where it landed and the evidence.
 
