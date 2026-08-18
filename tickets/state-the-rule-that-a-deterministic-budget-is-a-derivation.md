@@ -77,6 +77,8 @@ The six exact numeric values are a separate evidence gap, not a hidden third dec
 
 ## Delivery record — 2026-08-18, from base `c82888d5698af0fad46004f4753969621d108929`
 
+The work landed on `tkt/state-the-rule-that-a-deterministic-budget-is-a-derivation` as `d395f0e9b4243b539a7f564d66e9adf57c2bfca9`, whose five changed files are `crates/tiler-compiler/src/request.rs`, `crates/tiler-compiler/src/selection.rs`, `docs/compiler/optimizer.md`, `docs/research/region-search/rewrite-search-formalism.md`, and this ticket. `tkt guard` against that commit reports `under_declared: []` and `conflict: false` over the four declared scopes.
+
 Each required-work bullet, with where it landed and the evidence.
 
 1. **General rule stated at `DeterministicBudgets`.** A new struct-level doc in `crates/tiler-compiler/src/request.rs` opens `The rule: a budget is one of exactly two things, and it must say which`. An authoring-side derivation names its formula and the declaration it is over, and the doc says explicitly that `governed` is a nullary `const fn` returning integer literals and that no field is tracked or recomputed while a request compiles, so nothing implies runtime tracking. A literal policy cap names its work unit, its stop effect, and its evidence status, and the doc states that a literal `must never be relabelled as derived or as measured`.
