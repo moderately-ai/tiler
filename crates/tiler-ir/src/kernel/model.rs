@@ -15,10 +15,10 @@
 use crate::identity::{push_len, push_slice};
 use crate::schedule::{AccessOrdinal, BoundsWitnessId, OwnershipWitnessId};
 use crate::schedule::{
-    CanonicalScheduledRegionIdentity, ExceptionalValueAssumption, FlushedZeroSign, IndexArithmetic,
-    NumericalPermission, NumericalRealization, REGION_INDEX_ARITHMETIC, RegionId,
-    ResourceRequirements, SubgroupRealizationSubject, SubnormalFreedom, SubnormalMode,
-    SynchronizationSubject, TensorRole, ValueDomainProvenance,
+    ApproximationEnvelope, CanonicalScheduledRegionIdentity, ExceptionalValueAssumption,
+    FlushedZeroSign, IndexArithmetic, NumericalPermission, NumericalRealization,
+    REGION_INDEX_ARITHMETIC, RegionId, ResourceRequirements, SubgroupRealizationSubject,
+    SubnormalFreedom, SubnormalMode, SynchronizationSubject, TensorRole, ValueDomainProvenance,
 };
 use crate::semantic::EncodedComponentRole;
 use crate::shape::Axis;
@@ -79,7 +79,20 @@ use super::MAX_KERNEL_IDENTITY_BYTES;
 /// `v8` makes input roles fieldless and records live extent operands by their
 /// exact ordered access position. Both fields sit inside repeated records, so
 /// every input-bearing kernel moves and an earlier reader must miss.
-const KERNEL_DOMAIN: &[u8] = b"tiler.kernel.v8\0";
+///
+/// `v9` gives the numerical record and the fixed resource-requirement record
+/// their two elementary dimensions: the reciprocal-transform permission and the
+/// approximate-intrinsic envelope, each written between the signed-zero
+/// permission and the exceptional-value assumptions in canonical dimension
+/// order. Both insertions land inside records that are *followed* by more
+/// fields — the value-type table and the whole body after the requirements, and
+/// the requirements after the numerical record — so a `v8` reader handed `v9`
+/// bytes would consume the reciprocal byte as the NaN-assumption tag and lose
+/// framing for everything after it. Every kernel ever encoded maps to different
+/// bytes now, and two kernels differing only in an elementary freedom were one
+/// subject under `v8`, which is the collision the step exists to refuse: a
+/// cache or artifact holding a `v8` identity must miss rather than match.
+const KERNEL_DOMAIN: &[u8] = b"tiler.kernel.v9\0";
 
 /// The width [`push_len`] frames a length in, as ADR 0074 fixes it.
 const LENGTH_BYTES: usize = size_of::<u64>();
@@ -1946,16 +1959,47 @@ fn push_exceptional_assumption(bytes: &mut Vec<u8>, assumption: ExceptionalValue
 }
 
 fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalRealization) {
-    push_slice(bytes, numerical.profile_key.as_bytes());
-    bytes.extend_from_slice(&numerical.canonical_arithmetic_nan_bits.to_be_bytes());
-    push_subnormal(bytes, numerical.input_subnormals);
-    push_subnormal(bytes, numerical.result_subnormals);
-    push_permission(bytes, numerical.contraction);
-    push_permission(bytes, numerical.reassociation);
-    push_permission(bytes, numerical.permutation);
-    push_permission(bytes, numerical.signed_zero);
-    push_exceptional_assumption(bytes, numerical.nan_assumptions);
-    push_exceptional_assumption(bytes, numerical.infinity_assumptions);
+    // Destructured exhaustively rather than field-accessed, so a widened
+    // realization is a build error at this encoder instead of two semantically
+    // different kernels sharing one identity (ADR 0076 items 1 and 6).
+    let NumericalRealization {
+        profile_key,
+        canonical_arithmetic_nan_bits,
+        input_subnormals,
+        result_subnormals,
+        contraction,
+        reassociation,
+        permutation,
+        signed_zero,
+        reciprocal_transform,
+        approximate_intrinsics,
+        nan_assumptions,
+        infinity_assumptions,
+    } = *numerical;
+    push_slice(bytes, profile_key.as_bytes());
+    bytes.extend_from_slice(&canonical_arithmetic_nan_bits.to_be_bytes());
+    push_subnormal(bytes, input_subnormals);
+    push_subnormal(bytes, result_subnormals);
+    push_permission(bytes, contraction);
+    push_permission(bytes, reassociation);
+    push_permission(bytes, permutation);
+    push_permission(bytes, signed_zero);
+    push_permission(bytes, reciprocal_transform);
+    push_approximation_envelope(bytes, approximate_intrinsics);
+    push_exceptional_assumption(bytes, nan_assumptions);
+    push_exceptional_assumption(bytes, infinity_assumptions);
+}
+
+/// Encodes one approximate-intrinsic accuracy envelope.
+///
+/// Exhaustive over a non-`#[non_exhaustive]` enum for the same reason as
+/// [`push_permission`]: a widened envelope vocabulary is a build error here
+/// rather than an identity collision.
+fn push_approximation_envelope(bytes: &mut Vec<u8>, envelope: ApproximationEnvelope) {
+    bytes.push(match envelope {
+        ApproximationEnvelope::Forbidden => 0x01,
+        ApproximationEnvelope::BackendElementary => 0x02,
+    });
 }
 
 /// Encodes the synchronization realization a region requires, or its absence.
@@ -1995,6 +2039,8 @@ fn push_requirements(bytes: &mut Vec<u8>, requirements: &ResourceRequirements) {
     push_permission(bytes, requirements.reassociation);
     push_permission(bytes, requirements.permutation);
     push_permission(bytes, requirements.signed_zero);
+    push_permission(bytes, requirements.reciprocal_transform);
+    push_approximation_envelope(bytes, requirements.approximate_intrinsics);
     push_exceptional_assumption(bytes, requirements.nan_assumptions);
     push_exceptional_assumption(bytes, requirements.infinity_assumptions);
 }
@@ -2442,8 +2488,9 @@ fn numerical_encoded_len(numerical: &NumericalRealization) -> usize {
     LENGTH_BYTES
         .saturating_add(numerical.profile_key.len())
         .saturating_add(size_of_val(&numerical.canonical_arithmetic_nan_bits))
-        // Two subnormal modes and four permissions, one tag byte each.
-        .saturating_add(6)
+        // Two subnormal modes, five permissions, and the approximation
+        // envelope, one tag byte each.
+        .saturating_add(8)
         .saturating_add(exceptional_assumption_encoded_len(
             numerical.nan_assumptions,
         ))
@@ -2476,8 +2523,8 @@ fn requirements_encoded_len(requirements: &ResourceRequirements) -> usize {
         .saturating_add(size_of_val(&requirements.threads_per_workgroup))
         .saturating_add(size_of_val(&requirements.local_memory_bytes))
         // The device-memory flag, the index-arithmetic tag, two subnormal
-        // modes, and four permissions.
-        .saturating_add(8)
+        // modes, five permissions, and the approximation envelope.
+        .saturating_add(10)
         .saturating_add(synchronization_encoded_len(requirements.synchronization))
         .saturating_add(exceptional_assumption_encoded_len(
             requirements.nan_assumptions,

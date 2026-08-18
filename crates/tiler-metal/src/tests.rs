@@ -26,11 +26,11 @@ use tiler_ir::kernel::{
     KernelType, MemoryScope, VerifiedKernel, lower_scheduled_region,
 };
 use tiler_ir::schedule::{
-    Access, AccessMode, AccessOrdinal, ArithmeticType, AxisDecode, BoundsProof, BoundsProofKind,
-    BoundsWitnessId, ContractionAxisSource, ContributorArrival, ContributorCoverage,
-    ContributorOrder, ContributorPartition, ConvergenceEvidence, ExceptionalValueAssumption,
-    ExecutionBinding, FlushedZeroSign, KernelSchedule, LaunchPlan, LogicalAccess,
-    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    Access, AccessMode, AccessOrdinal, ApproximationEnvelope, ArithmeticType, AxisDecode,
+    BoundsProof, BoundsProofKind, BoundsWitnessId, ContractionAxisSource, ContributorArrival,
+    ContributorCoverage, ContributorOrder, ContributorPartition, ConvergenceEvidence,
+    ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign, KernelSchedule, LaunchPlan,
+    LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
     OwnershipWitnessId, PointwiseBf16Expression, PointwiseBf16ExpressionBuilder,
     PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId,
     ScalarProgram, ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode, SyncPointId,
@@ -167,6 +167,8 @@ fn subnormal_realization(
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ApproximationEnvelope::Forbidden,
         ExceptionalValueAssumption::MakeNoAssumption,
         ExceptionalValueAssumption::MakeNoAssumption,
     )
@@ -2405,6 +2407,8 @@ fn each_consumable_dimension_independently_requires_safe_math() {
         NumericalPermission::Permitted,
         NumericalPermission::Permitted,
         NumericalPermission::Permitted,
+        NumericalPermission::Permitted,
+        ApproximationEnvelope::BackendElementary,
         ExceptionalValueAssumption::AssumeAbsent {
             provenance: ValueDomainProvenance::CompilerProven,
         },
@@ -2443,6 +2447,14 @@ fn each_consumable_dimension_independently_requires_safe_math() {
             nan_assumptions: ExceptionalValueAssumption::AssumeAbsent {
                 provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
             },
+            ..baseline
+        },
+        NumericalRealization {
+            reciprocal_transform: NumericalPermission::Forbidden,
+            ..baseline
+        },
+        NumericalRealization {
+            approximate_intrinsics: ApproximationEnvelope::Forbidden,
             ..baseline
         },
     ] {

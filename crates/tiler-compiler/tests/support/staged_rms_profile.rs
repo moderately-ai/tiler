@@ -14,7 +14,8 @@ use tiler_ir::program::abi::{
     AvailabilityPhase, TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
 };
 use tiler_ir::schedule::{
-    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
+    ApproximationEnvelope, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
+    SubnormalMode,
 };
 use tiler_ir::semantic::accuracy::{
     AccuracyContract, AccuracyContractForm, ConformanceEvidence, ConformanceEvidenceClass,
@@ -191,6 +192,38 @@ pub(crate) fn staged_rms_profile(fixture: RmsRealizationFixture) -> TargetProfil
         .declare_signed_zero(
             subject.clone(),
             NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_reciprocal_transform(
+            subject.clone(),
+            NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_approximate_intrinsics(
+            subject.clone(),
+            ApproximationEnvelope::Forbidden,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_reciprocal_transform(
+            subject.clone(),
+            NumericalPermission::Permitted,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_approximate_intrinsics(
+            subject.clone(),
+            ApproximationEnvelope::BackendElementary,
             ScalarSupport::Exact,
             source.clone(),
         )

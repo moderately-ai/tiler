@@ -77,7 +77,8 @@ use tiler_ir::kernel::{
     BinaryOp, BlockRef, BufferAccess, KernelConstant, OperationView, VerifiedKernel,
 };
 use tiler_ir::schedule::{
-    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
+    ApproximationEnvelope, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
+    SubnormalMode,
 };
 use tiler_ir::semantic::{
     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
@@ -447,6 +448,18 @@ fn declare_numerics(
     builder.declare_signed_zero(
         f32_subject.clone(),
         NumericalPermission::Forbidden,
+        ScalarSupport::Exact,
+        source.clone(),
+    )?;
+    builder.declare_reciprocal_transform(
+        f32_subject.clone(),
+        NumericalPermission::Forbidden,
+        ScalarSupport::Exact,
+        source.clone(),
+    )?;
+    builder.declare_approximate_intrinsics(
+        f32_subject.clone(),
+        ApproximationEnvelope::Forbidden,
         ScalarSupport::Exact,
         source.clone(),
     )?;

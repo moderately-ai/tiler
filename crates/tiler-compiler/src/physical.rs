@@ -4240,10 +4240,11 @@ pub(crate) fn target_profile_descriptor(target: &TargetProfile) -> &[u8] {
 /// [`ResourceRequirements`] already states, carried forward **per dimension**
 /// rather than collapsed into one summary bit — the collapse the retired
 /// `StrictF32Arithmetic` axis forced, and which could neither name a failing
-/// dimension nor express emulation. The two elementary dimensions and
-/// materialization rounding stay off this proposal until a scheduled region can
-/// record them: they are not inferred, not recovered from the contract key, and
-/// not omitted because a strategy happens not to transform them.
+/// dimension nor express emulation. The two elementary dimensions joined the
+/// projection when the scheduled region grew to record them; materialization
+/// rounding stays off it until one can: it is not inferred, not recovered from
+/// the contract key, and not omitted because a strategy happens not to
+/// transform it.
 ///
 /// The synchronization requirement is carried the *opposite* way: forward as one
 /// atomic subject rather than per dimension, because each of its dimensions is
@@ -4301,12 +4302,11 @@ pub(crate) fn region_proposal(
 /// The population is the owning record, not a counted prefix. Exhaustive
 /// destructure makes a ninth field a build error here; exhaustive match on
 /// [`NumericalDimension`] makes a twelfth governed dimension a build error
-/// until this function says whether the region record carries it. Reciprocal
-/// transform, approximate intrinsics, and materialization rounding stay off
-/// the proposal: they are not on [`ResourceRequirements`], and inventing a
-/// strict value, skipping them because a strategy does not transform them, or
-/// recovering them from the contract key would be a second producer of a
-/// meaning the scheduled region cannot record.
+/// until this function says whether the region record carries it.
+/// Materialization rounding stays off the proposal: it is not on
+/// [`ResourceRequirements`], and inventing a strict value, skipping it because
+/// a strategy does not transform it, or recovering it from the contract key
+/// would be a second producer of a meaning the scheduled region cannot record.
 fn region_numerical_requirements(
     requirements: ResourceRequirements,
     arithmetic: ArithmeticType,
@@ -4345,6 +4345,8 @@ fn region_numerical_requirements(
         reassociation,
         permutation,
         signed_zero,
+        reciprocal_transform,
+        approximate_intrinsics,
         nan_assumptions,
         infinity_assumptions,
     } = requirements;
@@ -4370,15 +4372,19 @@ fn region_numerical_requirements(
                 NumericalDimension::Reassociation => DimensionBehaviour::Transform(reassociation),
                 NumericalDimension::Permutation => DimensionBehaviour::Transform(permutation),
                 NumericalDimension::SignedZero => DimensionBehaviour::Transform(signed_zero),
+                NumericalDimension::ReciprocalTransform => {
+                    DimensionBehaviour::Transform(reciprocal_transform)
+                }
+                NumericalDimension::ApproximateIntrinsics => {
+                    DimensionBehaviour::Approximation(approximate_intrinsics)
+                }
                 NumericalDimension::NanAssumptions => {
                     DimensionBehaviour::ExceptionalValue(nan_assumptions)
                 }
                 NumericalDimension::InfinityAssumptions => {
                     DimensionBehaviour::ExceptionalValue(infinity_assumptions)
                 }
-                NumericalDimension::ReciprocalTransform
-                | NumericalDimension::ApproximateIntrinsics
-                | NumericalDimension::MaterializationRounding => return None,
+                NumericalDimension::MaterializationRounding => return None,
             };
             Some(numerical(dimension, behaviour))
         })
@@ -4480,6 +4486,8 @@ mod tests {
             reassociation: NumericalPermission::Forbidden,
             permutation: NumericalPermission::Permitted,
             signed_zero: NumericalPermission::Permitted,
+            reciprocal_transform: NumericalPermission::Permitted,
+            approximate_intrinsics: tiler_ir::schedule::ApproximationEnvelope::BackendElementary,
             nan_assumptions: ExceptionalValueAssumption::AssumeAbsent {
                 provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
             },
@@ -4503,6 +4511,8 @@ mod tests {
             reassociation: realization.reassociation,
             permutation: realization.permutation,
             signed_zero: realization.signed_zero,
+            reciprocal_transform: realization.reciprocal_transform,
+            approximate_intrinsics: realization.approximate_intrinsics,
             nan_assumptions: realization.nan_assumptions,
             infinity_assumptions: realization.infinity_assumptions,
         }
@@ -4519,11 +4529,11 @@ mod tests {
             | NumericalDimension::Reassociation
             | NumericalDimension::Permutation
             | NumericalDimension::SignedZero
+            | NumericalDimension::ReciprocalTransform
+            | NumericalDimension::ApproximateIntrinsics
             | NumericalDimension::NanAssumptions
             | NumericalDimension::InfinityAssumptions => true,
-            NumericalDimension::ReciprocalTransform
-            | NumericalDimension::ApproximateIntrinsics
-            | NumericalDimension::MaterializationRounding => false,
+            NumericalDimension::MaterializationRounding => false,
         }
     }
 
@@ -4598,6 +4608,16 @@ mod tests {
                 (
                     NumericalDimension::SignedZero,
                     DimensionBehaviour::Transform(NumericalPermission::Permitted),
+                ),
+                (
+                    NumericalDimension::ReciprocalTransform,
+                    DimensionBehaviour::Transform(NumericalPermission::Permitted),
+                ),
+                (
+                    NumericalDimension::ApproximateIntrinsics,
+                    DimensionBehaviour::Approximation(
+                        tiler_ir::schedule::ApproximationEnvelope::BackendElementary,
+                    ),
                 ),
                 (
                     NumericalDimension::NanAssumptions,
@@ -4817,7 +4837,7 @@ mod tests {
         // purpose — a `v10` declaration could not distinguish a target that had
         // been asked from one that had not.
         // Every artifact identity and cache entry derived from it moves with it. Regenerate with `cargo nextest run -p tiler-compiler -E 'test(the_governed_descriptor_bytes_do_not_move)'` and take `left`.
-        const GOVERNED: &str = "000000000000002574696c65722e7461726765742d70726f66696c652e6465636c61726174696f6e2e76313100000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000002574696c65722e7461726765742d70726f66696c652e666163742d736f75726365732e7634000000000000000001000000000000007400000003010101000000000000002a74696c65722e676f7665726e65642d7461726765742d70726f66696c652d617574686f726974792e76310000000101000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e76310000000100000000000000050000000000000009677269642d61786973040000000000000000000000000000000f6275666665722d62696e64696e6773040000000000000000000000000000000d6465766963652d6d656d6f727901000000000000000000000000000000126c6f63616c2d6d656d6f72792d62797465730000000000000000000000000000000014696e6465782d61726974686d657469632d75363401000000000000000000000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f70657274696573000000010000000000000001000000000000004303000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c6572000000000000000366333200000001000000000000000c000101010100000101020100000201010100000201020100000302010100000302020100000402010100000402020100000502010100000602010100000904010100000a04010100000000000000002e74696c65722e7461726765742d70726f66696c652e64747970652d64697370617463686162696c6974792e7632000000000000000001000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c65720000000000000003663332000000010100000000000000003474696c65722e7461726765742d70726f66696c652e73796e6368726f6e697a6174696f6e2d7265616c697a6174696f6e2e7631000000000000000000";
+        const GOVERNED: &str = "000000000000002574696c65722e7461726765742d70726f66696c652e6465636c61726174696f6e2e76313100000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000002574696c65722e7461726765742d70726f66696c652e666163742d736f75726365732e7634000000000000000001000000000000007400000003010101000000000000002a74696c65722e676f7665726e65642d7461726765742d70726f66696c652d617574686f726974792e76310000000101000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e76310000000100000000000000050000000000000009677269642d61786973040000000000000000000000000000000f6275666665722d62696e64696e6773040000000000000000000000000000000d6465766963652d6d656d6f727901000000000000000000000000000000126c6f63616c2d6d656d6f72792d62797465730000000000000000000000000000000014696e6465782d61726974686d657469632d75363401000000000000000000000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f70657274696573000000010000000000000001000000000000004303000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c65720000000000000003663332000000010000000000000010000101010100000101020100000201010100000201020100000302010100000302020100000402010100000402020100000502010100000602010100000702010100000702020100000803010100000803020100000904010100000a04010100000000000000002e74696c65722e7461726765742d70726f66696c652e64747970652d64697370617463686162696c6974792e7632000000000000000001000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c65720000000000000003663332000000010100000000000000003474696c65722e7461726765742d70726f66696c652e73796e6368726f6e697a6174696f6e2d7265616c697a6174696f6e2e7631000000000000000000";
 
         let profile = crate::request::TargetProfile::governed();
         let descriptor = target_profile_descriptor(&profile);

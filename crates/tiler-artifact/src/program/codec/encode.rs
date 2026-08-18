@@ -196,7 +196,21 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// revision, losing framing for every following row. The step is major, and
 /// artifact identity moves to `v18` because the earlier spelling admitted
 /// collisions between distinct legal namespace/name boundaries.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (18, 0);
+///
+/// **`19.0` carries the two elementary numerical dimensions in both per-entry
+/// numerical records.**
+///
+/// The reciprocal-transform permission and the approximate-intrinsic envelope
+/// land between the signed-zero tag and the NaN-assumption tag of the fixed
+/// resource-requirement run *and* of the entry's own numerical-fact record, in
+/// canonical dimension order. An `18.0` reader would consume the reciprocal tag
+/// as the NaN-assumption tag and lose framing for the rest of the entry, so the
+/// step is major. Artifact identity moves with it, as the `16.0` step's shape:
+/// `push_resources` and `push_numerical` are read by `encode_identity` as well
+/// as by the manifest encoder, so two programs that differ in an elementary
+/// freedom are two artifacts, and the `ARTIFACT_DOMAIN` step to `v19` makes the
+/// earlier subject incomparable rather than merely unlikely to collide.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (19, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 ///

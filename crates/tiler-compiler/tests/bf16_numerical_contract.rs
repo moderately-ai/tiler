@@ -58,12 +58,13 @@ use tiler_compiler::target::{
 };
 use tiler_ir::kernel::{KernelType, lower_scheduled_region};
 use tiler_ir::schedule::{
-    Access, AccessMode, AccessOrdinal, ArithmeticType, BoundsProof, BoundsProofKind,
-    BoundsWitnessId, ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign, KernelSchedule,
-    LaunchPlan, LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
-    OwnershipProofKind, OwnershipWitnessId, PointwiseBf16ExpressionBuilder, ReductionTopology,
-    RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode, TailPolicy,
-    TensorRole, VerifiedScheduledRegion,
+    Access, AccessMode, AccessOrdinal, ApproximationEnvelope, ArithmeticType, BoundsProof,
+    BoundsProofKind, BoundsWitnessId, ExceptionalValueAssumption, ExecutionBinding,
+    FlushedZeroSign, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
+    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
+    PointwiseBf16ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
+    ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode, TailPolicy, TensorRole,
+    VerifiedScheduledRegion,
 };
 use tiler_ir::semantic::{
     Bf16, Bf16Add, Bf16Constant, Bf16Multiply, CANONICAL_BF16_ARITHMETIC_NAN_BITS, F32, F32Add,
@@ -156,6 +157,7 @@ fn declare_strict_reshaping(
         TargetProfileBuilder::declare_measured_reassociation,
         TargetProfileBuilder::declare_measured_permutation,
         TargetProfileBuilder::declare_measured_signed_zero,
+        TargetProfileBuilder::declare_measured_reciprocal_transform,
     ] {
         declare(
             builder,
@@ -166,6 +168,14 @@ fn declare_strict_reshaping(
         )
         .unwrap();
     }
+    builder
+        .declare_measured_approximate_intrinsics(
+            subject.clone(),
+            ApproximationEnvelope::Forbidden,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
     for declare in [
         TargetProfileBuilder::declare_measured_nan_assumptions,
         TargetProfileBuilder::declare_measured_infinity_assumptions,
@@ -872,6 +882,8 @@ fn bf16_region_under(contract: NumericalContract) -> VerifiedScheduledRegion {
             contract.reassociation(),
             contract.permutation(),
             contract.signed_zero(),
+            contract.reciprocal_transform(),
+            contract.approximate_intrinsics(),
             contract.nan_assumptions(),
             contract.infinity_assumptions(),
         ))

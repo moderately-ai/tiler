@@ -2375,6 +2375,8 @@ mod tests {
                 reassociation: realization.reassociation,
                 permutation: realization.permutation,
                 signed_zero: realization.signed_zero,
+                reciprocal_transform: realization.reciprocal_transform,
+                approximate_intrinsics: realization.approximate_intrinsics,
                 nan_assumptions: realization.nan_assumptions,
                 infinity_assumptions: realization.infinity_assumptions,
             },

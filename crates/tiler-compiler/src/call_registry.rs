@@ -402,7 +402,8 @@ mod tests {
     use crate::call_declaration::WorkScaling;
     use tiler_ir::schedule::AccessOrdinal;
     use tiler_ir::schedule::{
-        ExceptionalValueAssumption, NumericalPermission, ResourceRequirements, SubnormalMode,
+        ApproximationEnvelope, ExceptionalValueAssumption, NumericalPermission,
+        ResourceRequirements, SubnormalMode,
     };
 
     /// Resources ample enough that only the fault under test can fire.
@@ -421,6 +422,8 @@ mod tests {
             reassociation: NumericalPermission::Forbidden,
             permutation: NumericalPermission::Forbidden,
             signed_zero: NumericalPermission::Forbidden,
+            reciprocal_transform: NumericalPermission::Forbidden,
+            approximate_intrinsics: ApproximationEnvelope::Forbidden,
             nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
             infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
         }

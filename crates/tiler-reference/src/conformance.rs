@@ -24,7 +24,8 @@
 //! operations on the bits.
 //!
 //! It does **not** cover contraction, reassociation, permutation, signed-zero
-//! elimination, or exceptional-value absence assumptions, and
+//! elimination, reciprocal replacement, approximate intrinsics, or
+//! exceptional-value absence assumptions, and
 //! [`ReferenceNumericalConformance::from_realization`] refuses a realization that
 //! uses any of them rather than accepting one and ignoring it. The evaluator
 //! computes a separately rounded multiply and add, a strict left fold in
@@ -58,8 +59,8 @@
 //! [`ReferenceEvaluationRequest::conformance_for`]: crate::ReferenceEvaluationRequest::conformance_for
 
 use tiler_ir::schedule::{
-    ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
-    NumericalRealization, SubnormalMode, ValueDomainProvenance,
+    ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
+    NumericalPermission, NumericalRealization, SubnormalMode, ValueDomainProvenance,
 };
 use tiler_ir::semantic::{CANONICAL_BF16_ARITHMETIC_NAN_BITS, CANONICAL_F32_ARITHMETIC_NAN_BITS};
 
@@ -87,6 +88,22 @@ pub enum UnsupportedReferenceContract {
     PermutationPermitted,
     /// The realization permits eliminating signed-zero distinctions.
     SignedZeroEliminationPermitted,
+    /// The realization permits replacing a division by a reciprocal multiply.
+    ///
+    /// A contract permitting the replacement admits both the divided and the
+    /// reciprocal-multiplied result, so no single value is *the* reference
+    /// result.
+    ReciprocalTransformPermitted,
+    /// The realization authorizes a non-`Forbidden` approximation envelope.
+    ///
+    /// The envelope bounds elementary-function results by the *backend's* own
+    /// stated accuracy contract, which this host reference neither states nor
+    /// evaluates: any value within the envelope is admissible, which is a
+    /// result set rather than one value.
+    ApproximateIntrinsicsPermitted {
+        /// The envelope the realization authorized.
+        envelope: ApproximationEnvelope,
+    },
     /// The realization assumes NaNs absent on evidence this evaluator cannot validate.
     NanAbsenceAssumed {
         /// Authority behind the domain assumption.
@@ -139,6 +156,12 @@ impl UnsupportedReferenceContract {
             Self::SignedZeroEliminationPermitted => {
                 "reference.numerics.signed-zero-elimination-permitted"
             }
+            Self::ReciprocalTransformPermitted => {
+                "reference.numerics.reciprocal-transform-permitted"
+            }
+            Self::ApproximateIntrinsicsPermitted { .. } => {
+                "reference.numerics.approximate-intrinsics-permitted"
+            }
             Self::NanAbsenceAssumed { .. } => "reference.numerics.nan-absence-assumed",
             Self::InfinityAbsenceAssumed { .. } => "reference.numerics.infinity-absence-assumed",
             Self::ArithmeticNotEvaluable { .. } => "reference.numerics.arithmetic-not-evaluable",
@@ -155,7 +178,9 @@ impl fmt::Display for UnsupportedReferenceContract {
             Self::ContractionPermitted
             | Self::ReassociationPermitted
             | Self::PermutationPermitted
-            | Self::SignedZeroEliminationPermitted => write!(
+            | Self::SignedZeroEliminationPermitted
+            | Self::ReciprocalTransformPermitted
+            | Self::ApproximateIntrinsicsPermitted { .. } => write!(
                 formatter,
                 "{}: the reference evaluates one value and this contract admits a result set",
                 self.rule()
@@ -343,6 +368,8 @@ impl ReferenceNumericalConformance {
             reassociation,
             permutation,
             signed_zero,
+            reciprocal_transform,
+            approximate_intrinsics,
             nan_assumptions,
             infinity_assumptions,
         } = *realization;
@@ -379,6 +406,22 @@ impl ReferenceNumericalConformance {
                 return Err(UnsupportedReferenceContract::SignedZeroEliminationPermitted);
             }
             NumericalPermission::Forbidden => {}
+        }
+        match reciprocal_transform {
+            NumericalPermission::Permitted => {
+                return Err(UnsupportedReferenceContract::ReciprocalTransformPermitted);
+            }
+            NumericalPermission::Forbidden => {}
+        }
+        match approximate_intrinsics {
+            ApproximationEnvelope::BackendElementary => {
+                return Err(
+                    UnsupportedReferenceContract::ApproximateIntrinsicsPermitted {
+                        envelope: approximate_intrinsics,
+                    },
+                );
+            }
+            ApproximationEnvelope::Forbidden => {}
         }
         match nan_assumptions {
             ExceptionalValueAssumption::MakeNoAssumption => {}
@@ -502,8 +545,8 @@ mod tests {
     use super::{ConformanceSubject, ReferenceNumericalConformance, UnsupportedReferenceContract};
     use crate::ReferenceOperationError;
     use tiler_ir::schedule::{
-        ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
-        NumericalRealization, SubnormalMode, ValueDomainProvenance,
+        ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
+        NumericalPermission, NumericalRealization, SubnormalMode, ValueDomainProvenance,
     };
     use tiler_ir::semantic::CANONICAL_BF16_ARITHMETIC_NAN_BITS;
 
@@ -526,6 +569,8 @@ mod tests {
             reassociation,
             NumericalPermission::Forbidden,
             NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            ApproximationEnvelope::Forbidden,
             ExceptionalValueAssumption::MakeNoAssumption,
             ExceptionalValueAssumption::MakeNoAssumption,
         )
@@ -696,6 +741,22 @@ mod tests {
                     provenance: ValueDomainProvenance::RuntimeValidated,
                 },
             ),
+            (
+                NumericalRealization {
+                    reciprocal_transform: NumericalPermission::Permitted,
+                    ..strict
+                },
+                UnsupportedReferenceContract::ReciprocalTransformPermitted,
+            ),
+            (
+                NumericalRealization {
+                    approximate_intrinsics: ApproximationEnvelope::BackendElementary,
+                    ..strict
+                },
+                UnsupportedReferenceContract::ApproximateIntrinsicsPermitted {
+                    envelope: ApproximationEnvelope::BackendElementary,
+                },
+            ),
         ] {
             assert_eq!(
                 ReferenceNumericalConformance::from_realization(&declared, ArithmeticType::F32),
@@ -703,7 +764,7 @@ mod tests {
             );
             checked += 1;
         }
-        assert_eq!(checked, 4, "every newly carried freedom was exercised");
+        assert_eq!(checked, 6, "every newly carried freedom was exercised");
     }
 
     /// A strict realization carries both subnormal dimensions across unchanged.

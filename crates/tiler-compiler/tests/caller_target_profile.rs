@@ -20,7 +20,8 @@ use tiler_compiler::target::{
 };
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::schedule::{
-    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
+    ApproximationEnvelope, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
+    SubnormalMode,
 };
 use tiler_ir::semantic::{
     F32, F32Add, F32Constant, F32Multiply, F32Silu, InputKey, OutputKey,
@@ -206,6 +207,22 @@ fn external_profile(
             .declare_signed_zero(
                 subject.clone(),
                 NumericalPermission::Forbidden,
+                ScalarSupport::Exact,
+                source.clone(),
+            )
+            .unwrap();
+        builder
+            .declare_reciprocal_transform(
+                subject.clone(),
+                NumericalPermission::Forbidden,
+                ScalarSupport::Exact,
+                source.clone(),
+            )
+            .unwrap();
+        builder
+            .declare_approximate_intrinsics(
+                subject.clone(),
+                ApproximationEnvelope::Forbidden,
                 ScalarSupport::Exact,
                 source.clone(),
             )
@@ -506,6 +523,7 @@ fn measured_flushing_profile(
         TargetProfileBuilder::declare_reassociation,
         TargetProfileBuilder::declare_permutation,
         TargetProfileBuilder::declare_signed_zero,
+        TargetProfileBuilder::declare_reciprocal_transform,
     ] {
         permission(
             &mut builder,
@@ -516,6 +534,14 @@ fn measured_flushing_profile(
         )
         .unwrap();
     }
+    builder
+        .declare_approximate_intrinsics(
+            subject.clone(),
+            ApproximationEnvelope::Forbidden,
+            ScalarSupport::Exact,
+            guarantee.clone(),
+        )
+        .unwrap();
     builder
         .declare_nan_assumptions(
             subject.clone(),
@@ -978,6 +1004,22 @@ fn profile_with_realization(key: &str, realization: ElementaryRealization) -> Ta
         .declare_signed_zero(
             subject.clone(),
             NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_reciprocal_transform(
+            subject.clone(),
+            NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_approximate_intrinsics(
+            subject.clone(),
+            ApproximationEnvelope::Forbidden,
             ScalarSupport::Exact,
             source.clone(),
         )

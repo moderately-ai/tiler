@@ -82,6 +82,8 @@ pub(crate) enum TagSubject {
     SubnormalMode,
     /// A numerical transform permission of one numerical realization.
     NumericalPermission,
+    /// The approximate-intrinsic envelope of one numerical realization.
+    ApproximationEnvelope,
     /// An exceptional-value assumption and the provenance that supports it.
     ExceptionalValueAssumption,
     /// The index arithmetic one entry's dispatch record requires of a device.

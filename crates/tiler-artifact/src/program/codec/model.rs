@@ -27,8 +27,8 @@ use std::borrow::Cow;
 use tiler_ir::program::abi::compare_expr_nodes;
 use tiler_ir::program::{DependencyReasonView, StageRef, VerifiedKernelProgram};
 use tiler_ir::schedule::{
-    ExceptionalValueAssumption, NumericalPermission, NumericalRealization, ResourceRequirements,
-    SubnormalMode,
+    ApproximationEnvelope, ExceptionalValueAssumption, NumericalPermission, NumericalRealization,
+    ResourceRequirements, SubnormalMode,
 };
 use tiler_ir::semantic::{InputKey, OutputKey};
 
@@ -250,6 +250,8 @@ pub(crate) struct NumericalFacts {
     pub(crate) reassociation: NumericalPermission,
     pub(crate) permutation: NumericalPermission,
     pub(crate) signed_zero: NumericalPermission,
+    pub(crate) reciprocal_transform: NumericalPermission,
+    pub(crate) approximate_intrinsics: ApproximationEnvelope,
     pub(crate) nan_assumptions: ExceptionalValueAssumption,
     pub(crate) infinity_assumptions: ExceptionalValueAssumption,
 }
@@ -266,6 +268,8 @@ impl NumericalFacts {
             reassociation,
             permutation,
             signed_zero,
+            reciprocal_transform,
+            approximate_intrinsics,
             nan_assumptions,
             infinity_assumptions,
         } = numerical;
@@ -278,6 +282,8 @@ impl NumericalFacts {
             reassociation,
             permutation,
             signed_zero,
+            reciprocal_transform,
+            approximate_intrinsics,
             nan_assumptions,
             infinity_assumptions,
         }
@@ -299,6 +305,8 @@ impl NumericalFacts {
             reassociation,
             permutation,
             signed_zero,
+            reciprocal_transform,
+            approximate_intrinsics,
             nan_assumptions,
             infinity_assumptions,
         } = self;
@@ -309,6 +317,8 @@ impl NumericalFacts {
             reassociation: *reassociation,
             permutation: *permutation,
             signed_zero: *signed_zero,
+            reciprocal_transform: *reciprocal_transform,
+            approximate_intrinsics: *approximate_intrinsics,
             nan_assumptions: *nan_assumptions,
             infinity_assumptions: *infinity_assumptions,
         }

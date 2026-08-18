@@ -28,7 +28,8 @@ use tiler_compiler::target::{
     TargetProfile, TargetProfileBuilder, TargetProfileKey, TargetRequest,
 };
 use tiler_ir::schedule::{
-    ExceptionalValueAssumption, NumericalPermission, ScheduledRegion, SubnormalMode,
+    ApproximationEnvelope, ExceptionalValueAssumption, NumericalPermission, ScheduledRegion,
+    SubnormalMode,
 };
 use tiler_ir::semantic::{
     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, ProviderIdentity, SemanticProgram,
@@ -244,6 +245,22 @@ fn acme_profile(key: &str, max_threads_per_workgroup: u32) -> TargetProfile {
         .declare_signed_zero(
             subject.clone(),
             NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_reciprocal_transform(
+            subject.clone(),
+            NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_approximate_intrinsics(
+            subject.clone(),
+            ApproximationEnvelope::Forbidden,
             ScalarSupport::Exact,
             source.clone(),
         )

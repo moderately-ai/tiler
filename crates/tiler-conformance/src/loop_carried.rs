@@ -163,6 +163,8 @@ fn declared_realization() -> NumericalRealization {
         contract.reassociation(),
         contract.permutation(),
         contract.signed_zero(),
+        contract.reciprocal_transform(),
+        contract.approximate_intrinsics(),
         contract.nan_assumptions(),
         contract.infinity_assumptions(),
     )

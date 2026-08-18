@@ -1748,9 +1748,9 @@ mod tests {
     };
     use objc2_metal::{MTLBindingType, MTLCommandBufferStatus};
     use tiler_ir::schedule::{
-        ExceptionalValueAssumption, FencedSpaces, IndexArithmetic, MemoryOrdering,
-        NumericalPermission, ResourceRequirements, SubnormalMode, SynchronizationKind,
-        SynchronizationScope, SynchronizationSubject,
+        ApproximationEnvelope, ExceptionalValueAssumption, FencedSpaces, IndexArithmetic,
+        MemoryOrdering, NumericalPermission, ResourceRequirements, SubnormalMode,
+        SynchronizationKind, SynchronizationScope, SynchronizationSubject,
     };
     use tiler_metal::applicability::{MetalGpuFamily, MetalGpuFamilySupport};
 
@@ -1803,6 +1803,8 @@ mod tests {
             reassociation: NumericalPermission::Forbidden,
             permutation: NumericalPermission::Forbidden,
             signed_zero: NumericalPermission::Forbidden,
+            reciprocal_transform: NumericalPermission::Forbidden,
+            approximate_intrinsics: ApproximationEnvelope::Forbidden,
             nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
             infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
         }

@@ -74,7 +74,7 @@ pub enum RealizationTranslationError {
     ///
     /// Fail-closed rather than picking the first. Which arithmetic contract
     /// governs a packaged entry is a compiler fact, and an entry's own
-    /// [`NumericalRealization`] carries eight behaviour dimensions and no
+    /// [`NumericalRealization`] carries ten behaviour dimensions and no
     /// arithmetic type, so nothing reachable from here can decide it. When the
     /// compiler grows a per-entry statement, this becomes a translation of that
     /// statement rather than a refusal.
@@ -135,7 +135,7 @@ impl Error for RealizationTranslationError {
 /// selected contract and the artifact refuses a record that leaves one unbound.
 ///
 /// The entry-to-subject association is the one claim the neutral artifact cannot
-/// derive — an entry's `NumericalRealization` carries eight behaviour dimensions
+/// derive — an entry's `NumericalRealization` carries ten behaviour dimensions
 /// and no arithmetic type — so this function states it from the compiler's own
 /// subject table, and refuses when that table cannot decide it.
 ///

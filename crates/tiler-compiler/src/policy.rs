@@ -46,7 +46,7 @@
 //! - **Reserved in the type system.** Every dimension in
 //!   [`crate::target::honourability::NumericalDimension`] can be stated, declared, and
 //!   assessed.
-//! - **Implemented.** [`REALIZED_DIMENSIONS`] names the eight consumable
+//! - **Implemented.** [`REALIZED_DIMENSIONS`] names the ten consumable
 //!   dimensions the scheduled-region IR carries.
 //! - **Tested guarantee.** Only a dimension some admitted operation can consume
 //!   *and* the region IR carries has an observable resolution at all, and only
@@ -85,21 +85,6 @@ use crate::target::ScalarArithmetic;
 use crate::target::honourability::{DimensionBehaviour, NumericalDimension, NumericalRequirement};
 use tiler_ir::semantic::OpKey;
 
-/// The accuracy envelope the relaxed preset authorizes.
-///
-/// A *named* envelope rather than a tolerance literal, because
-/// `docs/numerical-semantics.md` requires the approximate-intrinsic dimension to
-/// resolve to a maximum accuracy envelope: a bound spelled inline could be
-/// widened without changing the contract's identity, which is the one thing an
-/// accuracy clause must not permit. Nothing in this build emits an approximate
-/// intrinsic, so this names an envelope that is authorized and unconsumed.
-#[allow(
-    dead_code,
-    reason = "reserved governed envelope for an approximate intrinsic; no admitted operation consumes it until a registered realization carries that dimension"
-)]
-pub(crate) const RELAXED_APPROXIMATION_ENVELOPE: ApproximationEnvelope =
-    ApproximationEnvelope::BackendElementary;
-
 /// The key a composed contract carries before one is derived for it.
 ///
 /// A spelling no canonical key can collide with — every derived key opens with
@@ -117,13 +102,15 @@ pub(crate) const UNKEYED_CONTRACT: &str = "tiler.contract.unkeyed";
 /// what makes an unenumerated dimension fail closed — but it *is* a defect the
 /// moment an admitted operation can consume one of the missing dimensions, which
 /// is exactly what [`unrepresentable_dimension`] refuses.
-pub(crate) const REALIZED_DIMENSIONS: [NumericalDimension; 8] = [
+pub(crate) const REALIZED_DIMENSIONS: [NumericalDimension; 10] = [
     NumericalDimension::InputSubnormals,
     NumericalDimension::ResultSubnormals,
     NumericalDimension::Contraction,
     NumericalDimension::Reassociation,
     NumericalDimension::Permutation,
     NumericalDimension::SignedZero,
+    NumericalDimension::ReciprocalTransform,
+    NumericalDimension::ApproximateIntrinsics,
     NumericalDimension::NanAssumptions,
     NumericalDimension::InfinityAssumptions,
 ];
@@ -240,19 +227,30 @@ impl OperationNumericalCapability {
     /// - `SignedZero`, `NanAssumptions`, and `InfinityAssumptions` are
     ///   properties of the arithmetic the operation itself performs.
     ///
-    /// **Three dimensions are deliberately unfounded here, and none of the
-    /// three is merely unreached.** `MaterializationRounding` names a boundary
-    /// *between* stages rather than a position inside one occurrence, so an
-    /// operation capability is the wrong authority to site it — a schedule that
-    /// stages a partial tensor is what creates the boundary. `ReciprocalTransform`
-    /// and `ApproximateIntrinsics` act on a *subordinate* operation inside a
-    /// composite family — the activation's exponential, the normalization's
-    /// reciprocal square root — whose accuracy is carried by that family's own
-    /// [`tiler_ir::semantic::accuracy::AccuracyContract`] rather than by one of
-    /// this occurrence's four generic positions. All three are also outside
-    /// [`is_consumable`] today, so no contract places one on a target and no
-    /// honoured fact exists to carry; returning `None` is what makes the day one
-    /// becomes consumable a typed refusal rather than a silently relocated row.
+    /// - `ReciprocalTransform` and `ApproximateIntrinsics` act on a
+    ///   *subordinate* operation inside a composite family — the activation's
+    ///   and softmax's division and exponential, the normalization's division
+    ///   and reciprocal square root. `docs/numerical-semantics.md` places a
+    ///   dimension not assigned to an input, result, accumulator, component, or
+    ///   materialization position on the operation's own arithmetic, and the
+    ///   subordinate arithmetic *is* inside the composite occurrence, so both
+    ///   found [`PolicyLocus::Computation`] — the existing variant, no new
+    ///   locus and no new wire tag, exactly as the 2026-08-11 acceptance
+    ///   states. The subordinate operation's *accuracy* stays carried by the
+    ///   family's own [`tiler_ir::semantic::accuracy::AccuracyContract`], which
+    ///   is a different statement from where the generic freedom acts.
+    ///
+    /// **One dimension is deliberately unfounded here, and it is not merely
+    /// unreached.** `MaterializationRounding` names a boundary *between* stages
+    /// rather than a position inside one occurrence, so an operation capability
+    /// is the wrong authority to site it — a schedule that stages a partial
+    /// tensor is what creates the boundary. It is also outside
+    /// [`is_consumable`], so no contract places it on a target and no honoured
+    /// fact exists to carry; returning `None` is what makes the day it becomes
+    /// consumable a typed refusal rather than a silently relocated row —
+    /// `crate::session`'s producer refuses by
+    /// `numerical-realization-locus-unfounded` rather than substituting
+    /// [`PolicyLocus::Computation`].
     pub(crate) const fn founded_locus(self, dimension: NumericalDimension) -> Option<PolicyLocus> {
         match dimension {
             NumericalDimension::InputSubnormals => Some(PolicyLocus::Input),
@@ -266,11 +264,11 @@ impl OperationNumericalCapability {
             }
             NumericalDimension::Permutation => Some(PolicyLocus::Accumulator),
             NumericalDimension::SignedZero
+            | NumericalDimension::ReciprocalTransform
+            | NumericalDimension::ApproximateIntrinsics
             | NumericalDimension::NanAssumptions
             | NumericalDimension::InfinityAssumptions => Some(PolicyLocus::Computation),
-            NumericalDimension::ReciprocalTransform
-            | NumericalDimension::ApproximateIntrinsics
-            | NumericalDimension::MaterializationRounding => None,
+            NumericalDimension::MaterializationRounding => None,
         }
     }
 
@@ -305,8 +303,8 @@ impl OperationNumericalCapability {
 /// strict-affine association, quantization, and dequantization; every one has a
 /// row below. The affine operations' exact behavior is carried by the encoded
 /// value and operation contracts rather than selected from the caller's generic
-/// policy. None of the admitted operations permits a reciprocal substitution or
-/// approximate intrinsic.
+/// policy. The three elementary families are the operations with a division to
+/// replace or an elementary function to approximate, and their rows say so.
 ///
 /// **Fact.** The registry also admits `tiler::constant-bf16@1`,
 /// `tiler::multiply-bf16@1`, and `tiler::add-bf16@1`, and none of the three has
@@ -337,17 +335,18 @@ impl OperationNumericalCapability {
 /// decided state rather than an unfinished one, and writing a row would still
 /// need evidence of BF16's own.
 ///
-/// **Inference — and this changed when the activation was admitted.**
-/// `MaterializationRounding` is still unconsumable: it is not the strict-affine
-/// encode rounding rule, which the scheme fixes to nearest-even, and observable
-/// materialization of a compound value preserves its exact codes and associated
-/// parameters. `ReciprocalTransform` and `ApproximateIntrinsics` are a different
-/// case now. Both were unconsumable because no admitted operation had a division
-/// to replace or an elementary function to approximate, and `tiler::silu-f32@1`
-/// has one of each — so their absence from every row below is no longer derived
-/// from the admitted set. [`ELEMENTARY_UNCARRIED_DIMENSIONS`] states the omission
-/// explicitly and `the_uncarried_elementary_dimensions_are_outside_the_realization`
-/// checks the condition under which it stays honest.
+/// **Inference.** `MaterializationRounding` is the one still-unconsumable
+/// realized-space neighbour: it is not the strict-affine encode rounding rule,
+/// which the scheme fixes to nearest-even, and observable materialization of a
+/// compound value preserves its exact codes and associated parameters.
+/// `ReciprocalTransform` and `ApproximateIntrinsics` stopped being that case
+/// when the region realization grew to carry them: each elementary family's row
+/// lists both, `is_consumable` therefore places both on every contract's
+/// requirement set, and the superseded omission witness
+/// (`ELEMENTARY_UNCARRIED_DIMENSIONS` and its tripwire test) is deleted rather
+/// than retained — the carried state it guarded against is now the delivered
+/// one, and `every_consumable_dimension_founds_a_locus` plus the ADR 0076
+/// pairing checks below are what now guard "carried and consumed coherently".
 pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapability] {
     /// Dimensions any `f32` arithmetic operation can consume.
     const ARITHMETIC: &[NumericalDimension] = &[
@@ -405,12 +404,17 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
     ///
     /// The arithmetic row without contraction: the activation's composition puts
     /// no multiply adjacent to an add, so there is no product for ADR 0015's
-    /// permission to fuse into.
+    /// permission to fuse into. The two elementary dimensions are present
+    /// because the composition contains a division (the reciprocal-transform
+    /// obligation) and an exponential (the approximate-intrinsic obligation),
+    /// and [`tiler_ir::schedule::NumericalRealization`] now carries both.
     const ELEMENTARY: &[NumericalDimension] = &[
         NumericalDimension::InputSubnormals,
         NumericalDimension::ResultSubnormals,
         NumericalDimension::Reassociation,
         NumericalDimension::SignedZero,
+        NumericalDimension::ReciprocalTransform,
+        NumericalDimension::ApproximateIntrinsics,
         NumericalDimension::NanAssumptions,
         NumericalDimension::InfinityAssumptions,
     ];
@@ -427,7 +431,9 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
     /// admits.
     ///
     /// Both order-contract dimensions are present for the embedded fold's sake,
-    /// as they are for any ordered reduction.
+    /// as they are for any ordered reduction. The two elementary dimensions are
+    /// present because the family contains a division (by the extent) and an
+    /// elementary function (the reciprocal square root).
     const NORMALIZATION: &[NumericalDimension] = &[
         NumericalDimension::InputSubnormals,
         NumericalDimension::ResultSubnormals,
@@ -435,6 +441,8 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         NumericalDimension::Reassociation,
         NumericalDimension::Permutation,
         NumericalDimension::SignedZero,
+        NumericalDimension::ReciprocalTransform,
+        NumericalDimension::ApproximateIntrinsics,
         NumericalDimension::NanAssumptions,
         NumericalDimension::InfinityAssumptions,
     ];
@@ -454,12 +462,21 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
     /// sake. The maximum fold consumes neither — it is associative and
     /// commutative on every input — but a capability row is per operation rather
     /// than per embedded fold, and the sum needs both.
+    ///
+    /// The two elementary dimensions are present because the family contains a
+    /// division (one by the denominator) and an elementary function (the
+    /// exponential). The reciprocal obligation runs in the *opposite* direction
+    /// from its siblings' and is real for that reason: the pinned formula
+    /// already multiplies by the reciprocal, so what the permission licenses
+    /// here is the substitution *back* to a division.
     const SOFTMAX: &[NumericalDimension] = &[
         NumericalDimension::InputSubnormals,
         NumericalDimension::ResultSubnormals,
         NumericalDimension::Reassociation,
         NumericalDimension::Permutation,
         NumericalDimension::SignedZero,
+        NumericalDimension::ReciprocalTransform,
+        NumericalDimension::ApproximateIntrinsics,
         NumericalDimension::NanAssumptions,
         NumericalDimension::InfinityAssumptions,
     ];
@@ -491,25 +508,14 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         // an exponential, an add, and a divide, and no multiply is adjacent to an
         // add, so ADR 0015's contraction has no product to fuse.
         //
-        // **Two dimensions it can consume are deliberately absent, and the
-        // absence is a stated boundary rather than an oversight.** SiLU is the
-        // first admitted operation that could consume `ReciprocalTransform` (it
-        // contains a division) and the first that could consume
-        // `ApproximateIntrinsics` (it contains an elementary function). Listing
-        // either would enter it into `is_consumable`'s union, which decides which
-        // dimensions every contract must place on a target — and neither is
-        // carried by `tiler_ir::schedule::NumericalRealization`, so the
-        // `RelaxedF32` preset that authorizes both would become unrepresentable
-        // for every program. Widening the realization to carry them is ADR 0076
-        // item 1's shape and is filed as `carry-the-elementary-numerical-
-        // dimensions-in-the-region-realization`; until then the obligation is
-        // enforced where this build can actually enforce it, in the Metal
-        // emission, which writes `precise::exp` and the `/` operator and requires
-        // `-fmetal-math-fp32-functions=precise`.
-        //
-        // `ELEMENTARY_UNCARRIED_DIMENSIONS` names the two so the omission is a checked
-        // claim rather than a gap, and its test fires the moment the realization
-        // grows to carry one.
+        // The two elementary dimensions are present because the composition has
+        // a division to replace and an elementary function to approximate, and
+        // `tiler_ir::schedule::NumericalRealization` now carries both — the
+        // widening `carry-the-elementary-numerical-dimensions-in-the-region-
+        // realization` delivered under ADR 0076 item 1's shape. The Metal
+        // emission's `precise::exp` and `/` operator remain a backend guarantee
+        // over the operations actually emitted; what these rows add is the
+        // profile-level question every contract now places on every target.
         OperationNumericalCapability {
             key: "tiler::silu-f32@1",
             operation: tiler_ir::semantic::silu_f32_op,
@@ -517,14 +523,9 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         },
         // The normalization is an ordered reduction with per-point arithmetic on
         // both sides of its fold, so it consumes the reduction row's dimensions
-        // *and* contraction — see `NORMALIZATION` for why the adjacency is real.
-        //
-        // The same two elementary dimensions the activation withholds are
-        // withheld here, for the same reason and by the same constant: the
-        // normalization contains a division (by the extent) and an elementary
-        // function (the reciprocal square root), so both are real obligations
-        // rather than absent ones, and `ELEMENTARY_UNCARRIED_DIMENSIONS` is what
-        // states the omission as a checked claim.
+        // *and* contraction — see `NORMALIZATION` for why the adjacency is real,
+        // and for why its elementary entries are: a division by the extent and a
+        // reciprocal square root.
         OperationNumericalCapability {
             key: "tiler::rms-norm-f32@1",
             operation: tiler_ir::semantic::rms_norm_f32_op,
@@ -533,13 +534,7 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         // The softmax is two ordered reductions with per-point arithmetic between
         // and after them, so it consumes the reduction row's dimensions and
         // *not* contraction — see `SOFTMAX` for why the one adjacency it has is
-        // inert.
-        //
-        // The same two elementary dimensions the activation and the
-        // normalization withhold are withheld here, for the same reason and by
-        // the same constant: the softmax contains a division (one by the
-        // denominator) and an elementary function (the exponential), so both are
-        // real obligations rather than absent ones.
+        // inert, and for why its elementary entries are real obligations.
         OperationNumericalCapability {
             key: "tiler::softmax-f32@1",
             operation: tiler_ir::semantic::softmax_f32_op,
@@ -590,46 +585,6 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         },
     ]
 }
-
-/// The dimensions the admitted elementary families can consume and this build withholds.
-///
-/// **Both are real obligations for all three families, and neither is a row.**
-/// `tiler::silu-f32@1` contains a division and an exponential;
-/// `tiler::rms-norm-f32@1` contains a division by the extent and a reciprocal
-/// square root; `tiler::softmax-f32@1` contains a division of one by the
-/// denominator and an exponential. A contract resolving `ReciprocalTransform` or
-/// `ApproximateIntrinsics` differently would admit a different observable result
-/// for any of them — which is exactly the condition [`operation_capabilities`]
-/// says a row exists for.
-///
-/// The softmax's `ReciprocalTransform` obligation runs in the *opposite*
-/// direction from its siblings' and is a real obligation for that reason: the
-/// pinned formula already multiplies by the reciprocal, so what the permission
-/// would license here is the substitution *back* to a division.
-///
-/// They are withheld because listing them enters each into [`is_consumable`]'s
-/// union, and that union decides which dimensions *every* contract places on a
-/// target. Neither is carried by [`tiler_ir::schedule::NumericalRealization`], so
-/// [`unrepresentable_dimension`] would then refuse the public `RelaxedF32` preset
-/// — which authorizes both — for every program, whether or not it contains an
-/// activation. Making them representable means widening the region realization,
-/// which is ADR 0076 item 1's shape and a separate change.
-///
-/// **What holds the line meanwhile.** The obligation is enforced where this build
-/// can enforce it: `crates/tiler-metal/src/emit.rs` writes `precise::exp`,
-/// `precise::rsqrt`, and the `/` operator rather than a fast intrinsic or a
-/// reciprocal multiply, and records
-/// `MetalNumericalRequirement::PreciseFp32Functions`. That is a backend guarantee
-/// over the operations actually emitted, not a profile-level assessment, and the
-/// difference is the whole of what this constant defers.
-#[allow(
-    dead_code,
-    reason = "test-held omission witness until the region realization carries reciprocal-transform or approximate-intrinsic dimensions and their capability rows"
-)]
-pub(crate) const ELEMENTARY_UNCARRIED_DIMENSIONS: [NumericalDimension; 2] = [
-    NumericalDimension::ReciprocalTransform,
-    NumericalDimension::ApproximateIntrinsics,
-];
 
 /// Returns the numerical capabilities declared for one governed operation.
 ///
@@ -1068,8 +1023,8 @@ pub(crate) const fn strict_contract(
 #[cfg(test)]
 mod tests {
     use super::{
-        ELEMENTARY_UNCARRIED_DIMENSIONS, REALIZED_DIMENSIONS, dimension_requirements,
-        is_consumable, operation_capabilities, operation_capability, unrepresentable_dimension,
+        REALIZED_DIMENSIONS, dimension_requirements, is_consumable, operation_capabilities,
+        operation_capability, unrepresentable_dimension,
     };
     use crate::request::StrictF32NumericalContract;
     use crate::target::honourability::{
@@ -1310,7 +1265,7 @@ mod tests {
         let assume_absent = ExceptionalValueAssumption::AssumeAbsent {
             provenance: ValueDomainProvenance::CompilerProven,
         };
-        let cases: [WideningCase; 4] = [
+        let cases: [WideningCase; 6] = [
             (NumericalDimension::Permutation, |contract| {
                 contract.permutation = NumericalPermission::Permitted;
             }),
@@ -1327,6 +1282,13 @@ mod tests {
                     provenance: ValueDomainProvenance::CompilerProven,
                 };
             }),
+            (NumericalDimension::ReciprocalTransform, |contract| {
+                contract.reciprocal_transform = NumericalPermission::Permitted;
+            }),
+            (NumericalDimension::ApproximateIntrinsics, |contract| {
+                contract.approximate_intrinsics =
+                    tiler_ir::schedule::ApproximationEnvelope::BackendElementary;
+            }),
         ];
         assert_eq!(
             DimensionBehaviour::ExceptionalValue(assume_absent).key(),
@@ -1342,19 +1304,6 @@ mod tests {
                 dimension.key()
             );
         }
-    }
-
-    /// A dimension no admitted operation can consume may take any resolution.
-    ///
-    /// This is the other half of the rule, and it is what lets the relaxed preset
-    /// authorize a reciprocal transform and an approximation envelope while this
-    /// build has neither a division nor an elementary function to apply them to.
-    #[test]
-    fn an_unconsumable_dimension_is_not_refused() {
-        let mut contract = StrictF32NumericalContract::governed();
-        contract.reciprocal_transform = NumericalPermission::Permitted;
-        assert!(!is_consumable(NumericalDimension::ReciprocalTransform));
-        assert_eq!(unrepresentable_dimension(&contract), None);
     }
 
     /// The requirement set covers exactly the consumable dimensions.
@@ -1374,29 +1323,44 @@ mod tests {
         }
     }
 
-    /// The withheld elementary dimensions are exactly the ones outside the realization.
+    /// The elementary dimensions are carried and consumed coherently.
     ///
-    /// **This is the check that fires when the deferral stops being honest.** The
-    /// moment `NumericalRealization` grows to carry either dimension, the
-    /// reason for withholding its row disappears and this assertion fails,
-    /// which is the only signal that would otherwise be missing: nothing else
-    /// relates the capability table to the realization's contents.
+    /// **The successor of the deleted omission tripwire, guarding the inverse
+    /// state.** `the_uncarried_elementary_dimensions_are_outside_the_realization`
+    /// fired the moment the realization grew to carry either dimension while
+    /// the capability rows still withheld it; this is the ADR 0076 item
+    /// pairing read in the delivered direction. Carried without consumers
+    /// would be dead identity bytes in every region; consumable without being
+    /// carried would let two contracts share one region identity, which
+    /// [`unrepresentable_dimension`] exists to refuse. Each family is named,
+    /// so a row silently losing an elementary entry fails here rather than
+    /// shrinking the requirement set every contract places on a target.
     #[test]
-    fn the_uncarried_elementary_dimensions_are_outside_the_realization() {
-        for dimension in ELEMENTARY_UNCARRIED_DIMENSIONS {
+    fn the_elementary_dimensions_are_carried_and_consumed_coherently() {
+        for dimension in [
+            NumericalDimension::ReciprocalTransform,
+            NumericalDimension::ApproximateIntrinsics,
+        ] {
             assert!(
-                !REALIZED_DIMENSIONS.contains(&dimension),
-                "{} is now carried by the region realization, so tiler::silu-f32@1, \
-                 tiler::rms-norm-f32@1, and tiler::softmax-f32@1 must gain its capability row \
-                 rather than continue to withhold it",
+                REALIZED_DIMENSIONS.contains(&dimension),
+                "{} must be carried by the region realization",
                 dimension.key()
             );
             assert!(
-                !is_consumable(dimension),
-                "{} is withheld from every row, so no contract may be asked to resolve it against \
-                 a target",
+                is_consumable(dimension),
+                "{} must be consumable by some admitted operation",
                 dimension.key()
             );
+            for operation in [silu_f32_op(), rms_norm_f32_op(), softmax_f32_op()] {
+                let capability =
+                    operation_capability(&operation).expect("the elementary family is admitted");
+                assert!(
+                    capability.can_consume(dimension),
+                    "{} must consume {}",
+                    capability.key(),
+                    dimension.key()
+                );
+            }
         }
     }
 
@@ -1413,6 +1377,8 @@ mod tests {
             NumericalDimension::ResultSubnormals,
             NumericalDimension::Reassociation,
             NumericalDimension::SignedZero,
+            NumericalDimension::ReciprocalTransform,
+            NumericalDimension::ApproximateIntrinsics,
             NumericalDimension::NanAssumptions,
             NumericalDimension::InfinityAssumptions,
         ] {
@@ -1425,7 +1391,7 @@ mod tests {
         ] {
             assert!(!capability.can_consume(dimension), "{}", dimension.key());
         }
-        assert_eq!(capability.consumes().len(), 6);
+        assert_eq!(capability.consumes().len(), 8);
     }
 
     /// The normalization's row adds contraction to the reduction dimensions.
@@ -1446,13 +1412,15 @@ mod tests {
             NumericalDimension::Reassociation,
             NumericalDimension::Permutation,
             NumericalDimension::SignedZero,
+            NumericalDimension::ReciprocalTransform,
+            NumericalDimension::ApproximateIntrinsics,
             NumericalDimension::NanAssumptions,
             NumericalDimension::InfinityAssumptions,
         ] {
             assert!(capability.can_consume(dimension), "{}", dimension.key());
         }
         assert!(!capability.can_consume(NumericalDimension::MaterializationRounding));
-        assert_eq!(capability.consumes().len(), 8);
+        assert_eq!(capability.consumes().len(), 10);
         // The difference from the bare serial sum is exactly the contraction
         // entry, and it is asserted rather than described.
         let serial = operation_capability(
@@ -1479,6 +1447,8 @@ mod tests {
             NumericalDimension::Reassociation,
             NumericalDimension::Permutation,
             NumericalDimension::SignedZero,
+            NumericalDimension::ReciprocalTransform,
+            NumericalDimension::ApproximateIntrinsics,
             NumericalDimension::NanAssumptions,
             NumericalDimension::InfinityAssumptions,
         ] {
@@ -1486,7 +1456,7 @@ mod tests {
         }
         assert!(!capability.can_consume(NumericalDimension::Contraction));
         assert!(!capability.can_consume(NumericalDimension::MaterializationRounding));
-        assert_eq!(capability.consumes().len(), 7);
+        assert_eq!(capability.consumes().len(), 9);
         // The normalization *does* consume contraction, so the absence above is
         // a property of this operation rather than of the dimension.
         let normalization =
@@ -1655,7 +1625,7 @@ mod tests {
             }
         }
         assert_eq!(
-            founded, 50,
+            founded, 56,
             "the consumable (operation, dimension) pairs are the population under test",
         );
         emitted.sort_unstable();
@@ -1674,16 +1644,28 @@ mod tests {
              capability cannot site",
         );
 
-        // The three unfounded dimensions are unfounded for every family, and
-        // none of them is consumable, so no row is ever dropped by the gap.
-        for dimension in [
-            NumericalDimension::ReciprocalTransform,
-            NumericalDimension::ApproximateIntrinsics,
-            NumericalDimension::MaterializationRounding,
-        ] {
+        // The one unfounded dimension is unfounded for every family, and it is
+        // not consumable, so no row is ever dropped by the gap. The two
+        // elementary dimensions moved out of this set when the realization
+        // grew to carry them: each now founds the operation's own arithmetic.
+        for dimension in [NumericalDimension::MaterializationRounding] {
             assert!(!is_consumable(dimension), "{}", dimension.key());
             for capability in operation_capabilities() {
                 assert_eq!(capability.founded_locus(dimension), None);
+            }
+        }
+        for dimension in [
+            NumericalDimension::ReciprocalTransform,
+            NumericalDimension::ApproximateIntrinsics,
+        ] {
+            for capability in operation_capabilities() {
+                assert_eq!(
+                    capability.founded_locus(dimension),
+                    Some(PolicyLocus::Computation),
+                    "{} founds the subordinate arithmetic inside {}",
+                    dimension.key(),
+                    capability.key(),
+                );
             }
         }
     }

@@ -54,7 +54,7 @@
 //!
 //! ```
 //! use tiler_ir::schedule::{
-//!     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId,
+//!     Access, AccessMode, ApproximationEnvelope, BoundsProof, BoundsProofKind, BoundsWitnessId,
 //!     ExceptionalValueAssumption, ExecutionBinding, AccessOrdinal, KernelSchedule, LaunchPlan,
 //!     LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
 //!     OwnershipProofKind, OwnershipWitnessId, PointwiseF32ExpressionBuilder, RegionId,
@@ -115,6 +115,8 @@
 //!     NumericalPermission::Forbidden,
 //!     NumericalPermission::Forbidden,
 //!     NumericalPermission::Forbidden,
+//!     NumericalPermission::Forbidden,
+//!     ApproximationEnvelope::Forbidden,
 //!     ExceptionalValueAssumption::MakeNoAssumption,
 //!     ExceptionalValueAssumption::MakeNoAssumption,
 //! ))?;

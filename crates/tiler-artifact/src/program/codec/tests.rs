@@ -519,18 +519,21 @@ fn an_encoded_envelope_round_trips_to_an_equal_model() {
         artifact
             .canonical_identity()
             .as_bytes()
-            .starts_with(b"tiler.artifact-program.v18\0")
+            .starts_with(b"tiler.artifact-program.v19\0")
     );
 }
 
 /// The conditional carrier leaves every previously encodable resource byte
 /// untouched when no subgroup realization is required.
 ///
-/// The literal vector is the pre-carrier `v18` spelling of this fixture's
-/// resource row. It is intentionally not assembled with tag helpers: doing so
-/// would prove only that today's encoder agrees with itself, while this pin
-/// proves that the legacy bytes stayed exact. Existing standard-path artifact,
-/// cache-subject, and fixed-content pins cover the enclosing identities.
+/// The literal vector is this fixture's `v19` resource row: the pre-carrier
+/// `v18` spelling plus the two elementary-dimension tags between the
+/// signed-zero and NaN-assumption bytes, which is the exact insertion the
+/// `v19` step declares. It is intentionally not assembled with tag helpers:
+/// doing so would prove only that today's encoder agrees with itself, while
+/// this pin proves the layout is the declared one. Existing standard-path
+/// artifact, cache-subject, and fixed-content pins cover the enclosing
+/// identities.
 #[test]
 fn an_absent_subgroup_preserves_the_legacy_resource_bytes_exactly() {
     let envelope = envelope_of(&default_artifact());
@@ -543,7 +546,8 @@ fn an_absent_subgroup_preserves_the_legacy_resource_bytes_exactly() {
         bytes,
         [
             0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x01, 0x01, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+            0x00, 0x00, 0x01, 0x01, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+            0x01,
         ],
     );
 
@@ -630,9 +634,9 @@ fn every_present_subgroup_subject_round_trips_without_authority_loss() {
         )
         .as_bytes(),
         &[
-            0x6d, 0xaf, 0xe9, 0x76, 0x30, 0xb5, 0x5a, 0x92, 0x84, 0xc4, 0xb9, 0x9b, 0x7e, 0x24,
-            0x4d, 0xb2, 0xb7, 0x70, 0xbf, 0xca, 0xe7, 0xc2, 0x74, 0xd8, 0x3f, 0x17, 0xa6, 0xe0,
-            0xc2, 0xc8, 0x08, 0xbc,
+            0x66, 0x5b, 0x07, 0xe6, 0xb6, 0x4c, 0x32, 0xd5, 0x5c, 0x8d, 0x7a, 0xc2, 0x9a, 0x42,
+            0x4f, 0x13, 0xa0, 0x09, 0x91, 0xd6, 0x49, 0xe2, 0x46, 0xdd, 0x30, 0x60, 0xce, 0xe9,
+            0x5b, 0xe5, 0x81, 0x7e,
         ],
         "the first present-subgroup identity has an exact digest pin",
     );
@@ -1187,7 +1191,7 @@ fn a_legacy_flat_capability_row_is_not_reinterpreted() {
             read_providers(&mut Cursor::new(&bytes)),
             Err(ArtifactCodecError::Truncated { .. })
         ),
-        "schema 18 requires the structured fields; no legacy parser exists",
+        "schema 19 requires the structured fields; no legacy parser exists",
     );
 }
 
@@ -1221,7 +1225,7 @@ fn the_framing_header_is_the_fixed_width_it_declares() {
         &bytes[HEADER_BYTES..HEADER_BYTES + MANIFEST_DOMAIN.len()],
         MANIFEST_DOMAIN,
     );
-    assert_eq!(MANIFEST_SCHEMA, (18, 0));
+    assert_eq!(MANIFEST_SCHEMA, (19, 0));
 }
 
 /// The canonicity backstop compares a derivation against bytes rather than

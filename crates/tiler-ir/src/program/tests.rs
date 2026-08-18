@@ -59,6 +59,8 @@ fn strict() -> NumericalRealization {
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ApproximationEnvelope::Forbidden,
         ExceptionalValueAssumption::MakeNoAssumption,
         ExceptionalValueAssumption::MakeNoAssumption,
     )
@@ -3940,6 +3942,8 @@ fn bf16_numerical() -> NumericalRealization {
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ApproximationEnvelope::Forbidden,
         ExceptionalValueAssumption::MakeNoAssumption,
         ExceptionalValueAssumption::MakeNoAssumption,
     )

@@ -6,12 +6,12 @@
 
 use tiler_ir::kernel::{LoopBound, OperationView, VerifiedBufferId, lower_scheduled_region};
 use tiler_ir::schedule::{
-    Access, AccessMode, AccessOrdinal, BoundsProof, BoundsProofKind, BoundsWitnessId,
-    ContractionAxisSource, ContributorOrder, ExceptionalValueAssumption, ExecutionBinding,
-    KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission, NumericalRealization,
-    OwnershipProof, OwnershipProofKind, OwnershipWitnessId, ReductionTopology, RegionId,
-    ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
-    VerifiedScheduledRegion, element_count,
+    Access, AccessMode, AccessOrdinal, ApproximationEnvelope, BoundsProof, BoundsProofKind,
+    BoundsWitnessId, ContractionAxisSource, ContributorOrder, ExceptionalValueAssumption,
+    ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
+    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
+    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
+    TensorRole, VerifiedScheduledRegion, element_count,
 };
 use tiler_ir::shape::{Axis, Shape};
 
@@ -27,6 +27,8 @@ fn numerical() -> NumericalRealization {
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ApproximationEnvelope::Forbidden,
         ExceptionalValueAssumption::MakeNoAssumption,
         ExceptionalValueAssumption::MakeNoAssumption,
     )

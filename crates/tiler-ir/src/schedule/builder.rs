@@ -3139,8 +3139,8 @@ mod tests {
     };
     use crate::schedule::model::{ContributorOrder, ContributorPartition, LaunchPlan};
     use crate::schedule::numerics::{
-        ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
-        SubnormalMode, ValueDomainProvenance,
+        ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
+        NumericalPermission, SubnormalMode, ValueDomainProvenance,
     };
     use crate::schedule::synchronization::{
         FencedSpaces, MemoryOrdering, SynchronizationKind, SynchronizationPlacement,
@@ -3156,7 +3156,12 @@ mod tests {
     /// The pointwise program is encoded as a typed, framed topological graph,
     /// so its exact operand order, constants, root, and physical `f32` family are all pinned.
     ///
-    /// Rebaselined deliberately at the `tiler.schedule.v6` step, which removed
+    /// Rebaselined deliberately at the `tiler.schedule.v7` step, which gave the
+    /// numerical record its two elementary dimensions — the reciprocal-transform
+    /// permission and the approximate-intrinsic envelope — between the
+    /// signed-zero permission and the exceptional-value assumptions.
+    ///
+    /// The `v6` rebaseline recorded the fieldless-input-role step, which removed
     /// the declared-input ordinal payload from fieldless input roles.
     ///
     /// Earlier rebaselines recorded the `tiler.schedule.v4` step, which gave
@@ -3166,31 +3171,32 @@ mod tests {
     /// input leaf's framed length grew from nine to twenty-one; and before that,
     /// the old `ScalarProgram::MultiplyThenAdd` tag (`0x21`) becoming the exact
     /// `ScalarProgram::PointwiseF32` expression encoding (`0x24`).
-    const STRICT_F32_REGION_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e763600000000000000000200000000000000020000000000000003000000000000000201000101000000000002000201000000010100000000000000000000000200000000010011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
+    const STRICT_F32_REGION_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e763700000000000000000200000000000000020000000000000003000000000000000201000101000000000002000201000000010100000000000000000000000200000000010011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc00000010101010101010101010100000000000000060000000101000000003100000000000000060000000101";
     /// Canonical identity of the one-committer `[2, 6] -> [2]` cooperative fixture.
     ///
     /// Captured against the bytes this tree encodes for that fixture so a
     /// later payload move fails this pin rather than only the domain-separator
     /// check. The new topology and binding tags must not appear here.
-    const ONE_COMMITTER_COOPERATIVE_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e763600000000000000000200000000000000020000000000000003000000000000000202000102000000000000000200000000000000020000000000000006000000000000000100000000000000020000000000000001000000010100000000000300020100000001010000000000000000000000020000000002001200000000000000020000000000000002000000000000000600000000000000010000000000000002000000000000000100000001010000000103001100000000000000020000000003000000000000000222000000000000000100000001017fc0000000000000000000000000001574696c65722e746573742e7374726963742d6633327fc00000010101020101010101000000000000000600000003010000000035000000000000000300000000000000020100000000000000010000000000000003000000000000000100000000000000010000000001000000000000000300000000000000010000000000000002000000000000000000000000000000000000000300000000000000010000000000000000000000010000000000000001000000000000000000000000000000010000000000000000000000010000000000000000000000000000000300000000000000000000000000000001000000000000000000000001000000000000000000000000000000000000000000000003000000000000000100000000010202010002010000000000000001000000000000000000000000000000030100000000000000000000000000000001000000000000000100000001010301000100000000000000060000000301";
+    const ONE_COMMITTER_COOPERATIVE_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e763700000000000000000200000000000000020000000000000003000000000000000202000102000000000000000200000000000000020000000000000006000000000000000100000000000000020000000000000001000000010100000000000300020100000001010000000000000000000000020000000002001200000000000000020000000000000002000000000000000600000000000000010000000000000002000000000000000100000001010000000103001100000000000000020000000003000000000000000222000000000000000100000001017fc0000000000000000000000000001574696c65722e746573742e7374726963742d6633327fc000000101010201010101010101000000000000000600000003010000000035000000000000000300000000000000020100000000000000010000000000000003000000000000000100000000000000010000000001000000000000000300000000000000010000000000000002000000000000000000000000000000000000000300000000000000010000000000000000000000010000000000000001000000000000000000000000000000010000000000000000000000010000000000000000000000000000000300000000000000000000000000000001000000000000000000000001000000000000000000000000000000000000000000000003000000000000000100000000010202010002010000000000000001000000000000000000000000000000030100000000000000000000000000000001000000000000000100000001010301000100000000000000060000000301";
 
-    /// The same region's identity under `tiler.schedule.v5`.
+    /// The same region's identity under `tiler.schedule.v6`.
     ///
-    /// Retained rather than deleted, because it is what makes the `v5` step's
-    /// blast radius a measured fact instead of an assurance: everything after
-    /// the separator is byte-identical, so no region that stages nothing moved
-    /// for any reason other than the version.
+    /// Retained rather than deleted, because it is what makes the `v7` step's
+    /// blast radius a measured fact instead of an assurance: the separator
+    /// moves *and* the payload moves by exactly the two inserted
+    /// elementary-dimension bytes, so the retained comparison shows the step
+    /// changed precisely what its grammar argument claims and nothing else.
     ///
-    /// **Rebaselined from the `v3` value at the `v5` step, and the rebaseline is
+    /// **Rebaselined from the `v5` value at the `v7` step, and the rebaseline is
     /// the point rather than housekeeping.** Carried forward unchanged this
-    /// constant would have made the retained comparison a `v5`-against-`v3` one
+    /// constant would have made the retained comparison a `v7`-against-`v5` one
     /// — a claim about two separator steps combined, which is strictly weaker
     /// than a claim about either: a payload change at one step exactly undone at
-    /// the next satisfies it. Moving it to the `v4` value keeps the comparison
-    /// proving exactly one step. That discards the `v3` datum deliberately; its
-    /// whole content was the `v3` to `v4` claim, which the commit that made it
+    /// the next satisfies it. Moving it to the `v6` value keeps the comparison
+    /// proving exactly one step. That discards the `v5` datum deliberately; its
+    /// whole content was the earlier step's claim, which the commit that made it
     /// already carries.
-    const STRICT_F32_REGION_IDENTITY_HEX_V5: &str = "74696c65722e7363686564756c652e7635000000000000000002000000000000000200000000000000030000000000000002010000000000010100000000000200020100000001010000000000000000000000020000000001000000000011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
+    const STRICT_F32_REGION_IDENTITY_HEX_V6: &str = "74696c65722e7363686564756c652e763600000000000000000200000000000000020000000000000003000000000000000201000101000000000002000201000000010100000000000000000000000200000000010011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
 
     fn strict_numerical() -> NumericalRealization {
         NumericalRealization::new(
@@ -3202,6 +3208,8 @@ mod tests {
             NumericalPermission::Forbidden,
             NumericalPermission::Forbidden,
             NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            ApproximationEnvelope::Forbidden,
             ExceptionalValueAssumption::MakeNoAssumption,
             ExceptionalValueAssumption::MakeNoAssumption,
         )
@@ -3344,6 +3352,8 @@ mod tests {
             NumericalPermission::Permitted,
             NumericalPermission::Forbidden,
             NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            ApproximationEnvelope::Forbidden,
             ExceptionalValueAssumption::MakeNoAssumption,
             ExceptionalValueAssumption::MakeNoAssumption,
         ));
@@ -3829,6 +3839,8 @@ mod tests {
             NumericalPermission::Forbidden,
             NumericalPermission::Forbidden,
             NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            ApproximationEnvelope::Forbidden,
             ExceptionalValueAssumption::MakeNoAssumption,
             ExceptionalValueAssumption::MakeNoAssumption,
         );
@@ -8759,11 +8771,16 @@ mod tests {
         );
     }
 
-    /// A region that stages nothing moved for the version and nothing else.
+    /// The `v7` step moves the domain and exactly the elementary payload bytes.
     ///
-    /// The `v6` step moves both the domain and the fieldless input-role payload.
+    /// Compared against the retained `v6` identity structurally rather than by
+    /// bare inequality: the payload delta must be precisely the two inserted
+    /// one-byte rows — the reciprocal-transform permission and the
+    /// approximate-intrinsic envelope — between the signed-zero permission and
+    /// the NaN assumption, so a step that moved anything else fails here
+    /// instead of hiding inside "the bytes differ".
     #[test]
-    fn the_fieldless_input_role_step_moves_domain_and_payload() {
+    fn the_elementary_dimension_step_moves_domain_and_payload() {
         // Eighteen bytes of `tiler.schedule.vN\0`, so thirty-six hex digits.
         const SEPARATOR: usize = 36;
 
@@ -8777,11 +8794,25 @@ mod tests {
         assert_eq!(hex, STRICT_F32_REGION_IDENTITY_HEX);
         assert_ne!(
             STRICT_F32_REGION_IDENTITY_HEX[..SEPARATOR],
-            STRICT_F32_REGION_IDENTITY_HEX_V5[..SEPARATOR]
+            STRICT_F32_REGION_IDENTITY_HEX_V6[..SEPARATOR]
         );
-        assert_ne!(
-            STRICT_F32_REGION_IDENTITY_HEX[SEPARATOR..],
-            STRICT_F32_REGION_IDENTITY_HEX_V5[SEPARATOR..]
+        // The two spellings differ by exactly four hex digits — the two
+        // inserted permission/envelope tag bytes — at one position inside the
+        // numerical record. Locate the insertion by the longest common prefix
+        // and check the suffixes re-align after it.
+        let new = &STRICT_F32_REGION_IDENTITY_HEX[SEPARATOR..];
+        let old = &STRICT_F32_REGION_IDENTITY_HEX_V6[SEPARATOR..];
+        assert_eq!(new.len(), old.len() + 4, "two one-byte rows were inserted");
+        let prefix = new
+            .as_bytes()
+            .iter()
+            .zip(old.as_bytes())
+            .take_while(|(new, old)| new == old)
+            .count();
+        assert_eq!(
+            &new[prefix + 4..],
+            &old[prefix..],
+            "every byte after the two inserted rows is carried unchanged"
         );
     }
 
@@ -9503,7 +9534,8 @@ mod tests {
         );
     }
 
-    /// The existing one-committer fixture is re-pinned under fieldless roles.
+    /// The existing one-committer fixture is re-pinned under the elementary
+    /// numerical dimensions.
     #[test]
     fn existing_one_committer_schedule_encodings_keep_their_bytes() {
         let verified = cooperative_builder(cooperative_tile_fixture())
@@ -9511,16 +9543,17 @@ mod tests {
             .expect("the one-committer fixture still verifies");
         let bytes = verified.canonical_identity().as_bytes();
         assert!(
-            bytes.starts_with(b"tiler.schedule.v6\0"),
-            "the schedule domain must carry the fieldless-role step"
+            bytes.starts_with(b"tiler.schedule.v7\0"),
+            "the schedule domain must carry the elementary-dimension step"
         );
         assert!(
             bytes.contains(&0x35),
             "the one-committer topology tag must still appear"
         );
         assert!(
-            !bytes.contains(&0x37),
-            "the new topology tag must not appear in an old region"
+            !bytes[18..].contains(&0x37),
+            "the new topology tag must not appear in an old region's payload; \
+             the separator is excluded because `v7` spells the byte 0x37"
         );
         // Binding tag 0x01 sits at a known offset after the numerical payload;
         // the new 0x02 binding is an appended alternative, so an old region
