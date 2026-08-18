@@ -56,6 +56,7 @@ use tiler_artifact::program::{
 };
 
 use super::LoadRejection;
+use super::determinism::PlanDeterminismSubject;
 use std::fmt;
 
 /// The evaluated launch geometry of one routed entry.
@@ -319,6 +320,10 @@ pub(super) struct RouteCandidate<'a> {
     pub(super) kernel_program: &'a [u8],
     pub(super) entries: Vec<RoutedEntry<'a>>,
     pub(super) shared: Vec<SharedAllocation>,
+    /// The ADR 0013 stability subject, `Some` exactly for an attested claimed
+    /// route. Minted once at candidate time and carried unchanged through the
+    /// preflight and the one-way commit.
+    pub(super) subject: Option<PlanDeterminismSubject<'a>>,
 }
 
 /// One exact prepared-entry property the host must acquire before routing can commit.
@@ -756,6 +761,7 @@ pub struct Preflight<'a> {
     pub(super) kernel_program: &'a [u8],
     pub(super) entries: Vec<RoutedEntry<'a>>,
     pub(super) shared: Vec<SharedAllocation>,
+    pub(super) subject: Option<PlanDeterminismSubject<'a>>,
 }
 
 impl<'a> Preflight<'a> {
@@ -765,13 +771,26 @@ impl<'a> Preflight<'a> {
             kernel_program,
             entries,
             shared,
+            subject,
         } = candidate;
         Self {
             identity,
             kernel_program,
             entries,
             shared,
+            subject,
         }
+    }
+
+    /// Returns the ADR 0013 plan-determinism stability subject of this route.
+    ///
+    /// `Some` exactly for an attested claimed route — the adapter-bound
+    /// positive path — after every identity and payload obligation was
+    /// discharged. `None` for an `Unclaimed` route, which is a state rather
+    /// than a failure: such a route promises nothing and remains routable.
+    #[must_use]
+    pub const fn plan_determinism_subject(&self) -> Option<&PlanDeterminismSubject<'a>> {
+        self.subject.as_ref()
     }
     /// Returns the identity of the artifact this route would execute.
     #[must_use]
@@ -918,12 +937,14 @@ impl<'a> Preflight<'a> {
             kernel_program,
             entries,
             shared,
+            subject,
         } = self;
         RoutedDispatch {
             identity,
             kernel_program,
             entries,
             shared,
+            subject,
         }
     }
 }
@@ -943,6 +964,7 @@ pub struct RoutedDispatch<'a> {
     kernel_program: &'a [u8],
     entries: Vec<RoutedEntry<'a>>,
     shared: Vec<SharedAllocation>,
+    subject: Option<PlanDeterminismSubject<'a>>,
 }
 
 impl<'a> RoutedDispatch<'a> {
@@ -979,6 +1001,17 @@ impl<'a> RoutedDispatch<'a> {
     #[must_use]
     pub fn shared_allocations(&self) -> &[SharedAllocation] {
         &self.shared
+    }
+
+    /// Returns the ADR 0013 stability subject, carried unchanged across the
+    /// commit.
+    ///
+    /// The same value [`Preflight::plan_determinism_subject`] exposed: nothing
+    /// after the commit may rewrite, re-select, or first fail the subject, so a
+    /// host records beside its result exactly what was promised before it.
+    #[must_use]
+    pub const fn plan_determinism_subject(&self) -> Option<&PlanDeterminismSubject<'a>> {
+        self.subject.as_ref()
     }
 
     /// Returns how each committed object reaches an executable state.

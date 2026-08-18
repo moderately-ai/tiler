@@ -1843,6 +1843,46 @@ pub(super) fn record_alternative_explain(
         alternative.program.stage_count(),
         kernel,
     )?;
+    // The ADR 0013 IR witness verdict, reported through the existing
+    // detail-event shape so the explain schema and renderer stay put. The
+    // verdict is derived here from the verified program itself — never a
+    // producer claim — and a refusal is a disproved check rather than a
+    // compilation failure: the plan compiles, and its artifact simply cannot
+    // claim plan determinism. Deliberately no envelope digest and no delivery
+    // position: neither is known before publication, and printing a
+    // not-yet-known value would be a fabricated fact.
+    let key = format!("{}/program", alternative.stable_id);
+    let determinism = explain_step(
+        (|| -> Result<_, CompileError> {
+            let subject = explain.subject(SubjectKind::KernelProgram, &key)?;
+            let assessment =
+                match tiler_ir::kernel::verify_plan_determinism(alternative.program.core()) {
+                    Ok(_) => PredicateAssessment::proven(
+                        "program.plan-determinism-witness",
+                        EvidenceBasis::CheckedInvariant,
+                    )?,
+                    Err(refusal) => PredicateAssessment::disproved(
+                        "program.plan-determinism-witness",
+                        ReasonCode::new(plan_determinism_reason(&refusal))?,
+                        EvidenceBasis::CheckedInvariant,
+                    )?,
+                };
+            Ok(explain.push_detail(
+                RuleRef::builtin("program.plan-determinism.v1")?,
+                vec![subject],
+                ExplainEvent::Check {
+                    stage: ExplainStage::ProgramVerification,
+                    assessment,
+                    rejection: RejectionClass::IntrinsicInvalid,
+                },
+                vec![program],
+            )?)
+        })(),
+        ExplainStage::ProgramVerification,
+        SubjectKind::KernelProgram,
+        &key,
+        record_cause(program),
+    )?;
     let key = format!("{}/artifact", alternative.stable_id);
     record_count_step(
         explain,
@@ -1853,8 +1893,32 @@ pub(super) fn record_alternative_explain(
         "artifact.plan-verified",
         "provider-count",
         alternative.artifact_plan.lowering_providers().len(),
-        program,
+        determinism,
     )
+}
+
+/// Returns the governed reason code of one plan-determinism refusal.
+///
+/// A wildcard is required across the crate boundary — the refusal vocabulary
+/// is `#[non_exhaustive]` — and classifies a later-admitted class as
+/// unclassified rather than inventing a name for it.
+fn plan_determinism_reason(refusal: &tiler_ir::kernel::PlanDeterminismRefusal) -> &'static str {
+    use tiler_ir::kernel::PlanDeterminismRefusal;
+    match refusal {
+        PlanDeterminismRefusal::UnfixedContributorArrival { .. } => {
+            "plan-determinism.unfixed-contributor-arrival"
+        }
+        PlanDeterminismRefusal::OutputAffectingAtomic { .. } => {
+            "plan-determinism.output-affecting-atomic"
+        }
+        PlanDeterminismRefusal::RuntimeDependentSelection { .. } => {
+            "plan-determinism.runtime-dependent-selection"
+        }
+        PlanDeterminismRefusal::UnverifiedOpaqueStage { .. } => {
+            "plan-determinism.unverified-opaque-stage"
+        }
+        _ => "plan-determinism.unclassified",
+    }
 }
 
 pub(super) fn record_cost_and_selection(

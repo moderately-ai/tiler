@@ -97,7 +97,9 @@ pub use payload_cache::{
     AcceptedArtifact, CompiledPayloads, DeclaredPayload, DeliveredPayloadCacheError,
     DeliveredPayloadProtocolError, accept_or_publish_delivered_payload_artifact,
 };
-pub use plan_artifact::{BackendEntryDeclaration, PlanArtifactError, assemble_plan_artifact};
+pub use plan_artifact::{
+    BackendEntryDeclaration, PlanArtifactError, PlanDeterminismDeclaration, assemble_plan_artifact,
+};
 // The verdict half of [`BoundMetalCompileDeclaration::dtype_dispatchability_rows`],
 // re-exported rather than restated. A consumer of that accessor must match the
 // verdict to state anything about it, and the two that do — the frontend

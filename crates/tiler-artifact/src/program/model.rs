@@ -43,6 +43,7 @@ use super::codec::{
     ArtifactEnvelope, DecodedExtentOperand, EntryRow, NumericalFacts, PayloadContent, VariantRow,
     canonical_entry_positions, position as node_at,
 };
+use super::environment::{PlanDeterminismScope, TargetEnvironmentDeclaration};
 use super::error::{ArtifactDiagnostic, ArtifactEntityKind, RecordedArtifactIdentityError};
 use super::expr::{
     AbiBinaryOp, AbiEvaluationError, AbiFacts, AbiRoot, AbiType, AbiUnaryOp, AbiValue, ExprNode,
@@ -277,11 +278,27 @@ use super::requirement::{RouteRequirement, push_requirements};
 /// miss for the other, and the domain step is what makes the old subject
 /// incomparable with the complete one rather than merely unlikely to collide.
 ///
+/// # Why this is a `v20` step
+///
+/// The ADR 0013 stability-subject carrier
+/// (`decide-the-adr-0013-plan-determinism-stability-subject`, accepted
+/// 2026-08-18) lands two identity-bearing records. Each payload descriptor
+/// gains an optional provider-versioned target-environment declaration, folded
+/// inside the payload's canonical key, and each variant gains one
+/// plan-determinism scope cell per delivery position, folded inside the
+/// per-variant record. Both land *inside* records the rest of the identity
+/// trails, so a `v19` encoding of one artifact could in principle equal a
+/// `v20` encoding of another; and the subjects genuinely differ — a `v19`
+/// identity described an artifact that could not state a determinism claim or
+/// a declared execution-environment class at all, so an artifact claiming
+/// `Plan` and the identical artifact claiming nothing are two artifacts, and a
+/// cache holding a `v19` identity must miss rather than match.
+///
 /// Crate-visible because [`RecordedArtifactProgramIdentity::from_bytes`] admits
 /// bytes by `starts_with` on this separator, so a governed domain that prefixed
 /// it would let another subject's bytes be accepted as an artifact identity.
 /// `crate::domains` enumerates it and checks that no such domain exists.
-pub(crate) const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v19\0";
+pub(crate) const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v20\0";
 
 /// [`ARTIFACT_DOMAIN`] without its terminator, for rendering in a diagnostic.
 ///
@@ -439,7 +456,14 @@ impl ArtifactSchema {
     pub const GOVERNED: Self = Self {
         program: SchemaVersion::new(1, 0),
         abi_expression: SchemaVersion::new(1, 0),
-        guard_and_routing: SchemaVersion::new(1, 0),
+        // `2.0` for the ADR 0013 plan-determinism scope cells. The guard and
+        // routing component moves independently of the manifest because its
+        // governed *vocabulary* changed: a route is no longer chosen by guard
+        // and stable priority alone — a claimed `Plan` cell filters on the
+        // attested target environment before the guard — so a reader that
+        // understands `1.0` cannot decide a `2.0` route even when it can frame
+        // the manifest around it.
+        guard_and_routing: SchemaVersion::new(2, 0),
         // `3.0` for the live-device route-requirement family. The target
         // requirement component moves independently of the manifest because its
         // governed *vocabulary* changed: a requirement is no longer only a
@@ -701,6 +725,16 @@ pub struct BackendPayloadDescriptor {
     pub compatibility: TargetProfileRef,
     /// How the payload reaches an executable state.
     pub execution_policy: ArtifactExecutionPolicy,
+    /// The provider-versioned declared target environment, if the producer
+    /// stated one.
+    ///
+    /// A **declaration**, never an attestation: it certifies nothing on its
+    /// own, and a payload without one simply cannot support a
+    /// [`PlanDeterminismScope::Plan`] cell. Identity-bearing — two payloads
+    /// differing only in their declared environment class are two payloads.
+    ///
+    /// [`PlanDeterminismScope::Plan`]: super::environment::PlanDeterminismScope::Plan
+    pub environment: Option<TargetEnvironmentDeclaration>,
 }
 
 impl BackendPayloadDescriptor {
@@ -722,13 +756,22 @@ impl BackendPayloadDescriptor {
             digest,
             compatibility,
             execution_policy,
+            environment,
         } = self;
         let TargetProfileRef {
             key: compatibility_key,
             descriptor: compatibility_descriptor,
         } = compatibility;
-        // A `SchemaVersion` encodes as two `u16`s; the trailing byte is the
-        // execution-policy tag.
+        // A `SchemaVersion` encodes as two `u16`s; after the execution-policy
+        // tag, the environment declaration writes a presence byte and, when
+        // present, its provider, exact schema version, and framed descriptor.
+        let environment_bytes = environment.as_ref().map_or(1, |declaration| {
+            1 + framed(declaration.provider().namespace().len())
+                + framed(declaration.provider().name().len())
+                + size_of::<u32>()
+                + 2 * size_of::<u16>()
+                + framed(declaration.descriptor().as_bytes().len())
+        });
         let exact = PAYLOAD_KEY_DOMAIN.len()
             + framed(backend.as_str().len())
             + framed(representation.as_str().len())
@@ -736,7 +779,8 @@ impl BackendPayloadDescriptor {
             + framed(digest.as_bytes().len())
             + framed(compatibility_key.as_str().len())
             + framed(compatibility_descriptor.as_bytes().len())
-            + 1;
+            + 1
+            + environment_bytes;
         let mut bytes = Vec::with_capacity(exact);
         bytes.extend_from_slice(PAYLOAD_KEY_DOMAIN);
         push_slice(&mut bytes, backend.as_str().as_bytes());
@@ -746,6 +790,19 @@ impl BackendPayloadDescriptor {
         push_slice(&mut bytes, compatibility_key.as_str().as_bytes());
         push_slice(&mut bytes, compatibility_descriptor.as_bytes());
         bytes.push(execution_policy.tag());
+        // The absence is folded too: a payload that later gains a declaration
+        // must not share a canonical key with the one that had none.
+        match environment {
+            None => bytes.push(0x00),
+            Some(declaration) => {
+                bytes.push(0x01);
+                push_slice(&mut bytes, declaration.provider().namespace().as_bytes());
+                push_slice(&mut bytes, declaration.provider().name().as_bytes());
+                bytes.extend_from_slice(&declaration.provider().revision().to_be_bytes());
+                declaration.descriptor_schema().encode(&mut bytes);
+                push_slice(&mut bytes, declaration.descriptor().as_bytes());
+            }
+        }
         debug_assert_eq!(bytes.len(), exact, "payload key capacity is exact");
         bytes
     }
@@ -932,6 +989,13 @@ pub(super) struct VariantData {
     /// projected, exactly as the deferred set is.
     pub(super) route_requirements: Vec<RouteRequirement>,
     pub(super) entries: Vec<EntryData>,
+    /// One plan-determinism scope cell per delivery position.
+    ///
+    /// Every cell starts [`PlanDeterminismScope::Unclaimed`]; only the
+    /// builder's proof-bound `publish_plan` flips one to
+    /// [`PlanDeterminismScope::Plan`]. Identity-bearing and length-locked to
+    /// the artifact's delivery positions.
+    pub(super) scope: Vec<PlanDeterminismScope>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1144,6 +1208,102 @@ impl RecordedArtifactProgramIdentity {
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+}
+
+/// The governed digest over one complete encoded artifact envelope.
+///
+/// The **object-bearing** identity ADR 0013's plan-deterministic scope holds
+/// fixed: unlike [`CanonicalArtifactProgramIdentity`], which is a
+/// pre-compilation subject excluding emitted object bytes, this digest covers
+/// the exact encoded envelope — executable sections included — so two
+/// relinkings of one artifact are two stability subjects even where they are
+/// one cache subject.
+///
+/// Privately constructed by successful encode or decode: the only mints are
+/// this crate's own decoder (after complete validation) and its sidecar
+/// association, so holding one is evidence the bytes it names were a complete,
+/// validated envelope. A consumer that merely *recorded* a digest states it as
+/// a [`RecordedArtifactEnvelopeDigest`] instead.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ArtifactEnvelopeDigest([u8; super::codec::DIGEST_BYTES]);
+
+impl ArtifactEnvelopeDigest {
+    /// Derives the digest over one complete encoded envelope's exact bytes.
+    ///
+    /// Crate-private: only a successful encode or decode may reach it.
+    pub(crate) fn derive(envelope_bytes: &[u8]) -> Self {
+        Self(super::codec::envelope_digest(envelope_bytes))
+    }
+
+    /// Returns the exact digest bytes.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; super::codec::DIGEST_BYTES] {
+        &self.0
+    }
+}
+
+/// An envelope digest a consumer *recorded*, stated as the one it expects.
+///
+/// The same assertion-versus-evidence split
+/// [`RecordedArtifactProgramIdentity`] documents, applied to the envelope
+/// digest: a derived [`ArtifactEnvelopeDigest`] was computed from bytes this
+/// crate validated, and a recorded one is what somebody wrote down. Proof
+/// sidecars store this assertion type rather than raw bytes, so a reader can
+/// tell which warrant a value carries.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct RecordedArtifactEnvelopeDigest([u8; super::codec::DIGEST_BYTES]);
+
+impl RecordedArtifactEnvelopeDigest {
+    /// Wraps a fixed-width wire read whose width the reader already proved.
+    ///
+    /// Crate-private: an out-of-crate consumer states bytes through
+    /// [`Self::from_bytes`], which checks the width it cannot otherwise prove.
+    pub(crate) const fn from_wire(bytes: [u8; super::codec::DIGEST_BYTES]) -> Self {
+        Self(bytes)
+    }
+
+    /// States recorded bytes as the envelope digest a consumer expects.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RecordedArtifactIdentityError::Empty`] for empty bytes or
+    /// [`RecordedArtifactIdentityError::WrongWidth`] for any other length than
+    /// exactly [`super::DIGEST_BYTES`]: a digest has one width, so a wrong
+    /// width is a recording of something else.
+    pub fn from_bytes(value: impl AsRef<[u8]>) -> Result<Self, RecordedArtifactIdentityError> {
+        let value = value.as_ref();
+        if value.is_empty() {
+            return Err(RecordedArtifactIdentityError::Empty);
+        }
+        let Ok(exact) = <[u8; super::codec::DIGEST_BYTES]>::try_from(value) else {
+            return Err(RecordedArtifactIdentityError::WrongWidth {
+                bytes: value.len(),
+                expected: super::codec::DIGEST_BYTES,
+            });
+        };
+        Ok(Self(exact))
+    }
+
+    /// Returns the recorded digest bytes.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; super::codec::DIGEST_BYTES] {
+        &self.0
+    }
+
+    /// Compares this assertion against a derived envelope digest.
+    #[must_use]
+    pub fn matches(&self, derived: &ArtifactEnvelopeDigest) -> bool {
+        self.0 == derived.0
+    }
+}
+
+impl From<ArtifactEnvelopeDigest> for RecordedArtifactEnvelopeDigest {
+    /// Records a derived digest. The direction is deliberately one-way: a
+    /// derivation may be written down, and a recording can never become a
+    /// derivation.
+    fn from(derived: ArtifactEnvelopeDigest) -> Self {
+        Self(derived.0)
     }
 }
 
@@ -1472,6 +1632,16 @@ impl<'a> VariantRef<'a> {
     #[must_use]
     pub fn route_requirements(self) -> &'a [RouteRequirement] {
         &self.data().route_requirements
+    }
+
+    /// Returns the plan-determinism scope claimed at one delivery position.
+    ///
+    /// `None` for a position past the artifact's delivery positions. Every cell
+    /// is [`PlanDeterminismScope::Unclaimed`] unless the builder's proof-bound
+    /// `publish_plan` established the ADR 0013 claim there.
+    #[must_use]
+    pub fn plan_determinism_scope(self, delivery: usize) -> Option<PlanDeterminismScope> {
+        self.data().scope.get(delivery).copied()
     }
 
     /// Returns the deferred feasibility predicates of this variant.
@@ -2978,6 +3148,14 @@ fn push_variant(
         bytes.extend_from_slice(&predecessor.to_be_bytes());
         bytes.extend_from_slice(&successor.to_be_bytes());
         bytes.push(reason.tag());
+    }
+    // One plan-determinism scope cell per delivery position, folded in delivery
+    // order: position `p` is what a consumer's build target resolves to, so the
+    // order is meaning and is written as stated. The count is folded so a
+    // variant that gains a position cannot share bytes with one that had fewer.
+    push_len(bytes, variant.scope.len());
+    for cell in &variant.scope {
+        bytes.push(cell.tag());
     }
     Ok(())
 }

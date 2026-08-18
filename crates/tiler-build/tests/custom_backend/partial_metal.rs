@@ -25,8 +25,8 @@ use tiler_artifact::program::{
     BindingKind, TargetPropertyKey, VerifiedArtifactProgram,
 };
 use tiler_build::{
-    BackendEntryDeclaration, BoundMetalCompileDeclaration, assemble_plan_artifact,
-    metal_compile_request, prepare_metal_payload,
+    BackendEntryDeclaration, BoundMetalCompileDeclaration, PlanDeterminismDeclaration,
+    assemble_plan_artifact, metal_compile_request, prepare_metal_payload,
 };
 use tiler_compiler::session::{Compilation, CompileRequest, NumericalContract, compile};
 use tiler_compiler::target::TargetRequest;
@@ -102,6 +102,7 @@ pub fn assemble(
     assemble_plan_artifact(
         semantic,
         plan,
+        PlanDeterminismDeclaration::Unclaimed,
         |builder, profile| {
             compiled
                 .push_carried(builder, profile)

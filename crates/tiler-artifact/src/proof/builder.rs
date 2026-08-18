@@ -33,7 +33,7 @@ use std::fmt;
 use tiler_ir::semantic::{InputKey, OutputKey, SemanticGraphIdentity};
 
 use crate::program::{
-    ArtifactCodecFailure, DIGEST_BYTES, VerifiedArtifactProgram, envelope_digest,
+    ArtifactCodecFailure, RecordedArtifactEnvelopeDigest, VerifiedArtifactProgram, envelope_digest,
 };
 
 use super::budget::{CaseLens, ProofBudgetError, project_from_data, project_sidecar};
@@ -719,7 +719,7 @@ fn check_elements<K>(
 #[derive(Clone, Debug)]
 pub struct ProofSidecarBuilder {
     artifact_identity: Vec<u8>,
-    envelope_digest: [u8; DIGEST_BYTES],
+    envelope_digest: RecordedArtifactEnvelopeDigest,
     subjects: ProofSubjects,
     interface: BoundInterface,
     cases: Vec<ProofCaseData>,
@@ -761,7 +761,7 @@ impl ProofSidecarBuilder {
         let interface = project_interface(artifact)?;
         Ok(Self {
             artifact_identity: artifact.canonical_identity().as_bytes().to_vec(),
-            envelope_digest: envelope_digest(&bytes),
+            envelope_digest: RecordedArtifactEnvelopeDigest::from_wire(envelope_digest(&bytes)),
             subjects: ProofSubjects {
                 semantic: ProofSemanticSubject::from_bytes(semantic_graph.as_bytes())?,
                 numerical,

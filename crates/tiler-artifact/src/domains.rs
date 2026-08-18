@@ -89,7 +89,7 @@ impl DomainContainer {
     /// domains".
     pub(crate) const PROOF_SIDECAR: usize = 4;
     /// Governed domains the artifact program's identity encoding admits.
-    pub(crate) const PROGRAM_IDENTITY: usize = 7;
+    pub(crate) const PROGRAM_IDENTITY: usize = 8;
 }
 
 /// One governed domain separator admitted by this crate.
@@ -136,6 +136,8 @@ pub(crate) enum GovernedDomain {
     ProgramDeliveredRealization,
     /// Separator opening one core route requirement's canonical bytes.
     ProgramRouteRequirement,
+    /// Separator opening one canonical target-environment compatibility identity.
+    ProgramTargetEnvironment,
 }
 
 impl GovernedDomain {
@@ -163,6 +165,7 @@ impl GovernedDomain {
         Self::ProgramDeferredKey,
         Self::ProgramDeliveredRealization,
         Self::ProgramRouteRequirement,
+        Self::ProgramTargetEnvironment,
     ];
 
     /// Returns the exact separator bytes this domain names.
@@ -188,6 +191,7 @@ impl GovernedDomain {
             Self::ProgramDeferredKey => program::DEFERRED_KEY_DOMAIN,
             Self::ProgramDeliveredRealization => program::DELIVERED_REALIZATION_DOMAIN,
             Self::ProgramRouteRequirement => program::ROUTE_REQUIREMENT_DOMAIN,
+            Self::ProgramTargetEnvironment => program::TARGET_ENVIRONMENT_COMPATIBILITY_DOMAIN,
         }
     }
 
@@ -212,7 +216,7 @@ impl GovernedDomain {
             Self::SidecarManifestDigest => b"tiler.proof-sidecar.manifest-digest.v1\0",
             Self::SidecarPayloadDigest => b"tiler.proof-sidecar.payload-digest.v1\0",
             Self::SidecarIdentity => b"tiler.proof-sidecar.identity.v1\0",
-            Self::ProgramArtifact => b"tiler.artifact-program.v19\0",
+            Self::ProgramArtifact => b"tiler.artifact-program.v20\0",
             Self::ProgramStageKey => b"tiler.artifact-program.stage.v4\0",
             Self::ProgramPayloadKey => b"tiler.artifact-program.payload.v1\0",
             Self::ProgramProviderKey => b"tiler.artifact-program.provider.v3\0",
@@ -221,6 +225,7 @@ impl GovernedDomain {
                 b"tiler.artifact-program.delivered-realization.v2\0"
             }
             Self::ProgramRouteRequirement => b"tiler.artifact.route-requirement.v1\0",
+            Self::ProgramTargetEnvironment => b"tiler.target-environment-compatibility.v1\0",
         }
     }
 
@@ -246,7 +251,8 @@ impl GovernedDomain {
             | Self::ProgramProviderKey
             | Self::ProgramDeferredKey
             | Self::ProgramDeliveredRealization
-            | Self::ProgramRouteRequirement => DomainContainer::ProgramIdentity,
+            | Self::ProgramRouteRequirement
+            | Self::ProgramTargetEnvironment => DomainContainer::ProgramIdentity,
         }
     }
 
@@ -365,8 +371,20 @@ fn no_governed_domain_of_this_crate_prefixes_another() {
 
     for domain in domains {
         let bytes = domain.bytes();
+        // `tiler.target-environment-compatibility.` joined the established
+        // prefixes with the ADR 0013 stability-subject carrier, whose accepted
+        // packet fixes that exact spelling: the identity it opens is a
+        // runtime-compatibility class shared with `tiler-runtime` rather than
+        // an artifact-program subject. The cross-crate argument was re-read at
+        // that step: `crates/tiler-ir/src/domains.rs` pins `tiler.target.` (a
+        // classified non-domain query-key namespace, dot-terminated) and
+        // `tiler.target-property-query.v1\0`, and neither is in a prefix
+        // relation with this namespace — they diverge at the first byte after
+        // `tiler.target`.
         assert!(
-            bytes.starts_with(b"tiler.artifact") || bytes.starts_with(b"tiler.proof-sidecar."),
+            bytes.starts_with(b"tiler.artifact")
+                || bytes.starts_with(b"tiler.proof-sidecar.")
+                || bytes.starts_with(b"tiler.target-environment-compatibility."),
             "{domain:?} is spelled {:?}, outside this crate's established prefixes. The \
              cross-crate half of the no-prefix obligation is a spelling argument rather than a \
              check, and a domain outside these prefixes breaks that argument rather than merely \

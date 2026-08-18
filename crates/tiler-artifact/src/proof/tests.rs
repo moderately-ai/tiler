@@ -164,7 +164,7 @@ fn the_association_is_derived_from_the_artifact_and_not_supplied() {
     let artifact = default_artifact();
     let bytes = artifact.encode().expect("the artifact encodes");
     let expected = crate::program::envelope_digest(&bytes);
-    assert_eq!(sidecar(&artifact).envelope_digest(), &expected);
+    assert_eq!(sidecar(&artifact).envelope_digest().as_bytes(), &expected);
 }
 
 #[test]
@@ -570,7 +570,7 @@ fn dotted_operation_boundaries_reach_proof_subject_and_envelope_association() {
     );
     let pair_bytes = pair.encode().expect("the pair envelope encodes");
     assert_eq!(
-        pair_sidecar.envelope_digest(),
+        pair_sidecar.envelope_digest().as_bytes(),
         &crate::program::envelope_digest(&pair_bytes),
         "the exact pair envelope reaches the sidecar association",
     );

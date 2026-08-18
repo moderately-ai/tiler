@@ -32,6 +32,7 @@ use tiler_ir::schedule::{
 };
 use tiler_ir::semantic::{InputKey, OutputKey};
 
+use super::super::environment::PlanDeterminismScope;
 use super::super::error::{ArtifactDiagnostic, ArtifactEntityKind};
 use super::super::expr::ExprNode;
 use super::super::keys::{BackendEntryKey, FeasibilityRuleSetRef, TargetProfileRef};
@@ -513,6 +514,12 @@ pub(crate) struct VariantRow {
     ///
     /// Canonically ordered and distinct.
     pub(crate) dependencies: Vec<StageDependencyData>,
+    /// One plan-determinism scope cell per delivery position.
+    ///
+    /// Length-locked to the artifact's delivery positions; `validate` re-proves
+    /// the lock and every `Plan` cell's structural coherence for an envelope
+    /// decoded from bytes no builder wrote.
+    pub(crate) scope: Vec<PlanDeterminismScope>,
 }
 
 /// The canonical neutral artifact envelope.
@@ -630,6 +637,8 @@ impl ArtifactEnvelope {
                 entries,
                 execution_order,
                 dependencies,
+                // Delivery order is meaning, so the run is carried as stated.
+                scope: variant.scope.clone(),
             });
         }
 

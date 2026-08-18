@@ -27,6 +27,7 @@
 //! the commit" are checked rather than asserted.
 
 mod adapter;
+mod determinism;
 mod fixture;
 mod image;
 mod retained;

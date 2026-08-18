@@ -37,6 +37,7 @@ use tiler::runtime::adapter::{LiveExecutionContext, RuntimeAdapter};
 use tiler::runtime::load::{
     DTypeDispatchResolution, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest,
     Preflight, PreparedEntryObservation, RoutedDispatch, RoutedEntry, TargetPropertyRequest,
+    TargetEnvironmentObservation, TargetEnvironmentSupport,
 };
 use tiler::value::{
     AdapterCapability, DispatchAdapter, RegionRequest, ResultRequest, StorageScalar, Tensor,
@@ -163,6 +164,23 @@ impl RuntimeAdapter for Executor<'_> {
     type Refusal = Refused;
     type Failure = Refused;
     type Completion = ();
+
+    /// Registers no schema: this consumer's backend claims no ADR 0013
+    /// authority, so claimed cells would filter while `Unclaimed` routes stay
+    /// routable.
+    fn target_environment_support(&self) -> TargetEnvironmentSupport<'_> {
+        TargetEnvironmentSupport::Unsupported
+    }
+
+    /// Unreachable while no schema is registered; unavailable regardless.
+    fn observe_target_environment(
+        &mut self,
+        _: &LiveExecutionContext,
+    ) -> TargetEnvironmentObservation {
+        TargetEnvironmentObservation::Unavailable {
+            reason: "no target-environment schema is registered".to_owned(),
+        }
+    }
 
     /// States the emitted environment, with or without the region's dtype row.
     ///

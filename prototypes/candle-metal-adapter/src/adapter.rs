@@ -113,7 +113,8 @@ use tiler_metal::synchronization_requirement::evaluate_synchronization;
 use tiler_runtime::adapter::{LiveExecutionContext, RuntimeAdapter};
 use tiler_runtime::load::{
     ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight,
-    PreparedEntryObservation, RoutedDispatch, RoutedEntry, TargetPropertyRequest,
+    PreparedEntryObservation, RoutedDispatch, RoutedEntry, TargetEnvironmentObservation,
+    TargetEnvironmentSupport, TargetPropertyRequest,
 };
 
 use crate::refusal::{DispatchFailure, ReflectedBinding, ReflectedBindingClass, RouteRefusal};
@@ -957,6 +958,26 @@ impl RuntimeAdapter for CandleMetalAdapter {
     /// routing commit.
     fn bind_execution_context(&mut self) -> Result<ExecutionEnvironment, Self::Refusal> {
         Ok(self.environment.clone())
+    }
+
+    /// Registers no target-environment descriptor schema.
+    ///
+    /// ADR 0086 records the native Metal runtime-translation authority as
+    /// `Unknown`, so no accepted Metal provider schema exists and this adapter
+    /// must not invent one: every claimed `Plan` cell filters as
+    /// provider-unavailable while `Unclaimed` routes stay routable.
+    fn target_environment_support(&self) -> TargetEnvironmentSupport<'_> {
+        TargetEnvironmentSupport::Unsupported
+    }
+
+    /// Never reached while no schema is registered; unavailable regardless.
+    fn observe_target_environment(
+        &mut self,
+        _context: &LiveExecutionContext,
+    ) -> TargetEnvironmentObservation {
+        TargetEnvironmentObservation::Unavailable {
+            reason: "no accepted Metal target-environment observer exists (ADR 0086)".to_owned(),
+        }
     }
 
     /// Validates one entry's carried payload from its own bytes.

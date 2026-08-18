@@ -83,6 +83,8 @@ pub(super) fn validate(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecE
     // and would otherwise report a scrambled realization run as a missing
     // symbol.
     check_delivery_positions(envelope)?;
+    // After the position check, whose count every scope run is locked to.
+    check_plan_determinism(envelope)?;
     check_entry_mappings(envelope)?;
     let facts = ExpressionFacts::derive(envelope.expressions());
     check_expression_closure(envelope)?;
@@ -635,6 +637,71 @@ fn check_delivery_positions(envelope: &ArtifactEnvelope) -> Result<(), ArtifactC
                 return Err(obligation(ArtifactDiagnostic::AmbiguousPayloadDelivery {
                     payload: *payload,
                 }));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Re-proves the plan-determinism scope runs and every claimed cell's
+/// byte-decidable coherence.
+///
+/// The neutral half of the builder's proof-bound `publish_plan` join, run
+/// against bytes no builder wrote: each variant carries exactly one cell per
+/// delivery position, and a `Plan` cell requires every entry's payload at that
+/// position to carry a target-environment declaration, carry its object bytes,
+/// and resolve to one shared declared-environment tuple. What stays
+/// deliberately out of reach here is semantic provider validation — a neutral
+/// decoder holds no provider schema, so it can frame an unknown provider but
+/// never turn it into executable compatibility.
+fn check_plan_determinism(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecError> {
+    let positions = envelope.delivery_positions();
+    for (rank, variant) in envelope.variants().iter().enumerate() {
+        if variant.scope.len() != positions {
+            return Err(obligation(
+                ArtifactDiagnostic::PlanDeterminismScopeCardinality {
+                    variant: rank,
+                    cells: variant.scope.len(),
+                    positions,
+                },
+            ));
+        }
+        for (delivery, cell) in variant.scope.iter().enumerate() {
+            match cell {
+                super::super::environment::PlanDeterminismScope::Unclaimed => continue,
+                super::super::environment::PlanDeterminismScope::Plan => {}
+            }
+            let incoherent = |entry| {
+                obligation(ArtifactDiagnostic::UnverifiedPlanDeterminismClaim {
+                    variant: rank,
+                    delivery,
+                    entry,
+                })
+            };
+            let mut first: Option<(usize, usize)> = None;
+            for (entry, row) in variant.entries.iter().enumerate() {
+                let payload = position(row.payloads[delivery]);
+                let descriptor = &envelope.payloads()[payload];
+                if descriptor.environment.is_none() || envelope.payload_content()[payload].is_none()
+                {
+                    return Err(incoherent(entry));
+                }
+                match first {
+                    None => first = Some((entry, payload)),
+                    Some((_, first_payload)) => {
+                        let held = &envelope.payloads()[first_payload];
+                        // The declared-environment tuple compared component-wise:
+                        // deriving the canonical identity requires a validated
+                        // declaration, which a neutral decoder cannot mint.
+                        if descriptor.environment != held.environment
+                            || descriptor.compatibility != held.compatibility
+                            || descriptor.backend != held.backend
+                            || descriptor.representation != held.representation
+                        {
+                            return Err(incoherent(entry));
+                        }
+                    }
+                }
             }
         }
     }

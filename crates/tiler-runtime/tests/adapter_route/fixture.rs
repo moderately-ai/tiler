@@ -77,13 +77,16 @@ use tiler_artifact::program::{
     EntryRealization, EntrySpec, ExceptionalValueAssumption, FactSourceProvenance,
     FeasibilityRuleSetKey, FeasibilityRuleSetRef, HonouringMeans, LaunchSpec,
     LoweringCapabilitySubject, MaterializationRounding, NumericalDimension, NumericalObligationKey,
-    NumericalPermission, PayloadContent, PayloadMetadata, PayloadPlatform, PayloadProvenance,
-    PolicyLocus, ProvenanceIdentity, RecordedArtifactProgramIdentity, RepresentationKey,
-    RouteFeatureKey, RouteRequirement, ScalarArithmeticSubject, ScalarArithmeticSubjectIdentity,
-    SchemaVersion, SelectedProvider, SemanticOccurrence, SubnormalMode, TargetEvidenceDeclaration,
-    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, TargetPropertyKey,
-    ToolComponent, VariantSpec, overlapping_behaviour,
+    NumericalPermission, PayloadContent, PayloadMetadata, PayloadPlanDeterminismRefusal,
+    PayloadPlanDeterminismVerifier, PayloadPlatform, PayloadProvenance, PolicyLocus,
+    ProvenanceIdentity, RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey,
+    RouteRequirement, ScalarArithmeticSubject, ScalarArithmeticSubjectIdentity, SchemaVersion,
+    SelectedProvider, SemanticOccurrence, SubnormalMode, TargetEnvironmentDeclaration,
+    TargetEnvironmentDescriptor, TargetEvidenceDeclaration, TargetProfileDescriptorDigest,
+    TargetProfileKey, TargetProfileRef, TargetPropertyKey, ToolComponent, VariantSpec,
+    overlapping_behaviour,
 };
+use tiler_artifact::program::{BackendPayloadDescriptor, ValidatedTargetEnvironmentDeclaration};
 use tiler_ir::index::{
     DomainRole, FrozenIndexRealizationLawRegistry, FrozenScalarRegistry, IndexInteger,
     IndexRealizationAuthority, IndexRefinementSubject, IndexRefinementVerificationOutcome,
@@ -91,7 +94,10 @@ use tiler_ir::index::{
     TensorRole as IndexTensorRole, VerifiedIndexRegion, add_f32_scalar_op, constant_f32_scalar_op,
     multiply_f32_scalar_op,
 };
-use tiler_ir::kernel::{KernelType, VerifiedKernel, lower_scheduled_region};
+use tiler_ir::kernel::{
+    KernelType, PlanDeterminismWitness, VerifiedKernel, lower_scheduled_region,
+    verify_plan_determinism,
+};
 use tiler_ir::program::abi::{
     AbiBinaryOp, AbiRoot, PreparedEntryTargetRequirement, TargetPropertyProviderIdentity,
     TargetPropertyQuery, TargetPropertyRequirementRelation,
@@ -613,6 +619,15 @@ pub struct FixtureSpec {
     /// Each carries the arithmetic the delivered-realization record binds it to;
     /// see [`FixtureEntry::arithmetic`].
     pub entries: Vec<FixtureEntry>,
+    /// The provider-versioned target environment the payload declares, if any.
+    pub environment: Option<TargetEnvironmentDeclaration>,
+    /// Whether the member publishes the ADR 0013 `Plan` claim at delivery 0.
+    ///
+    /// Publishing requires [`Self::environment`] and a carried object; the
+    /// fixture derives the IR witness from the packaged program and mints the
+    /// receipt through [`ScalarPayloadDeterminismVerifier`], so the claim is
+    /// proof-bound exactly as a production producer's would be.
+    pub claim_plan: bool,
 }
 
 /// Returns the governed entry key of one packaged backend entry.
@@ -816,6 +831,8 @@ impl Default for FixtureSpec {
                 transports: vec![1, 0],
                 arithmetic: ArithmeticType::F32,
             }],
+            environment: None,
+            claim_plan: false,
         }
     }
 }
@@ -1054,6 +1071,7 @@ fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, s
         }
         PackagedPlan::LiveContraction => live_contraction_program(semantic),
     };
+    let metadata = member_metadata(spec, "aarch64-apple-darwin");
     let payload = draft
         .push_carried_payload(
             spec.backend.clone(),
@@ -1063,46 +1081,9 @@ fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, s
             // The only policy the vocabulary defines, so the fixture states it
             // rather than offering a knob with one position.
             ArtifactExecutionPolicy::NativeImage,
+            spec.environment.clone(),
             PayloadContent {
-                metadata: PayloadMetadata {
-                    source_representation: RepresentationKey::new(SOURCE_REPRESENTATION_KEY)
-                        .expect("a governed source representation"),
-                    // The retained source describes what was translated, and it
-                    // is a function of the packaged plan alone — deliberately
-                    // independent of `code`. Every payload perturbation below
-                    // therefore changes the carried object and *not* the
-                    // compilation subject, which is what makes two artifacts
-                    // with different bytes share one canonical identity — the
-                    // asymmetry ADR 0090 item 8 rests on.
-                    source: spec.plan.source(),
-                    provenance: PayloadProvenance {
-                        toolchain: "tiler.test.scalar-image-translator".to_owned(),
-                        target: "aarch64-apple-darwin".to_owned(),
-                        family: spec.backend.as_str().to_owned(),
-                        language: "tiler.kernel-ir.v4".to_owned(),
-                        // No SDK and no platform deployment minimum on this
-                        // backend's target, stated rather than approximated. The
-                        // Apple-shaped placeholders this line replaced were what
-                        // ADR 0090 item 14 named.
-                        platform: PayloadPlatform::Unversioned,
-                        components: vec![ToolComponent {
-                            role: "translator".to_owned(),
-                            version: "1".to_owned(),
-                        }],
-                        compile_flags: Vec::new(),
-                        link_flags: Vec::new(),
-                    },
-                    entries: spec
-                        .entries
-                        .iter()
-                        .map(|entry| tiler_artifact::program::PayloadEntryMapping {
-                            entry_key: entry.key.clone(),
-                            symbol: entry.symbol.clone(),
-                            transports: entry.transports.clone(),
-                        })
-                        .collect(),
-                    obligations: Vec::new(),
-                },
+                metadata: metadata.clone(),
                 code: spec.code.clone(),
             },
         )
@@ -1157,6 +1138,315 @@ fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, s
             .require_route(variant, requirement.clone())
             .expect("the fixture route requirement was accepted");
     }
+
+    if spec.claim_plan {
+        // The proof-bound ADR 0013 join, exactly as a production producer would
+        // run it: the IR witness over the packaged program, a receipt minted by
+        // the backend's installed verifier against the exact descriptor,
+        // object bytes, and validated declaration, then the transactional
+        // publication of the one claimed cell.
+        let declaration = spec
+            .environment
+            .as_ref()
+            .expect("a claiming member declares a target environment");
+        let witness =
+            verify_plan_determinism(&program).expect("the fixture plan is plan deterministic");
+        let descriptor = BackendPayloadDescriptor {
+            backend: spec.backend.clone(),
+            representation: spec.representation.clone(),
+            payload_schema: SchemaVersion::new(1, 0),
+            digest: metadata
+                .identity()
+                .expect("the fixture metadata has an identity"),
+            compatibility: spec.payload_profile.clone(),
+            execution_policy: ArtifactExecutionPolicy::NativeImage,
+            environment: Some(declaration.clone()),
+        };
+        // Validated against the *producer's* registration, derived from its own
+        // declaration: a producer that declares a revision or class the
+        // consumer's adapter does not register still builds a coherent claimed
+        // artifact — the mismatch is then the runtime filter's to name.
+        let validated = declaration
+            .validate(&producer_schema(declaration))
+            .expect("the fixture declaration is its own schema's canonical spelling");
+        let receipt = ScalarPayloadDeterminismVerifier
+            .verify(&witness, &descriptor, &spec.code, &validated)
+            .expect("the scalar host's translation makes no run-dependent choice");
+        draft
+            .publish_plan(variant, 0, &witness, &[receipt])
+            .expect("the proof-bound claim publishes");
+    }
+}
+
+/// The scalar host's installed payload plan-determinism verifier.
+///
+/// Its whole translation is a byte-for-byte image decode on the calling
+/// thread, so "no run-dependent translation choice" is this backend's honest
+/// judgment rather than a fixture shortcut; the receipt's bindings are minted
+/// by the artifact layer from the exact inputs either way.
+pub struct ScalarPayloadDeterminismVerifier;
+
+impl PayloadPlanDeterminismVerifier for ScalarPayloadDeterminismVerifier {
+    fn assess(
+        &self,
+        _witness: &PlanDeterminismWitness<'_>,
+        _descriptor: &BackendPayloadDescriptor,
+        _object_bytes: &[u8],
+        _declaration: &ValidatedTargetEnvironmentDeclaration,
+    ) -> Result<(), PayloadPlanDeterminismRefusal> {
+        Ok(())
+    }
+}
+
+/// The scalar host's one governed environment provider identity.
+#[must_use]
+pub fn environment_provider() -> ProviderIdentity {
+    ProviderIdentity::new("tiler.test", "scalar-host-environment", 1)
+        .expect("a governed provider identity")
+}
+
+/// The canonical spelling of the class this process actually is.
+pub const ENVIRONMENT_DESCRIPTOR: &[u8] = b"process-arithmetic-v1";
+
+/// The canonical spelling of a second admitted class this process is not.
+pub const ALTERED_ENVIRONMENT_DESCRIPTOR: &[u8] = b"process-arithmetic-v1-altered";
+
+/// The scalar host's declared target environment.
+#[must_use]
+pub fn environment_declaration() -> TargetEnvironmentDeclaration {
+    declaration_of(ENVIRONMENT_DESCRIPTOR)
+}
+
+/// The same declaration over the second admitted class.
+///
+/// The accepted provider-descriptor perturbation: one descriptor field moved,
+/// everything else held.
+#[must_use]
+pub fn altered_environment_declaration() -> TargetEnvironmentDeclaration {
+    declaration_of(ALTERED_ENVIRONMENT_DESCRIPTOR)
+}
+
+fn declaration_of(descriptor: &[u8]) -> TargetEnvironmentDeclaration {
+    TargetEnvironmentDeclaration::new(
+        environment_provider(),
+        SchemaVersion::new(1, 0),
+        TargetEnvironmentDescriptor::new(descriptor).expect("a bounded fixture descriptor"),
+    )
+    .expect("a nonzero schema major")
+}
+
+/// The same declaration under the next provider revision, which nothing registers.
+#[must_use]
+pub fn revised_provider_declaration() -> TargetEnvironmentDeclaration {
+    TargetEnvironmentDeclaration::new(
+        ProviderIdentity::new("tiler.test", "scalar-host-environment", 2)
+            .expect("a governed provider identity"),
+        SchemaVersion::new(1, 0),
+        TargetEnvironmentDescriptor::new(ENVIRONMENT_DESCRIPTOR)
+            .expect("a bounded fixture descriptor"),
+    )
+    .expect("a nonzero schema major")
+}
+
+/// The producer-side registration one declaration was validated under.
+///
+/// Derived from the declaration itself: the producer's authority is its own
+/// registration, and whether the *consumer's* independently selected adapter
+/// registers the same provider, revision, schema, and class is exactly the
+/// question the runtime filter answers.
+fn producer_schema(
+    declaration: &TargetEnvironmentDeclaration,
+) -> crate::adapter::ScalarEnvironmentSchema {
+    crate::adapter::ScalarEnvironmentSchema {
+        provider: declaration.provider().clone(),
+        schema: declaration.descriptor_schema(),
+        admitted: vec![declaration.descriptor().as_bytes().to_vec()],
+    }
+}
+
+/// The scalar host's registered descriptor schema, for the adapter to expose.
+///
+/// Two admitted classes, each with exactly one canonical spelling, so a
+/// declared-versus-observed class mismatch is representable.
+#[must_use]
+pub fn environment_schema() -> crate::adapter::ScalarEnvironmentSchema {
+    crate::adapter::ScalarEnvironmentSchema {
+        provider: environment_provider(),
+        schema: SchemaVersion::new(1, 0),
+        admitted: vec![
+            ENVIRONMENT_DESCRIPTOR.to_vec(),
+            ALTERED_ENVIRONMENT_DESCRIPTOR.to_vec(),
+        ],
+    }
+}
+
+/// Builds one member's payload compilation subject.
+///
+/// The retained source describes what was translated, and it is a function of
+/// the packaged plan alone — deliberately independent of `code`. Every payload
+/// perturbation therefore changes the carried object and *not* the compilation
+/// subject, which is what makes two artifacts with different bytes share one
+/// canonical identity — the asymmetry ADR 0090 item 8 rests on. `target` is
+/// the one provenance field the two-delivery fixture varies, because two
+/// delivery positions are one plan compiled twice for two consumer targets.
+fn member_metadata(spec: &FixtureSpec, target: &str) -> PayloadMetadata {
+    PayloadMetadata {
+        source_representation: RepresentationKey::new(SOURCE_REPRESENTATION_KEY)
+            .expect("a governed source representation"),
+        source: spec.plan.source(),
+        provenance: PayloadProvenance {
+            toolchain: "tiler.test.scalar-image-translator".to_owned(),
+            target: target.to_owned(),
+            family: spec.backend.as_str().to_owned(),
+            language: "tiler.kernel-ir.v4".to_owned(),
+            // No SDK and no platform deployment minimum on this backend's
+            // target, stated rather than approximated.
+            platform: PayloadPlatform::Unversioned,
+            components: vec![ToolComponent {
+                role: "translator".to_owned(),
+                version: "1".to_owned(),
+            }],
+            compile_flags: Vec::new(),
+            link_flags: Vec::new(),
+        },
+        entries: spec
+            .entries
+            .iter()
+            .map(|entry| tiler_artifact::program::PayloadEntryMapping {
+                entry_key: entry.key.clone(),
+                symbol: entry.symbol.clone(),
+                transports: entry.transports.clone(),
+            })
+            .collect(),
+        obligations: Vec::new(),
+    }
+}
+
+/// Assembles one claimed member realized at **two** delivery positions.
+///
+/// One plan, one kernel program, two compiled objects: the second payload's
+/// compilation subject differs only in its provenance target, which is exactly
+/// what a second consumer build target is. Both payloads declare the same
+/// target environment and the member publishes the proof-bound `Plan` claim at
+/// both positions, so the accepted delivery-position perturbation can hold the
+/// envelope and rank fixed and move only the selected coordinate.
+///
+/// # Panics
+///
+/// Panics when the artifact does not verify, claim, or encode: a fixture that
+/// cannot be built is a defect in this file rather than a case under test.
+#[must_use]
+pub fn assemble_two_delivery_claimed() -> Fixture {
+    let semantic = semantic_program();
+    let provider =
+        ProviderIdentity::new("tiler-test", "scalar-host-serial-sum", 1).expect("a provider");
+    let compilation = CompilationEnvironment::new([provider.clone()]).expect("an environment");
+    let mut draft = ArtifactProgramBuilder::new(&semantic, compilation).expect("an artifact draft");
+    draft
+        .select_provider(SelectedProvider {
+            provider,
+            capability: LoweringCapabilitySubject {
+                family: CapabilityFamilyKey::new("index-access").expect("a capability family"),
+                operation: OpKey::new("tiler", "strict-serial-sum-f32", 1)
+                    .expect("an operation key"),
+            },
+            capability_revision: 1,
+        })
+        .expect("the selected provider was offered");
+
+    let spec = FixtureSpec {
+        environment: Some(environment_declaration()),
+        claim_plan: true,
+        ..FixtureSpec::for_plan(PackagedPlan::Fused)
+    };
+    let program = fused_program(&semantic, FusedGuard::AlwaysHolds);
+    let metadata = [
+        member_metadata(&spec, "aarch64-apple-darwin"),
+        member_metadata(&spec, "aarch64-apple-ios"),
+    ];
+    let mut payloads = Vec::new();
+    for subject in &metadata {
+        payloads.push(
+            draft
+                .push_carried_payload(
+                    spec.backend.clone(),
+                    spec.representation.clone(),
+                    SchemaVersion::new(1, 0),
+                    spec.payload_profile.clone(),
+                    ArtifactExecutionPolicy::NativeImage,
+                    spec.environment.clone(),
+                    PayloadContent {
+                        metadata: subject.clone(),
+                        code: spec.code.clone(),
+                    },
+                )
+                .expect("the delivery payload was accepted"),
+        );
+    }
+    let variant = draft
+        .push_variant(
+            &program,
+            VariantSpec {
+                target_profile: spec.variant_profile.clone(),
+                feasibility_rules: FeasibilityRuleSetRef {
+                    key: FeasibilityRuleSetKey::new("tiler.test.scalar-host.feasibility")
+                        .expect("a governed rule-set key"),
+                    revision: 1,
+                },
+                deferred_predicates: Vec::new(),
+                entries: vec![EntrySpec {
+                    bindings: vec![
+                        BindingSpec {
+                            kind: BindingKind::Buffer,
+                        };
+                        2
+                    ],
+                    launch: LaunchSpec {
+                        zero_work_skips_dispatch: true,
+                        preconditions: Vec::new(),
+                    },
+                    implementation: BackendEntryRef {
+                        payloads: payloads.clone(),
+                        entry_key: spec.entries[0].key.clone(),
+                    },
+                }],
+            },
+        )
+        .expect("the two-delivery variant packages the bound plan");
+
+    let witness =
+        verify_plan_determinism(&program).expect("the fixture plan is plan deterministic");
+    let declaration = spec.environment.as_ref().expect("the fixture declares");
+    let validated = declaration
+        .validate(&producer_schema(declaration))
+        .expect("the fixture declaration is its own schema's canonical spelling");
+    for (delivery, subject) in metadata.iter().enumerate() {
+        let descriptor = BackendPayloadDescriptor {
+            backend: spec.backend.clone(),
+            representation: spec.representation.clone(),
+            payload_schema: SchemaVersion::new(1, 0),
+            digest: subject
+                .identity()
+                .expect("the fixture metadata has an identity"),
+            compatibility: spec.payload_profile.clone(),
+            execution_policy: ArtifactExecutionPolicy::NativeImage,
+            environment: Some(declaration.clone()),
+        };
+        let receipt = ScalarPayloadDeterminismVerifier
+            .verify(&witness, &descriptor, &spec.code, &validated)
+            .expect("the scalar host's translation makes no run-dependent choice");
+        draft
+            .publish_plan(variant, delivery, &witness, &[receipt])
+            .expect("the proof-bound claim publishes at each delivery");
+    }
+
+    declare_realization(&mut draft, std::slice::from_ref(&spec));
+    let artifact = draft.build().expect("the fixture artifact verifies");
+    let bytes = artifact.encode().expect("the fixture artifact encodes");
+    let expected =
+        RecordedArtifactProgramIdentity::from_bytes(artifact.canonical_identity().as_bytes())
+            .expect("the producing side records its own identity");
+    Fixture { bytes, expected }
 }
 
 // -------------------------------------------------------------------------

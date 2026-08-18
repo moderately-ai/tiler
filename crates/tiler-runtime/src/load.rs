@@ -177,9 +177,18 @@
 //!
 //! [`accept-the-loader-variant-eligibility-vocabulary`]: ../../../../tickets/accept-the-loader-variant-eligibility-vocabulary.md
 
+mod determinism;
 mod host;
 mod route;
 
+// The ADR 0013 runtime plan-determinism subject and attestation vocabulary
+// (`decide-the-adr-0013-plan-determinism-stability-subject`, accepted
+// 2026-08-18). The packet names these exact items and this owner.
+pub use determinism::{
+    CanonicalPlanDeterminismSubjectIdentity, LiveTargetEnvironmentAttestation,
+    PlanDeterminismSubject, SelectedPlanVariant, TargetEnvironmentIneligibility,
+    TargetEnvironmentObservation, TargetEnvironmentSupport,
+};
 pub use host::{DTypeDispatch, DTypeDispatchResolution, ExecutionEnvironment, TargetCompatibility};
 pub use route::{
     EntrySlot, LiveDeviceObservation, LiveDeviceQualification, LiveDeviceRequest, Preflight,
@@ -196,9 +205,11 @@ use tiler_artifact::program::{
     AbiEvaluationError, AbiFacts, AbiValue, ArithmeticType, ArtifactCodecFailure,
     ArtifactExecutionPolicy, BackendKey, BackendPayloadDescriptor, BindingTarget, BufferAccess,
     CanonicalArtifactProgramIdentity, DecodedArtifact, DecodedEntry, DecodedExpr, DecodedInput,
-    DecodedOutput, DecodedVariant, NumericalPolicySubject, RecordedArtifactProgramIdentity,
-    RepresentationKey, RouteRequirement, RouteRequirementSubject, RoutingPolicy, SectionView,
-    StageDependencyReason, TargetProfileKey, decode_artifact,
+    DecodedOutput, DecodedVariant, NumericalPolicySubject, PlanDeterminismScope, ProviderIdentity,
+    RecordedArtifactProgramIdentity, RepresentationKey, RouteRequirement, RouteRequirementSubject,
+    RoutingPolicy, SchemaVersion, SectionView, StageDependencyReason, TargetEnvironmentDeclaration,
+    TargetEnvironmentDeclarationError, TargetEnvironmentDescriptorSchema,
+    TargetEnvironmentReasonCode, TargetProfileKey, decode_artifact,
 };
 
 use std::error::Error;
@@ -287,6 +298,16 @@ impl DecodedProgram {
     #[must_use]
     pub fn delivery_positions(&self) -> usize {
         self.decoded.delivery_positions()
+    }
+
+    /// Returns whether any variant claims plan determinism at this delivery.
+    ///
+    /// Crate-visible so `route_with_adapter` observes the live environment only
+    /// when a claimed cell exists to attest.
+    pub(crate) fn contains_plan_cell(&self) -> bool {
+        self.decoded.variants().any(|variant| {
+            variant.plan_determinism_scope(self.delivery) == Some(PlanDeterminismScope::Plan)
+        })
     }
 
     /// Returns the identity re-derived from this artifact's decoded content.
@@ -441,10 +462,14 @@ impl DecodedProgram {
         expected: &RecordedArtifactProgramIdentity,
         facts: &AbiFacts,
     ) -> Result<Preflight<'_>, LoadRejection> {
+        // The device-free assessment: a caller-stated `ExecutionEnvironment`
+        // cannot mint a live attestation, so every claimed `Plan` cell filters
+        // as unverified while `Unclaimed` candidates stay routable.
+        let assessment = TargetEnvironmentAssessment::DeviceFree;
         self.decoded
             .evaluate_retained_shape_relations(facts)
             .map_err(LoadRejection::RetainedShapeRelation)?;
-        let (identity, variant) = self.select_route(environment, expected, facts)?;
+        let (identity, variant) = self.select_route(environment, expected, facts, &assessment)?;
 
         // The earlier phase first. Both are unanswerable here, and a host that
         // learns it needs a bound device before it learns it needs a prepared
@@ -456,7 +481,7 @@ impl DecodedProgram {
         // table's canonical stage-key order, which is identity's and carries no
         // execution meaning.
         let ordered: Vec<_> = variant.execution_order().collect();
-        let candidate = self.route_candidate(identity, variant, &ordered, facts)?;
+        let candidate = self.route_candidate(identity, variant, &ordered, facts, &assessment)?;
         Ok(Preflight::from_candidate(candidate))
     }
 
@@ -485,10 +510,30 @@ impl DecodedProgram {
         expected: &RecordedArtifactProgramIdentity,
         facts: &AbiFacts,
     ) -> Result<LiveDeviceQualification<'_>, LoadRejection> {
+        // Device-free like `preflight`: this public path holds no adapter, so
+        // a claimed `Plan` cell filters as unverified. `route_with_adapter`
+        // reaches the attested path through the crate-private sibling below.
+        self.prepare_with_environment(
+            environment,
+            expected,
+            facts,
+            &TargetEnvironmentAssessment::DeviceFree,
+        )
+    }
+
+    /// The adapter-reachable half of [`Self::prepare`], with the loader's
+    /// target-environment assessment threaded through selection.
+    pub(crate) fn prepare_with_environment(
+        &mut self,
+        environment: &ExecutionEnvironment,
+        expected: &RecordedArtifactProgramIdentity,
+        facts: &AbiFacts,
+        assessment: &TargetEnvironmentAssessment<'_>,
+    ) -> Result<LiveDeviceQualification<'_>, LoadRejection> {
         self.decoded
             .evaluate_retained_shape_relations(facts)
             .map_err(LoadRejection::RetainedShapeRelation)?;
-        let (identity, variant) = self.select_route(environment, expected, facts)?;
+        let (identity, variant) = self.select_route(environment, expected, facts, assessment)?;
         let requirements = route_requirements(variant, environment)?;
         let ordered: Vec<_> = variant.execution_order().collect();
         let mut requests = Vec::with_capacity(variant.deferred_predicates().len());
@@ -504,7 +549,7 @@ impl DecodedProgram {
                 requirement: deferred.requirement(),
             });
         }
-        let candidate = self.route_candidate(identity, variant, &ordered, facts)?;
+        let candidate = self.route_candidate(identity, variant, &ordered, facts, assessment)?;
         Ok(LiveDeviceQualification {
             candidate,
             requirements,
@@ -517,6 +562,7 @@ impl DecodedProgram {
         environment: &ExecutionEnvironment,
         expected: &RecordedArtifactProgramIdentity,
         facts: &AbiFacts,
+        assessment: &TargetEnvironmentAssessment<'_>,
     ) -> Result<(CanonicalArtifactProgramIdentity, DecodedVariant<'a>), LoadRejection> {
         let identity = self.identity();
         if identity.as_bytes() != expected.as_bytes() {
@@ -525,7 +571,7 @@ impl DecodedProgram {
                 loaded: identity,
             });
         }
-        let variant = self.select_variant(environment, facts)?;
+        let variant = self.select_variant(environment, facts, assessment)?;
         Ok((identity, variant))
     }
 
@@ -535,6 +581,7 @@ impl DecodedProgram {
         variant: DecodedVariant<'a>,
         ordered: &[DecodedEntry<'a>],
         facts: &AbiFacts,
+        assessment: &TargetEnvironmentAssessment<'_>,
     ) -> Result<route::RouteCandidate<'a>, LoadRejection> {
         let mut entries = Vec::with_capacity(ordered.len());
         for (position, entry) in ordered.iter().copied().enumerate() {
@@ -550,7 +597,80 @@ impl DecodedProgram {
             kernel_program: variant.kernel_program_identity(),
             entries,
             shared,
+            subject: self.mint_plan_determinism_subject(variant, assessment),
         })
+    }
+
+    /// Mints the ADR 0013 stability subject for one selected claimed route.
+    ///
+    /// `Some` exactly when the selected variant's cell at this program's
+    /// delivery position is claimed and the loader holds a live attestation
+    /// that eligibility already matched — the only positive path, reached
+    /// through `route_with_adapter`. Every other route carries `None`, which is
+    /// a state rather than a failure: an `Unclaimed` route promises nothing.
+    fn mint_plan_determinism_subject<'a>(
+        &'a self,
+        variant: DecodedVariant<'a>,
+        assessment: &TargetEnvironmentAssessment<'_>,
+    ) -> Option<PlanDeterminismSubject<'a>> {
+        if variant.plan_determinism_scope(self.delivery) != Some(PlanDeterminismScope::Plan) {
+            return None;
+        }
+        let TargetEnvironmentAssessment::Attested { schema, .. } = assessment else {
+            // Unreachable for a selected variant: eligibility filtered every
+            // claimed cell on a path without an attestation. Returning `None`
+            // rather than panicking keeps the fail-closed direction — a subject
+            // is never invented — if selection and minting ever drift.
+            return None;
+        };
+        let (declaration, payload) = self.claimed_declaration(variant);
+        let validated = declaration
+            .validate(*schema)
+            .expect("eligibility admitted the claimed cell under this exact schema");
+        let environment = validated.compatibility_identity(
+            &payload.compatibility,
+            &payload.backend,
+            &payload.representation,
+        );
+        Some(PlanDeterminismSubject::new(
+            *self.decoded.envelope_digest(),
+            SelectedPlanVariant::new(
+                u32::try_from(variant.routing_rank()).expect("a decode bounded the portfolio"),
+                u32::try_from(self.delivery).expect("a decode bounded the delivery positions"),
+            ),
+            environment,
+            variant.kernel_program_identity(),
+        ))
+    }
+
+    /// Returns the shared declared environment of one claimed cell's payloads.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the decoded artifact contradicts what `decode_artifact`
+    /// proved: every entry of a claimed cell names a payload carrying a
+    /// declaration, and all resolve to one declared tuple — so the first
+    /// entry's answers for the cell.
+    fn claimed_declaration<'a>(
+        &'a self,
+        variant: DecodedVariant<'a>,
+    ) -> (
+        &'a TargetEnvironmentDeclaration,
+        &'a BackendPayloadDescriptor,
+    ) {
+        let entry = variant
+            .execution_order()
+            .next()
+            .expect("a decode proved every variant dispatches at least one entry");
+        let payload = entry
+            .payload(self.delivery)
+            .expect("a decode proved every entry is realized at this program's delivery position");
+        let descriptor = &self.decoded.payloads()[payload];
+        let declaration = descriptor
+            .environment
+            .as_ref()
+            .expect("a decode proved every claimed cell's payloads declare an environment");
+        (declaration, descriptor)
     }
 
     /// Discharges every obligation of one entry of a selected route.
@@ -651,6 +771,7 @@ impl DecodedProgram {
         &self,
         environment: &ExecutionEnvironment,
         facts: &AbiFacts,
+        assessment: &TargetEnvironmentAssessment<'_>,
     ) -> Result<DecodedVariant<'_>, LoadRejection> {
         // Exhaustive rather than a wildcard: `RoutingPolicy` is deliberately not
         // `#[non_exhaustive]` (ADR 0074 convention 5b), so a policy added to the
@@ -668,7 +789,8 @@ impl DecodedProgram {
         let bases = packaged_entry_bases(&self.decoded);
         for variant in self.decoded.variants() {
             let rank = variant.routing_rank();
-            if let Err(reason) = self.variant_eligibility(variant, environment, &bases) {
+            if let Err(reason) = self.variant_eligibility(variant, environment, &bases, assessment)
+            {
                 filtered.push(FilteredVariant {
                     variant: rank,
                     reason,
@@ -725,6 +847,7 @@ impl DecodedProgram {
         variant: DecodedVariant<'_>,
         environment: &ExecutionEnvironment,
         bases: &[u32],
+        assessment: &TargetEnvironmentAssessment<'_>,
     ) -> Result<(), VariantIneligibility> {
         let classification = environment.classify(variant.target_profile());
         if !classification.is_compatible() {
@@ -786,7 +909,113 @@ impl DecodedProgram {
                 });
             }
         }
+        // Last, after every ordinary eligibility subject and before the guard:
+        // the exact attested compatibility identity of a claimed `Plan` cell.
+        // Unknown providers, revisions, schemas, unavailable observations, and
+        // mismatches all filter here, so an `Unclaimed` candidate behind this
+        // variant stays routable and nothing stability-related can first fail
+        // after the commit.
+        if variant.plan_determinism_scope(self.delivery) == Some(PlanDeterminismScope::Plan)
+            && let Err(reason) = self.claimed_cell_eligibility(variant, assessment)
+        {
+            return Err(VariantIneligibility::PlanDeterminismEnvironment {
+                delivery_position: self.delivery,
+                reason,
+            });
+        }
         Ok(())
+    }
+
+    /// Decides whether one claimed `Plan` cell is attested for this route.
+    ///
+    /// Positive support requires the independently selected adapter to expose
+    /// the exact declared provider schema and to have produced a validated
+    /// observation equal to the declared descriptor. Raw provider bytes never
+    /// self-certify: the declared side is validated against the *adapter's*
+    /// registration, never against anything the artifact carries.
+    fn claimed_cell_eligibility(
+        &self,
+        variant: DecodedVariant<'_>,
+        assessment: &TargetEnvironmentAssessment<'_>,
+    ) -> Result<(), TargetEnvironmentIneligibility> {
+        let (declaration, _) = self.claimed_declaration(variant);
+        match assessment {
+            TargetEnvironmentAssessment::DeviceFree => {
+                Err(TargetEnvironmentIneligibility::Unattested)
+            }
+            TargetEnvironmentAssessment::ProviderUnavailable => {
+                Err(TargetEnvironmentIneligibility::ProviderUnavailable)
+            }
+            TargetEnvironmentAssessment::ObservationUnavailable {
+                provider,
+                schema,
+                reason,
+            } => Err(TargetEnvironmentIneligibility::ObservationUnavailable {
+                provider: Box::new(provider.clone()),
+                schema: *schema,
+                reason: reason.clone(),
+            }),
+            TargetEnvironmentAssessment::InvalidObservedDescriptor {
+                provider,
+                schema,
+                reason,
+            } => Err(TargetEnvironmentIneligibility::InvalidObservedDescriptor {
+                provider: Box::new(provider.clone()),
+                schema: *schema,
+                reason: reason.clone(),
+            }),
+            TargetEnvironmentAssessment::Attested {
+                schema,
+                attestation,
+            } => {
+                match declaration.validate(*schema) {
+                    Ok(_) => {
+                        if attestation.descriptor() == declaration.descriptor() {
+                            Ok(())
+                        } else {
+                            Err(TargetEnvironmentIneligibility::EnvironmentMismatch {
+                                declared: declaration.descriptor().clone(),
+                                observed: attestation.descriptor().clone(),
+                            })
+                        }
+                    }
+                    Err(TargetEnvironmentDeclarationError::ProviderMismatch {
+                        declared,
+                        registered,
+                    }) => Err(TargetEnvironmentIneligibility::ProviderMismatch {
+                        declared,
+                        registered,
+                    }),
+                    Err(TargetEnvironmentDeclarationError::SchemaMismatch {
+                        declared,
+                        registered,
+                    }) => Err(TargetEnvironmentIneligibility::SchemaMismatch {
+                        declared,
+                        registered,
+                    }),
+                    Err(TargetEnvironmentDeclarationError::NoncanonicalDescriptor {
+                        provider,
+                        schema,
+                        reason,
+                    }) => Err(TargetEnvironmentIneligibility::InvalidDeclaredDescriptor {
+                        provider,
+                        schema,
+                        reason,
+                    }),
+                    // The declaration grammar's remaining refusals are
+                    // construction-time rules a decoded declaration already
+                    // passed; a wildcard is required across the crate boundary
+                    // and is classified as an invalid declared descriptor so a
+                    // widened grammar filters rather than routes.
+                    Err(_) => Err(TargetEnvironmentIneligibility::InvalidDeclaredDescriptor {
+                        provider: Box::new(declaration.provider().clone()),
+                        schema: declaration.descriptor_schema(),
+                        reason: TargetEnvironmentReasonCode::new("declaration-grammar")
+                            .expect("a literal governed reason code"),
+                    }),
+                }
+            }
+        }
     }
 
     /// Returns the arithmetic type governing one packaged entry.
@@ -819,6 +1048,45 @@ impl DecodedProgram {
         let NumericalPolicySubject::ScalarArithmetic(scalar) = subject;
         scalar.subject().arithmetic()
     }
+}
+
+/// The loader's target-environment assessment for one routing attempt.
+///
+/// Crate-private input to stable-priority eligibility: it says what, if
+/// anything, stands behind a claimed `Plan` cell on this path. Only
+/// `route_with_adapter` can construct the attested arm, because only it binds
+/// a context and validates the adapter's observation against the adapter's own
+/// registered schema.
+pub(crate) enum TargetEnvironmentAssessment<'a> {
+    /// A device-free path: no attestation can exist, every claimed cell filters.
+    DeviceFree,
+    /// The adapter registers no descriptor schema.
+    ProviderUnavailable,
+    /// The registered schema exists and the adapter produced no observation.
+    ObservationUnavailable {
+        /// Provider the adapter's schema is registered under.
+        provider: ProviderIdentity,
+        /// Schema version the observation would have validated under.
+        schema: SchemaVersion,
+        /// The adapter's own account of why no observation exists.
+        reason: String,
+    },
+    /// The adapter's observation is not its own schema's canonical spelling.
+    InvalidObservedDescriptor {
+        /// Provider the adapter's schema is registered under.
+        provider: ProviderIdentity,
+        /// Schema version that refused the observation.
+        schema: SchemaVersion,
+        /// The schema's bounded governed reason code.
+        reason: TargetEnvironmentReasonCode,
+    },
+    /// The loader validated the observation and minted the live attestation.
+    Attested {
+        /// The adapter's registered schema, for validating the declared side.
+        schema: &'a dyn TargetEnvironmentDescriptorSchema,
+        /// The validated live observation.
+        attestation: LiveTargetEnvironmentAttestation,
+    },
 }
 
 /// The flat canonical packaged-entry ordinals of one variant's entries.
@@ -1407,6 +1675,20 @@ pub enum VariantIneligibility {
         /// Governed target profile key this host stated, naming the family.
         host_profile: TargetProfileKey,
     },
+    /// The variant's claimed plan-deterministic cell is not attested here.
+    ///
+    /// The ADR 0013 stability-subject filter: a claimed cell requires the
+    /// independently selected adapter to expose the exact declared provider
+    /// schema and to have produced a validated live observation equal to the
+    /// declared descriptor. Filtered before the guard and before any commit,
+    /// so an `Unclaimed` alternative behind this variant stays routable and an
+    /// absent attestation never suppresses a viable route.
+    PlanDeterminismEnvironment {
+        /// Delivery position of the claimed cell.
+        delivery_position: usize,
+        /// The exact class of the missing or mismatched attestation.
+        reason: TargetEnvironmentIneligibility,
+    },
 }
 
 impl fmt::Display for VariantIneligibility {
@@ -1449,6 +1731,14 @@ impl fmt::Display for VariantIneligibility {
                 "entry {entry} computes in {} and this host's {host_profile} family resolves it \
                  {resolution:?}",
                 arithmetic.canonical_type_key(),
+            ),
+            Self::PlanDeterminismEnvironment {
+                delivery_position,
+                reason,
+            } => write!(
+                formatter,
+                "its claimed plan-deterministic cell at delivery position {delivery_position} is \
+                 not attested: {reason}",
             ),
         }
     }

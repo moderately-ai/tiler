@@ -39,6 +39,7 @@
 use std::error::Error;
 use std::fmt;
 
+use tiler_artifact::program::PayloadPlanDeterminismReceipt;
 use tiler_artifact::program::{
     AbiExprId, ArtifactBuildError, ArtifactProgramBuilder, ArtifactVerificationError,
     BackendEntryKey, BackendEntryRef, BindingKind, BindingSpec, CapabilityFamilyKey,
@@ -48,10 +49,37 @@ use tiler_artifact::program::{
     VerifiedArtifactProgram,
 };
 use tiler_compiler::session::{Compilation, PlanAlternative};
+use tiler_ir::kernel::PlanDeterminismWitness;
 use tiler_ir::program::StageRef;
 use tiler_ir::semantic::SemanticProgram;
 
 use crate::realization::RealizationTranslationError;
+
+/// What one build claims about ADR 0013 plan determinism.
+///
+/// The standard build path owns the proof-bound join: a claim carries the
+/// owner-linked compiler witness and the backend payload receipts, and the
+/// artifact builder's `publish_plan` re-proves every binding before any cell
+/// moves. There is deliberately no bool and no raw-declaration form — both
+/// argument types are privately minted, so low-level construction cannot pass
+/// either as proof.
+///
+/// [`Self::Unclaimed`] is every current build: no accepted provider can mint a
+/// receipt today (ADR 0086 records the Metal runtime-translation authority as
+/// `Unknown`), so every current artifact lands admitting nothing and stays
+/// routable as `Unclaimed`.
+#[derive(Clone, Copy)]
+pub enum PlanDeterminismDeclaration<'a> {
+    /// No determinism claim; every cell stays `Unclaimed`.
+    Unclaimed,
+    /// The proof-bound `Plan` claim for the named delivery positions.
+    Claimed {
+        /// The IR witness over exactly the plan's verified kernel program.
+        witness: &'a PlanDeterminismWitness<'a>,
+        /// Per claimed delivery position, one receipt per selected payload.
+        deliveries: &'a [(usize, &'a [PayloadPlanDeterminismReceipt])],
+    },
+}
 
 /// What one backend declares for a single program stage's executable entry.
 ///
@@ -180,6 +208,7 @@ impl From<RealizationTranslationError> for PlanArtifactError {
 pub fn assemble_plan_artifact(
     semantic: &SemanticProgram,
     plan: PlanAlternative<'_>,
+    determinism: PlanDeterminismDeclaration<'_>,
     declare_payload: impl FnOnce(
         &mut ArtifactProgramBuilder,
         TargetProfileRef,
@@ -249,7 +278,7 @@ pub fn assemble_plan_artifact(
     }
 
     let packaged_entries = u32::try_from(entries.len()).expect("a bounded entry table fits u32");
-    builder.push_variant(
+    let variant = builder.push_variant(
         program,
         VariantSpec {
             target_profile: profile.clone(),
@@ -258,6 +287,21 @@ pub fn assemble_plan_artifact(
             entries,
         },
     )?;
+    // The ADR 0013 join: transactional per claimed delivery position, before
+    // the builder freezes anything. `Unclaimed` publishes nothing, which is
+    // every current build — no accepted provider can mint a receipt while ADR
+    // 0086 records the Metal runtime-translation authority as `Unknown`.
+    match determinism {
+        PlanDeterminismDeclaration::Unclaimed => {}
+        PlanDeterminismDeclaration::Claimed {
+            witness,
+            deliveries,
+        } => {
+            for (delivery, receipts) in deliveries {
+                builder.publish_plan(variant, *delivery, witness, receipts)?;
+            }
+        }
+    }
     // The delivered realization, transcribed from the plan's own compiler
     // evidence. Declared after the variant so the entry count it binds is the
     // one the artifact actually packaged, and derived rather than delegated

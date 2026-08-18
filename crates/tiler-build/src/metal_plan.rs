@@ -50,8 +50,8 @@ use crate::realization::RealizationTranslationError;
 use crate::{
     AcceptedArtifact, BackendEntryDeclaration, BoundMetalCompileDeclaration, CompiledMetalPayload,
     MetalArtifactProtocolError, MetalAssemblyError, MetalCacheError, MetalPlanProfileMismatch,
-    PlanArtifactError, accept_or_publish_delivered_metal_artifact, assemble_plan_artifact,
-    metal_compile_request, prepare_metal_payload,
+    PlanArtifactError, PlanDeterminismDeclaration, accept_or_publish_delivered_metal_artifact,
+    assemble_plan_artifact, metal_compile_request, prepare_metal_payload,
 };
 
 /// Why a checked compiler plan did not produce an accepted Metal artifact.
@@ -296,6 +296,9 @@ pub fn accept_or_publish_metal_plan(
     let pending = assemble_plan_artifact(
         semantic,
         plan,
+        // No accepted Metal receipt authority exists (ADR 0086), so every
+        // Metal artifact lands admitting nothing.
+        PlanDeterminismDeclaration::Unclaimed,
         |builder, profile| {
             payloads
                 .iter()
@@ -311,6 +314,7 @@ pub fn accept_or_publish_metal_plan(
             assemble_plan_artifact(
                 semantic,
                 plan,
+                PlanDeterminismDeclaration::Unclaimed,
                 |builder, profile| carry_all(builder, &profile, compiled),
                 |_, stage| Ok(metal_entry_declaration(stage)),
             )
@@ -353,6 +357,7 @@ pub fn accept_or_publish_metal_plan(
     let artifact = assemble_plan_artifact(
         semantic,
         plan,
+        PlanDeterminismDeclaration::Unclaimed,
         |builder, profile| carry_all(builder, &profile, carried),
         |_, stage| Ok(metal_entry_declaration(stage)),
     )
@@ -456,9 +461,9 @@ mod tests {
     use super::{MetalPlanBuildError, accept_or_publish_metal_plan, metal_entry_declaration};
     use crate::{
         BoundMetalCompileDeclaration, CompiledMetalPayload, MetalArtifactProtocolError,
-        MetalCacheError, MetalPlanProfileMismatch, PreparedMetalPayload,
-        accept_or_publish_delivered_metal_artifact, assemble_plan_artifact, metal_compile_request,
-        prepare_metal_payload,
+        MetalCacheError, MetalPlanProfileMismatch, PlanDeterminismDeclaration,
+        PreparedMetalPayload, accept_or_publish_delivered_metal_artifact, assemble_plan_artifact,
+        metal_compile_request, prepare_metal_payload,
     };
 
     fn semantic_program() -> SemanticProgram {
@@ -1661,7 +1666,19 @@ mod tests {
     /// [`assemble_plan_artifact`]: crate::assemble_plan_artifact
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
-        // **Hex step after the elementary numerical dimensions.** The
+        // **Hex step after the ADR 0013 stability subject.** The
+        // `tiler.artifact-program.v20` / manifest `20.0` / guard-and-routing
+        // `2.0` step adds one environment-presence byte to the payload row and
+        // one plan-determinism scope run to the variant row — Metal declares
+        // no environment and claims no cell, so the new bytes are the absence
+        // spellings — and both identities move for the stepped domain and
+        // component schema. The superseded pair was
+        // `9ec0c14925a24cc85ab489863936bfcb2c488771c320e7e58e729bdc1450c8e7` /
+        // `a3b0054639592c319bdc3b28566e8f6c2adc961eab72b488a66dd39f8acfeea0`
+        // at 77,256 bytes; the 2,181-byte descriptor holds, because the
+        // target profile does not move at this step.
+        //
+        // **The earlier hex step was the elementary numerical dimensions.** The
         // coordinated `tiler.schedule.v7` / `tiler.kernel.v9` /
         // `tiler.artifact-program.v19` / manifest `19.0` step carries the
         // reciprocal-transform permission and the approximate-intrinsic
@@ -1680,9 +1697,9 @@ mod tests {
         // `da08d9006f071e38244d0ea765f563dce425cb934057d847a0f03bd88b5aa5b8`
         // at the same 77,096 bytes.
         const ARTIFACT_IDENTITY: &str =
-            "9ec0c14925a24cc85ab489863936bfcb2c488771c320e7e58e729bdc1450c8e7";
+            "13b2246b2e01f39c9a247ee9d2d4565d3bf743d08de8f3d53a7ed6d6c33fec5f";
         const CACHE_SUBJECT: &str =
-            "a3b0054639592c319bdc3b28566e8f6c2adc961eab72b488a66dd39f8acfeea0";
+            "32477f9dfd68cf586553248c52b638e09029f6e948a03b99b9cfc4574928fff2";
         // **Hex step after the feasibility rule-set key v5 → v6.** Descriptor
         // length and fixed content stay at the workgroup-tree-width-policy
         // values: silent profiles write no subgroup section, and the key
@@ -1703,6 +1720,11 @@ mod tests {
         // the redundant `tiler.capability.` text prefix saves eight bytes in
         // this one-provider envelope while the replacement fields are framed
         // independently.
+        // **77,266 after the ADR 0013 stability subject.** 77,256 + 10: one
+        // environment-presence byte on the single payload row, plus the
+        // variant's plan-determinism scope run — an eight-byte count and one
+        // `Unclaimed` tag for the one delivery position. A delta that does not
+        // factor as `payloads + 8 + positions` is a second change riding along.
         // **77,256 after the elementary numerical dimensions.** 77,096 + 160.
         // Eighty-four is the descriptor's twelve new bytes (two six-byte
         // honourability rows) across its seven identity-bearing embeddings;
@@ -1714,7 +1736,7 @@ mod tests {
         // folded through the kernel-program and stage subjects at their
         // embedding multiplicities, read off the move rather than derived,
         // which is one notch weaker and is stated rather than blurred.
-        const FIXED_CONTENT_BYTES: usize = 77_256;
+        const FIXED_CONTENT_BYTES: usize = 77_266;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
@@ -1788,9 +1810,9 @@ mod tests {
     #[test]
     fn the_authority_ledger_mirrors_the_live_standard_metal_pins() {
         const ARTIFACT_IDENTITY: &str =
-            "9ec0c14925a24cc85ab489863936bfcb2c488771c320e7e58e729bdc1450c8e7";
+            "13b2246b2e01f39c9a247ee9d2d4565d3bf743d08de8f3d53a7ed6d6c33fec5f";
         const CACHE_SUBJECT: &str =
-            "a3b0054639592c319bdc3b28566e8f6c2adc961eab72b488a66dd39f8acfeea0";
+            "32477f9dfd68cf586553248c52b638e09029f6e948a03b99b9cfc4574928fff2";
         let ledger = include_str!(
             "../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md"
         );
@@ -1808,7 +1830,7 @@ mod tests {
             "the live pin paragraph does not name CACHE_SUBJECT",
         );
         assert!(
-            today.contains("fixed content is 77,256 bytes"),
+            today.contains("fixed content is 77,266 bytes"),
             "the live pin paragraph does not name FIXED_CONTENT_BYTES",
         );
         assert!(
@@ -2570,6 +2592,7 @@ mod tests {
             let pending = assemble_plan_artifact(
                 &program,
                 plan,
+                PlanDeterminismDeclaration::Unclaimed,
                 |builder, profile| {
                     prepared
                         .iter()
@@ -2589,6 +2612,7 @@ mod tests {
                     assemble_plan_artifact(
                         &program,
                         plan,
+                        PlanDeterminismDeclaration::Unclaimed,
                         |builder, profile| {
                             swapped
                                 .into_iter()
@@ -2615,6 +2639,7 @@ mod tests {
             let mis_ordered = assemble_plan_artifact(
                 &program,
                 plan,
+                PlanDeterminismDeclaration::Unclaimed,
                 |builder, profile| {
                     prepared
                         .iter()

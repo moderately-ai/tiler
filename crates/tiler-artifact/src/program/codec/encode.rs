@@ -210,7 +210,23 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// as by the manifest encoder, so two programs that differ in an elementary
 /// freedom are two artifacts, and the `ARTIFACT_DOMAIN` step to `v19` makes the
 /// earlier subject incomparable rather than merely unlikely to collide.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (19, 0);
+///
+/// **`20.0` carries the ADR 0013 stability-subject records.**
+///
+/// Each payload row gains an optional provider-versioned target-environment
+/// declaration after its content reference, and each variant row gains one
+/// plan-determinism scope cell per delivery position after its dependency
+/// edges. Major for the plainest framing reason: a `19.0` reader would consume
+/// the declaration's presence byte as the next payload row's backend-key
+/// length prefix, and the scope run's count as the next variant's program
+/// section, losing framing for the rest of the manifest. Artifact identity
+/// moves with it — both records are folded by `encode_identity`, so an
+/// artifact claiming `Plan` and the identical artifact claiming nothing are
+/// two artifacts, and the `ARTIFACT_DOMAIN` step to `v20` makes the earlier
+/// subject incomparable rather than merely unlikely to collide. The
+/// guard-and-routing component steps to `2.0` beside it, because a claimed
+/// cell filters routing on the attested environment before the guard.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (20, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 ///
@@ -677,6 +693,22 @@ fn encode_provenance_tables(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
             }
             None => bytes.push(0x00),
         }
+        // The provider-versioned target-environment declaration, presence-tagged
+        // because the absence is meaning: a payload without one cannot support
+        // a `Plan` cell, and a reader must not recover "no declaration" from
+        // bytes that never stated it.
+        match &payload.environment {
+            None => bytes.push(0x00),
+            Some(declaration) => {
+                bytes.push(0x01);
+                push_slice(bytes, declaration.provider().namespace().as_bytes());
+                push_slice(bytes, declaration.provider().name().as_bytes());
+                bytes.extend_from_slice(&declaration.provider().revision().to_be_bytes());
+                bytes.extend_from_slice(&declaration.descriptor_schema().major().to_be_bytes());
+                bytes.extend_from_slice(&declaration.descriptor_schema().minor().to_be_bytes());
+                push_slice(bytes, declaration.descriptor().as_bytes());
+            }
+        }
     }
 }
 
@@ -742,6 +774,12 @@ fn encode_variants(
             bytes.extend_from_slice(&edge.predecessor.to_be_bytes());
             bytes.extend_from_slice(&edge.successor.to_be_bytes());
             bytes.push(edge.reason.tag());
+        }
+        // One plan-determinism scope cell per delivery position, in delivery
+        // order, which is meaning and is written as stated.
+        push_len(bytes, variant.scope.len());
+        for cell in &variant.scope {
+            bytes.push(cell.tag());
         }
     }
     Ok(())

@@ -172,6 +172,11 @@ impl<'request> PreparedMetalPayload<'request> {
             compatibility,
             execution_policy: ArtifactExecutionPolicy::NativeImage,
             digest: self.digest.clone(),
+            // No Metal target-environment declaration exists: ADR 0086 records
+            // the native runtime-translation authority as `Unknown`, so no
+            // accepted Metal provider schema can be declared and every Metal
+            // route stays `Unclaimed` under ADR 0013.
+            environment: None,
         })
     }
 
@@ -281,6 +286,10 @@ impl CompiledMetalPayload {
             PAYLOAD_SCHEMA,
             compatibility,
             ArtifactExecutionPolicy::NativeImage,
+            // No Metal target-environment declaration exists: ADR 0086 records
+            // the native runtime-translation authority as `Unknown`, so every
+            // Metal route stays `Unclaimed` under ADR 0013.
+            None,
             self.content,
         )
     }

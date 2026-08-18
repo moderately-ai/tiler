@@ -52,7 +52,8 @@ use tiler_artifact::program::{
     RepresentationKey, SchemaVersion, TargetPropertyKey, ToolComponent, VerifiedArtifactProgram,
 };
 use tiler_build::{
-    BackendEntryDeclaration, DeclaredPayload, PlanArtifactError, assemble_plan_artifact,
+    BackendEntryDeclaration, DeclaredPayload, PlanArtifactError, PlanDeterminismDeclaration,
+    assemble_plan_artifact,
 };
 use tiler_cache::expansion::{
     ComposedSubject, ExpansionCache, PublishFailure, SubjectFacets, SubjectRefusal,
@@ -528,6 +529,7 @@ pub fn assemble(
     Ok(assemble_plan_artifact(
         semantic,
         plan,
+        PlanDeterminismDeclaration::Unclaimed,
         |builder, profile| {
             builder
                 .push_carried_payload(
@@ -536,6 +538,7 @@ pub fn assemble(
                     PAYLOAD_SCHEMA,
                     profile,
                     ArtifactExecutionPolicy::NativeImage,
+                    None,
                     content,
                 )
                 .map(|payload| vec![payload])
@@ -563,6 +566,7 @@ pub fn assemble_pending(
     Ok(assemble_plan_artifact(
         semantic,
         plan,
+        PlanDeterminismDeclaration::Unclaimed,
         |builder, profile| {
             builder
                 .push_payload(BackendPayloadDescriptor {
@@ -572,6 +576,7 @@ pub fn assemble_pending(
                     compatibility: profile,
                     execution_policy: declaration.execution_policy,
                     digest: declaration.digest.clone(),
+                    environment: None,
                 })
                 .map(|payload| vec![payload])
         },

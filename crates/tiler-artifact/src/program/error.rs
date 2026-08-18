@@ -624,6 +624,72 @@ pub enum ArtifactBuildError {
         /// Typed cause from that vocabulary.
         cause: RouteRequirementError,
     },
+    /// A `Plan` claim was offered with no witness over this variant's program.
+    ///
+    /// The witness argument proves *a* program; a witness whose kernel-program
+    /// identity is not this variant's proves nothing about it, so it is missing
+    /// for this variant rather than merely mismatched.
+    MissingPlanDeterminismWitness {
+        /// Zero-based declaration rank of the variant.
+        variant: usize,
+    },
+    /// A `Plan` claim covers an entry whose selected payload has no receipt.
+    MissingPayloadPlanDeterminismReceipt {
+        /// Zero-based declaration rank of the variant.
+        variant: usize,
+        /// Delivery position the claim covers.
+        delivery: usize,
+        /// Zero-based declared entry position whose payload lacks a receipt.
+        entry: usize,
+    },
+    /// A receipt binds a kernel program other than the witnessed one.
+    PlanDeterminismProgramMismatch {
+        /// Zero-based declaration rank of the variant.
+        variant: usize,
+        /// Delivery position the claim covers.
+        delivery: usize,
+        /// Zero-based declared entry position whose receipt disagrees.
+        entry: usize,
+    },
+    /// A receipt's object binding is not the entry's carried payload object.
+    ///
+    /// Raised both for object bytes whose governed section digest disagrees
+    /// with the receipt's and for a descriptor-only payload: a `Plan` claim is
+    /// over exact executable objects, and an envelope that does not carry them
+    /// has no object-bearing digest for the stability subject to fix.
+    PlanDeterminismPayloadMismatch {
+        /// Zero-based declaration rank of the variant.
+        variant: usize,
+        /// Delivery position the claim covers.
+        delivery: usize,
+        /// Zero-based declared entry position whose object binding disagrees.
+        entry: usize,
+    },
+    /// A `Plan` claim covers a payload that declares no target environment.
+    MissingTargetEnvironmentDeclaration {
+        /// Zero-based declaration rank of the variant.
+        variant: usize,
+        /// Delivery position the claim covers.
+        delivery: usize,
+        /// Zero-based declared entry position whose payload declares none.
+        entry: usize,
+    },
+    /// Two entries of one claimed cell resolve to different target-environment
+    /// compatibility identities, or one entry's receipt disagrees with its own
+    /// payload's declaration.
+    ///
+    /// `first_entry == entry` reports the self-disagreement: the receipt was
+    /// minted for a declaration other than the one the payload carries.
+    PlanDeterminismEnvironmentMismatch {
+        /// Zero-based declaration rank of the variant.
+        variant: usize,
+        /// Delivery position the claim covers.
+        delivery: usize,
+        /// Entry whose resolved identity the disagreement is against.
+        first_entry: usize,
+        /// Entry whose resolved identity disagrees.
+        entry: usize,
+    },
 }
 
 /// Classifies the ABI domain's own key rejection into this crate's vocabulary.
@@ -705,6 +771,12 @@ impl Error for ArtifactBuildError {
             | Self::AccessibleBytesDisagreement { .. }
             | Self::LaunchDisagreement { .. }
             | Self::DuplicateRouteRequirementSubject { .. }
+            | Self::MissingPlanDeterminismWitness { .. }
+            | Self::MissingPayloadPlanDeterminismReceipt { .. }
+            | Self::PlanDeterminismProgramMismatch { .. }
+            | Self::PlanDeterminismPayloadMismatch { .. }
+            | Self::MissingTargetEnvironmentDeclaration { .. }
+            | Self::PlanDeterminismEnvironmentMismatch { .. }
             | Self::DuplicateVariant => None,
         }
     }
@@ -747,6 +819,18 @@ pub enum RecordedArtifactIdentityError {
         /// governed bound is 64 MiB, and an error is not a place to copy one.
         bytes: usize,
     },
+    /// The recorded bytes are not the one width the asserted digest has.
+    ///
+    /// Raised by fixed-width recorded assertions such as
+    /// [`RecordedArtifactEnvelopeDigest`](super::RecordedArtifactEnvelopeDigest):
+    /// a digest has exactly one width, so any other length is a recording of
+    /// something else rather than a truncation of the right thing.
+    WrongWidth {
+        /// Recorded byte length.
+        bytes: usize,
+        /// The one admitted byte length.
+        expected: usize,
+    },
 }
 
 impl fmt::Display for RecordedArtifactIdentityError {
@@ -766,6 +850,11 @@ impl fmt::Display for RecordedArtifactIdentityError {
                 "artifact.recorded-identity: {bytes} recorded byte(s) do not lead with the \
                  `{ARTIFACT_DOMAIN_LABEL}` domain, so they are not an artifact identity this \
                  build can be asked about",
+            ),
+            Self::WrongWidth { bytes, expected } => write!(
+                formatter,
+                "artifact.recorded-identity: {bytes} recorded byte(s) are not the {expected}-byte \
+                 width the asserted digest has, so they are a recording of something else",
             ),
         }
     }
@@ -846,6 +935,38 @@ pub enum ArtifactDiagnostic {
         /// The record codec's own typed cause.
         cause: Box<RealizationCodecError>,
     },
+    /// A variant's plan-determinism scope run is not one cell per delivery
+    /// position.
+    ///
+    /// The run is length-locked to the artifact's delivery positions: a short
+    /// run would leave a position's claim unrecoverable and a long one would
+    /// claim positions that do not exist. Proven at build by construction and
+    /// re-proven at decode against bytes no builder wrote.
+    PlanDeterminismScopeCardinality {
+        /// Zero-based routing rank of the variant.
+        variant: usize,
+        /// Scope cells the variant carries.
+        cells: usize,
+        /// Delivery positions the artifact declares.
+        positions: usize,
+    },
+    /// A decoded `Plan` cell is structurally incoherent.
+    ///
+    /// The neutral re-proof of the builder's proof-bound join, over exactly
+    /// what a neutral decoder can decide: every entry's payload at the claimed
+    /// position must carry a target-environment declaration, carry its object
+    /// bytes, and resolve to one shared declared-environment tuple. Semantic
+    /// provider validation remains the runtime adapter's; a claim that fails
+    /// even these byte-decidable obligations was never buildable and is
+    /// refused rather than routed.
+    UnverifiedPlanDeterminismClaim {
+        /// Zero-based routing rank of the variant.
+        variant: usize,
+        /// Delivery position of the incoherent cell.
+        delivery: usize,
+        /// Zero-based canonical entry position that broke the coherence.
+        entry: usize,
+    },
     /// An entry's resources carry the bit-preserving-copy numerical arm, which
     /// the artifact grammar cannot yet state.
     ///
@@ -879,6 +1000,8 @@ impl ArtifactDiagnostic {
             // a consumer that surfaces this reads which of the record's
             // nineteen rules refused, not merely that one did.
             Self::DeliveredRealization { cause } => cause.rule(),
+            Self::PlanDeterminismScopeCardinality { .. } => "plan-determinism-scope-cardinality",
+            Self::UnverifiedPlanDeterminismClaim { .. } => "unverified-plan-determinism-claim",
             Self::BitPreservingCopyResources => "bit-preserving-copy-resources",
         }
     }
@@ -904,6 +1027,8 @@ impl Error for ArtifactDiagnostic {
             | Self::IdentityLimit { .. }
             | Self::MissingDeliveredRealization
             | Self::DeliveredRealizationEntryOutOfRange { .. }
+            | Self::PlanDeterminismScopeCardinality { .. }
+            | Self::UnverifiedPlanDeterminismClaim { .. }
             | Self::BitPreservingCopyResources => None,
         }
     }

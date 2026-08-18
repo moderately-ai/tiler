@@ -112,6 +112,10 @@ pub(crate) enum TagSubject {
     SectionDisposition,
     /// Whether one backend payload carries its content in this envelope.
     PayloadContent,
+    /// Whether one backend payload declares a target environment.
+    TargetEnvironmentPresence,
+    /// The plan-determinism scope one variant claims at one delivery position.
+    PlanDeterminismScope,
     /// The operation kind of one entry's synchronization realization.
     SynchronizationKind,
     /// An invocation scope of one entry's synchronization realization.
@@ -245,6 +249,10 @@ pub(crate) enum CodecLimitKind {
     Payloads,
     /// Delivery-position count of one executable entry's realization run.
     DeliveryPositions,
+    /// Plan-determinism scope-cell count of one plan variant.
+    PlanDeterminismScopeCells,
+    /// Byte length of one declared target-environment descriptor.
+    TargetEnvironmentDescriptorBytes,
     /// Selected capability-provider count.
     SelectedProviders,
     /// Deferred feasibility predicate count of one plan variant.
@@ -708,6 +716,15 @@ pub(crate) enum ArtifactCodecError {
         /// Typed rejection from the shared-IR registry.
         cause: RegistryError,
     },
+    /// A declared target environment was rejected by its own grammar.
+    ///
+    /// The neutral decoder's half of the provider-versioned declaration:
+    /// generic bounds and the zero-major refusal. Semantic provider validation
+    /// remains unavailable to a neutral decoder by design.
+    InvalidTargetEnvironment {
+        /// Typed rejection from the declaration grammar.
+        cause: super::super::environment::TargetEnvironmentDeclarationError,
+    },
     /// A declared interface shape was rejected by its own constructor.
     InvalidShape {
         /// Typed rejection from the shared shape vocabulary.
@@ -765,6 +782,7 @@ impl Error for ArtifactCodecError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::InvalidGovernedKey { cause } => Some(cause),
+            Self::InvalidTargetEnvironment { cause } => Some(cause),
             Self::InvalidOperationKey { cause } => Some(cause),
             Self::InvalidInterfaceKey { cause } => Some(cause),
             Self::InvalidProviderIdentity { cause } => Some(cause),

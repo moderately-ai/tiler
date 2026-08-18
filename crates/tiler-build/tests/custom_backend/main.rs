@@ -1602,6 +1602,7 @@ fn declaring_one_payload_twice_is_refused() {
     let refusal = tiler_build::assemble_plan_artifact(
         &semantic,
         plan,
+        tiler_build::PlanDeterminismDeclaration::Unclaimed,
         |builder, profile| {
             // Two payloads and one delivery position: the second is declared
             // and never realized, which is the unreferenced-payload refusal
@@ -1612,6 +1613,7 @@ fn declaring_one_payload_twice_is_refused() {
                 backend::PAYLOAD_SCHEMA,
                 profile.clone(),
                 ArtifactExecutionPolicy::NativeImage,
+                None,
                 content.clone(),
             )?;
             builder.push_carried_payload(
@@ -1620,6 +1622,7 @@ fn declaring_one_payload_twice_is_refused() {
                 backend::PAYLOAD_SCHEMA,
                 profile,
                 ArtifactExecutionPolicy::NativeImage,
+                None,
                 content,
             )?;
             Ok(vec![first])
