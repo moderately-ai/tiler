@@ -1,7 +1,7 @@
 ---
 id: decide-the-adr-0013-plan-determinism-stability-subject
 title: Decide the ADR 0013 plan-determinism stability subject
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [decide-the-semantic-order-contract-for-relaxed-contractions]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/artifact, implementation/compiler, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, numerics, identity, public-boundary, needs-tom]
+claimed_from: todo
+assignee: worker-determinism-surface
+lease_expires_at: 1787017405
 ---
 ## Outcome
 
