@@ -1,7 +1,7 @@
 ---
 id: state-the-rule-that-a-deterministic-budget-is-a-derivation
 title: Decide and state the deterministic-budget provenance rule
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [derive-the-region-shape-budgets-from-the-declaration, design-explicit-caller-selected-budget-exhaustion-policies]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/optimizer, research/region-search]
 shared_scopes: [project/tickets]
 paths: []
 tags: [budgets, conventions, decision, needs-tom]
-claimed_from: todo
-assignee: worker-budget-rule
-lease_expires_at: 1787066597
 ---
 ## Decision accepted — 2026-08-11
 
