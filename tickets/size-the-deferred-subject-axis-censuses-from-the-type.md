@@ -1,7 +1,7 @@
 ---
 id: size-the-deferred-subject-axis-censuses-from-the-type
 title: Size the deferred-subject axis censuses from the type
-status: in-progress
+status: done
 priority: p2
 dependencies: [carry-subgroup-width-through-exact-prepared-entry-equality]
 related: [generalize-deferred-target-provenance-beyond-capability-axes]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: worker-axis-census
-lease_expires_at: 1787066399
 ---
 ## User-visible outcome
 
@@ -84,6 +81,8 @@ Repaired rather than documented-as-a-pin, because the repair was available: `cap
 Two fields stay shared with the encoder, and the test now says so: `CapabilityAxis::key` and `PreparedEntryTargetRequirement::canonical_bytes`. Both were shared pre-enum too — they are the axis's one governed spelling and the requirement's own governed encoding — so restating either would assert a second opinion about bytes this module does not own. The claim in the test's doc comment is now exactly that, not the broader "independent pre-enum control".
 
 **Unverified.** The byte control was not perturbed. Breaking its subject means editing `encode_deferred_predicate` (for example writing the required quantity little-endian), and that edit was refused by the environment's tool policy; retrying it would have been working around the refusal rather than around a mistake. Its liveness is inherited rather than demonstrated: it compares against real encoder output and passes, and the change re-sourced one of three reconstructed fields to a value that is equal today. A reviewer with encoder-edit permission should make the little-endian perturbation and confirm `capability_records_keep_their_pre_enum_bytes_exactly` reddens.
+
+**Verified at integration — 2026-08-18, by the coordinator.** The little-endian perturbation was made in the lane worktree at this commit: `encode_deferred_predicate`'s capability arm changed `to_be_bytes` to `to_le_bytes` on the required quantity alone. `cargo nextest run -p tiler-compiler -E 'test(capability_records_keep_their_pre_enum_bytes_exactly)'` failed with `assertion `left == right` failed: the grid-axis capability record moved under the subject vocabulary`, the two byte vectors differing exactly at the eight-byte required-quantity field (`… 1, 0, 0, 0, 0, 0, 0, 0 …` against `… 0, 0, 0, 0, 0, 0, 0, 1 …`) with every framed field identical. The perturbation was reverted and the tree confirmed byte-identical to the delivered commit. The byte control is demonstrated live, not inherited.
 
 ## Commands
 
