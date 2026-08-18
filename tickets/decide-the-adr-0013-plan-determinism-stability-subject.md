@@ -1,7 +1,7 @@
 ---
 id: decide-the-adr-0013-plan-determinism-stability-subject
 title: Decide the ADR 0013 plan-determinism stability subject
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [decide-the-semantic-order-contract-for-relaxed-contractions]
@@ -262,3 +262,10 @@ tkt guard tkt/decide-the-adr-0013-plan-determinism-stability-subject \
 ```
 
 Ticket lint reported no diagnostics; every pinned citation and local link resolved; `git diff --check` was empty. The pre-commit guard reported no conflict, no under-declared scope, and the ticket's complete declared scope set; as designed it saw no committed changed file before commit. The same exact-base/config-ref guard is rerun on the reported commit so the ticket-only path is visible. No production file, accepted ADR, ticket status, dependency, queue row, or preserved failed work changed.
+
+
+## Accepted decision — 2026-08-18
+
+Tom accepted **the exact reviewed packet at `2cb651290979f578094d885c851c5085b4065d9b`** in the live coordination session with the orchestrator, relayed first-hand by the coordinator, by replying `agreed, next decision` to the accept-or-retain-typed-refusal question presented in explain-then-recommend form.
+
+The accepted carrier is exactly the packet's sole nondominated option: provider-versioned canonical target-environment declarations; proof-bound payload receipts; adapter-bound live schema validation and observation; a runtime plan subject of envelope digest, routing rank, delivery position, and canonical target-environment identity. Raw provider bytes never self-certify. Unknown providers, revisions, schemas, unavailable observations, and mismatches filter the claimed plan before its guard and before commit; `Unclaimed` alternatives remain routable; no current Metal route gains a positive claim while ADR 0086 records its runtime translation authority as `Unknown`. Identity consequences as packeted: target-environment identity v1 and runtime plan-subject v1; artifact v18→v19, manifest 18.0→19.0, guard/routing 1.0→2.0 — with the version numbers rederived at the implementation's own base, since the independently accepted physical-selection provenance surface (queue item 7) also steps artifact/manifest and whichever lands first takes the number. The recorded reversal evidence stands: a closed backend-neutral vocabulary proven complete for every admitted provider, or evidence that provider schemas cannot be governed and canonically observed under the packet's bounds. Implementation flows through `implement-the-adr-0013-plan-determinism-stability-subject`, which this acceptance unblocks.
