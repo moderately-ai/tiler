@@ -83,7 +83,7 @@ Updated 2026-08-18: the compilation-selection provenance packet was parked as it
 - Current recommendation: do not accept the row yet.
 - Release trigger: `associate-live-extent-operands-with-symbolic-semantic-interface-axes` produces an independently reviewed minimum complete schema/identity derivation and the packet is rewritten against that exact commit.
 
-## 10. Host-bounded physical-frontier sink — blocked before presentation
+## 10. Host-bounded physical-frontier sink — POLICY ACCEPTED 2026-08-18 (two active specialists; request-scoped 1,024); engineering path open
 
 - Tickets: `replace-provider-offer-with-a-host-bounded-frontier-sink` (`p1`, `blocked`); branch-local `accept-the-host-bounded-physical-frontier-sink` at preserved draft `54e272baa525027a6f6f9d982bd3bd7c387597fb`.
 - Hold evidence: the custodial idle-M3 request-wide census eliminated 256 and eliminated 16,384 as a standalone answer because complete explain capacity fires first. Item 1 is complete and the capacity-policy audit retains both truthful explain ceilings with no numeric active-provider guarantee. The raw calibration is now deferred because no consumer or accepted contract names the active population a value should support; it cannot manufacture two or 31 as policy. Review of preserved draft `54e272ba` also found request exhaustion downgraded to target/candidate outcomes, provider-order-dependent error precedence, a `u64::MAX` counter escape, stale authority-count documentation, uncompilable retained spikes, and incomplete calibration over admitted targets/candidates.

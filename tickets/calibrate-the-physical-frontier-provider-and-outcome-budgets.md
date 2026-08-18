@@ -1,7 +1,7 @@
 ---
 id: calibrate-the-physical-frontier-provider-and-outcome-budgets
 title: Calibrate the physical-frontier provider and raw-outcome budgets
-status: deferred
+status: todo
 priority: p1
 dependencies: [decide-whether-the-implementation-frontier-owes-a-retention-budget, measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro, decide-how-explain-capacity-bounds-active-physical-provider-populations, decide-the-truthful-public-class-for-complete-explain-capacity-refusals, implement-the-truthful-explain-capacity-budget-refusal, prove-the-truthful-explain-capacity-budget-refusal-boundary]
 related: [replace-provider-offer-with-a-host-bounded-frontier-sink]
@@ -149,4 +149,12 @@ The retained 2026-08-14 M3 record, custody verifier, and negative controls remai
 ## Trigger check log
 
 - **2026-08-16 — not fired.** `rg -n -i 'active specialist|active-provider|full (32|provider)|31 (installed|active)|two active' tickets docs --glob '*.md'` finds the numeric populations only in this calibration family, the explain-capacity decision/conditional experiment, and implementation non-goals; no consumer or accepted support contract names one. Trigger when a named consumer or accepted contract states an active-provider population whose request-wide raw outcomes must be supported. Re-audit current provider, candidate, target, explain, runtime/RSS, request-identity, and partial-output authorities before selecting a value.
+- **2026-08-18, later the same day — FIRED.** Tom accepted two active specialists as the supported ordinary population in the live coordination session (see `## Accepted policy — 2026-08-18` above), which is exactly the "named consumer or accepted contract states an active-provider population" condition. The ticket reopens under that authority; re-audit current provider, candidate, target, explain, runtime/RSS, request-identity, and partial-output authorities before encoding the value, per the trigger's own instruction.
 - **2026-08-18 — not fired.** The same command's only file not already in the 2026-08-16 population is [`frame-provider-identities-before-using-them-as-explain-keys`](frame-provider-identities-before-using-them-as-explain-keys.md), whose hit is the phrase `the full provider-identity vocabulary` — an explain key-naming outcome, not a supported active-provider population. No consumer or accepted contract names one. The coordinator queued the underlying policy question ("is two active specialists the supported ordinary population, making request-scoped 1,024 the calibrated raw-outcome value?") for Tom, since the deferral awaits exactly that authority and holds the p1 frontier-sink chain.
+
+
+## Accepted policy — 2026-08-18
+
+Tom accepted, in the live coordination session with the orchestrator (relayed first-hand by the coordinator, reply `agreed, next decision`), **two active specialists as the supported ordinary population**, making **request-scoped 1,024** the calibrated raw-outcome value — the decision gate's one conditional survivor, now unconditional. The acceptance supplies exactly the authority the 2026-08-16 disposition said was missing; the measurement record (2026-08-14 idle-M3 run, 848 outcomes at 177 ms / 531 MB) stands as its evidence. The recorded reversal evidence stays live: a named three-specialist consumer, or an accepted policy separating installed identities from active answerers, reopens the value.
+
+This ticket reopens for the remaining selection/encoding work under that authority. The value reaches production only through the host-bounded frontier-sink work, whose preserved draft `54e272ba` must first receive the six recorded review-finding repairs, subject perturbations for each, and a fresh independent exact-commit review — acceptance of the policy is not acceptance of the draft.
