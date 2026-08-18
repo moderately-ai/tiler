@@ -93,6 +93,10 @@ Positive controls: `an_attested_claimed_route_carries_one_exact_subject_across_t
 
 `docs/decisions/0013-scoped-determinism.md` `implementation_status` moves `not-started` → `partial` (`contracts/decisions` added as the scheduling scope for this one-field alignment): the plan-deterministic guarantee's stability subject — declaration, receipt, runtime subject, and fail-closed filter — is implemented and tested, while portable bitwise remains unimplemented and no positive provider claim ships. The ADR's body is untouched; its open sentence about the exact compatibility-identity fields is answered by the accepted decision recorded in `decide-the-adr-0013-plan-determinism-stability-subject`, which the traceability chain already reaches through this ticket.
 
+### Gate record
+
+`make full` passed (exit 0) at `b23873d4`, the commit carrying the complete code tree: fmt with the trybuild fixture floors, workspace check, nextest (3,775 lib/bin tests and the 1,282-test release numerical suite all green), doc-tests, clippy with warnings denied and the prototype style exclusions, rustdoc with `-D warnings`, `tkt lint`, `make citations`, and shellcheck. The two commits after it (`58c20885` and this record) touch only `docs/decisions/0013-scoped-determinism.md` and this ticket — neither path is in the gate-invalidating list — so the green gate carries; `tkt lint` and `make citations` were rerun on each ticket/docs delta per the carry rule.
+
 ### Follow-on
 
 The next framing step over these records (queue item 7's carrier, or any manifest-grammar change) must rederive on top of this landing: artifact `v20 → v21`, manifest `20.0 → 21.0`, and recompute the standard-Metal pins from its merged tree.
