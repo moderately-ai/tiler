@@ -1,7 +1,7 @@
 ---
 id: decide-the-algebraic-capability-authority-for-contraction-splits
 title: Decide the algebraic capability authority for contraction splits
-status: todo
+status: in-progress
 priority: p1
 dependencies: [decide-the-semantic-order-contract-for-relaxed-contractions]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, contracts/numerics, contrac
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, numerics, identity, public-boundary, needs-tom]
+claimed_from: todo
+assignee: worker-algebraic-authority
+lease_expires_at: 1787091293
 ---
 ## User-visible outcome
 
