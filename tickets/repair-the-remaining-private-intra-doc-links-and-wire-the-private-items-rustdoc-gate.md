@@ -1,7 +1,7 @@
 ---
 id: repair-the-remaining-private-intra-doc-links-and-wire-the-private-items-rustdoc-gate
 title: Repair the remaining private intra-doc links and wire the private-items rustdoc gate
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [repair-the-private-intra-doc-links-the-public-rustdoc-gate-cannot-see]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/reference, implementation/frontend, i
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: worker-doc-gate
-lease_expires_at: 1787088563
 ---
 ## User-visible outcome
 
