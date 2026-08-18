@@ -1,7 +1,7 @@
 ---
 id: repair-the-checkpoint-no-cast-control
 title: Repair the checkpoint no-Cast control
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [ingest-the-checkpoint-as-f32-program-inputs]
@@ -9,9 +9,6 @@ scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, verification]
-claimed_from: todo
-assignee: worker-checkpoint-no-cast
-lease_expires_at: 1787017663
 ---
 ## Fact audit — exact main `dc105234`
 
