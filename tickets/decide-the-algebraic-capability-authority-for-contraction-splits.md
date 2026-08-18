@@ -10,8 +10,8 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [decision, numerics, identity, public-boundary, needs-tom]
 claimed_from: todo
-assignee: worker-algebraic-authority
-lease_expires_at: 1787091293
+assignee: worker-algebraic-review
+lease_expires_at: 1787096894
 ---
 ## User-visible outcome
 
