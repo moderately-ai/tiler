@@ -1,7 +1,7 @@
 ---
 id: decide-the-source-bound-live-row-major-access-surface
 title: Decide the source-bound LiveRowMajor access surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [accept-the-live-extent-operand-public-surface, reconcile-input-ordinal-region-local-and-declared-input-semantics]
 related: [admit-symbolic-extents-through-schedule-formation, associate-live-extent-operands-with-symbolic-semantic-interface-axes, deliver-an-artifact-family-from-a-symbolic-region, repair-fieldless-tensor-role-documentation-after-access-ordinal-reconciliation, refuse-mixed-pointwise-live-row-major-access-relations-before-lowering]
@@ -1126,3 +1126,12 @@ provenance here, leave implementation to
 and preserve artifact association as its downstream hard edge. On rejection,
 record the rejected premise and keep the current typed refusal; do not mark the
 capability implemented or close blocked dependents by inertia.
+
+
+## Accepted decision — 2026-08-18
+
+Tom accepted **option 1, the fieldless contextual marker**, in the live coordination session with the orchestrator (this repository's continuous-delivery loop), relayed first-hand by the coordinator, by replying `agreed, next decision` to the packet's one question presented in explain-then-recommend form.
+
+The accepted surface is exactly the packet's fieldless spelling at reviewed commit `c452249655ab4b5ddcaef7cea8745b22a1c50634`: `LiveRowMajorSource { inner_axis }` on the source access plus the unit `LiveRowMajor` consumer marker; retire tag `0x09`; fresh source/consumer tags `0x0A`/`0x0B`; the four exact verifier rules with the packet's precedence (marker count, marker role/mode, then complete live-relation coverage); every pointwise read and the final write carry the selected live relation; dedicated `ScheduledRegionDiagnostic::LiveRowMajorSource` including `ConsumerMissingRelation { access }`. Fresh tags and first-trace refusal growth require no identity or explain version step; every moved live identity value is recomputed and static values stay exact, per the packet.
+
+The recorded reversal evidence stands: a public or identity-bearing detached-map consumer, or a concrete next multi-source population, reopens the consumer-field question as a new decision rather than a reinterpretation of this surface. Implementation flows through the already-blocked carrier chain (`admit-symbolic-extents-through-schedule-formation` and its dependents), which this acceptance unblocks.
