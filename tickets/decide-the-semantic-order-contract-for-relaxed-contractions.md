@@ -1,7 +1,7 @@
 ---
 id: decide-the-semantic-order-contract-for-relaxed-contractions
 title: Decide the semantic order contract for relaxed contractions
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [decide-the-algebraic-capability-authority-for-contraction-splits, admit-reassociated-contraction-schedule-alternatives, decide-the-adr-0013-plan-determinism-stability-subject, implement-the-adr-0013-plan-determinism-stability-subject]
@@ -459,3 +459,12 @@ The same-key/scalar-only movement fingerprints (`8713bca5...`→`ade9f0ef...`, `
 No materially distinct option is missing: every candidate the ticket's own frontier requires is dispositioned, an adjective-bearing successor spelling is excluded by the same truthfulness argument that eliminates `strict-...@2`, and a dtype-generic key would contradict the corpus-wide per-dtype key convention without any consumer asking for it. Every elimination reason was re-checked at this base: the same-key elimination rests on the verified graph-only join; the permutation-only elimination rests on ADR 0014's two `Unrealized` paragraphs (no commutativity capability exists to declare, and nothing consumes a permutation permission), both re-read and current. The recommendation is genuinely nondominated rather than manufactured — strict-forever minimizes surface, the successor alone delivers the fired capability, and the packet asks Tom exactly that one question. No correctness-bearing API, proof, or identity choice was found left implicit for the implementer beyond the documentation sweep now repaired.
 
 **Verdict: ready for Tom with the named repairs, which are made in this commit.** The packet's Facts, eliminations, arithmetic, identity cascade, and dependency wiring all survive independent re-derivation at `075d2d44`; the discrepancies found are citation-quality and carrier-completeness issues, none of which moves the option set, the recommendation, or the draft question.
+
+
+## Accepted decision — 2026-08-18
+
+Tom accepted **the complete standard-vertical replacement: retire `tiler::strict-tensor-contraction-f32@1` and replace it with `tiler::tensor-contraction-f32@1`, reassociation-only**, in the live coordination session with the orchestrator, relayed first-hand by the coordinator, by replying `agreed, next decision` to the packet's exact draft question presented in explain-then-recommend form after independent review (`5a48c9ce`, merged `abfb0948`).
+
+The accepted semantic contract is exactly the packet's: the successor's strict request cell preserves the old strict left-fold answer bit for bit; its reassociation-permitted cell denotes the set of all full ordered binary trees over the unchanged canonical leaves; permutation remains operation-owned unsupported; the old key leaves the standard vertical completely, with no alias, equivalence rule, fallback, or duplicate selection policy. Same-key mutation remains eliminated on the measured artifact-hybrid evidence.
+
+Per the packet's downstream list: (1) the exact drafted public surface (descriptor, effective profile, witness, topology evaluator) remains a **labelled draft** whose exact included/excluded acceptance is its own next question — carried by `accept-the-tensor-contraction-successor-public-surface`; (2) the ADR-0013 decision was accepted the same session and its implementation carrier is queued; (3) `decide-the-algebraic-capability-authority-for-contraction-splits` reopens at this accepted commit to choose the internal reducer capability; (4) one implementation carrier owns the atomic key replacement and boundary delivery, blocked on the surface acceptance and the determinism carrier; (5) `admit-reassociated-contraction-schedule-alternatives` is revised so contiguous membership is the only reachable delivery; (6) lane-strided admission stays behind the permutation/commutativity trigger.

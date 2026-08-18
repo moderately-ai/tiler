@@ -1,7 +1,7 @@
 ---
 id: decide-the-algebraic-capability-authority-for-contraction-splits
 title: Decide the algebraic capability authority for contraction splits
-status: blocked
+status: todo
 priority: p1
 dependencies: [decide-the-semantic-order-contract-for-relaxed-contractions]
 related: []
