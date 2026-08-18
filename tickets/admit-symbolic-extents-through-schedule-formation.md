@@ -1,7 +1,7 @@
 ---
 id: admit-symbolic-extents-through-schedule-formation
 title: Admit symbolic extents through schedule formation
-status: in-progress
+status: done
 priority: p1
 dependencies: [admit-symbolic-extents-through-compiler-region-formation, accept-the-live-extent-operand-public-surface, decide-the-source-bound-live-row-major-access-surface, refuse-mixed-pointwise-live-row-major-access-relations-before-lowering]
 related: [deliver-an-artifact-family-from-a-symbolic-region, carry-live-extent-operands-through-the-artifact-envelope]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, contracts/foundation, imple
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, ir, shapes, public-boundary]
-claimed_from: todo
-assignee: worker-symbolic-extents
-lease_expires_at: 1787091293
 ---
 ## User-visible outcome
 
