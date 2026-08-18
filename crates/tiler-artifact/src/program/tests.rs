@@ -193,6 +193,8 @@ pub(super) fn strict() -> NumericalRealization {
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ApproximationEnvelope::Forbidden,
         ExceptionalValueAssumption::MakeNoAssumption,
         ExceptionalValueAssumption::MakeNoAssumption,
     )
@@ -3021,6 +3023,8 @@ impl PointwiseWidth {
                 NumericalPermission::Forbidden,
                 NumericalPermission::Forbidden,
                 NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                ApproximationEnvelope::Forbidden,
                 ExceptionalValueAssumption::MakeNoAssumption,
                 ExceptionalValueAssumption::MakeNoAssumption,
             ),
@@ -5666,8 +5670,8 @@ fn empty_extent_lists_do_not_move_previously_encodable_artifact_bytes() {
         "two no-extent artifacts must keep one identity",
     );
     assert!(
-        super::model::ARTIFACT_DOMAIN.ends_with(b"v18\0"),
-        "the independent selected-capability step owns v18; empty extent lists still write no bytes",
+        super::model::ARTIFACT_DOMAIN.ends_with(b"v19\0"),
+        "the elementary-dimension step owns v19; empty extent lists still write no bytes",
     );
     let with = live_extent_artifact();
     assert_ne!(

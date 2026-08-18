@@ -562,6 +562,8 @@ impl StrictF32NumericalContract {
             self.reassociation,
             self.permutation,
             self.signed_zero,
+            self.reciprocal_transform,
+            self.approximate_intrinsics,
             self.nan_assumptions,
             self.infinity_assumptions,
         )

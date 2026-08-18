@@ -32,13 +32,13 @@ static inline bfloat tiler_canonicalize_nan_bf16_7fc0(bfloat value) {
     return nan ? as_type<bfloat>(ushort(0x7fc0u)) : value;
 }
 
-// Entry point tiler_kernel_b8b405b8a03230fb
-//   kernel identity digest: b8b405b8a03230fb
-//   scheduled region identity digest: 9a9a0b37454df952
+// Entry point tiler_kernel_a2df42e83503af57
+//   kernel identity digest: a2df42e83503af57
+//   scheduled region identity digest: cb12962007e495b7
 //   numerical profile: tiler.test.strict-bf16
 //   buffer(0): Input tensor, Bf16, Device space, Read access, 4 element(s)
 //   buffer(1): Intermediate tensor, Bf16, Device space, Write access, 4 element(s)
-kernel void tiler_kernel_b8b405b8a03230fb(
+kernel void tiler_kernel_a2df42e83503af57(
         device const bfloat *b0 [[buffer(0)]],
         device bfloat *b1 [[buffer(1)]],
         uint tiler_global_invocation_index [[thread_position_in_grid]]) {

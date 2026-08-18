@@ -23,10 +23,10 @@ use tiler_ir::program::{
     StorageScalar, ValueRole, VerifiedKernelProgram,
 };
 use tiler_ir::schedule::{
-    ExceptionalValueAssumption, FlushedZeroSign, IndexArithmetic, MemoryOrdering,
-    NumericalPermission, NumericalRealization, ResourceRequirements, SubgroupRealizationSubject,
-    SubgroupTransfer, SubnormalMode, SynchronizationKind, SynchronizationScope,
-    SynchronizationSubject, ValueDomainProvenance,
+    ApproximationEnvelope, ExceptionalValueAssumption, FlushedZeroSign, IndexArithmetic,
+    MemoryOrdering, NumericalPermission, NumericalRealization, ResourceRequirements,
+    SubgroupRealizationSubject, SubgroupTransfer, SubnormalMode, SynchronizationKind,
+    SynchronizationScope, SynchronizationSubject, ValueDomainProvenance,
 };
 use tiler_ir::semantic::{
     EncodedComponentRole, InputKey, OpKey, OutputKey, ProviderIdentity,
@@ -244,7 +244,7 @@ use super::requirement::{RouteRequirement, push_requirements};
 /// no variant guard happens to read them, so two programs differing there can
 /// no longer share the earlier incomplete identity.
 ///
-/// # Why this is a `v18` step
+/// # Why this was a `v18` step
 ///
 /// A selected lowering capability now frames its governed family and exact
 /// operation namespace, name, and semantic version independently. The `v17`
@@ -252,6 +252,18 @@ use super::requirement::{RouteRequirement, push_requirements};
 /// dots fell on different namespace/name boundaries could share one artifact
 /// identity. The structured record removes that collision; stepping the domain
 /// makes every ambiguous earlier subject incomparable with the injective one.
+///
+/// # Why this is a `v19` step
+///
+/// Both per-entry numerical records — the fixed resource-requirement run and
+/// the entry's own numerical facts — gained the reciprocal-transform permission
+/// and the approximate-intrinsic envelope, written between the signed-zero tag
+/// and the exceptional-value assumptions in canonical dimension order. The
+/// bytes land inside records the rest of the identity trails, so every artifact
+/// ever encoded maps to different bytes now; and two artifacts differing only
+/// in an elementary freedom were one subject under `v18`, which is the
+/// collision the step refuses: a cache holding a `v18` identity must miss
+/// rather than match.
 ///
 /// # Why this was a `v15` step
 ///
@@ -269,7 +281,7 @@ use super::requirement::{RouteRequirement, push_requirements};
 /// bytes by `starts_with` on this separator, so a governed domain that prefixed
 /// it would let another subject's bytes be accepted as an artifact identity.
 /// `crate::domains` enumerates it and checks that no such domain exists.
-pub(crate) const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v18\0";
+pub(crate) const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v19\0";
 
 /// [`ARTIFACT_DOMAIN`] without its terminator, for rendering in a diagnostic.
 ///
@@ -2287,6 +2299,27 @@ pub(super) const fn permission_from_tag(tag: u8) -> Option<NumericalPermission> 
     }
 }
 
+/// This crate's own tag table for the approximate-intrinsic envelope.
+///
+/// A second, independent copy of the schedule's table by design, exactly as the
+/// subnormal and permission tables are: the two identities are different
+/// subjects, and a shared encoder would let one domain's step silently move the
+/// other's bytes. Admitting a third envelope is a build error at both.
+pub(super) const fn approximation_envelope_tag(envelope: ApproximationEnvelope) -> u8 {
+    match envelope {
+        ApproximationEnvelope::Forbidden => 0x01,
+        ApproximationEnvelope::BackendElementary => 0x02,
+    }
+}
+
+pub(super) const fn approximation_envelope_from_tag(tag: u8) -> Option<ApproximationEnvelope> {
+    match tag {
+        0x01 => Some(ApproximationEnvelope::Forbidden),
+        0x02 => Some(ApproximationEnvelope::BackendElementary),
+        _ => None,
+    }
+}
+
 /// The governed tag table of the index-arithmetic requirement vocabulary.
 ///
 /// A forward and inverse pair kept in one place, like every other enumeration
@@ -2487,6 +2520,8 @@ pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirement
         reassociation,
         permutation,
         signed_zero,
+        reciprocal_transform,
+        approximate_intrinsics,
         nan_assumptions,
         infinity_assumptions,
     } = resources;
@@ -2502,6 +2537,8 @@ pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirement
     bytes.push(permission_tag(reassociation));
     bytes.push(permission_tag(permutation));
     bytes.push(permission_tag(signed_zero));
+    bytes.push(permission_tag(reciprocal_transform));
+    bytes.push(approximation_envelope_tag(approximate_intrinsics));
     bytes.push(exceptional_assumption_tag(nan_assumptions));
     bytes.push(exceptional_assumption_tag(infinity_assumptions));
     push_subgroup_requirement(bytes, subgroup);
@@ -2517,6 +2554,8 @@ pub(super) fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalFacts) {
         reassociation,
         permutation,
         signed_zero,
+        reciprocal_transform,
+        approximate_intrinsics,
         nan_assumptions,
         infinity_assumptions,
     } = numerical;
@@ -2528,6 +2567,8 @@ pub(super) fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalFacts) {
     bytes.push(permission_tag(*reassociation));
     bytes.push(permission_tag(*permutation));
     bytes.push(permission_tag(*signed_zero));
+    bytes.push(permission_tag(*reciprocal_transform));
+    bytes.push(approximation_envelope_tag(*approximate_intrinsics));
     bytes.push(exceptional_assumption_tag(*nan_assumptions));
     bytes.push(exceptional_assumption_tag(*infinity_assumptions));
 }

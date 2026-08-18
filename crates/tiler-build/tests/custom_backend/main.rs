@@ -1903,11 +1903,11 @@ fn a_kernel_this_backend_cannot_place_is_refused_during_translation() {
 fn wide_kernel() -> VerifiedKernel {
     use tiler_ir::kernel::lower_scheduled_region;
     use tiler_ir::schedule::{
-        Access, AccessMode, AccessOrdinal, BoundsProof, BoundsProofKind, BoundsWitnessId,
-        ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
-        NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-        OwnershipWitnessId, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId,
-        ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+        Access, AccessMode, AccessOrdinal, ApproximationEnvelope, BoundsProof, BoundsProofKind,
+        BoundsWitnessId, ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan,
+        LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
+        OwnershipProofKind, OwnershipWitnessId, PointwiseF32ExpressionBuilder, ReductionTopology,
+        RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
     };
 
     let mut region = ScheduledRegionBuilder::new(RegionId::new(0));
@@ -1974,6 +1974,8 @@ fn wide_kernel() -> VerifiedKernel {
             NumericalPermission::Forbidden,
             NumericalPermission::Forbidden,
             NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            ApproximationEnvelope::Forbidden,
             ExceptionalValueAssumption::MakeNoAssumption,
             ExceptionalValueAssumption::MakeNoAssumption,
         ))

@@ -229,8 +229,8 @@ use tiler_ir::program::abi::{
     AvailabilityPhase, TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
 };
 use tiler_ir::schedule::{
-    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubgroupRealizationSubject,
-    SubnormalMode, SynchronizationSubject,
+    ApproximationEnvelope, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
+    SubgroupRealizationSubject, SubnormalMode, SynchronizationSubject,
 };
 use tiler_ir::semantic::{F32, ResolvedValueType};
 
@@ -4919,6 +4919,36 @@ fn governed_target_honourability() -> Vec<ScalarHonourabilityDeclaration> {
         exact(
             NumericalDimension::SignedZero,
             DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+        ),
+        // The two elementary dimensions follow the contraction/reassociation
+        // idiom above: both resolutions of each are declared, and each is
+        // honoured exactly rather than approximately. `Forbidden` is delivered
+        // by the arithmetic actually performed — nothing in the governed
+        // prototype path substitutes a reciprocal for a division or selects an
+        // approximate intrinsic. The widened resolutions are honoured for the
+        // reassociation row's reason: a permission names a set of legal
+        // results, the delivered realization is one of them, and this target
+        // runs the one Tiler selected rather than substituting another. The
+        // `BackendElementary` envelope in particular is a *maximum* accuracy
+        // the caller authorizes consuming, and an exactly rounded elementary
+        // result lies within every such envelope, so delivering the precise
+        // contract honours the authorization without asserting any
+        // approximation authority this profile does not have.
+        exact(
+            NumericalDimension::ReciprocalTransform,
+            DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+        ),
+        exact(
+            NumericalDimension::ReciprocalTransform,
+            DimensionBehaviour::Transform(NumericalPermission::Permitted),
+        ),
+        exact(
+            NumericalDimension::ApproximateIntrinsics,
+            DimensionBehaviour::Approximation(ApproximationEnvelope::Forbidden),
+        ),
+        exact(
+            NumericalDimension::ApproximateIntrinsics,
+            DimensionBehaviour::Approximation(ApproximationEnvelope::BackendElementary),
         ),
         exact(
             NumericalDimension::NanAssumptions,

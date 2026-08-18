@@ -118,8 +118,9 @@ use tiler_ir::program::abi::{
     AvailabilityPhase, TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
 };
 use tiler_ir::schedule::{
-    ArithmeticType, ExceptionalValueAssumption, FencedSpaces, MemoryOrdering, NumericalPermission,
-    SynchronizationKind, SynchronizationScope, SynchronizationSubject,
+    ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FencedSpaces,
+    MemoryOrdering, NumericalPermission, SynchronizationKind, SynchronizationScope,
+    SynchronizationSubject,
 };
 use tiler_ir::semantic::{Bf16, F32};
 use tiler_metal::target::{
@@ -896,6 +897,38 @@ impl BoundMetalCompileDeclaration {
         builder.declare_measured_signed_zero(
             f32.clone(),
             NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            measured.clone(),
+        )?;
+        // The two elementary dimensions, each declared at its *strict*
+        // resolution only. The ledger's attribute-string section is the
+        // isolation: across all 688 retained cases the `safe` strings carry
+        // no `arcp` — LLVM's allow-reciprocal relaxation, the licence a
+        // reciprocal substitution needs — over a retained population that
+        // includes a bare `fdiv`, and no `afn` — allow-approximate-functions
+        // — anywhere. So the selected `safe`/`contract-off` realization
+        // delivers a forbidding contract exactly: the compiler adds no
+        // substitution and no approximation to the operations Tiler emits.
+        //
+        // The widened resolutions — `Permitted` reciprocal replacement and the
+        // `BackendElementary` envelope — are deliberately *not* declared, and
+        // stay `Unknown` with the ledger recording the reconsideration
+        // trigger: no retained case isolates a delivered substitution or an
+        // approximate intrinsic on this exact toolchain row, and a row read
+        // from the governed profile's delivered-realization argument rather
+        // than from a retained measurement would be a guess wearing a
+        // measurement's provenance. A contract authorizing either freedom is
+        // therefore refused by name on this profile, which is the fail-closed
+        // answer rather than an invented one.
+        builder.declare_measured_reciprocal_transform(
+            f32.clone(),
+            NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            measured.clone(),
+        )?;
+        builder.declare_measured_approximate_intrinsics(
+            f32.clone(),
+            ApproximationEnvelope::Forbidden,
             ScalarSupport::Exact,
             measured.clone(),
         )?;
@@ -2099,9 +2132,18 @@ mod tests {
         // grow, because the policy shares the same measured source. **That the
         // arithmetic closes is the evidence no layout moved**, not an assertion
         // beside one.
+        //
+        // It grew to **2,181** when the two measured elementary rows landed:
+        // each scalar honourability row writes the subject's one-byte
+        // arithmetic tag, its framed resolved-type identity, the dimension
+        // tag, the two behaviour bytes, the means tag, and a one-byte compact
+        // source index — six bytes here because the `f32` subject and the
+        // shared measured source are already in their tables — so two rows are
+        // twelve bytes exactly. The source table does not grow, because both
+        // rows share the measured source every numerical row already carries.
         assert_eq!(
             descriptor.len(),
-            2_169,
+            2_181,
             "the canonical descriptor length moved; update the authority ledger with it",
         );
     }

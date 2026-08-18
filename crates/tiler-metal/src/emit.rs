@@ -70,8 +70,9 @@ use tiler_ir::kernel::{
     VerifiedBufferId, VerifiedInputExtentId, VerifiedKernel, VerifiedStagingId, VerifiedValueId,
 };
 use tiler_ir::schedule::{
-    ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
-    NumericalRealization, StagingId, SubnormalMode, TensorRole, ValueDomainProvenance,
+    ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
+    NumericalPermission, NumericalRealization, StagingId, SubnormalMode, TensorRole,
+    ValueDomainProvenance,
 };
 
 use crate::diagnostic::{BarrierRejection, MetalEmitError, MetalOperationFamily};
@@ -1058,8 +1059,27 @@ pub(crate) const fn msl_type(value_type: KernelType) -> Result<&'static str, Met
 pub(crate) fn realization_requirements(
     realization: NumericalRealization,
 ) -> BTreeSet<MetalNumericalRequirement> {
+    // Destructured exhaustively rather than field-accessed, so a widened
+    // realization cannot compile while this projection silently ignores the
+    // new dimension — the incompleteness ADR 0076 item 6 exists to refuse.
+    let NumericalRealization {
+        profile_key: _,
+        canonical_arithmetic_nan_bits: _,
+        input_subnormals,
+        result_subnormals,
+        contraction,
+        reassociation: _,
+        permutation: _,
+        signed_zero: _,
+        reciprocal_transform: _,
+        // Consumed by `requires_safe_math` below; named here so ignoring it in
+        // both places is a build error rather than a silent selection.
+        approximate_intrinsics,
+        nan_assumptions: _,
+        infinity_assumptions: _,
+    } = realization;
     let mut requirements = BTreeSet::new();
-    match realization.contraction {
+    match contraction {
         NumericalPermission::Forbidden => {
             requirements.insert(MetalNumericalRequirement::NoFloatingPointContraction);
         }
@@ -1068,7 +1088,19 @@ pub(crate) fn realization_requirements(
     if requires_safe_math(realization) {
         requirements.insert(MetalNumericalRequirement::SafeMathMode);
     }
-    for mode in [realization.input_subnormals, realization.result_subnormals] {
+    // Neither envelope resolution names a translation-unit flag *here*, and
+    // the two reasons differ. `Forbidden` is enforced at every elementary
+    // emission site: `emit_unary` writes the `precise::` namespace — which
+    // selects the precise intrinsic under both flag settings — and inserts
+    // `PreciseFp32Functions` and `SafeMathMode` beside it, so a unit with no
+    // elementary function carries no inert flag and a unit with one carries
+    // both lines of defence. `BackendElementary` is a granted freedom, and a
+    // granted freedom is tolerated under every selection. The match is still
+    // exhaustive so a widened envelope vocabulary must decide what it selects.
+    match approximate_intrinsics {
+        ApproximationEnvelope::Forbidden | ApproximationEnvelope::BackendElementary => {}
+    }
+    for mode in [input_subnormals, result_subnormals] {
         match mode {
             SubnormalMode::Preserve | SubnormalMode::FlushToZero { zero_sign: _ } => {}
         }
@@ -1079,14 +1111,28 @@ pub(crate) fn realization_requirements(
 /// Returns whether a realization forbids a licence of relaxed Metal math.
 ///
 /// `safe` is required for every dimension the emitted operations cannot carry:
-/// reassociation and permutation, signed-zero elimination, and exceptional
-/// values unless their absence rests on compiler proof or a runtime validation.
-/// A caller declaration is intentionally treated like no assumption because it
-/// is ineligible to justify a correctness-sensitive relaxation.
+/// reassociation and permutation, signed-zero elimination, reciprocal
+/// replacement of a division — the `arcp` relaxation is exactly the licence a
+/// forbidding contract must withhold from the emitted `/` operator — and
+/// exceptional values unless their absence rests on compiler proof or a
+/// runtime validation. A caller declaration is intentionally treated like no
+/// assumption because it is ineligible to justify a correctness-sensitive
+/// relaxation. A forbidden approximation envelope requires `safe` too: the
+/// relaxed licence's `afn` attribute would let the backend substitute an
+/// approximate function for arithmetic a `Forbidden` envelope pins to its
+/// precise contract.
 const fn requires_safe_math(realization: NumericalRealization) -> bool {
     matches!(realization.reassociation, NumericalPermission::Forbidden)
         || matches!(realization.permutation, NumericalPermission::Forbidden)
         || matches!(realization.signed_zero, NumericalPermission::Forbidden)
+        || matches!(
+            realization.reciprocal_transform,
+            NumericalPermission::Forbidden
+        )
+        || matches!(
+            realization.approximate_intrinsics,
+            ApproximationEnvelope::Forbidden
+        )
         || exceptional_values_require_safe_math(realization.nan_assumptions)
         || exceptional_values_require_safe_math(realization.infinity_assumptions)
 }

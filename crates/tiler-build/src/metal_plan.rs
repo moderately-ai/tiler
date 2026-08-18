@@ -1661,19 +1661,28 @@ mod tests {
     /// [`assemble_plan_artifact`]: crate::assemble_plan_artifact
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
-        // **Hex step after the feasibility rule-set key v6 → v7**, the prepared
-        // subgroup-width confirmation vocabulary. Both identities fold the
-        // recorded rule-set key, so both move; descriptor length and fixed
-        // content stay, because this profile stays silent about subgroups —
-        // writing neither the subgroup-realization nor the subgroup-width-query
-        // section — and `v7` keeps `v6`'s byte length. The superseded pair was
+        // **Hex step after the elementary numerical dimensions.** The
+        // coordinated `tiler.schedule.v7` / `tiler.kernel.v9` /
+        // `tiler.artifact-program.v19` / manifest `19.0` step carries the
+        // reciprocal-transform permission and the approximate-intrinsic
+        // envelope in every numerical record, and this profile gains its two
+        // measured `Forbidden` rows, so both identities, the descriptor, and
+        // the fixed content all move together. The superseded pair was
+        // `7024654cdc51ea3a0f5d8c6c6f24ef603a9faae03fdf081bf497fee025284ac0` /
+        // `44ce29d76c7b4d9fe188269ae898a3dcd9729db1ae256fab65086896d2e2145f`
+        // at 77,096 bytes and a 2,169-byte descriptor.
+        //
+        // The earlier hex step was the feasibility rule-set key v6 → v7, the
+        // prepared subgroup-width confirmation vocabulary, which moved both
+        // identities while descriptor length and fixed content held; its
+        // superseded pair was
         // `d8877dd9284de4e6ea58ec97067008311e90f7df714459b3fd4f9fce8b70447d` /
         // `da08d9006f071e38244d0ea765f563dce425cb934057d847a0f03bd88b5aa5b8`
         // at the same 77,096 bytes.
         const ARTIFACT_IDENTITY: &str =
-            "7024654cdc51ea3a0f5d8c6c6f24ef603a9faae03fdf081bf497fee025284ac0";
+            "9ec0c14925a24cc85ab489863936bfcb2c488771c320e7e58e729bdc1450c8e7";
         const CACHE_SUBJECT: &str =
-            "44ce29d76c7b4d9fe188269ae898a3dcd9729db1ae256fab65086896d2e2145f";
+            "a3b0054639592c319bdc3b28566e8f6c2adc961eab72b488a66dd39f8acfeea0";
         // **Hex step after the feasibility rule-set key v5 → v6.** Descriptor
         // length and fixed content stay at the workgroup-tree-width-policy
         // values: silent profiles write no subgroup section, and the key
@@ -1694,7 +1703,18 @@ mod tests {
         // the redundant `tiler.capability.` text prefix saves eight bytes in
         // this one-provider envelope while the replacement fields are framed
         // independently.
-        const FIXED_CONTENT_BYTES: usize = 77_096;
+        // **77,256 after the elementary numerical dimensions.** 77,096 + 160.
+        // Eighty-four is the descriptor's twelve new bytes (two six-byte
+        // honourability rows) across its seven identity-bearing embeddings;
+        // four is the two per-entry records (resources and numerical facts, one
+        // permission tag and one envelope tag each); the remaining seventy-two
+        // is the stepped nested identities — the schedule identity grows by its
+        // two inserted tag bytes and the kernel identity by six (the framed
+        // schedule subject plus its own numerical and requirement records) —
+        // folded through the kernel-program and stage subjects at their
+        // embedding multiplicities, read off the move rather than derived,
+        // which is one notch weaker and is stated rather than blurred.
+        const FIXED_CONTENT_BYTES: usize = 77_256;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
@@ -1768,9 +1788,9 @@ mod tests {
     #[test]
     fn the_authority_ledger_mirrors_the_live_standard_metal_pins() {
         const ARTIFACT_IDENTITY: &str =
-            "7024654cdc51ea3a0f5d8c6c6f24ef603a9faae03fdf081bf497fee025284ac0";
+            "9ec0c14925a24cc85ab489863936bfcb2c488771c320e7e58e729bdc1450c8e7";
         const CACHE_SUBJECT: &str =
-            "44ce29d76c7b4d9fe188269ae898a3dcd9729db1ae256fab65086896d2e2145f";
+            "a3b0054639592c319bdc3b28566e8f6c2adc961eab72b488a66dd39f8acfeea0";
         let ledger = include_str!(
             "../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md"
         );
@@ -1788,11 +1808,11 @@ mod tests {
             "the live pin paragraph does not name CACHE_SUBJECT",
         );
         assert!(
-            today.contains("fixed content is 77,096 bytes"),
+            today.contains("fixed content is 77,256 bytes"),
             "the live pin paragraph does not name FIXED_CONTENT_BYTES",
         );
         assert!(
-            today.contains("2,169"),
+            today.contains("2,181"),
             "the live pin paragraph does not name the descriptor length",
         );
     }

@@ -68,7 +68,8 @@ use tiler_ir::numerics::{
 };
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::schedule::{
-    ExceptionalValueAssumption, NumericalPermission, NumericalRealization, SubnormalMode,
+    ApproximationEnvelope, ExceptionalValueAssumption, NumericalPermission, NumericalRealization,
+    SubnormalMode,
 };
 
 use super::keys::TargetProfileRef;
@@ -458,7 +459,7 @@ impl TargetEvidence {
 /// The association binding one packaged executable entry to its policy subject.
 ///
 /// **This is what makes the neutral cross-check possible at all.** An entry's
-/// [`NumericalRealization`] carries eight behaviour dimensions and no arithmetic
+/// [`NumericalRealization`] carries ten behaviour dimensions and no arithmetic
 /// type, so the artifact cannot derive from an entry which subject governs it.
 /// The producer states the association and the artifact validates the encoding;
 /// the compiler and `tiler-build` are what prove its semantic meaning, and this
@@ -1072,7 +1073,7 @@ impl DeliveredRealizationBuilder {
     }
 }
 
-/// The eight numerical dimensions one packaged entry's own realization states.
+/// The ten numerical dimensions one packaged entry's own realization states.
 ///
 /// # Why the cross-check subject is its own record
 ///
@@ -1082,7 +1083,7 @@ impl DeliveredRealizationBuilder {
 /// is a `&'static str` a compiling build chose. A decoder holds an owned-key
 /// dispatch record, whose contract key arrived as bytes — the split
 /// `super::codec`'s `NumericalFacts` documents as decided rather than pending.
-/// Naming the eight behaviours once lets one exhaustive
+/// Naming the ten behaviours once lets one exhaustive
 /// [`overlapping_behaviour`] serve both, instead of two matches that could
 /// drift.
 ///
@@ -1104,6 +1105,10 @@ pub struct EntryRealization {
     pub permutation: NumericalPermission,
     /// Whether observable signed-zero distinctions may be eliminated.
     pub signed_zero: NumericalPermission,
+    /// Whether replacing a division by a reciprocal multiplication is permitted.
+    pub reciprocal_transform: NumericalPermission,
+    /// The approximate-intrinsic envelope the realization authorizes.
+    pub approximate_intrinsics: ApproximationEnvelope,
     /// Whether NaN values may be assumed absent.
     pub nan_assumptions: ExceptionalValueAssumption,
     /// Whether infinity values may be assumed absent.
@@ -1111,11 +1116,11 @@ pub struct EntryRealization {
 }
 
 impl EntryRealization {
-    /// Projects the shared IR's scheduled realization onto its eight behaviours.
+    /// Projects the shared IR's scheduled realization onto its ten behaviours.
     ///
     /// The destructuring is exhaustive and field-named, so widening
-    /// [`NumericalRealization`] to a ninth consumable dimension is a build error
-    /// here rather than a cross-check that silently stops covering it.
+    /// [`NumericalRealization`] to an eleventh consumable dimension is a build
+    /// error here rather than a cross-check that silently stops covering it.
     #[must_use]
     pub const fn of(realization: NumericalRealization) -> Self {
         let NumericalRealization {
@@ -1127,6 +1132,8 @@ impl EntryRealization {
             reassociation,
             permutation,
             signed_zero,
+            reciprocal_transform,
+            approximate_intrinsics,
             nan_assumptions,
             infinity_assumptions,
         } = realization;
@@ -1137,6 +1144,8 @@ impl EntryRealization {
             reassociation,
             permutation,
             signed_zero,
+            reciprocal_transform,
+            approximate_intrinsics,
             nan_assumptions,
             infinity_assumptions,
         }
@@ -1145,11 +1154,10 @@ impl EntryRealization {
 
 /// The behaviour one entry's [`EntryRealization`] states on a dimension.
 ///
-/// `None` for the three dimensions the scheduled realization does not carry —
-/// reciprocal transform, approximate intrinsics, and materialization rounding.
-/// Written as one exhaustive match so widening the entry statement to a ninth
-/// dimension is a build error here rather than a cross-check that silently stops
-/// covering it.
+/// `None` for the one dimension the scheduled realization does not carry —
+/// materialization rounding. Written as one exhaustive match so widening the
+/// entry statement to an eleventh dimension is a build error here rather than a
+/// cross-check that silently stops covering it.
 #[must_use]
 pub const fn overlapping_behaviour(
     dimension: NumericalDimension,
@@ -1174,15 +1182,19 @@ pub const fn overlapping_behaviour(
         NumericalDimension::SignedZero => {
             Some(DimensionBehaviour::Transform(realization.signed_zero))
         }
+        NumericalDimension::ReciprocalTransform => Some(DimensionBehaviour::Transform(
+            realization.reciprocal_transform,
+        )),
+        NumericalDimension::ApproximateIntrinsics => Some(DimensionBehaviour::Approximation(
+            realization.approximate_intrinsics,
+        )),
         NumericalDimension::NanAssumptions => Some(DimensionBehaviour::ExceptionalValue(
             realization.nan_assumptions,
         )),
         NumericalDimension::InfinityAssumptions => Some(DimensionBehaviour::ExceptionalValue(
             realization.infinity_assumptions,
         )),
-        NumericalDimension::ReciprocalTransform
-        | NumericalDimension::ApproximateIntrinsics
-        | NumericalDimension::MaterializationRounding => None,
+        NumericalDimension::MaterializationRounding => None,
     }
 }
 

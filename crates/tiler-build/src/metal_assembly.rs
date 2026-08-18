@@ -503,10 +503,10 @@ mod tests {
     };
     use tiler_ir::kernel::lower_scheduled_region;
     use tiler_ir::schedule::{
-        Access, AccessMode, AccessOrdinal, BoundsProof, BoundsProofKind, BoundsWitnessId,
-        ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
-        NumericalPermission, NumericalRealization as DeclaredNumericalRealization, OwnershipProof,
-        OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression,
+        Access, AccessMode, AccessOrdinal, ApproximationEnvelope, BoundsProof, BoundsProofKind,
+        BoundsWitnessId, ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan,
+        LogicalAccess, NumericalPermission, NumericalRealization as DeclaredNumericalRealization,
+        OwnershipProof, OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression,
         PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
         ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
     };
@@ -616,6 +616,8 @@ mod tests {
                 NumericalPermission::Forbidden,
                 NumericalPermission::Forbidden,
                 NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                ApproximationEnvelope::Forbidden,
                 ExceptionalValueAssumption::MakeNoAssumption,
                 ExceptionalValueAssumption::MakeNoAssumption,
             ))
@@ -1008,6 +1010,8 @@ mod tests {
                 NumericalPermission::Forbidden,
                 NumericalPermission::Forbidden,
                 NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                ApproximationEnvelope::Forbidden,
                 ExceptionalValueAssumption::MakeNoAssumption,
                 ExceptionalValueAssumption::MakeNoAssumption,
             ))
@@ -1100,6 +1104,8 @@ mod tests {
                 NumericalPermission::Forbidden,
                 NumericalPermission::Forbidden,
                 NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                ApproximationEnvelope::Forbidden,
                 ExceptionalValueAssumption::MakeNoAssumption,
                 ExceptionalValueAssumption::MakeNoAssumption,
             ))

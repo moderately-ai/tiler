@@ -23,8 +23,8 @@ use crate::schedule::model::{
     partial_reduction_shape,
 };
 use crate::schedule::numerics::{
-    ArithmeticType, ExceptionalValueAssumption, NumericalPermission, NumericalRealization,
-    SubnormalMode,
+    ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, NumericalPermission,
+    NumericalRealization, SubnormalMode,
 };
 use crate::schedule::pointwise::{PointwiseF32Expression, PointwiseF32ExpressionBuilder};
 use crate::schedule::pointwise_bf16::{PointwiseBf16Expression, PointwiseBf16ExpressionBuilder};
@@ -46,6 +46,8 @@ fn strict_numerical() -> NumericalRealization {
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ApproximationEnvelope::Forbidden,
         ExceptionalValueAssumption::MakeNoAssumption,
         ExceptionalValueAssumption::MakeNoAssumption,
     )

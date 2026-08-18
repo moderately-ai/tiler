@@ -139,7 +139,7 @@
 //! use tiler_ir::kernel::lower_scheduled_region;
 //! use tiler_ir::schedule::{
 //!     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId,
-//!     ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
+//!     ApproximationEnvelope, ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
 //!     NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
 //!     OwnershipWitnessId, PointwiseF32ExpressionBuilder, RegionId, ReductionTopology,
 //!     AccessOrdinal, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
@@ -207,6 +207,8 @@
 //!     NumericalPermission::Forbidden,
 //!     NumericalPermission::Forbidden,
 //!     NumericalPermission::Forbidden,
+//!     NumericalPermission::Forbidden,
+//!     ApproximationEnvelope::Forbidden,
 //!     ExceptionalValueAssumption::MakeNoAssumption,
 //!     ExceptionalValueAssumption::MakeNoAssumption,
 //! ))?;

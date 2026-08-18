@@ -527,6 +527,8 @@ pub(crate) fn realization_of(contract: NumericalContract) -> NumericalRealizatio
         contract.reassociation(),
         contract.permutation(),
         contract.signed_zero(),
+        contract.reciprocal_transform(),
+        contract.approximate_intrinsics(),
         contract.nan_assumptions(),
         contract.infinity_assumptions(),
     )

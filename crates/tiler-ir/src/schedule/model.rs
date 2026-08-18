@@ -16,8 +16,9 @@ use super::cooperative::{
 use super::error::{ContributorError, ElementCountOverflow, VectorLaneCountError};
 use super::handles::{AccessOrdinal, BoundsWitnessId, OwnershipWitnessId, RegionId};
 use super::numerics::{
-    ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
-    NumericalRealization, SubnormalFreedom, SubnormalMode, ValueDomainProvenance,
+    ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
+    NumericalPermission, NumericalRealization, SubnormalFreedom, SubnormalMode,
+    ValueDomainProvenance,
 };
 use super::pointwise::{PointwiseF32Expression, PointwiseF32Node};
 use super::pointwise_bf16::{PointwiseBf16Expression, PointwiseBf16Node};
@@ -1544,7 +1545,7 @@ pub enum IndexArithmetic {
 /// These feed a separate phased target-feasibility assessment; deriving them is
 /// part of intrinsic verification and never a target decision (ADR 0007).
 ///
-/// The eight numerical fields carry the region's declared realization forward
+/// The ten numerical fields carry the region's declared realization forward
 /// per dimension rather than as one summary bit. A single `requires_strict_f32`
 /// boolean cannot name which dimension a target failed to honour, and the
 /// boolean these replaced was derived from contraction and reassociation alone
@@ -1627,6 +1628,11 @@ pub struct ResourceRequirements {
     pub permutation: NumericalPermission,
     /// Whether the region's declared realization permits signed-zero elimination.
     pub signed_zero: NumericalPermission,
+    /// Whether the region's declared realization permits reciprocal replacement.
+    pub reciprocal_transform: NumericalPermission,
+    /// The approximate-intrinsic envelope the region's declared realization
+    /// authorizes.
+    pub approximate_intrinsics: ApproximationEnvelope,
     /// The region's declared NaN-absence assumption.
     pub nan_assumptions: ExceptionalValueAssumption,
     /// The region's declared infinity-absence assumption.
@@ -2141,6 +2147,8 @@ pub(super) fn derive_requirements(region: &ScheduledRegion) -> ResourceRequireme
         reassociation: region.index.numerical.reassociation,
         permutation: region.index.numerical.permutation,
         signed_zero: region.index.numerical.signed_zero,
+        reciprocal_transform: region.index.numerical.reciprocal_transform,
+        approximate_intrinsics: region.index.numerical.approximate_intrinsics,
         nan_assumptions: region.index.numerical.nan_assumptions,
         infinity_assumptions: region.index.numerical.infinity_assumptions,
     }
@@ -2507,6 +2515,22 @@ fn push_exceptional_assumption(bytes: &mut Vec<u8>, assumption: ExceptionalValue
     }
 }
 
+/// Encodes one approximate-intrinsic accuracy envelope.
+///
+/// The match is exhaustive over a non-`#[non_exhaustive]` enum, so admitting a
+/// third envelope is a build error here rather than an identity collision
+/// between two regions that differ only in the approximation they authorize
+/// (ADR 0076 item 6). Written locally rather than through
+/// [`ApproximationEnvelope::tag`] to follow this record's convention: every
+/// numerical field is written by its own local exhaustive encoder, so a change
+/// to the vocabulary's own tag table cannot silently move schedule identity.
+fn push_approximation_envelope(bytes: &mut Vec<u8>, envelope: ApproximationEnvelope) {
+    bytes.push(match envelope {
+        ApproximationEnvelope::Forbidden => 0x01,
+        ApproximationEnvelope::BackendElementary => 0x02,
+    });
+}
+
 /// Encodes the complete numerical realization a region declares.
 ///
 /// Every field is encoded, including both subnormal dimensions. `profile_key`
@@ -2520,16 +2544,40 @@ fn push_exceptional_assumption(bytes: &mut Vec<u8>, assumption: ExceptionalValue
 /// crate-chosen `&'static str` containing no NUL, but the uniform form is what
 /// removes the need to re-derive that argument at each site.
 fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalRealization) {
-    push_slice(bytes, numerical.profile_key.as_bytes());
-    bytes.extend_from_slice(&numerical.canonical_arithmetic_nan_bits.to_be_bytes());
-    push_subnormal(bytes, numerical.input_subnormals);
-    push_subnormal(bytes, numerical.result_subnormals);
-    push_permission(bytes, numerical.contraction);
-    push_permission(bytes, numerical.reassociation);
-    push_permission(bytes, numerical.permutation);
-    push_permission(bytes, numerical.signed_zero);
-    push_exceptional_assumption(bytes, numerical.nan_assumptions);
-    push_exceptional_assumption(bytes, numerical.infinity_assumptions);
+    // Destructured exhaustively rather than field-accessed, so a widened
+    // realization is a build error at this encoder instead of two semantically
+    // different regions sharing one identity (ADR 0076 items 1 and 6).
+    let NumericalRealization {
+        profile_key,
+        canonical_arithmetic_nan_bits,
+        input_subnormals,
+        result_subnormals,
+        contraction,
+        reassociation,
+        permutation,
+        signed_zero,
+        reciprocal_transform,
+        approximate_intrinsics,
+        nan_assumptions,
+        infinity_assumptions,
+    } = *numerical;
+    push_slice(bytes, profile_key.as_bytes());
+    bytes.extend_from_slice(&canonical_arithmetic_nan_bits.to_be_bytes());
+    push_subnormal(bytes, input_subnormals);
+    push_subnormal(bytes, result_subnormals);
+    push_permission(bytes, contraction);
+    push_permission(bytes, reassociation);
+    push_permission(bytes, permutation);
+    push_permission(bytes, signed_zero);
+    // The two elementary dimensions sit between the transform permissions and
+    // the exceptional-value assumptions, in canonical dimension order. They are
+    // written unconditionally: an optional row would let a strict region and a
+    // region that never stated the dimension share bytes, which is the
+    // compatibility default the accepted decision refuses.
+    push_permission(bytes, reciprocal_transform);
+    push_approximation_envelope(bytes, approximate_intrinsics);
+    push_exceptional_assumption(bytes, nan_assumptions);
+    push_exceptional_assumption(bytes, infinity_assumptions);
 }
 
 fn push_scalar_program(bytes: &mut Vec<u8>, program: &ScalarProgram) {
@@ -3199,7 +3247,24 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
 /// versioned domain separator (ADR 0074 convention 3). This encoder was the
 /// only site that omitted the terminator.
 ///
-/// # Why this is a `v5` step
+/// # Why this is a `v7` step
+///
+/// `v7` gives the numerical-realization record its two elementary dimensions:
+/// the reciprocal-transform permission and the approximate-intrinsic envelope,
+/// written between the signed-zero permission and the exceptional-value
+/// assumptions in canonical dimension order. The two bytes land *inside* the
+/// realization record, which every following field of the region encoding
+/// trails, so every region ever encoded maps to different bytes now — and an
+/// append would not have been safe even at the record's end, because the
+/// schedule payload continues after `push_numerical` and a `v6` reader handed
+/// `v7` bytes would consume the reciprocal byte as the NaN-assumption tag and
+/// lose framing for everything after it. Two regions that differ only in an
+/// elementary dimension were also *one subject* under `v6`, which is exactly
+/// the collision ADR 0076 item 6 exists to refuse: a cache or artifact holding
+/// a `v6` identity must miss rather than match a region whose elementary
+/// freedoms the earlier record could not state.
+///
+/// # Why this was a `v5` step
 ///
 /// `v5` widens the cooperative staging relation to two dimensions (ADR 0097). A
 /// tile's participants occupy a stated [`ParticipantSpace`] rather than a
@@ -3258,7 +3323,7 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
 /// the domain.
 pub(super) fn encode_identity(region: &ScheduledRegion) -> CanonicalScheduledRegionIdentity {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"tiler.schedule.v6\0");
+    bytes.extend_from_slice(b"tiler.schedule.v7\0");
     push_shape(&mut bytes, &region.index.iteration_shape);
     push_len(&mut bytes, region.index.accesses.len());
     for access in &region.index.accesses {

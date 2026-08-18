@@ -54,10 +54,11 @@ use super::super::model::{
     BindingTargetData, DeferredPredicateData, InterfaceComponentData, InterfaceEntryData,
     LaunchData, LoweringCapabilitySubject, RoutingPolicy, SUBGROUP_REQUIREMENT_BLOCK_TAG,
     SchemaVersion, SelectedProvider, StageDependencyData, StageDependencyReason,
-    address_space_from_tag, buffer_access_from_tag, element_type_from_tag,
-    exceptional_assumption_from_tag, index_arithmetic_from_tag, memory_ordering_from_tag,
-    permission_from_tag, storage_scalar_from_tag, subgroup_transfer_from_tag, subnormal_from_tag,
-    synchronization_kind_from_tag, synchronization_scope_from_tag,
+    address_space_from_tag, approximation_envelope_from_tag, buffer_access_from_tag,
+    element_type_from_tag, exceptional_assumption_from_tag, index_arithmetic_from_tag,
+    memory_ordering_from_tag, permission_from_tag, storage_scalar_from_tag,
+    subgroup_transfer_from_tag, subnormal_from_tag, synchronization_kind_from_tag,
+    synchronization_scope_from_tag,
 };
 use super::super::realization::DeliveredRealizationRecord;
 use super::super::realization::codec::decode as decode_realization;
@@ -1076,6 +1077,8 @@ fn parse_entry(
         reassociation: cursor.permission()?,
         permutation: cursor.permission()?,
         signed_zero: cursor.permission()?,
+        reciprocal_transform: cursor.permission()?,
+        approximate_intrinsics: cursor.approximation_envelope()?,
         nan_assumptions: cursor.exceptional_assumption()?,
         infinity_assumptions: cursor.exceptional_assumption()?,
         // The conditional block is physically last even though the model keeps
@@ -1093,6 +1096,8 @@ fn parse_entry(
         reassociation: cursor.permission()?,
         permutation: cursor.permission()?,
         signed_zero: cursor.permission()?,
+        reciprocal_transform: cursor.permission()?,
+        approximate_intrinsics: cursor.approximation_envelope()?,
         nan_assumptions: cursor.exceptional_assumption()?,
         infinity_assumptions: cursor.exceptional_assumption()?,
     };
@@ -1698,6 +1703,12 @@ tag_reader!(
     tiler_ir::schedule::NumericalPermission,
     permission_from_tag,
     TagSubject::NumericalPermission
+);
+tag_reader!(
+    approximation_envelope,
+    tiler_ir::schedule::ApproximationEnvelope,
+    approximation_envelope_from_tag,
+    TagSubject::ApproximationEnvelope
 );
 tag_reader!(
     index_arithmetic,

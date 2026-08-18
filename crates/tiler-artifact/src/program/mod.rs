@@ -249,6 +249,8 @@
 //! #     NumericalPermission::Forbidden,
 //! #     NumericalPermission::Forbidden,
 //! #     NumericalPermission::Forbidden,
+//! #     NumericalPermission::Forbidden,
+//! #     ApproximationEnvelope::Forbidden,
 //! #     ExceptionalValueAssumption::MakeNoAssumption,
 //! #     ExceptionalValueAssumption::MakeNoAssumption,
 //! # ))?;

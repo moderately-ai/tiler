@@ -2863,7 +2863,8 @@ fn staged_rms_target_profile() -> TargetProfile {
         TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
     };
     use tiler_ir::schedule::{
-        ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
+        ApproximationEnvelope, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
+        SubnormalMode,
     };
     use tiler_ir::semantic::accuracy::{ConformanceEvidence, ConformanceEvidenceClass};
     use tiler_ir::semantic::{
@@ -2960,6 +2961,22 @@ fn staged_rms_target_profile() -> TargetProfile {
         .declare_signed_zero(
             subject.clone(),
             NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_reciprocal_transform(
+            subject.clone(),
+            NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_approximate_intrinsics(
+            subject.clone(),
+            ApproximationEnvelope::Forbidden,
             ScalarSupport::Exact,
             source.clone(),
         )
@@ -3716,15 +3733,16 @@ fn every_wired_authority_emits_its_typed_explain_records() {
             ("target.local-memory-bytes", 3),
             // One honourability record per realized dimension per region:
             // three regions each report which behaviour was assessed and by
-            // what means. Reciprocal transform, approximate intrinsics, and
-            // materialization rounding stay off this census until a region
-            // can record them.
+            // what means. Materialization rounding stays off this census until
+            // a region can record it.
+            ("target.numerics.approximate-intrinsics", 3),
             ("target.numerics.contraction", 3),
             ("target.numerics.infinity-assumptions", 3),
             ("target.numerics.input-subnormals", 3),
             ("target.numerics.nan-assumptions", 3),
             ("target.numerics.permutation", 3),
             ("target.numerics.reassociation", 3),
+            ("target.numerics.reciprocal-transform", 3),
             ("target.numerics.result-subnormals", 3),
             ("target.numerics.signed-zero", 3),
             ("target.threads-per-workgroup", 3),
@@ -3957,12 +3975,17 @@ fn assert_honoured_dimensions_are_exhaustive(trace: &crate::explain::VerifiedExp
     assert_eq!(
         honoured,
         BTreeMap::from([
+            (
+                ("numerics.approximate-intrinsics", "approximation.forbidden"),
+                3,
+            ),
             (("numerics.contraction", "forbidden"), 3),
             (("numerics.infinity-assumptions", "make-no-assumption"), 3),
             (("numerics.input-subnormals", "preserve"), 3),
             (("numerics.nan-assumptions", "make-no-assumption"), 3),
             (("numerics.permutation", "forbidden"), 3),
             (("numerics.reassociation", "forbidden"), 3),
+            (("numerics.reciprocal-transform", "forbidden"), 3),
             (("numerics.result-subnormals", "preserve"), 3),
             (("numerics.signed-zero", "forbidden"), 3),
         ])
@@ -4543,11 +4566,11 @@ fn bf16_semantic_program(key: &InputKey, elements: u64) -> SemanticProgram {
 /// physical-carrier vocabularies admit and verify this region.
 fn bf16_scheduled_region(elements: u64) -> tiler_ir::schedule::VerifiedScheduledRegion {
     use tiler_ir::schedule::{
-        Access, AccessMode, AccessOrdinal, BoundsProof, BoundsProofKind, BoundsWitnessId,
-        ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
-        NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-        OwnershipWitnessId, PointwiseBf16ExpressionBuilder, ReductionTopology, ScalarProgram,
-        ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+        Access, AccessMode, AccessOrdinal, ApproximationEnvelope, BoundsProof, BoundsProofKind,
+        BoundsWitnessId, ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan,
+        LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
+        OwnershipProofKind, OwnershipWitnessId, PointwiseBf16ExpressionBuilder, ReductionTopology,
+        ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
     };
 
     let mut expression = PointwiseBf16ExpressionBuilder::new();
@@ -4623,6 +4646,8 @@ fn bf16_scheduled_region(elements: u64) -> tiler_ir::schedule::VerifiedScheduled
             NumericalPermission::Forbidden,
             NumericalPermission::Forbidden,
             NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            ApproximationEnvelope::Forbidden,
             ExceptionalValueAssumption::MakeNoAssumption,
             ExceptionalValueAssumption::MakeNoAssumption,
         ))
@@ -6284,8 +6309,8 @@ fn retaining_the_candidate_does_not_move_canonical_identities() {
     assert_eq!(
         labels,
         [
-            "program-alternative:a4f1d97d9fd825d5",
-            "program-alternative:45c9b66d6c622c7d",
+            "program-alternative:46e6724372a67204",
+            "program-alternative:3de1c7941b7aeced",
         ],
         "successful plan identities must not move when retention is added"
     );

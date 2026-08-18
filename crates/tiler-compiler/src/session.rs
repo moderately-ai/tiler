@@ -3409,10 +3409,28 @@ mod tests {
             .obligations()
             .map(crate::session::SelectedObligation::dimension)
             .collect();
+        // The two elementary dimensions are realized and honoured, and still
+        // carry no obligation row here: an obligation names a position inside
+        // an occurrence that consumes the dimension, and the scale-then-reduce
+        // program has no division and no elementary function. The artifact
+        // derives them `NotRequired` for exactly this program, which is the
+        // honest claim rather than a dropped row.
+        let consumed: BTreeSet<NumericalDimension> = realized
+            .iter()
+            .copied()
+            .filter(|dimension| {
+                !matches!(
+                    dimension,
+                    NumericalDimension::ReciprocalTransform
+                        | NumericalDimension::ApproximateIntrinsics
+                )
+            })
+            .collect();
         assert_eq!(
-            delivered, realized,
-            "the scale-then-reduce program consumes every realized dimension, so \
-             none may be missing from selected delivered evidence",
+            delivered, consumed,
+            "the scale-then-reduce program consumes every realized dimension \
+             except the two elementary ones, so exactly those rows may be absent \
+             from selected delivered evidence",
         );
         for dimension in [
             NumericalDimension::Permutation,
@@ -3868,6 +3886,8 @@ mod tests {
                 NumericalDimension::Reassociation,
                 NumericalDimension::Permutation,
                 NumericalDimension::SignedZero,
+                NumericalDimension::ReciprocalTransform,
+                NumericalDimension::ApproximateIntrinsics,
                 NumericalDimension::NanAssumptions,
                 NumericalDimension::InfinityAssumptions,
             ]),
@@ -3908,8 +3928,10 @@ mod tests {
         assert_eq!(
             rows.len(),
             7,
-            "seven of the eight honoured dimensions act on the one covered \
-             occurrence: {rows:?}",
+            "seven of the ten honoured dimensions act on the one covered \
+             occurrence — contraction founds no position on a bare fold, and \
+             the two elementary dimensions found none on a program with no \
+             division or elementary function: {rows:?}",
         );
         let stated: BTreeSet<NumericalDimension> =
             rows.iter().map(|(_, dimension, _)| *dimension).collect();

@@ -103,11 +103,12 @@ pub enum BehaviourSpace {
 /// question into an implemented permission.
 ///
 /// **Not every dimension here is one the region IR carries.**
-/// [`crate::schedule::NumericalRealization`] carries eight of them, and the
-/// contract is complete over all eleven because completeness is what makes an
-/// unenumerated dimension fail closed. `tiler_compiler::policy` owns the rule
-/// that keeps the difference safe: a dimension outside the realization may take
-/// any resolution only while no admitted operation can consume it.
+/// [`crate::schedule::NumericalRealization`] carries ten of them —
+/// materialization rounding is the one outside it — and the contract is
+/// complete over all eleven because completeness is what makes an unenumerated
+/// dimension fail closed. `tiler_compiler::policy` owns the rule that keeps the
+/// difference safe: a dimension outside the realization may take any
+/// resolution only while no admitted operation can consume it.
 ///
 /// Deliberately **not** `#[non_exhaustive]` under ADR 0074 convention 5b: every
 /// out-of-crate consumer maps it totally onto an identity tag, and a wildcard

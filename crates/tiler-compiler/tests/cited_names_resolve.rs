@@ -59,7 +59,14 @@ const SELF_FILE: &str = "cited_names_resolve.rs";
 /// kept short on purpose: an entry added to silence a real rename would be a
 /// mask, so the second test below asserts every entry is genuinely unresolvable
 /// and fails when one starts resolving.
-const DELIBERATELY_ABSENT: [(&str, &str); 2] = [
+const DELIBERATELY_ABSENT: [(&str, &str); 3] = [
+    (
+        "the_uncarried_elementary_dimensions_are_outside_the_realization",
+        "`policy.rs`'s carried-and-consumed coherence test names the deleted \
+         omission tripwire it succeeded, so a reader can trace which check \
+         guarded the pre-carried state and why its firing condition is now \
+         the delivered one",
+    ),
     (
         "declare_barrier_execution_scope",
         "`crate::target` names the per-dimension synchronization spellings it \

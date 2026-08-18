@@ -21,8 +21,8 @@
 //! on a GPU.
 
 use tiler_ir::schedule::{
-    ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
-    NumericalRealization, SubnormalMode,
+    ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
+    NumericalPermission, NumericalRealization, SubnormalMode,
 };
 use tiler_ir::semantic::accuracy::{ExactRational, UlpFormatError};
 use tiler_ir::semantic::{
@@ -1195,6 +1195,8 @@ fn declared_bf16_realization(
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ApproximationEnvelope::Forbidden,
         ExceptionalValueAssumption::MakeNoAssumption,
         ExceptionalValueAssumption::MakeNoAssumption,
     )
@@ -1276,6 +1278,8 @@ fn the_bf16_capability_refuses_a_conformance_resolved_for_binary32() {
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ApproximationEnvelope::Forbidden,
         ExceptionalValueAssumption::MakeNoAssumption,
         ExceptionalValueAssumption::MakeNoAssumption,
     );

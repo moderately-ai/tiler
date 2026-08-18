@@ -91,9 +91,9 @@ use tiler_compiler::session::{
 };
 use tiler_compiler::target::{TargetProfile, TargetRequest};
 use tiler_ir::schedule::{
-    Access, AccessMode, AccessOrdinal, BoundsProof, BoundsProofKind, BoundsWitnessId,
-    ContractionAxisSource, ContributorOrder, ExceptionalValueAssumption, ExecutionBinding,
-    IndexRegion, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
+    Access, AccessMode, AccessOrdinal, ApproximationEnvelope, BoundsProof, BoundsProofKind,
+    BoundsWitnessId, ContractionAxisSource, ContributorOrder, ExceptionalValueAssumption,
+    ExecutionBinding, IndexRegion, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
     PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId,
     ScalarProgram, ScheduledRegion, ScheduledRegionBuilder, ScheduledRegionDiagnostic,
@@ -445,6 +445,8 @@ fn strict_f32_realization() -> NumericalRealization {
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ApproximationEnvelope::Forbidden,
         ExceptionalValueAssumption::MakeNoAssumption,
         ExceptionalValueAssumption::MakeNoAssumption,
     )

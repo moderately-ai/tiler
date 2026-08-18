@@ -20,13 +20,13 @@
 #include <metal_stdlib>
 using namespace metal;
 
-// Entry point tiler_kernel_780ee8b88fd4f388
-//   kernel identity digest: 780ee8b88fd4f388
-//   scheduled region identity digest: 8d9fe9420b51cf4f
+// Entry point tiler_kernel_61f9b2026e2e8c84
+//   kernel identity digest: 61f9b2026e2e8c84
+//   scheduled region identity digest: 223e30746e1a76ba
 //   numerical profile: tiler.test.strict-f32
 //   buffer(0): Input tensor, F32, Device space, Read access, 2 element(s)
 //   buffer(1): Output tensor, F32, Device space, Write access, 4 element(s)
-kernel void tiler_kernel_780ee8b88fd4f388(
+kernel void tiler_kernel_61f9b2026e2e8c84(
         device const float *b0 [[buffer(0)]],
         device float *b1 [[buffer(1)]],
         uint tiler_global_invocation_index [[thread_position_in_grid]]) {

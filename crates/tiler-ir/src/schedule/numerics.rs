@@ -252,6 +252,25 @@ pub struct NumericalRealization {
     pub permutation: NumericalPermission,
     /// Whether observable signed-zero distinctions may be eliminated.
     pub signed_zero: NumericalPermission,
+    /// Whether replacing a division by a reciprocal multiplication is permitted.
+    ///
+    /// A direct required field rather than an optional or inferred one, by the
+    /// accepted 2026-08-11 decision on
+    /// `carry-the-elementary-numerical-dimensions-in-the-region-realization`:
+    /// every constructor states it, so two contracts resolving it differently
+    /// can no longer share one region identity once an admitted operation — the
+    /// activation's, the normalization's, or the softmax's division — can
+    /// consume it.
+    pub reciprocal_transform: NumericalPermission,
+    /// The maximum accuracy envelope approximate intrinsics may consume.
+    ///
+    /// Carried as the governed [`ApproximationEnvelope`] rather than a boolean,
+    /// because `docs/numerical-semantics.md` resolves this dimension to a named
+    /// maximum accuracy envelope; a permission alone would state no bound at
+    /// all. Required for the same reason as
+    /// [`Self::reciprocal_transform`]: the subordinate exponential and
+    /// reciprocal square root of the admitted elementary families consume it.
+    pub approximate_intrinsics: ApproximationEnvelope,
     /// Whether NaN values may be assumed absent.
     pub nan_assumptions: ExceptionalValueAssumption,
     /// Whether infinity values may be assumed absent.
@@ -274,6 +293,8 @@ impl NumericalRealization {
         reassociation: NumericalPermission,
         permutation: NumericalPermission,
         signed_zero: NumericalPermission,
+        reciprocal_transform: NumericalPermission,
+        approximate_intrinsics: ApproximationEnvelope,
         nan_assumptions: ExceptionalValueAssumption,
         infinity_assumptions: ExceptionalValueAssumption,
     ) -> Self {
@@ -286,6 +307,8 @@ impl NumericalRealization {
             reassociation,
             permutation,
             signed_zero,
+            reciprocal_transform,
+            approximate_intrinsics,
             nan_assumptions,
             infinity_assumptions,
         }
@@ -502,14 +525,12 @@ pub enum ApproximationEnvelope {
     /// accuracy rather than by a Tiler-side numeric tolerance, so a backend that
     /// states none cannot honour it.
     ///
-    /// **Not reachable for either operation that could consume it.** The admitted
-    /// activation and the admitted RMS normalization both withhold this dimension
-    /// from their compiler capability rows — see
-    /// `ELEMENTARY_UNCARRIED_DIMENSIONS` in `crates/tiler-compiler/src/policy.rs`
-    /// — because [`NumericalRealization`] cannot record which resolution a region
-    /// chose, so two contracts differing here would share one identity. Widening
-    /// the realization is what makes this variant consumable rather than merely
-    /// statable.
+    /// **Consumable and carried.** [`NumericalRealization`] records which
+    /// resolution a region chose in its `approximate_intrinsics` field, so two
+    /// contracts differing here are two region identities, and the admitted
+    /// elementary families' compiler capability rows list the dimension. A
+    /// target that declares nothing for this behaviour still resolves it
+    /// `Unknown` and refuses, so statable is not the same claim as honoured.
     BackendElementary,
 }
 
