@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [decide-the-adr-0013-plan-determinism-stability-subject]
 related: [decide-the-semantic-order-contract-for-relaxed-contractions]
-scopes: [implementation/ir, implementation/artifact, implementation/compiler, implementation/runtime, implementation/build, implementation/frontend, implementation/candle, research/target-profiles, contracts/numerics, contracts/artifacts]
+scopes: [implementation/ir, implementation/artifact, implementation/compiler, implementation/runtime, implementation/build, implementation/frontend, implementation/candle, research/target-profiles, contracts/numerics, contracts/artifacts, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, identity]
@@ -88,6 +88,10 @@ Positive controls: `an_attested_claimed_route_carries_one_exact_subject_across_t
 ### Commands
 
 `cargo nextest run --workspace` (3,775 passed), `cargo test --workspace --doc`, `cargo fmt --check`, `cargo clippy --workspace --all-targets --locked --exclude tiler-prototype-run --exclude tiler-prototype-compile --exclude tiler-prototype-candle -- -D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace`, `tkt lint`, `make citations`, `git diff --check`, `tkt guard tkt/implement-the-adr-0013-plan-determinism-stability-subject --format json`, and `make full` at the final commit.
+
+### ADR alignment
+
+`docs/decisions/0013-scoped-determinism.md` `implementation_status` moves `not-started` → `partial` (`contracts/decisions` added as the scheduling scope for this one-field alignment): the plan-deterministic guarantee's stability subject — declaration, receipt, runtime subject, and fail-closed filter — is implemented and tested, while portable bitwise remains unimplemented and no positive provider claim ships. The ADR's body is untouched; its open sentence about the exact compatibility-identity fields is answered by the accepted decision recorded in `decide-the-adr-0013-plan-determinism-stability-subject`, which the traceability chain already reaches through this ticket.
 
 ### Follow-on
 

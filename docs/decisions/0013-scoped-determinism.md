@@ -6,7 +6,7 @@ title: "Scope deterministic numerical guarantees"
 topics: ["numerics","determinism","reductions"]
 catalog_group: "numerical-operations"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.numerical-semantics"]
 evidence: ["tiler.research.numerics.reduction-semantics-and-legality"]
 ticket: "numerical-policy-contract"
