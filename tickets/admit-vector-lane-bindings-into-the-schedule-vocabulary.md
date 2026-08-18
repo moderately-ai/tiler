@@ -1,7 +1,7 @@
 ---
 id: admit-vector-lane-bindings-into-the-schedule-vocabulary
 title: Admit the first vector-lane schedule boundary
-status: todo
+status: in-progress
 priority: p2
 dependencies: [accept-adr-0093-cpu-vector-lane-tier]
 related: [design-the-cpu-vector-lane-tier, admit-shared-contributor-coverage-and-reduction-padding-identity, declare-cpu-vector-realization-facts-in-the-target-profile, define-plural-operation-specific-vector-realization-requirements, admit-fixed-vector-ssa-and-unmasked-memory-into-kernel-ir]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [scheduling, ir, cpu, simd, execution-hierarchy, public-boundary, decision, needs-tom]
+claimed_from: todo
+assignee: worker-vector-lanes
+lease_expires_at: 1787062687
 ---
 ## User-visible outcome
 
