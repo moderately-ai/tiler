@@ -1,7 +1,7 @@
 ---
 id: correct-the-b1d-prefill-logits-figures
 title: Correct the B1-d prefill logits figures the off-by-4096 seeded
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [project-only-the-final-position-logits, admit-a-position-selecting-slice-for-the-rotary-table, scope-the-sequence-extending-tensor-family, design-model-level-qualification-and-optimization]
@@ -9,6 +9,9 @@ scopes: [research/program-planning, research/shapes, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, documentation, program-planning, residency]
+claimed_from: todo
+assignee: worker-b1d-figures
+lease_expires_at: 1787062049
 ---
 ## User-visible outcome
 
