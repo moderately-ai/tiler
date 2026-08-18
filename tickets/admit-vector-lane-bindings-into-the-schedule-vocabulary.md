@@ -1,7 +1,7 @@
 ---
 id: admit-vector-lane-bindings-into-the-schedule-vocabulary
 title: Admit the first vector-lane schedule boundary
-status: in-progress
+status: done
 priority: p2
 dependencies: [accept-adr-0093-cpu-vector-lane-tier]
 related: [design-the-cpu-vector-lane-tier, admit-shared-contributor-coverage-and-reduction-padding-identity, declare-cpu-vector-realization-facts-in-the-target-profile, define-plural-operation-specific-vector-realization-requirements, admit-fixed-vector-ssa-and-unmasked-memory-into-kernel-ir]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [scheduling, ir, cpu, simd, execution-hierarchy, public-boundary, decision, needs-tom]
-claimed_from: todo
-assignee: worker-vector-lanes
-lease_expires_at: 1787062687
 ---
 ## User-visible outcome
 
@@ -138,3 +135,5 @@ The accepted schedule carrier is implemented exactly as accepted, in `tiler-ir` 
 ## Closes when
 
 Tom accepts the exact included and excluded surface above, the successor graph is filed, and implementation evidence proves the carrier through the real CPU path without widening the accepted scope.
+
+**Split — 2026-08-18, at closure.** The first two clauses are discharged: the acceptance is recorded above with provenance, all four successor tickets exist, and the accepted carrier is implemented with its evidence in the delivery record. The third clause — proving the carrier through the real CPU path — was never dischargeable by this ticket at any base where no `tiler-cpu*` crate exists; it is the standing outcome of [`prove-the-first-real-fixed-vector-cpu-execution-approach`](prove-the-first-real-fixed-vector-cpu-execution-approach.md), which already depends on this ticket among its seven prerequisites. This ticket closes on the delivered carrier scope; the CPU-path proof remains graph-enforced downstream rather than an unmet clause here.
