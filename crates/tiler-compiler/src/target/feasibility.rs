@@ -289,7 +289,19 @@ enum CapabilityRelation {
 
 /// The canonical axis order. This is the single source of truth for evaluation
 /// and reporting order, matching the derived [`CapabilityAxis`] ordering.
-const CANONICAL_AXES: [CapabilityAxis; 7] = [
+///
+/// `pub(crate)` so the deferred-subject identity tests in [`crate::frontier`]
+/// census this array instead of restating it. A second copy there would be a
+/// second population to keep complete, and nothing would have compared the two.
+///
+/// The length is hand-written because `variant_count` is nightly and this crate
+/// gates that feature on `test` (see the crate root), so a production array
+/// cannot be sized from its own enum here. The test module below closes the gap:
+/// `CANONICAL_AXES_COVER_THE_CAPABILITY_VOCABULARY` makes a widened enum a build
+/// error at this census, and `capability_axis_descriptor_tags_ascend_with_the_derived_order`
+/// proves the entries strictly ascend, so a full-length array cannot be one that
+/// repeats an axis in place of a missing one.
+pub(crate) const CANONICAL_AXES: [CapabilityAxis; 7] = [
     CapabilityAxis::GridAxisThreads,
     CapabilityAxis::WorkgroupThreads,
     CapabilityAxis::BufferBindings,
@@ -3931,6 +3943,32 @@ mod tests {
         )
         .unwrap()
     }
+
+    /// [`CANONICAL_AXES`] still names every [`CapabilityAxis`], sized from the
+    /// enum rather than from a hand-written 7.
+    ///
+    /// This is the completeness half of the census, and it is a build error
+    /// rather than a test so that a widened vocabulary stops the crate at the
+    /// array instead of at whichever assertion happens to notice. Without it an
+    /// eighth axis is silent: `tag`, `key`, `relation`, `quantity`, and the
+    /// deferred-identity tests' own relation map are all wildcard-free matches,
+    /// so a widening forces arms in each of them — and then every one of the
+    /// canonical-order, byte-preservation, and escape-disjointness checks passes
+    /// while ranging over seven eighths of the vocabulary. Verified 2026-08-18:
+    /// an eighth variant with all five match arms supplied ran 957 `tiler-compiler`
+    /// tests green before this assertion existed.
+    ///
+    /// Completeness alone does not prove coverage — an array of the right length
+    /// could repeat one axis and omit another. `capability_axis_descriptor_tags_ascend_with_the_derived_order`
+    /// below is the other half: strict ascent under the derived `Ord` admits no
+    /// repeat, so full length plus strict ascent is exactly the vocabulary, once
+    /// each, in declaration order.
+    const CANONICAL_AXES_COVER_THE_CAPABILITY_VOCABULARY: () = assert!(
+        CANONICAL_AXES.len() == core::mem::variant_count::<CapabilityAxis>(),
+        "CANONICAL_AXES has stopped naming every CapabilityAxis: the evaluation \
+order, the deferred-subject byte control, and the escape-disjointness census all \
+range over it, and each would pass over the axes that remain."
+    );
 
     /// The canonical-key equivalence the sort order relies on: axis descriptor
     /// tags ascend with the derived axis order, so a capability-only deferred

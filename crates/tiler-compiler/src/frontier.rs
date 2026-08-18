@@ -6973,7 +6973,14 @@ mod tests {
             ATOMIC_DEFERRED_SUBGROUP_WIDTH_CONFIRMATION, ATOMIC_DEFERRED_SUBJECT_ESCAPE,
             DeferredPredicate, ExecutableDeferredTargetSubject, encode_deferred_predicate,
         };
-        use crate::target::feasibility::CapabilityAxis;
+        // The census these tests range over is the feasibility module's own
+        // [`CANONICAL_AXES`], not a copy of it. A copy would be a second
+        // population to keep complete, and an axis added to the vocabulary but
+        // to neither array would leave both tests below reporting success over
+        // the axes that remained. `CANONICAL_AXES_COVER_THE_CAPABILITY_VOCABULARY`
+        // sizes that one array from `CapabilityAxis` itself, so this module
+        // inherits the completeness guarantee rather than restating it.
+        use crate::target::feasibility::{CANONICAL_AXES, CapabilityAxis};
         use tiler_ir::identity::{push_len, push_slice};
         use tiler_ir::program::abi::{
             AvailabilityPhase, PreparedEntryTargetRequirement, TargetPropertyKey,
@@ -6983,15 +6990,15 @@ mod tests {
             ArithmeticType, SubgroupRealizationSubject, SubgroupTransfer, SubgroupWidth,
         };
 
-        const CANONICAL_AXES: [CapabilityAxis; 7] = [
-            CapabilityAxis::GridAxisThreads,
-            CapabilityAxis::WorkgroupThreads,
-            CapabilityAxis::BufferBindings,
-            CapabilityAxis::DeviceAddressSpace,
-            CapabilityAxis::LocalMemoryBytes,
-            CapabilityAxis::IndexArithmeticU64,
-            CapabilityAxis::DeviceAddressWidthBits,
-        ];
+        /// The quantity every capability fixture below requires.
+        ///
+        /// Named rather than inlined because the byte control reconstructs the
+        /// record's required-quantity field from it, and that reconstruction is
+        /// only independent evidence while it reads the fixture's own input
+        /// instead of the encoder's accessor chain. Admissible on every axis:
+        /// `1` satisfies the boolean axes' `value <= 1` and the exact axis's
+        /// `value > 0`, and ceilings admit any amount.
+        const FIXTURE_REQUIRED: u64 = 1;
 
         fn requirement(
             property: &str,
@@ -7014,6 +7021,17 @@ mod tests {
             .unwrap()
         }
 
+        /// The governed relation each axis compares by, restated here rather
+        /// than read from `CapabilityAxis::relation`.
+        ///
+        /// The duplication is deliberate and stays: `DeferredPredicate::new`
+        /// validates a capability pair against the production map, so deriving
+        /// the fixture's relation from that same map would make construction
+        /// trivially valid and this an independent statement of nothing. Held
+        /// hand-written, a production relation that changed refuses here and the
+        /// tests below say so. Unlike an array, it needs no `variant_count`: the
+        /// match has no wildcard, so a widened vocabulary is already a build
+        /// error at this arm.
         fn capability_relation(axis: CapabilityAxis) -> TargetPropertyRequirementRelation {
             match axis {
                 CapabilityAxis::GridAxisThreads
@@ -7039,7 +7057,7 @@ mod tests {
                     "tiler",
                     "test-prepared-properties",
                     1,
-                    1,
+                    FIXTURE_REQUIRED,
                     capability_relation(axis),
                 ),
             )
@@ -7086,13 +7104,30 @@ mod tests {
         /// the exact pre-enum spelling: length-framed axis key, big-endian
         /// required quantity, length-framed complete requirement. An old
         /// capability proposal identity therefore cannot move.
+        ///
+        /// The reconstruction is a control and not a restatement of the encoder,
+        /// and the required quantity is the field where that distinction is at
+        /// risk. The pre-enum encoder wrote `predicate.required().value()` and
+        /// the current one writes `predicate.requirement().required()`; the two
+        /// agree only because `Quantity::value` is the identity unwrap on every
+        /// axis, so reading the quantity back out of the predicate here would
+        /// have pinned the new expression against itself and called the result
+        /// pre-enum evidence. It comes from [`FIXTURE_REQUIRED`] instead — the
+        /// value this module put in.
+        ///
+        /// The other two fields are shared with the encoder deliberately, and
+        /// were shared before the subject vocabulary too: `CapabilityAxis::key`
+        /// is the axis's one governed spelling and
+        /// `PreparedEntryTargetRequirement::canonical_bytes` is the
+        /// requirement's own governed encoding. Restating either here would
+        /// assert a second opinion about bytes this module does not own.
         #[test]
         fn capability_records_keep_their_pre_enum_bytes_exactly() {
             for axis in CANONICAL_AXES {
                 let predicate = capability_predicate(axis);
                 let mut legacy = Vec::new();
                 push_slice(&mut legacy, axis.key().as_bytes());
-                legacy.extend_from_slice(&predicate.requirement().required().to_be_bytes());
+                legacy.extend_from_slice(&FIXTURE_REQUIRED.to_be_bytes());
                 push_slice(&mut legacy, &predicate.requirement().canonical_bytes());
                 assert_eq!(
                     encoded(&predicate),
