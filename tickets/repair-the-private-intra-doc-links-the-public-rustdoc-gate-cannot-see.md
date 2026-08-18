@@ -128,9 +128,9 @@ priv EXIT=101
 
 That is what settles "add" versus "replace": the private run keeps the public-to-private check, so adding it removes nothing, and the reason to keep the public run is the shipped page set rather than a lost lint. Reverted; `capability.rs` returns to `e25af41f3e708c391d3e07827ebd120c168c10937dd1b4dda172cb233f5d0afd` and leaves `git status` clean.
 
-## Final census and commands (base `01fc9682`)
+## Final census and commands (base `01fc9682`, repairs at `c36f80fe`)
 
-`RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items -p tiler-compiler` **exits 0**. Nothing remains unresolved in this crate.
+`RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items -p tiler-compiler` **exits 0**. Nothing remains unresolved in this crate. Every command below was run on `c36f80fe`'s tree.
 
 | command | result |
 | --- | --- |
