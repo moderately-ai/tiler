@@ -1,7 +1,7 @@
 ---
 id: correct-the-runtime-execution-environment-fact-census
 title: Correct the runtime execution-environment fact census
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [decide-the-adr-0013-plan-determinism-stability-subject]
@@ -9,9 +9,6 @@ scopes: [implementation/runtime, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, runtime, graph-repair]
-claimed_from: todo
-assignee: worker-runtime-environment-docs
-lease_expires_at: 1787024422
 ---
 ## User-visible outcome
 
@@ -45,4 +42,4 @@ rg -n 'the host supplies the three facts a load depends|one `RepresentationKey` 
 rg -n 'four declarations a load|one map from each declared `ArithmeticType`|dtype map is eligibility evidence' crates/tiler-runtime/src/load/host.rs docs/glossary.md
 ```
 
-The first command returned no matches. The second returned the runtime module declaration and the corrected glossary row. `cargo fmt --check -- crates/tiler-runtime/src/load/host.rs`, `RUSTDOCFLAGS='-D warnings' cargo doc -p tiler-runtime --no-deps`, `tkt lint --format json`, `make citations`, and `git diff --check` passed. The post-commit exact-base `tkt guard` result is recorded with the commit handoff.
+The first command returned no matches. The second returned the runtime module declaration and the corrected glossary row. `cargo fmt --check -- crates/tiler-runtime/src/load/host.rs`, `RUSTDOCFLAGS='-D warnings' cargo doc -p tiler-runtime --no-deps`, `tkt lint --format json`, `make citations`, and `git diff --check` passed. Exact implementation commit `1bac83cfbbc72f19b144a9d4a83ffb329dd4e816` was integrated on main at `46ca0c2f6fc18e8051a8c5e3748267c14f14a09d`; post-commit exact-base `tkt guard` exited zero with no under-declaration, conflict false, and only declared-area collision warnings.
