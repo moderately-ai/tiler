@@ -1,7 +1,7 @@
 ---
 id: decide-the-artifact-physical-selection-provenance-surface
 title: Decide the artifact physical-selection provenance surface
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [disclose-the-physical-provider-environment-a-compilation-was-offered, publish-occurrence-bound-selected-physical-implementation-evidence, replace-flat-selected-lowering-capability-keys-with-structured-subjects]
 related: [package-selected-physical-implementation-provenance-in-artifact-identity]
@@ -1046,3 +1046,10 @@ payload/backend/profile/entry/position; and a
 claim that the artifact independently proves a direct low-level caller's rows
 are the compiler's exhaustive plan. The production bridge is the authority for
 that last association, and the artifact preserves exactly what it receives.
+
+
+## Accepted decision — 2026-08-18
+
+Tom accepted the exact reviewed packet at `06c5a22918ea803767fc04648b4873a8a7a420a7` in the live coordination session with the orchestrator, relayed first-hand by the coordinator, by replying `agreed, next decision` to the one accept-or-name-the-change question presented in explain-then-recommend form.
+
+The accepted surface is exactly the packet's sole nondominated atomic option: two role-separated construction-only offered sets; required `VariantSpec::selected_physical_implementations`; opaque shared occurrence/proposal wrappers; the closed three-kind artifact enum with `0x04` reserved for a future reviewed `View`; strict occurrence order and role validation; the artifact-owned 4,096-entry count ceiling derived from `MAX_VARIANT_ENTRIES` plus mandatory `selected rows <= entries`; the existing whole-manifest and whole-identity byte limits only; and one byte-identical canonical run in artifact v19 and manifest 19.0. The superseded commits `825a3d29`, `a6304aef`, and `17b06048` remain non-evidence. Implementation flows through `package-selected-physical-implementation-provenance-in-artifact-identity`, which this acceptance unblocks; it must rederive the exact artifact/manifest version numbers at its own base if another accepted step lands first.
