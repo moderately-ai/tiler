@@ -4,8 +4,9 @@
 //! requires three evidence classes to stay separate, and this module builds the
 //! second of them:
 //!
-//! 1. exact or proven-upper-bound [`ResourceRequirements`], used for hard
-//!    feasibility — already exists, in `tiler_ir::schedule`;
+//! 1. exact or proven-upper-bound
+//!    [`ResourceRequirements`](tiler_ir::schedule::ResourceRequirements), used
+//!    for hard feasibility — already exists, in `tiler_ir::schedule`;
 //! 2. **uncertain pressure estimates with provenance and an explicit `Unknown`
 //!    state, including registers, occupancy, and source size** — this module;
 //! 3. an analytical cost estimate with model provenance and its own `Unknown` —

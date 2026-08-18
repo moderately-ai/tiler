@@ -249,8 +249,8 @@ pub(crate) const GOVERNED_INDEX_ACCESS_CAPABILITIES: usize = 21;
 /// one capability per admitted operand arity: [`resolve_index_access`] keys on
 /// the exact `(family, operation, signature)` triple and a `LoweringSignature`
 /// carries the exact operand type list, so a variadic family is one registration
-/// per arity rather than one registration. The count is stated by
-/// [`GOVERNED_INDEX_ACCESS_CAPABILITIES`] and asserted against the frozen
+/// per arity rather than one registration. The count is stated by the test-only
+/// `GOVERNED_INDEX_ACCESS_CAPABILITIES` and asserted against the frozen
 /// registry.
 ///
 /// [`resolve_index_access`]: FrozenLoweringCapabilityRegistry::resolve_index_access
