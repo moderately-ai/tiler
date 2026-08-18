@@ -637,10 +637,10 @@ const UNMODELLED_BOUNDARY_CARRIER_RULE: &str = "boundary-carrier-unmodelled";
 /// - **alignment** is the natural alignment of the boundary value's own element
 ///   type, derived rather than stated: [`boundary_carrier`] reads the region's
 ///   scalar program for the physical carrier its boundary values have, and
-///   [`ByteAlignment::natural_for`] takes that carrier's width from
-///   `StorageScalar::byte_width`. A region whose program fixes no single carrier
-///   is refused with [`UNMODELLED_BOUNDARY_CARRIER_RULE`] rather than given the
-///   widest one. In the bounded profile every admitted program is `f32`
+///   [`crate::boundary::ByteAlignment::natural_for`] takes that carrier's width
+///   from `StorageScalar::byte_width`. A region whose program fixes no single
+///   carrier is refused with [`UNMODELLED_BOUNDARY_CARRIER_RULE`] rather than
+///   given the widest one. In the bounded profile every admitted program is `f32`
 ///   throughout, so the derived answer is four bytes — but it is now four
 ///   because the element is four wide, not because the profile said so;
 /// - **materialization** is a materialized buffer. Each access is a distinct

@@ -718,9 +718,10 @@ pub(crate) fn compile(request: CompilationRequest<'_>) -> Result<CompilationProd
 /// Compiles against a caller-composed physical-provider environment.
 ///
 /// The one production entry that varies the physical authorities. Separate from
-/// [`compile`] rather than a defaulted parameter on it, so the governed path
-/// keeps a caller-free spelling and an entry that silently defaulted cannot make
-/// "nothing was installed" and "the installation was dropped" the same call.
+/// the test-only `compile` rather than a defaulted parameter on it, so the
+/// governed path keeps a caller-free spelling and an entry that silently
+/// defaulted cannot make "nothing was installed" and "the installation was
+/// dropped" the same call.
 ///
 /// The providers are borrowed for the compilation rather than carried on the
 /// request, for the reason [`PhysicalAuthorities`] documents: a provider is a
@@ -745,10 +746,10 @@ pub(crate) fn compile_with_physical_providers(
 
 /// Compiles under stated rewrite and physical authorities.
 ///
-/// Both are what this build ships when [`compile`] states them, and both are
-/// stated at the entry rather than reconstructed further down: a stage that
-/// built its own authority would be answering a different question from the one
-/// the caller submitted, and no reader of the result could tell.
+/// Both are what this build ships when the test-only `compile` states them, and
+/// both are stated at the entry rather than reconstructed further down: a stage
+/// that built its own authority would be answering a different question from the
+/// one the caller submitted, and no reader of the result could tell.
 fn compile_configured(
     request: CompilationRequest<'_>,
     algebraic_configuration: AlgebraicRuleConfiguration,

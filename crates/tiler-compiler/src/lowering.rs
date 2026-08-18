@@ -1,10 +1,10 @@
 //! The compile path's lowering-capability resolution and refinement stage.
 //!
 //! Every recognized semantic occurrence resolves exactly one
-//! [`LoweringFamily::IndexAccess`] capability through the frozen registry the
-//! request carries, and the resolved provider is then driven through
-//! [`refine_index_region`] to prove it realizes that occurrence. The two answer
-//! different questions and are kept apart accordingly:
+//! [`crate::capability::LoweringFamily::IndexAccess`] capability through the
+//! frozen registry the request carries, and the resolved provider is then driven
+//! through [`refine_index_region`] to prove it realizes that occurrence. The two
+//! answer different questions and are kept apart accordingly:
 //!
 //! - **Resolution is unconditional and fails closed.** A missing or contended
 //!   capability means the installed authority cannot lower a program it was

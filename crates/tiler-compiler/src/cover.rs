@@ -186,7 +186,7 @@ impl fmt::Display for CoverInfeasibility {
 /// [`Self::Forbidden`] a legal cover is an exact partition and any second
 /// coverage of an operation is [`CoverError::IllegalDuplication`], while under
 /// [`Self::PureRecomputation`] a second coverage is legal exactly when
-/// [`duplication_refusal`] admits the member.
+/// [`DuplicationLegality::refusal`] admits the member.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
@@ -993,9 +993,9 @@ impl From<RegionError> for CoverError {
 /// bounded by the request's `region_covers` and `region_cover_expansions`
 /// budgets. Under a duplication-admitting `policy` an anchored region may also
 /// re-cover operations the branch already covers, provided
-/// [`duplication_refusal`] admits each of them. A program whose named output is a
-/// bare boundary-input passthrough has no legal cover and yields an `Ok` result
-/// with an empty cover set and a recorded [`CoverInfeasibility`].
+/// [`DuplicationLegality::refusal`] admits each of them. A program whose named
+/// output is a bare boundary-input passthrough has no legal cover and yields an
+/// `Ok` result with an empty cover set and a recorded [`CoverInfeasibility`].
 ///
 /// # Errors
 ///
@@ -1832,7 +1832,7 @@ impl Partitioner<'_> {
 /// **The first is defence in depth and is currently unreachable from the search,
 /// stated so rather than presented as a live check.** A second producer of a
 /// named output would have to be a second region containing that output's
-/// producing member, and [`duplication_refusal`] refuses that member with
+/// producing member, and [`DuplicationLegality::refusal`] refuses that member with
 /// [`DuplicationRefusal::NamedResultProducer`] before a cover containing both
 /// can be assembled. It is kept because it is the condition, not the
 /// consequence: the day the duplication condition admits a named-result producer

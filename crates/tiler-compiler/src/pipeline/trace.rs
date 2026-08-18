@@ -1140,10 +1140,10 @@ pub(super) fn record_plan_selection(
 ///
 /// **The only authority that states the gap, and it used to be read by tests
 /// alone.** `select_physical_plans` has always constructed a
-/// [`PlanRejection::RegionUnimplemented`] for every cover region with an empty
-/// admitted set, and nothing on the compile path ever emitted one — so a caller
-/// reading the trace saw a cover that produced no plan and no record saying
-/// which of its regions had nothing to implement it.
+/// [`crate::selection::PlanRejection::RegionUnimplemented`] for every cover
+/// region with an empty admitted set, and nothing on the compile path ever
+/// emitted one — so a caller reading the trace saw a cover that produced no plan
+/// and no record saying which of its regions had nothing to implement it.
 ///
 /// **One record per unimplemented region, carrying the count of covers it
 /// blocked — not one record per (cover, region) pair.** The distinct rejection

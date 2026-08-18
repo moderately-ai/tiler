@@ -484,8 +484,9 @@ pub(crate) struct AssemblyPublishingCopy {
 /// two passes of one region — which is why it is derived over the flattened
 /// stage list rather than inside the per-region loop that mints the other two.
 ///
-/// The occurrence travels as the planner's own [`SemanticMemberId`] because the
-/// assembler holds no lowering; [`build_cover_core`] projects it onto the IR's
+/// The occurrence travels as the planner's own
+/// [`crate::region::SemanticMemberId`] because the assembler holds no lowering;
+/// [`build_cover_core`] projects it onto the IR's
 /// [`tiler_ir::program::SemanticOccurrence`] through the same
 /// `OccurrenceLowering` that mints the stage's coverage records, so the
 /// declaration and the coverage it continues name one receipt's occurrence.

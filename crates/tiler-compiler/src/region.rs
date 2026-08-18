@@ -1732,9 +1732,9 @@ pub(crate) fn form_region_candidates(
 /// region *sequence* enumerates one node per stage, so the cover search sees
 /// the family's internal boundary — the capability Tom's Option A′ decision on
 /// `resolve-which-authority-mints-a-multi-stage-region-candidate` makes region
-/// formation's to mint. [`form_region_candidates`] stays the law-blind entry
-/// for callers exercising formation structure alone; the two differ only in
-/// the graph they build.
+/// formation's to mint. The test-only `form_region_candidates` stays the
+/// law-blind entry for callers exercising formation structure alone; the two
+/// differ only in the graph they build.
 pub(crate) fn form_region_candidates_with_realizations(
     program: &SemanticProgram,
     budgets: DeterministicBudgets,

@@ -178,8 +178,8 @@ const GOVERNED_FEASIBILITY_RULE_SET_KEY: &str =
 /// Nonzero output-affecting revision of the governed feasibility rule set.
 ///
 /// Bumped when this module changes *how* a requirement is compared against a
-/// bound or a declaration — an axis [`Relation`], [`satisfies`],
-/// [`CapabilityAxis::admits`], [`authority_matches_phase`],
+/// bound or a declaration — an axis's [`CapabilityAxis::relation`],
+/// [`satisfies`], [`CapabilityAxis::admits`], [`authority_matches_phase`],
 /// [`CheckedTargetProfile::resolve`]'s preference for the most refined available
 /// fact, the mapping of a [`HonouringMeans`] onto a verdict in
 /// [`CheckedTargetProfile::resolve_dimension`], or the outcome precedence in
@@ -225,10 +225,11 @@ pub(crate) use tiler_ir::program::abi::AvailabilityPhase;
 /// canonical evaluation and reporting order.
 ///
 /// This space is *quantitative*: every axis has a `u64` bound, a
-/// [`Quantity`] unit, and a comparison [`Relation`]. Numerical behaviour is
-/// deliberately not in it — see [`crate::target::honourability`] — because a bound
-/// comparison can report whether an obligation is met and never by what means,
-/// and the means is what an emulated dimension's emitted operations depend on.
+/// [`Quantity`] unit, and a comparison [`CapabilityRelation`]. Numerical
+/// behaviour is deliberately not in it — see [`crate::target::honourability`] —
+/// because a bound comparison can report whether an obligation is met and never
+/// by what means, and the means is what an emulated dimension's emitted
+/// operations depend on.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CapabilityAxis {
     /// Threads dispatched along the launch grid axis.

@@ -5608,7 +5608,7 @@ fn resolve_numerical_contract(
 /// no longer refused here. [`check_output_cover`] owns that rule and states the
 /// measured order the four walls fell in; it is not restated here, because two
 /// derivations of one measurement are what drift.
-/// [`crate::pipeline::conformance`]'s
+/// `crate::pipeline::conformance`'s
 /// `a_published_and_consumed_intermediate_compiles_and_agrees` is the compiling
 /// assertion, `an_output_key_pair_naming_one_value_still_refuses_by_name` is the
 /// neighbour that must keep refusing, and
@@ -5875,7 +5875,7 @@ fn recognize_elementwise_output(
 /// places one region as both the edge's producer and the publication's retainer
 /// and that region needs a *second dispatch* to write the publication; and only
 /// then `tiler_ir::program`'s `UncoveringStage`, which its publishing-copy
-/// declaration now accounts for. [`crate::pipeline::conformance`]'s
+/// declaration now accounts for. `crate::pipeline::conformance`'s
 /// `a_published_and_consumed_intermediate_compiles_and_agrees` is the compiling
 /// assertion and `an_output_key_pair_naming_one_value_still_refuses_by_name` is
 /// the neighbour that must keep refusing.
