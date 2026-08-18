@@ -1,7 +1,7 @@
 ---
 id: declare-metal-subgroup-realization-facts-in-the-target-profile
 title: Declare Metal subgroup realization facts as atomic target facts
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: [accept-adr-0094-subgroup-execution-tier, admit-an-atomic-subgroup-realization-subject-to-target-profiles, decide-the-prepared-subgroup-width-equality-gate, carry-subgroup-width-through-exact-prepared-entry-equality, measure-metal-thread-execution-width-across-prepared-pipelines]
 related: [design-the-subgroup-execution-tier, declare-cpu-vector-realization-facts-in-the-target-profile, correct-the-subgroup-threads-route-dimension-meaning, correct-the-metal-profile-authority-ledgers-stale-identity-pins, make-prepared-entry-observations-typed-and-key-dispatched, generalize-deferred-target-provenance-beyond-capability-axes, bind-prepared-pipeline-caches-to-loader-derived-route-identity]
@@ -131,3 +131,12 @@ The `PreparedKernelPreflight` stage for subgroup width and its routing-commit or
 
 - The **standard** macOS Apple9 profile (`FIRST_MACOS_APPLE9`) remains subgroup-silent by its evidence: no width was ever measured on its ledger host, and no host matching that ledger row currently exists. [`measure-thread-execution-width-on-the-standard-metal-profiles-own-host`](measure-thread-execution-width-on-the-standard-metal-profiles-own-host.md) owns that measurement and the row it could license.
 - No production route can require the subject yet — no schedule mints `ResourceRequirements::subgroup` until the schedule-vocabulary lane lands — so the M3 Pro declaration's row is read by feasibility (public `subgroup_realization` resolution, whole-subject equality, tested) but reached by no compiled program; that is the accepted decision's own sequencing, not a gap this ticket may close.
+
+
+## Accepted decision — 2026-08-18, revised after Tom's naming objection
+
+Tom reviewed the delivered surfaces in the live coordination session and objected to codifying the host model into a durable public profile key (`tiler.metal.macos-m3pro-apple9.msl4-0.subgroup-f32.v1`): host model names belong in measurement provenance, not identity vocabulary. The revised disposition, accepted by Tom (`agreed next decision`, relayed first-hand by the coordinator):
+
+1. **The prepared-width stage surface is accepted as delivered** at `c7f20365`: `declare_subgroup_width_query`, the loader's pre-commit refusal classes (`UnownedPreparedEntryProperty`, `UnsatisfiedDeferredPredicate`), and the adapter's exact-match dispatch to the retained pipeline's `threadExecutionWidth`. Public-boundary item 6's spelling is thereby accepted.
+2. **The host-named public profile is NOT accepted.** `BoundMetalSubgroupDeclaration` and its profile key demote from public surface to a crate-private evidence fixture — the declaration, its Metal-owned validation, its tests, and the retained on-device demonstration all continue unchanged; no public identity is minted from a hardware model name. Carrier: `demote-the-m3-pro-subgroup-declaration-to-an-internal-evidence-fixture`.
+3. **The missing decision is filed rather than defaulted**: `decide-the-host-evidence-to-profile-composition-model` owns how single-host measured evidence composes into family-scoped profile identity (per-row execution provenance on family-keyed profiles is the candidate to beat). Until it is accepted, host-scoped evidence remains evidence, and no further host-named profile key may be minted.
