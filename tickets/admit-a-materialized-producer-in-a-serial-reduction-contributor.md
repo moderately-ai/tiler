@@ -288,3 +288,134 @@ The corrected nondominated frontier is status quo, a bare-producer fail-closed s
 The verifier repair is a correctness requirement, not a cleanup: the no-proof exemption must match the `DeclaredInput` contributor source explicitly. Perturb only the source to `Materialized` and require the ordinary `portfolio-equivalence` proof path to run. Also distinguish recognizer admission from target admission for `sum(rms_norm(...))`: the governed target intentionally has no elementary row, so positive end-to-end evidence depends on [`drive-staged-materialization-boundary-tests-past-elementary-accuracy`](drive-staged-materialization-boundary-tests-past-elementary-accuracy.md) and a caller-declared discharging RMS realization.
 
 Finally, the source-bearing identity consequence is additive, not absent: old `serial-sum-f32.v3` subjects and pins may remain byte-identical, while newly admitted programs naturally produce new request, plan, schedule, KIR, artifact, and cache identities. No existing domain necessarily steps, but every prototype must prove the new subject cannot encode under the old tag and must enumerate the downstream identities it creates.
+
+## Census repair and re-audit — 2026-08-18, base `1957227cc710a7d7f78b8febacc2d6ccb997448e`
+
+Read in full at this base: the recognition, refusal, subject-encoding, and accessor paths of `crates/tiler-compiler/src/request.rs`; all of `crates/tiler-compiler/src/pipeline/verify.rs`; every serial-sum consumer site in `crates/tiler-compiler/src/physical.rs`, `crates/tiler-compiler/src/pipeline.rs`, and `crates/tiler-compiler/src/pipeline/trace.rs`; and the fixture populations in `request.rs` tests and `crates/tiler-compiler/tests/materialized_intermediate_epilogue_wall.rs`. Prototype measurements were taken in a detached worktree at this exact commit and the worktree was removed afterwards; nothing under `crates/` moved on this branch.
+
+### Per-Fact verdicts
+
+- **Facts 1–4 (2026-08-13 audit): verified unchanged.** Anchors re-run at this base: `Folded` is raised under `leaves.staged.is_none() && materializes_its_result`; `Flattens a discovered materialization boundary into the rule a caller` is still the one flattening and still reports `reduction-contributor-materialization`; `recognize_elementwise` still has one production caller (`recognize_reduction`); `StagedOperandAdmission::NoEdge` is constructed only in `recognize_epilogue_producer`; `materializes_its_result` is still exactly the three families; `NormalizedSerialSum` still carries `prologue`, `prologue_reads`, `contributor_input`, and no producer. The Fact 3 control population is unchanged: `folded_prologue(true)`, `staged_contributor`, and the wall-file / `contraction_direct_path` contraction subjects all still expect `reduction-contributor-materialization`, and `folded_prologue(false)` still recognizes as `SerialSum`.
+- **The 2026-08-13 "Related claim that is false at this base" is repaired.** `nested_contraction_chain`'s doc now reads `This is not the two-intermediate-read width wall` and `one missing producer carrier` — landed in `dc18557c` ("test: restore staged materialization boundary evidence"). Follow-up item 4 of the earlier packet is discharged; nothing to file.
+- **The readiness correction's `pipeline/verify.rs` claim: verified, and the hole is wider than stated.** The exemption arm in `verify_equivalence` matches `(ProgramAlternativeKind::Fused, None)` under the guard `output.try_serial_sum().is_none_or(|serial| serial.prologue.is_none())`. Two consequences the correction did not spell out: (a) a **non**-serial-sum output also satisfies the guard, through `is_none_or(None) == true`, so a boxed top-level produced-sum arm satisfies the exemption without the site ever re-opening; (b) under the exhaustive contributor source the site **fails to compile** — measured below — the one carrier that forces the verifier repair into review. Reachability at this base: `ProgramAlternativeKind::of` classifies `Fused` only for a one-region whole-program cover, and no genuine produced-sum plan has one (no scheduled region computes producer, continuation, and fold), so today the defect sits in the verifier's forged-portfolio independence — its own contract that a tampered receipt `fails closed instead of being carried into a compilation product` — rather than a live wrong compile. That does not discharge the repair; it is filed as [`match-the-declared-input-contributor-in-the-fused-proof-exemption`](match-the-declared-input-contributor-in-the-fused-proof-exemption.md).
+- **The identity correction (additive consequence): verified against the encoder.** The serial-sum sub-tag holds at `v3` (anchor: `The sub-tag holds at`), and the established producer pattern is the staged arm's presence byte plus recursion through `encode_output_subject` (anchor: `The producer, present exactly when some operand above is staged`), which encodes a nested producer exactly as the standalone output of its family. The forged-subject analysis is under Identity below.
+- **Neighbourhood movement since 2026-08-13 the packet must absorb.** [`admit-a-strict-serial-fold-that-writes-a-materialized-intermediate`](admit-a-strict-serial-fold-that-writes-a-materialized-intermediate.md) is done: a `ScalarProgram::StrictSerialSum` region may commit to `TensorRole::Intermediate`, so the producer half of `sum(producer)` already has its write vocabulary. [`drive-staged-materialization-boundary-tests-past-elementary-accuracy`](drive-staged-materialization-boundary-tests-past-elementary-accuracy.md) is done, discharging this ticket's second dependency; the recognizer-versus-target-admission caveat for `sum(rms_norm(x, w))` is now the ordinary elementary-accuracy control rather than an evidence gap. `verify_region_output_binding` now opens with a `RegionProgram::Numerical` destructure that refuses a partitioned-copy region under `request-binding`; no carrier consequence — every produced-sum region is `Numerical`. Two doc sentences the carrier makes false are confirmed still present and must be repaired at implementation: `StagedOperandAdmission`'s `declared inputs by construction` (the sentence wraps mid-clause, so the longer spelling greps empty) and `encode_output_subject`'s `admits a folding family as a chain's producer and nothing else`.
+
+### Completed consumer census — what each carrier forces, measured
+
+Production (lib-target) consumers of the fold's contributor fields and of the output vocabulary, with whether each carrier's type change forces the site to re-open (measured by compile-error census below). A = exhaustive contributor source, materialized payload boxed; B = boxed top-level produced-sum arm sharing a fold core; C = additive `producer: Option<Box<NormalizedOutput>>` field.
+
+| Site | File | A | B | C |
+| --- | --- | --- | --- | --- |
+| `verify_equivalence` fused-proof exemption (`serial.prologue.is_none()`) | `pipeline/verify.rs` | **forced** | silently satisfied via `is_none_or(None)` | silently satisfied |
+| `contributor_tensor` / `declared_contributor_tensor` | `physical.rs` | forced | not forced | not forced |
+| `fused_prologue_constants` / `affine_prologue` gate | `physical.rs` | forced | decided once at `try_serial_sum` for every caller | not forced |
+| `spell_output` serial-sum arm (prologue part, parametric guard) | `physical.rs` | forced | forced (new arm) | not forced |
+| `pointwise_region`, `fused_region` prologue reads | `physical.rs` | forced | not forced | not forced |
+| `declared_input_for_verified_access`, `verify_region_output_binding`, `subject_contributor_tensor` serial-sum arms | `physical.rs` | forced via the subject accessors | forced (subject arm) | not forced |
+| `output_region_role` member partition | `pipeline.rs` | not forced (members shape unchanged) | forced (new arm) | not forced |
+| `record_numerical_equivalence` fold attribution via `try_serial_sum` | `pipeline/trace.rs` | not forced, stays correct (produced sum is still the serial-sum arm) | not forced, silently degrades to `reduction-provider-missing` | not forced |
+| `members` / `owns_region_members` / `prologue_members` partition | `request.rs` | partially forced (`prologue_members`); producer/continuation parts are named hand-work | forced (new arm) | not forced |
+| `carries_parametric_broadcast`, `input_elements_at`, `reads_declared_input`, `max_input_elements` | `request.rs` | forced | forced (new arm) | not forced |
+| `encode_output_subject` + `output_subject` projection + subject accessors | `request.rs` | forced | forced (subject arm) | not forced |
+| `recognize_reduction` constructor | `request.rs` | forced | not forced (new recognizer beside it) | forced |
+| `check_output_cover` (via `members`) | `request.rs` | not forced; producer members ride `members()` extension | forced transitively | not forced |
+| frontier proposal plumbing (`propose_split`, `propose_workgroup_tree`, …) | `frontier.rs` | not forced (passes `&NormalizedOutput` through) | not forced | not forced |
+
+`selection.rs` and `frontier.rs` `serial_sum()` call sites are `#[cfg(test)]`-only (the accessor itself is `#[cfg(test)]`).
+
+## Prototype measurements — 2026-08-18
+
+Method: detached worktree at `1957227c`, pinned toolchain `nightly-2026-07-19` (`rustc 1.99.0-nightly eff8269f7`). Layout via `size_of` printed from a `#[cfg(test)]` probe module beside the real types; consumer censuses by applying each carrier's exact type change (and its `NormalizedSerialSumSubject` / `NormalizedOutputSubject` mirror) with no consumer repairs, then `cargo check -p tiler-compiler`. Both measurements are host-independent; no timing was taken and none is owed — layout and forced-site counts decide this frontier, and if the per-materialized-contributor `Box` allocation is ever questioned it is an M3-host measurement for the implementation ticket.
+
+| Type | bytes |
+| --- | --- |
+| baseline `NormalizedSerialSum` | 296 |
+| baseline `NormalizedOutput` | 296 (serial sum is the widest inline arm; `NormalizedPointwise` is 208) |
+| baseline `NormalizedSerialSumSubject` / `NormalizedOutputSubject` | 240 / 240 |
+| A: source enum `{DeclaredInput(ordinal), PointwisePrologue{expr, reads}, Materialized(Box<_>)}` | 48 |
+| A: `NormalizedSerialSum` with the three fields replaced by the source | **288** |
+| A: `NormalizedOutput` | **288** |
+| A-unboxed (materialized payload inline) `NormalizedSerialSum` / `NormalizedOutput` | 320 / 320 |
+| B: `NormalizedOutput` + `ProducedSum(Box<_>)` sixth arm | 296 (heap payload 664: producer 296 + continuation 72 + embedded fold core 296) |
+| C: `NormalizedSerialSum` + `producer: Option<Box<NormalizedOutput>>` | 304; `NormalizedOutput` 304 |
+| shared parts: `ContributorContinuation {expr, Vec<(BoundaryRead, LogicalAccess)>, members}` | 72 |
+
+Compile-failure census, `cargo check -p tiler-compiler` (lib; `--all-targets` in parentheses):
+
+| Carrier | errors | distribution |
+| --- | --- | --- |
+| A (field replacement) | 31 (75) | `request.rs` 23, `physical.rs` 7, **`pipeline/verify.rs` 1 — the exemption itself** |
+| B (sixth arm) | 21 (46) | `request.rs` 16, `physical.rs` 4, `pipeline.rs` 1; **`pipeline/verify.rs` 0** |
+| C (additive field) | 2 (4) | the two constructors only; every classification, spelling, binding, identity, and verifier site compiles unchanged |
+
+The correction's layout premise is now quantified in both directions: the **unboxed** materialized payload does enlarge every output (+24 bytes, 296 → 320), but the **boxed** payload inside an exhaustive source *shrinks* it (296 → 288), because the enum replaces 56 bytes of `Option<expr>` + `Vec` + `Option<ordinal>` with a 48-byte tagged union. The layout argument that kept option (6) nondominated is therefore disproved by measurement: the boxed contributor source is smaller than both the status quo and the produced-sum arm.
+
+## Re-gated decision packet — 2026-08-18
+
+### Option set and eliminations
+
+1. **Status quo.** Fail-closed, correct, outcome unmet. Retained only as "do not admit after Tom rejects admission".
+2. **Bare-producer fail-closed slice, no continuation** — expressed in the contributor-source shape with `Materialized(Box<producer>)` carrying no continuation slot; `sum(producer * 2)` refuses under a new named rule (proposed `reduction-contributor-continuation`). Admits `sum(sum(x))`, `sum(contract(a, b))`, `sum(rms_norm(x, w))`; defers both spellings the User-visible outcome names (`sum(sum(x) * 2)`, `sum(contract(a, b) * 2)`).
+3. **Boxed top-level produced-sum arm sharing a fold core** (carrier B). **Eliminated by measurement and by the verifier census.** Its layout advantage does not exist (296 vs A's 288). It leaves the `pipeline/verify.rs` exemption compiling and *satisfied* through `is_none_or(None)`, silently degrades `record_numerical_equivalence`'s fold attribution to `reduction-provider-missing`, concentrates the semantics of every `try_serial_sum` caller into one accessor arm decided once, and re-imports the absence encoding this ticket exists to remove — its shared fold core is a `NormalizedSerialSum` whose `prologue: None, contributor_input: None` state means "materialized contributor" by the absence of both fields, the exact implicit XOR being replaced. It also adds a sixth arm at 21 match sites whose fold halves must delegate to or duplicate serial-sum handling.
+4. **Exhaustive contributor source with the materialized payload boxed** (carrier A). Survivor; recommended.
+5. **A-unboxed.** Eliminated: +24 bytes on every `NormalizedOutput` for zero capability difference — the correction's warning, quantified.
+6. **Additive producer field** (carrier C). Eliminated: it forces 2 of the ~27 correctness-bearing sites; every perturbation this ticket's own list demands — the verifier proof path, the fused-constants gate, the subject encoder's producer presence, the member partition — is left to unforced hand edits, and the subject encoder compiling unchanged means a forged produced subject's separation from `serial-sum-f32.v3` would rest on an accidental property of the unread-marker run (see Identity), the unstated-invariant reliance the pointwise arm's identity comment forbids.
+7. **The true complete replacement — every producer walk iterative.** Evaluated as instructed: it is a genuine alternative for the *producer-walk representation*, not for this admission's carrier, and it does not belong on this frontier. Even a worklist walk needs a typed place to retain producer and continuation — one of the carriers above — so "iterative everything" is a carrier **plus** a rewrite of the thirteen recursive walkers the census names (`recognize_epilogue_producer`, `encode_output_subject`, `output_subject`, `members`, `owns_region_members`, `producer_shape_for`, `input_elements_at`, `reads_declared_input`, `max_input_elements`, `carries_parametric_broadcast`, `spell_output`, `verify_region_output_binding`, `output_region_role`, `declared_input_for_verified_access`), whose sole additional buy is arbitrary chain depth — an explicit non-goal, and the deferred staged-depth ticket's measured no-program-bought result. It remains the recorded reversal path for the sides-rule (follow-up 3), not a frontier member; presenting it here would present a knowingly dominated composite.
+
+### Pareto comparison of survivors
+
+Dimensions: correctness, fail-closed strictness, long-term maintainability, host runtime/memory. Kernel performance out of scope.
+
+| | (1) Status quo | (2) Bare-producer slice on the source shape | (4) Full contributor source with continuation |
+| --- | --- | --- | --- |
+| Correctness | correct, admits nothing | same forced-site census as (4); admits the three bare subjects | same; admits the ticket's stated population; continuation reuses the proven epilogue machinery (`BoundaryRead` reads, `RegionSpellingKind::Epilogue`, the staged-leaf mint of `recognize_epilogue`) |
+| Fail-closed | already fail-closed | exhaustive source; continuation refused by name | exhaustive source; depth refused by name (`reduction-contributor-depth`), width and staged-depth unchanged |
+| Maintainability | no new surface | second landing owed for the continuation; a named refusal that later becomes unreachable | one landing; no successor ticket owed for the outcome |
+| Host | 296 | 288 | 288 |
+
+(2) and (4) tie on correctness, strictness, and host; (4) meets the User-visible outcome and the Activation clause's three subjects in one landing, while (2) defers two of the outcome's own example spellings behind a rule that exists only to be deleted. (4) weakly dominates on maintainability; (2) survives only as the smaller-first-diff staging choice. **Recommended: (4), with the sides-rule bound.**
+
+### Carrier, recognition, bound, spelling, numerical sections
+
+Unchanged from the 2026-08-13 packet except as restated by the measurements: the recommended normal form is the 2026-08-13 "Recommended carrier" section's, with the payload boxed — `Materialized(Box<MaterializedContributor>)` where `MaterializedContributor { producer: NormalizedOutput, continuation: Option<ContributorContinuation> }` — and the `ReductionContributorAdmission { OneEdge, NoEdge }` sides-rule exactly as written there (`recognize_output` → `OneEdge`, `recognize_epilogue_producer` → `NoEdge`; host stack constant in program depth; at most two producer hops, matching today's `Epilogue` → `Staged` bound).
+
+### Identity — measured and completed
+
+- New sub-tag, proposed `serial-sum-produced-f32.v1`, written only by the `Materialized` arm; the `DeclaredInput` and `PointwisePrologue` arms keep writing `serial-sum-f32.v3` byte-for-byte. `tiler.compiler.request-subject.v6` does not step; the `domains.rs` pin row stays `(1, 0)`.
+- **The new subject cannot encode under the old tag, structurally.** Under the exhaustive source the encoder's serial-sum arm must match the source enum, the `Materialized` arm writes its own framed tag first, and framed tags separate arms before any payload is read. The producer is written through `encode_output_subject` recursion so a nested fold is the same subject as that fold standing alone; the continuation is a presence byte then the epilogue arm's `BoundaryRead`-tagged read vocabulary. Conversely the old grammar has no producer slot: a dropped-producer forgery pushed through the `serial-sum-f32.v3` arm would emit an `encode_elementwise_reads` run of *only* unread markers (`0x04` for every declared ordinal), which no legal old subject produces — every legal fold reads at least one declared input in its own regions — but that separation is an accidental property of the marker run, and resting identity on it is exactly what the pointwise arm's `would be exactly the unstated invariant` comment forbids. The tag split is the structural control; the marker-run accident is why carrier C's unforced encoder was eliminated rather than argued safe.
+- Downstream identities a newly admitted program creates, per the correction: a new request subject (new arm) and therefore new evidence/explain subjects; new cover, plan, schedule, KIR, artifact, and cache *content* identities minted within existing domains for the new programs. No domain steps; artifact and cache identity move only with selected packaged content (anchor: `not artifact or cache identity; those move only when the`). The implementation regression is that the existing pinned request qualifiers (`deterministic_trace_is_sealed_and_rendered_separately`, the tiler-build Metal goldens) recompute unchanged.
+
+### Strongest counterargument, reversal evidence, perturbations
+
+**Counterargument to (4) over (2):** a smaller first landing is easier to review, and the continuation partition (a third member part that must not enter `RecognizedSerialSumMembers::pointwise`) is the one genuinely new machine. **Why it does not win:** the continuation's regions, reads, and numbering already exist as the epilogue path, the slice's named refusal is scaffolding that must later be removed from the optimizer contract, and the outcome sentence names two continuation spellings.
+
+**Counterargument to (4) over (3):** every `NormalizedOutput` match already exists and B's new arm makes the produced population visible at each. **Why it does not win, measured:** B's forced set (21 sites) misses the verifier exemption entirely while A's (31) contains it; B is not smaller (296 vs 288); and B's fold core re-encodes the contributor source by field absence.
+
+**Reversal evidence.** A measured layout or forced-site result contradicting the table above (rerun the probe at the implementation base); a demonstration that a genuine `Fused`-classified produced-sum alternative is constructible (would upgrade the verifier defect from forged-portfolio to live and raise the filed ticket's priority); a worklist producer walk with a named budget and a cover that places every edge (reopens the sides-rule, follow-up 3).
+
+**Perturbations (implementation-time), superseding the 2026-08-13 list where they overlap:**
+
+- Perturb only a recognized subject's contributor source to `Materialized` and require the ordinary `portfolio-equivalence` proof path to run — the filed verifier ticket's check, with failure text shown.
+- `folded_prologue(false)` byte-identical under `serial-sum-f32.v3`; `folded_prologue(true)` recognized with a `SerialSum` producer and a one-`BoundaryRead::Staged` continuation; `sum(rms_norm(x, w))` a `Staged` producer with no synthesized continuation.
+- A forged subject encoding a produced sum under `serial-sum-f32.v3`, or omitting the producer presence, must fail binding — and the test must forge the bytes, not rely on the marker-run accident.
+- `fused_prologue_constants` on `staged * 2 + 1` stays `None` (type-forced by the source enum; keep the negative test).
+- Continuation members perturbed into `members.pointwise()` must refuse or panic before `pointwise_region` binds declared inputs; `output_region_role` for a continuation region must not answer `whole-program` — both are named hand-work sites A does not force.
+- `sum(sum(a) * sum(b))` still refuses width; `sum(sum(sum(x)*2)*2)` refuses `reduction-contributor-depth`, not recursion; `record_numerical_equivalence` resolves the fold of a produced sum (A keeps this automatically; the assertion pins it).
+- Repair the two doc sentences named in the census (`declared inputs by construction`; `admits a folding family as a chain's producer and nothing else`).
+
+### One question for Tom
+
+Accept carrier (4) — the exhaustive contributor source with a boxed materialized payload, continuation included, sides-rule bound, new `serial-sum-produced-f32.v1` sub-tag — or restrict the first landing to (2), the bare-producer slice on the same shape with the continuation refused under `reduction-contributor-continuation`? Recommendation: (4); (2) buys review size only and defers the outcome's own examples.
+
+### Follow-ups after this packet
+
+1. **Implementation carrier** — as the 2026-08-13 list's item 1, updated to the boxed payload; the compile-failure census above is the migration map, and the sites it does *not* force (member partition, `output_region_role`, `check_output_cover` extension) are the hand-work list.
+2. **`reduction-contributor-depth` diagnostic** — unchanged (2026-08-13 item 2).
+3. **Worklist producer walk** — unchanged (2026-08-13 item 3); reversal path, not frontier.
+4. ~~Comment repair~~ — already landed in `dc18557c`.
+5. **Verifier exemption repair** — filed now as [`match-the-declared-input-contributor-in-the-fused-proof-exemption`](match-the-declared-input-contributor-in-the-fused-proof-exemption.md); under carrier (4) the site is compile-forced and the repair rides the migration, but it carries its own perturbation obligation and reviewer.
+
+### Packet state
+
+Re-gated over the corrected frontier with measurements. Deliberately left `in-progress` and unqueued: independent review of this packet is owed before `awaiting-decision` is restored, per the 2026-08-13 correction.
