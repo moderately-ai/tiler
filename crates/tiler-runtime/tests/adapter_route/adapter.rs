@@ -167,6 +167,14 @@ pub enum Perturbation {
     /// quantity and whose second was not owned, and a single-entry route cannot
     /// be in that state at all.
     UnrecognizeSecondPreparedEntry,
+    /// Every subgroup-width request is answered from the **first** entry's
+    /// prepared state.
+    ///
+    /// The cross-pipeline substitution the equality gate exists to catch: the
+    /// reported value is a genuine prepared-state width — of the wrong
+    /// pipeline. On a two-entry route with distinct per-entry widths the second
+    /// entry's row must refuse before the commit.
+    AnswerSubgroupWidthFromFirstEntry,
     /// No entry can be prepared.
     RefusePreparation,
     /// The caller's input storage is one element short.
@@ -640,25 +648,43 @@ impl RuntimeAdapter for ScalarHostAdapter {
         // key is admitted by an unrelated pipeline measurement.
         let query = request.requirement().query();
         let provider = query.provider();
-        if query.key().as_str() != fixture::PREPARED_PROPERTY_KEY
-            || provider.namespace() != fixture::PREPARED_PROPERTY_PROVIDER_NAMESPACE
+        if provider.namespace() != fixture::PREPARED_PROPERTY_PROVIDER_NAMESPACE
             || provider.name() != fixture::PREPARED_PROPERTY_PROVIDER_NAME
             || provider.revision() != fixture::PREPARED_PROPERTY_PROVIDER_REVISION
         {
             return PreparedEntryObservation::Unrecognized;
         }
-        // The exact prepared entry the request names, not a host-wide property
-        // that resembles it. The comparison, the threshold, and the direction
-        // stay with the loader.
-        let entry = &self.prepared[request.entry()];
-        let invocations = u64::from(entry.rows);
-        PreparedEntryObservation::Quantity(match self.perturbation {
-            Some(Perturbation::UnderreportPreparedEntry) => fixture::PREPARED_PROPERTY_MINIMUM - 1,
-            Some(Perturbation::ReportPreparedEntryAtThreshold) => {
-                fixture::PREPARED_PROPERTY_MINIMUM
+        match query.key().as_str() {
+            fixture::PREPARED_PROPERTY_KEY => {
+                // The exact prepared entry the request names, not a host-wide
+                // property that resembles it. The comparison, the threshold,
+                // and the direction stay with the loader.
+                let entry = &self.prepared[request.entry()];
+                let invocations = u64::from(entry.rows);
+                PreparedEntryObservation::Quantity(match self.perturbation {
+                    Some(Perturbation::UnderreportPreparedEntry) => {
+                        fixture::PREPARED_PROPERTY_MINIMUM - 1
+                    }
+                    Some(Perturbation::ReportPreparedEntryAtThreshold) => {
+                        fixture::PREPARED_PROPERTY_MINIMUM
+                    }
+                    _ => invocations,
+                })
             }
-            _ => invocations,
-        })
+            fixture::SUBGROUP_WIDTH_PROPERTY_KEY => {
+                // The width of the exact prepared entry the request names —
+                // or, under the cross-pipeline perturbation, of the first
+                // entry, which is the substitution the equality comparison in
+                // the loader must catch when the widths differ.
+                let source = if self.perturbed_by(Perturbation::AnswerSubgroupWidthFromFirstEntry) {
+                    0
+                } else {
+                    request.entry()
+                };
+                PreparedEntryObservation::Quantity(fixture::SCALAR_SUBGROUP_WIDTHS[source])
+            }
+            _ => PreparedEntryObservation::Unrecognized,
+        }
     }
 
     fn plan_dispatch(

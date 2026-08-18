@@ -125,6 +125,18 @@ const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v10\0
 /// layer's `FeasibilityRuleSetRef` carries both a key and a revision rather than
 /// one number.
 ///
+/// `v7` adds the prepared subgroup-width confirmation predicate and the
+/// profile-level prepared subgroup-width query family that makes it executable
+/// (ADR 0094 decision 7). This is a *vocabulary* widening for the reason `v4`
+/// was one: the rules now decide a deferred predicate `v6` could not express —
+/// a `Realized` compile-profile subgroup fact no longer proves alone, but
+/// defers one `ObservedEqualsRequired` width confirmation against the exact
+/// prepared pipeline before routing commit. No previously encodable *value*
+/// moves with it: a profile that declared a subject `Realized` without the
+/// query was constructible under `v6` and is refused at construction under
+/// `v7`, so the populations the two keys assess are disjoint rather than
+/// re-scored.
+///
 /// `v6` adds the atomic subgroup-realization predicate. This is a *vocabulary*
 /// widening rather than a revision: the rules now decide a predicate `v5` could
 /// not express at all, and a `v5` assessment of a subgroup-requiring candidate
@@ -161,7 +173,7 @@ const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v10\0
 /// predicate nor decide one, and it named an axis (`strict-f32`) this rule set
 /// no longer has.
 const GOVERNED_FEASIBILITY_RULE_SET_KEY: &str =
-    "tiler.feasibility.phased-capability-and-numerical-honourability.v6";
+    "tiler.feasibility.phased-capability-and-numerical-honourability.v7";
 
 /// Nonzero output-affecting revision of the governed feasibility rule set.
 ///
@@ -847,6 +859,15 @@ pub(crate) struct CheckedTargetProfile {
     synchronization: Vec<SynchronizationRealizationFact>,
     /// Canonical: sorted by `(subject, phase)`, unique per pair.
     subgroup: Vec<SubgroupRealizationFact>,
+    /// The one profile-level prepared subgroup-width query (ADR 0094 decision 7).
+    ///
+    /// Present exactly when the subgroup declaration carries a `Realized`
+    /// verdict: a profile declaring any subject `Realized` must say how the
+    /// exact prepared pipeline's width is obtained before routing commits, and
+    /// a query with no `Realized` subject to confirm is an orphan. Both
+    /// directions are construction refusals, so `assess` can derive the
+    /// confirmation requirement without a fallback arm.
+    subgroup_query: Option<TargetPropertyQuery>,
     /// The bounded canonical descriptor, derived once after validation.
     descriptor: Box<[u8]>,
 }
@@ -889,10 +910,18 @@ impl CheckedTargetProfile {
             honourability,
             Vec::new(),
             Vec::new(),
+            None,
         )
     }
 
     /// Builds a checked profile including its synchronization declaration.
+    ///
+    /// `subgroup_query` is the owning profile contract of ADR 0094 decision 7's
+    /// prepared confirmation: exactly one profile-level prepared subgroup-width
+    /// query whenever any subgroup subject is declared `Realized`, and none
+    /// otherwise. A missing, wrong-phase, or orphan query — or a query contract
+    /// a capability axis also claims — is a malformed profile, never a deferral
+    /// gap discovered at assessment.
     pub(crate) fn new_complete(
         identity: impl Into<TargetProfileIdentity>,
         facts: Vec<CapabilityFact>,
@@ -900,6 +929,7 @@ impl CheckedTargetProfile {
         honourability: Vec<NumericalHonourabilityFact>,
         synchronization: Vec<SynchronizationRealizationFact>,
         subgroup: Vec<SubgroupRealizationFact>,
+        subgroup_query: Option<TargetPropertyQuery>,
     ) -> Result<Self, FeasibilityError> {
         let identity = identity.into();
         let mut facts = facts;
@@ -995,6 +1025,38 @@ impl CheckedTargetProfile {
                 rule: "contradictory-subgroup",
             });
         }
+        // The owning profile contract of the prepared subgroup-width
+        // confirmation (ADR 0094 decision 7): a `Realized` subject licenses a
+        // schedule whose width the exact prepared pipeline must still confirm
+        // before routing commit, so the profile that declares the realization
+        // must also say how that width is obtained. Both directions refuse —
+        // a realization with no query would leave `assess` a choice between
+        // silently proving and silently failing, and a query with nothing to
+        // confirm is a claim about a realization the profile never made.
+        let declares_realized = subgroup
+            .iter()
+            .any(|fact| fact.realization() == SubgroupRealization::Realized);
+        match &subgroup_query {
+            Some(query) => {
+                if query.available_at() != AvailabilityPhase::PreparedKernelPreflight {
+                    return Err(FeasibilityError::MalformedProfile {
+                        rule: "subgroup-query-phase",
+                    });
+                }
+                if !declares_realized {
+                    return Err(FeasibilityError::MalformedProfile {
+                        rule: "orphan-subgroup-query",
+                    });
+                }
+            }
+            None => {
+                if declares_realized {
+                    return Err(FeasibilityError::MalformedProfile {
+                        rule: "missing-subgroup-query",
+                    });
+                }
+            }
+        }
         if identity.key().is_empty() {
             return Err(FeasibilityError::MalformedProfile { rule: "identity" });
         }
@@ -1080,6 +1142,7 @@ impl CheckedTargetProfile {
             if queries[index + 1..]
                 .iter()
                 .any(|right| left.query == right.query)
+                || subgroup_query.as_ref() == Some(&left.query)
             {
                 return Err(FeasibilityError::MalformedProfile {
                     rule: "duplicate-query-contract",
@@ -1110,6 +1173,7 @@ impl CheckedTargetProfile {
             &honourability,
             &synchronization,
             &subgroup,
+            subgroup_query.as_ref(),
         );
         let descriptor_length = descriptor.len();
         if descriptor_length > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES {
@@ -1125,6 +1189,7 @@ impl CheckedTargetProfile {
             honourability,
             synchronization,
             subgroup,
+            subgroup_query,
             descriptor: descriptor.into_boxed_slice(),
         })
     }
@@ -1157,6 +1222,12 @@ impl CheckedTargetProfile {
     /// The checked subgroup-realization declaration, in canonical order.
     pub(crate) fn subgroup(&self) -> &[SubgroupRealizationFact] {
         &self.subgroup
+    }
+
+    /// The one profile-level prepared subgroup-width query, when the profile
+    /// declares any subgroup subject `Realized`.
+    pub(crate) const fn subgroup_query(&self) -> Option<&TargetPropertyQuery> {
+        self.subgroup_query.as_ref()
     }
 
     /// Resolves one complete synchronization subject against this profile.
@@ -1226,6 +1297,12 @@ impl CheckedTargetProfile {
     /// device "do you execute a 32-lane `f32` in-range XOR shuffle". Deferring
     /// without a query contract would be a promise nothing can keep, so the
     /// unresolved case is `Unknown` and fails closed.
+    ///
+    /// What *is* deferred — by [`CheckedTargetProfile::assess`], not here — is
+    /// the prepared-pipeline **width confirmation** of a subject this profile
+    /// resolves `Realized` (ADR 0094 decision 7). That predicate carries the
+    /// profile's one executable subgroup-width query and never substitutes for
+    /// the realization fact this resolution answers.
     fn resolve_subgroup(
         &self,
         subject: SubgroupRealizationSubject,
@@ -1563,7 +1640,39 @@ impl CheckedTargetProfile {
         let mut unknown_subgroup = None;
         if let Some(subject) = proposal.subgroup {
             match self.resolve_subgroup(subject, available_phase) {
-                SubgroupResolution::Realized(record) => realized_subgroup = Some(record),
+                SubgroupResolution::Realized(record) => {
+                    realized_subgroup = Some(record);
+                    // ADR 0094 decision 7's third stage: the compile-profile
+                    // fact licenses the schedule, and the exact prepared
+                    // pipeline must still report the literal width before
+                    // routing commits. The construction contract guarantees
+                    // the query, so this arm has no fallback: the required
+                    // value is derived from the complete atomic subject and
+                    // both `expect`s restate invariants the checked profile
+                    // and the derivation just established.
+                    let query = self.subgroup_query.as_ref().expect(
+                        "a checked profile carrying a Realized subgroup fact declares its \
+                         prepared subgroup-width query",
+                    );
+                    if query.available_at() > available_phase {
+                        let requirement = PreparedEntryTargetRequirement::new(
+                            query.clone(),
+                            u64::from(subject.width().get()),
+                            TargetPropertyRequirementRelation::ObservedEqualsRequired,
+                        )
+                        .expect("a checked profile declares a prepared-entry subgroup query");
+                        deferred.push(
+                            DeferredPredicate::new(
+                                ExecutableDeferredTargetSubject::SubgroupWidthConfirmation(subject),
+                                requirement,
+                            )
+                            .expect(
+                                "the required width and equality relation were derived from the \
+                                 complete atomic subject at this site",
+                            ),
+                        );
+                    }
+                }
                 SubgroupResolution::Unrealizable(record) => unrealizable_subgroup = Some(record),
                 SubgroupResolution::NoPath => {
                     unknown_subgroup = Some(UnknownSubgroup { subject });
@@ -1659,6 +1768,7 @@ fn canonical_profile_descriptor(
     honourability: &[NumericalHonourabilityFact],
     synchronization: &[SynchronizationRealizationFact],
     subgroup: &[SubgroupRealizationFact],
+    subgroup_query: Option<&TargetPropertyQuery>,
 ) -> Vec<u8> {
     let mut bytes = Vec::new();
     push_slice(&mut bytes, PROFILE_DESCRIPTOR_DOMAIN);
@@ -1715,6 +1825,18 @@ fn canonical_profile_descriptor(
             bytes.push(fact.validity().tag());
         }
     }
+    // Written last, and only when a query exists. The construction contract
+    // makes presence equivalent to a `Realized` subgroup row, so every profile
+    // carrying these bytes is a new value — the `Realized`-without-query
+    // population these bytes replace is refused at construction rather than
+    // re-encoded — and every profile without them keeps the exact bytes it
+    // encoded before this family existed. The query decides verdicts as a
+    // bound does: two profiles sharing every fact and differing only in which
+    // prepared query confirms the width defer different executable predicates.
+    if let Some(query) = subgroup_query {
+        push_slice(&mut bytes, CHECKED_SUBGROUP_QUERY_DOMAIN);
+        push_slice(&mut bytes, &query.canonical_bytes());
+    }
     bytes
 }
 
@@ -1723,6 +1845,17 @@ fn canonical_profile_descriptor(
 /// Written **only when the family is non-empty**, so a profile that never
 /// carried the family keeps the bytes it already encoded.
 const CHECKED_SUBGROUP_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.subgroup-realization.v1\0";
+
+/// Domain separating one checked descriptor's prepared subgroup-width query.
+///
+/// Written **only when the query exists**, which the construction contract
+/// makes equivalent to the subgroup family carrying a `Realized` row, so a
+/// profile without the query keeps the bytes it already encoded. Injectivity
+/// survives for the reason [`CHECKED_SUBGROUP_DOMAIN`]'s section states: every
+/// earlier section is self-delimiting and this separator distinguishes the
+/// query bytes from any continuation.
+const CHECKED_SUBGROUP_QUERY_DOMAIN: &[u8] =
+    b"tiler.target-profile.descriptor.subgroup-width-query.v1\0";
 
 /// Whether a fact authority is consistent with the phase it is available from.
 const fn authority_matches_phase(authority: FactAuthority, phase: AvailabilityPhase) -> bool {
@@ -2833,6 +2966,7 @@ mod tests {
             baseline_honourability(id),
             facts,
             Vec::new(),
+            None,
         )
         .unwrap()
     }
@@ -3103,6 +3237,7 @@ mod tests {
                     ),
                 ],
                 Vec::new(),
+                None,
             ),
             Err(FeasibilityError::MalformedProfile {
                 rule: "duplicate-synchronization"
@@ -3135,6 +3270,7 @@ mod tests {
                             synchronization_fact(id, REQUIRED_SUBJECT, second),
                         ],
                         Vec::new(),
+                        None,
                     ),
                     Err(FeasibilityError::MalformedProfile {
                         rule: "contradictory-synchronization"
@@ -3230,6 +3366,7 @@ mod tests {
                     SynchronizationRealization::Realized
                 )],
                 Vec::new(),
+                None,
             ),
             Err(FeasibilityError::MalformedProfile {
                 rule: "synchronization-subject"
@@ -3270,7 +3407,41 @@ mod tests {
         .attributed_to(profile)
     }
 
+    /// The one prepared subgroup-width query every realized fixture declares.
+    fn subgroup_width_query() -> TargetPropertyQuery {
+        TargetPropertyQuery::new(
+            TargetPropertyKey::new("tiler.test.prepared-entry.subgroup-width").unwrap(),
+            AvailabilityPhase::PreparedKernelPreflight,
+            TargetPropertyProviderIdentity::new("tiler", "test-prepared-properties", 1).unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// The baseline plus a subgroup declaration over exactly `facts`.
+    ///
+    /// The prepared subgroup-width query is derived from the facts exactly as
+    /// the owning contract requires — present when any fact is `Realized`,
+    /// absent otherwise — so a fixture cannot accidentally exercise the
+    /// missing-query or orphan-query refusals those tests own explicitly.
     fn subgroup_profile(facts: Vec<SubgroupRealizationFact>) -> CheckedTargetProfile {
+        let query = facts
+            .iter()
+            .any(|fact| fact.realization() == SubgroupRealization::Realized)
+            .then(subgroup_width_query);
+        subgroup_profile_with_query(facts, query)
+    }
+
+    fn subgroup_profile_with_query(
+        facts: Vec<SubgroupRealizationFact>,
+        query: Option<TargetPropertyQuery>,
+    ) -> CheckedTargetProfile {
+        subgroup_profile_result(facts, query).unwrap()
+    }
+
+    fn subgroup_profile_result(
+        facts: Vec<SubgroupRealizationFact>,
+        query: Option<TargetPropertyQuery>,
+    ) -> Result<CheckedTargetProfile, FeasibilityError> {
         let id = identity();
         CheckedTargetProfile::new_complete(
             id,
@@ -3286,8 +3457,8 @@ mod tests {
             baseline_honourability(id),
             Vec::new(),
             facts,
+            query,
         )
-        .unwrap()
     }
 
     fn subgroup_proposal() -> FeasibilityProposal {
@@ -3346,23 +3517,64 @@ mod tests {
         );
     }
 
+    /// The exactly matching realization admits the candidate — as a deferral,
+    /// never as a compile-time proof (ADR 0094 decision 7).
+    ///
+    /// The compile-profile fact is proven evidence, and beside it the
+    /// assessment mints exactly one width confirmation against the profile's
+    /// prepared subgroup-width query: `ObservedEqualsRequired`, required
+    /// exactly the subject's width, resolvable only at
+    /// `PreparedKernelPreflight`. No compile-profile row alone discharges the
+    /// gate.
     #[test]
-    fn an_exactly_matching_subgroup_realization_admits_the_candidate() {
+    fn an_exactly_matching_subgroup_realization_defers_its_width_confirmation() {
         let profile = subgroup_profile(vec![subgroup_fact(
             identity(),
             required_subgroup(),
             SubgroupRealization::Realized,
         )]);
-        let FeasibilityOutcome::Proven(evidence) =
+        let FeasibilityOutcome::Deferred(deferred) =
             profile.assess(&subgroup_proposal(), AvailabilityPhase::CompileProfile)
         else {
-            panic!("the exactly matching realization admits the candidate");
+            panic!("a realized subgroup defers its prepared-width confirmation");
         };
-        let realized = evidence
+        let realized = deferred
+            .proven()
             .subgroup()
-            .expect("the admitted evidence names the realization it consumed");
+            .expect("the proven evidence names the realization it consumed");
         assert_eq!(realized.subject(), required_subgroup());
         assert_eq!(realized.fact().provenance().profile().key(), BASELINE_KEY);
+        let [confirmation] = deferred.predicates() else {
+            panic!("exactly one width confirmation is minted");
+        };
+        assert_eq!(
+            confirmation.subject(),
+            ExecutableDeferredTargetSubject::SubgroupWidthConfirmation(required_subgroup()),
+        );
+        assert_eq!(
+            confirmation.phase(),
+            AvailabilityPhase::PreparedKernelPreflight
+        );
+        let requirement = confirmation.requirement();
+        assert_eq!(requirement.query(), &subgroup_width_query());
+        assert_eq!(
+            requirement.required(),
+            u64::from(required_subgroup().width().get()),
+        );
+        assert_eq!(
+            requirement.relation(),
+            TargetPropertyRequirementRelation::ObservedEqualsRequired,
+        );
+        assert!(deferred.dimensions().is_empty());
+        // Once the prepared phase is reached the confirmation has no later
+        // phase left to defer to, and the fact alone proves.
+        assert!(matches!(
+            profile.assess(
+                &subgroup_proposal(),
+                AvailabilityPhase::PreparedKernelPreflight
+            ),
+            FeasibilityOutcome::Proven(_),
+        ));
     }
 
     #[test]
@@ -3444,6 +3656,8 @@ mod tests {
         );
     }
 
+    /// A realization fact only available later is unknown, never deferred —
+    /// and once it *is* available, the width confirmation still is deferred.
     #[test]
     fn a_later_phase_subgroup_realization_is_unknown_rather_than_deferred() {
         let later = DeclaredSubgroupRealization::new(
@@ -3458,8 +3672,27 @@ mod tests {
             profile.assess(&subgroup_proposal(), AvailabilityPhase::CompileProfile),
             FeasibilityOutcome::Unknown(_)
         ));
+        // Resolvable once its phase is reached — and resolving the realization
+        // is not discharging the gate: the prepared-width confirmation stays
+        // outstanding until the prepared phase itself.
+        let FeasibilityOutcome::Deferred(deferred) =
+            profile.assess(&subgroup_proposal(), AvailabilityPhase::LiveDevicePreflight)
+        else {
+            panic!("a live-device realization still defers the prepared confirmation");
+        };
         assert!(matches!(
-            profile.assess(&subgroup_proposal(), AvailabilityPhase::LiveDevicePreflight),
+            deferred.predicates(),
+            [confirmation]
+                if confirmation.subject()
+                    == ExecutableDeferredTargetSubject::SubgroupWidthConfirmation(
+                        required_subgroup()
+                    )
+        ));
+        assert!(matches!(
+            profile.assess(
+                &subgroup_proposal(),
+                AvailabilityPhase::PreparedKernelPreflight
+            ),
             FeasibilityOutcome::Proven(_)
         ));
     }
@@ -3512,6 +3745,7 @@ mod tests {
                     subgroup_fact(id, required_subgroup(), SubgroupRealization::Realized),
                     subgroup_fact(id, required_subgroup(), SubgroupRealization::Realized),
                 ],
+                Some(subgroup_width_query()),
             ),
             Err(FeasibilityError::MalformedProfile {
                 rule: "duplicate-subgroup"
@@ -3533,11 +3767,142 @@ mod tests {
                     subgroup_fact(id, required_subgroup(), SubgroupRealization::Realized),
                     subgroup_fact(id, required_subgroup(), SubgroupRealization::Unrealizable),
                 ],
+                Some(subgroup_width_query()),
             ),
             Err(FeasibilityError::MalformedProfile {
                 rule: "contradictory-subgroup"
             })
         ));
+    }
+
+    /// The owning profile contract of the prepared width confirmation: each
+    /// perturbation changes exactly one half of the realization/query pairing
+    /// while the checks stay unchanged, so each refusal names its own rule.
+    #[test]
+    fn the_subgroup_query_contract_refuses_missing_orphan_and_wrong_phase() {
+        let realized = || {
+            vec![subgroup_fact(
+                identity(),
+                required_subgroup(),
+                SubgroupRealization::Realized,
+            )]
+        };
+        // Perturb the query's presence alone: a realized subject with no
+        // executable width path would leave the gate undischargeable.
+        assert_eq!(
+            subgroup_profile_result(realized(), None),
+            Err(FeasibilityError::MalformedProfile {
+                rule: "missing-subgroup-query",
+            })
+        );
+        // Perturb the facts alone: a query with nothing to confirm claims a
+        // realization the profile never made — for silence and for an explicit
+        // refusal alike, since `Unrealizable` licenses no schedule whose width
+        // could be confirmed.
+        assert_eq!(
+            subgroup_profile_result(Vec::new(), Some(subgroup_width_query())),
+            Err(FeasibilityError::MalformedProfile {
+                rule: "orphan-subgroup-query",
+            })
+        );
+        assert_eq!(
+            subgroup_profile_result(
+                vec![subgroup_fact(
+                    identity(),
+                    required_subgroup(),
+                    SubgroupRealization::Unrealizable,
+                )],
+                Some(subgroup_width_query()),
+            ),
+            Err(FeasibilityError::MalformedProfile {
+                rule: "orphan-subgroup-query",
+            })
+        );
+        // Perturb the phase alone: a live-device query cannot answer a
+        // prepared-pipeline property.
+        let live_device = TargetPropertyQuery::new(
+            TargetPropertyKey::new("tiler.test.prepared-entry.subgroup-width").unwrap(),
+            AvailabilityPhase::LiveDevicePreflight,
+            TargetPropertyProviderIdentity::new("tiler", "test-prepared-properties", 1).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            subgroup_profile_result(realized(), Some(live_device)),
+            Err(FeasibilityError::MalformedProfile {
+                rule: "subgroup-query-phase",
+            })
+        );
+    }
+
+    /// One complete executable query contract answers one static subject: a
+    /// capability axis sharing the subgroup query's exact contract is refused
+    /// where the profile is minted, which keeps the deferred set's
+    /// `conflicting-deferred-query` unreachable from any checked profile.
+    #[test]
+    fn a_capability_axis_sharing_the_subgroup_query_contract_is_malformed() {
+        let id = identity();
+        assert_eq!(
+            CheckedTargetProfile::new_complete(
+                id,
+                Vec::new(),
+                vec![CapabilityQuery::new(
+                    CapabilityAxis::WorkgroupThreads,
+                    subgroup_width_query(),
+                )],
+                Vec::new(),
+                Vec::new(),
+                vec![subgroup_fact(
+                    id,
+                    required_subgroup(),
+                    SubgroupRealization::Realized
+                )],
+                Some(subgroup_width_query()),
+            ),
+            Err(FeasibilityError::MalformedProfile {
+                rule: "duplicate-query-contract",
+            })
+        );
+    }
+
+    /// The query is identity: two realized profiles differing only in which
+    /// prepared contract confirms the width must not share a descriptor, and
+    /// the query family's bytes exist exactly when the query does.
+    #[test]
+    fn the_prepared_width_query_moves_the_checked_descriptor() {
+        let realized = || {
+            vec![subgroup_fact(
+                identity(),
+                required_subgroup(),
+                SubgroupRealization::Realized,
+            )]
+        };
+        let baseline = subgroup_profile_with_query(realized(), Some(subgroup_width_query()));
+        let other_key = TargetPropertyQuery::new(
+            TargetPropertyKey::new("tiler.test.prepared-entry.subgroup-width-second").unwrap(),
+            AvailabilityPhase::PreparedKernelPreflight,
+            TargetPropertyProviderIdentity::new("tiler", "test-prepared-properties", 1).unwrap(),
+        )
+        .unwrap();
+        let renamed = subgroup_profile_with_query(realized(), Some(other_key));
+        assert_ne!(
+            baseline.canonical_descriptor(),
+            renamed.canonical_descriptor(),
+            "the query contract does not reach the descriptor"
+        );
+        assert!(
+            baseline
+                .canonical_descriptor()
+                .windows(CHECKED_SUBGROUP_QUERY_DOMAIN.len())
+                .any(|window| window == CHECKED_SUBGROUP_QUERY_DOMAIN),
+        );
+        let silent = subgroup_profile(Vec::new());
+        assert!(
+            !silent
+                .canonical_descriptor()
+                .windows(CHECKED_SUBGROUP_QUERY_DOMAIN.len())
+                .any(|window| window == CHECKED_SUBGROUP_QUERY_DOMAIN),
+            "a profile with no query must write none of the family's bytes"
+        );
     }
 
     // ---- The typed executable deferred subject ----------------------------
@@ -5185,7 +5550,7 @@ mod tests {
         assert_ne!(rules.key(), profile.identity().key());
         assert_eq!(
             rules.key(),
-            "tiler.feasibility.phased-capability-and-numerical-honourability.v6"
+            "tiler.feasibility.phased-capability-and-numerical-honourability.v7"
         );
         assert_eq!(rules.revision(), 1);
 

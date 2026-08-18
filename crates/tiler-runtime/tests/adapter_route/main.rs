@@ -1247,6 +1247,136 @@ fn a_two_stage_route_shares_one_allocation_and_matches_the_reference() {
     );
 }
 
+/// The materialized member plus one subgroup-width equality row per entry,
+/// each required at `required_of(entry)`.
+///
+/// One row per entry and never one for the route: two prepared pipelines may
+/// report different widths, and the fixture's per-entry widths are distinct so
+/// a cross-entry substitution is observable rather than a coincidence.
+fn subgroup_width_spec(required_of: impl Fn(usize) -> u64) -> FixtureSpec {
+    FixtureSpec {
+        deferred_predicates: vec![
+            fixture::prepared_predicate(0),
+            fixture::prepared_predicate(1),
+            fixture::subgroup_width_predicate(0, required_of(0)),
+            fixture::subgroup_width_predicate(1, required_of(1)),
+        ],
+        ..FixtureSpec::materialized()
+    }
+}
+
+/// The subgroup-width row is an equality decided per exact entry, pre-commit.
+///
+/// Four cases over one artifact-declared row family, perturbing one thing each:
+///
+/// 1. **Exact equality on every entry routes**, and each entry's row was
+///    observed against its own prepared width.
+/// 2. **A wider prepared width refuses.** The observed width satisfies a floor
+///    and is exactly the case the equality relation exists to reject: a wider
+///    pipeline runs lane arithmetic nothing verified. The refusal names the
+///    row, the entry, and the observed quantity, and arrives before planning.
+/// 3. **A narrower prepared width refuses** the same way, so the equality is
+///    two-sided rather than an off-by-direction floor.
+/// 4. **Answering one entry's row from another entry's pipeline refuses.** The
+///    reported value is a genuine prepared-state width — of the wrong pipeline
+///    — and the second entry's own requirement catches it before the commit.
+#[test]
+fn a_subgroup_width_row_is_a_per_entry_equality_and_never_a_floor() {
+    let widths = fixture::SCALAR_SUBGROUP_WIDTHS;
+
+    let (outcome, host) = route(
+        &subgroup_width_spec(|entry| widths[entry]),
+        ScalarHostAdapter::new(&OPERANDS),
+    );
+    assert!(
+        outcome.is_ok(),
+        "exact equality on both entries must route: {:?}",
+        outcome.err().map(|failure| failure.to_string()),
+    );
+    assert_eq!(
+        host.stages
+            .iter()
+            .filter(|stage| **stage == Stage::ObservePreparedEntry)
+            .count(),
+        4,
+        "every declared row was observed once, with no deduplication across entries",
+    );
+
+    // A device one power of two wider than the verified width: satisfies a
+    // floor, must not satisfy the gate.
+    let (wider, wider_host) = route(
+        &subgroup_width_spec(|entry| if entry == 0 { widths[0] / 2 } else { widths[1] }),
+        ScalarHostAdapter::new(&OPERANDS),
+    );
+    assert!(
+        matches!(
+            &wider,
+            Err(AdapterRouteFailure::Load(
+                LoadRejection::UnsatisfiedDeferredPredicate {
+                    entry: 0,
+                    subject,
+                    observed,
+                    ..
+                }
+            )) if *observed == widths[0]
+                && subject.key == fixture::SUBGROUP_WIDTH_PROPERTY_KEY
+                && subject.required == widths[0] / 2,
+        ),
+        "a wider observed width must refuse the equality row: {wider:?}",
+    );
+    assert!(
+        !wider_host.stages.contains(&Stage::PlanDispatch),
+        "the width mismatch refuses before anything is planned or committed",
+    );
+
+    let (narrower, _) = route(
+        &subgroup_width_spec(|entry| if entry == 0 { widths[0] * 2 } else { widths[1] }),
+        ScalarHostAdapter::new(&OPERANDS),
+    );
+    assert!(
+        matches!(
+            &narrower,
+            Err(AdapterRouteFailure::Load(
+                LoadRejection::UnsatisfiedDeferredPredicate {
+                    entry: 0,
+                    subject,
+                    observed,
+                    ..
+                }
+            )) if *observed == widths[0]
+                && subject.key == fixture::SUBGROUP_WIDTH_PROPERTY_KEY
+                && subject.required == widths[0] * 2,
+        ),
+        "a narrower observed width must refuse the equality row: {narrower:?}",
+    );
+
+    let (substituted, substituted_host) = route(
+        &subgroup_width_spec(|entry| widths[entry]),
+        ScalarHostAdapter::new(&OPERANDS)
+            .perturbed(Perturbation::AnswerSubgroupWidthFromFirstEntry),
+    );
+    assert!(
+        matches!(
+            &substituted,
+            Err(AdapterRouteFailure::Load(
+                LoadRejection::UnsatisfiedDeferredPredicate {
+                    entry: 1,
+                    subject,
+                    observed,
+                    ..
+                }
+            )) if *observed == widths[0]
+                && subject.key == fixture::SUBGROUP_WIDTH_PROPERTY_KEY
+                && subject.required == widths[1],
+        ),
+        "answering entry 1's row from entry 0's pipeline must refuse: {substituted:?}",
+    );
+    assert!(
+        !substituted_host.stages.contains(&Stage::PlanDispatch),
+        "the cross-pipeline substitution refuses before anything is planned",
+    );
+}
+
 /// A shared allocation short of what the plan sized it for is a terminal failure.
 ///
 /// The one allocation this planner sizes from *two* statements rather than one,

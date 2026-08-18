@@ -177,6 +177,19 @@ pub const FOREIGN_PREPARED_PROPERTY_KEY: &str =
     "tiler.target.prepared-entry.thread-execution-width";
 /// Threshold that property must reach.
 pub const PREPARED_PROPERTY_MINIMUM: u64 = 2;
+/// Prepared-entry key of this adapter's per-entry subgroup execution width.
+///
+/// Owned by the same provider tuple as [`PREPARED_PROPERTY_KEY`] and compared
+/// by **equality**: a subgroup route's combine steps are its content, so a
+/// wider prepared width satisfies a floor while running lane arithmetic
+/// nothing verified. The row exists to drive the loader's retained
+/// `ObservedEqualsRequired` relation from an artifact's own bytes.
+pub const SUBGROUP_WIDTH_PROPERTY_KEY: &str = "tiler.target.prepared-entry.subgroup-width";
+/// The per-entry subgroup width this host's prepared state reports.
+///
+/// Distinct per entry so answering one entry's row from another's prepared
+/// state is an observable substitution rather than a coincidence.
+pub const SCALAR_SUBGROUP_WIDTHS: [u64; 2] = [4, 8];
 
 /// Rows of the packaged input, which is also the output element count.
 pub const ROWS: u64 = 2;
@@ -326,6 +339,36 @@ pub fn prepared_predicate_owned(
             query,
             PREPARED_PROPERTY_MINIMUM,
             TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+        )
+        .expect("a well-formed prepared-entry requirement"),
+        entry,
+    }
+}
+
+/// Returns one subgroup-width confirmation bound to a variant entry.
+///
+/// `ObservedEqualsRequired`, never a floor, and one row per requiring entry
+/// with its own required width: two prepared pipelines may report different
+/// widths, so deduplicating across entries would compare one pipeline's width
+/// against another entry's requirement.
+#[must_use]
+pub fn subgroup_width_predicate(entry: u32, required: u64) -> DeferredPredicateSpec {
+    let query = TargetPropertyQuery::new(
+        TargetPropertyKey::new(SUBGROUP_WIDTH_PROPERTY_KEY).expect("a governed property key"),
+        AvailabilityPhase::PreparedKernelPreflight,
+        TargetPropertyProviderIdentity::new(
+            PREPARED_PROPERTY_PROVIDER_NAMESPACE,
+            PREPARED_PROPERTY_PROVIDER_NAME,
+            PREPARED_PROPERTY_PROVIDER_REVISION,
+        )
+        .expect("a property provider identity"),
+    )
+    .expect("a well-formed target property query");
+    DeferredPredicateSpec {
+        requirement: PreparedEntryTargetRequirement::new(
+            query,
+            required,
+            TargetPropertyRequirementRelation::ObservedEqualsRequired,
         )
         .expect("a well-formed prepared-entry requirement"),
         entry,

@@ -97,11 +97,12 @@ use candle_metal_kernels::metal::{
 use dispatch2::DispatchData;
 use objc2_metal::{
     MTLBinding, MTLBindingType, MTLCommandBufferStatus, MTLCommandQueue,
-    MTLComputePipelineDescriptor, MTLDevice, MTLGPUFamily, MTLPipelineOption, MTLSize,
+    MTLComputePipelineDescriptor, MTLComputePipelineState, MTLDevice, MTLGPUFamily,
+    MTLPipelineOption, MTLSize,
 };
 
 use tiler_artifact::program::{
-    BindingTarget, BufferAccess, RouteRequirement, RouteResourceDimension,
+    BindingTarget, BufferAccess, RouteRequirement, RouteResourceDimension, TargetPropertyQuery,
 };
 use tiler_ir::schedule::ResourceRequirements;
 use tiler_metal::applicability::{
@@ -147,12 +148,57 @@ const METAL_MINIMUM_GPU_FAMILY_VERSION: u32 = 1;
 /// Governed prepared-entry key this adapter answers from a compiled pipeline.
 const METAL_PREPARED_WORKGROUP_KEY: &str =
     "tiler.target.prepared-entry.max-threads-per-workgroup.v1";
-/// Provider namespace that answers [`METAL_PREPARED_WORKGROUP_KEY`].
+/// Governed prepared-entry key naming the exact pipeline's subgroup execution
+/// width (ADR 0094 decision 7).
+///
+/// Answered from *that* entry's retained `MTLComputePipelineState`'s
+/// `threadExecutionWidth` and from nothing else: Metal publishes no
+/// device-scoped equivalent, and a device-wide or neighbouring-pipeline number
+/// would report a constant as an observation of the pipeline being routed. The
+/// loader holds the equality comparison; this adapter reports the width.
+const METAL_PREPARED_SUBGROUP_WIDTH_KEY: &str = "tiler.target.prepared-entry.subgroup-width.v1";
+/// Provider namespace that answers the prepared-entry keys above.
 const METAL_PREPARED_PROVIDER_NAMESPACE: &str = "tiler";
-/// Provider name that answers [`METAL_PREPARED_WORKGROUP_KEY`].
+/// Provider name that answers the prepared-entry keys above.
 const METAL_PREPARED_PROVIDER_NAME: &str = "prepared-entry-properties";
-/// Provider revision that answers [`METAL_PREPARED_WORKGROUP_KEY`].
+/// Provider revision that answers the prepared-entry keys above.
 const METAL_PREPARED_PROVIDER_REVISION: u32 = 1;
+
+/// Which retained-pipeline property one prepared-entry query names.
+///
+/// The decision half of [`CandleMetalAdapter::observe_prepared_entry`], split
+/// from the pipeline read so the exact-match dispatch is testable without a
+/// device. `None` is every unknown ownership — provider namespace, name,
+/// revision, or property key — and the caller answers it
+/// [`PreparedEntryObservation::Unrecognized`], never a quantity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MetalPreparedProperty {
+    /// `MTLComputePipelineState.maxTotalThreadsPerThreadgroup`.
+    MaxTotalThreadsPerThreadgroup,
+    /// `MTLComputePipelineState.threadExecutionWidth`.
+    ThreadExecutionWidth,
+}
+
+/// Exact-matches one query's ownership onto the property it names.
+///
+/// Provider first, then key, and both exactly: answering any other ownership
+/// with a pipeline quantity is how a second legal key is admitted by an
+/// unrelated measurement, and the subgroup gate's whole premise is that the
+/// width can only come from the governed key against the exact pipeline.
+fn metal_prepared_property(query: &TargetPropertyQuery) -> Option<MetalPreparedProperty> {
+    let provider = query.provider();
+    if provider.namespace() != METAL_PREPARED_PROVIDER_NAMESPACE
+        || provider.name() != METAL_PREPARED_PROVIDER_NAME
+        || provider.revision() != METAL_PREPARED_PROVIDER_REVISION
+    {
+        return None;
+    }
+    match query.key().as_str() {
+        METAL_PREPARED_WORKGROUP_KEY => Some(MetalPreparedProperty::MaxTotalThreadsPerThreadgroup),
+        METAL_PREPARED_SUBGROUP_WIDTH_KEY => Some(MetalPreparedProperty::ThreadExecutionWidth),
+        _ => None,
+    }
+}
 
 /// Interface key of the program input this consumer binds.
 pub const INPUT_KEY: &str = "input";
@@ -1037,34 +1083,42 @@ impl RuntimeAdapter for CandleMetalAdapter {
         self.build_pipelines(entries, discharged)
     }
 
-    /// Reports one exact prepared entry's maximum threadgroup size.
+    /// Reports one exact prepared entry's named pipeline property.
     ///
-    /// From *that* entry's pipeline rather than from a device-wide property that
-    /// resembles it: `MTLDevice.maxThreadsPerThreadgroup` is a device bound and
-    /// `MTLComputePipelineState.maxTotalThreadsPerThreadgroup` is this kernel's,
-    /// and the second is what a launch is actually limited by.
+    /// From *that* entry's pipeline rather than from a device-wide property
+    /// that resembles it: `MTLDevice.maxThreadsPerThreadgroup` is a device
+    /// bound and `MTLComputePipelineState.maxTotalThreadsPerThreadgroup` is
+    /// this kernel's, and the second is what a launch is actually limited by.
+    /// The subgroup width is the same shape one property over —
+    /// `threadExecutionWidth` belongs to the compiled pipeline, so the value
+    /// reported for entry `N` is read from the exact pipeline
+    /// [`Self::prepare_entries`] retained for entry `N` and will be encoded if
+    /// the route commits. No rebuild, substitution, or cached verdict exists
+    /// between this observation and the dispatch.
     ///
     /// Provider namespace, name, revision, and property key are matched
-    /// exactly. Answering any other ownership with this pipeline quantity is
-    /// how a second legal key is admitted by an unrelated measurement.
+    /// exactly by [`metal_prepared_property`]. Answering any other ownership
+    /// with a pipeline quantity is how a second legal key is admitted by an
+    /// unrelated measurement. The loader holds the comparison — including the
+    /// subgroup gate's `ObservedEqualsRequired` — so an unknown property and a
+    /// mismatched width surface as its two distinct pre-commit refusals.
     fn observe_prepared_entry(
         &mut self,
         _context: &LiveExecutionContext,
         request: TargetPropertyRequest<'_>,
     ) -> PreparedEntryObservation {
-        let query = request.requirement().query();
-        let provider = query.provider();
-        if query.key().as_str() != METAL_PREPARED_WORKGROUP_KEY
-            || provider.namespace() != METAL_PREPARED_PROVIDER_NAMESPACE
-            || provider.name() != METAL_PREPARED_PROVIDER_NAME
-            || provider.revision() != METAL_PREPARED_PROVIDER_REVISION
-        {
+        let Some(property) = metal_prepared_property(request.requirement().query()) else {
             return PreparedEntryObservation::Unrecognized;
-        }
-        PreparedEntryObservation::Quantity(
-            u64::try_from(self.prepared[request.entry()].max_total_threads_per_threadgroup())
-                .unwrap_or(u64::MAX),
-        )
+        };
+        let pipeline = &self.prepared[request.entry()];
+        PreparedEntryObservation::Quantity(match property {
+            MetalPreparedProperty::MaxTotalThreadsPerThreadgroup => {
+                u64::try_from(pipeline.max_total_threads_per_threadgroup()).unwrap_or(u64::MAX)
+            }
+            MetalPreparedProperty::ThreadExecutionWidth => {
+                u64::try_from(pipeline.as_ref().threadExecutionWidth()).unwrap_or(u64::MAX)
+            }
+        })
     }
 
     /// Sizes what the route will dispatch and checks its capacity, acquiring nothing.
@@ -1684,10 +1738,13 @@ pub fn bind_candle_storage(
 #[cfg(test)]
 mod tests {
     use super::{
-        ReflectedBinding, ReflectedBindingClass, RouteRefusal, SubmissionOutcome, allocation_holds,
+        METAL_PREPARED_PROVIDER_NAME, METAL_PREPARED_PROVIDER_NAMESPACE,
+        METAL_PREPARED_PROVIDER_REVISION, METAL_PREPARED_SUBGROUP_WIDTH_KEY,
+        METAL_PREPARED_WORKGROUP_KEY, MetalPreparedProperty, ReflectedBinding,
+        ReflectedBindingClass, RouteRefusal, SubmissionOutcome, allocation_holds,
         argument_slots_agree, binding_fits, bindings_are_declarable, bound_accessible_extent,
-        derived_requirements_hold, gpu_family_from_payload, reflected_binding_class,
-        submission_outcome, workgroup_fits,
+        derived_requirements_hold, gpu_family_from_payload, metal_prepared_property,
+        reflected_binding_class, submission_outcome, workgroup_fits,
     };
     use objc2_metal::{MTLBindingType, MTLCommandBufferStatus};
     use tiler_ir::schedule::{
@@ -1749,6 +1806,86 @@ mod tests {
             nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
             infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
         }
+    }
+
+    /// One query names one pipeline property, and every ownership perturbation
+    /// is unrecognized rather than answered by a neighbouring quantity.
+    ///
+    /// This is the decision half of `observe_prepared_entry`, driven without a
+    /// device; the pipeline read it selects is the retained
+    /// `MTLComputePipelineState` of the exact entry the request names. Each
+    /// perturbation changes exactly one ownership field against the governed
+    /// subgroup-width spelling, so a `None` names the field the perturbation
+    /// touched: answering the perturbed provider or key with
+    /// `threadExecutionWidth` would admit the equality gate by an unrelated
+    /// measurement, and answering the *workgroup* key with the width would
+    /// collapse the two properties the exact-match dispatch exists to keep
+    /// apart.
+    #[test]
+    fn prepared_property_dispatch_is_exact_per_ownership_field() {
+        use tiler_artifact::program::{TargetPropertyProviderIdentity, TargetPropertyQuery};
+        use tiler_ir::program::abi::{AvailabilityPhase, TargetPropertyKey};
+        let query = |key: &str, namespace: &str, name: &str, revision: u32| {
+            TargetPropertyQuery::new(
+                TargetPropertyKey::new(key).unwrap(),
+                AvailabilityPhase::PreparedKernelPreflight,
+                TargetPropertyProviderIdentity::new(namespace, name, revision).unwrap(),
+            )
+            .unwrap()
+        };
+        let governed = |key: &str| {
+            query(
+                key,
+                METAL_PREPARED_PROVIDER_NAMESPACE,
+                METAL_PREPARED_PROVIDER_NAME,
+                METAL_PREPARED_PROVIDER_REVISION,
+            )
+        };
+        assert_eq!(
+            metal_prepared_property(&governed(METAL_PREPARED_WORKGROUP_KEY)),
+            Some(MetalPreparedProperty::MaxTotalThreadsPerThreadgroup),
+        );
+        assert_eq!(
+            metal_prepared_property(&governed(METAL_PREPARED_SUBGROUP_WIDTH_KEY)),
+            Some(MetalPreparedProperty::ThreadExecutionWidth),
+        );
+        // Perturb the key alone.
+        assert_eq!(
+            metal_prepared_property(&governed("tiler.target.prepared-entry.subgroup-width.v2")),
+            None,
+            "an unknown key version must be unrecognized, never approximated",
+        );
+        // Perturb each provider field alone.
+        assert_eq!(
+            metal_prepared_property(&query(
+                METAL_PREPARED_SUBGROUP_WIDTH_KEY,
+                "acme",
+                METAL_PREPARED_PROVIDER_NAME,
+                METAL_PREPARED_PROVIDER_REVISION,
+            )),
+            None,
+            "a foreign provider namespace must be unrecognized",
+        );
+        assert_eq!(
+            metal_prepared_property(&query(
+                METAL_PREPARED_SUBGROUP_WIDTH_KEY,
+                METAL_PREPARED_PROVIDER_NAMESPACE,
+                "device-properties",
+                METAL_PREPARED_PROVIDER_REVISION,
+            )),
+            None,
+            "a foreign provider name must be unrecognized",
+        );
+        assert_eq!(
+            metal_prepared_property(&query(
+                METAL_PREPARED_SUBGROUP_WIDTH_KEY,
+                METAL_PREPARED_PROVIDER_NAMESPACE,
+                METAL_PREPARED_PROVIDER_NAME,
+                METAL_PREPARED_PROVIDER_REVISION + 1,
+            )),
+            None,
+            "a foreign provider revision must be unrecognized",
+        );
     }
 
     /// Every routed entry's derived requirements are checked, not only the first.

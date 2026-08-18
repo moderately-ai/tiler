@@ -63,6 +63,18 @@
 //! [`TargetProfileBuilder::declare_measured_subgroup_realization`],
 //! [`TargetProfile::subgroup_realization`], and
 //! [`TargetProfileBuildError::DuplicateSubgroupRealization`] are that draft.
+//! The **prepared subgroup-width query** joined the same family under the
+//! accepted 2026-08-11 prepared-width gate
+//! (`decide-the-prepared-subgroup-width-equality-gate`): a profile declaring
+//! any subject `Realized` carries exactly one profile-level
+//! `PreparedKernelPreflight` subgroup-width query, and a missing, duplicate,
+//! wrong-phase, or orphan query refuses at construction.
+//! [`TargetProfileBuilder::declare_subgroup_width_query`] and the
+//! [`TargetProfileBuildError::MissingSubgroupWidthQuery`],
+//! [`TargetProfileBuildError::OrphanSubgroupWidthQuery`],
+//! [`TargetProfileBuildError::DuplicateSubgroupWidthQuery`], and
+//! [`TargetProfileBuildError::InvalidSubgroupQueryPhase`] spellings are the
+//! labelled draft of that accepted contract.
 //!
 //! The **workgroup-tree-width-policy** family is an **Accepted public surface**.
 //! Tom delegated the choice to the coordinator on 2026-08-11 under
@@ -308,6 +320,16 @@ const WORKGROUP_TREE_WIDTH_POLICY_DOMAIN: &[u8] =
 /// that it still has no subgroup row. [`complete_descriptor`] states the
 /// derivation.
 const SUBGROUP_REALIZATION_DOMAIN: &[u8] = b"tiler.target-profile.subgroup-realization.v1\0";
+/// Domain separating one declaration's prepared subgroup-width query.
+///
+/// Its own separator, written **only when the query exists**. Presence is
+/// equivalent, by the construction contract, to the subgroup-realization
+/// family carrying a `Realized` row, so a profile without the query keeps the
+/// bytes it already encoded — including every profile minted before this
+/// family existed, and the previously constructible `Realized`-without-query
+/// population, which is now refused at construction rather than re-encoded.
+/// [`complete_descriptor`] states the derivation.
+const SUBGROUP_WIDTH_QUERY_DOMAIN: &[u8] = b"tiler.target-profile.subgroup-width-query.v1\0";
 
 /// Maximum byte length of one target-profile key.
 ///
@@ -1965,6 +1987,7 @@ pub struct TargetProfileBuilder {
     tree_width_policies: Vec<WorkgroupTreeWidthPolicyFact>,
     elementary: Vec<ElementaryRealization>,
     subgroup: Vec<DeclaredSubgroupRealization>,
+    subgroup_query: Option<TargetPropertyQuery>,
 }
 
 impl TargetProfileBuilder {
@@ -1985,6 +2008,7 @@ impl TargetProfileBuilder {
             tree_width_policies: Vec::new(),
             elementary: Vec::new(),
             subgroup: Vec::new(),
+            subgroup_query: None,
         }
     }
 
@@ -2097,6 +2121,50 @@ impl TargetProfileBuilder {
             realization,
             source,
         ));
+        Ok(())
+    }
+
+    /// Declares the one prepared-entry query that supplies the exact prepared
+    /// pipeline's subgroup execution width (ADR 0094 decision 7).
+    ///
+    /// **Labelled draft** under ADR 0075, in the subgroup-realization family.
+    /// The accepted 2026-08-11 prepared-width gate requires exactly one
+    /// profile-level `PreparedKernelPreflight` subgroup-width query on any
+    /// profile that declares a subgroup subject `Realized`: the compile-profile
+    /// fact licenses the schedule, and the exact prepared pipeline must still
+    /// report the literal width the compiler verified before routing commits.
+    /// No query is inferred from a backend family, and no compile-profile row
+    /// alone can discharge the gate.
+    ///
+    /// This is deliberately separate from
+    /// [`Self::declare_subgroup_realization`]: that method records what the
+    /// target realizes, while this one records how an exact prepared entry
+    /// will produce the confirming width later. It is profile-level rather
+    /// than per-subject because one prepared pipeline has one execution width;
+    /// each requiring entry's required value is derived from its own verified
+    /// atomic subject.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TargetProfileBuildError::InvalidSubgroupQueryPhase`] for a
+    /// query at any phase but `PreparedKernelPreflight`, and
+    /// [`TargetProfileBuildError::DuplicateSubgroupWidthQuery`] for a second
+    /// declaration. A missing or orphan query refuses at [`Self::build`],
+    /// where the final realization set is known.
+    pub fn declare_subgroup_width_query(
+        &mut self,
+        query: TargetPropertyQuery,
+    ) -> Result<(), TargetProfileBuildError> {
+        if query.available_at() != AvailabilityPhase::PreparedKernelPreflight {
+            return Err(TargetProfileBuildError::InvalidSubgroupQueryPhase {
+                required: AvailabilityPhase::PreparedKernelPreflight,
+                actual: query.available_at(),
+            });
+        }
+        if self.subgroup_query.is_some() {
+            return Err(TargetProfileBuildError::DuplicateSubgroupWidthQuery);
+        }
+        self.subgroup_query = Some(query);
         Ok(())
     }
 
@@ -3575,6 +3643,25 @@ impl TargetProfileBuilder {
                 return Err(TargetProfileBuildError::DuplicateSubgroupRealization);
             }
         }
+        // The accepted prepared-width gate's profile contract, decided here
+        // where the final realization set is known: a `Realized` subject with
+        // no executable width path leaves ADR 0094 decision 7's confirmation
+        // undischargeable, and a query with no `Realized` subject claims a
+        // realization this profile never made. `Unrealizable` requires no
+        // positive query.
+        let declares_realized = self
+            .subgroup
+            .iter()
+            .any(|declared| declared.realization() == SubgroupRealization::Realized);
+        match &self.subgroup_query {
+            Some(_) if !declares_realized => {
+                return Err(TargetProfileBuildError::OrphanSubgroupWidthQuery);
+            }
+            None if declares_realized => {
+                return Err(TargetProfileBuildError::MissingSubgroupWidthQuery);
+            }
+            _ => {}
+        }
         Ok(())
     }
 
@@ -3665,6 +3752,7 @@ impl TargetProfileBuilder {
                 .iter()
                 .map(|declared| declared.clone().attributed_to(identity.clone()))
                 .collect(),
+            self.subgroup_query.clone(),
         )
         .map_err(TargetProfileBuildError::from)?;
 
@@ -3680,6 +3768,7 @@ impl TargetProfileBuilder {
             &self.tree_width_policies,
             &self.elementary,
             &self.subgroup,
+            self.subgroup_query.as_ref(),
         );
         if descriptor.len() > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES {
             return Err(TargetProfileBuildError::DescriptorTooLong {
@@ -3699,6 +3788,7 @@ impl TargetProfileBuilder {
             tree_width_policies,
             elementary,
             subgroup: _,
+            subgroup_query: _,
         } = self;
         Ok(TargetProfile {
             data: Arc::new(TargetProfileData {
@@ -3991,6 +4081,17 @@ pub enum SubgroupRealizationResolution {
 /// would move every existing descriptor to record that it still has no
 /// subgroup row. Injectivity survives for the same reason as the families
 /// above. The owning declaration domain therefore stays at `v11`.
+///
+/// # The prepared subgroup-width query is the same silence-as-absence
+///
+/// It is written last, behind its own separator, and only when a query was
+/// declared. Presence is equivalent, by the builder's own validation, to the
+/// subgroup family carrying a `Realized` row, so every profile carrying the
+/// query bytes is a new value: the previously constructible
+/// `Realized`-without-query population is refused at construction rather than
+/// re-encoded, and every profile without a query keeps the exact bytes it
+/// already encoded. Injectivity survives for the same reason as the families
+/// above, and the owning declaration domain therefore stays at `v11`.
 #[allow(
     clippy::too_many_arguments,
     reason = "one parameter per declared row family, threaded explicitly so the encoder reads as the grammar it writes; grouping them behind a struct would put the canonical byte order under two authorities"
@@ -4007,6 +4108,7 @@ fn complete_descriptor(
     tree_width_policies: &[WorkgroupTreeWidthPolicyFact],
     elementary: &[ElementaryRealization],
     subgroup: &[DeclaredSubgroupRealization],
+    subgroup_query: Option<&TargetPropertyQuery>,
 ) -> Vec<u8> {
     let mut bytes = Vec::new();
     push_slice(&mut bytes, COMPLETE_PROFILE_DESCRIPTOR_DOMAIN);
@@ -4192,6 +4294,10 @@ fn complete_descriptor(
                 .expect("every subgroup-realization source was inserted into the source table");
             encode_compact_index(&mut bytes, source_index);
         }
+    }
+    if let Some(query) = subgroup_query {
+        push_slice(&mut bytes, SUBGROUP_WIDTH_QUERY_DOMAIN);
+        push_slice(&mut bytes, &query.canonical_bytes());
     }
     bytes
 }
@@ -4940,6 +5046,34 @@ pub enum TargetProfileBuildError {
     /// subject both realized and unrealizable has stated a contradiction, and
     /// admitting both rows would leave whichever the sort put first deciding.
     DuplicateSubgroupRealization,
+    /// A prepared subgroup-width query was declared at a phase that cannot
+    /// answer the exact prepared pipeline's execution width.
+    InvalidSubgroupQueryPhase {
+        /// The one phase that can answer the property.
+        required: AvailabilityPhase,
+        /// Phase the rejected query declared.
+        actual: AvailabilityPhase,
+    },
+    /// A second prepared subgroup-width query was declared.
+    ///
+    /// The contract is profile-level and singular: one prepared pipeline has
+    /// one execution width, and two query contracts would let one later
+    /// observation stand for two claims with no way to attribute the answer.
+    DuplicateSubgroupWidthQuery,
+    /// A subgroup subject was declared `Realized` with no prepared
+    /// subgroup-width query to confirm its width.
+    ///
+    /// ADR 0094 decision 7 requires the exact prepared pipeline's width to
+    /// confirm the realization before routing commits; a profile that licenses
+    /// the schedule without saying how that width is obtained would leave the
+    /// gate undischargeable.
+    MissingSubgroupWidthQuery,
+    /// A prepared subgroup-width query was declared with no `Realized`
+    /// subgroup subject to confirm.
+    ///
+    /// Silence and `Unrealizable` license no schedule whose width could be
+    /// confirmed, so the query claims a realization this profile never made.
+    OrphanSubgroupWidthQuery,
     /// The canonical descriptor exceeded the artifact identity bound.
     DescriptorTooLong {
         /// Encoded byte length.
@@ -5738,6 +5872,7 @@ mod tests {
                 source.clone(),
             )
             .unwrap();
+        declare_query_for(&mut builder, SubgroupSupport::Realized);
 
         assert_eq!(builder.quantitative.len(), 7);
         assert_eq!(builder.scalar.len(), 15);
@@ -6743,6 +6878,27 @@ mod tests {
         .expect("power-of-two width at least 2 defines an XOR shuffle")
     }
 
+    /// The one prepared subgroup-width query every realized fixture declares,
+    /// in the governed prepared-entry spelling the Metal adapters dispatch.
+    fn subgroup_width_query() -> TargetPropertyQuery {
+        TargetPropertyQuery::new(
+            TargetPropertyKey::new("tiler.target.prepared-entry.subgroup-width.v1").unwrap(),
+            AvailabilityPhase::PreparedKernelPreflight,
+            TargetPropertyProviderIdentity::new("tiler", "prepared-entry-properties", 1).unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// Declares the width query exactly when `support` licenses a schedule,
+    /// which is the owning contract's own condition.
+    fn declare_query_for(builder: &mut TargetProfileBuilder, support: SubgroupSupport) {
+        if matches!(support, SubgroupSupport::Realized) {
+            builder
+                .declare_subgroup_width_query(subgroup_width_query())
+                .unwrap();
+        }
+    }
+
     /// Silence is `Unknown` for every subject, and it costs a profile that
     /// declares nothing not one descriptor byte.
     #[test]
@@ -6779,6 +6935,7 @@ mod tests {
         builder
             .declare_subgroup_realization(required, SubgroupSupport::Realized, source)
             .unwrap();
+        declare_query_for(&mut builder, SubgroupSupport::Realized);
         let profile = builder.try_build().unwrap();
         assert_eq!(
             profile.subgroup_realization(required, AvailabilityPhase::CompileProfile),
@@ -6838,6 +6995,7 @@ mod tests {
                 device_runtime_source(),
             )
             .unwrap();
+        declare_query_for(&mut builder, SubgroupSupport::Realized);
         let profile = builder.try_build().unwrap();
         assert_eq!(
             profile.subgroup_realization(required, AvailabilityPhase::CompileProfile),
@@ -6906,6 +7064,7 @@ mod tests {
                     .declare_subgroup_realization(subject, support, source.clone())
                     .unwrap();
             }
+            declare_query_for(&mut builder, SubgroupSupport::Realized);
             builder.try_build().unwrap()
         };
         let forward = declare([
@@ -6953,6 +7112,7 @@ mod tests {
             builder
                 .declare_subgroup_realization(required, SubgroupSupport::Realized, source)
                 .unwrap();
+            declare_query_for(&mut builder, SubgroupSupport::Realized);
             builder.try_build().unwrap()
         };
         let left = descriptor(first);
@@ -6979,6 +7139,7 @@ mod tests {
         builder
             .declare_measured_subgroup_realization(required, SubgroupSupport::Realized, source)
             .unwrap();
+        declare_query_for(&mut builder, SubgroupSupport::Realized);
         let profile = builder.try_build().unwrap();
         assert_eq!(
             profile.subgroup_realization(required, AvailabilityPhase::CompileProfile),
@@ -7000,6 +7161,7 @@ mod tests {
             builder
                 .declare_subgroup_realization(subject, support, source.clone())
                 .unwrap();
+            declare_query_for(&mut builder, support);
             builder.try_build().unwrap()
         };
         let realized = descriptor(baseline, SubgroupSupport::Realized);
@@ -7041,6 +7203,7 @@ mod tests {
             builder
                 .declare_subgroup_realization(subject, support, source.clone())
                 .unwrap();
+            declare_query_for(&mut builder, support);
             builder.try_build().unwrap()
         };
         let realized = profile(required, SubgroupSupport::Realized);
@@ -7092,6 +7255,7 @@ mod tests {
                     device_runtime_source(),
                 )
                 .unwrap();
+            declare_query_for(&mut builder, SubgroupSupport::Realized);
             builder.try_build().unwrap()
         };
         assert_eq!(
@@ -7154,11 +7318,141 @@ mod tests {
                 source,
             )
             .unwrap();
+        declare_query_for(&mut builder, SubgroupSupport::Realized);
         let profile = builder.try_build().unwrap();
         assert_eq!(
             profile.subgroup_realization(required, AvailabilityPhase::CompileProfile),
             SubgroupRealizationResolution::Unknown,
             "independently true neighbouring facts must not compose into a permission"
+        );
+    }
+
+    /// The owning profile contract of the prepared width query, one
+    /// perturbation per refusal: missing, orphan (against silence and against
+    /// an explicit refusal), duplicate, and wrong phase each name their own
+    /// typed error, and none inserts a repairable draft.
+    #[test]
+    fn the_subgroup_width_query_contract_refuses_each_perturbation_by_name() {
+        let source = public_external_source(1);
+        let required = subgroup_subject(32, ArithmeticType::F32);
+        // Perturb the query's presence alone.
+        let mut missing = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.subgroup-query-missing.v1".to_owned()).unwrap(),
+        );
+        missing
+            .declare_subgroup_realization(required, SubgroupSupport::Realized, source.clone())
+            .unwrap();
+        assert_eq!(
+            missing.try_build().unwrap_err(),
+            TargetProfileBuildError::MissingSubgroupWidthQuery,
+        );
+        // Perturb the realization alone: silence, then an explicit refusal.
+        let mut orphan = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.subgroup-query-orphan.v1".to_owned()).unwrap(),
+        );
+        orphan
+            .declare_subgroup_width_query(subgroup_width_query())
+            .unwrap();
+        assert_eq!(
+            orphan.try_build().unwrap_err(),
+            TargetProfileBuildError::OrphanSubgroupWidthQuery,
+        );
+        let mut refused = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.subgroup-query-unrealizable.v1".to_owned()).unwrap(),
+        );
+        refused
+            .declare_subgroup_realization(required, SubgroupSupport::Unrealizable, source.clone())
+            .unwrap();
+        refused
+            .declare_subgroup_width_query(subgroup_width_query())
+            .unwrap();
+        assert_eq!(
+            refused.try_build().unwrap_err(),
+            TargetProfileBuildError::OrphanSubgroupWidthQuery,
+        );
+        // Perturb the cardinality alone.
+        let mut duplicate = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.subgroup-query-duplicate.v1".to_owned()).unwrap(),
+        );
+        duplicate
+            .declare_subgroup_width_query(subgroup_width_query())
+            .unwrap();
+        assert_eq!(
+            duplicate.declare_subgroup_width_query(subgroup_width_query()),
+            Err(TargetProfileBuildError::DuplicateSubgroupWidthQuery),
+        );
+        // Perturb the phase alone: a live-device query cannot answer a
+        // prepared-pipeline property, and the refusal happens before insertion.
+        let mut wrong_phase = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.subgroup-query-phase.v1".to_owned()).unwrap(),
+        );
+        assert_eq!(
+            wrong_phase.declare_subgroup_width_query(
+                TargetPropertyQuery::new(
+                    TargetPropertyKey::new("tiler.target.prepared-entry.subgroup-width.v1")
+                        .unwrap(),
+                    AvailabilityPhase::LiveDevicePreflight,
+                    TargetPropertyProviderIdentity::new("tiler", "prepared-entry-properties", 1)
+                        .unwrap(),
+                )
+                .unwrap(),
+            ),
+            Err(TargetProfileBuildError::InvalidSubgroupQueryPhase {
+                required: AvailabilityPhase::PreparedKernelPreflight,
+                actual: AvailabilityPhase::LiveDevicePreflight,
+            }),
+        );
+        assert!(wrong_phase.subgroup_query.is_none());
+    }
+
+    /// The query is identity in the complete declaration exactly as in the
+    /// checked descriptor: its family bytes exist only when it does, and two
+    /// realized profiles differing only in the query contract differ.
+    #[test]
+    fn the_subgroup_width_query_moves_the_complete_declaration() {
+        let source = public_external_source(1);
+        let required = subgroup_subject(32, ArithmeticType::F32);
+        let with_query = |query: TargetPropertyQuery| {
+            let mut builder = TargetProfileBuilder::new(
+                TargetProfileKey::new("test.subgroup-query-identity.v1".to_owned()).unwrap(),
+            );
+            builder
+                .declare_subgroup_realization(required, SubgroupSupport::Realized, source.clone())
+                .unwrap();
+            builder.declare_subgroup_width_query(query).unwrap();
+            builder.try_build().unwrap()
+        };
+        let baseline = with_query(subgroup_width_query());
+        let renamed = with_query(
+            TargetPropertyQuery::new(
+                TargetPropertyKey::new("tiler.target.prepared-entry.subgroup-width-second.v1")
+                    .unwrap(),
+                AvailabilityPhase::PreparedKernelPreflight,
+                TargetPropertyProviderIdentity::new("tiler", "prepared-entry-properties", 1)
+                    .unwrap(),
+            )
+            .unwrap(),
+        );
+        assert_ne!(
+            baseline.canonical_descriptor(),
+            renamed.canonical_descriptor(),
+            "the query contract does not reach the complete declaration"
+        );
+        assert!(
+            baseline
+                .canonical_descriptor()
+                .windows(SUBGROUP_WIDTH_QUERY_DOMAIN.len())
+                .any(|window| window == SUBGROUP_WIDTH_QUERY_DOMAIN),
+        );
+        let silent = public_builder("test.subgroup-query-silent.v1")
+            .try_build()
+            .unwrap();
+        assert!(
+            !silent
+                .canonical_descriptor()
+                .windows(SUBGROUP_WIDTH_QUERY_DOMAIN.len())
+                .any(|window| window == SUBGROUP_WIDTH_QUERY_DOMAIN),
+            "a profile with no query must write none of the family's bytes"
         );
     }
 
