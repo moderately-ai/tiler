@@ -10,8 +10,8 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [decision, needs-tom, public-boundary, schedule, concatenate, identity, verification]
 claimed_from: todo
-assignee: worker-partitioned-copy-surface
-lease_expires_at: 1787060886
+assignee: worker-partitioned-copy-review
+lease_expires_at: 1787062259
 ---
 ## Outcome
 
