@@ -1,7 +1,7 @@
 ---
 id: declare-metal-subgroup-realization-facts-in-the-target-profile
 title: Declare Metal subgroup realization facts as atomic target facts
-status: in-progress
+status: awaiting-decision
 priority: p2
 dependencies: [accept-adr-0094-subgroup-execution-tier, admit-an-atomic-subgroup-realization-subject-to-target-profiles, decide-the-prepared-subgroup-width-equality-gate, carry-subgroup-width-through-exact-prepared-entry-equality, measure-metal-thread-execution-width-across-prepared-pipelines]
 related: [design-the-subgroup-execution-tier, declare-cpu-vector-realization-facts-in-the-target-profile, correct-the-subgroup-threads-route-dimension-meaning, correct-the-metal-profile-authority-ledgers-stale-identity-pins, make-prepared-entry-observations-typed-and-key-dispatched, generalize-deferred-target-provenance-beyond-capability-axes, bind-prepared-pipeline-caches-to-loader-derived-route-identity]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/metal, implementation/build, re
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [target-profiles, metal, subgroup, execution-hierarchy, feasibility, public-boundary, decision, needs-tom]
-claimed_from: todo
-assignee: worker-metal-subgroup-facts
-lease_expires_at: 1787067519
 ---
 ## User-visible outcome
 
