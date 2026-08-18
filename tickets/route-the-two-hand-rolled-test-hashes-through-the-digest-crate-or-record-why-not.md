@@ -1,7 +1,7 @@
 ---
 id: route-the-two-hand-rolled-test-hashes-through-the-digest-crate-or-record-why-not
 title: Route the four workspace raw conformance hashes through the digest authority
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [site-the-governed-digest-so-layered-identity-encoders-can-reach-it]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/reference, implementation/confo
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, public-boundary, identity, conformance]
+claimed_from: todo
+assignee: worker-external-digest
+lease_expires_at: 1787097598
 ---
 ## User-visible outcome
 
