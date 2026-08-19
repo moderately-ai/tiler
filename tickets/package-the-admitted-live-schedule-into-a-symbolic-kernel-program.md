@@ -1,17 +1,14 @@
 ---
 id: package-the-admitted-live-schedule-into-a-symbolic-kernel-program
 title: Package the admitted live schedule into a symbolic kernel program
-status: awaiting-decision
+status: todo
 priority: p1
 dependencies: [admit-symbolic-extents-through-schedule-formation]
 related: [deliver-an-artifact-family-from-a-symbolic-region, carry-live-extent-operands-through-the-artifact-envelope, associate-live-extent-operands-with-symbolic-semantic-interface-axes]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, artifact, identity, shapes, public-boundary, needs-tom]
-claimed_from: todo
-assignee: worker-symbolic-packaging-packet
-lease_expires_at: 1787105011
+tags: [implementation, artifact, identity, shapes, public-boundary]
 ---
 ## User-visible outcome
 
@@ -155,3 +152,13 @@ On the packet's own comparison A dominates D on substance: equal top-tier correc
 ### Verdict
 
 **Sound with minor repairs, all applied in place; recommendation unchanged.** The central reframing — the artifact has carried the identity-bearing environment subject since v17 and the genuinely unrepresented layer is kernel-program identity — is correct against source at this base, and the dispatch brief it contradicted was wrong. The transitive-only elimination survives independent derivation; the forced wire spelling is genuinely forced; the frontier is complete; the identity-consequence set is correct after one stale-value repair; and the question is Tom's by authority, in the form the ticket's Closes-when defines. No defect changes the recommendation or the option set. The packet may proceed to Tom with these corrections carried.
+
+## Accepted decision — 2026-08-19
+
+Tom accepted **Option A, the complete-subject fold**, exactly as recommended by the packet at `fccbaf1a` with the independent review's corrections at `1bd8aa7c` carried (both merged to main at `cf6809db`).
+
+- Provenance: Tom, 2026-08-19, live decision-queue session in the coordination conversation ("agreed next decision" on item 24 of `.ticketsplease/decision-queue.md`, presented in explain-then-recommend form immediately beforehand).
+- What this accepts: kernel-program identity folds the program's total `ShapeEnvIdentity` subject bytes as one framed slice beside the semantic graph (`tiler.kernel-program.v12→v13`, every kernel-program identity value moves); the artifact interface gains the unconditional per-axis sourced entry, symbol spelled by name, with decode-side coherence checks (major manifest step and artifact domain step); the `SymbolicInterfaceExtent` lift becomes condition-shaped and total per the packet; the `named-output-symbolic` decline is replaced for the admitted population and retained (or narrowed by name) for every other symbolic shape; the operand row `{ key, axis, value_type }` and every value-never-enters-identity negative control stay unchanged.
+- Standing instruction from the packet, reaffirmed at acceptance: **exact version numbers are rederived at the implementation base** — the concurrent contraction-key migration moves identity values across the same tree, and the packet's own review already caught one stale number (`tiler.kernel.v9`, not v7) inside a single day's drift.
+- Sequencing: this ticket now proceeds as its own implementation carrier and joins the **solo identity-migration queue** (it moves kernel-program, artifact, and manifest identity plus every dependent pin), ordered behind the running contraction replacement and the previously queued migrations; it must not run beside any other pin-moving lane.
+- The prose-repair prerequisite [`repair-the-stale-three-carried-subject-claims`](repair-the-stale-three-carried-subject-claims.md) stays independent; where this carrier's implementation rewrites a censused site (the `SymbolicInterfaceExtent` doc in particular), that ticket re-audits and repairs only the remainder, per its own instruction.
