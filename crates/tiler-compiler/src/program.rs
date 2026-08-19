@@ -33,7 +33,9 @@ use tiler_ir::program::{
 };
 use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::{InputKey, OutputKey, SemanticIdentity, SemanticProgram};
-use tiler_ir::shape::{Axis, Shape, SourcedExtent};
+use tiler_ir::shape::{
+    Axis, BindingSource, Shape, ShapeSymbol, SourcedExtent, decode_shape_env_subject,
+};
 
 use tiler_ir::program::abi::{
     AbiBinaryOp, AbiEvaluationError, AbiFacts, AbiRoot, AbiValue, AvailabilityPhase, ExprNode,
@@ -43,8 +45,8 @@ use tiler_ir::program::abi::{
 use crate::cover::{CoverRegion, RegionCover};
 use crate::lowering::ResolvedLowering;
 use crate::physical::{
-    AccessMode, AccessOrdinal, ContributorPartition, NumericalRealization, RegionId, TensorRole,
-    VerifiedKernel, VerifiedScheduledRegion, lower_structured_kernel,
+    AccessMode, AccessOrdinal, ContributorPartition, LiveExtentRoot, NumericalRealization,
+    RegionId, TensorRole, VerifiedKernel, VerifiedScheduledRegion, lower_structured_kernel,
 };
 use crate::region::{RegionOccurrenceIdentity, SemanticStage, SemanticValueId, value_ordinal};
 use crate::request::{LoweringProviderIdentity, TargetProfile, VerifiedTargetRequest};
@@ -359,12 +361,41 @@ impl From<KernelProgramBuildError> for ProgramError {
 /// the value's required bytes, the view window, and the ABI byte expression are
 /// four readings of one fact instead of four numbers something has to keep in
 /// agreement.
+///
+/// The extents are held in the *sourced* vocabulary rather than as a fixed
+/// [`Shape`], because a named output of the admitted symbolic population wears a
+/// declared `ShapeEnv` symbol on an axis. One field rather than a sourced list
+/// beside a fixed shape, for the reason above: the covered boundary and the ABI
+/// byte formula are two readings of these extents, derived where each is needed
+/// instead of two numbers something has to keep in agreement.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct AssemblyValue {
-    shape: Shape,
+    extents: Vec<SourcedExtent>,
     /// `Temporary` for a value another stage reads, `Output` for one a named
     /// program output publishes.
     role: ValueRole,
+}
+
+impl AssemblyValue {
+    /// Returns the fixed boundary a physical realization covers.
+    ///
+    /// A symbolic axis occupies a zero static extent, exactly as the input side
+    /// of [`build_cover_core`] already writes: the program value must not bake a
+    /// live binding, and the honest quantity is the `InputExtent`-rooted byte
+    /// formula [`declare_host_abi`] declares for the same axis.
+    ///
+    /// # Panics
+    ///
+    /// Never for extents an assembly can hold: they come from a verified
+    /// boundary whose rank is already an admitted shape rank.
+    fn covered_shape(&self) -> Shape {
+        Shape::try_from_dims(
+            self.extents
+                .iter()
+                .map(|extent| extent.as_static().map_or(0, tiler_ir::shape::Extent::get)),
+        )
+        .expect("an assembled value's rank is already an admitted shape rank")
+    }
 }
 
 /// Which program value one stage access binds.
@@ -719,7 +750,7 @@ impl CoverAssembly {
             }
             edge_value.push(internals.len());
             internals.push(AssemblyValue {
-                shape,
+                extents: shape.extents().iter().copied().map(Into::into).collect(),
                 role: ValueRole::Temporary,
             });
         }
@@ -781,7 +812,15 @@ impl CoverAssembly {
             for staged in &stage_regions[first..last] {
                 pass_values[*position].push(internals.len());
                 internals.push(AssemblyValue {
-                    shape: staged.region().index.iteration_shape.clone(),
+                    extents: staged
+                        .region()
+                        .index
+                        .iteration_shape
+                        .extents()
+                        .iter()
+                        .copied()
+                        .map(Into::into)
+                        .collect(),
                     role: ValueRole::Temporary,
                 });
             }
@@ -800,38 +839,47 @@ impl CoverAssembly {
         // stood.
         let mut outputs: Vec<(OutputKey, usize)> = Vec::new();
         let mut output_value: Vec<Option<usize>> = vec![None; regions.len()];
+        let roots = symbolic_output_roots(semantic);
         for (output, position) in semantic.outputs().zip(&attribution) {
-            let shape = semantic
-                .shape(output.value())
-                .map_err(|_| {
-                    AssemblyRefusal::missing(regions[*position].label(), "named-output-unshaped")
-                })?
-                // Physical assembly sizes every allocation and view from this
-                // shape, so a symbolic one has nothing to size. Refused by its
-                // own rule rather than folded into the handle failure above.
-                //
-                // Since the accepted source-bound live schedule landed, the
-                // admitted rank-one symbolic population reaches this refusal
-                // *schedulable*: its verified live plan was formed, bound, and
-                // selected upstream, and what remains missing is the packaged
-                // program — the shared kernel-program builder's own
-                // `SymbolicInterfaceExtent` rule keeps "no symbolic program
-                // reaches a packaged artifact" a property of that type until
-                // `package-the-admitted-live-schedule-into-a-symbolic-kernel-program`
-                // represents the shape-environment subject in kernel-program
-                // and artifact identity. Declining here, under the same typed
-                // program-assembly capability class, is what keeps that
-                // identity boundary owned by its ticket rather than lifted as
-                // an implementation fallback.
-                .as_static()
-                .ok_or_else(|| {
-                    AssemblyRefusal::missing(regions[*position].label(), "named-output-symbolic")
-                })?
-                .clone();
+            let sourced = semantic.shape(output.value()).map_err(|_| {
+                AssemblyRefusal::missing(regions[*position].label(), "named-output-unshaped")
+            })?;
+            let extents: Vec<SourcedExtent> = sourced.extents().collect();
+            // Physical assembly sizes every allocation and view from this
+            // boundary, so a symbolic axis occupies a zero static extent and the
+            // honest quantity is declared as an `InputExtent`-rooted byte
+            // formula instead — the convention the input side of
+            // `build_cover_core` has always written, now joined by the output
+            // side.
+            //
+            // **The condition, not the population.** That convention is honest
+            // only when every symbolic axis has an ABI-nameable root: a symbol
+            // the program's own environment roots at a *declared program input's
+            // dimension*. A symbol rooted at a static extent, an interface
+            // parameter, a target property, or nothing at all has no
+            // `InputExtent` to name, so the byte formula would have to invent a
+            // quantity. Those keep a typed decline of their own — `roots` is
+            // `None` for exactly that case — under the same program-assembly
+            // capability class the blanket rule used.
+            //
+            // The rank-one same-shape single-symbol *population* gate stays
+            // where it is, in `admits_source_bound_live_schedule`: replicating
+            // it here would put one policy in two places, and the schedule wall
+            // it guards runs before any cover reaches this assembler.
+            if extents.iter().any(|extent| {
+                extent
+                    .symbol()
+                    .is_some_and(|symbol| !roots.iter().any(|(rooted, _)| rooted == symbol))
+            }) {
+                return Err(AssemblyRefusal::missing(
+                    regions[*position].label(),
+                    "named-output-unrooted-symbolic",
+                ));
+            }
             output_value[*position] = Some(internals.len());
             outputs.push((output.key().clone(), internals.len()));
             internals.push(AssemblyValue {
-                shape,
+                extents,
                 role: ValueRole::Output,
             });
         }
@@ -1229,7 +1277,10 @@ impl CoverAssembly {
     ) -> Result<Self, AssemblyRefusal> {
         let internals: Vec<AssemblyValue> = internals
             .into_iter()
-            .map(|(shape, role)| AssemblyValue { shape, role })
+            .map(|(shape, role)| AssemblyValue {
+                extents: shape.extents().iter().copied().map(Into::into).collect(),
+                role,
+            })
             .collect();
         let dependencies = derive_dependencies(&stages, internals.len())?;
         check_materialized_values_are_read(&internals, &dependencies)?;
@@ -1614,7 +1665,7 @@ fn build_cover_core(
     let internal_elements = assembly
         .internals
         .iter()
-        .map(|value| shape_elements(&value.shape))
+        .map(|value| sourced_element_count(&value.extents))
         .collect::<Result<Vec<_>, ProgramError>>()?;
 
     // The program's own carrier, taken from the contract this target compiles
@@ -1634,7 +1685,12 @@ fn build_cover_core(
             .iter()
             .map(|(key, _, extents)| (key.clone(), extents.as_slice()))
             .collect::<Vec<_>>(),
-        &internal_elements,
+        &assembly
+            .internals
+            .iter()
+            .map(|value| value.extents.as_slice())
+            .collect::<Vec<_>>(),
+        &symbolic_output_roots(semantic),
     )?;
     // Program-owned storage for every value the program materializes for
     // itself, then the externally bound storage of each declared input.
@@ -1648,19 +1704,7 @@ fn build_cover_core(
     }
     let mut input_views = Vec::with_capacity(inputs.len());
     for (key, shape, extents) in &inputs {
-        let elements =
-            extents
-                .iter()
-                .try_fold(1_u64, |product, extent| match extent.as_static() {
-                    Some(static_extent) => {
-                        product
-                            .checked_mul(static_extent.get())
-                            .ok_or(ProgramError::Storage {
-                                rule: "element-count-overflow",
-                            })
-                    }
-                    None => Ok(0),
-                })?;
+        let elements = sourced_element_count(extents)?;
         let external = builder.push_allocation(storage(
             carrier,
             byte_count(carrier, elements)?,
@@ -1673,7 +1717,7 @@ fn build_cover_core(
     let mut internal_values = Vec::with_capacity(assembly.internals.len());
     for (value, allocation) in assembly.internals.iter().zip(&internal_storage) {
         internal_values.push(builder.push_value(
-            internal(carrier, value.role, value.shape.clone()),
+            internal(carrier, value.role, value.covered_shape()),
             *allocation,
         )?);
     }
@@ -1942,69 +1986,56 @@ impl HostAbi {
 /// extent therefore share one byte expression rather than declaring a second
 /// that nothing keeps in agreement with the first. Operands always precede their
 /// use, which is the arena's acyclicity invariant.
+/// **The internal side follows the input side rather than restating it.** A
+/// wholly literal internal value keeps its historical one-literal-product
+/// spelling, so no existing program's identity moves for this. One whose extents
+/// name a symbol declares the same per-axis chain the input side does, and its
+/// symbolic factors are rooted through `roots` — the program environment's own
+/// decoded root bindings — because an internal value has no interface key of its
+/// own for `InputExtent` to name. A symbol absent from `roots` is invalid
+/// compiler output rather than a caller error: `CoverAssembly::from_plan`
+/// declines `named-output-unrooted-symbolic` before an unrooted symbol can reach
+/// an assembled value.
 fn declare_host_abi(
     builder: &mut KernelProgramBuilder,
     carrier: BoundedCarrier,
     inputs: &[(InputKey, &[SourcedExtent])],
-    internal_elements: &[u64],
+    internals: &[&[SourcedExtent]],
+    roots: &[(ShapeSymbol, LiveExtentRoot)],
 ) -> Result<HostAbi, ProgramError> {
     // The element byte width every accessible range scales by, taken from the
     // program's own carrier: a `bf16` program's accessible byte counts are half
     // an `f32` program's, and scaling by the wrong width is a range the runtime
     // would bind past the end of the caller's buffer.
     let element_bytes = builder.push_abi_root(AbiRoot::UnsignedLiteral(carrier.element_bytes()))?;
-    let declare_static = |builder: &mut KernelProgramBuilder,
-                          counts: &[u64]|
-     -> Result<Vec<AbiExprId>, ProgramError> {
-        let mut declared = Vec::with_capacity(counts.len());
-        for elements in counts {
-            let elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(*elements))?;
-            declared.push(builder.push_abi_binary(
-                AbiBinaryOp::CheckedMultiply,
-                element_bytes,
-                elements,
-            )?);
-        }
-        Ok(declared)
-    };
     let mut input_bytes = Vec::with_capacity(inputs.len());
     for (key, extents) in inputs {
-        let count = if let Some(product) = static_extent_product(extents) {
-            // The historical static spelling: one literal product, not a
-            // chain of per-axis ones. Changing it would move every existing
-            // program identity.
-            builder.push_abi_root(AbiRoot::UnsignedLiteral(product))?
-        } else {
-            let mut count = builder.push_abi_root(AbiRoot::UnsignedLiteral(1))?;
-            for (axis, extent) in extents.iter().enumerate() {
-                let axis = Axis::new(u32::try_from(axis).map_err(|_| ProgramError::Structure {
-                    rule: "program-input-rank",
-                })?);
-                let factor = match extent {
-                    SourcedExtent::Static(static_extent) => {
-                        builder.push_abi_root(AbiRoot::UnsignedLiteral(static_extent.get()))?
-                    }
-                    SourcedExtent::Symbol(_) => builder.push_abi_root(AbiRoot::InputExtent {
-                        key: key.clone(),
-                        axis,
-                    })?,
-                    _ => {
-                        return Err(ProgramError::Structure {
-                            rule: "program-input-extent-kind",
-                        });
-                    }
-                };
-                count = builder.push_abi_binary(AbiBinaryOp::CheckedMultiply, count, factor)?;
-            }
-            count
-        };
+        // A symbolic input axis names its *own* declared dimension, which is the
+        // fact the runtime binds for that buffer.
+        let count = declare_element_count(builder, extents, |axis, symbol| {
+            let _ = symbol;
+            Some((key.clone(), axis))
+        })?;
         input_bytes.push(builder.push_abi_binary(
             AbiBinaryOp::CheckedMultiply,
             element_bytes,
             count,
         )?);
     }
-    let internal_bytes = declare_static(builder, internal_elements)?;
+    let mut internal_bytes = Vec::with_capacity(internals.len());
+    for extents in internals {
+        let count = declare_element_count(builder, extents, |_, symbol| {
+            roots
+                .iter()
+                .find(|(rooted, _)| rooted == symbol)
+                .map(|(_, root)| (root.input.clone(), root.axis))
+        })?;
+        internal_bytes.push(builder.push_abi_binary(
+            AbiBinaryOp::CheckedMultiply,
+            element_bytes,
+            count,
+        )?);
+    }
     // The bounded profile admits every governed target unconditionally, so the
     // guard is a constant. It is still declared rather than assumed, because a
     // program identity blind to its guard is the hazard ADR 0072 names.
@@ -2212,6 +2243,127 @@ fn static_extent_product(extents: &[SourcedExtent]) -> Option<u64> {
     })
 }
 
+/// Declares one value's element-count expression over its sourced extents.
+///
+/// A wholly literal boundary keeps the historical spelling — one
+/// `UnsignedLiteral` product rather than a chain of per-axis multiplications —
+/// because changing it would move every existing program identity for nothing. A
+/// boundary naming a symbol declares the per-axis chain, with each symbolic
+/// factor resolved to an `InputExtent` root by `root_of`. The live value is
+/// never folded into a literal: that would specialize the program on a binding.
+///
+/// `root_of` returning `None` is invalid compiler output — the assembler
+/// declines an unrooted symbolic boundary by name before one reaches here — so
+/// it is reported as a typed structure error rather than defaulted.
+fn declare_element_count(
+    builder: &mut KernelProgramBuilder,
+    extents: &[SourcedExtent],
+    root_of: impl Fn(Axis, &ShapeSymbol) -> Option<(InputKey, Axis)>,
+) -> Result<AbiExprId, ProgramError> {
+    if let Some(product) = static_extent_product(extents) {
+        return Ok(builder.push_abi_root(AbiRoot::UnsignedLiteral(product))?);
+    }
+    let mut count = builder.push_abi_root(AbiRoot::UnsignedLiteral(1))?;
+    for (position, extent) in extents.iter().enumerate() {
+        let axis = Axis::new(
+            u32::try_from(position).map_err(|_| ProgramError::Structure {
+                rule: "program-value-rank",
+            })?,
+        );
+        let factor = if let Some(literal) = extent.as_static() {
+            builder.push_abi_root(AbiRoot::UnsignedLiteral(literal.get()))?
+        } else if let Some(symbol) = extent.symbol() {
+            let (key, axis) = root_of(axis, symbol).ok_or(ProgramError::Structure {
+                rule: "program-value-unrooted-extent",
+            })?;
+            builder.push_abi_root(AbiRoot::InputExtent { key, axis })?
+        } else {
+            // A source kind this profile has no ABI spelling for. Reached only
+            // by a widened `SourcedExtent`, and refused rather than sized.
+            return Err(ProgramError::Structure {
+                rule: "program-value-extent-kind",
+            });
+        };
+        count = builder.push_abi_binary(AbiBinaryOp::CheckedMultiply, count, factor)?;
+    }
+    Ok(count)
+}
+
+/// The dense element count of one sourced boundary under the zero-extent
+/// convention: a symbolic axis contributes zero, so the whole product is zero.
+fn sourced_element_count(extents: &[SourcedExtent]) -> Result<u64, ProgramError> {
+    extents
+        .iter()
+        .try_fold(1_u64, |product, extent| match extent.as_static() {
+            Some(literal) => product
+                .checked_mul(literal.get())
+                .ok_or(ProgramError::Storage {
+                    rule: "element-count-overflow",
+                }),
+            None => Ok(0),
+        })
+}
+
+/// Every declared symbol this program's environment roots at an ABI-nameable
+/// input dimension, with that root.
+///
+/// **The one authority is the retained identity bytes**, decoded and revalidated
+/// through the public [`decode_shape_env_subject`] exactly as
+/// [`crate::physical::decode_live_extent_root`] does. Nothing here reads
+/// `ExtentSources::determined` or any bound value, so a program whose
+/// environment also *proves* `n == 4` yields the same roots — and therefore the
+/// same byte formulas and the same identity — as its unbound neighbour.
+///
+/// A symbol is omitted when its root is not an input dimension, when the rooted
+/// input is not one this program declares, or when the root axis lies outside
+/// that input's rank: each of those has no `AbiRoot::InputExtent` to name, and a
+/// caller that finds a symbol missing declines by name rather than inventing a
+/// quantity. Malformed or undecodable bytes yield no roots at all, so every
+/// symbolic axis declines — fail-closed in the same direction.
+fn symbolic_output_roots(semantic: &SemanticProgram) -> Vec<(ShapeSymbol, LiveExtentRoot)> {
+    let Ok(subject) =
+        decode_shape_env_subject(semantic.semantic_identity().shape_environment().as_bytes())
+    else {
+        return Vec::new();
+    };
+    let declared: Vec<(InputKey, usize)> = semantic
+        .inputs()
+        .map(|input| {
+            let rank = semantic
+                .shape(input.value())
+                .map_or(0, tiler_ir::shape::SourcedShape::rank);
+            (input.key().clone(), rank)
+        })
+        .collect();
+    subject
+        .bindings
+        .iter()
+        .filter_map(|(symbol, binding)| match binding.source() {
+            BindingSource::InputDimension { input, axis } => {
+                let rank = declared
+                    .iter()
+                    .find(|(declared, _)| declared == input)
+                    .map(|(_, rank)| *rank)?;
+                (usize::try_from(axis.get()).ok()? < rank).then(|| {
+                    (
+                        symbol.clone(),
+                        LiveExtentRoot {
+                            input: input.clone(),
+                            axis: *axis,
+                        },
+                    )
+                })
+            }
+            // Named exhaustively rather than by wildcard: a widened
+            // `BindingSource` is a build error here instead of a silent
+            // admission of a root this profile has no ABI spelling for.
+            BindingSource::Static(_)
+            | BindingSource::InterfaceParameter { .. }
+            | BindingSource::TargetProperty { .. } => None,
+        })
+        .collect()
+}
+
 fn shape_elements(shape: &Shape) -> Result<u64, ProgramError> {
     tiler_ir::schedule::element_count(shape).map_err(|_| ProgramError::Storage {
         rule: "element-count-overflow",
@@ -2335,7 +2487,7 @@ fn verify_host_contract(
             rule: "region-budget",
         });
     }
-    let values = evaluate_expressions(expressions)?;
+    let values = evaluate_expressions(expressions, declared_input_extents(&program.core))?;
     if values.get(position(program.core.applicability_guard())) != Some(&AbiValue::Boolean(true)) {
         return Err(ProgramError::Structure {
             rule: "applicability-guard",
@@ -2638,11 +2790,34 @@ pub(crate) fn verify_artifact_plan_with_lowering(
 /// proves every node is *evaluable* at compile time, which the bounded profile
 /// requires but a program in general does not.
 ///
-/// The bound environment is empty and reaches only `CompileProfile`: the
-/// bounded profile's graph is entirely literals, so binding a device fact here
-/// would be claiming an availability this stage does not have.
-fn evaluate_expressions(expressions: &[ExprNode]) -> Result<Vec<AbiValue>, ProgramError> {
-    let facts = AbiFacts::new(AvailabilityPhase::CompileProfile, Vec::new(), Vec::new());
+/// **The environment is the program's own declared input boundary, and it used
+/// to be empty.** The retired clause read that "the bounded profile's graph is
+/// entirely literals, so binding a device fact here would be claiming an
+/// availability this stage does not have". The first half stopped being true
+/// when the admitted symbolic population began packaging: a symbolic input axis
+/// is an [`AbiRoot::InputExtent`] root by construction, so an empty environment
+/// refused every such program at `host-expression.operand` rather than checking
+/// it. The second half still holds and still decides the shape of the fix — a
+/// [`AbiRoot::TargetProperty`] root stays unbound and still refuses, because
+/// that *is* a device fact.
+///
+/// What is bound instead is the covered boundary the program itself declares,
+/// read from its own `ProgramInput` values rather than re-derived, so this check
+/// and the shared builder's `static_facts` are two readings of one fact. Under
+/// the zero-extent convention a symbolic axis reads as zero here, which makes
+/// the accessible-byte agreement below compare zero against zero for such a
+/// value: nothing is lost that this stage ever had — a symbolic extent has no
+/// compile-time value to check against — and the live quantity is rebound from
+/// the caller's buffer at preflight.
+fn evaluate_expressions(
+    expressions: &[ExprNode],
+    declared_extents: Vec<(InputKey, Axis, u64)>,
+) -> Result<Vec<AbiValue>, ProgramError> {
+    let facts = AbiFacts::new(
+        AvailabilityPhase::LiveDevicePreflight,
+        declared_extents,
+        Vec::new(),
+    );
     let mut values = Vec::with_capacity(expressions.len());
     for position in 0..expressions.len() {
         let root = u32::try_from(position).map_err(|_| ProgramError::Structure {
@@ -2654,6 +2829,39 @@ fn evaluate_expressions(expressions: &[ExprNode]) -> Result<Vec<AbiValue>, Progr
         );
     }
     Ok(values)
+}
+
+/// The per-axis extents of every declared program input, from the program itself.
+///
+/// The covered boundary a verified kernel program records, which is the same
+/// quantity `KernelProgramBuilder::static_facts` proved the declared formulas
+/// against. Reading it off the built product rather than back off the semantic
+/// program is what keeps the compiler's host contract from becoming a second
+/// derivation that could disagree with the one the shared builder used.
+fn declared_input_extents(core: &VerifiedKernelProgram) -> Vec<(InputKey, Axis, u64)> {
+    let mut extents = Vec::new();
+    for value in core.values() {
+        let MaterializedOrigin::ProgramInput { key } = value.origin() else {
+            continue;
+        };
+        for (axis, extent) in value.shape().extents().iter().enumerate() {
+            let Ok(axis) = u32::try_from(axis) else {
+                continue;
+            };
+            // One logical input may be declared as several component values,
+            // which all carry the same logical boundary; the fact table is a
+            // set, so the repeat is dropped rather than bound twice.
+            let axis = Axis::new(axis);
+            if extents
+                .iter()
+                .any(|(bound, bound_axis, _)| bound == key && *bound_axis == axis)
+            {
+                continue;
+            }
+            extents.push((key.clone(), axis, extent.get()));
+        }
+    }
+    extents
 }
 
 /// Maps one shared evaluation failure onto this crate's stable rule vocabulary.

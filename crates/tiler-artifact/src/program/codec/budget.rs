@@ -52,8 +52,13 @@ pub(super) fn check_budgets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactC
     for rank in envelope
         .inputs()
         .iter()
-        .map(|input| input.shape.rank())
-        .chain(envelope.outputs().iter().map(|output| output.shape.rank()))
+        .map(super::super::model::InterfaceEntryData::rank)
+        .chain(
+            envelope
+                .outputs()
+                .iter()
+                .map(super::super::model::InterfaceEntryData::rank),
+        )
     {
         codec_limit(rank, MAX_INTERFACE_SHAPE_RANK, CodecLimitKind::ShapeRank)?;
     }

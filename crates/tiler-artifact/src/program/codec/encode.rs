@@ -13,8 +13,8 @@
 use super::super::expr::ExprNode;
 use super::super::model::{
     INPUT_EXTENT_BLOCK_TAG, abi_type_tag, element_type_tag, push_binding_target,
-    push_component_role, push_numerical, push_resources, push_shape, push_storage_encoding,
-    storage_scalar_tag,
+    push_component_role, push_numerical, push_resources, push_shape, push_sourced_extents,
+    push_storage_encoding, storage_scalar_tag,
 };
 use super::super::model::{address_space_tag, buffer_access_tag};
 use super::super::requirement::RouteRequirement;
@@ -226,7 +226,34 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// subject incomparable rather than merely unlikely to collide. The
 /// guard-and-routing component steps to `2.0` beside it, because a claimed
 /// cell filters routing on the attested environment before the guard.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (20, 0);
+///
+/// **`21.0` carries the per-axis sourced interface boundary.**
+///
+/// Each named input and output writes its rank and then that many *tagged*
+/// axes — a literal extent or a scoped symbol name — where `20.0` wrote a rank
+/// and that many bare `u64` extents. The tag lands **inside** each repeated
+/// interface record, so a `20.0` reader would consume the first axis's tag byte
+/// as the top seven bytes of a `u64` extent and lose framing for the whole
+/// manifest: the same reason the `16.0` index-arithmetic record and the `19.0`
+/// numerical dimensions were major steps rather than appended fields.
+///
+/// The tag is unconditional, so a wholly literal interface pays it too and every
+/// artifact's manifest bytes move. That was the decided cost of one grammar
+/// instead of two: a zero-extent literal spelling for a symbolic axis would
+/// misreport it as an *empty* axis to every interface reader — `Extent`
+/// documents zero exactly that way — or force a reinterpretation of the
+/// genuinely-empty population, and the retained environment cannot disambiguate
+/// because a root binding names only its own `(key, axis)`.
+///
+/// Artifact identity moves with it, as at `16.0` and `19.0`: `push_interface` is
+/// read by `encode_identity` as well as by this encoder, so `ARTIFACT_DOMAIN`
+/// steps to `v21` and a cache holding a `v20` identity misses rather than
+/// matching. Two decode-side coherence checks arrive with the grammar — a named
+/// interface symbol must be declared in the retained environment, and a root
+/// axis's interface symbol must agree with the binding that environment roots
+/// there — so the only way the two spellings of one boundary could disagree is
+/// refused rather than resolved by precedence.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (21, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 ///
@@ -569,13 +596,13 @@ fn encode_manifest(
     push_len(&mut bytes, envelope.inputs().len());
     for input in envelope.inputs() {
         push_slice(&mut bytes, input.key.as_str().as_bytes());
-        push_shape(&mut bytes, &input.shape);
+        push_sourced_extents(&mut bytes, &input.extents);
         encode_interface_components(&mut bytes, input);
     }
     push_len(&mut bytes, envelope.outputs().len());
     for output in envelope.outputs() {
         push_slice(&mut bytes, output.key.as_str().as_bytes());
-        push_shape(&mut bytes, &output.shape);
+        push_sourced_extents(&mut bytes, &output.extents);
         encode_interface_components(&mut bytes, output);
     }
 

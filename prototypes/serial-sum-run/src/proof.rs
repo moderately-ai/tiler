@@ -886,13 +886,19 @@ fn bind_declared_interface(decoded: &DecodedProgram) -> Result<DeclaredInterface
             )));
         }
         let extents: Vec<u64> = input
-            .shape()
+            .static_shape()
+            .ok_or_else(|| {
+                ProofError::Interface(format!(
+                    "the artifact's input {position} {:?} declares a symbolic axis and this proof                      binds a fixed boundary only",
+                    input.key().as_str(),
+                ))
+            })?
             .extents()
             .iter()
             .map(|extent| extent.get())
             .collect();
         binder
-            .bind_input_shape(input.key(), input.shape())
+            .bind_declared_extents(input.key(), input.extents())
             .map_err(|cause| {
                 ProofError::Interface(format!(
                     "the declared shape of input {position} {:?} does not bind: {cause}",
@@ -926,7 +932,13 @@ fn bind_declared_interface(decoded: &DecodedProgram) -> Result<DeclaredInterface
         inputs,
         output_key: output.key().as_str().to_owned(),
         output_elements: output
-            .shape()
+            .static_shape()
+            .ok_or_else(|| {
+                ProofError::Interface(format!(
+                    "the artifact's output {:?} declares a symbolic axis and this proof reads a                      fixed boundary only",
+                    output.key().as_str(),
+                ))
+            })?
             .extents()
             .iter()
             .map(|extent| extent.get())

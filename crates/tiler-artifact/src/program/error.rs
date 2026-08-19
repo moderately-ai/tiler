@@ -219,17 +219,27 @@ impl fmt::Display for AbiExprUse {
 pub enum ArtifactBuildError {
     /// No fresh builder ownership identity remained.
     BuilderIdentityExhausted,
-    /// A bound semantic interface extent names a declared `ShapeEnv` symbol.
+    /// A bound semantic interface extent names a source kind this profile has no
+    /// published spelling for.
     ///
-    /// A bound semantic interface extent still cannot name a declared symbol:
-    /// the envelope carries the environment as a retained projection, but the
-    /// published interface remains a fixed `Shape`. The registry snapshot stays
-    /// out under ADR 0072. The fifth subject itself now travels, because two
-    /// fixed-interface programs can already differ only by an unused
-    /// environment.
-    SymbolicSemanticInterface {
+    /// **This replaces `SymbolicSemanticInterface`, and the population it
+    /// refuses is what changed.** That variant refused every symbolic axis,
+    /// because the published interface was a fixed `Shape` and a symbolic
+    /// boundary had no encoding at all. Since `tiler.artifact-program.v21` the
+    /// published entry states each axis literal-or-symbol, so a declared
+    /// `ShapeEnv` symbol is publishable and no longer refused.
+    ///
+    /// What stays refused is a `SourcedExtent` kind the manifest grammar has no
+    /// tag for. `SourcedExtent` is `#[non_exhaustive]`, so a kind admitted later
+    /// would otherwise have to be encoded as whichever neighbour it resembles;
+    /// refusing it by name here is what lets the identity encoder and the
+    /// manifest encoder write the interface run infallibly, and what keeps a
+    /// widened vocabulary a typed decline rather than a silent re-encoding.
+    UnpublishableInterfaceExtent {
         /// Rejected interface entry, named by its stable key.
         interface: String,
+        /// The axis whose source kind has no published spelling.
+        axis: u32,
     },
     /// A retained root binding uses a source this artifact cannot evaluate.
     ///
@@ -798,7 +808,7 @@ impl Error for ArtifactBuildError {
             Self::StaticEvaluation { cause, .. } => Some(cause),
             Self::InvalidRouteRequirement { cause } => Some(cause),
             Self::BuilderIdentityExhausted
-            | Self::SymbolicSemanticInterface { .. }
+            | Self::UnpublishableInterfaceExtent { .. }
             | Self::UnsupportedRetainedBindingSource { .. }
             | Self::RetainedShapeEnvironmentIdentityMismatch
             | Self::ForeignHandle { .. }

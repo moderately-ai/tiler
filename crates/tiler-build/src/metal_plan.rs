@@ -1499,7 +1499,20 @@ mod tests {
     /// [`assemble_plan_artifact`]: crate::assemble_plan_artifact
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
-        // **Hex step after the ADR 0013 stability subject.** The
+        // **Hex step after the packaged symbolic interface.** The
+        // `tiler.kernel-program.v13` / `tiler.artifact-program.v21` / manifest
+        // `21.0` step folds the program's complete shape-environment subject
+        // into kernel-program identity and spells each published interface axis
+        // literal-or-symbol. This fixture is wholly literal and declares no
+        // symbol, so both new bytes are the *total* spellings — the empty
+        // environment's subject and a literal tag per axis — which is the price
+        // the totality was accepted for. The superseded pair was
+        // `a90c65750ba0bb7122b0553025ed9f1a5c5f4b9ac6fdd4c390cd293c01f82274` /
+        // `ea3e346e59397cd83b16bf8672a1337651de2845cbdb7b9a604bf3443e9b1717`
+        // at 91,891 bytes; the 3,296-byte descriptor holds, because the target
+        // profile does not move at this step.
+        //
+        // **The earlier hex step was the ADR 0013 stability subject.** The
         // `tiler.artifact-program.v20` / manifest `20.0` / guard-and-routing
         // `2.0` step adds one environment-presence byte to the payload row and
         // one plan-determinism scope run to the variant row — Metal declares
@@ -1530,9 +1543,9 @@ mod tests {
         // `da08d9006f071e38244d0ea765f563dce425cb934057d847a0f03bd88b5aa5b8`
         // at the same 77,096 bytes.
         const ARTIFACT_IDENTITY: &str =
-            "a90c65750ba0bb7122b0553025ed9f1a5c5f4b9ac6fdd4c390cd293c01f82274";
+            "5b55dde1e8aab459509c2ce4248c711a6bc6820e7859e6525a4d9a33b70f2160";
         const CACHE_SUBJECT: &str =
-            "ea3e346e59397cd83b16bf8672a1337651de2845cbdb7b9a604bf3443e9b1717";
+            "c6f105fc9dd11f76e7d10a1fcc67f42c660e1b99b3c623f5070f487804f4c2f7";
         // **Hex step after the feasibility rule-set key v5 → v6.** Descriptor
         // length and fixed content stay at the workgroup-tree-width-policy
         // values: silent profiles write no subgroup section, and the key
@@ -1563,6 +1576,16 @@ mod tests {
         // realization record's evidence rows, each of which frames that same
         // descriptor and ends in the schema-4 source whose context now carries
         // its framed selection.
+        // **91,945 after the packaged symbolic interface.** 91,891 + 54, and it
+        // factors as `51 + 3`. Fifty-one is the framed empty shape-environment
+        // subject the kernel-program identity now folds, carried once in this
+        // one-variant envelope's `KernelProgramSubject` section — the same 43
+        // identity bytes framed as 51 that the retained-environment entry below
+        // already measured at the artifact layer. Three is one unconditional
+        // source tag per published interface axis: the `[2, 2]` input's two and
+        // the rank-one output's one. A delta that does not factor as
+        // `framed_env * variants + interface_axes` is a second change riding
+        // along, not this one.
         // **77,266 after the ADR 0013 stability subject.** 77,256 + 10: one
         // environment-presence byte on the single payload row, plus the
         // variant's plan-determinism scope run — an eight-byte count and one
@@ -1579,7 +1602,7 @@ mod tests {
         // folded through the kernel-program and stage subjects at their
         // embedding multiplicities, read off the move rather than derived,
         // which is one notch weaker and is stated rather than blurred.
-        const FIXED_CONTENT_BYTES: usize = 91_891;
+        const FIXED_CONTENT_BYTES: usize = 91_945;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
@@ -1653,9 +1676,9 @@ mod tests {
     #[test]
     fn the_authority_ledger_mirrors_the_live_standard_metal_pins() {
         const ARTIFACT_IDENTITY: &str =
-            "a90c65750ba0bb7122b0553025ed9f1a5c5f4b9ac6fdd4c390cd293c01f82274";
+            "5b55dde1e8aab459509c2ce4248c711a6bc6820e7859e6525a4d9a33b70f2160";
         const CACHE_SUBJECT: &str =
-            "ea3e346e59397cd83b16bf8672a1337651de2845cbdb7b9a604bf3443e9b1717";
+            "c6f105fc9dd11f76e7d10a1fcc67f42c660e1b99b3c623f5070f487804f4c2f7";
         let ledger = include_str!(
             "../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md"
         );
@@ -1673,7 +1696,7 @@ mod tests {
             "the live pin paragraph does not name CACHE_SUBJECT",
         );
         assert!(
-            today.contains("fixed content is 91,891 bytes"),
+            today.contains("fixed content is 91,945 bytes"),
             "the live pin paragraph does not name FIXED_CONTENT_BYTES",
         );
         // Keyed on the stating phrase and not on the bare digits. The paragraph

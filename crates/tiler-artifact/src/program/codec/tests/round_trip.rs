@@ -38,7 +38,7 @@ fn an_encoded_envelope_round_trips_to_an_equal_model() {
         artifact
             .canonical_identity()
             .as_bytes()
-            .starts_with(b"tiler.artifact-program.v20\0")
+            .starts_with(b"tiler.artifact-program.v21\0")
     );
 }
 
@@ -72,7 +72,7 @@ fn the_framing_header_is_the_fixed_width_it_declares() {
         &bytes[HEADER_BYTES..HEADER_BYTES + MANIFEST_DOMAIN.len()],
         MANIFEST_DOMAIN,
     );
-    assert_eq!(MANIFEST_SCHEMA, (20, 0));
+    assert_eq!(MANIFEST_SCHEMA, (21, 0));
 }
 
 /// The canonicity backstop compares a derivation against bytes rather than

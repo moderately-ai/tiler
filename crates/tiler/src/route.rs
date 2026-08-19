@@ -455,16 +455,25 @@ fn execution_environment(route: &RouteFacts) -> Result<ExecutionEnvironment, &'s
 /// declared interface.
 ///
 /// The extents come from the artifact rather than from the values the region
-/// was handed, and that is correct rather than convenient: only a region whose
-/// every declared extent is literal can be compiled at all — a symbolic one has
-/// no semantic program to optimize — so the artifact's declared input shapes
-/// *are* the region's, and reading them here keeps this function free of any
-/// second derivation that could disagree with the packaged one.
+/// was handed, and that is correct rather than convenient: reading them here
+/// keeps this function free of any second derivation that could disagree with
+/// the packaged one.
+///
+/// **Only the axes the artifact actually fixes are bound.** The published
+/// interface states each axis literal-or-symbol since
+/// `tiler.artifact-program.v21`, and a symbolic axis's value is the caller's
+/// bound buffer at live preflight rather than anything the artifact declares.
+/// Binding it here would state a fact the artifact does not have; leaving it
+/// unbound makes every route expression over it fail closed as an unbound input
+/// extent, which is the honest answer until the symbolic delivery chain supplies
+/// the operand. The retired clause this replaces read that "only a region whose
+/// every declared extent is literal can be compiled at all", which stopped being
+/// true when the admitted symbolic population began packaging.
 fn abi_facts(program: &DecodedProgram) -> Result<AbiFacts, &'static str> {
     let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
     for input in program.inputs() {
         binder
-            .bind_input_shape(input.key(), input.shape())
+            .bind_declared_extents(input.key(), input.extents())
             .map_err(|_| "the artifact's declared input shapes do not bind")?;
     }
     Ok(binder.build())

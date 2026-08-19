@@ -238,10 +238,14 @@ fn a_bf16_artifact_round_trips_and_its_carrier_enters_identity() {
     );
 
     let elements: u64 = at_bf16.inputs[0]
-        .shape
-        .extents()
+        .extents
         .iter()
-        .map(|extent| extent.get())
+        .map(|extent| {
+            extent
+                .as_static()
+                .expect("the fixture interface is wholly literal")
+                .get()
+        })
         .product();
     assert_eq!(elements, 6, "the fixture input is the [2, 3] tensor");
     let at_f32_bytes = encode(&at_f32).expect("the f32 envelope encodes");

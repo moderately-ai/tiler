@@ -316,7 +316,7 @@ fn a_partial_binding_window_survives_encode_and_decode() {
     let inputs: Vec<_> = decoded.inputs().collect();
     let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
     binder
-        .bind_input_shape(inputs[0].key(), inputs[0].shape())
+        .bind_declared_extents(inputs[0].key(), inputs[0].extents())
         .expect("the decoded interface binds its own declared shape");
     let facts = binder.build();
 
@@ -405,4 +405,169 @@ fn a_backend_entry_key_that_no_longer_matches_its_identity_is_rejected() {
         *artifact.canonical_identity(),
         "changing a packaged fact must change the artifact's identity",
     );
+}
+
+// -------------------------------------------------------------------------
+// The two spellings of one boundary must agree
+// -------------------------------------------------------------------------
+
+/// The scoped symbol these forgeries put on an interface axis.
+pub(super) fn forged_symbol(name: &str) -> tiler_ir::shape::SourcedExtent {
+    tiler_ir::shape::SourcedExtent::Symbol(
+        tiler_ir::shape::ShapeSymbol::new(
+            tiler_ir::shape::SymbolScope::new("forged/0").unwrap(),
+            name,
+        )
+        .unwrap(),
+    )
+}
+
+/// An interface axis naming a symbol the retained environment does not declare
+/// is refused.
+///
+/// **The first of the two decode-side coherence checks the sourced interface
+/// grammar arrives with.** The `v21` entry can name a symbol, so a producer can
+/// now write one that resolves against nothing: the retained environment is the
+/// only place a binding for it could live, and the default fixture's is empty.
+/// A consumer reaching that axis would have no root to resolve it through, so
+/// the artifact is refused rather than loaded with an axis nothing can bind.
+///
+/// The forgery reseals everything — identity, manifest digest, section digests —
+/// which is what makes this a *model* obligation rather than an integrity one.
+#[test]
+fn an_interface_symbol_the_environment_does_not_declare_is_rejected() {
+    assert_eq!(
+        reject_forged(|envelope| {
+            envelope.inputs[0].extents[0] = forged_symbol("undeclared");
+        }),
+        ArtifactCodecError::UndeclaredInterfaceSymbol {
+            key: "input".to_owned(),
+            axis: 0,
+            symbol: "forged/0::undeclared".to_owned(),
+        },
+    );
+}
+
+/// The same rule reaches the output side, which has no root row of its own.
+///
+/// Stated separately because the two runs are walked by one chain and a check
+/// written over the inputs alone would let every output symbol through — the
+/// asymmetry the interface's own `static_interface_shape` predecessor existed to
+/// prevent, in the other direction.
+#[test]
+fn an_output_interface_symbol_the_environment_does_not_declare_is_rejected() {
+    assert_eq!(
+        reject_forged(|envelope| {
+            envelope.outputs[0].extents[0] = forged_symbol("undeclared");
+        }),
+        ArtifactCodecError::UndeclaredInterfaceSymbol {
+            key: "result".to_owned(),
+            axis: 0,
+            symbol: "forged/0::undeclared".to_owned(),
+        },
+    );
+}
+
+/// A retained environment declaring `S` rooted at `input[0]` and a statically
+/// bound `T`, as the carried bytes of a forged envelope.
+pub(super) fn forged_retained_environment()
+-> super::super::super::retained::RetainedShapeEnvironment {
+    use tiler_ir::shape::{
+        BindingSource, Extent, FactProvenance, RootBinding, ShapeEnvBuilder, ShapeSymbol,
+        SymbolScope,
+    };
+    let scope = SymbolScope::new("forged/0").unwrap();
+    let rooted = ShapeSymbol::new(scope.clone(), "S").unwrap();
+    let spare = ShapeSymbol::new(scope, "T").unwrap();
+    let mut draft = ShapeEnvBuilder::new();
+    draft.declare(rooted.clone()).unwrap();
+    draft
+        .bind(
+            &rooted,
+            RootBinding::new(
+                BindingSource::InputDimension {
+                    input: tiler_ir::semantic::InputKey::new("input").unwrap(),
+                    axis: tiler_ir::shape::Axis::new(0),
+                },
+                AvailabilityPhase::LiveDevicePreflight,
+                FactProvenance::RuntimeValidated,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    draft.declare(spare.clone()).unwrap();
+    draft
+        .bind(
+            &spare,
+            RootBinding::new(
+                BindingSource::Static(Extent::new(2)),
+                AvailabilityPhase::CompileProfile,
+                FactProvenance::StaticallyProven,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let environment = draft.build().unwrap();
+    super::super::super::retained::RetainedShapeEnvironment::from_bytes(
+        environment.identity().as_bytes(),
+    )
+    .expect("the forged environment's own bytes revalidate")
+}
+
+/// One axis spelled by two different symbols — the environment's root and the
+/// interface's own name — is refused.
+///
+/// **The second decode-side coherence check.** Both spellings are individually
+/// well formed here: `S` and `T` are declared and bound, the interface names a
+/// declared symbol so the check above passes, and the environment roots a symbol
+/// at an axis it can reach. What is refused is the *disagreement*: a consumer
+/// resolving `S` reads `input[0]`, which the interface calls `T`, so the two
+/// runs describe two different programs and neither is authoritative over the
+/// other.
+///
+/// Deliberately narrower than "the rooted axis must be symbolic": the sibling
+/// test below shows a literal at a rooted axis passing, which is the case
+/// `tiler.artifact-program.v17` pins as representable.
+#[test]
+fn two_symbols_naming_one_rooted_axis_are_rejected() {
+    assert_eq!(
+        reject_forged(|envelope| {
+            envelope.semantic.retained_shape = forged_retained_environment();
+            envelope.inputs[0].extents[0] = forged_symbol("T");
+        }),
+        ArtifactCodecError::RootedAxisDisagreement {
+            key: "input".to_owned(),
+            axis: 0,
+            rooted: "forged/0::S".to_owned(),
+            declared: "forged/0::T".to_owned(),
+        },
+    );
+}
+
+/// A literal on an axis the environment roots is *not* a disagreement.
+///
+/// The negative control for the check above, and the one that keeps it from
+/// becoming the over-strong rule "every rooted axis must be symbolic". The
+/// environment roots `S` at `input[0]` while the interface fixes that axis, so
+/// `S` is simply determined there — exactly the `S`/`C`/`T` carrier shape
+/// `program::retained` already pins, and the population
+/// `tiler.artifact-program.v17` made representable. Only the *unrelated*
+/// declaration check may fire, and here nothing fires at all.
+///
+/// Watched failing under a deliberate perturbation: requiring
+/// `declared.symbol() == Some(symbol)` rather than skipping a literal makes this
+/// reject with `RootedAxisDisagreement { key: "input", axis: 0, rooted:
+/// "forged/0::S", declared: "2" }`, and reddens four `program::retained` tests
+/// beside it — `a_missing_binding_is_its_own_class`,
+/// `a_runtime_bound_neighbour_s_equals_c_plus_t_passes`,
+/// `an_inconsistent_triple_names_every_term_and_observed_side`, and the
+/// `invocation_bindings_do_not_enter_artifact_identity` negative control, whose
+/// carriers root at fixed axes exactly as this one does.
+#[test]
+fn a_literal_on_a_rooted_axis_is_admitted() {
+    let artifact = default_artifact();
+    let mut envelope = envelope_of(&artifact);
+    envelope.semantic.retained_shape = forged_retained_environment();
+    let bytes = encode(&envelope).expect("the forged envelope encodes");
+    decode(&bytes).expect("a symbol rooted at a fixed axis is representable");
 }

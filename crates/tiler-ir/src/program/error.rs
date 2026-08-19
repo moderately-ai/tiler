@@ -155,36 +155,6 @@ pub enum KernelProgramBuildError {
         /// Rejected interface key.
         key: InputKey,
     },
-    /// A bound semantic interface extent names a declared `ShapeEnv` symbol.
-    ///
-    /// A kernel program's subject records the exact interface boundaries a
-    /// physical realization must cover, and a covered boundary is a fixed
-    /// quantity: the stage coverage, allocations, and views built over it are
-    /// all sized. Refusing here is what makes "no symbolic program reaches a
-    /// packaged artifact" a property of this type rather than a convention —
-    /// every artifact is built from a verified kernel program, so a symbolic
-    /// program cannot reach one and cannot ship with its shape-environment
-    /// subject unrepresented in *this* program's identity, which
-    /// `encode_identity` writes from the semantic graph and the physical
-    /// content with no shape-environment slice of its own.
-    ///
-    /// **Corrected 2026-08-19 under
-    /// `repair-the-stale-three-carried-subject-claims`; the clause was true
-    /// when written.** It closed
-    /// "unrepresented in the artifact's three carried subjects",
-    /// kept on one line so it stays greppable — a later hit for that phrase
-    /// lands in this note rather than in a live claim. The artifact stopped
-    /// having three carried subjects at `tiler.artifact-program.v17`, which put
-    /// the lossless retained shape environment into the semantic-subject run
-    /// beside the three reached subjects and folded all four into artifact
-    /// identity. The refusal, and every reason given for it above, are
-    /// unchanged; what moves is which layer still carries no shape-environment
-    /// slice, and that layer is this type's own identity rather than the
-    /// envelope's.
-    SymbolicInterfaceExtent {
-        /// Rejected interface entry, named by its stable key.
-        interface: String,
-    },
     /// Two materialized values claimed the same program input.
     DuplicateProgramInput {
         /// Repeated interface key.

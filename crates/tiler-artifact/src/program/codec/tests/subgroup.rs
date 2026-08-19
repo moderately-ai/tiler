@@ -176,15 +176,17 @@ fn every_present_subgroup_subject_round_trips_without_authority_loss() {
             &width_32.canonical_identity().unwrap(),
         )
         .as_bytes(),
-        // Rebaselined at the fact-source provenance schema 3 -> 4 step (the
-        // required compilation-selection carrier): the delivered-realization
-        // domain moved to v3, so every artifact identity built over it moves.
-        // Pre-recompute failure observed left = 04 d9 a0 5b ... (the new
-        // digest), right = the retired 87 4e 52 27 ... pin.
+        // Rebaselined at the `tiler.artifact-program.v20 -> v21` step (the
+        // per-axis sourced interface boundary): the interface run gains an
+        // unconditional source tag per axis and `push_interface` is folded by
+        // `encode_identity`, so every artifact identity moves — including this
+        // wholly literal one, which is the cost the unconditional tag was
+        // accepted for. Pre-recompute failure observed left = 29 34 e6 62 ...
+        // (the new digest), right = the retired 04 d9 a0 5b ... pin.
         &[
-            0x04, 0xd9, 0xa0, 0x5b, 0x91, 0xaf, 0x75, 0x48, 0xd2, 0xed, 0xca, 0x6f, 0x07, 0x81,
-            0x52, 0x2d, 0xc9, 0xc1, 0x6e, 0xb0, 0xb7, 0xac, 0xc3, 0xe5, 0x1c, 0xef, 0x92, 0x71,
-            0xf7, 0x7f, 0xa5, 0x7f
+            0x29, 0x34, 0xe6, 0x62, 0x05, 0xbd, 0x60, 0x94, 0xe5, 0x6e, 0x80, 0xf8, 0xe5, 0x6d,
+            0x16, 0xb8, 0x14, 0x9a, 0xc1, 0xcf, 0xf3, 0xec, 0xd3, 0x69, 0x30, 0x85, 0x0d, 0xa6,
+            0x02, 0x62, 0xbf, 0x88
         ],
         "the first present-subgroup identity has an exact digest pin",
     );

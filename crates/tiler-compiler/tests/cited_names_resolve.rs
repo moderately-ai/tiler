@@ -60,7 +60,7 @@ const SELF_FILE: &str = "cited_names_resolve.rs";
 /// kept short on purpose: an entry added to silence a real rename would be a
 /// mask, so the second test below asserts every entry is genuinely unresolvable
 /// and fails when one starts resolving.
-const DELIBERATELY_ABSENT: [(&str, &str); 3] = [
+const DELIBERATELY_ABSENT: [(&str, &str); 4] = [
     (
         "the_uncarried_elementary_dimensions_are_outside_the_realization",
         "`policy.rs`'s carried-and-consumed coherence test names the deleted \
@@ -73,6 +73,13 @@ const DELIBERATELY_ABSENT: [(&str, &str); 3] = [
         "`crate::target` names the per-dimension synchronization spellings it \
          deliberately does not offer, so a reader can see the whole-subject \
          argument refusing a specific alternative rather than describing one",
+    ),
+    (
+        "the_admitted_symbolic_population_declines_at_program_assembly_not_schedule",
+        "`request/tests.rs`'s packaging test names the wall assertion it \
+         replaced, so a reader can tell a restored `named-output-symbolic` \
+         refusal from a restored schedule-geometry one; the retired name is \
+         the transition being recorded",
     ),
     (
         "two_region_occurrence_lowering_wall",

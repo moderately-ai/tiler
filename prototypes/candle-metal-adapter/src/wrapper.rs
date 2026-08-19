@@ -772,10 +772,19 @@ fn bind_interface(
             inputs.len(),
         )));
     };
-    let [rows, columns] = input.shape().extents() else {
+    // A symbolic axis has no fixed extent for this wrapper to size a Candle
+    // tensor from, so it is refused here as a foreign interface rather than
+    // read through the published convention.
+    let Some(input_shape) = input.static_shape() else {
+        return Err(foreign(
+            "the artifact's input declares a symbolic axis and this wrapper binds a fixed rank-2 \
+             input"
+                .to_owned(),
+        ));
+    };
+    let [rows, columns] = input_shape.extents() else {
         return Err(foreign(format!(
-            "the artifact's input is {} and this wrapper binds a rank-2 input",
-            input.shape(),
+            "the artifact's input is {input_shape} and this wrapper binds a rank-2 input",
         )));
     };
     if input.key().as_str() != INPUT_KEY || input.resolved_type_encoding() != f32_type.as_bytes() {
@@ -794,8 +803,14 @@ fn bind_interface(
             outputs.len(),
         )));
     };
-    let published: u64 = output
-        .shape()
+    let Some(output_shape) = output.static_shape() else {
+        return Err(foreign(
+            "the artifact's output declares a symbolic axis and this wrapper reads a fixed \
+             boundary"
+                .to_owned(),
+        ));
+    };
+    let published: u64 = output_shape
         .extents()
         .iter()
         .map(|extent| extent.get())
@@ -808,7 +823,7 @@ fn bind_interface(
             "the artifact's output is {:?} of {} and logical type {:02x?}, and this wrapper reads \
              {} F32 element(s) under {OUTPUT_KEY:?}",
             output.key().as_str(),
-            output.shape(),
+            output_shape,
             output.resolved_type_encoding(),
             rows.get(),
         )));
@@ -818,8 +833,7 @@ fn bind_interface(
     // output's own extents; an empty *input* is constructed later by
     // `empty_input_tensor` rather than refused here.
     if published == 0 {
-        let extents: Vec<u64> = output
-            .shape()
+        let extents: Vec<u64> = output_shape
             .extents()
             .iter()
             .map(|extent| extent.get())
@@ -857,7 +871,7 @@ fn bind_interface(
 
     let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
     binder
-        .bind_input_shape(input.key(), input.shape())
+        .bind_declared_extents(input.key(), input.extents())
         .map_err(|cause| foreign(format!("the declared input shape does not bind: {cause}")))?;
     Ok((rows.get(), columns.get(), binder.build()))
 }

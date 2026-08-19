@@ -94,7 +94,7 @@ use tiler_ir::schedule::{
     ExceptionalValueAssumption, NumericalPermission, ResourceRequirements, SubnormalMode,
 };
 use tiler_ir::semantic::{InputKey, OutputKey};
-use tiler_ir::shape::Shape;
+use tiler_ir::shape::{Shape, SourcedExtent};
 
 use super::decode::decode;
 use super::encode::encode;
@@ -391,10 +391,23 @@ impl<'a> DecodedInput<'a> {
         &self.0.key
     }
 
-    /// Returns the logical tensor shape the input must be bound with.
+    /// Returns the declared per-axis boundary the input must be bound with.
+    ///
+    /// Total over the interface vocabulary: a literal axis and a declared
+    /// `ShapeEnv` symbol are two spellings this one run carries, so a reader
+    /// never mistakes a symbolic axis for an empty one.
     #[must_use]
-    pub const fn shape(self) -> &'a Shape {
-        &self.0.shape
+    pub fn extents(self) -> &'a [SourcedExtent] {
+        &self.0.extents
+    }
+
+    /// Returns the fixed tensor shape, for a wholly literal boundary only.
+    ///
+    /// `None` when an axis names a symbol; a consumer that needs a sized
+    /// boundary fails closed there rather than reading a convention.
+    #[must_use]
+    pub fn static_shape(self) -> Option<Shape> {
+        self.0.static_shape()
     }
 
     /// Returns the logical resolved-type identity encoding.
@@ -421,10 +434,16 @@ impl<'a> DecodedOutput<'a> {
         &self.0.key
     }
 
-    /// Returns the logical tensor shape the output is published with.
+    /// Returns the declared per-axis boundary the output is published with.
     #[must_use]
-    pub const fn shape(self) -> &'a Shape {
-        &self.0.shape
+    pub fn extents(self) -> &'a [SourcedExtent] {
+        &self.0.extents
+    }
+
+    /// Returns the fixed tensor shape, for a wholly literal boundary only.
+    #[must_use]
+    pub fn static_shape(self) -> Option<Shape> {
+        self.0.static_shape()
     }
 
     /// Returns the logical resolved-type identity encoding.
@@ -1308,6 +1327,7 @@ impl From<ArtifactCodecError> for ArtifactCodecFailure {
             | ArtifactCodecError::InvalidGovernedKey { .. }
             | ArtifactCodecError::InvalidOperationKey { .. }
             | ArtifactCodecError::InvalidInterfaceKey { .. }
+            | ArtifactCodecError::InvalidInterfaceSymbol { .. }
             | ArtifactCodecError::InvalidProviderIdentity { .. }
             | ArtifactCodecError::InvalidTargetEnvironment { .. }
             | ArtifactCodecError::InvalidShape { .. }
@@ -1349,6 +1369,8 @@ impl From<ArtifactCodecError> for ArtifactCodecFailure {
             | ArtifactCodecError::ExtentOperandAxis { .. }
             | ArtifactCodecError::ExtentOperandType { .. }
             | ArtifactCodecError::ExtentOperandStaticAxis { .. }
+            | ArtifactCodecError::UndeclaredInterfaceSymbol { .. }
+            | ArtifactCodecError::RootedAxisDisagreement { .. }
             | ArtifactCodecError::ExtentOperandTransport { .. }
             | ArtifactCodecError::DeclaredFeatureMismatch
             | ArtifactCodecError::MissingReference { .. }

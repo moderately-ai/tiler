@@ -251,12 +251,12 @@ fn a_decoded_artifact_carries_everything_one_dispatch_needs() {
     let outputs: Vec<_> = decoded.outputs().collect();
     assert_eq!(inputs.len(), 1);
     assert_eq!(inputs[0].key().as_str(), "input");
-    assert_eq!(inputs[0].shape().extents().len(), 2);
+    assert_eq!(inputs[0].extents().len(), 2);
     assert_eq!(outputs[0].key().as_str(), "result");
 
     let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
     binder
-        .bind_input_shape(inputs[0].key(), inputs[0].shape())
+        .bind_declared_extents(inputs[0].key(), inputs[0].extents())
         .expect("the decoded interface binds its own declared shape");
     let facts = binder.build();
 
@@ -455,7 +455,7 @@ fn strict_affine_components_round_trip_as_target_neutral_structural_abi() {
 
     let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
     binder
-        .bind_input_shape(input.key(), input.shape())
+        .bind_declared_extents(input.key(), input.extents())
         .expect("input shape");
     let facts = binder.build();
     let entry = decoded

@@ -302,7 +302,7 @@ fn evaluate_binding(
                         input.as_str()
                     ),
                 )),
-                Some(entry) if usize_axis(*axis) >= entry.shape.extents().len() => {
+                Some(entry) if usize_axis(*axis) >= entry.rank() => {
                     Err(RetainedShapeRelationFailure::invalid_domain(
                         symbol,
                         binding.source(),
@@ -310,7 +310,7 @@ fn evaluate_binding(
                             "input `{}` axis {} is outside rank {}",
                             input.as_str(),
                             axis.get(),
-                            entry.shape.extents().len()
+                            entry.rank()
                         ),
                     ))
                 }

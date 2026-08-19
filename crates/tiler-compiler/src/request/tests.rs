@@ -4911,14 +4911,21 @@ fn corrupted_identity_subject_bytes_fail_as_request_binding() {
     );
 }
 
-/// A bound symbol is not folded into the logical plan.
+/// A bound symbol is not folded into the compiled product.
 ///
 /// The environment pins `n` to 4. The program still names the symbol, the
 /// request still carries that environment, and compilation forms the live
-/// schedule as the symbol — never a `[4]` plan — before declining at the
-/// same program-assembly wall the unbound neighbour hits. The exact
-/// identity claim (bound and unbound schedule bytes equal, literal `[4]`
-/// bytes different) is
+/// schedule as the symbol — never a `[4]` plan.
+///
+/// **The value-never-enters-identity assertions below are unchanged; the wall
+/// assertion beside them is what moved.** This used to close by requiring
+/// `compile()` to decline at `program-assembly.named-output-symbolic`, which
+/// stood only because packaging could not represent the shape-environment
+/// subject. `tiler.kernel-program.v13` folds it, so the population packages and
+/// the claim strengthens from "declines rather than compiling as 4" to the
+/// directly testable "compiles, and what it compiles is not the `[4]` program".
+/// The exact schedule-identity claim (bound and unbound schedule bytes equal,
+/// literal `[4]` bytes different) remains
 /// `the_admitted_symbolic_population_forms_a_verified_source_bound_live_schedule`'s.
 #[test]
 fn a_compiled_plan_does_not_fold_a_bound_extent_value() {
@@ -4943,46 +4950,97 @@ fn a_compiled_plan_does_not_fold_a_bound_extent_value() {
         Some(extent.clone()),
         "recognition must keep the authored symbol, not the bound value 4",
     );
-    match crate::pipeline::compile(CompilationRequest::governed(&bound)) {
-        Err(error) => {
-            assert_eq!(
-                scheduled_symbolic_extent(&error),
-                None,
-                "a bound symbol passes schedule formation as the symbol, got {error}"
-            );
-            assert_eq!(
-                error.to_string(),
-                "compile.unsupported.program-assembly.named-output-symbolic: no installed \
-                 capability can compile this valid semantic program",
-                "the bound symbol declines at packaging, never as a [4] product",
-            );
-        }
-        Ok(_) => {
-            panic!("a bound symbol must decline at the program-assembly wall, not compile as 4")
-        }
+    let compiled = crate::pipeline::compile(CompilationRequest::governed(&bound))
+        .expect("a bound symbol packages as the symbol");
+    let literal = literal_three_input_elementwise(4);
+    let literal_compiled = crate::pipeline::compile(CompilationRequest::governed(&literal))
+        .expect("the literal [4] neighbour still compiles");
+    assert_ne!(
+        packaged_program_identity(&compiled),
+        packaged_program_identity(&literal_compiled),
+        "a program that names n, even with n proved equal to 4, is not the [4] program",
+    );
+
+    // The packaged boundary keeps the symbol rather than the proved value: the
+    // covered boundary is the zero-extent convention, and 4 appears nowhere in
+    // it. A packaging step that folded the bound value would size this at 4.
+    let packaged = packaged_program(&compiled);
+    for value in packaged.core().values() {
+        assert!(
+            value
+                .shape()
+                .extents()
+                .iter()
+                .all(|extent| extent.get() != 4),
+            "no packaged value may be sized by the bound extent value",
+        );
     }
 
-    let literal = literal_three_input_elementwise(4);
-    crate::pipeline::compile(CompilationRequest::governed(&literal))
-        .expect("the literal [4] neighbour still compiles");
+    // Where the live quantity *is* carried: as an `InputExtent` root over the
+    // environment's own decoded root, resolved at live preflight from the
+    // caller's buffer. This is the positive half of the assertion above — a
+    // packaging step that folded the bound value would have no reason to
+    // declare this root, and one that dropped the quantity entirely would leave
+    // the accessible ranges sized by nothing.
+    let rooted = packaged.core().abi_expressions().iter().any(|node| {
+        matches!(
+            node,
+            tiler_ir::program::abi::ExprNode::Root(tiler_ir::program::abi::AbiRoot::InputExtent {
+                key,
+                axis,
+            }) if key.as_str() == "a" && axis.get() == 0,
+        )
+    });
+    assert!(
+        rooted,
+        "the live extent must be carried as a root over the environment's decoded root",
+    );
 }
 
-/// The admitted symbolic population passes real schedule formation and
-/// declines at the next true wall: the program-assembly packaging gate.
+/// The verified kernel program one compiled target packaged.
+fn packaged_program(
+    compiled: &crate::pipeline::CompilationProduct,
+) -> &crate::program::KernelProgram {
+    &compiled.targets[0]
+        .compiled()
+        .expect("the governed target compiled")
+        .portfolio
+        .alternatives[0]
+        .program
+}
+
+/// The canonical kernel-program identity bytes one compiled target packaged.
+fn packaged_program_identity(compiled: &crate::pipeline::CompilationProduct) -> Vec<u8> {
+    packaged_program(compiled)
+        .core()
+        .canonical_identity()
+        .as_bytes()
+        .to_vec()
+}
+
+/// The admitted symbolic population passes schedule formation *and* packaging,
+/// and its packaged boundary keeps the symbol.
 ///
-/// The former schedule-geometry refuse — `UnsupportedSymbolicExtent {
-/// phase: "schedule", rule: "symbolic-extent" }` — is gone for this
-/// population: its verified source-bound live plan is formed, bound, and
-/// selected, and what remains missing is the packaged kernel program,
-/// whose shared builder keeps "no symbolic program reaches a packaged
-/// artifact" its own typed property until the live-extent artifact
-/// envelope lands. Deliberately perturbed during development: restoring
-/// the old unconditional gate makes this fail with
-/// `compile.schedule.symbolic-extent: program/0::n is a symbolic extent
-/// this capability cannot plan over`, which is the exact refusal the new
-/// path removed.
+/// **This replaces
+/// `the_admitted_symbolic_population_declines_at_program_assembly_not_schedule`.**
+/// Two walls fell in turn for this population and the retired names of both are
+/// recorded here so a later reader can tell which one a regression restored:
+/// the schedule-geometry refuse `UnsupportedSymbolicExtent { phase: "schedule",
+/// rule: "symbolic-extent" }` went when the source-bound live schedule landed,
+/// and the packaging refuse `program-assembly.named-output-symbolic` went at
+/// `tiler.kernel-program.v13`, which folds the shape-environment subject so a
+/// symbolic program's identity is complete rather than under-keyed.
+///
+/// Watched failing under two independent deliberate perturbations, each showing
+/// a different assertion below is load-bearing. Restoring the unconditional
+/// schedule gate makes this fail at the `scheduled_symbolic_extent` assertion
+/// with `compile.schedule.symbolic-extent: program/0::n is a symbolic extent
+/// this capability cannot plan over`. Restoring `named-output-symbolic` as an
+/// unconditional refusal in `CoverAssembly::from_plan` makes it fail at the
+/// `compile` call with `compile.unsupported.program-assembly.named-output-symbolic:
+/// no installed capability can compile this valid semantic program`.
 #[test]
-fn the_admitted_symbolic_population_declines_at_program_assembly_not_schedule() {
+fn the_admitted_symbolic_population_packages_a_verified_kernel_program() {
     let symbolic = symbolic_three_input_elementwise(None);
     crate::region::RegionGraph::from_program(&symbolic)
         .expect("region-graph construction must record a sourced boundary");
@@ -4993,29 +5051,127 @@ fn the_admitted_symbolic_population_declines_at_program_assembly_not_schedule() 
     )
     .expect("region formation must accept the admitted symbolic population");
 
-    match crate::pipeline::compile(CompilationRequest::governed(&symbolic)) {
+    let compiled = match crate::pipeline::compile(CompilationRequest::governed(&symbolic)) {
+        Ok(compiled) => compiled,
         Err(error) => {
             assert_eq!(
                 scheduled_symbolic_extent(&error),
                 None,
                 "the admitted population must pass the schedule gate, got {error}"
             );
-            assert_eq!(
-                error.to_string(),
-                "compile.unsupported.program-assembly.named-output-symbolic: no installed \
-                 capability can compile this valid semantic program",
-                "the next true wall is the packaging gate, typed as a capability gap",
-            );
+            panic!("the admitted population must package, got {error}");
         }
-        Ok(_) => panic!(
-            "the admitted population declines at the program-assembly wall until the \
-             live-extent artifact envelope lands, got a product"
-        ),
-    }
+    };
+
+    // The packaged program's identity folds the program's own environment
+    // subject beside its graph. Read rather than asserted by construction: a
+    // fold that dropped the subject leaves this needle absent. The domain step
+    // itself is pinned where the domain is declared — `tiler_ir`'s
+    // `the_program_domain_separator_is_what_distinguishes_the_reinterpreting_steps`
+    // and its `PINNED_IDENTITY_DOMAINS` row — rather than restated here, because
+    // this crate's own pin census admits only the domains it declares.
+    let identity = packaged_program_identity(&compiled);
+    let subject = symbolic
+        .semantic_identity()
+        .shape_environment()
+        .as_bytes()
+        .to_vec();
+    assert!(
+        identity
+            .windows(subject.len())
+            .any(|window| window == subject.as_slice()),
+        "the packaged identity must carry the program's own environment subject",
+    );
 
     let literal = literal_three_input_elementwise(4);
     crate::pipeline::compile(CompilationRequest::governed(&literal))
         .expect("the literal neighbour still compiles");
+}
+
+/// The packaging population is exactly the admitted one, counted rather than
+/// argued.
+///
+/// **The lift is condition-shaped, not population-shaped**, so the check that
+/// matters is that making representation total did not widen *what compiles*.
+/// The census walks every symbolic fixture this module can author and requires
+/// each to compile exactly when `admits_source_bound_live_schedule` says the
+/// request is admitted — including the parametric-broadcast carrier, which the
+/// schedule gate lets past on its own separate arm and which must therefore
+/// still decline at physical selection rather than falling into packaging.
+///
+/// The population is printed rather than trusted, and a floor is asserted, so a
+/// fixture list that silently stopped covering its subject cannot look green.
+#[test]
+fn the_packaging_population_is_exactly_the_admitted_population() {
+    let cases: Vec<(&str, SemanticProgram)> = vec![
+        ("admitted-unbound", symbolic_three_input_elementwise(None)),
+        (
+            "admitted-bound-4",
+            symbolic_three_input_elementwise(Some(4)),
+        ),
+        (
+            "root-at-b",
+            three_input_elementwise_with(
+                Some(request_environment_rooted("b", None)),
+                &[SourcedExtent::Symbol(request_symbol("n"))],
+            ),
+        ),
+        (
+            "interface-parameter-root",
+            three_input_elementwise_with(
+                Some(interface_parameter_environment()),
+                &[SourcedExtent::Symbol(request_symbol("n"))],
+            ),
+        ),
+        (
+            "unread-root-input",
+            three_input_elementwise_with(
+                Some(request_environment_rooted("missing", None)),
+                &[SourcedExtent::Symbol(request_symbol("n"))],
+            ),
+        ),
+        (
+            "parametric-broadcast",
+            parametric_broadcast_only_program(
+                parametric_broadcast_environment("n", (1, 32_768), None),
+                "n",
+            ),
+        ),
+    ];
+    assert!(
+        cases.len() >= 6,
+        "the census must keep every symbolic arm the accepted surface names",
+    );
+
+    let mut admitted = 0_usize;
+    let mut packaged = 0_usize;
+    for (label, program) in &cases {
+        let target = verify_planned_request(CompilationRequest::governed(program))
+            .ok()
+            .and_then(|verified| verified.for_target(0).ok());
+        let admits = target
+            .as_ref()
+            .is_some_and(crate::physical::admits_source_bound_live_schedule);
+        let compiles = crate::pipeline::compile(CompilationRequest::governed(program)).is_ok();
+        println!("packaging census: {label}: admitted={admits} packaged={compiles}");
+        admitted += usize::from(admits);
+        packaged += usize::from(compiles);
+        assert_eq!(
+            admits, compiles,
+            "{label}: the packaging population must equal the admitted population",
+        );
+    }
+    // Three admitted: the unbound fixture, its constraint-bound neighbour, and
+    // the one whose root moved to `b` — a root the region still reads densely.
+    // Three refused: a root that is not an input dimension at all, a root input
+    // the region never reads, and the parametric-broadcast carrier, which the
+    // schedule gate lets past on its own arm and which must therefore decline at
+    // physical selection rather than falling into packaging.
+    assert_eq!(
+        (admitted, packaged),
+        (3, 3),
+        "the census must exercise both answers, not one of them six times",
+    );
 }
 
 /// Dropping the program's environment is a pairing refusal, not a schema one.
