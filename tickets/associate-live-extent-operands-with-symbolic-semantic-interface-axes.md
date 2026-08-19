@@ -1,7 +1,7 @@
 ---
 id: associate-live-extent-operands-with-symbolic-semantic-interface-axes
 title: Associate live-extent operands with symbolic semantic interface axes
-status: in-progress
+status: done
 priority: p0
 dependencies: [admit-symbolic-extents-through-schedule-formation]
 related: [admit-live-extent-operands-to-payload-indexing, accept-the-live-extent-artifact-envelope-row, prove-one-live-extent-artifact-payload-and-pipeline-at-two-n]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/artifact, implementation/runtime, con
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, identity, public-boundary, shapes]
-claimed_from: todo
-assignee: worker-live-extent-association
-lease_expires_at: 1787100581
 ---
 ## User-visible outcome
 
