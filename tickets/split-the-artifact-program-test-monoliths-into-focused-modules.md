@@ -1,7 +1,7 @@
 ---
 id: split-the-artifact-program-test-monoliths-into-focused-modules
 title: Split the artifact program test monoliths into focused modules
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [keep-a-module-size-and-complexity-census-with-a-split-queue]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [refactor, maintainability, artifact, tests]
+claimed_from: todo
+assignee: worker-split-artifact-tests
+lease_expires_at: 1787146418
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: split-the-schedule-builder-into-cohesive-submodules
 title: Split the schedule builder into cohesive submodules
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [keep-a-module-size-and-complexity-census-with-a-split-queue]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [refactor, maintainability, ir]
+claimed_from: todo
+assignee: worker-split-schedule-builder
+lease_expires_at: 1787146418
 ---
 ## User-visible outcome
 

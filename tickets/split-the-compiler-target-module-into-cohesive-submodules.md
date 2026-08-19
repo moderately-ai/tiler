@@ -1,7 +1,7 @@
 ---
 id: split-the-compiler-target-module-into-cohesive-submodules
 title: Split the compiler target module into cohesive submodules
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [keep-a-module-size-and-complexity-census-with-a-split-queue]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [refactor, maintainability, compiler, identity-adjacent]
+claimed_from: todo
+assignee: worker-split-compiler-target
+lease_expires_at: 1787146418
 ---
 ## User-visible outcome
 
