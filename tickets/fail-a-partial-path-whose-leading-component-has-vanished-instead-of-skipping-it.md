@@ -1,7 +1,7 @@
 ---
 id: fail-a-partial-path-whose-leading-component-has-vanished-instead-of-skipping-it
 title: Fail a partial path whose leading component has vanished instead of skipping it as external
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [stop-the-citation-checkers-ambiguity-skip-resolving-against-a-basename-twin]
@@ -9,6 +9,9 @@ scopes: [implementation/workspace]
 shared_scopes: [project/tickets]
 paths: [check-citations.sh]
 tags: [gates, citations, correctness]
+claimed_from: todo
+assignee: worker-partialpath
+lease_expires_at: 1787165795
 ---
 ## User-visible outcome
 
