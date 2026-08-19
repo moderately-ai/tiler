@@ -147,15 +147,37 @@
 #   - Deriving the memory from `git log --diff-filter=D` is not the rule either,
 #     though it needs no maintenance. It cannot tell a deletion from a rename and
 #     cannot tell whether two paths ever coexisted, so it poisons a suffix
-#     forever on a move. Measured over the 65 paths ever deleted here: one live
-#     citation would newly fail, `payload.rs:289` in
+#     forever on a move. Measured over the 65 paths ever deleted here, its whole
+#     effect was to break one live citation, the partial `:289` pin on
+#     `check_provenance` in
 #     `docs/research/extensions/backend-provider-composition.md`, whose only
 #     historical twin is a deleted `prototypes/serial-sum-compile/src/payload.rs`
-#     and which reading confirms correctly names `check_provenance` in
-#     `crates/tiler-artifact/src/program/codec/payload.rs`. One invented failure,
-#     no caught defect. The ledger records ambiguity this checker observed while
-#     a live citation rested on it, never ambiguity inferred backwards from
-#     history.
+#     and which reading confirms correctly names
+#     `crates/tiler-artifact/src/program/codec/payload.rs`.
+#
+#     That rejection stands, and the review it was weighed against did not
+#     weaken it. `git log` is a review list here and never the rule: nothing
+#     enters the ledger from a deletion line, and the reading is what decides.
+#     What the reading changed, on 2026-08-19 at `ea321967`, is the verdict on
+#     that one suffix. Re-cut at that base the overlap is still exactly one --
+#     over 66 ever-deleted paths, and over the 82 that `--no-renames` reports,
+#     which is the wider list because a rename collapses a family too. Reading
+#     its history rather than its deletion line shows the ambiguity was real and
+#     live: `7e01f3b7` added the prototype twin on 2026-07-25 beside the codec
+#     file, `2d2a7bd7` removed it on 2026-07-28 with 152 lines deleted and no
+#     matching addition anywhere in that commit, and in between a `todo` ticket
+#     cited the bare suffix -- `tickets/stop-recomputing-pure-derivations-in-the-codec.md`
+#     pinned `:403` on it at `3dacabce`. This script did not exist until
+#     `7e3a7367` on 2026-08-07, so no run could have recorded what was there.
+#
+#     So an entry is admitted two ways, and only two. From an ambiguity a run
+#     observed while a live citation rested on it, which is how every other entry
+#     below arrived. Or from one a reading reconstructs across a collapse that
+#     predates this script, where the deletion is named and shown not to be a
+#     rename, the two paths are shown to have coexisted, and a live citation is
+#     shown to have rested on the bare suffix inside that window. What is still
+#     refused is the thing the rule above would have done: an entry inferred from
+#     a deletion line alone, with none of that read.
 #
 # WHAT ROOTS A CITATION IN ANOTHER PROJECT, AND WHY THAT IS WRITTEN DOWN TOO
 #
@@ -492,10 +514,12 @@ UPSTREAM
 
 # The retired-ambiguity ledger, quoted heredoc so nothing here is expanded. One
 # "/"-boundary suffix per line; blank lines and `#` comments are ignored by the
-# reader. Every entry was observed ambiguous while a live citation rested on it,
-# and the section above states what that buys and what it deliberately is not.
-# Entries are added, never retro-derived and never pruned: the floor in report()
-# is what makes a truncation loud rather than a quietly weaker check.
+# reader. Every entry records a suffix that really was ambiguous while a live
+# citation rested on it -- seen by a run, or reconstructed by reading a collapse
+# that predates this script, which the section above bounds to a named deletion
+# shown not to be a rename with coexistence and a live citation both read out of
+# the window. Entries are added and never pruned: the floor in report() is what
+# makes a truncation loud rather than a quietly weaker check.
 cat >|"$ledgerfile" <<'LEDGER'
 accuracy.rs
 adapter.rs
@@ -515,6 +539,15 @@ lib.rs
 main.rs
 model.rs
 numerics.rs
+# Retired: `2d2a7bd7` deleted `prototypes/serial-sum-compile/src/payload.rs` on
+# 2026-07-28 -- 152 lines removed, no matching addition in the commit -- leaving
+# `crates/tiler-artifact/src/program/codec/payload.rs` alone under this suffix.
+# `git ls-tree 2d2a7bd7^` carries both paths and `git ls-tree 2d2a7bd7` carries
+# one, so they coexisted rather than one being the other renamed. A live `todo`
+# ticket pinned the bare suffix inside that window, at `3dacabce`. This script
+# postdates the collapse, so no run saw it and the entry is the reconstruction
+# the section above admits. No live citation carries the bare suffix now.
+payload.rs
 perturb.rs
 pointwise.rs
 program.rs
@@ -730,7 +763,7 @@ BEGIN {
 	# when a cited suffix first turns ambiguous should raise the census without
 	# editing this. Lowering it is the deliberate edit that removes a guard, in
 	# the same diff as the entry it removes, in front of the same reviewer.
-	LEDGER_FLOOR = 41
+	LEDGER_FLOOR = 42
 	while ((getline led < ledgerfile) > 0) {
 		if (led == "" || led ~ /^#/) continue
 		if (led in was_ambiguous) continue
