@@ -144,7 +144,7 @@ fn every_section_purpose_declares_its_disposition_and_schema() {
 /// Sharing one object across variants declaring *different* profiles is not the
 /// case this serves, and never was: `ArtifactProgramBuilder::check_subject`
 /// refuses a second variant declaring a different profile, which
-/// `super::super::super::tests::refuses_a_second_variant_declaring_a_different_target_profile`
+/// `super::super::super::tests::insertion_rules::refuses_a_second_variant_declaring_a_different_target_profile`
 /// pins.
 #[test]
 fn the_payload_compatibility_contract_participates_in_its_canonical_key() {

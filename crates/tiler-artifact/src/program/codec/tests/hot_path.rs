@@ -231,7 +231,8 @@ fn hot_path_digest_throughput() {
 /// TILER_PROFILE_SECONDS=20 samply record --save-only --unstable-presymbolicate \
 ///     --rate 4000 -o decode.profile.json.gz \
 ///     -- target/release/deps/tiler_artifact-<hash> \
-///        --ignored --exact program::codec::tests::hot_path_decode_profile_loop --nocapture
+///        --ignored --exact program::codec::tests::hot_path::hot_path_decode_profile_loop \
+///        --nocapture
 /// ```
 ///
 /// Three details are load-bearing. `CARGO_PROFILE_RELEASE_DEBUG=true` is
