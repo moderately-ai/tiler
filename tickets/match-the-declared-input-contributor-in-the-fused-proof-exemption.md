@@ -39,3 +39,21 @@ The carrier itself, its recognizer, subject tag, or spelling — owned by the ca
 ## Coordination
 
 A sibling lane holds `implementation/compiler`; this ticket is filed, not claimed. The dependency edge originally pointed at the decision ticket; on 2026-08-18, after Tom accepted carrier (4), the coordinator retargeted it onto the filed implementation carrier [`replace-the-serial-sum-contributor-fields-with-the-exhaustive-source`](replace-the-serial-sum-contributor-fields-with-the-exhaustive-source.md), since the perturbation needs a `Materialized` source to exist. Under the accepted carrier this site is one of the 31 compile-forced errors, so the repair rides that migration — but this ticket's statement, perturbation obligation, and reviewer remain its own.
+
+## Outcome — 2026-08-19
+
+Landed with the carrier migration on `tkt/replace-the-serial-sum-contributor-fields-with-the-exhaustive-source`, under this ticket's own statement rather than as a migration side effect.
+
+**Facts re-audited at base `441f3215`.** All three verified. `serial.prologue.is_none()` sat at `crates/tiler-compiler/src/pipeline/verify.rs:324` under `output.try_serial_sum().is_none_or(|serial| serial.prologue.is_none())`; the arm comment `The condition is the prologue, not the family` and the module's `fails closed instead of being carried into a compilation product` were both present; `ProgramAlternativeKind::of` still classifies `Fused` only for a one-region whole-program cover, so the reachability Fact — forged-portfolio rather than live wrong compile — holds. The carrier-decides-forcing Fact reproduced exactly: the re-derived 31-error lib census names this site as its one `pipeline/verify.rs` error.
+
+**The repair.** The guard is now `request.normalized().outputs().iter().all(merges_nothing)`, where `merges_nothing` is an exhaustive match over the output vocabulary *and* over the fold's contributor source within it. `SerialSumContributor::DeclaredInput` answers `true`; `PointwisePrologue` and `Materialized` answer `false`; a chain and a staged family answer `false` by the per-family rule the ticket asked for rather than through `is_none_or`'s vacuous truth; pointwise and contraction answer `true` because each publishes from one region computing one recognized family. No fallback: an alternative the exemption no longer covers fails under `portfolio-equivalence`.
+
+**Perturbation, with the failure text.** `a_produced_folds_fused_receipt_takes_the_ordinary_proof_path` in `crates/tiler-compiler/src/pipeline/tests.rs` compiles `sum(input, [cols])`, takes the genuine `Fused` alternative carrying no numerical proof, and moves *only* the recognized fold's contributor source to `Materialized` over that same fold's own recognized shape — through a narrow `#[cfg(test)] VerifiedTargetRequest::perturb_serial_sum_contributor` seam, because no genuine produced-sum plan classifies `Fused` and the arm is otherwise unreachable with a materialized source. The perturbed request refuses:
+
+```
+program.structure.portfolio-equivalence: rejected
+```
+
+Both controls the ticket names are asserted beside it: `sum(x)` keeps its exemption and verifies `Ok(())`, and a fold perturbed to carry a pointwise prologue falls through to the proving arm with the same refusal. Reversing the repair — making `merges_nothing` answer `true` for `Materialized`, which is the retired absence form — reddens the check with `a produced fold is not exempt from the numerical replay: ()`.
+
+Severity is unchanged: no genuine produced-sum plan is `Fused`, so this remains the verifier's forged-receipt independence contract rather than a live wrong compile. Evidence that such an alternative is constructible would still raise it.
