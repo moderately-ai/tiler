@@ -44,12 +44,11 @@ use tiler_runtime::load::{
 };
 
 use tiler_artifact::program::{
-    ArithmeticType, BackendKey, ProviderIdentity, RepresentationKey, RouteRequirement,
-    RouteResourceDimension, SchemaVersion, TargetEnvironmentDescriptor,
-    TargetEnvironmentDescriptorSchema, TargetEnvironmentReasonCode, TargetProfileRef,
+    ArithmeticType, BackendKey, RepresentationKey, RouteRequirement, RouteResourceDimension,
+    TargetEnvironmentDescriptor, TargetProfileRef,
 };
 
-use crate::fixture;
+use crate::fixture::{self, ScalarEnvironmentSchema};
 use crate::image::{
     ExecutionFault, Placement, ScalarEntry, ScalarPayloadRefusal, addresses_program_input, decode,
 };
@@ -80,53 +79,6 @@ pub enum Stage {
     AllocateDispatch,
     /// The committed route was encoded, run, and observed.
     Dispatch,
-}
-
-/// One test provider's registered target-environment descriptor schema.
-///
-/// The scalar host's whole authority claim is byte equality with one exact
-/// canonical spelling: the process *is* the execution-environment class its
-/// schema names, which is the strongest claim a single-process interpreter can
-/// honestly make and exactly the shape the ADR 0013 contract requires a
-/// provider to prove before registering positive support.
-#[derive(Clone, Debug)]
-pub struct ScalarEnvironmentSchema {
-    /// Provider identity, with its exact nonzero revision.
-    pub provider: ProviderIdentity,
-    /// Exact schema version.
-    pub schema: SchemaVersion,
-    /// The canonical descriptor spellings this schema admits, one per class.
-    ///
-    /// Each admitted value is the exactly-one canonical spelling of its own
-    /// environment class; a second class is a second member of this set, never
-    /// a second spelling of the first. That is what makes a declared-versus-
-    /// observed class mismatch representable while validation still accepts
-    /// exactly one byte spelling per class.
-    pub admitted: Vec<Vec<u8>>,
-}
-
-impl TargetEnvironmentDescriptorSchema for ScalarEnvironmentSchema {
-    fn provider(&self) -> &ProviderIdentity {
-        &self.provider
-    }
-
-    fn schema_version(&self) -> SchemaVersion {
-        self.schema
-    }
-
-    fn validate_canonical_descriptor(
-        &self,
-        descriptor: &[u8],
-    ) -> Result<(), TargetEnvironmentReasonCode> {
-        if self.admitted.iter().any(|value| value == descriptor) {
-            Ok(())
-        } else {
-            Err(
-                TargetEnvironmentReasonCode::new("scalar-host.not-the-canonical-spelling")
-                    .expect("a literal governed reason code"),
-            )
-        }
-    }
 }
 
 /// One measured target family's dtype-dispatchability row.

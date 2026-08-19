@@ -4,13 +4,42 @@
 //! exact equality committing and every refusal arriving before the routing
 //! commit.
 //!
-//! The required width is derived from
-//! `tiler_build::BoundMetalSubgroupDeclaration::first_m3_pro_apple9` — the
-//! evidence-backed M3 Pro declaration — not from a literal written here, so the
-//! green case is the declaration's row confirmed against the pipelines the
-//! committed route dispatches. Runs only on the declaration's own execution
-//! row (`Apple M3 Pro`, macOS build `26A5388g`) under its ledger toolchain;
-//! any other host or toolchain is refused by name rather than measured.
+//! The required width is derived from `BoundMetalSubgroupDeclaration`'s
+//! `first_m3_pro_apple9` — the evidence-backed M3 Pro declaration — not from a
+//! literal written here, so the green case is the declaration's row confirmed
+//! against the pipelines the committed route dispatches. Runs only on the
+//! declaration's own execution row (`Apple M3 Pro`, macOS build `26A5388g`)
+//! under its ledger toolchain; any other host or toolchain is refused by name
+//! rather than measured.
+//!
+//! **That declaration is `pub(crate)` inside `tiler-build` and stays that way.**
+//! It was reachable as a public path when this ran, at `586c508a`; the ticket
+//! `demote-the-m3-pro-subgroup-declaration-to-an-internal-evidence-fixture`
+//! made it crate-private on 2026-08-18, and ADR 0113 component 3 made that
+//! permanent on 2026-08-19. The public spelling this module used is therefore
+//! not named here as though it still existed, and the `use` below is retained
+//! unchanged only because it is what ran. The README beside this file carries
+//! the full record and the links.
+
+// This harness does not build at the tip of `main`, permanently and by
+// decision, and the compiler's own diagnostic for that is actively misleading:
+// `error[E0432]` on the `use` below offers `BoundMetalCompileDeclaration` as a
+// similar name, which is a different declaration and would silently produce a
+// different width. So the record is stated here, where the next person to run
+// this meets it before the README and before that suggestion.
+//
+// Neither restoration route is admissible, which is why this is permanent
+// rather than pending: a feature-gated re-export undoes the demotion, and a
+// second copy of the rows mints a second authority over one retained
+// measurement. The remaining break, the `#[path]`-shared runtime fixture, was
+// repaired and is now held by `crates/tiler-runtime/tests/adapter_route_portability.rs`.
+compile_error!(
+    "metal-subgroup-width-route-gate does not build at the tip of `main`, and permanently so: \
+     ADR 0113 keeps `BoundMetalSubgroupDeclaration` a crate-private evidence fixture inside \
+     `tiler-build`, and this spike is a separate crate. Do not substitute a similarly named \
+     declaration or a literal width. Reproduce the retained demonstration by checking out \
+     `586c508a` and running it there; see the `Build exception` section of this spike's README."
+);
 
 mod device_io;
 #[path = "../../../../crates/tiler-runtime/tests/adapter_route/fixture.rs"]
