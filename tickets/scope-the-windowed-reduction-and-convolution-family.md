@@ -26,7 +26,11 @@ tags: [research, operations, reductions, convolution, deferred]
 
 ## Activation trigger
 
-Either a named workload requires a windowed reduction, pooling, or convolution occurrence, **or** a proposal is made to widen `tiler::strict-tensor-contraction-f32@1`'s index structure beyond binary contraction — because the second is exactly the case where knowing whether a window fits inside that structure stops being academic.
+Either a named workload requires a windowed reduction, pooling, or convolution occurrence, **or** a proposal is made to widen the standard contraction key's index structure beyond binary contraction — because the second is exactly the case where knowing whether a window fits inside that structure stops being academic.
+
+**Correction — 2026-08-19 (key retired; the trigger is unchanged in substance).** This trigger named `tiler::strict-tensor-contraction-f32@1` as the current standard contraction key. That key is **retired from the standard vertical** under [ADR 0112](../docs/decisions/0112-replace-the-strict-contraction-key-with-a-permission-indexed-successor.md), which replaced it with `tiler::tensor-contraction-f32@1` (`crates/tiler-ir/src/semantic/contraction.rs`, anchor `is the documented successor to the`); `crates/tiler-compiler/tests/retired_contraction_key_never_compiles.rs` pins that the old key can no longer produce a program. The trigger is stated against the *standard contraction key* rather than a spelling, because what makes it fire is a proposal to widen that key's ADR 0087 index structure beyond binary contraction — a property the successor inherits unchanged. The successor is `tiler::tensor-contraction-f32@1`; naming it here rather than the retired spelling is the whole repair, and the ADR 0087 test in the work section below is unaffected.
+
+**Command recheck — 2026-08-19.** The 2026-08-05 log entry's recheck command still runs but **no longer returns the count it records**: `rg -o -N --no-filename 'tiler::[a-z0-9-]+@[0-9]+' crates/tiler-ir/src/semantic/ | sort -u` returns **50** governed keys at this base, not the 46 stated there. The entry's *conclusion* is unaffected and the trigger stays unfired — the windowed/convolution family's key is still absent from that list, which is what the check exists to establish. The count is dated evidence about 2026-08-05 and is left in that entry rather than rewritten; this note is the current reading.
 
 ## What the work would be, when it starts
 
