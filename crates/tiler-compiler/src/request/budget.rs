@@ -293,7 +293,7 @@ impl BudgetResource {
 ///
 /// - **Program bounds** (`semantic_values`, `semantic_operations`, `regions`,
 ///   `host_expression_nodes`, `buffers`) refuse a *submitted program* at
-///   [`check_program_budgets`], before any target is consulted.
+///   [`check_program_budgets`](super::verify::check_program_budgets), before any target is consulted.
 /// - **Region-shape bounds** (`region_members`, `region_boundary_outputs`,
 ///   `region_live_values`) declare the largest region this profile forms at all,
 ///   so a program whose only implementable cover needs a bigger one has no plan
@@ -324,12 +324,12 @@ pub(crate) struct DeterministicBudgets {
     /// Values a submitted program may declare and produce.
     ///
     /// Derived; [`Self::governed`] states the formula and the declaration.
-    /// [`check_program_budgets`] refuses the program that exceeds it.
+    /// [`check_program_budgets`](super::verify::check_program_budgets) refuses the program that exceeds it.
     pub(crate) semantic_values: u32,
     /// Semantic occurrences a submitted program may declare.
     ///
     /// Derived; [`Self::governed`] states the formula and the declaration.
-    /// [`check_program_budgets`] refuses the program that exceeds it.
+    /// [`check_program_budgets`](super::verify::check_program_budgets) refuses the program that exceeds it.
     pub(crate) semantic_operations: u32,
     /// Dispatch regions the widest plan for a submitted program may assemble.
     ///
@@ -468,7 +468,7 @@ impl DeterministicBudgets {
     /// program, which is the largest program shape this profile may be asked to
     /// admit.** Each is derived from that program's own measured counts rather
     /// than from the smallest number that lets it through, which is the rule
-    /// [`check_program_budgets`] states and the rule the split reduction's
+    /// [`check_program_budgets`](super::verify::check_program_budgets) states and the rule the split reduction's
     /// earlier widenings followed. The counts are the two rows the layer was
     /// verified and reference-evaluated at: eighteen declared inputs and three
     /// ordered named outputs at both, fifty-eight occurrences over seventy-six
@@ -484,7 +484,7 @@ impl DeterministicBudgets {
     ///   produces more than one value. The prefill row is `18 + 58 = 76` by the
     ///   same arithmetic, so eighty bounds both.
     /// - `semantic_operations` is `62`: the decode row's occurrence count.
-    /// - `regions` is `12`: [`check_program_budgets`] derives the actual as four
+    /// - `regions` is `12`: [`check_program_budgets`](super::verify::check_program_budgets) derives the actual as four
     ///   dispatches per declared output — the widest producer chain one output
     ///   can reach, prologue, partial, final, and epilogue — so three outputs
     ///   reach `3 × 4`.
@@ -528,7 +528,7 @@ impl DeterministicBudgets {
     ///   member results are one per occurrence: the same `18 + 62`
     ///   `semantic_values` is.
     ///
-    /// The three program bounds derived through [`check_program_budgets`] —
+    /// The three program bounds derived through [`check_program_budgets`](super::verify::check_program_budgets) —
     /// `regions`, `host_expression_nodes`, and `buffers` — are tight at exactly
     /// eighteen declared inputs and three declared outputs, so their thresholds
     /// coincide along each axis:
@@ -630,7 +630,7 @@ impl DeterministicBudgets {
     /// `tiler.compiler.request-subject.v6` domain.
     ///
     /// A budget is an upper bound, so widening admits program shapes and never
-    /// requires them: [`check_program_budgets`] still refuses a program one step
+    /// requires them: [`check_program_budgets`](super::verify::check_program_budgets) still refuses a program one step
     /// past each of these, and `verify_host_contract` still refuses a built
     /// program whose expression, value, or stage count exceeds
     /// `host_expression_nodes`, `buffers`, or `regions`. The same holds of the

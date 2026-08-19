@@ -112,7 +112,7 @@ fn intern_contract_key(key: String) -> &'static str {
 /// Renders the canonical, injective key of one resolved contract.
 ///
 /// **Injective because the bytes it renders are.** The preimage is the same
-/// exhaustive per-dimension encoding [`encode_contract`] writes into a request
+/// exhaustive per-dimension encoding [`encode_contract`](super::subject::encode_contract) writes into a request
 /// subject: the arithmetic type's tag, the canonical arithmetic NaN bits, and
 /// then, in [`crate::target::honourability::CANONICAL_DIMENSIONS`] order, each
 /// dimension's own tag followed by

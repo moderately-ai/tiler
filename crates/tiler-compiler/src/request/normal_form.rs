@@ -319,7 +319,7 @@ pub(crate) struct NormalizedContraction {
 /// Which boundary tensor one recognized read binds.
 ///
 /// **Local access position and declared association are separate facts in every
-/// recognized shape.** [`canonical_input_reads`] orders a whole-program or
+/// recognized shape.** [`canonical_input_reads`](super::elementwise::canonical_input_reads) orders a whole-program or
 /// prologue run by declaration group and dense-before-mapped relation, while
 /// omitting unread declarations and preserving distinguishable repeated reads.
 /// Leaf position and declared ordinal therefore need not coincide. An epilogue
@@ -461,7 +461,7 @@ pub(crate) struct NormalizedStaged {
     /// [`BoundaryRead::Input`]. It is carried for the reason
     /// [`NormalizedEpilogue::producer`] is carried: the producing occurrences
     /// belong to *this* output's walk — nothing else claims them, and
-    /// [`check_output_cover`] refuses a program with an occurrence no walk
+    /// [`check_output_cover`](super::recognize::check_output_cover) refuses a program with an occurrence no walk
     /// claimed — so the region a cover places for them has to be spelled from a
     /// recognized shape this partition holds.
     ///
@@ -1016,7 +1016,7 @@ impl NormalizedOutput {
             // is a materialized intermediate. A staged family's realization
             // stages are region formation's to enumerate — see
             // [`NormalizedStaged`] — and claiming them here would state the same
-            // split twice and make [`check_output_cover`]'s per-occurrence
+            // split twice and make [`check_output_cover`](super::recognize::check_output_cover)'s per-occurrence
             // accounting count a realization choice as program work. The
             // producer's occurrences are program work and are claimed by this
             // walk alone, exactly as a chain's producer's are.
@@ -1056,7 +1056,7 @@ impl NormalizedOutput {
     /// decided against the recognized partition. A physical arm answering the
     /// second for itself would be a second account of the partition, free to
     /// disagree with the account [`NormalizedProgram::output_for_region`] and
-    /// [`check_output_cover`] read.
+    /// [`check_output_cover`](super::recognize::check_output_cover) read.
     pub(crate) fn owns_region_members(&self, members: &[SemanticStage]) -> bool {
         match self {
             Self::SerialSum(normalized) => {
@@ -1139,7 +1139,7 @@ impl NormalizedProgram {
     /// spelled against whichever partition happened to be first.
     ///
     /// **Two outputs may own one member set, and declaration order decides.**
-    /// [`check_output_cover`] admits exactly one overlap — a walk that is one
+    /// [`check_output_cover`](super::recognize::check_output_cover) admits exactly one overlap — a walk that is one
     /// whole part of a longer walk's partition, publishing the value that part
     /// hands across the boundary — and both claimants are then recognitions of
     /// the same value over the same occurrences, so they resolve to the same
@@ -1245,7 +1245,7 @@ impl NormalizedProgram {
 
     /// Returns every attribution atom any output's walk claimed, ascending.
     ///
-    /// The walks partition the program's occurrences — [`check_output_cover`]
+    /// The walks partition the program's occurrences — [`check_output_cover`](super::recognize::check_output_cover)
     /// proves it — so this is the program's whole operation set and the
     /// deduplication is the invariant being relied on rather than a repair.
     pub(crate) fn all_members(&self) -> Vec<SemanticStage> {

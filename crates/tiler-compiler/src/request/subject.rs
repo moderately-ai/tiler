@@ -822,7 +822,7 @@ pub(super) const PARAMETRIC_BROADCAST_ACCESS_TAG: u8 = 0x05;
 /// `declared` is a count rather than an ordinal list because the arm writes the
 /// declared input keys immediately before, in the same order. It saturates at
 /// [`u32::MAX`] rather than truncating, which no request reaches:
-/// [`check_program_budgets`] bounds a program's declared inputs far below it, so
+/// [`check_program_budgets`](super::verify::check_program_budgets) bounds a program's declared inputs far below it, so
 /// the saturation is unreachable rather than a collision this encoder tolerates.
 pub(super) fn encode_elementwise_reads(
     output: &mut Vec<u8>,

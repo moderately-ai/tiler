@@ -365,7 +365,7 @@ fn resolve_elementwise(
 /// these declared ordinals. This walk therefore skips an unread group instead
 /// of refusing it: the obligation
 /// that no declared input goes unread by *every* output is a program-scoped
-/// property and lives in [`check_output_cover`], where the other program-scoped
+/// property and lives in [`check_output_cover`](super::recognize::check_output_cover), where the other program-scoped
 /// obligations moved when several ordered outputs became statable.
 ///
 /// # Errors
@@ -887,8 +887,8 @@ fn minted_value<V: Clone>(minted: &[(ValueId, V)], value: ValueId) -> Result<V, 
 /// having already run in the caller — or [`RequestError::ShapeProductOverflow`]
 /// under `input` for a domain whose extents do not multiply into a `u64`. The
 /// rank and occurrence-coverage obligations are the caller's:
-/// [`recognize_elementwise_output`] reports `elementwise-rank` and
-/// [`check_output_cover`] reports `operation-set`.
+/// [`recognize_elementwise_output`](super::recognize::recognize_elementwise_output) reports `elementwise-rank` and
+/// [`check_output_cover`](super::recognize::check_output_cover) reports `operation-set`.
 pub(super) fn recognize_pointwise(
     program: &SemanticProgram,
     output: &tiler_ir::semantic::ProgramOutputRef<'_>,

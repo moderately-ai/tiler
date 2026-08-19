@@ -158,7 +158,7 @@ pub(super) enum StagedOperandAdmission {
 /// [`crate::region::RegionGraph::with_realizations`] when it enumerates one
 /// region candidate per stage. Re-deriving them here would put a second account
 /// of one law in the boundary, which is the drift
-/// [`recognize_elementwise_output`]'s own doc argues against for the same
+/// [`recognize_elementwise_output`](super::recognize::recognize_elementwise_output)'s own doc argues against for the same
 /// reason.
 ///
 /// **One operand may be a value another region materializes, and that is this
@@ -166,7 +166,7 @@ pub(super) enum StagedOperandAdmission {
 /// recognized shape carries a [`BoundaryRead`] per operand and the producer's
 /// recognized shape beside them, so `rms_norm(matmul(a, b), w)` is a partition
 /// this output owns end to end — the producer's occurrence included, which is
-/// what [`check_output_cover`] requires and what makes the *producing* region
+/// what [`check_output_cover`](super::recognize::check_output_cover) requires and what makes the *producing* region
 /// spellable from a shape this partition holds. The alternative considered and
 /// rejected was deriving each operand's source from the cover's materialization
 /// edges: it keeps one authority for the stage split and moves a recognition-time
@@ -191,7 +191,7 @@ pub(super) enum StagedOperandAdmission {
 ///   materialization edge, whether that is one staged value read twice or two
 ///   different ones. [`TensorRole::Intermediate`] carries no ordinal, so nothing
 ///   says which edge each read binds; it is the same unattributable pair
-///   [`record_leaf`] refuses for an epilogue's leaves.
+///   [`record_leaf`](super::elementwise::record_leaf) refuses for an epilogue's leaves.
 /// - `staged-operand-depth` for a staged operand of an occurrence that is
 ///   *itself* at the far side of an edge. That is a recognized chain more than
 ///   one materialization boundary deep, and it is the one guard the depth rule

@@ -69,7 +69,7 @@ pub(super) fn producer_for_value(
 /// the family declares — four for binary32, two for `bf16` — and a run of any
 /// other length is refused rather than zero-extended, so a `bf16` payload that
 /// arrived four bytes wide is a malformed record here instead of a number whose
-/// upper half nobody stated. [`Bf16Mint::constant`] narrows back before minting.
+/// upper half nobody stated. [`Bf16Mint::constant`](super::elementwise::PointwiseMintSink::constant) narrows back before minting.
 ///
 /// The format key is checked against the *family's own* type key rather than
 /// against binary32's: a record naming one family and carrying another's format

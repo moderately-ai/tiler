@@ -111,7 +111,7 @@ use super::*;
 ///   under `operation-set` is a walk that reaches a *second, different* folded
 ///   value, and that is a rule about chain **width** rather than depth: the two
 ///   folds would feed one region two `TensorRole::Intermediate` reads, which is
-///   the same unordinalled-role fact [`record_leaf`] refuses for one staged value
+///   the same unordinalled-role fact [`record_leaf`](super::elementwise::record_leaf) refuses for one staged value
 ///   read twice.
 ///   [`admit-a-scheduled-region-that-reads-two-materialization-edges`](../../../tickets/admit-a-scheduled-region-that-reads-two-materialization-edges.md)
 ///   owns the region vocabulary underneath both. The chain-*depth* rule is
@@ -226,8 +226,8 @@ pub(super) fn select_supported_strategy(
 /// **What it deliberately does not decide is whether the width can be
 /// dispatched or its contract honoured.** Those are the target profile's and the
 /// numerical contract's, they run before this function, and each reports its own
-/// typed refusal: [`require_compile_profile_dispatch`] for a width the profile
-/// names no dispatch fact for, [`resolve_numerical_contract`] for a contract no
+/// typed refusal: [`require_compile_profile_dispatch`](super::verify::require_compile_profile_dispatch) for a width the profile
+/// names no dispatch fact for, [`resolve_numerical_contract`](super::verify::resolve_numerical_contract) for a contract no
 /// stated entry resolves, and
 /// [`RequestError::NoApplicableNumericalContract`] for a preference no entry of
 /// which is about this program's arithmetic at all.
@@ -383,7 +383,7 @@ fn recognize_output(
 /// Returns [`RequestError::UnsupportedCapability`] under `output-handle` for an
 /// output the program holds no shape for, `elementwise-rank` for a rank-zero
 /// domain no region iterates, and every rule [`plan_elementwise`],
-/// [`mint_elementwise`], and [`recognize_epilogue`] report.
+/// [`mint_elementwise`](super::elementwise::mint_elementwise), and [`recognize_epilogue`] report.
 pub(super) fn recognize_elementwise_output(
     program: &SemanticProgram,
     output: &tiler_ir::semantic::ProgramOutputRef<'_>,
@@ -456,7 +456,7 @@ pub(super) fn recognize_elementwise_output(
 /// the neighbour that must keep refusing.
 ///
 /// *Every declared input is read by some walk* (`input-set`). This is the
-/// obligation [`canonical_input_reads`] used to state per walk, under
+/// obligation [`canonical_input_reads`](super::elementwise::canonical_input_reads) used to state per walk, under
 /// `elementwise-reads`, and it was the same requirement while a program had one
 /// declared output: that walk's read set was the program's. With several
 /// outputs the walks split the declared inputs between them, so the per-walk

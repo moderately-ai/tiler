@@ -25,7 +25,7 @@ use super::*;
 /// yet a staged leaf, so it refuses under `structural-operand`. If another dense
 /// occurrence first discovers the boundary, replay does make the producer result
 /// a staged leaf and this function recognizes the mapped read, but
-/// [`record_leaf`] then refuses it as a second read of the unordinalled
+/// [`record_leaf`](super::elementwise::record_leaf) then refuses it as a second read of the unordinalled
 /// [`TensorRole::Intermediate`] under `structural-access-conflict`. Thus neither
 /// path currently admits a structural read of a staged operand; materializing a
 /// same-region computed value would additionally introduce an observable rounding
