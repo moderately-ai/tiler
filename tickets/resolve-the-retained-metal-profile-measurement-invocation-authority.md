@@ -1,7 +1,7 @@
 ---
 id: resolve-the-retained-metal-profile-measurement-invocation-authority
 title: Resolve the retained Metal profile measurement invocation authority
-status: in-progress
+status: done
 priority: p1
 dependencies: [decide-the-compilation-selection-provenance-public-and-wire-surface]
 related: [carry-required-compilation-selection-identity-on-compile-profile-contexts, split-metal-profile-measurement-sources-by-compilation-selection]
@@ -9,9 +9,6 @@ scopes: [implementation/build, implementation/metal-aot, research/target-profile
 shared_scopes: [project/tickets]
 paths: []
 tags: [metal, target-profiles, provenance, measurement, identity, decision, needs-tom]
-claimed_from: todo
-assignee: worker-metal-remeasure
-lease_expires_at: 1787102010
 ---
 ## User-visible outcome
 
@@ -239,3 +236,9 @@ The crossover harness already compiled through the production `CompileRequest`; 
 2. The implementation carrier (`carry-required-compilation-selection-identity-on-compile-profile-contexts` graph) lands the per-population sources, the ledger's third-environment tables, profile-row updates consuming these records, and pin recomputation on the merged tree — follow-up implementation once both records exist, per the packet.
 
 Nothing in this session edited production crates, profiles, ledgers, or any environment component.
+
+## Quiet-window sweep discharged; ticket closes — 2026-08-18
+
+Remaining item 1 is complete. The coordinator drained lanes, verified the attestation, hash-pin, and load-band preconditions from `RUN.md` (1-minute load within the retained idle band before start), and ran the documented commands. `sweep.tsv`, `calibration.txt`, `perturbations.txt`, and `environment.tsv` are committed at `39c10c60` ("Retain the quiet-window saturated-cost re-measurement record", an ancestor of `main`) with every pinned hash verified against the committed blobs. **The fit survived its stop condition** — the held-out serial-versus-parallel separation held (fitted encoder overhead 3.0569 µs, parallel-threads knee 1280, per-step 15.5962 ns), and all four frozen perturbations moved the fit as the mutation proof requires — so the cost row is retained, not withdrawn.
+
+Remaining item 2 is split, per the follow-ups rule: ledger third-environment tables, profile-row updates consuming both 2026-08-18 records, per-population sources, the Populations C/D independent equality assertion, and pin recomputation on the merged tree belong to [`reseat-the-grid-and-cost-profile-rows-on-the-re-measured-records`](reseat-the-grid-and-cost-profile-rows-on-the-re-measured-records.md) (p1, dependent on this ticket) together with the existing selection-identity carrier graph. With the decision answered ((R, R) plus the standing authorization above), both records retained with request-derived selection authority and harness binding, and the remainder ticketed, this ticket's outcome is supported: the carrier can land without historical inference or public self-certification. Closing as done.
