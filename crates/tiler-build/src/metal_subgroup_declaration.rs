@@ -97,13 +97,36 @@
 //! it is inert while the enum is crate-private, and removing it would silently
 //! widen the surface that a future republication would have to re-review.
 //!
-//! **What would license a public host-scoped profile is a decision nobody has
-//! taken yet.** `decide-the-host-evidence-to-profile-composition-model` owns
-//! how single-host measured evidence composes into family-scoped profile
-//! identity — per-row execution provenance on family-keyed profiles is the
-//! candidate to beat. Until it is accepted, host-scoped evidence stays
-//! evidence, and no further host-named profile key may be minted here or
-//! anywhere else.
+//! **What would license a public host-scoped profile is decided: nothing
+//! would.** Tom accepted the host-evidence composition model on 2026-08-19
+//! (ADR 0113, `docs/decisions/0113-key-profiles-by-claim-scope-and-carry-host-evidence-as-per-row-provenance.md`).
+//! A public compile-profile key names claim scope only — backend, platform
+//! family, GPU family, language standard, stated content families, revision —
+//! and never a procurement identifier, so a hardware model name, an OS version,
+//! an OS build, or a serial or registry identity may not appear in a minted
+//! public key at all. Host identity lives in per-row measurement provenance
+//! instead, where the source's measurement contexts already carry it inside
+//! descriptor identity.
+//!
+//! What that licenses instead of a host-scoped profile: a measured row may
+//! enter a **family**-keyed profile when three conditions hold together — the
+//! producing measurement's frozen protocol named that exact profile key as
+//! beneficiary *before the run*; the declaring module transcribes only what the
+//! record states and refuses every other value by name, which is the
+//! [`BoundMetalSubgroupDeclarationError::UnevidencedWidth`] pattern below; and
+//! the row's validity is `MeasuredEnvironment`, which the measurement-source
+//! constructor already makes unwidenable. A record whose protocol scoped it
+//! elsewhere composes into nothing else, ever.
+//!
+//! This declaration fails the first condition and always will: its frozen
+//! protocol pre-scoped it to a *new* M3 Pro claim over the frozen population
+//! only, before a single width was read, and no later decision can retroactively
+//! rescope a record. So the accepted model's own consequence — stated in it —
+//! is that this record stays a crate-private evidence fixture **permanently**,
+//! and the demotion above is not a holding position awaiting a decision. The
+//! standard profile reaches a subgroup row the other way: a new measurement on
+//! a current host, under a new protocol that pre-names
+//! `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1` as beneficiary.
 //!
 //! ## Compile evidence that nothing outside the crate can reach this
 //!
