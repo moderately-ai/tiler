@@ -1,0 +1,24 @@
+date_utc	2026-08-19T00:45:58Z
+os.product	macOS
+os.version	27.0
+os.build	26A5406e
+architecture	arm64
+device	Apple M4 Max
+logical_cores	14
+developer_dir	/Applications/Xcode.app/Contents/Developer
+xcode	26.6 (17F113)
+sdk.version	26.5
+sdk.build	25F70
+offline.compiler	Apple metal version 32023.883 (metalfe-32023.883)
+offline.linker	AIR-LLD 32023.883 (metalfe-32023.883) (compatible with legacy metallib linker)
+default_developer_dir	/Applications/Xcode-beta.app/Contents/Developer
+rustc	rustc 1.99.0-nightly (eff8269f7 2026-07-18)
+toolchain	nightly-2026-07-19-aarch64-apple-darwin (overridden by '/Users/tsanterre/workspace/github.com/moderately-ai/tiler/rust-toolchain.toml')
+environment.repository_base	ae7a55f2fc4d5c8b79e17074cb708a6ce4f570b3
+sweep.harness_sha256	ca32f6b049a15137dd20d18920c931f7561b0f745b99c9520b0cae178e816844
+model.harness_sha256	f7da070d81a31b9fdb69a74f8ae64c1147242175f274c00a5147bbd7088577c0
+fit.harness_sha256	45cfa10bd45a69bdb448e1a632bf8e2a8f85f024ab5536f935842b197f27da0b
+sweep.sha256	204e39664a11c1ee0e57ce6eafd4dd2ad25a2bf4d90404426cb3ed5bf25ca4c2
+host.occupancy	sole occupancy: all agent lanes drained before the timed run; nothing dispatched during it
+host.load_before	3.16 5.99 6.32
+host.load_after	2.29 5.39 6.09
