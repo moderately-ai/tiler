@@ -1,3 +1,11 @@
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the 2026-08-18 demotion below removed this module's only non-test callers — the crate-root re-export and, through it, the standalone route-gate spike — so a crate-private evidence fixture is what is left: the rows, their constant, the measured producer, the declaration, its accessors, its Metal-owned validation, and its error vocabulary are all exercised by `tests` and by nothing else in a non-test build. The population is deliberately not narrowed to `cfg(test)`: rustdoc never compiles a test-only module, and the compile evidence of external unreachability in the docs below has to be a thing rustdoc actually builds. Stated under `not(test)` rather than unconditionally, so an item the tests stop reaching is still a red build in the configuration that does reach it."
+    )
+)]
+
 //! The first evidence-backed Metal subgroup realization declaration.
 //!
 //! One value binds the atomic subgroup subject Tom accepted on 2026-08-11 to
@@ -64,8 +72,67 @@
 //! refusal, the query's phase, and the missing/orphan query contract at
 //! `build()`.
 //!
-//! Every public item here is a reviewed *draft* boundary (ADR 0074 §7 / ADR
-//! 0075): built and tested at full fidelity while Tom reviews the surface.
+//! # Why nothing here is public: the 2026-08-18 demotion
+//!
+//! This module was delivered as a draft public boundary. Tom reviewed it on
+//! 2026-08-18 and did not accept it: the objection is that
+//! `tiler.metal.macos-m3pro-apple9.msl4-0.subgroup-f32.v1` codifies a *host
+//! model name* into durable public identity vocabulary, and host model names
+//! belong in measurement provenance instead. The revised acceptance keeps the
+//! prepared-width **stage** surface (`declare_subgroup_width_query`, the
+//! loader's pre-commit refusal classes, the adapter's exact-match dispatch) and
+//! demotes this declaration to a crate-private evidence fixture, recorded on
+//! `declare-metal-subgroup-realization-facts-in-the-target-profile` under
+//! *"Accepted decision — 2026-08-18, revised after Tom's naming objection"*.
+//! The carrier ticket is
+//! `demote-the-m3-pro-subgroup-declaration-to-an-internal-evidence-fixture`.
+//!
+//! Nothing about the evidence changed, so nothing about the declaration does:
+//! the rows, the Metal-owned validation, its refusals, and the tests below are
+//! exactly what they were when the on-device demonstration ran. The profile key
+//! string is retained verbatim for the same reason — it is now an *evidence
+//! label* on a crate-private fixture rather than identity vocabulary a consumer
+//! can name, and rewriting it would falsify the retained log and the descriptor
+//! the demonstration checked. `#[non_exhaustive]` likewise stays on the error:
+//! it is inert while the enum is crate-private, and removing it would silently
+//! widen the surface that a future republication would have to re-review.
+//!
+//! **What would license a public host-scoped profile is a decision nobody has
+//! taken yet.** `decide-the-host-evidence-to-profile-composition-model` owns
+//! how single-host measured evidence composes into family-scoped profile
+//! identity — per-row execution provenance on family-keyed profiles is the
+//! candidate to beat. Until it is accepted, host-scoped evidence stays
+//! evidence, and no further host-named profile key may be minted here or
+//! anywhere else.
+//!
+//! ## Compile evidence that nothing outside the crate can reach this
+//!
+//! The crate root no longer names the declaration, so an import of it is an
+//! unresolved import rather than a privacy error — there is no such item at
+//! `tiler_build`'s root to be private about:
+//!
+//! ```compile_fail,E0432
+//! use tiler_build::BoundMetalSubgroupDeclaration;
+//! ```
+//!
+//! Its error type left with it:
+//!
+//! ```compile_fail,E0432
+//! use tiler_build::BoundMetalSubgroupDeclarationError;
+//! ```
+//!
+//! Routing around the missing re-export by naming the module path is refused
+//! as *private* rather than as absent. The two codes are two properties, which
+//! one case would conflate: E0432 says the re-export is gone, E0603 says the
+//! item is unreachable by any path. Restoring only the re-export cannot make
+//! the first pass, because a `pub use` of a `pub(crate)` item is itself E0365;
+//! publishing only the owning module leaves this case red on the item's own
+//! visibility, which is what actually holds the demotion. Both were watched
+//! failing against a perturbed subject before either was trusted:
+//!
+//! ```compile_fail,E0603
+//! use tiler_build::metal_subgroup_declaration::BoundMetalSubgroupDeclaration;
+//! ```
 //!
 //! [`BoundMetalCompileDeclaration`]: crate::BoundMetalCompileDeclaration
 
@@ -184,13 +251,13 @@ const MEASURED_PRODUCER: &str = "tiler.metal.m3pro-apple9-subgroup.measured.v1";
 
 /// One checked, versioned M3 Pro Apple9 subgroup-width declaration.
 ///
-/// Constructed only by [`Self::first_m3_pro_apple9`]: there is no public
-/// constructor taking rows, because a caller minting a subgroup fact for a
-/// subject nobody measured is exactly what the retained record's frozen
-/// protocol exists to prevent. Widening this to another device, arithmetic
-/// type, width, or transfer is a new measurement rather than a new argument.
+/// Constructed only by [`Self::first_m3_pro_apple9`]: there is no constructor
+/// taking rows, because a caller minting a subgroup fact for a subject nobody
+/// measured is exactly what the retained record's frozen protocol exists to
+/// prevent. Widening this to another device, arithmetic type, width, or
+/// transfer is a new measurement rather than a new argument.
 #[derive(Clone, Debug)]
-pub struct BoundMetalSubgroupDeclaration {
+pub(crate) struct BoundMetalSubgroupDeclaration {
     profile: TargetProfile,
     subject: SubgroupRealizationSubject,
 }
@@ -204,13 +271,13 @@ impl BoundMetalSubgroupDeclaration {
     /// rejected provenance identity, a subject the checked constructor cannot
     /// form, a Metal-evidence correspondence refusal, a refused query, or the
     /// generic builder's own row refusal.
-    pub fn first_m3_pro_apple9() -> Result<Self, BoundMetalSubgroupDeclarationError> {
+    pub(crate) fn first_m3_pro_apple9() -> Result<Self, BoundMetalSubgroupDeclarationError> {
         Self::declare(&FIRST_M3PRO_APPLE9_SUBGROUP)
     }
 
     /// Returns the checked compiler profile carrying the declared rows.
     #[must_use]
-    pub const fn profile(&self) -> &TargetProfile {
+    pub(crate) const fn profile(&self) -> &TargetProfile {
         &self.profile
     }
 
@@ -220,7 +287,7 @@ impl BoundMetalSubgroupDeclaration {
     /// carry is `self.realized_subject().width()`; deriving it anywhere else
     /// would put the number under a second authority.
     #[must_use]
-    pub const fn realized_subject(&self) -> SubgroupRealizationSubject {
+    pub(crate) const fn realized_subject(&self) -> SubgroupRealizationSubject {
         self.subject
     }
 
@@ -365,7 +432,7 @@ fn measured_source(
 /// Why the bound M3 Pro subgroup declaration could not be assembled.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum BoundMetalSubgroupDeclarationError {
+pub(crate) enum BoundMetalSubgroupDeclarationError {
     /// The declared profile key is not a valid target-profile key.
     ProfileKey(TargetProfileKeyError),
     /// A producer, compiler-role, compiler-build, or execution-environment
