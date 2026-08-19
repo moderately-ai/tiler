@@ -5,7 +5,7 @@ status: in-progress
 priority: p2
 dependencies: []
 related: [keep-a-module-size-and-complexity-census-with-a-split-queue]
-scopes: [implementation/artifact, contracts/navigation, research/documentation]
+scopes: [implementation/artifact, implementation/frontend, contracts/navigation, research/documentation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [refactor, maintainability, artifact, tests]
@@ -40,9 +40,13 @@ New tests, assertion changes, production-code edits, and other crates' test mono
 
 Both directories land with identical test populations, all gates green, and the inventory recorded.
 
-## Two scopes added for the citation repairs the split forced
+## Three scopes added for the path pins the split forced
 
-`contracts/navigation` and `research/documentation` were added because deleting `crates/tiler-artifact/src/program/codec/tests.rs` rots every line-number citation into it, and `make citations` gates on those resolving. Four citations were affected and all four are repaired here; none of them is a claim about the artifact crate's behaviour, so the added scopes are scheduling metadata rather than an expansion of the outcome.
+`contracts/navigation`, `research/documentation`, and `implementation/frontend` were added because moving a file that other checks pin **by path** makes those checks fail. Each repair below is a path update under an unchanged claim, so the added scopes are scheduling metadata rather than an expansion of the outcome.
+
+`implementation/frontend` — `crates/tiler/tests/workspace_unsafe_sites.rs` pins the exact private `macro_rules!` producer population of the whole workspace by `(path, name)`, and one of its seventeen entries was `codec/tests.rs`'s `exhaustive_enum_population`. The macro now lives beside its only two invocations in `crates/tiler-artifact/src/program/codec/tests/vocabularies.rs`, and the pin names that path. Nothing else in that inventory moves: the population is still seventeen, the four admitted unsafe sites are unchanged, and the invocations are admitted again because the definition they resolve to is pinned. **This does not show up in `cargo nextest run -p tiler-artifact`** — only a workspace run reaches it, which is how it was found.
+
+The remaining two are citation repairs. Deleting `crates/tiler-artifact/src/program/codec/tests.rs` rots every line-number citation into it, and `make citations` gates on those resolving. Four citations were affected and all four are repaired here; none is a claim about the artifact crate's behaviour.
 
 - `docs/roadmap.md` pinned `a_producer_built_bf16_artifact_round_trips_and_re_derives_its_identity` to `codec/tests.rs`:2584. **That line number was already wrong at the base**: the test began at line 4131 and line 2584 was inside `a_partial_binding_window_survives_encode_and_decode`. It only resolved because the file was long enough. Repaired to the anchor form against the test's new home, `crates/tiler-artifact/src/program/codec/tests/carriers.rs`.
 - Three occurrences of `codec/tests.rs`:541 under `docs/research/documentation/ticket-audit-2026-08-10/` are *quotations of a retired citation* inside a repair record and its report — each sentence says the citation was replaced as stale. They are re-spelled in the shape `check-citations.sh` reserves for exactly that case: the path in a code span, the retired line number as a bare `:541` suffix outside it, so a quoted retired citation is no longer demanded to resolve. No claim changed.
