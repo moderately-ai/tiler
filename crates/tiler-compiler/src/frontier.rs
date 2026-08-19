@@ -1364,6 +1364,23 @@ pub enum StrategyDeclineCause {
         /// Stable code naming the missing policy family.
         policy: &'static str,
     },
+    /// The operation's declared algebraic maximum withholds a freedom the
+    /// strategy consumes.
+    ///
+    /// The algebraic half of ADR 0014's two-fact legality rule, distinct from
+    /// [`Self::NumericalPermissionRefused`] by its source: this cause reads the
+    /// *operation's* declaration — for the governed contraction, the reduction
+    /// descriptor's order-freedom maxima, which the 2026-08-18
+    /// algebraic-authority acceptance fixes as the fold's algebraic fact —
+    /// while the numerical cause reads the caller's resolved ceiling. The two
+    /// sources are reported distinctly and never collapsed into one verdict;
+    /// neither fact can substitute for the other. Lane-strided contraction
+    /// membership is refused under this cause until a future key generation
+    /// declares fold permutation.
+    AlgebraicCapabilityUnsupported {
+        /// The canonical key of the withheld dimension.
+        dimension: &'static str,
+    },
 }
 
 impl StrategyDeclineCause {
@@ -1372,6 +1389,7 @@ impl StrategyDeclineCause {
     pub const fn reason(self) -> &'static str {
         match self {
             Self::NumericalPermissionRefused { .. } => "numerical-permission-refused",
+            Self::AlgebraicCapabilityUnsupported { .. } => "algebraic-capability-unsupported",
             Self::NoAdmissibleShape { rule, .. }
             | Self::Unrepresentable { rule }
             | Self::UnspellableRegion { rule, .. }
@@ -1383,13 +1401,15 @@ impl StrategyDeclineCause {
     ///
     /// **Appends-only, carried by per-tag injectivity at this site rather than
     /// by a green gate.** Each variant writes a distinct leading tag byte —
-    /// `0x01`, `0x02`, `0x03`, `0x04`, `0x05` — and no variant writes another's,
-    /// so two causes can share an encoding only if one variant's payload equals
-    /// its own for two distinct values. Within `0x04` the rule is
-    /// length-prefixed and the count is a fixed four-byte field, so the payload
-    /// is a bijection onto `(rule, covered)`. `0x05` is the missing-policy
-    /// case. `0x05` was unused before this variant existed, so every previously
-    /// encoded cause keeps its exact bytes and no pinned identity moves.
+    /// `0x01`, `0x02`, `0x03`, `0x04`, `0x05`, `0x06` — and no variant writes
+    /// another's, so two causes can share an encoding only if one variant's
+    /// payload equals its own for two distinct values. Within `0x04` the rule
+    /// is length-prefixed and the count is a fixed four-byte field, so the
+    /// payload is a bijection onto `(rule, covered)`. `0x05` is the
+    /// missing-policy case. `0x06` is the algebraic case; it was unused before
+    /// that variant existed, so every previously encoded cause keeps its exact
+    /// bytes and no pinned identity moves — the same append precedent `0x05`
+    /// set.
     fn encode(self, output: &mut Vec<u8>) {
         match self {
             Self::NumericalPermissionRefused { dimension } => {
@@ -1413,6 +1433,10 @@ impl StrategyDeclineCause {
             Self::TargetPolicyUndeclared { policy } => {
                 output.push(0x05);
                 push_slice(output, policy.as_bytes());
+            }
+            Self::AlgebraicCapabilityUnsupported { dimension } => {
+                output.push(0x06);
+                push_slice(output, dimension.as_bytes());
             }
         }
     }

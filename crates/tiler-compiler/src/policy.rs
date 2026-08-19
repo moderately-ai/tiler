@@ -541,8 +541,8 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
             consumes: SOFTMAX,
         },
         OperationNumericalCapability {
-            key: "tiler::strict-tensor-contraction-f32@1",
-            operation: tiler_ir::semantic::strict_tensor_contraction_f32_op,
+            key: "tiler::tensor-contraction-f32@1",
+            operation: tiler_ir::semantic::tensor_contraction_f32_op,
             consumes: TENSOR_CONTRACTION,
         },
         // The two structural families consume nothing, and the reason is not
@@ -1568,7 +1568,7 @@ mod tests {
             "tiler::rms-norm-f32@1",
             "tiler::softmax-f32@1",
             "tiler::strict-serial-sum-f32@1",
-            "tiler::strict-tensor-contraction-f32@1",
+            "tiler::tensor-contraction-f32@1",
         ];
         let mut observed: Vec<&str> = operation_capabilities()
             .iter()

@@ -744,6 +744,13 @@ fn record_declined_strategy(
         crate::frontier::StrategyDeclineCause::NumericalPermissionRefused { .. } => {
             ExplainStage::NumericalLegality
         }
+        // The algebraic half of ADR 0014's two-fact rule: the failing source is
+        // the operation's own declared capability, so it reports under
+        // capability resolution rather than under the caller's numerical
+        // contract — the two sources are never collapsed into one verdict.
+        crate::frontier::StrategyDeclineCause::AlgebraicCapabilityUnsupported { .. } => {
+            ExplainStage::CapabilityResolution
+        }
         crate::frontier::StrategyDeclineCause::NoAdmissibleShape { .. }
         | crate::frontier::StrategyDeclineCause::Unrepresentable { .. }
         // A missing region spelling is a scheduling-vocabulary fact, exactly as
@@ -776,6 +783,12 @@ fn record_declined_strategy(
                         FactValue::Identity(crate::explain::SubjectKey::new(dimension)?),
                     )?)?
                 }
+                crate::frontier::StrategyDeclineCause::AlgebraicCapabilityUnsupported {
+                    dimension,
+                } => assessment.with_fact(ExplainFact::new(
+                    "withheld-dimension",
+                    FactValue::Identity(crate::explain::SubjectKey::new(dimension)?),
+                )?)?,
                 crate::frontier::StrategyDeclineCause::NoAdmissibleShape { extent, .. } => {
                     assessment.with_fact(ExplainFact::new("extent", FactValue::Count(extent))?)?
                 }

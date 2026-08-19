@@ -184,6 +184,7 @@ fn classify_empty_frontier(frontier: &ImplementationFrontier) -> EmptyFrontierFa
             crate::frontier::FrontierRejection::StrategyDeclined {
                 cause:
                     crate::frontier::StrategyDeclineCause::NumericalPermissionRefused { .. }
+                    | crate::frontier::StrategyDeclineCause::AlgebraicCapabilityUnsupported { .. }
                     | crate::frontier::StrategyDeclineCause::NoAdmissibleShape { .. }
                     | crate::frontier::StrategyDeclineCause::Unrepresentable { .. }
                     | crate::frontier::StrategyDeclineCause::TargetPolicyUndeclared { .. },

@@ -73,7 +73,7 @@ use tiler_ir::semantic::{
     OpKey, OperationEffect, ProviderIdentity, SemanticProgram, add_bf16_op, add_f32_op,
     broadcast_f32_op, concatenate_f32_op, constant_bf16_op, constant_f32_op, multiply_bf16_op,
     multiply_f32_op, reindex_f32_op, rms_norm_f32_op, silu_f32_op, slice_f32_op, softmax_f32_op,
-    strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
+    strict_serial_sum_f32_op, tensor_contraction_f32_op,
 };
 
 use crate::region::{
@@ -193,7 +193,7 @@ enum FusionOperationRole {
     ///
     /// `tiler::rms-norm-f32@1` squares each contributor before the fold and then
     /// divides, adds `eps`, takes a reciprocal square root, and applies two
-    /// multiplies after it. `tiler::strict-tensor-contraction-f32@1` carries the
+    /// multiplies after it. `tiler::tensor-contraction-f32@1` carries the
     /// prologue alone: each contributor is the separately rounded binary32
     /// product of two operand elements, and the fold over the canonically
     /// ordered contracted index space is followed by nothing. Every reduction
@@ -554,7 +554,7 @@ impl FusionNumericalCapabilities {
         // `is_exact_governed_same_family_pointwise` below, where this family is
         // the case that closure was written for.
         roles.insert(
-            strict_tensor_contraction_f32_op(),
+            tensor_contraction_f32_op(),
             FusionOperationRole::PrologueCarryingOrderedReduction,
         );
         // The three BF16 families, decided from their own declared record.
@@ -1446,7 +1446,7 @@ fn derive_obligations(
     // multiply-only family, with no reduction or other member, prove there is
     // no multiply-plus-add contraction opportunity. The governed vocabulary
     // holds one family that is contraction-capable within a single operation —
-    // `tiler::strict-tensor-contraction-f32@1`, whose per-contributor step is
+    // `tiler::tensor-contraction-f32@1`, whose per-contributor step is
     // `accumulator + a * b` — so the closure guards a live case and not only a
     // hypothetical one.
     obligations.push(if is_exact_governed_same_family_pointwise(members) {
@@ -1633,7 +1633,7 @@ fn is_exact_governed_same_family_pointwise(members: &[MemberDerivation]) -> bool
             // puts a multiply next to an add — `u + eps` after `a / N` — so a
             // region containing one has a contraction opportunity that this
             // closed proof cannot rule out. For
-            // `tiler::strict-tensor-contraction-f32@1` the adjacency is not in an
+            // `tiler::tensor-contraction-f32@1` the adjacency is not in an
             // epilogue at all but in the per-contributor step itself:
             // `accumulator + a * b` is a multiply feeding an add, which is
             // precisely the shape ADR 0015's permission is about. So this family
@@ -3339,7 +3339,7 @@ mod contraction_role_tests {
         ContractionIndex, ContractionIndexStructure, F32, F32Multiply, F32Softmax,
         F32TensorContraction, InputKey, OutputKey, SemanticProgram, SemanticProgramBuilder,
         add_f32_op, multiply_f32_op, rms_norm_f32_op, softmax_f32_op, strict_serial_sum_f32_op,
-        strict_tensor_contraction_f32_op,
+        tensor_contraction_f32_op,
     };
     use tiler_ir::shape::{Axis, Shape};
 
@@ -3404,7 +3404,7 @@ mod contraction_role_tests {
     fn the_contraction_resolves_to_the_prologue_carrying_role() {
         let capabilities = FusionNumericalCapabilities::governed();
         assert_eq!(
-            capabilities.classify(&strict_tensor_contraction_f32_op()),
+            capabilities.classify(&tensor_contraction_f32_op()),
             Some(FusionOperationRole::PrologueCarryingOrderedReduction)
         );
         assert_eq!(
@@ -3503,14 +3503,14 @@ mod contraction_role_tests {
         assert!(proof.reached_definitions().iter().any(|reached| {
             reached
                 .normative_definition()
-                .contains("strict-tensor-contraction-f32")
+                .contains("tensor-contraction-f32")
         }));
 
         let perturbed = derive_fusion_legality(
             &program,
             budgets,
             contract,
-            &FusionNumericalCapabilities::governed_without(&strict_tensor_contraction_f32_op()),
+            &FusionNumericalCapabilities::governed_without(&tensor_contraction_f32_op()),
             &formation,
             &candidate,
         )
@@ -3574,7 +3574,7 @@ mod contraction_role_tests {
         let with_contraction = contraction_obligation(&[
             member(
                 FusionOperationRole::PrologueCarryingOrderedReduction,
-                strict_tensor_contraction_f32_op(),
+                tensor_contraction_f32_op(),
             ),
             member(FusionOperationRole::ElementwiseArithmetic, add_f32_op()),
         ]);
@@ -3694,7 +3694,7 @@ mod contraction_role_tests {
                 + structure.coordinate_relations
         );
 
-        for excluded in [strict_tensor_contraction_f32_op(), softmax_f32_op()] {
+        for excluded in [tensor_contraction_f32_op(), softmax_f32_op()] {
             let perturbed = derive_fusion_legality(
                 &program,
                 budgets,

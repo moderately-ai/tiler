@@ -41,7 +41,7 @@ use tiler_ir::semantic::{
     concatenate_f32_op, concatenate_result_shape, constant_bf16_op, constant_f32_op,
     dequantize_strict_affine_op, multiply_bf16_op, multiply_f32_op, reindex_f32_op,
     rms_norm_f32_op, silu_f32_op, slice_f32_op, strict_serial_sum_f32_op,
-    strict_tensor_contraction_f32_op,
+    tensor_contraction_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape, SourcedExtent};
 
@@ -409,8 +409,8 @@ pub(crate) fn governed_index_access_capabilities()
             implementation: Arc::new(GovernedSliceF32),
         },
         GovernedIndexAccess {
-            provider: governed_provider("strict-tensor-contraction-f32"),
-            operation: strict_tensor_contraction_f32_op(),
+            provider: governed_provider("tensor-contraction-f32"),
+            operation: tensor_contraction_f32_op(),
             signature: LoweringSignature::new([f32_type.clone(), f32_type.clone()], [f32_type])?,
             // The union over shapes, like the serial sum's: a contracted space
             // with one point reaches only the product, and a longer one reaches
@@ -1469,7 +1469,7 @@ fn folded_extent_bits(points: u64) -> Result<u32, LoweringEmitError> {
     Ok(extent.to_bits())
 }
 
-/// Emits the region realizing one `tiler::strict-tensor-contraction-f32@1`
+/// Emits the region realizing one `tiler::tensor-contraction-f32@1`
 /// occurrence.
 ///
 /// The `direct` realization: one iteration point per output element, folding its
@@ -2613,7 +2613,7 @@ mod tests {
         add_f32_op, broadcast_f32_op, concatenate_f32_axis_attribute, concatenate_f32_op,
         constant_f32_op, dequantize_strict_affine_op, multiply_f32_op, reindex_f32_op,
         rms_norm_f32_eps_attribute, rms_norm_f32_op, slice_f32_op, strict_serial_sum_f32_op,
-        strict_tensor_contraction_f32_op,
+        tensor_contraction_f32_op,
     };
     use tiler_ir::shape::{
         BindingSource, EXTENT_PHASE_CEILING, ExtentRelation, ExtentTerm, FactProvenance,
@@ -4719,7 +4719,7 @@ mod tests {
         result: Shape,
     ) -> IndexRefinement {
         refine(
-            strict_tensor_contraction_f32_op(),
+            tensor_contraction_f32_op(),
             vec![
                 OccurrenceOperand::new(OccurrenceValueId(0), f32_type(), left),
                 OccurrenceOperand::new(OccurrenceValueId(1), f32_type(), right),
