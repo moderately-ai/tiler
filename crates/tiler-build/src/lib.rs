@@ -1,3 +1,11 @@
+// `variant_count` sizes `MetalProfileMeasurementPopulation::ALL` in
+// `metal_declaration`, so a population added to the enum and not to the list is
+// an array-length error at the declaration rather than a census that silently
+// shrinks while still reporting no collision. Unconditional rather than
+// test-gated because the sized array is production data the per-population
+// source partition walks; the same mechanism sizes the `ALL` arrays in
+// `tiler-metal-aot`.
+#![feature(variant_count)]
 #![doc(test(attr(forbid(unsafe_code))))]
 //! Build-time compilation, artifact, and cache orchestration for Tiler.
 //!
@@ -69,7 +77,6 @@ mod metal_cache;
 mod metal_declaration;
 mod metal_payload;
 mod metal_plan;
-mod metal_profile;
 mod metal_subgroup_declaration;
 mod payload_cache;
 mod plan_artifact;
@@ -84,12 +91,12 @@ pub use metal_cache::{
 };
 pub use metal_declaration::{
     BoundMetalCompileDeclaration, BoundMetalDeclarationError, MetalPlanProfileMismatch,
+    MetalProfileMeasurementPopulation,
 };
 pub use metal_payload::{MetalPayloadFact, MetalPayloadMismatch, validate_prepared_metal_payload};
 pub use metal_plan::{
     AcceptedMetalPlanArtifact, MetalPlanBuildError, accept_or_publish_metal_plan,
 };
-pub use metal_profile::{MetalF32TargetProfileError, declare_metal_f32_subnormal_behaviour};
 pub use payload_cache::{
     AcceptedArtifact, CompiledPayloads, DeclaredPayload, DeliveredPayloadCacheError,
     DeliveredPayloadProtocolError, accept_or_publish_delivered_payload_artifact,

@@ -10,8 +10,9 @@ use tiler_ir::program::abi::AvailabilityPhase;
 
 use crate::target::feasibility::{FactAuthority, FactValidityScope};
 use crate::target::honourability::{
-    CompilerBuildIdentity, CompilerBuildRole, ExecutionEnvironmentIdentity, FactEvidenceBasis,
-    MeasurementContext, NumericalRefusalEvidence, ProvenanceIdentity,
+    CompileProfileMeasurementContext, CompilerBuildIdentity, CompilerBuildRole,
+    ExecutionEnvironmentIdentity, FactEvidenceBasis, MeasurementContext, NumericalRefusalEvidence,
+    ProvenanceIdentity,
 };
 use crate::target::key::TargetProfileKey;
 
@@ -313,12 +314,81 @@ impl<'a> TargetMeasurementContexts<'a> {
     }
 }
 
+/// One compile-profile measurement context, as read back.
+///
+/// Beside the builds and environment it names the exact backend compilation
+/// selection the measured facts were produced under — the association a reader
+/// comparing a refusal against its own deployment needs. There is deliberately
+/// no zero-information borrowed identity wrapper: the selection reads back as
+/// its exact bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TargetCompileProfileMeasurementContextReference<'a>(
+    &'a CompileProfileMeasurementContext,
+);
+
+impl<'a> TargetCompileProfileMeasurementContextReference<'a> {
+    /// Returns the compiler builds participating in this context, in canonical
+    /// order. Never empty: a context with no build is refused at construction.
+    #[must_use]
+    pub fn compiler_builds(&self) -> TargetCompilerBuilds<'a> {
+        TargetCompilerBuilds(self.0.compiler_builds())
+    }
+
+    /// Returns the environment in which those builds ran.
+    #[must_use]
+    pub const fn environment(&self) -> TargetExecutionEnvironmentReference<'a> {
+        TargetExecutionEnvironmentReference(self.0.environment())
+    }
+
+    /// Returns the exact backend compilation-selection bytes.
+    #[must_use]
+    pub fn compilation_selection(&self) -> &'a [u8] {
+        self.0.compilation_selection().as_bytes()
+    }
+}
+
+/// The compile-profile contexts one measured fact rests on, canonical order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TargetCompileProfileMeasurementContexts<'a>(&'a [CompileProfileMeasurementContext]);
+
+impl<'a> TargetCompileProfileMeasurementContexts<'a> {
+    /// Returns how many contexts the fact rests on.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns whether the set is empty. It never is for a measured fact.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Returns the context at `index`, or [`None`] past the end.
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<TargetCompileProfileMeasurementContextReference<'a>> {
+        self.0
+            .get(index)
+            .map(TargetCompileProfileMeasurementContextReference)
+    }
+
+    /// Iterates the contexts in canonical order.
+    pub fn iter(
+        &self,
+    ) -> impl ExactSizeIterator<Item = TargetCompileProfileMeasurementContextReference<'a>> {
+        self.0
+            .iter()
+            .map(TargetCompileProfileMeasurementContextReference)
+    }
+}
+
 /// Why the authority may make the fact behind one refusal.
 ///
 /// A normative guarantee and an empirical measurement are different claims, and
-/// this is where the difference is visible: only the measured arm can name the
+/// this is where the difference is visible: only the measured arms can name the
 /// compiler builds and execution environments a reader would compare against
-/// its own deployment.
+/// its own deployment, and only the compile-profile arm carries an exact
+/// compilation selection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum TargetNumericalEvidenceBasis<'a> {
@@ -332,10 +402,17 @@ pub enum TargetNumericalEvidenceBasis<'a> {
         /// The versioned normative reference cited.
         reference: TargetProvenanceReference<'a>,
     },
-    /// One or more exact, independently readable measurement contexts.
+    /// One or more exact, independently readable post-compile measurement
+    /// contexts.
     Measurement {
         /// The contexts measured, in canonical order. Never empty.
         contexts: TargetMeasurementContexts<'a>,
+    },
+    /// One or more exact compile-profile measurement contexts, each carrying
+    /// its required backend compilation selection.
+    CompileProfileMeasurement {
+        /// The contexts measured, in canonical order. Never empty.
+        contexts: TargetCompileProfileMeasurementContexts<'a>,
     },
 }
 
@@ -394,6 +471,11 @@ impl<'a> TargetNumericalRefusalEvidence<'a> {
             FactEvidenceBasis::Measurement { contexts } => {
                 TargetNumericalEvidenceBasis::Measurement {
                     contexts: TargetMeasurementContexts(contexts),
+                }
+            }
+            FactEvidenceBasis::CompileProfileMeasurement { contexts } => {
+                TargetNumericalEvidenceBasis::CompileProfileMeasurement {
+                    contexts: TargetCompileProfileMeasurementContexts(contexts),
                 }
             }
         }

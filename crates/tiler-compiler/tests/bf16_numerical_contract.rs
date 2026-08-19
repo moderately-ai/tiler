@@ -52,9 +52,10 @@ use tiler_compiler::session::{
 };
 use tiler_compiler::target::{
     DTypeDispatchability, DeviceAddressWidth, IndexArithmeticSupport, ScalarArithmetic,
-    ScalarSupport, TargetCompileProfileMeasurementSource, TargetCompilerBuild, TargetCompilerRole,
-    TargetExecutionEnvironment, TargetFactProducerIdentity, TargetMeasurementContext,
-    TargetProfile, TargetProfileBuilder, TargetProfileKey, TargetRequest,
+    ScalarSupport, TargetCompilationSelectionIdentity, TargetCompileProfileMeasurementContext,
+    TargetCompileProfileMeasurementSource, TargetCompilerBuild, TargetCompilerRole,
+    TargetExecutionEnvironment, TargetFactProducerIdentity, TargetProfile, TargetProfileBuilder,
+    TargetProfileKey, TargetRequest,
 };
 use tiler_ir::kernel::{KernelType, lower_scheduled_region};
 use tiler_ir::schedule::{
@@ -122,7 +123,12 @@ fn measurement() -> TargetCompileProfileMeasurementSource {
     TargetCompileProfileMeasurementSource::new(
         TargetFactProducerIdentity::new("test.bf16-compile-profile-probe.v1".to_owned(), 1)
             .unwrap(),
-        [TargetMeasurementContext::new([compiler], environment).unwrap()],
+        [TargetCompileProfileMeasurementContext::new(
+            [compiler],
+            environment,
+            TargetCompilationSelectionIdentity::from_bytes(b"test-selection.v1").unwrap(),
+        )
+        .unwrap()],
     )
     .unwrap()
 }

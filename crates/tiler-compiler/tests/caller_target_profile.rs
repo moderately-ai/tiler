@@ -11,7 +11,8 @@ use tiler_compiler::session::{
 use tiler_compiler::target::{
     DTypeDispatchability, DTypeDispatchabilityResolution, DeviceAddressWidth,
     ElementaryRealization, IndexArithmeticSupport, MAX_TARGET_PROFILES_PER_REQUEST,
-    MeasuredFactAuthority, ScalarArithmetic, ScalarSupport, TargetCompileProfileMeasurementSource,
+    MeasuredFactAuthority, ScalarArithmetic, ScalarSupport, TargetCompilationSelectionIdentity,
+    TargetCompileProfileMeasurementContext, TargetCompileProfileMeasurementSource,
     TargetCompilerBuild, TargetCompilerRole, TargetCompilerRoleReference,
     TargetExecutionEnvironment, TargetFactAuthority, TargetFactProducerIdentity, TargetFactSource,
     TargetFactValidityScope, TargetMeasurementContext, TargetNormativeReferenceIdentity,
@@ -106,7 +107,12 @@ fn measurement_on(
         .hardware("test-hardware".to_owned())
         .build()
         .unwrap();
-    let context = TargetMeasurementContext::new([compiler], environment).unwrap();
+    let context = TargetCompileProfileMeasurementContext::new(
+        [compiler],
+        environment,
+        TargetCompilationSelectionIdentity::from_bytes(b"test-selection.v1").unwrap(),
+    )
+    .unwrap();
     TargetCompileProfileMeasurementSource::new(
         TargetFactProducerIdentity::new("test.compile-profile-probe.v1".to_owned(), 1).unwrap(),
         [context],
@@ -648,8 +654,9 @@ fn a_declared_refusal_exposes_its_measured_evidence_and_provenance_alone_moves_i
     assert_eq!(evidence.authority_identity().revision(), 1);
     assert_eq!(evidence.target_profile(), baseline.target_profile());
 
-    let TargetNumericalEvidenceBasis::Measurement { contexts } = evidence.basis() else {
-        panic!("a measured declaration rests on measurement contexts");
+    let TargetNumericalEvidenceBasis::CompileProfileMeasurement { contexts } = evidence.basis()
+    else {
+        panic!("a compile-profile measured declaration rests on compile-profile contexts");
     };
     assert_eq!(contexts.len(), 1);
     let context = contexts.get(0).unwrap();
@@ -665,6 +672,7 @@ fn a_declared_refusal_exposes_its_measured_evidence_and_provenance_alone_moves_i
     assert_eq!(environment.platform_build(), "build-1");
     assert_eq!(environment.architecture(), "test-architecture");
     assert_eq!(environment.hardware(), "test-hardware");
+    assert_eq!(context.compilation_selection(), b"test-selection.v1");
 
     // Only the measurement moves. What the caller required, what the target
     // declares, and what it honours instead are unchanged, and the refusal is

@@ -1330,6 +1330,123 @@ pub const MAX_PROVENANCE_TEXT_BYTES: usize = 256;
 pub const MAX_COMPILER_BUILDS_PER_CONTEXT: usize = 16;
 /// Maximum measurement contexts admitted by one evidence row.
 pub const MAX_MEASUREMENT_CONTEXTS_PER_SOURCE: usize = 64;
+/// Maximum byte length of one backend-owned compilation-selection identity.
+///
+/// Exactly the existing complete-target-descriptor ceiling, not a new narrower
+/// policy: the profile builder's cumulative descriptor limit remains the final
+/// authority when several contexts and sources are combined.
+pub const MAX_COMPILATION_SELECTION_IDENTITY_BYTES: usize = 64 * 1_024;
+
+/// Why a compilation-selection identity was refused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum CompilationSelectionIdentityError {
+    /// The identity carried no bytes. Absence is not a selection.
+    Empty,
+    /// The identity exceeded [`MAX_COMPILATION_SELECTION_IDENTITY_BYTES`].
+    TooLong {
+        /// Actual byte length offered.
+        actual: usize,
+        /// Maximum admitted byte length.
+        max: usize,
+    },
+}
+
+impl fmt::Display for CompilationSelectionIdentityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl Error for CompilationSelectionIdentityError {}
+
+/// The exact backend-owned canonical bytes of one compilation selection.
+///
+/// Opaque to this crate on purpose: the producing backend owns the grammar, and
+/// the generic layers only validate the envelope, frame, compare, retain, and
+/// expose the bytes. There is no `Option`, `Default`, empty sentinel, implicit
+/// governed selection, or conversion from a target profile — a compile-profile
+/// measurement context cannot exist without exactly one admitted identity.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct CompilationSelectionIdentity(Box<[u8]>);
+
+impl CompilationSelectionIdentity {
+    /// Admits exact selection bytes.
+    ///
+    /// Empty input and the `64 KiB + 1` bound are checked before `Box::from`,
+    /// so proportional allocation occurs only after admission.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompilationSelectionIdentityError::Empty`] for no bytes and
+    /// [`CompilationSelectionIdentityError::TooLong`] past the ceiling.
+    pub fn from_bytes(value: impl AsRef<[u8]>) -> Result<Self, CompilationSelectionIdentityError> {
+        let value = value.as_ref();
+        if value.is_empty() {
+            return Err(CompilationSelectionIdentityError::Empty);
+        }
+        if value.len() > MAX_COMPILATION_SELECTION_IDENTITY_BYTES {
+            return Err(CompilationSelectionIdentityError::TooLong {
+                actual: value.len(),
+                max: MAX_COMPILATION_SELECTION_IDENTITY_BYTES,
+            });
+        }
+        Ok(Self(Box::from(value)))
+    }
+
+    /// The exact admitted bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+/// The authority class of one post-compile measured fact.
+///
+/// The four authorities an ordinary measurement may claim, each deriving its
+/// one coherent phase/authority/validity triple. Callers cannot supply the
+/// three coordinates independently, which is what closes the phase-laundering
+/// route the raw constructors used to leave open.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum PostCompileMeasurementAuthority {
+    /// Evidence read from a produced artifact.
+    ArtifactEvidence,
+    /// Evidence observed from a live device runtime.
+    DeviceRuntime,
+    /// Evidence observed after a kernel or pipeline was prepared.
+    PreparedKernel,
+    /// Evidence observed for one concrete launch.
+    LaunchInstance,
+}
+
+impl PostCompileMeasurementAuthority {
+    /// The one coherent phase/authority/validity triple this authority derives.
+    const fn triple(self) -> (AvailabilityPhase, FactAuthority, FactValidityScope) {
+        match self {
+            Self::ArtifactEvidence => (
+                AvailabilityPhase::ArtifactEvidence,
+                FactAuthority::ArtifactEvidence,
+                FactValidityScope::PreparedArtifact,
+            ),
+            Self::DeviceRuntime => (
+                AvailabilityPhase::LiveDevicePreflight,
+                FactAuthority::DeviceRuntime,
+                FactValidityScope::DeviceInstance,
+            ),
+            Self::PreparedKernel => (
+                AvailabilityPhase::PreparedKernelPreflight,
+                FactAuthority::PreparedKernel,
+                FactValidityScope::PreparedArtifact,
+            ),
+            Self::LaunchInstance => (
+                AvailabilityPhase::LaunchPreflight,
+                FactAuthority::LaunchInstance,
+                FactValidityScope::LaunchInstance,
+            ),
+        }
+    }
+}
 
 /// A versioned identity naming an authority or governed guarantee.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -1768,6 +1885,135 @@ impl MeasurementContext {
     }
 }
 
+/// One compile-profile measurement: exact compiler builds, the environment they
+/// executed in, and the exact backend compilation selection that produced the
+/// measured facts.
+///
+/// Distinct from [`MeasurementContext`] by decision rather than by accident:
+/// compile-profile and post-compile measurement are different typed routes, a
+/// later-phase context cannot carry or be asked for a compilation selection,
+/// and an invalid cross-phase association is unrepresentable rather than
+/// checked.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct CompileProfileMeasurementContext {
+    compiler_builds: Vec<CompilerBuildIdentity>,
+    environment: ExecutionEnvironmentIdentity,
+    compilation_selection: CompilationSelectionIdentity,
+}
+
+impl CompileProfileMeasurementContext {
+    /// Pairs a compiler-build set and environment with the one required
+    /// compilation selection, canonicalizing the build order exactly as
+    /// [`MeasurementContext::new`] does.
+    #[must_use]
+    pub fn new(
+        mut compiler_builds: Vec<CompilerBuildIdentity>,
+        environment: ExecutionEnvironmentIdentity,
+        compilation_selection: CompilationSelectionIdentity,
+    ) -> Self {
+        compiler_builds.sort_by_key(CompilerBuildIdentity::canonical_bytes);
+        Self {
+            compiler_builds,
+            environment,
+            compilation_selection,
+        }
+    }
+
+    /// Whether this context is well formed and complete.
+    ///
+    /// The selection needs no separate validity clause: [`CompilationSelectionIdentity::from_bytes`]
+    /// is its only constructor, so an admitted context cannot hold an empty or
+    /// over-ceiling identity.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        !self.compiler_builds.is_empty()
+            && self.compiler_builds.len() <= MAX_COMPILER_BUILDS_PER_CONTEXT
+            && self
+                .compiler_builds
+                .iter()
+                .all(CompilerBuildIdentity::is_valid)
+            && strictly_increasing(
+                &self.compiler_builds,
+                CompilerBuildIdentity::canonical_bytes,
+            )
+            && self.environment.is_valid()
+    }
+
+    /// The canonically ordered compiler builds.
+    #[must_use]
+    pub fn compiler_builds(&self) -> &[CompilerBuildIdentity] {
+        &self.compiler_builds
+    }
+
+    /// The execution environment.
+    #[must_use]
+    pub const fn environment(&self) -> &ExecutionEnvironmentIdentity {
+        &self.environment
+    }
+
+    /// The exact backend compilation selection that produced the facts.
+    #[must_use]
+    pub const fn compilation_selection(&self) -> &CompilationSelectionIdentity {
+        &self.compilation_selection
+    }
+
+    /// Appends this context's canonical bytes.
+    ///
+    /// The selection is last so the existing build/environment prefix remains
+    /// one grammar and the new association is context-local.
+    pub fn encode(&self, bytes: &mut Vec<u8>) {
+        let Self {
+            compiler_builds,
+            environment,
+            compilation_selection,
+        } = self;
+        push_len(bytes, compiler_builds.len());
+        for build in compiler_builds {
+            build.encode(bytes);
+        }
+        environment.encode(bytes);
+        push_slice(bytes, compilation_selection.as_bytes());
+    }
+
+    /// Renders this context into an explanation.
+    ///
+    /// The existing `env=...;builds=...` spelling, then the selection as two
+    /// lowercase hexadecimal digits per byte: exact and readable, so a reader of
+    /// the rendered trace and a reader of the identity bytes see the same claim.
+    pub fn render(&self, output: &mut String) {
+        use std::fmt::Write as _;
+        let Self {
+            compiler_builds,
+            environment,
+            compilation_selection,
+        } = self;
+        output.push_str("env=");
+        environment.render(output);
+        output.push_str(";builds=");
+        for (index, build) in compiler_builds.iter().enumerate() {
+            if index != 0 {
+                output.push(',');
+            }
+            build.render(output);
+        }
+        output.push_str(";compilation-selection=");
+        for byte in compilation_selection.as_bytes() {
+            let _ = write!(output, "{byte:02x}");
+        }
+    }
+
+    /// This context's canonical bytes, as a comparable key.
+    ///
+    /// The complete canonical bytes including the selection, so two contexts
+    /// differing only in selection sort and deduplicate as two.
+    #[must_use]
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.encode(&mut bytes);
+        bytes
+    }
+}
+
 /// Why the authority may make the fact.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum FactEvidenceBasis {
@@ -1782,10 +2028,17 @@ pub enum FactEvidenceBasis {
         /// The versioned external reference cited.
         reference: ProvenanceIdentity,
     },
-    /// One or more exact, independently readable measurement contexts.
+    /// One or more exact, independently readable post-compile measurement
+    /// contexts.
     Measurement {
         /// The canonically ordered measurement contexts.
         contexts: Vec<MeasurementContext>,
+    },
+    /// One or more exact compile-profile measurement contexts, each carrying
+    /// its required backend compilation selection.
+    CompileProfileMeasurement {
+        /// The canonically ordered compile-profile measurement contexts.
+        contexts: Vec<CompileProfileMeasurementContext>,
     },
 }
 
@@ -1794,13 +2047,15 @@ impl FactEvidenceBasis {
     ///
     /// Deliberately not in declaration order: `ExternalGuarantee` carries `0x03`
     /// because it was inserted after `0x01` and `0x02` had been committed to
-    /// every target-profile descriptor.
+    /// every target-profile descriptor, and `CompileProfileMeasurement` takes
+    /// the next unused value.
     #[must_use]
     pub const fn tag(&self) -> u8 {
         match self {
             Self::GovernedGuarantee { .. } => 0x01,
             Self::Measurement { .. } => 0x02,
             Self::ExternalGuarantee { .. } => 0x03,
+            Self::CompileProfileMeasurement { .. } => 0x04,
         }
     }
 
@@ -1816,6 +2071,12 @@ impl FactEvidenceBasis {
                     context.encode(bytes);
                 }
             }
+            Self::CompileProfileMeasurement { contexts } => {
+                push_len(bytes, contexts.len());
+                for context in contexts {
+                    context.encode(bytes);
+                }
+            }
         }
     }
 }
@@ -1824,10 +2085,12 @@ impl FactEvidenceBasis {
 ///
 /// Artifact decode admits this version only. Every other incoming schema is
 /// refused before the body is read: a newer schema, a never-implemented
-/// schema, and (when any exist) a retired schema are distinct typed refusals.
-/// This constant was introduced at 3; no predecessor wire grammar was
-/// implemented, so no schema number is retired.
-pub const FACT_SOURCE_PROVENANCE_SCHEMA_VERSION: u32 = 3;
+/// schema, and a retired schema are distinct typed refusals. This constant was
+/// introduced at 3; schema 4 adds the required compile-profile measurement
+/// basis carrying an exact backend compilation selection per context, and
+/// schema 3 — whose compile-profile measurement lacks the now-required
+/// selection — is retired rather than normalized.
+pub const FACT_SOURCE_PROVENANCE_SCHEMA_VERSION: u32 = 4;
 
 /// Structured, versioned provenance shared by numerical evidence rows.
 ///
@@ -1848,11 +2111,15 @@ pub struct FactSourceProvenance {
 impl FactSourceProvenance {
     /// Assembles one provenance statement, canonicalizing measurement order.
     ///
-    /// Always stamps [`FACT_SOURCE_PROVENANCE_SCHEMA_VERSION`]. A decoder that
-    /// must preserve an incoming schema therefore has to match that schema
-    /// first; feeding a foreign body to this constructor would normalize it.
+    /// **Private on purpose** — this is the unchecked assembler behind the four
+    /// public routes, kept reachable inside this crate so a perturbation
+    /// harness can build the incoherent triples the public surface makes
+    /// unrepresentable. Always stamps
+    /// [`FACT_SOURCE_PROVENANCE_SCHEMA_VERSION`]; a decoder that must preserve
+    /// an incoming schema has to match that schema first, because feeding a
+    /// foreign body here would normalize it.
     #[must_use]
-    pub fn new(
+    fn assemble(
         phase: AvailabilityPhase,
         authority: FactAuthority,
         validity: FactValidityScope,
@@ -1863,6 +2130,10 @@ impl FactSourceProvenance {
             FactEvidenceBasis::Measurement { mut contexts } => {
                 contexts.sort_by_key(MeasurementContext::canonical_bytes);
                 FactEvidenceBasis::Measurement { contexts }
+            }
+            FactEvidenceBasis::CompileProfileMeasurement { mut contexts } => {
+                contexts.sort_by_key(CompileProfileMeasurementContext::canonical_bytes);
+                FactEvidenceBasis::CompileProfileMeasurement { contexts }
             }
             other => other,
         };
@@ -1879,7 +2150,7 @@ impl FactSourceProvenance {
     /// A compile-profile governed-guarantee statement.
     #[must_use]
     pub fn governed(authority_identity: ProvenanceIdentity, guarantee: ProvenanceIdentity) -> Self {
-        Self::new(
+        Self::assemble(
             AvailabilityPhase::CompileProfile,
             FactAuthority::GovernedProfile,
             FactValidityScope::PortableProfile,
@@ -1894,7 +2165,7 @@ impl FactSourceProvenance {
         authority_identity: ProvenanceIdentity,
         reference: ProvenanceIdentity,
     ) -> Self {
-        Self::new(
+        Self::assemble(
             AvailabilityPhase::CompileProfile,
             FactAuthority::ExternalProfile,
             FactValidityScope::PortableProfile,
@@ -1903,16 +2174,52 @@ impl FactSourceProvenance {
         )
     }
 
-    /// A measured statement over one or more exact contexts.
+    /// A compile-profile measured statement over one or more exact contexts,
+    /// each carrying its required backend compilation selection.
+    ///
+    /// The phase/authority/validity triple is fixed by construction: no caller
+    /// supplies the three coordinates, so a compile-profile claim cannot wear a
+    /// later phase's authority. The raw triple-taking constructors this route
+    /// replaced are no longer public:
+    ///
+    /// ```compile_fail,E0624
+    /// let _ = tiler_ir::numerics::FactSourceProvenance::assemble;
+    /// ```
+    ///
+    /// ```compile_fail,E0599
+    /// let _ = tiler_ir::numerics::FactSourceProvenance::measured;
+    /// ```
+    ///
+    /// ```compile_fail,E0599
+    /// let _ = tiler_ir::numerics::FactSourceProvenance::new;
+    /// ```
     #[must_use]
-    pub fn measured(
-        phase: AvailabilityPhase,
-        authority: FactAuthority,
-        validity: FactValidityScope,
+    pub fn compile_profile_measured(
+        authority_identity: ProvenanceIdentity,
+        contexts: Vec<CompileProfileMeasurementContext>,
+    ) -> Self {
+        Self::assemble(
+            AvailabilityPhase::CompileProfile,
+            FactAuthority::MeasuredProfile,
+            FactValidityScope::MeasuredEnvironment,
+            authority_identity,
+            FactEvidenceBasis::CompileProfileMeasurement { contexts },
+        )
+    }
+
+    /// A post-compile measured statement over one or more exact contexts.
+    ///
+    /// The phase/authority/validity triple is derived from the authority enum,
+    /// so callers cannot supply three independent coordinates, and no
+    /// post-compile route can name `CompileProfile`.
+    #[must_use]
+    pub fn post_compile_measured(
+        authority: PostCompileMeasurementAuthority,
         authority_identity: ProvenanceIdentity,
         contexts: Vec<MeasurementContext>,
     ) -> Self {
-        Self::new(
+        let (phase, authority, validity) = authority.triple();
+        Self::assemble(
             phase,
             authority,
             validity,
@@ -1926,26 +2233,56 @@ impl FactSourceProvenance {
     /// The phase/authority/validity triple is checked against a closed table
     /// rather than each field independently, because the three coordinates are
     /// one claim: a `CompileProfile` fact vouched for by a `LaunchInstance`
-    /// authority names no readable moment.
+    /// authority names no readable moment. All four basis classes are closed —
+    /// governed and external check their exact triples too, which is what
+    /// removed the public governed/external phase-laundering route.
     #[must_use]
     pub fn is_valid(&self) -> bool {
         self.schema_version == FACT_SOURCE_PROVENANCE_SCHEMA_VERSION
             && self.authority_identity.is_valid()
             && match &self.basis {
                 FactEvidenceBasis::GovernedGuarantee { guarantee } => {
-                    self.authority == FactAuthority::GovernedProfile && guarantee.is_valid()
+                    matches!(
+                        (self.phase, self.authority, self.validity),
+                        (
+                            AvailabilityPhase::CompileProfile,
+                            FactAuthority::GovernedProfile,
+                            FactValidityScope::PortableProfile,
+                        )
+                    ) && guarantee.is_valid()
                 }
                 FactEvidenceBasis::ExternalGuarantee { reference } => {
-                    self.authority == FactAuthority::ExternalProfile && reference.is_valid()
+                    matches!(
+                        (self.phase, self.authority, self.validity),
+                        (
+                            AvailabilityPhase::CompileProfile,
+                            FactAuthority::ExternalProfile,
+                            FactValidityScope::PortableProfile,
+                        )
+                    ) && reference.is_valid()
                 }
-                FactEvidenceBasis::Measurement { contexts } => {
+                FactEvidenceBasis::CompileProfileMeasurement { contexts } => {
                     matches!(
                         (self.phase, self.authority, self.validity),
                         (
                             AvailabilityPhase::CompileProfile,
                             FactAuthority::MeasuredProfile,
                             FactValidityScope::MeasuredEnvironment,
-                        ) | (
+                        )
+                    ) && !contexts.is_empty()
+                        && contexts.len() <= MAX_MEASUREMENT_CONTEXTS_PER_SOURCE
+                        && contexts
+                            .iter()
+                            .all(CompileProfileMeasurementContext::is_valid)
+                        && strictly_increasing(
+                            contexts,
+                            CompileProfileMeasurementContext::canonical_bytes,
+                        )
+                }
+                FactEvidenceBasis::Measurement { contexts } => {
+                    matches!(
+                        (self.phase, self.authority, self.validity),
+                        (
                             AvailabilityPhase::ArtifactEvidence,
                             FactAuthority::ArtifactEvidence,
                             FactValidityScope::PreparedArtifact,
@@ -2059,6 +2396,18 @@ impl FactSourceProvenance {
             }
             FactEvidenceBasis::Measurement { contexts } => {
                 let _ = write!(output, ":basis=measurement:contexts={}", contexts.len());
+                for context in contexts {
+                    output.push_str(":[");
+                    context.render(output);
+                    output.push(']');
+                }
+            }
+            FactEvidenceBasis::CompileProfileMeasurement { contexts } => {
+                let _ = write!(
+                    output,
+                    ":basis=compile-profile-measurement:contexts={}",
+                    contexts.len()
+                );
                 for context in contexts {
                     output.push_str(":[");
                     context.render(output);

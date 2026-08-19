@@ -81,11 +81,17 @@ mod tests;
 /// Versioned domain separator of one delivered-realization record's canonical
 /// bytes.
 ///
+/// `v3` because [`TargetEvidence`]'s encoder ends with `source.encode(bytes)`
+/// **unframed**, and fact-source provenance stepped its own schema from 3 to 4:
+/// the compile-profile measurement basis now carries a required exact backend
+/// compilation selection per context. An unframed nested grammar moving is a
+/// grammar change of this record, so the step moves every value in the domain.
+///
 /// `v2` rather than `v1`: the superseded four-dimension, dtype-free,
 /// opaque-means draft's `v1` bytes described a different record entirely, and
 /// nothing that holds one of those may match one of these.
 pub const DELIVERED_REALIZATION_DOMAIN: &[u8] =
-    b"tiler.artifact-program.delivered-realization.v2\0";
+    b"tiler.artifact-program.delivered-realization.v3\0";
 
 /// The latest availability phase a delivered-realization fact may name.
 ///

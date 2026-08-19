@@ -135,8 +135,15 @@ use crate::target::honourability::NumericalRefusalEvidence;
 // against the v4 tree. Event tag 9 is unused: it named the omitted-record
 // summary that the complete-or-refused trace contract removed at v1. The gap is
 // history rather than a reservation.
+// - Renderer v10, *forced*, schema unmoved: fact-source provenance stepped its
+//   own schema from 3 to 4, so every rendered source line's `source-schema=`
+//   spelling changed, the compile-profile measurement basis now renders as
+//   `basis=compile-profile-measurement` with a `compilation-selection=` hex
+//   run per context, and the governed/external triples render under the closed
+//   validation. The trace schema did not move: a rendered source is one framed
+//   payload whose own schema word announces itself.
 pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 11;
-pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 9;
+pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 10;
 const COMPILATION_EXPLAIN_SCHEMA_VERSION: u32 = 1;
 const COMPILATION_EXPLAIN_RENDERER_VERSION: u32 = 1;
 const MAX_COMPILATION_EXPLAIN_CANDIDATES: usize = 256;
@@ -3893,7 +3900,7 @@ mod tests {
     #[test]
     fn explain_vocabulary_is_append_only_and_versioned() {
         assert_eq!(EXPLAIN_SCHEMA_VERSION, 11);
-        assert_eq!(EXPLAIN_RENDERER_VERSION, 9);
+        assert_eq!(EXPLAIN_RENDERER_VERSION, 10);
         assert_eq!(subject_kind_tag(SubjectKind::Alternative), 12);
         assert_eq!(subject_kind_tag(SubjectKind::OpaqueCall), 13);
         assert_eq!(subject_kind_tag(SubjectKind::Provider), 14);
@@ -4512,9 +4519,12 @@ mod tests {
             "validity=measured-environment",
             "phase=compile-profile",
             "authority-identity=test.probe.v1@1",
-            "basis=measurement:contexts=1",
+            "basis=compile-profile-measurement:contexts=1",
             "code-generator=test-offline-compiler@1.0",
             "env=test-platform/1.0/build-1/test-architecture/test-hardware",
+            // `test-selection.v1` as two lowercase hexadecimal digits per byte:
+            // the rendered evidence names the exact selection, not a summary.
+            "compilation-selection=746573742d73656c656374696f6e2e7631",
         ] {
             assert!(
                 baseline_render.contains(expected),
@@ -4539,6 +4549,17 @@ mod tests {
             (
                 "execution environment",
                 refusal(measured_profile_source("test.probe.v1", "1.0", "build-2")),
+            ),
+            (
+                "compilation selection",
+                refusal(
+                    crate::target::honourability::measured_profile_source_with_selection(
+                        "test.probe.v1",
+                        "1.0",
+                        "build-1",
+                        b"test-selection.v2",
+                    ),
+                ),
             ),
         ] {
             assert_eq!(
@@ -4658,7 +4679,7 @@ mod tests {
                 //     'test(deterministic_trace_is_sealed_and_rendered_separately)'
                 // and take the `left` value the assertion reports. The cause
                 // belongs in the commit that moves it, not appended here.
-                "tiler-explain-v9 request=ba45e5043054d8d5\n",
+                "tiler-explain-v10 request=13fa48000c9aa422\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=compiler:tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=compiler:tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
@@ -5642,7 +5663,7 @@ mod tests {
         assert_eq!(
             forward
                 .render()
-                .matches("tiler-explain-v9 request=")
+                .matches("tiler-explain-v10 request=")
                 .count(),
             3,
             "the top-level selection and both complete candidate traces render",

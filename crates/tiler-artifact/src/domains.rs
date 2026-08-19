@@ -222,7 +222,7 @@ impl GovernedDomain {
             Self::ProgramProviderKey => b"tiler.artifact-program.provider.v3\0",
             Self::ProgramDeferredKey => b"tiler.artifact-program.deferred.v2\0",
             Self::ProgramDeliveredRealization => {
-                b"tiler.artifact-program.delivered-realization.v2\0"
+                b"tiler.artifact-program.delivered-realization.v3\0"
             }
             Self::ProgramRouteRequirement => b"tiler.artifact.route-requirement.v1\0",
             Self::ProgramTargetEnvironment => b"tiler.target-environment-compatibility.v1\0",

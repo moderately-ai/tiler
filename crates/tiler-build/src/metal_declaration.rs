@@ -106,12 +106,12 @@ use tiler_artifact::program::{
 };
 use tiler_compiler::target::{
     DTypeDispatchability, DTypeDispatchabilityResolution, IndexArithmeticSupport, ScalarArithmetic,
-    ScalarSupport, SynchronizationSupport, TargetCompileProfileMeasurementSource,
+    ScalarSupport, SynchronizationSupport, TargetCompilationSelectionIdentity,
+    TargetCompileProfileMeasurementContext, TargetCompileProfileMeasurementSource,
     TargetCompilerBuild, TargetCompilerRole, TargetCompilerRoleIdentity,
     TargetExecutionEnvironment, TargetFactProducerIdentity, TargetFactSource,
-    TargetMeasurementContext, TargetNormativeReferenceIdentity, TargetProfile,
-    TargetProfileBuildError, TargetProfileBuilder, TargetProfileKey, TargetProfileKeyError,
-    WorkgroupTreeWidthPolicy,
+    TargetNormativeReferenceIdentity, TargetProfile, TargetProfileBuildError, TargetProfileBuilder,
+    TargetProfileKey, TargetProfileKeyError, WorkgroupTreeWidthPolicy,
 };
 use tiler_ir::numerics::{ScalarArithmeticSubjectError, registered_arithmetic_value_type};
 use tiler_ir::program::abi::{
@@ -128,10 +128,12 @@ use tiler_metal::target::{
     MetalFloatArithmeticType, MetalFlushedZeroSign, MetalPlatform, MetalSubnormalArithmetic,
     MetalSubnormalArithmeticFacts, MetalTargetFacts, MslLanguageVersion,
 };
-use tiler_metal_aot::input::{MetalTarget, MetalTargetError, NumericalRealization};
+use tiler_metal_aot::input::{
+    ApplePlatform, CompileRequest, DeploymentMinimum, MetalTarget, MetalTargetError, MslVersion,
+    NumericalRealization, OptimizationLevel,
+};
 
 use crate::metal_assembly::compile_target;
-use crate::{MetalF32TargetProfileError, declare_metal_f32_subnormal_behaviour};
 
 /// The ledger's offline compilation environment, one exact component per field.
 ///
@@ -167,6 +169,55 @@ pub(crate) struct ExecutionRow {
     pub(crate) platform_build: &'static str,
     pub(crate) architecture: &'static str,
     pub(crate) hardware: &'static str,
+}
+
+/// One retained record's compilation-selection parameters, as typed request
+/// vocabulary rather than flag text.
+///
+/// The independently derived half of the per-population equality control: each
+/// population's record header transcribes the `CompileRequest` whose
+/// compilation executed, these rows transcribe that header, and
+/// [`BoundMetalCompileDeclaration::declare`] derives the expected selection
+/// bytes from them through [`CompileRequest::compilation_selection_identity`]
+/// before comparing against the production request. Generic code never spells
+/// a Metal flag; the grammar stays with the request that owns it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RecordedSelectionRows {
+    platform: ApplePlatform,
+    deployment_minimum: (u16, u16),
+    language: MslVersion,
+    optimization: OptimizationLevel,
+    numerical: NumericalRealization,
+}
+
+impl RecordedSelectionRows {
+    /// Derives this record's selection identity through the one Metal-owned
+    /// producer.
+    ///
+    /// The request is built over an empty source deliberately: the selection
+    /// grammar excludes source text by decision, so no source exists that
+    /// could reach the derived bytes.
+    fn selection(
+        self,
+    ) -> Result<tiler_metal_aot::identity::CompilationSelectionIdentity, MetalTargetError> {
+        let target = MetalTarget::new(
+            self.platform,
+            DeploymentMinimum::new(self.deployment_minimum.0, self.deployment_minimum.1),
+            self.language,
+        )?;
+        Ok(
+            CompileRequest::new(String::new(), target, self.optimization, self.numerical)
+                .compilation_selection_identity(),
+        )
+    }
+}
+
+/// One retained measurement population's provenance rows: the selection its
+/// record pins and the execution environment that produced it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PopulationRows {
+    selection: RecordedSelectionRows,
+    execution: ExecutionRow,
 }
 
 /// Every ledger row this declaration is assembled from, in one place.
@@ -223,8 +274,20 @@ struct LedgerRows {
     facts: MetalTargetFacts,
     emission: MetalEmissionRealization,
     numerical: NumericalRealization,
+    /// The optimization level every measured row is scoped to and the
+    /// production request compiles under. A ledger row rather than a call-site
+    /// default, so the production selection the per-population equality is
+    /// checked against is stated data.
+    optimization: OptimizationLevel,
     offline: OfflineToolchainRow,
-    execution: ExecutionRow,
+    /// The four retained measurement populations' provenance rows, stated
+    /// separately so no row can inherit a neighbouring run's selection or
+    /// environment. Rows share one source only after exact selection equality,
+    /// and contexts differing in execution environment never share.
+    grid: PopulationRows,
+    cost: PopulationRows,
+    tree_width: PopulationRows,
+    dispatch_numerics: PopulationRows,
 }
 
 /// The exact rows the authority ledger admits for this profile.
@@ -258,14 +321,14 @@ const FIRST_MACOS_APPLE9: LedgerRows = LedgerRows {
     // floor, so this row is measured and carries the measurement's own
     // validity rather than a normative reference.
     //
-    // `spikes/target-profiles/metal-grid-axis-extent` dispatched a ladder of
-    // extents through this profile's own compilation, launch realization, and
-    // dispatch route on the exact offline and execution environments below,
-    // verifying every slot of a poisoned buffer at three threadgroup widths.
-    // All 6,294 rows completed and verified; `2^28` is the widest extent
-    // verified at every width, and it is the run's stop condition rather than
-    // an observed limit — nothing measured a failure, so nothing here says
-    // where one is.
+    // `spikes/target-profiles/metal-grid-axis-extent`'s 2026-08-18 record
+    // (`results/2026-08-18-apple-m4-max-macos27.0-26A5406e/`) dispatched a
+    // ladder of extents compiled through the production `CompileRequest` on
+    // the grid population's offline and execution rows below, verifying every
+    // slot of a poisoned buffer at three threadgroup widths. All 6,294 rows
+    // completed and verified; `2^28` is the widest extent verified at every
+    // width, and it is the run's stop condition rather than an observed limit
+    // — nothing measured a failure, so nothing here says where one is.
     grid_axis_threads: 268_435_456,
     // "Workgroup threads — absent as a fact, declared as a prepared-kernel query".
     workgroup_property_key: "tiler.target.prepared-entry.max-threads-per-workgroup.v1",
@@ -314,17 +377,20 @@ const FIRST_MACOS_APPLE9: LedgerRows = LedgerRows {
         ordering: MemoryOrdering::AcquireRelease,
     },
     synchronization_support: SynchronizationSupport::Realized,
-    // "Saturated parallel fold steps — 1,056, measured".
+    // "Saturated parallel fold steps — 1,280, measured".
     //
-    // **Measurement, 2026-08-07** —
+    // **Measurement, 2026-08-18** —
     // `spikes/program-planning/reduction-dispatch-crossover`, retained at
-    // `results/2026-08-07-apple-m4-max-macos27.0-26A5388g/`, on a host matching
-    // this ledger's offline and execution rows in every field. The sweep timed
-    // all three reduction strategies over a 92-cell matrix, 276 dispatched
-    // alternatives, and fitted a three-parameter work-span model
-    // `sum over stages of ( encoder + max(work / P, depth) * step )` on the
-    // perfect-square contributor counts. `P` fits at `1.056e3` and is the number
-    // declared here: the fold steps the device retires at once when saturated.
+    // `results/2026-08-18-apple-m4-max-macos27.0-26A5406e/`, the accepted
+    // (R, R) quiet-window re-measurement: sole occupancy attested, harness
+    // hashes pinned, and every cell compiled through the production
+    // `CompileRequest`. The sweep timed all three reduction strategies over a
+    // 92-cell matrix and fitted the three-parameter work-span model
+    // `sum over stages of ( encoder + max(work / P, depth) * step )`;
+    // `parallel_threads` fits at `1.280001e3` and is the number declared here:
+    // the fold steps the device retires at once when saturated. The fit
+    // retained its held-out serial-versus-parallel separation, so the row is
+    // retained rather than withdrawn under the packeted stop condition.
     //
     // **This is a cost row and deliberately not a capability axis.** Every
     // `CapabilityAxis` is a hard bound whose silence is an `Unknown` that never
@@ -337,19 +403,15 @@ const FIRST_MACOS_APPLE9: LedgerRows = LedgerRows {
     // dispatchability, and numerical rows carry, so its validity stays
     // `MeasuredEnvironment` and cannot widen into a portable claim.
     //
-    // **What the measurement establishes, and what it does not.** The model
-    // reproduces the measured verdict on 24 of the 26 held-out cells whose
-    // serial-or-parallel verdict is separated, worst measured penalty 1.81x, and
-    // the sweep's own perturbation table shows that *only* `P` moves a decision:
-    // scaling `encoder` by twenty or `step` by a tenth leaves every predicted
-    // winner unchanged, while scaling `P` by a quarter drops agreement to 20 of
-    // 26 and the worst penalty to 3.04x. **`P` is determined only to about a
-    // factor of four** — quadrupling it leaves fit-set agreement where it was and
-    // *improves* the held-out worst penalty to 1.20x — so this is a contour
-    // position rather than a tight constant, and it is a quantity of this host
-    // row alone. Another Apple family, OS row, dtype, or device declares its own
-    // or declares none.
-    saturated_parallel_fold_steps: Some(1_056),
+    // **What the measurement establishes, and what it does not.** The
+    // re-measured fit reproduces the separated serial-or-parallel verdict on
+    // 29 of the 32 fit-set cells and 20 of the 22 held-out cells whose verdict
+    // is separated (worst regret when wrong 2.01x), with all four frozen
+    // perturbations moving the fit as the mutation proof requires. It remains
+    // a contour position rather than a tight constant, and a quantity of this
+    // host row alone: another Apple family, OS row, dtype, or device declares
+    // its own or declares none.
+    saturated_parallel_fold_steps: Some(1_280),
     // "Workgroup-tree-width policy — MeasuredNearestCap256V1, measured".
     //
     // **Measurement, 2026-08-07** —
@@ -391,7 +453,11 @@ const FIRST_MACOS_APPLE9: LedgerRows = LedgerRows {
     // "The flags are part of the row": the retained cases this ledger reads are
     // the `safe`, `contract-off` ones, which is exactly this realization.
     numerical: NumericalRealization::strict_baseline(),
-    // "The offline compilation environment" table.
+    // Every retained population and the production compile path select `-O2`.
+    optimization: OptimizationLevel::Default,
+    // "The offline compilation environment" table — identical, field for
+    // field, across all four retained records, re-observed by each rather than
+    // inherited.
     offline: OfflineToolchainRow {
         compiler_version: "32023.883",
         compiler_build: "metalfe-32023.883",
@@ -402,14 +468,76 @@ const FIRST_MACOS_APPLE9: LedgerRows = LedgerRows {
         sdk_version: "26.5",
         sdk_build: "25F70",
     },
-    // "The execution environment" table.
-    execution: ExecutionRow {
-        platform: "macos",
-        platform_version: "27.0",
-        platform_build: "26A5388g",
-        architecture: "arm64",
-        hardware: "Apple M4 Max",
+    // The grid population: the 2026-08-18 re-measured record under the
+    // accepted (R, R) disposition. Its header transcribes the executed
+    // production `CompileRequest` — `-target air64-apple-macos26.0
+    // -std=metal4.0 -O2 -fmetal-math-mode=safe
+    // -fmetal-math-fp32-functions=precise -ffp-contract=off`, zero additional
+    // linker flags — and pins harness and result hashes; the execution row is
+    // the build the run actually observed.
+    grid: PopulationRows {
+        selection: PRODUCTION_RECORDED_SELECTION,
+        execution: ExecutionRow {
+            platform: "macos",
+            platform_version: "27.0",
+            platform_build: "26A5406e",
+            architecture: "arm64",
+            hardware: "Apple M4 Max",
+        },
     },
+    // The saturated-cost population: the 2026-08-18 quiet-window sweep, same
+    // production selection and execution row as the grid record.
+    cost: PopulationRows {
+        selection: PRODUCTION_RECORDED_SELECTION,
+        execution: ExecutionRow {
+            platform: "macos",
+            platform_version: "27.0",
+            platform_build: "26A5406e",
+            architecture: "arm64",
+            hardware: "Apple M4 Max",
+        },
+    },
+    // The workgroup-tree-width population: the retained 2026-08-07 partition
+    // calibration, whose recovered `prepare` path constructs the identical
+    // production selection on the `26A5388g` execution row.
+    tree_width: PopulationRows {
+        selection: PRODUCTION_RECORDED_SELECTION,
+        execution: ExecutionRow {
+            platform: "macos",
+            platform_version: "27.0",
+            platform_build: "26A5388g",
+            architecture: "arm64",
+            hardware: "Apple M4 Max",
+        },
+    },
+    // The dispatchability-and-numerics population: the unified 2026-08-02
+    // F32+BF16 record, whose `Profile::offline_flags` emits the identical
+    // production selection on the `26A5388g` execution row.
+    dispatch_numerics: PopulationRows {
+        selection: PRODUCTION_RECORDED_SELECTION,
+        execution: ExecutionRow {
+            platform: "macos",
+            platform_version: "27.0",
+            platform_build: "26A5388g",
+            architecture: "arm64",
+            hardware: "Apple M4 Max",
+        },
+    },
+};
+
+/// The recorded selection all four retained records pin: the macOS/26.0/MSL 4.0
+/// target, `-O2`, and the strict numerical baseline.
+///
+/// One named constant rather than four inline copies, so a future record whose
+/// selection differs is a visible new value; each population still carries its
+/// own field so a test can move exactly one and watch that population's
+/// mismatch refusal.
+const PRODUCTION_RECORDED_SELECTION: RecordedSelectionRows = RecordedSelectionRows {
+    platform: ApplePlatform::MacOs,
+    deployment_minimum: (26, 0),
+    language: MslVersion::Metal4_0,
+    optimization: OptimizationLevel::Default,
+    numerical: NumericalRealization::strict_baseline(),
 };
 
 /// Producer of every normatively sourced row in this declaration.
@@ -439,6 +567,48 @@ pub(crate) const PREPARED_ENTRY_PROVIDER_NAME: &str = "prepared-entry-properties
 pub(crate) const OFFLINE_DISTRIBUTION_ROLE: &str = "tiler.metal.offline-toolchain-distribution";
 /// Producer-defined compiler role naming the platform SDK.
 pub(crate) const OFFLINE_SDK_ROLE: &str = "tiler.metal.offline-platform-sdk";
+
+/// One retained measurement population of the authoritative Metal profile.
+///
+/// The typed census of the standard declaration's measured source populations:
+/// each variant names the rows one retained record produced, and the
+/// per-population compilation-selection equality control reports its refusal in
+/// this vocabulary. `ALL` is type-sized, so a population added to the enum and
+/// not to the list is a build error at the declaration rather than a census
+/// that silently shrinks.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum MetalProfileMeasurementPopulation {
+    /// The measured grid-axis extent row.
+    GridAxis,
+    /// The measured saturated-parallel-fold-steps cost row.
+    SaturatedParallelFoldSteps,
+    /// The measured workgroup-tree-width policy row.
+    WorkgroupTreeWidthPolicy,
+    /// The measured dispatchability and numerical rows.
+    DispatchabilityAndNumerics,
+}
+
+impl MetalProfileMeasurementPopulation {
+    /// Every measurement population, in declaration order and type-sized.
+    pub const ALL: [Self; core::mem::variant_count::<Self>()] = [
+        Self::GridAxis,
+        Self::SaturatedParallelFoldSteps,
+        Self::WorkgroupTreeWidthPolicy,
+        Self::DispatchabilityAndNumerics,
+    ];
+
+    /// Returns the stable lowercase identifier naming this population.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GridAxis => "grid-axis",
+            Self::SaturatedParallelFoldSteps => "saturated-parallel-fold-steps",
+            Self::WorkgroupTreeWidthPolicy => "workgroup-tree-width-policy",
+            Self::DispatchabilityAndNumerics => "dispatchability-and-numerics",
+        }
+    }
+}
 
 /// One checked, versioned macOS Metal compile-time declaration.
 ///
@@ -524,39 +694,6 @@ impl BoundMetalCompileDeclaration {
     /// the AOT driver's own target validation.
     pub fn first_macos_apple9() -> Result<Self, BoundMetalDeclarationError> {
         Self::declare(&FIRST_MACOS_APPLE9)
-    }
-
-    /// A second *artifact family* over this profile's rows, for tests only.
-    ///
-    /// `#[cfg(test)]` and crate-private: it is unreachable from any dependent
-    /// crate and from every production path in this one, which is the whole of
-    /// its safety. It exists so a test can ask what happens when one selection
-    /// names two artifact families, without inventing a measured row.
-    ///
-    /// **It is not a second measured declaration, and could not be.** It moves
-    /// exactly one field — `MetalTargetFacts::platform` — which the ledger's
-    /// projection table records as *not* projecting into the compiler profile.
-    /// So this shares `first_macos_apple9`'s profile key, descriptor, measured
-    /// dispatchability, and every numerical row, and differs only in the AOT
-    /// target it compiles for: `air64-apple-ios26.0` rather than
-    /// `air64-apple-macos26.0`. Those measured rows were taken on a macOS host,
-    /// and the ledger refuses their inheritance by name — "No iOS family,
-    /// physical or simulated, gains a row from this one" — which is exactly why
-    /// this may not escape `cfg(test)`.
-    ///
-    /// `first-authoritative-ios-metal-compile-declaration` is the ticket that
-    /// would produce a real one, and it is blocked on a measurement.
-    #[cfg(test)]
-    pub(crate) fn second_artifact_family_fixture() -> Result<Self, BoundMetalDeclarationError> {
-        let mut rows = FIRST_MACOS_APPLE9;
-        rows.facts = MetalTargetFacts::new(
-            rows.facts.language,
-            MetalPlatform::IOsDevice,
-            rows.facts.deployment_minimum,
-            rows.facts.subnormal_arithmetic,
-            rows.facts.buffer_binding_limit,
-        );
-        Self::declare(&rows)
     }
 
     /// Returns the checked compiler profile every projected row entered.
@@ -715,7 +852,88 @@ impl BoundMetalCompileDeclaration {
 
     fn declare(rows: &LedgerRows) -> Result<Self, BoundMetalDeclarationError> {
         let normative = NormativeSources::declare(rows)?;
-        let measured = measured_source(rows)?;
+
+        // ---- the per-population compilation-selection equality --------------
+        // Resolved before any row reaches the builder, so no profile descriptor
+        // can exist over a population whose retained selection is not the
+        // production request's. The production selection derives from the same
+        // AOT target every production compilation of this declaration uses,
+        // the ledger's optimization row, and the selected numerical
+        // realization; each population's expected bytes derive independently
+        // from its own record's transcribed request parameters. Byte equality
+        // prevents metadata drift and cross-population substitution — it does
+        // not by itself authenticate execution, which is the retained records'
+        // harness-hash binding's job.
+        let aot_target = compile_target(rows.facts)?;
+        let production =
+            CompileRequest::new(String::new(), aot_target, rows.optimization, rows.numerical)
+                .compilation_selection_identity();
+        // Type-sized over `ALL`, so a population added to the enum without a
+        // provenance row here is a build error at this array rather than a
+        // partition that silently stops covering its domain.
+        let populations: [(MetalProfileMeasurementPopulation, &PopulationRows);
+            MetalProfileMeasurementPopulation::ALL.len()] = [
+            (MetalProfileMeasurementPopulation::GridAxis, &rows.grid),
+            (
+                MetalProfileMeasurementPopulation::SaturatedParallelFoldSteps,
+                &rows.cost,
+            ),
+            (
+                MetalProfileMeasurementPopulation::WorkgroupTreeWidthPolicy,
+                &rows.tree_width,
+            ),
+            (
+                MetalProfileMeasurementPopulation::DispatchabilityAndNumerics,
+                &rows.dispatch_numerics,
+            ),
+        ];
+        let mut sources: Vec<(Vec<u8>, ExecutionRow, TargetCompileProfileMeasurementSource)> =
+            Vec::with_capacity(populations.len());
+        let mut population_sources = Vec::with_capacity(populations.len());
+        for (population, provenance) in populations {
+            let expected = provenance
+                .selection
+                .selection()
+                .map_err(BoundMetalDeclarationError::AotTarget)?;
+            if expected.as_bytes() != production.as_bytes() {
+                return Err(BoundMetalDeclarationError::CompilationSelectionMismatch {
+                    population,
+                });
+            }
+            // Rows share one source exactly when their complete canonical
+            // selection bytes and execution environment are both equal; a
+            // context on another execution row never shares, whatever its
+            // selection.
+            let existing = sources.iter().find(|(bytes, execution, _)| {
+                bytes.as_slice() == expected.as_bytes() && *execution == provenance.execution
+            });
+            let source = if let Some((_, _, source)) = existing {
+                source.clone()
+            } else {
+                let source =
+                    population_source(&rows.offline, &provenance.execution, expected.as_bytes())?;
+                sources.push((
+                    expected.as_bytes().to_vec(),
+                    provenance.execution,
+                    source.clone(),
+                ));
+                source
+            };
+            population_sources.push((population, source));
+        }
+        let source_of = |population: MetalProfileMeasurementPopulation| {
+            population_sources
+                .iter()
+                .find(|(candidate, _)| *candidate == population)
+                .expect("every population's source was constructed above")
+                .1
+                .clone()
+        };
+        let grid_source = source_of(MetalProfileMeasurementPopulation::GridAxis);
+        let cost_source = source_of(MetalProfileMeasurementPopulation::SaturatedParallelFoldSteps);
+        let tree_width_source =
+            source_of(MetalProfileMeasurementPopulation::WorkgroupTreeWidthPolicy);
+        let measured = source_of(MetalProfileMeasurementPopulation::DispatchabilityAndNumerics);
 
         let mut builder =
             TargetProfileBuilder::new(TargetProfileKey::new(rows.profile_key.to_owned())?);
@@ -728,8 +946,7 @@ impl BoundMetalCompileDeclaration {
         // dispatchability and numerical rows do — the same one, not a second,
         // because the extent ladder ran on exactly the offline and execution
         // environments those rows were taken on.
-        builder
-            .declare_measured_max_threads_per_grid_axis(rows.grid_axis_threads, measured.clone())?;
+        builder.declare_measured_max_threads_per_grid_axis(rows.grid_axis_threads, grid_source)?;
         builder.declare_max_threads_per_workgroup_query(
             TargetPropertyQuery::new(
                 TargetPropertyKey::new(rows.workgroup_property_key)
@@ -785,7 +1002,7 @@ impl BoundMetalCompileDeclaration {
         // on, so a second source would claim a second population that does not
         // exist.
         if let Some(steps) = rows.saturated_parallel_fold_steps {
-            builder.declare_measured_saturated_parallel_fold_steps(steps, measured.clone())?;
+            builder.declare_measured_saturated_parallel_fold_steps(steps, cost_source)?;
         }
 
         // ---- the one tree-width policy, measured ---------------------------
@@ -795,7 +1012,7 @@ impl BoundMetalCompileDeclaration {
         // calibration ran on exactly the offline and execution environments
         // the rows above were taken on.
         if let Some(policy) = rows.workgroup_tree_width_policy {
-            builder.declare_measured_workgroup_tree_width_policy(policy, measured.clone())?;
+            builder.declare_measured_workgroup_tree_width_policy(policy, tree_width_source)?;
         }
 
         // ---- dispatchability, measured and exact ----------------------------
@@ -818,9 +1035,12 @@ impl BoundMetalCompileDeclaration {
         }
 
         // ---- projected numerical overlaps: exact dtype subnormal rows -------
-        // F32 uses the ratified low-level seam; BF16 stays private to this bound
-        // declaration. Both read the Metal record rather than restating its mode
-        // and both install complete exclusive input/result tables.
+        // Both projections are private to this bound declaration since the
+        // 2026-08-18 adapter retirement: no public Metal-branded build adapter
+        // accepts independently supplied facts, and generic caller-authored
+        // declarations carry no Metal-production authentication claim. Both
+        // read the Metal record rather than restating its mode and both
+        // install complete exclusive input/result tables.
         declare_metal_f32_subnormal_behaviour(&mut builder, &rows.facts, measured.clone())?;
         declare_metal_bf16_subnormal_behaviour(&mut builder, &rows.facts, measured.clone())?;
 
@@ -964,9 +1184,10 @@ impl BoundMetalCompileDeclaration {
 
         // Nothing else is an overlap. Language, artifact family, and deployment
         // minimum have no compiler counterpart, and validating them against one
-        // would invent an agreement neither vocabulary states.
-        let aot_target = compile_target(rows.facts)?;
-
+        // would invent an agreement neither vocabulary states. The AOT target
+        // itself was resolved before the selection equality above, so a family,
+        // standard, and minimum that do not form a governed compiler target
+        // refuse before any row is declared.
         Ok(Self {
             profile,
             facts: rows.facts,
@@ -977,10 +1198,45 @@ impl BoundMetalCompileDeclaration {
     }
 }
 
-/// Projects the declaration-owned BF16 measurement without widening the
-/// ratified public F32 adapter.
+/// Projects the declaration-owned F32 measurement into the profile builder.
 ///
-/// Both dimensions are transactional, matching the public F32 seam: a conflict
+/// Private since the 2026-08-18 adapter retirement: Tom accepted retiring the
+/// public `declare_metal_f32_subnormal_behaviour` convenience, whose only
+/// production caller was this declaration's own projection, so every
+/// Metal-branded projection is production-owned. The transactional
+/// clone-stage-commit shape is unchanged: a conflict in the result table cannot
+/// leave the input table partially installed.
+fn declare_metal_f32_subnormal_behaviour(
+    builder: &mut TargetProfileBuilder,
+    facts: &MetalTargetFacts,
+    source: TargetCompileProfileMeasurementSource,
+) -> Result<(), BoundMetalDeclarationError> {
+    let behaviour = facts
+        .subnormal_arithmetic
+        .behaviour(MetalFloatArithmeticType::F32)
+        .map_err(|_| BoundMetalDeclarationError::UnstatedF32SubnormalBehaviour)?;
+    let mut staged = builder.clone();
+    staged
+        .declare_measured_input_subnormal_behaviour(
+            ScalarArithmetic::f32(),
+            behaviour.subnormal_mode(),
+            source.clone(),
+        )
+        .map_err(BoundMetalDeclarationError::F32SubnormalProjection)?;
+    staged
+        .declare_measured_result_subnormal_behaviour(
+            ScalarArithmetic::f32(),
+            behaviour.subnormal_mode(),
+            source,
+        )
+        .map_err(BoundMetalDeclarationError::F32SubnormalProjection)?;
+    *builder = staged;
+    Ok(())
+}
+
+/// Projects the declaration-owned BF16 measurement.
+///
+/// Both dimensions are transactional, matching the F32 projection: a conflict
 /// in the result table cannot leave the input table partially installed.
 fn declare_metal_bf16_subnormal_behaviour(
     builder: &mut TargetProfileBuilder,
@@ -1044,21 +1300,24 @@ impl NormativeSources {
     }
 }
 
-/// Builds the one measurement source every measured row shares.
+/// Builds one measurement population's source.
 ///
-/// One context pairing the four offline toolchain components with the execution
-/// environment, because that pair *is* the measurement: these compilers produced
-/// bytes that this host ran to produce these observations. Splitting them into
-/// two contexts would suggest either half could stand alone.
+/// One context pairing the four offline toolchain components with that
+/// population's execution environment and the equality-checked selection
+/// bytes, because that triple *is* the measurement: these compilers, invoked
+/// under this exact selection, produced bytes that this host ran to produce
+/// these observations. Splitting them would suggest any part could stand
+/// alone.
 ///
 /// `metalfe-32023.921` is deliberately absent. The retained record holds it as
 /// the build the host loads for `newLibraryWithSource:options:`; Tiler's AOT
 /// route supplies no source, so that build is evidence about a comparison path
 /// and ADR 0086 item 4 excludes it by name.
-fn measured_source(
-    rows: &LedgerRows,
+fn population_source(
+    offline: &OfflineToolchainRow,
+    execution: &ExecutionRow,
+    selection: &[u8],
 ) -> Result<TargetCompileProfileMeasurementSource, BoundMetalDeclarationError> {
-    let offline = &rows.offline;
     let producer_defined = |key: &str| -> Result<TargetCompilerRole, BoundMetalDeclarationError> {
         Ok(TargetCompilerRole::ProducerDefined(
             TargetCompilerRoleIdentity::new(key.to_owned(), 1)?,
@@ -1091,13 +1350,17 @@ fn measured_source(
         )?,
     ];
     let environment = TargetExecutionEnvironment::builder()
-        .platform(rows.execution.platform.to_owned())
-        .platform_version(rows.execution.platform_version.to_owned())
-        .platform_build(rows.execution.platform_build.to_owned())
-        .architecture(rows.execution.architecture.to_owned())
-        .hardware(rows.execution.hardware.to_owned())
+        .platform(execution.platform.to_owned())
+        .platform_version(execution.platform_version.to_owned())
+        .platform_build(execution.platform_build.to_owned())
+        .architecture(execution.architecture.to_owned())
+        .hardware(execution.hardware.to_owned())
         .build()?;
-    let context = TargetMeasurementContext::new(builds, environment)?;
+    let context = TargetCompileProfileMeasurementContext::new(
+        builds,
+        environment,
+        TargetCompilationSelectionIdentity::from_bytes(selection)?,
+    )?;
     Ok(TargetCompileProfileMeasurementSource::new(
         TargetFactProducerIdentity::new(MEASURED_PRODUCER.to_owned(), 1)?,
         [context],
@@ -1185,8 +1448,24 @@ pub enum BoundMetalDeclarationError {
     PreparedEntryQuery,
     /// The compiler target profile refused a declared row.
     Profile(TargetProfileBuildError),
-    /// The `f32` subnormal projection was refused.
-    SubnormalProjection(MetalF32TargetProfileError),
+    /// One retained population's independently derived selection is not the
+    /// production request's.
+    ///
+    /// The refusing authority stays visible by population: a retained record
+    /// whose selection differs from production must not source a row, and no
+    /// transfer rule exists that could admit it.
+    CompilationSelectionMismatch {
+        /// The population whose retained selection disagreed.
+        population: MetalProfileMeasurementPopulation,
+    },
+    /// The Metal record omitted the F32 behaviour this declaration requires.
+    ///
+    /// The retired public adapter's exact refusal, now owned here beside its
+    /// BF16 sibling: the projection is production-owned and no public
+    /// Metal-branded build adapter accepts independently supplied facts.
+    UnstatedF32SubnormalBehaviour,
+    /// The compiler profile refused the declaration-owned F32 projection.
+    F32SubnormalProjection(TargetProfileBuildError),
     /// The Metal record omitted the BF16 behaviour this declaration requires.
     UnstatedBf16SubnormalBehaviour,
     /// The governed scalar catalog refused the BF16 policy subject.
@@ -1232,12 +1511,6 @@ impl From<TargetProfileBuildError> for BoundMetalDeclarationError {
     }
 }
 
-impl From<MetalF32TargetProfileError> for BoundMetalDeclarationError {
-    fn from(error: MetalF32TargetProfileError) -> Self {
-        Self::SubnormalProjection(error)
-    }
-}
-
 impl From<MetalTargetError> for BoundMetalDeclarationError {
     fn from(error: MetalTargetError) -> Self {
         Self::AotTarget(error)
@@ -1255,10 +1528,27 @@ impl fmt::Display for BoundMetalDeclarationError {
             Self::ProfileKey(error) => ("profile key", error),
             Self::Provenance(error) => ("fact source", error),
             Self::Profile(error) => ("compiler profile row", error),
-            Self::SubnormalProjection(error) => ("f32 subnormal projection", error),
             Self::Bf16Subject(error) => ("BF16 policy subject", error),
             Self::Bf16SubnormalProjection(error) => ("BF16 subnormal projection", error),
             Self::AotTarget(error) => ("AOT target", error),
+            Self::CompilationSelectionMismatch { population } => {
+                return write!(
+                    formatter,
+                    "compilation selection: retained {} selection differs from the production \
+                     CompileRequest selection",
+                    population.as_str(),
+                );
+            }
+            Self::UnstatedF32SubnormalBehaviour => {
+                return formatter
+                    .write_str("Metal target facts do not state f32 subnormal behavior");
+            }
+            Self::F32SubnormalProjection(error) => {
+                return write!(
+                    formatter,
+                    "compiler target profile refused Metal f32 facts: {error}"
+                );
+            }
             Self::UnstatedBf16SubnormalBehaviour => {
                 return formatter.write_str(
                     "BF16 subnormal projection: Metal target facts do not state BF16 behaviour",
@@ -1284,11 +1574,14 @@ impl Error for BoundMetalDeclarationError {
         match self {
             Self::ProfileKey(error) => Some(error),
             Self::Provenance(error) => Some(error),
-            Self::Profile(error) | Self::Bf16SubnormalProjection(error) => Some(error),
+            Self::Profile(error)
+            | Self::F32SubnormalProjection(error)
+            | Self::Bf16SubnormalProjection(error) => Some(error),
             Self::Bf16Subject(error) => Some(error),
-            Self::SubnormalProjection(error) => Some(error),
             Self::AotTarget(error) => Some(error),
             Self::PreparedEntryQuery
+            | Self::CompilationSelectionMismatch { .. }
+            | Self::UnstatedF32SubnormalBehaviour
             | Self::UnstatedBf16SubnormalBehaviour
             | Self::BufferCapacityExceedsEmissionLimit { .. } => None,
         }
@@ -1299,7 +1592,8 @@ impl Error for BoundMetalDeclarationError {
 mod tests {
     use super::{
         BoundMetalCompileDeclaration, BoundMetalDeclarationError, FIRST_MACOS_APPLE9, LedgerRows,
-        MEASURED_PRODUCER, MetalPlanProfileMismatch,
+        MEASURED_PRODUCER, MetalPlanProfileMismatch, MetalProfileMeasurementPopulation,
+        PopulationRows,
     };
     use tiler_compiler::session::{
         CompileRequest, NumericalContract, TargetCompileRefusal, TargetNumericalContractRefusal,
@@ -1333,6 +1627,9 @@ mod tests {
         MetalSubnormalArithmetic, MetalSubnormalArithmeticFacts, MetalTargetFacts,
         MslLanguageVersion,
     };
+    use tiler_metal_aot::input::{
+        Fp32Functions, FpContract, MathMode, MslVersion, NumericalRealization, OptimizationLevel,
+    };
 
     /// The subnormal behaviour the ledger's measured Apple row delivers, for
     /// `f32` and `bf16` alike.
@@ -1350,6 +1647,22 @@ mod tests {
     fn declared() -> BoundMetalCompileDeclaration {
         BoundMetalCompileDeclaration::first_macos_apple9()
             .expect("the ledger's rows assemble one bound declaration")
+    }
+
+    /// The dispatchability-and-numerics population's source, exactly as the
+    /// production partition constructs it.
+    fn measured_source(rows: &LedgerRows) -> super::TargetCompileProfileMeasurementSource {
+        let selection = rows
+            .dispatch_numerics
+            .selection
+            .selection()
+            .expect("the recorded selection projects onto a governed target");
+        super::population_source(
+            &rows.offline,
+            &rows.dispatch_numerics.execution,
+            selection.as_bytes(),
+        )
+        .expect("the population source assembles")
     }
 
     fn descriptor(rows: &LedgerRows) -> Vec<u8> {
@@ -1652,7 +1965,18 @@ mod tests {
             "the measured producer is absent",
         );
         assert!(text.contains("32023.883"), "the compiler row is absent");
-        assert!(text.contains("26A5388g"), "the execution row is absent");
+        assert!(
+            text.contains("26A5388g"),
+            "the dispatch/numerics execution row is absent",
+        );
+        assert!(
+            text.contains("26A5406e"),
+            "the re-measured grid/cost execution row is absent",
+        );
+        assert!(
+            text.contains("tiler.metal-aot.compilation-selection.v1"),
+            "the Metal-derived selection bytes are absent from the measured sources",
+        );
     }
 
     /// The workgroup row is a prepared-kernel query and cannot become a fact.
@@ -1730,14 +2054,14 @@ mod tests {
         let mut builder = TargetProfileBuilder::new(
             TargetProfileKey::new("test.duplicate-subnormal.v1".to_owned()).unwrap(),
         );
-        let source = super::measured_source(&FIRST_MACOS_APPLE9).expect("the measured source");
-        crate::declare_metal_f32_subnormal_behaviour(
+        let source = measured_source(&FIRST_MACOS_APPLE9);
+        super::declare_metal_f32_subnormal_behaviour(
             &mut builder,
             declaration.metal_facts(),
             source.clone(),
         )
         .expect("the first projection lands");
-        let error = crate::declare_metal_f32_subnormal_behaviour(
+        let error = super::declare_metal_f32_subnormal_behaviour(
             &mut builder,
             declaration.metal_facts(),
             source,
@@ -1761,7 +2085,7 @@ mod tests {
         let mut builder = TargetProfileBuilder::new(
             TargetProfileKey::new("test.duplicate-bf16-subnormal.v1".to_owned()).unwrap(),
         );
-        let source = super::measured_source(&FIRST_MACOS_APPLE9).expect("the measured source");
+        let source = measured_source(&FIRST_MACOS_APPLE9);
         super::declare_metal_bf16_subnormal_behaviour(
             &mut builder,
             declaration.metal_facts(),
@@ -1834,10 +2158,10 @@ mod tests {
                 ),
             )
             .expect("a preserving row exists first");
-        crate::declare_metal_f32_subnormal_behaviour(
+        super::declare_metal_f32_subnormal_behaviour(
             &mut builder,
             declaration.metal_facts(),
-            super::measured_source(&FIRST_MACOS_APPLE9).expect("the measured source"),
+            measured_source(&FIRST_MACOS_APPLE9),
         )
         .expect_err("a flushing measurement cannot join a preserving declaration");
     }
@@ -1865,32 +2189,259 @@ mod tests {
             .expect("a compiler capacity below the emission limit is sound");
     }
 
-    /// The Metal facts that do not project are not validated as though they did.
+    /// The language standard now reaches the compiler descriptor — through the
+    /// required compilation selection, and only coherently.
     ///
-    /// Changing the language standard changes the AOT target and the payload
-    /// identity it governs, and must leave the compiler profile's descriptor
-    /// untouched — it has no compiler counterpart to move.
+    /// Before the selection carrier, a language change moved the AOT target and
+    /// left the descriptor untouched. The selection is provenance on every
+    /// measured source now, so a *coherent* language move (the facts and every
+    /// population's recorded selection together) moves both the AOT target and
+    /// the descriptor, while an *incoherent* one (the facts alone) is refused
+    /// by name before any descriptor exists: the retained records still pin
+    /// MSL 4.0, so their rows cannot source an MSL 3.2 production profile.
     #[test]
-    fn nonprojected_metal_facts_do_not_reach_the_compiler_descriptor() {
-        let mut rows = FIRST_MACOS_APPLE9;
-        rows.facts = MetalTargetFacts::new(
+    fn a_language_standard_change_moves_selection_identity_and_the_descriptor() {
+        let mut incoherent = FIRST_MACOS_APPLE9;
+        incoherent.facts = MetalTargetFacts::new(
             MslLanguageVersion::Metal3_2,
             MetalPlatform::MacOs,
             MetalDeploymentMinimum::new(26, 0),
+            incoherent.facts.subnormal_arithmetic,
+            incoherent.facts.buffer_binding_limit,
+        );
+        let error = BoundMetalCompileDeclaration::declare(&incoherent)
+            .expect_err("records pinned to MSL 4.0 cannot source an MSL 3.2 profile");
+        assert_eq!(
+            error,
+            BoundMetalDeclarationError::CompilationSelectionMismatch {
+                population: MetalProfileMeasurementPopulation::GridAxis,
+            },
+        );
+        assert_eq!(
+            error.to_string(),
+            "compilation selection: retained grid-axis selection differs from the production \
+             CompileRequest selection",
+        );
+
+        let mut coherent = incoherent;
+        for population in [
+            &mut coherent.grid,
+            &mut coherent.cost,
+            &mut coherent.tree_width,
+            &mut coherent.dispatch_numerics,
+        ] {
+            population.selection.language = MslVersion::Metal3_2;
+        }
+        let moved = BoundMetalCompileDeclaration::declare(&coherent)
+            .expect("a coherent MSL 3.2 move is a governed macOS target");
+        assert_ne!(
+            moved.profile().canonical_descriptor(),
+            declared().profile().canonical_descriptor(),
+            "the language standard must reach the descriptor through the selection",
+        );
+        assert_ne!(
+            moved.aot_target(),
+            declared().aot_target(),
+            "and it must still move the AOT target it governs",
+        );
+    }
+
+    /// A second artifact family cannot wear this profile's measured rows.
+    ///
+    /// The structural successor of the retired `second_artifact_family_fixture`
+    /// and of the ledger's prose refusal ("No iOS family, physical or
+    /// simulated, gains a row from this one"): moving only
+    /// `MetalTargetFacts::platform` moves the production selection to the iOS
+    /// target while every retained record still pins the macOS one, so the
+    /// declaration refuses by population name before any profile descriptor
+    /// exists — the inheritance the ledger used to refuse in prose is now
+    /// unrepresentable.
+    #[test]
+    fn a_second_artifact_family_cannot_wear_this_profiles_measured_rows() {
+        let mut rows = FIRST_MACOS_APPLE9;
+        rows.facts = MetalTargetFacts::new(
+            rows.facts.language,
+            MetalPlatform::IOsDevice,
+            rows.facts.deployment_minimum,
             rows.facts.subnormal_arithmetic,
             rows.facts.buffer_binding_limit,
         );
+        let error = BoundMetalCompileDeclaration::declare(&rows)
+            .expect_err("macOS-measured rows must not source an iOS production profile");
         assert_eq!(
-            descriptor(&rows),
-            descriptor(&FIRST_MACOS_APPLE9),
-            "a language standard has no compiler-profile counterpart",
+            error,
+            BoundMetalDeclarationError::CompilationSelectionMismatch {
+                population: MetalProfileMeasurementPopulation::GridAxis,
+            },
         );
-        assert_ne!(
-            BoundMetalCompileDeclaration::declare(&rows)
-                .expect("MSL 3.2 is a governed macOS target")
-                .aot_target(),
-            declared().aot_target(),
-            "and it must still move the AOT target it does govern",
+    }
+
+    /// Each population's recorded selection is compared independently, and a
+    /// refusal names the exact record that disagrees.
+    ///
+    /// One perturbation per population rather than one for the set: a check
+    /// that stopped after the first population would leave a later record's
+    /// mismatch invisible, so each case moves exactly one record's
+    /// optimization row off the production `-O2` and reads the population
+    /// back out of both the typed error and its display text. The array is
+    /// sized by the population type, so a widened enum fails here rather than
+    /// leaving its new record uncompared.
+    #[test]
+    fn every_populations_selection_mismatch_is_named_independently() {
+        type SelectionPerturbation = (
+            MetalProfileMeasurementPopulation,
+            &'static str,
+            fn(&mut LedgerRows) -> &mut PopulationRows,
+        );
+        let cases: [SelectionPerturbation; MetalProfileMeasurementPopulation::ALL.len()] = [
+            (
+                MetalProfileMeasurementPopulation::GridAxis,
+                "compilation selection: retained grid-axis selection differs from the production \
+                 CompileRequest selection",
+                |rows| &mut rows.grid,
+            ),
+            (
+                MetalProfileMeasurementPopulation::SaturatedParallelFoldSteps,
+                "compilation selection: retained saturated-parallel-fold-steps selection differs \
+                 from the production CompileRequest selection",
+                |rows| &mut rows.cost,
+            ),
+            (
+                MetalProfileMeasurementPopulation::WorkgroupTreeWidthPolicy,
+                "compilation selection: retained workgroup-tree-width-policy selection differs \
+                 from the production CompileRequest selection",
+                |rows| &mut rows.tree_width,
+            ),
+            (
+                MetalProfileMeasurementPopulation::DispatchabilityAndNumerics,
+                "compilation selection: retained dispatchability-and-numerics selection differs \
+                 from the production CompileRequest selection",
+                |rows| &mut rows.dispatch_numerics,
+            ),
+        ];
+        for (population, display, project) in cases {
+            let mut rows = FIRST_MACOS_APPLE9;
+            project(&mut rows).selection.optimization = OptimizationLevel::Aggressive;
+            let error = BoundMetalCompileDeclaration::declare(&rows).expect_err(
+                "a record whose selection differs from production must refuse by population",
+            );
+            assert_eq!(
+                error,
+                BoundMetalDeclarationError::CompilationSelectionMismatch { population },
+            );
+            assert_eq!(error.to_string(), display);
+        }
+    }
+
+    /// Every selection field the ledger can move coherently reaches the
+    /// profile descriptor.
+    ///
+    /// The selection bytes are embedded per measured source, so a selection
+    /// field that moved without the descriptor moving would mean a context
+    /// wearing another compilation's provenance under the same identity. The
+    /// language standard has its own case above (it also moves the AOT
+    /// target); the platform's coherent direction is exercised by the
+    /// second-family refusal instead, because this profile's ledger rows are
+    /// macOS measurements and no coherent iOS citation exists for them.
+    #[test]
+    fn every_coherent_selection_field_move_reaches_the_descriptor() {
+        type CoherentMove = (&'static str, fn(&mut LedgerRows));
+        let baseline = descriptor(&FIRST_MACOS_APPLE9);
+        let cases: [CoherentMove; 4] = [
+            ("the optimization level", |rows| {
+                rows.optimization = OptimizationLevel::Aggressive;
+                for population in [
+                    &mut rows.grid,
+                    &mut rows.cost,
+                    &mut rows.tree_width,
+                    &mut rows.dispatch_numerics,
+                ] {
+                    population.selection.optimization = OptimizationLevel::Aggressive;
+                }
+            }),
+            ("the math mode", |rows| {
+                let strict = NumericalRealization::strict_baseline();
+                let moved = NumericalRealization::new(
+                    MathMode::Fast,
+                    strict.fp32_functions,
+                    strict.fp_contract,
+                );
+                rows.numerical = moved;
+                for population in [
+                    &mut rows.grid,
+                    &mut rows.cost,
+                    &mut rows.tree_width,
+                    &mut rows.dispatch_numerics,
+                ] {
+                    population.selection.numerical = moved;
+                }
+            }),
+            ("the fp32-functions mode", |rows| {
+                let strict = NumericalRealization::strict_baseline();
+                let moved = NumericalRealization::new(
+                    strict.math_mode,
+                    Fp32Functions::Fast,
+                    strict.fp_contract,
+                );
+                rows.numerical = moved;
+                for population in [
+                    &mut rows.grid,
+                    &mut rows.cost,
+                    &mut rows.tree_width,
+                    &mut rows.dispatch_numerics,
+                ] {
+                    population.selection.numerical = moved;
+                }
+            }),
+            ("the contraction mode", |rows| {
+                let strict = NumericalRealization::strict_baseline();
+                let moved = NumericalRealization::new(
+                    strict.math_mode,
+                    strict.fp32_functions,
+                    FpContract::On,
+                );
+                rows.numerical = moved;
+                for population in [
+                    &mut rows.grid,
+                    &mut rows.cost,
+                    &mut rows.tree_width,
+                    &mut rows.dispatch_numerics,
+                ] {
+                    population.selection.numerical = moved;
+                }
+            }),
+        ];
+        for (name, apply) in cases {
+            let mut rows = FIRST_MACOS_APPLE9;
+            apply(&mut rows);
+            let perturbed = descriptor(&rows);
+            assert_ne!(
+                perturbed, baseline,
+                "{name} must reach the profile descriptor through the selection",
+            );
+        }
+    }
+
+    /// Sources are shared exactly on equal (selection bytes, execution row),
+    /// and split the moment an execution row differs.
+    ///
+    /// Moving only the cost record onto a third execution build — the same
+    /// byte length, so entry framing is unchanged — stops it sharing the grid
+    /// record's source, and the descriptor grows by exactly one framed
+    /// measured source: 8 + 812 bytes, the same entry size the pinned 3,296
+    /// derivation counts twice. That the delta is encoding-predicted to the
+    /// byte is the evidence the baseline's {grid, cost} pair really shares
+    /// one table entry rather than coincidentally summing to it.
+    #[test]
+    fn a_cost_record_on_another_execution_row_stops_sharing_the_grid_source() {
+        let baseline = descriptor(&FIRST_MACOS_APPLE9);
+        let mut split_rows = FIRST_MACOS_APPLE9;
+        split_rows.cost.execution.platform_build = "26A0000x";
+        let split = descriptor(&split_rows);
+        assert_eq!(
+            split.len(),
+            baseline.len() + 820,
+            "an execution split must add exactly one framed measured source",
         );
     }
 
@@ -1978,7 +2529,7 @@ mod tests {
     #[test]
     fn every_measurement_context_field_moves_the_profile_descriptor() {
         let baseline = descriptor(&FIRST_MACOS_APPLE9);
-        let perturbations: [RowPerturbation; 9] = [
+        let perturbations: [RowPerturbation; 12] = [
             ("the offline compiler version", |rows| {
                 rows.offline.compiler_version = "32023.884";
             }),
@@ -1994,17 +2545,29 @@ mod tests {
             ("the macOS SDK build", |rows| {
                 rows.offline.sdk_build = "25F71";
             }),
-            ("the execution OS version", |rows| {
-                rows.execution.platform_version = "27.1";
+            ("the dispatch/numerics execution OS version", |rows| {
+                rows.dispatch_numerics.execution.platform_version = "27.1";
             }),
-            ("the execution OS build", |rows| {
-                rows.execution.platform_build = "26A5389x";
+            ("the dispatch/numerics execution OS build", |rows| {
+                rows.dispatch_numerics.execution.platform_build = "26A5389x";
             }),
-            ("the execution architecture", |rows| {
-                rows.execution.architecture = "x86_64";
+            ("the dispatch/numerics execution architecture", |rows| {
+                rows.dispatch_numerics.execution.architecture = "x86_64";
             }),
-            ("the execution hardware", |rows| {
-                rows.execution.hardware = "Apple M3 Max";
+            ("the dispatch/numerics execution hardware", |rows| {
+                rows.dispatch_numerics.execution.hardware = "Apple M3 Max";
+            }),
+            // The populations carry their own execution rows now, so a moved
+            // row on one population must move identity without touching its
+            // neighbours' contexts.
+            ("the grid execution OS build", |rows| {
+                rows.grid.execution.platform_build = "26A5407x";
+            }),
+            ("the cost execution OS build", |rows| {
+                rows.cost.execution.platform_build = "26A5407x";
+            }),
+            ("the tree-width execution OS build", |rows| {
+                rows.tree_width.execution.platform_build = "26A5389x";
             }),
         ];
         for (name, perturb) in perturbations {
@@ -2141,9 +2704,24 @@ mod tests {
         // shared measured source are already in their tables — so two rows are
         // twelve bytes exactly. The source table does not grow, because both
         // rows share the measured source every numerical row already carries.
+        //
+        // It grew to **3,296** at the required-compilation-selection carrier,
+        // and the delta is encoding-predicted to the byte. The one shared
+        // measured source became two — {grid, cost} on the `26A5406e`
+        // execution row and {tree-width, dispatch/numerics} on `26A5388g` —
+        // and each measured source's one context now ends with its framed
+        // 287-byte production selection (the 41-byte selection domain, the
+        // framed `macosx`/`macos`/`air64-apple-macos26.0` runs, the counted
+        // seven compile flags, and the counted empty linker run), growing a
+        // measured source from 517 to 812 bytes. The complete declaration
+        // frames each source, so the table's measured run went from one
+        // 8+517-byte entry to two 8+812-byte entries: 2,181 - 525 + 1,640 =
+        // 3,296 exactly. Every compact source index still fits one byte, so no
+        // row moved. **That the arithmetic closes is the evidence no layout
+        // moved**, not an assertion beside one.
         assert_eq!(
             descriptor.len(),
-            2_181,
+            3_296,
             "the canonical descriptor length moved; update the authority ledger with it",
         );
     }
@@ -2153,7 +2731,7 @@ mod tests {
     ///
     /// **This is what keeps `tiler-compiler`'s own tests honest.** That crate
     /// cannot depend on this one, so `pipeline::tests`' fixtures restate the
-    /// fitted 1,056 as a constant; this asserts the declaration carries the same
+    /// fitted 1,280 as a constant; this asserts the declaration carries the same
     /// number, so the two cannot drift apart silently.
     ///
     /// The descriptor assertion beside it is the one that separates the two
@@ -2167,7 +2745,7 @@ mod tests {
         let profile = declaration.profile();
         assert_eq!(
             profile.saturated_parallel_fold_steps(AvailabilityPhase::CompileProfile),
-            TargetCostRowResolution::Declared { value: 1_056 },
+            TargetCostRowResolution::Declared { value: 1_280 },
             "the declared saturated-fold-step row moved off the retained fit",
         );
         let text = String::from_utf8_lossy(profile.canonical_descriptor());
@@ -2508,8 +3086,9 @@ mod tests {
             declaration.profile().profile_key(),
         );
 
-        let TargetNumericalEvidenceBasis::Measurement { contexts } = evidence.basis() else {
-            panic!("a measured ledger row rests on measurement contexts");
+        let TargetNumericalEvidenceBasis::CompileProfileMeasurement { contexts } = evidence.basis()
+        else {
+            panic!("a measured ledger row rests on compile-profile measurement contexts");
         };
         assert_eq!(
             contexts.len(),
@@ -2564,12 +3143,23 @@ mod tests {
         );
 
         let environment = context.environment();
-        let execution = &FIRST_MACOS_APPLE9.execution;
+        let execution = &FIRST_MACOS_APPLE9.dispatch_numerics.execution;
         assert_eq!(environment.platform(), execution.platform);
         assert_eq!(environment.platform_version(), execution.platform_version);
         assert_eq!(environment.platform_build(), execution.platform_build);
         assert_eq!(environment.architecture(), execution.architecture);
         assert_eq!(environment.hardware(), execution.hardware);
+        // And the context names the exact production selection the population's
+        // equality control admitted.
+        let expected_selection = FIRST_MACOS_APPLE9
+            .dispatch_numerics
+            .selection
+            .selection()
+            .expect("the recorded selection projects onto a governed target");
+        assert_eq!(
+            context.compilation_selection(),
+            expected_selection.as_bytes()
+        );
     }
 
     /// A flush-accepting `bf16` contract clears the subnormal dimensions and

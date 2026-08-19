@@ -7,10 +7,12 @@
 //! exercises fails here rather than quietly shrinking what has been watched.
 
 use super::{
-    CANONICAL_DIMENSIONS, CompilerBuildIdentity, CompilerBuildRole, DIMENSION_COUNT,
+    CANONICAL_DIMENSIONS, CompilationSelectionIdentity, CompilationSelectionIdentityError,
+    CompileProfileMeasurementContext, CompilerBuildIdentity, CompilerBuildRole, DIMENSION_COUNT,
     DimensionBehaviour, ExecutionEnvironmentIdentity, FactAuthority, FactEvidenceBasis,
-    FactSourceProvenance, FactValidityScope, HonouringMeans, MAX_RESOLVED_TYPE_IDENTITY_BYTES,
-    MeasurementContext, NumericalDimension, NumericalObligationKey, PolicyLocus,
+    FactSourceProvenance, FactValidityScope, HonouringMeans,
+    MAX_COMPILATION_SELECTION_IDENTITY_BYTES, MAX_RESOLVED_TYPE_IDENTITY_BYTES, MeasurementContext,
+    NumericalDimension, NumericalObligationKey, PolicyLocus, PostCompileMeasurementAuthority,
     ProvenanceIdentity, RelaxationRequirement, ScalarArithmeticSubject,
     ScalarArithmeticSubjectError, ScalarArithmeticSubjectIdentity, approximation_envelope_from_tag,
     materialization_rounding_from_tag, materialization_rounding_tag, permission_from_tag,
@@ -597,33 +599,127 @@ fn measurement(compiler_version: &str) -> MeasurementContext {
     )
 }
 
+fn selection(bytes: &[u8]) -> CompilationSelectionIdentity {
+    CompilationSelectionIdentity::from_bytes(bytes).expect("a nonempty bounded test selection")
+}
+
+fn compile_measurement(
+    compiler_version: &str,
+    selected: &[u8],
+) -> CompileProfileMeasurementContext {
+    CompileProfileMeasurementContext::new(
+        vec![CompilerBuildIdentity::new(
+            CompilerBuildRole::CodeGenerator,
+            "test-offline-compiler",
+            compiler_version,
+            None,
+        )],
+        ExecutionEnvironmentIdentity::new(
+            "test-platform",
+            "1.0",
+            "test-build",
+            "test-architecture",
+            "test-hardware",
+        ),
+        selection(selected),
+    )
+}
+
+#[test]
+fn a_selection_identity_is_admitted_only_between_its_bounds() {
+    assert_eq!(
+        CompilationSelectionIdentity::from_bytes([]),
+        Err(CompilationSelectionIdentityError::Empty),
+        "absence is not a selection",
+    );
+    let over = vec![0x01; MAX_COMPILATION_SELECTION_IDENTITY_BYTES + 1];
+    assert_eq!(
+        CompilationSelectionIdentity::from_bytes(&over),
+        Err(CompilationSelectionIdentityError::TooLong {
+            actual: MAX_COMPILATION_SELECTION_IDENTITY_BYTES + 1,
+            max: MAX_COMPILATION_SELECTION_IDENTITY_BYTES,
+        }),
+    );
+    // The two boundary-control displays the accepted packet fixes exactly.
+    assert_eq!(
+        CompilationSelectionIdentityError::Empty.to_string(),
+        "Empty"
+    );
+    assert_eq!(
+        CompilationSelectionIdentityError::TooLong {
+            actual: 65_537,
+            max: 65_536,
+        }
+        .to_string(),
+        "TooLong { actual: 65537, max: 65536 }",
+    );
+    // The bound itself is admitted, so the refusal is off-by-one free.
+    let at_bound = vec![0x01; MAX_COMPILATION_SELECTION_IDENTITY_BYTES];
+    assert_eq!(
+        selection(&at_bound).as_bytes(),
+        at_bound.as_slice(),
+        "the exact bytes are retained, not a digest of them",
+    );
+}
+
+#[test]
+fn two_contexts_differing_only_in_selection_are_two_identities() {
+    let left = compile_measurement("1.0", b"selection-a");
+    let right = compile_measurement("1.0", b"selection-b");
+    assert_ne!(left.canonical_bytes(), right.canonical_bytes());
+
+    // Sorting and deduplication use the complete canonical bytes including the
+    // selection, so the two stay distinct in one source.
+    let source = FactSourceProvenance::compile_profile_measured(
+        ProvenanceIdentity::new("tiler.test-authority.v1", 1),
+        vec![right.clone(), left.clone()],
+    );
+    assert!(source.is_valid());
+    let FactEvidenceBasis::CompileProfileMeasurement { contexts } = source.basis() else {
+        panic!("the compile-profile route carries the compile-profile basis");
+    };
+    assert_eq!(contexts.len(), 2);
+    assert!(contexts[0].canonical_bytes() < contexts[1].canonical_bytes());
+
+    // And the rendering spells the selection bytes exactly, in lowercase hex.
+    let mut rendered = String::new();
+    left.render(&mut rendered);
+    assert!(
+        rendered.ends_with(";compilation-selection=73656c656374696f6e2d61"),
+        "the rendered context must show the exact selection bytes: {rendered}",
+    );
+}
+
 #[test]
 fn a_complete_provenance_statement_validates_and_an_incoherent_triple_does_not() {
-    let measured = FactSourceProvenance::measured(
-        AvailabilityPhase::CompileProfile,
-        FactAuthority::MeasuredProfile,
-        FactValidityScope::MeasuredEnvironment,
+    let measured = FactSourceProvenance::compile_profile_measured(
         ProvenanceIdentity::new("tiler.test-authority.v1", 1),
-        vec![measurement("1.0")],
+        vec![compile_measurement("1.0", b"selection-a")],
     );
     assert!(measured.is_valid());
 
     // The triple is one claim, not three independent fields: a compile-profile
     // fact vouched for by a launch-instance authority names no readable moment.
-    let incoherent = FactSourceProvenance::measured(
+    // Only the private assembler can even state the incoherent triple now.
+    let incoherent = FactSourceProvenance::assemble(
         AvailabilityPhase::CompileProfile,
         FactAuthority::LaunchInstance,
         FactValidityScope::MeasuredEnvironment,
         ProvenanceIdentity::new("tiler.test-authority.v1", 1),
-        vec![measurement("1.0")],
+        FactEvidenceBasis::CompileProfileMeasurement {
+            contexts: vec![compile_measurement("1.0", b"selection-a")],
+        },
     );
     assert!(!incoherent.is_valid());
 
-    // A measurement basis with no context measured nothing.
-    let empty = FactSourceProvenance::measured(
-        AvailabilityPhase::CompileProfile,
-        FactAuthority::MeasuredProfile,
-        FactValidityScope::MeasuredEnvironment,
+    // A measurement basis with no context measured nothing, in both routes.
+    let empty = FactSourceProvenance::compile_profile_measured(
+        ProvenanceIdentity::new("tiler.test-authority.v1", 1),
+        Vec::new(),
+    );
+    assert!(!empty.is_valid());
+    let empty = FactSourceProvenance::post_compile_measured(
+        PostCompileMeasurementAuthority::DeviceRuntime,
         ProvenanceIdentity::new("tiler.test-authority.v1", 1),
         Vec::new(),
     );
@@ -631,7 +727,7 @@ fn a_complete_provenance_statement_validates_and_an_incoherent_triple_does_not()
 
     // A governed guarantee vouched for by a measuring authority is the same
     // class of incoherence from the other side.
-    let mismatched = FactSourceProvenance::new(
+    let mismatched = FactSourceProvenance::assemble(
         AvailabilityPhase::CompileProfile,
         FactAuthority::MeasuredProfile,
         FactValidityScope::PortableProfile,
@@ -641,6 +737,95 @@ fn a_complete_provenance_statement_validates_and_an_incoherent_triple_does_not()
         },
     );
     assert!(!mismatched.is_valid());
+}
+
+/// The governed and external triples are closed exactly, which is the
+/// phase-laundering route the raw constructors used to leave open.
+#[test]
+fn governed_and_external_bases_admit_exactly_their_one_triple() {
+    assert!(
+        FactSourceProvenance::governed(
+            ProvenanceIdentity::new("tiler.test-authority.v1", 1),
+            ProvenanceIdentity::new("tiler.test-guarantee.v1", 1),
+        )
+        .is_valid()
+    );
+    assert!(
+        FactSourceProvenance::externally_guaranteed(
+            ProvenanceIdentity::new("tiler.test-authority.v1", 1),
+            ProvenanceIdentity::new("tiler.test-reference.v1", 1),
+        )
+        .is_valid()
+    );
+    // The previously assemblable governed launch-instance laundering triple.
+    let laundered = FactSourceProvenance::assemble(
+        AvailabilityPhase::ArtifactEvidence,
+        FactAuthority::GovernedProfile,
+        FactValidityScope::LaunchInstance,
+        ProvenanceIdentity::new("tiler.test-authority.v1", 1),
+        FactEvidenceBasis::GovernedGuarantee {
+            guarantee: ProvenanceIdentity::new("tiler.test-guarantee.v1", 1),
+        },
+    );
+    assert!(!laundered.is_valid());
+    let laundered = FactSourceProvenance::assemble(
+        AvailabilityPhase::LaunchPreflight,
+        FactAuthority::ExternalProfile,
+        FactValidityScope::LaunchInstance,
+        ProvenanceIdentity::new("tiler.test-authority.v1", 1),
+        FactEvidenceBasis::ExternalGuarantee {
+            reference: ProvenanceIdentity::new("tiler.test-reference.v1", 1),
+        },
+    );
+    assert!(!laundered.is_valid());
+}
+
+/// Each post-compile authority derives its one coherent triple, counted over
+/// the whole vocabulary.
+#[test]
+fn every_post_compile_authority_derives_its_one_coherent_triple() {
+    let authorities = [
+        (
+            PostCompileMeasurementAuthority::ArtifactEvidence,
+            AvailabilityPhase::ArtifactEvidence,
+            FactAuthority::ArtifactEvidence,
+            FactValidityScope::PreparedArtifact,
+        ),
+        (
+            PostCompileMeasurementAuthority::DeviceRuntime,
+            AvailabilityPhase::LiveDevicePreflight,
+            FactAuthority::DeviceRuntime,
+            FactValidityScope::DeviceInstance,
+        ),
+        (
+            PostCompileMeasurementAuthority::PreparedKernel,
+            AvailabilityPhase::PreparedKernelPreflight,
+            FactAuthority::PreparedKernel,
+            FactValidityScope::PreparedArtifact,
+        ),
+        (
+            PostCompileMeasurementAuthority::LaunchInstance,
+            AvailabilityPhase::LaunchPreflight,
+            FactAuthority::LaunchInstance,
+            FactValidityScope::LaunchInstance,
+        ),
+    ];
+    assert_eq!(
+        authorities.len(),
+        core::mem::variant_count::<PostCompileMeasurementAuthority>(),
+        "the table must cover every post-compile authority",
+    );
+    for (authority, phase, internal, validity) in authorities {
+        let source = FactSourceProvenance::post_compile_measured(
+            authority,
+            ProvenanceIdentity::new("tiler.test-authority.v1", 1),
+            vec![measurement("1.0")],
+        );
+        assert!(source.is_valid());
+        assert_eq!(source.phase(), phase);
+        assert_eq!(source.authority(), internal);
+        assert_eq!(source.validity(), validity);
+    }
 }
 
 #[test]
@@ -704,46 +889,70 @@ fn measurement_contexts_are_canonically_ordered_by_construction() {
 
 #[test]
 fn a_provenance_rendering_names_every_field_its_encoding_covers() {
-    let source = FactSourceProvenance::measured(
-        AvailabilityPhase::CompileProfile,
-        FactAuthority::MeasuredProfile,
-        FactValidityScope::MeasuredEnvironment,
+    let source = FactSourceProvenance::compile_profile_measured(
         ProvenanceIdentity::new("tiler.test-authority.v1", 1),
-        vec![measurement("1.0")],
+        vec![compile_measurement("1.0", b"selection-a")],
     );
     let mut rendered = String::new();
     source.render(&mut rendered);
     for expected in [
-        "source-schema=3",
+        "source-schema=4",
         "phase=compile-profile",
         "authority=measured-profile",
         "validity=measured-environment",
         "tiler.test-authority.v1@1",
-        "basis=measurement",
+        "basis=compile-profile-measurement",
         "test-offline-compiler@1.0",
         "test-platform/1.0/test-build/test-architecture/test-hardware",
+        "compilation-selection=73656c656374696f6e2d61",
     ] {
         assert!(
             rendered.contains(expected),
             "the rendering must show {expected}, or it is a summary of evidence rather than the evidence: {rendered}",
         );
     }
+
+    let source = FactSourceProvenance::post_compile_measured(
+        PostCompileMeasurementAuthority::DeviceRuntime,
+        ProvenanceIdentity::new("tiler.test-authority.v1", 1),
+        vec![measurement("1.0")],
+    );
+    let mut rendered = String::new();
+    source.render(&mut rendered);
+    for expected in [
+        "source-schema=4",
+        "phase=live-device-preflight",
+        "authority=device-runtime",
+        "validity=device-instance",
+        "basis=measurement",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "the rendering must show {expected}: {rendered}",
+        );
+    }
+    assert!(
+        !rendered.contains("compilation-selection"),
+        "a post-compile context carries no selection to render: {rendered}",
+    );
 }
 
 #[test]
 fn two_provenance_statements_differing_in_one_field_differ_in_canonical_bytes() {
-    let base = |version| {
-        FactSourceProvenance::measured(
-            AvailabilityPhase::CompileProfile,
-            FactAuthority::MeasuredProfile,
-            FactValidityScope::MeasuredEnvironment,
+    let base = |version, selected: &[u8]| {
+        FactSourceProvenance::compile_profile_measured(
             ProvenanceIdentity::new("tiler.test-authority.v1", 1),
-            vec![measurement(version)],
+            vec![compile_measurement(version, selected)],
         )
     };
     assert_ne!(
-        base("1.0").canonical_bytes(),
-        base("2.0").canonical_bytes(),
+        base("1.0", b"selection-a").canonical_bytes(),
+        base("2.0", b"selection-a").canonical_bytes(),
         "the exact compiler build a measurement rests on is part of its identity",
+    );
+    assert_ne!(
+        base("1.0", b"selection-a").canonical_bytes(),
+        base("1.0", b"selection-b").canonical_bytes(),
+        "the exact compilation selection a measurement rests on is part of its identity",
     );
 }

@@ -213,6 +213,9 @@ fn every_public_governed_tag_table_is_injective_over_its_variant_set() {
         FactEvidenceBasis::Measurement {
             contexts: Vec::new(),
         },
+        FactEvidenceBasis::CompileProfileMeasurement {
+            contexts: Vec::new(),
+        },
     ];
     assert_tag_table_ref("FactEvidenceBasis::tag", &bases, FactEvidenceBasis::tag);
 }

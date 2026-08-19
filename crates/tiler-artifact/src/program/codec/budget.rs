@@ -252,21 +252,37 @@ fn push_provenance_text<'a>(texts: &mut Vec<&'a str>, source: &'a FactSourceProv
         FactEvidenceBasis::ExternalGuarantee { reference } => texts.push(reference.key()),
         FactEvidenceBasis::Measurement { contexts } => {
             for context in contexts {
-                for build in context.compiler_builds() {
-                    if let CompilerBuildRole::ProviderDefined(identity) = build.role() {
-                        texts.push(identity.key());
-                    }
-                    texts.push(build.implementation());
-                    texts.push(build.version());
-                    texts.extend(build.build());
-                }
-                let environment = context.environment();
-                texts.push(environment.platform());
-                texts.push(environment.platform_version());
-                texts.push(environment.platform_build());
-                texts.push(environment.architecture());
-                texts.push(environment.hardware());
+                push_context_text(texts, context.compiler_builds(), context.environment());
+            }
+        }
+        // The compilation selection is opaque bytes rather than text, and its
+        // own 64-KiB ceiling is enforced at construction; only the textual
+        // fields join this budget.
+        FactEvidenceBasis::CompileProfileMeasurement { contexts } => {
+            for context in contexts {
+                push_context_text(texts, context.compiler_builds(), context.environment());
             }
         }
     }
+}
+
+/// Collects the text runs one measurement context writes, either route.
+fn push_context_text<'a>(
+    texts: &mut Vec<&'a str>,
+    compiler_builds: &'a [tiler_ir::numerics::CompilerBuildIdentity],
+    environment: &'a tiler_ir::numerics::ExecutionEnvironmentIdentity,
+) {
+    for build in compiler_builds {
+        if let CompilerBuildRole::ProviderDefined(identity) = build.role() {
+            texts.push(identity.key());
+        }
+        texts.push(build.implementation());
+        texts.push(build.version());
+        texts.extend(build.build());
+    }
+    texts.push(environment.platform());
+    texts.push(environment.platform_version());
+    texts.push(environment.platform_build());
+    texts.push(environment.architecture());
+    texts.push(environment.hardware());
 }

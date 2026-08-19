@@ -84,6 +84,13 @@ use crate::target::honourability::{
 /// Trailing NUL so no descriptor can be a prefix of a differently-domained
 /// encoding, matching the framing the rest of the workspace's identities use.
 ///
+/// `v11` because [`encode_honourability_facts`] writes each fact's structured
+/// source **unframed** inside this descriptor, and fact-source provenance
+/// stepped its own schema from 3 to 4 — the compile-profile measurement basis
+/// now carries a required exact compilation selection per context. An unframed
+/// nested grammar moving is a grammar change of this descriptor, so the step
+/// moves every value in the domain, including a profile with no numerical row.
+///
 /// `v10` adds the synchronization-realization declaration. It is folded into the
 /// descriptor rather than kept beside it because it decides verdicts exactly as a
 /// bound does: two profiles sharing a key and differing only in which
@@ -111,7 +118,7 @@ use crate::target::honourability::{
 /// `v3` distinguished per-dimension behaviours after the strict-arithmetic
 /// boolean was retired, but two profiles resting on different measured builds
 /// still collided under it.
-const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v10\0";
+const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v11\0";
 
 /// Governed key of the feasibility rule set this authority applies.
 ///
@@ -2745,7 +2752,8 @@ mod tests {
 
     use crate::target::honourability::{
         CompilerBuildIdentity, CompilerBuildRole, DeclaredBehaviour, ExecutionEnvironmentIdentity,
-        FactSourceProvenance, MeasurementContext, ProvenanceIdentity,
+        FactSourceProvenance, MeasurementContext, PostCompileMeasurementAuthority,
+        ProvenanceIdentity,
     };
     use tiler_ir::numerics::{RelaxationRequirement, ScalarArithmeticSubject};
     use tiler_ir::program::abi::{TargetPropertyKey, TargetPropertyProviderIdentity};
@@ -2773,19 +2781,17 @@ mod tests {
         IDENTITY.get_or_init(|| TargetProfileIdentity::new(BASELINE_KEY))
     }
 
-    fn measured_source(authority: FactAuthority) -> Arc<FactSourceProvenance> {
+    fn measured_source(authority: PostCompileMeasurementAuthority) -> Arc<FactSourceProvenance> {
         measured_source_with(authority, "1.0", "build-1")
     }
 
     fn measured_source_with(
-        authority: FactAuthority,
+        authority: PostCompileMeasurementAuthority,
         compiler_version: &str,
         platform_build: &str,
     ) -> Arc<FactSourceProvenance> {
-        Arc::new(FactSourceProvenance::measured(
-            AvailabilityPhase::LiveDevicePreflight,
+        Arc::new(FactSourceProvenance::post_compile_measured(
             authority,
-            FactValidityScope::DeviceInstance,
             ProvenanceIdentity::new("tiler.test.measurement-authority.v1", 1),
             vec![MeasurementContext::new(
                 vec![CompilerBuildIdentity::new(
@@ -3167,7 +3173,7 @@ mod tests {
         let later = DeclaredSynchronizationRealization::new(
             REQUIRED_SUBJECT,
             SynchronizationRealization::Realized,
-            measured_source(FactAuthority::DeviceRuntime),
+            measured_source(PostCompileMeasurementAuthority::DeviceRuntime),
         )
         .attributed_to(id);
         assert_eq!(later.phase(), AvailabilityPhase::LiveDevicePreflight);
@@ -3334,7 +3340,7 @@ mod tests {
         let later = DeclaredSynchronizationRealization::new(
             REQUIRED_SUBJECT,
             SynchronizationRealization::Unrealizable,
-            measured_source(FactAuthority::DeviceRuntime),
+            measured_source(PostCompileMeasurementAuthority::DeviceRuntime),
         )
         .attributed_to(id);
         assert_ne!(compile.phase(), later.phase());
@@ -3676,7 +3682,7 @@ mod tests {
         let later = DeclaredSubgroupRealization::new(
             required_subgroup(),
             SubgroupRealization::Realized,
-            measured_source(FactAuthority::DeviceRuntime),
+            measured_source(PostCompileMeasurementAuthority::DeviceRuntime),
         )
         .attributed_to(identity());
         assert_eq!(later.phase(), AvailabilityPhase::LiveDevicePreflight);
@@ -4726,7 +4732,7 @@ range over it, and each would pass over the axes that remain."
     fn a_later_phase_honourability_declaration_defers_then_resolves() {
         let id = identity();
         let mut declaration = baseline_honourability(id);
-        let source = measured_source(FactAuthority::DeviceRuntime);
+        let source = measured_source(PostCompileMeasurementAuthority::DeviceRuntime);
         declaration[0] = DeclaredBehaviour::new(
             NumericalDimension::InputSubnormals,
             ArithmeticType::F32,
@@ -5256,20 +5262,13 @@ range over it, and each would pass over the axes that remain."
                 )],
                 "declaration-provenance",
             ),
-            (
-                vec![
-                    DeclaredBehaviour::new(
-                        NumericalDimension::InputSubnormals,
-                        ArithmeticType::F32,
-                        F32::resolved_type(),
-                        PRESERVE,
-                        HonouringMeans::SupportedExactly,
-                        measured_source(FactAuthority::GovernedProfile),
-                    )
-                    .attributed_to(id),
-                ],
-                "declaration-authority",
-            ),
+            // The former `declaration-authority` case is gone with the raw
+            // provenance constructors: every public source route now derives
+            // its phase/authority/validity triple, so a declaration whose
+            // source authority contradicts its phase is unrepresentable from
+            // any constructible source. `authority_matches_phase` stays as
+            // defence in depth behind the type system rather than a reachable
+            // refusal.
             (
                 vec![
                     declares(
@@ -5336,10 +5335,8 @@ range over it, and each would pass over the axes that remain."
             )
         };
         let measured = |authority_identity, contexts| {
-            Arc::new(FactSourceProvenance::measured(
-                AvailabilityPhase::LiveDevicePreflight,
-                FactAuthority::DeviceRuntime,
-                FactValidityScope::DeviceInstance,
+            Arc::new(FactSourceProvenance::post_compile_measured(
+                PostCompileMeasurementAuthority::DeviceRuntime,
                 authority_identity,
                 contexts,
             ))
@@ -5400,10 +5397,26 @@ range over it, and each would pass over the axes that remain."
     fn structured_fact_source_is_canonical_and_identity_relevant() {
         let id = identity();
         let baseline = baseline_profile();
-        let build_one = measured_source_with(FactAuthority::DeviceRuntime, "1.0", "build-1");
-        let same_build = measured_source_with(FactAuthority::DeviceRuntime, "1.0", "build-1");
-        let build_two = measured_source_with(FactAuthority::DeviceRuntime, "2.0", "build-1");
-        let environment_two = measured_source_with(FactAuthority::DeviceRuntime, "1.0", "build-2");
+        let build_one = measured_source_with(
+            PostCompileMeasurementAuthority::DeviceRuntime,
+            "1.0",
+            "build-1",
+        );
+        let same_build = measured_source_with(
+            PostCompileMeasurementAuthority::DeviceRuntime,
+            "1.0",
+            "build-1",
+        );
+        let build_two = measured_source_with(
+            PostCompileMeasurementAuthority::DeviceRuntime,
+            "2.0",
+            "build-1",
+        );
+        let environment_two = measured_source_with(
+            PostCompileMeasurementAuthority::DeviceRuntime,
+            "1.0",
+            "build-2",
+        );
 
         let descriptor = |source| {
             let mut declarations = baseline_honourability(id);
@@ -5465,10 +5478,8 @@ range over it, and each would pass over the axes that remain."
                 )
             })
             .collect();
-        let source = Arc::new(FactSourceProvenance::measured(
-            AvailabilityPhase::LiveDevicePreflight,
-            FactAuthority::DeviceRuntime,
-            FactValidityScope::DeviceInstance,
+        let source = Arc::new(FactSourceProvenance::post_compile_measured(
+            PostCompileMeasurementAuthority::DeviceRuntime,
             ProvenanceIdentity::new("tiler.test.measurement-authority.v1", 1),
             contexts,
         ));

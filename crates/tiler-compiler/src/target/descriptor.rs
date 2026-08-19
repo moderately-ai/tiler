@@ -12,6 +12,7 @@ use tiler_ir::program::abi::TargetPropertyQuery;
 
 use crate::target::accuracy::ElementaryRealization;
 use crate::target::feasibility::{DeclaredSubgroupRealization, DeclaredSynchronizationRealization};
+use crate::target::honourability::SourceTable;
 use crate::target::key::TargetProfileKey;
 use crate::target::rows::{
     CostRowFact, DTypeDispatchabilityFact, EvaluationOrderFact, QuantitativeCapabilityDeclaration,
@@ -222,37 +223,32 @@ pub(super) fn complete_descriptor(
     push_slice(&mut bytes, COMPLETE_PROFILE_DESCRIPTOR_DOMAIN);
     push_slice(&mut bytes, key.as_str().as_bytes());
     push_slice(&mut bytes, PROFILE_SOURCE_DOMAIN);
-    let mut sources: Vec<_> = quantitative
-        .iter()
-        .map(|fact| fact.source.as_ref())
-        .chain(scalar.iter().map(|declaration| declaration.source.as_ref()))
-        .chain(dispatchability.iter().map(|fact| fact.source.as_ref()))
-        .chain(
-            synchronization
-                .iter()
-                .map(DeclaredSynchronizationRealization::source_ref),
-        )
-        .chain(evaluation_order.iter().map(|fact| fact.source.as_ref()))
-        .chain(cost_rows.iter().map(|fact| fact.source.as_ref()))
-        .chain(tree_width_policies.iter().map(|fact| fact.source.as_ref()))
-        .chain(elementary.iter().map(ElementaryRealization::source))
-        .chain(subgroup.iter().map(DeclaredSubgroupRealization::source_ref))
-        .map(|source| (source.canonical_bytes(), source))
-        .collect();
-    sources.sort_by(|left, right| left.0.cmp(&right.0));
-    sources.dedup_by(|left, right| left.0 == right.0);
-    push_len(&mut bytes, sources.len());
-    for (source_bytes, _) in &sources {
+    let sources = SourceTable::collect(
+        quantitative
+            .iter()
+            .map(|fact| fact.source.as_ref())
+            .chain(scalar.iter().map(|declaration| declaration.source.as_ref()))
+            .chain(dispatchability.iter().map(|fact| fact.source.as_ref()))
+            .chain(
+                synchronization
+                    .iter()
+                    .map(DeclaredSynchronizationRealization::source_ref),
+            )
+            .chain(evaluation_order.iter().map(|fact| fact.source.as_ref()))
+            .chain(cost_rows.iter().map(|fact| fact.source.as_ref()))
+            .chain(tree_width_policies.iter().map(|fact| fact.source.as_ref()))
+            .chain(elementary.iter().map(ElementaryRealization::source))
+            .chain(subgroup.iter().map(DeclaredSubgroupRealization::source_ref)),
+    );
+    push_len(&mut bytes, sources.entries().len());
+    for source_bytes in sources.entries() {
         push_slice(&mut bytes, source_bytes);
     }
     push_len(&mut bytes, quantitative.len());
     for fact in quantitative {
         push_slice(&mut bytes, fact.axis.key().as_bytes());
         bytes.extend_from_slice(&fact.bound.to_le_bytes());
-        let source_bytes = fact.source.canonical_bytes();
-        let source_index = sources
-            .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
-            .expect("every quantitative source was inserted into the source table");
+        let source_index = sources.index_of(fact.source.as_ref());
         QuantitativeCapabilityDeclaration::encode_source_index(&mut bytes, source_index);
     }
     push_len(&mut bytes, queries.len());
@@ -281,10 +277,7 @@ pub(super) fn complete_descriptor(
         let subject_index = subjects
             .binary_search(&subject)
             .expect("every numerical subject was inserted into the subject table");
-        let source_bytes = declaration.source.canonical_bytes();
-        let source_index = sources
-            .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
-            .expect("every numerical source was inserted into the source table");
+        let source_index = sources.index_of(declaration.source.as_ref());
         let mut row = Vec::new();
         encode_compact_index(&mut row, subject_index);
         row.push(declaration.dimension.tag());
@@ -301,10 +294,7 @@ pub(super) fn complete_descriptor(
     push_slice(&mut bytes, DISPATCHABILITY_DOMAIN);
     push_len(&mut bytes, dispatchability.len());
     for fact in dispatchability {
-        let source_bytes = fact.source.canonical_bytes();
-        let source_index = sources
-            .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
-            .expect("every dispatch source was inserted into the source table");
+        let source_index = sources.index_of(fact.source.as_ref());
         fact.encode(&mut bytes, source_index);
     }
     // The complete subject and its verdict, in uniqueness-key order
@@ -324,10 +314,7 @@ pub(super) fn complete_descriptor(
         bytes.push(u8::from(subject.fenced_spaces.device));
         bytes.push(subject.ordering.tag());
         bytes.push(declared.realization().tag());
-        let source_bytes = declared.source_ref().canonical_bytes();
-        let source_index = sources
-            .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
-            .expect("every synchronization source was inserted into the source table");
+        let source_index = sources.index_of(declared.source_ref());
         encode_compact_index(&mut bytes, source_index);
     }
     // The conditional sections. See this function's header for the derivation
@@ -336,10 +323,7 @@ pub(super) fn complete_descriptor(
         push_slice(&mut bytes, EVALUATION_ORDER_DOMAIN);
         push_len(&mut bytes, evaluation_order.len());
         for fact in evaluation_order {
-            let source_bytes = fact.source.canonical_bytes();
-            let source_index = sources
-                .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
-                .expect("every evaluation-order source was inserted into the source table");
+            let source_index = sources.index_of(fact.source.as_ref());
             fact.encode(&mut bytes, source_index);
         }
     }
@@ -347,10 +331,7 @@ pub(super) fn complete_descriptor(
         push_slice(&mut bytes, COST_ROW_DOMAIN);
         push_len(&mut bytes, cost_rows.len());
         for fact in cost_rows {
-            let source_bytes = fact.source.canonical_bytes();
-            let source_index = sources
-                .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
-                .expect("every cost-row source was inserted into the source table");
+            let source_index = sources.index_of(fact.source.as_ref());
             fact.encode(&mut bytes, source_index);
         }
     }
@@ -358,12 +339,7 @@ pub(super) fn complete_descriptor(
         push_slice(&mut bytes, WORKGROUP_TREE_WIDTH_POLICY_DOMAIN);
         push_len(&mut bytes, tree_width_policies.len());
         for fact in tree_width_policies {
-            let source_bytes = fact.source.canonical_bytes();
-            let source_index = sources
-                .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
-                .expect(
-                    "every workgroup-tree-width-policy source was inserted into the source table",
-                );
+            let source_index = sources.index_of(fact.source.as_ref());
             fact.encode(&mut bytes, source_index);
         }
     }
@@ -383,10 +359,7 @@ pub(super) fn complete_descriptor(
                 &mut bytes,
                 &realization.exceptional_evidence().canonical_encoding(),
             );
-            let source_bytes = realization.source().canonical_bytes();
-            let source_index = sources
-                .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
-                .expect("every elementary-realization source was inserted into the source table");
+            let source_index = sources.index_of(realization.source());
             encode_compact_index(&mut bytes, source_index);
         }
     }
@@ -396,10 +369,7 @@ pub(super) fn complete_descriptor(
         for declared in subgroup {
             declared.subject().encode(&mut bytes);
             bytes.push(declared.realization().tag());
-            let source_bytes = declared.source_ref().canonical_bytes();
-            let source_index = sources
-                .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
-                .expect("every subgroup-realization source was inserted into the source table");
+            let source_index = sources.index_of(declared.source_ref());
             encode_compact_index(&mut bytes, source_index);
         }
     }
