@@ -3,7 +3,7 @@ id: match-the-declared-input-contributor-in-the-fused-proof-exemption
 title: Match the declared-input contributor explicitly in the fused proof exemption
 status: todo
 priority: p2
-dependencies: [admit-a-materialized-producer-in-a-serial-reduction-contributor]
+dependencies: [replace-the-serial-sum-contributor-fields-with-the-exhaustive-source]
 related: [admit-a-materialized-producer-in-a-serial-reduction-contributor]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
@@ -38,4 +38,4 @@ The carrier itself, its recognizer, subject tag, or spelling — owned by the ca
 
 ## Coordination
 
-A sibling lane holds `implementation/compiler`; this ticket is filed, not claimed. The dependency edge points at the decision ticket because the carrier implementation ticket does not exist yet; the coordinator retargets the edge to that ticket when filing it, since the perturbation needs a `Materialized` source to exist.
+A sibling lane holds `implementation/compiler`; this ticket is filed, not claimed. The dependency edge originally pointed at the decision ticket; on 2026-08-18, after Tom accepted carrier (4), the coordinator retargeted it onto the filed implementation carrier [`replace-the-serial-sum-contributor-fields-with-the-exhaustive-source`](replace-the-serial-sum-contributor-fields-with-the-exhaustive-source.md), since the perturbation needs a `Materialized` source to exist. Under the accepted carrier this site is one of the 31 compile-forced errors, so the repair rides that migration — but this ticket's statement, perturbation obligation, and reviewer remain its own.

@@ -1,7 +1,7 @@
 ---
 id: admit-a-materialized-producer-in-a-serial-reduction-contributor
 title: Admit a materialized producer in a serial-reduction contributor
-status: awaiting-decision
+status: done
 priority: p3
 dependencies: [name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set, drive-staged-materialization-boundary-tests-past-elementary-accuracy]
 related: [name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set, admit-a-recognized-chain-more-than-one-materialization-boundary-deep]
@@ -471,3 +471,12 @@ Verified in full. The `serial.prologue.is_none()` anchor, the `The condition is 
 ### Verdict
 
 **Ready for Tom with the named repairs, which are made above.** Every load-bearing claim reproduced under independent derivation: the audit's anchors, the widened verifier guard, the layout table, carrier A's forced-site census including the compile-forced exemption, B's and C's eliminations (both slightly *understated* by the packet), the iterative-walk exclusion, and the filed ticket's Facts. The coordinator may restore `awaiting-decision`; the one question should be read together with the option (2) identity-cost note above.
+
+## Accepted decision — 2026-08-18
+
+Tom accepted **carrier (4)** — the full exhaustive contributor source with the materialized payload boxed (`Materialized(Box<MaterializedContributor>)`, producer plus optional continuation), the `ReductionContributorAdmission { OneEdge, NoEdge }` sides-rule bound, and the new `serial-sum-produced-f32.v1` sub-tag written only by the materialized arm — over the bare-producer slice and the status-quo refusal, exactly as recommended by the re-gated packet reviewed at `90714048`, with the review's option-(2) identity-cost note in view.
+
+- Provenance: Tom, 2026-08-18, live decision-queue session in the coordination conversation ("agreed next decision" on item 22 of `.ticketsplease/decision-queue.md`, presented in explain-then-recommend form immediately beforehand).
+- What this accepts: the carrier shape, its recognition/bound/spelling/numerical sections as restated by the 2026-08-18 packet, the identity consequences (new sub-tag; `serial-sum-f32.v3` bytes unmoved; `tiler.compiler.request-subject.v6` does not step; no artifact/cache/schedule/KIR domain steps), and the named-refusal population including `reduction-contributor-depth` for one-edge-too-deep subjects.
+- What this does not accept: arbitrary chain depth (the worklist producer walk remains the recorded reversal path, unfiled), backend emission, or performance selection.
+- Remainder: split into the implementation carrier [`replace-the-serial-sum-contributor-fields-with-the-exhaustive-source`](replace-the-serial-sum-contributor-fields-with-the-exhaustive-source.md), which owns the migration, the `reduction-contributor-depth` regression population, the two doc-sentence repairs, and the perturbation list; the verifier-exemption repair [`match-the-declared-input-contributor-in-the-fused-proof-exemption`](match-the-declared-input-contributor-in-the-fused-proof-exemption.md) is retargeted onto that carrier per its own Coordination note. This decision ticket closes as done with the carrier named and accepted; the Activation clause's admitted-or-refused outcome transfers to the carrier ticket.
