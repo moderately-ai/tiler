@@ -1,7 +1,7 @@
 ---
 id: decide-the-host-evidence-to-profile-composition-model
 title: Decide the host evidence to profile composition model
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [declare-metal-subgroup-realization-facts-in-the-target-profile]
@@ -9,6 +9,9 @@ scopes: [research/target-profiles, contracts/artifacts, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: worker-composition-model
+lease_expires_at: 1787105011
 ---
 ## User-visible outcome
 
