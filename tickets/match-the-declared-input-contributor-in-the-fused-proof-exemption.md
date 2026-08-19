@@ -1,7 +1,7 @@
 ---
 id: match-the-declared-input-contributor-in-the-fused-proof-exemption
 title: Match the declared-input contributor explicitly in the fused proof exemption
-status: todo
+status: done
 priority: p2
 dependencies: [replace-the-serial-sum-contributor-fields-with-the-exhaustive-source]
 related: [admit-a-materialized-producer-in-a-serial-reduction-contributor]
