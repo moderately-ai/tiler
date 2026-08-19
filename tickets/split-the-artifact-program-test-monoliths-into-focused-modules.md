@@ -106,3 +106,36 @@ Test population is unchanged: `cargo nextest run -p tiler-artifact` reports **34
 | `extent_operands` | 7 | live input-extent rows and their transports |
 | `plan_determinism` | 9 | scope cells and target-environment records (ADR 0013) |
 | `hot_path` | 6 | reproducible cost measurements; no timing assertions |
+
+### What holds "reorganization, not revision"
+
+A brace-depth parse of the pre-split files and of the split trees compares the two item by item, matching on item name and comparing the text from each item's own doc comment and attributes onward, with `super::` depth and visibility qualifiers normalized away. It reports **442 items before and 442 after, none missing, none added, and none changed**. 332 are byte-identical; the other 110 differ only by the `super::` depth the extra module level requires, by `pub(crate)` on a fixture item that now crosses a file boundary, and by the rustfmt reflow those two cause when they push a signature past 100 columns.
+
+The comparison was watched failing under two subject perturbations before it was trusted. Changing one byte of one string literal — `b"tiler.artifact-program.v10\0"` to `v11` in `a_recording_under_a_foreign_domain_is_refused` — moved it to `byte-identical: 160 … CHANGED: 1` and named that test and its file. Deleting `encoding_is_deterministic` outright moved it to `206 items before, 205 after` with `missing: ['encoding_is_deterministic']`. Both perturbations were reverted and the comparison returned to zero.
+
+The split is also mechanically reproducible: re-running the generator over the two pre-split files pinned from the base commit reproduces the committed tree byte for byte, so nothing in it is a hand edit that a reader would have to re-derive.
+
+The 47 items the pre-split file exported are all re-exported from `tests/mod.rs` with their **original visibility** — 15 `pub(crate)`, 32 `pub(super)`, none lost, none widened, none narrowed — so `crate::proof::tests`, `crate::program::retained`, and the codec suite import the same names at the same reach as before.
+
+## Defects observed while moving, deliberately not fixed
+
+1. **The fixture-visibility note is stale.** "The seven items this suite shares with `crate::proof::tests` are `pub(crate)`" — there are **15** `pub(crate)` items and `crate::proof::tests` imports **8** of them. The note also omits a second crate-internal consumer: `crate::program::retained`'s test module imports `SCALE_BITS`, `build_artifact`, `build_graph`, `fused_program`, `lowering_provider`, and `semantic_program`. The note is preserved verbatim and relocated to `tests/mod.rs`, beside the re-export block it describes, because it now sat above five constants that are all `pub(crate)` inside `support`.
+
+2. **Thirteen exported names have no consumer outside this suite**, so their `pub(crate)` / `pub(super)` markers claim a reach nothing uses: `BIAS_BITS`, `CANONICAL_NAN`, `strict`, `input_shape`, `output_shape`, `fused_kernel`, `entry`, `rules`, `partial_window_program`, `CLAIM_OBJECT`, `claim_payload_content`, `realization_record`, `live_extent_program`. The last two are `pub(crate)`, which is two levels wider than any use. The surface is preserved exactly here rather than narrowed, because narrowing it is a separate decision; the compiler cannot see the over-reach, since the suite's own modules now import through the same re-exports.
+
+3. **A `docs/roadmap.md` line citation was already wrong at the base.** It pinned `a_producer_built_bf16_artifact_round_trips_and_re_derives_its_identity` to `codec/tests.rs`:2584, but that test began at line 4131; line 2584 was inside `a_partial_binding_window_survives_encode_and_decode`. It resolved only because the file was long enough. Repaired to an anchor here — the standing case for AGENTS.md's "cite by searchable anchor, not by line number".
+
+4. **Two malformed section banners in the pre-split `program/tests.rs`**, preserved verbatim: line 1584 is a bare separator rule with no title, opening the strict-affine block (now the top of `support/encoded.rs`), and lines 1985–1986 spell `// Artifact fixtures` followed by a closing rule with no opening one (now the top of `support/artifacts.rs`). Cosmetic.
+
+## Gates — all green at 147a105c2728a5d2ec77d301cfddf6d94c8ac9b2
+
+`make full` passes end to end, which subsumes every check this ticket names. Run individually as well:
+
+- `cargo nextest run -p tiler-artifact`: 340 run, 340 passed, 1 skipped — identical to the base.
+- `cargo nextest run --workspace`: 3,791 run, 3,791 passed, 8 skipped.
+- `cargo test -p tiler-artifact --doc` and `cargo test --workspace --doc`: pass.
+- `cargo clippy -p tiler-artifact --all-targets -- -D warnings`: clean.
+- `cargo fmt --check`, `git diff --check`, `tkt lint`, `make citations`: clean.
+- `tkt guard tkt/split-the-artifact-program-test-monoliths-into-focused-modules --format json`: `under_declared: []`, `conflict: false`, severity `warn` (declared-area overlaps only).
+
+Commits: `0d73325c` the split, `17ae20b7` the workspace macro-producer pin, `147a105c` the two prose cross-references. `git diff --stat 9bcc2d86..147a105c` changes no production `.rs` file: the two test files become directories, `crates/tiler/tests/workspace_unsafe_sites.rs` moves one pinned path, and the rest is three documents and this ticket.
