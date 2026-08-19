@@ -164,7 +164,7 @@ Updated 2026-08-18: the compilation-selection provenance packet was parked as it
 - Presentation order and release trigger: behind the earlier queue. Present one accept-or-name-the-change question for the exact delivered surface at `c7f20365`. Separately, the deferred standard-host measurement ticket carries its own eventual choice (restore/find a `26A5388g` M4 Max, or re-row the standard profile) — do not bundle it into this question.
 
 
-## 20. Tensor-contraction successor public surface — next in this chain
+## 20. Tensor-contraction successor public surface — ACCEPTED 2026-08-18 (exact drafted surface)
 
 - Ticket: `accept-the-tensor-contraction-successor-public-surface` (`p1`, filed 2026-08-18 at the item-16 acceptance). The exact drafted descriptor/profile/witness/evaluator surface from the reviewed packet awaits its own accept-with-exclusions-or-revise question. The implementation carrier `replace-the-standard-contraction-key-with-the-accepted-successor` is blocked on it plus the ADR-0013 carrier.
 
