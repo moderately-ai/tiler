@@ -67,6 +67,25 @@
 # census prints how many bare paths were skipped, so the exclusion is counted
 # rather than silent.
 #
+# An extensionless, directory-less token is the other deliberate exclusion, and
+# it is narrower than it looks. `ADR:87` and `0:100` are pinned code spans by
+# shape, but `ADR` and `0` name a decision record and a tensor axis rather than
+# files, and demanding they resolve would be the same unsatisfiable condition.
+# So a token with no directory component and no extension is a citation only when
+# this tree carries a file of that name -- at the root, or as the tail of a
+# tracked path -- and is otherwise dropped. The census prints that drop in spans
+# and in distinct names, so this exclusion is a number beside the bare paths
+# rather than a silence.
+#
+# The tail half of that test is what closed a fail-open on 2026-08-19. Until then
+# the drop asked only whether the name sat at the repository root, so a pinned
+# `LICENSE:5` -- a plausible spelling, since this repository vendors nine files
+# by that name and the section below cites one of them by its full path -- was
+# discarded before any counter and before the ambiguity check, on a run that
+# stayed green. Nine tracked paths end with `LICENSE`, so the branch below would
+# have failed it as an ambiguity absent from the ledger. qualifies() carries the
+# measurement showing the two populations separate cleanly.
+#
 # The same rule is what keeps a dated correction writable. A correction that
 # retires a citation quotes the retired line number in prose, or as the bare
 # `:789-810` suffix the house style already uses, rather than pinning it to a
@@ -212,11 +231,11 @@
 # citations than the component test did, because a listed root is required to be
 # absent from every tracked path: anything this skips, the old rule skipped too.
 # Measured 2026-08-19 at `23eb1bf4`, it converts none of the skipped population
-# into failures -- all 16 citations reaching the branch are rooted in
-# `candle-core`, `candle-metal-kernels`, or `MacOSX26.5.sdk`. Second, a listed
-# root that IS a tracked component would silence this tree rather than another
-# one, so it aborts the run at exit 2 naming the collision instead of being
-# quietly honoured.
+# into failures -- all 16 citations reaching the branch, which are 16 pinned
+# occurrences spelling 10 distinct spans, are rooted in `candle-core`,
+# `candle-metal-kernels`, or `MacOSX26.5.sdk`. Second, a listed root that IS a
+# tracked component would silence this tree rather than another one, so it aborts
+# the run at exit 2 naming the collision instead of being quietly honoured.
 #
 # The list carries no floor, and the asymmetry with the ledger is the reason
 # rather than an omission. A truncated ledger silently weakens the check: every
@@ -315,7 +334,23 @@
 #   - A target with whitespace in it. Markdown requires `<...>` around such a
 #     target, and nothing here uses that; what the pattern actually catches is
 #     pseudo-code in a vendored specification (`](%max_trip_count, %keepgoing)`).
-#     An empty `]()` is likewise malformed rather than broken.
+#     An empty `]()` is likewise malformed rather than broken. Six reach this
+#     branch, measured 2026-08-19 at `04823326`, all six in
+#     `docs/research/numerics/sources/onnx-v1.22.0/Operators.md`.
+#
+#     This test runs first in link(), ahead of the external and vendored ones,
+#     and that order is deliberate: whether a string is a link target at all is
+#     prior to where the file carrying it lives. It does mean the vendored count
+#     is measured after this one, and the reconciliation is those same six. All
+#     six sit in a vendored file, so moving this test below the vendored one
+#     would raise that census line from 212 to 218 -- confirmed by running it
+#     both ways at `04823326` -- and would leave this counter reading zero on a
+#     corpus where the condition occurs six times, because the only files that
+#     produce it are vendored. A counter that the sole population producing its
+#     condition can never reach reports clean whatever the tree holds, which is
+#     the shape of silence this whole section exists to remove. So the 212 is the
+#     population reaching that branch and 218 is the vendored total; both are
+#     printed, on their own numbers, on the census line below.
 #
 # WHAT A LINK IS RESOLVED AGAINST. The target is joined to the directory of the
 # file that carries it, `.` and `..` segments are collapsed, and the result must
@@ -380,6 +415,17 @@
 # and are counted on their own census line, for the reasons the next section
 # gives; the twenty-four is a `docs/` count and stays one.
 #
+# That reading was correct when it was taken and is left standing; what has moved
+# under it is the corpus, not the branch. A third population landed afterwards,
+# and re-counted 2026-08-19 at `04823326` the census prints 1092: the same nine
+# Tiler documents, the same fifteen vendored specifications, and 1068 files under
+# `docs/research/documentation/ticket-audit-2026-08-10/`. The three partition the
+# 1092 exactly. So the twenty-four has not gone wrong -- it is two of the three
+# bullets below, at the date it names -- and a reader reconciling it against
+# today's census is looking at a corpus that grew rather than at a branch that
+# started admitting files it should not. All three are correctly checked, for the
+# reason each bullet gives.
+#
 #   - Nine Tiler documents whose `kind` has no status facet at all. The kind
 #     table in `docs/document-metadata.md` requires one of contract, decision,
 #     research, experiment, roadmap, and questions, and requires none of portal
@@ -396,6 +442,18 @@
 #     demanded of them. If one ever does resolve to a real claim about this
 #     tree, the failure names the file and a reader decides; a carve-out here
 #     would instead be a hole nobody sees.
+#
+#   - The ticket-audit records under
+#     `docs/research/documentation/ticket-audit-2026-08-10/`, 1068 of them at
+#     `04823326`, which is the population the twenty-four predates. They are
+#     per-ticket audit reports carrying no `tiler-doc/v1` frontmatter, so they
+#     reach this branch the way AGENTS.md and CLAUDE.md reach it -- nothing was
+#     seen, so nothing was seen that retires them. Checking them is right rather
+#     than merely harmless: they are the standing account of what an audit found,
+#     they cite the tree by line and anchor throughout, and a stale citation in
+#     one misroutes exactly the reader who went looking for the audit. Their
+#     citations resolve today, so the fail-closed direction costs nothing here
+#     either.
 #
 # THE REPOSITORY-ROOT DOCUMENTS, AND WHY THEIR FLOOR IS A FILE COUNT
 #
@@ -736,14 +794,39 @@ function fail(span, msg) {
 	printf "FAIL  %s\n        citation: `%s`\n        %s\n", ticket, span, msg
 }
 
-# An extensionless, directory-less token is a citation only when a file of that
-# exact name is really there. Without this, `ADR:87` -- which appears twenty
-# times in tickets/ and names a decision record, not a file -- would be read as
-# a path and fail forever.
+# An extensionless, directory-less token is a citation only when this tree really
+# carries a file of that name -- at the root, or as the tail of a tracked path.
+# Both tests are load-bearing and in opposite directions. Without the root test
+# `ADR:87` would be read as a path and fail forever, because it names a decision
+# record rather than a file. Without the suffix test the drop failed open: until
+# 2026-08-19 a pinned `LICENSE:5` was discarded here in silence, before any
+# counter and before the ambiguity check, though nine tracked files end with that
+# name and the branch below would have failed it as an unledgered ambiguity.
+#
+# The suffix test is what separates the two populations, and it separates them
+# cleanly rather than approximately. Measured 2026-08-19 at `04823326`: the nine
+# spans reaching this branch across `tickets/**` and `docs/**` spell five
+# distinct tokens -- `ADR`, `path`, `0`, `named`, `carries` -- and no tracked
+# path ends with any of them, so all nine still drop. `LICENSE` ends nine tracked
+# paths and `NOTICE` two, so both now reach the unledgered-ambiguity failure;
+# `LICENSE-APACHE`, `LICENSE-MIT`, and `Makefile` end exactly one and resolve by
+# unique suffix. Letting the whole extensionless case fall through instead was
+# measured and rejected: it fails all nine, which is the "fail forever" the root
+# test above exists to prevent.
+#
+# The drop is counted in the census, in spans and in distinct names, so what is
+# excluded here is a number a reader can see rather than a hole.
 function qualifies(p) {
 	if (p ~ /\//) return 1
 	if (p ~ /\.[A-Za-z0-9]+$/) return 1
-	return exists(p)
+	# Membership rather than a subscript read: referencing suffix_count[p] would
+	# create the element, and an existing entry is always at least one anyway.
+	if (p in suffix_count) return 1
+	if (exists(p)) return 1
+	unqualified++
+	if (!(p in unqualified_seen)) { unqualified_seen[p] = 1; unqualified_distinct++ }
+	if (verbose) printf "SKIP  %s: `%s` (not a path: no tracked file is or ends with it, and nothing of that name is at the root)\n", ticket, p
+	return 0
 }
 
 BEGIN {
@@ -793,6 +876,9 @@ BEGIN {
 	# -- which is unambiguous to a reader and resolves here whenever exactly
 	# one tracked file ends with it.
 	while ((getline p < indexfile) > 0) {
+		# The size of the ticket corpus, taken from the index so the floor in
+		# report() is derived rather than written down and left to go stale.
+		if (p ~ /^tickets\/.*\.md$/) tickets_tracked++
 		suffix = p
 		while (1) {
 			suffix_count[suffix]++
@@ -829,7 +915,11 @@ BEGIN {
 		if (up in component)
 			collisions = collisions "\n        " up
 	if (collisions != "") {
-		printf "check-citations: upstream root(s) recorded in check-citations.sh are also components of tracked paths, so citations under them would be skipped instead of checked:%s\n", collisions
+		# stderr, with every other fatal in this script. A gate that redirects
+		# stdout to a log and reads the terminal would otherwise see exit 2 with
+		# no message at all, which is the failure shape AGENTS.md tells a reader
+		# of a redirected gate to go looking for.
+		printf "check-citations: upstream root(s) recorded in check-citations.sh are also components of tracked paths, so citations under them would be skipped instead of checked:%s\n", collisions > "/dev/stderr"
 		aborted = 1
 		exit 2
 	}
@@ -1051,8 +1141,12 @@ function link_fail(dest, msg) {
 function link(dest,   target, resolved, n, segs, out, i, k) {
 	# An empty `]()` and a target carrying whitespace are malformed markdown
 	# rather than broken links; the header names what the pattern otherwise
-	# catches in a vendored specification.
-	if (dest == "" || dest ~ /[ \t]/) return
+	# catches in a vendored specification. Counted since 2026-08-19, and counted
+	# here rather than after the vendored test below on purpose: this asks whether
+	# the thing is a link target at all, which is prior to asking where the file
+	# carrying it lives. The header reconciles the vendored count with the six
+	# this takes from it.
+	if (dest == "" || dest ~ /[ \t]/) { link_malformed++; return }
 
 	if (dest ~ /^[A-Za-z][A-Za-z0-9+.-]*:\/\// || dest ~ /^mailto:/ || dest ~ /^tel:/) {
 		link_external++
@@ -1330,7 +1424,12 @@ function report(   starved, empty, live) {
 	printf "  upstream     %d recorded upstream root(s), none of which may be a component of any tracked path\n", upstream_entries + 0
 	printf "  ambiguity    %d ledger entry(s) against a floor of %d, %d citation(s) matched one, %d collapsed to a survivor, %d ambiguous off the ledger\n", \
 		ledger_entries + 0, LEDGER_FLOOR, ledger_matched + 0, ledger_collapsed + 0, ledger_stale + 0
-	printf "  not checked  %d bare path mention(s) carrying no line or anchor\n", bare_paths + 0
+	# Both citation-side exclusions, on one line and on separate numbers. The
+	# second was uncounted until 2026-08-19: a span dropped by qualifies() landed
+	# in no census line at all, which is the silence every other number here
+	# exists to prevent.
+	printf "  not checked  %d bare path mention(s) carrying no line or anchor, %d pinned span(s) over %d distinct extensionless name(s) no tracked path ends with\n", \
+		bare_paths + 0, unqualified + 0, unqualified_distinct + 0
 	# Printed unconditionally, both of them: these two counters are floored
 	# below, so a zero is a failure and must be visible rather than omitted.
 	printf "  wrapped      %d anchor(s) matched only after collapsing whitespace\n", anchor_wrapped + 0
@@ -1349,8 +1448,8 @@ function report(   starved, empty, live) {
 	printf "  docs         %d link(s) from the live document files above\n", link_ck["doc"] + 0
 	printf "  root         %d link(s) from the repository-root document files above\n", link_ck["root"] + 0
 	printf "  fixture      %d link(s) from %s\n", link_ck["fixture"] + 0, FIXTURE_LABEL
-	printf "  not resolved %d external (scheme://, mailto:, tel:), %d same-document heading anchor(s), %d in vendored upstream sources under docs/research/*/sources/\n", \
-		link_external + 0, link_selfanchor + 0, link_vendored + 0
+	printf "  not resolved %d external (scheme://, mailto:, tel:), %d same-document heading anchor(s), %d in vendored upstream sources under docs/research/*/sources/, %d malformed (empty target, or whitespace inside one)\n", \
+		link_external + 0, link_selfanchor + 0, link_vendored + 0, link_malformed + 0
 	printf "  fragments    %d resolved link(s) carried a #heading into another document; the path was resolved and the anchor deliberately was not\n", \
 		link_fragment + 0
 	printf "  untracked    %d resolved on the filesystem only and are absent from the index, so a reader with a clone cannot follow them\n", \
@@ -1386,6 +1485,17 @@ function report(   starved, empty, live) {
 	# it contributes on a clean tree is zero failures either way.
 	empty += count_floor(ledger_entries, LEDGER_FLOOR, "retired-ambiguity ledger", "entry(s)", \
 		"Every entry records a suffix observed ambiguous while a live citation rested on it, and entries are added rather than pruned; fewer than the floor means the heredoc was truncated or the reader stopped parsing it, and a suffix off the ledger resolves silently against whichever twin outlives the others.")
+	# The ticket corpus is reached by two fixed-depth globs -- `tickets/*.md` and
+	# `tickets/*.comments/*.md` -- which is exactly the shape the docs population
+	# uses `find` to avoid, because it drops a whole subtree in silence the day
+	# someone nests one level deeper. This is the floor that makes that loud, and
+	# it is sized from the index rather than by hand: a hand-written number is
+	# satisfied by a glob that has quietly stopped covering its domain, which is
+	# the one failure it would exist to catch. Reading *more* than the index holds
+	# is deliberately not floored -- an unstaged ticket is matched by the glob and
+	# is not a defect.
+	empty += count_floor(files_read["ticket"] + files_read["comment"], tickets_tracked, "tickets/**", "file(s)", \
+		"Every tracked markdown file under tickets/ must be reached by tickets/*.md or tickets/*.comments/*.md; a shortfall means one is nested deeper than either glob reaches and is being passed over in silence. Reach it with the same find the docs population uses, or return the file to a depth the globs cover.")
 	empty += population_floor(link_ck["root"], "repository-root markdown link", "link(s)", \
 		"README.md is six links of route into docs/ and spikes/, and AGENTS.md links the ADR governing every unsafe site in the workspace; zero means scan_links stopped reaching them, or the entry points stopped pointing anywhere at all.")
 	if (empty > 0)
