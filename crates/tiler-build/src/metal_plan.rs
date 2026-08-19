@@ -1676,9 +1676,16 @@ mod tests {
             today.contains("fixed content is 91,891 bytes"),
             "the live pin paragraph does not name FIXED_CONTENT_BYTES",
         );
+        // Keyed on the stating phrase and not on the bare digits. The paragraph
+        // also derives this length arithmetically a few sentences later
+        // (`2,181 - 525 + 2 x 820 = 3,296`), so a bare-substring assertion is
+        // satisfied by the derivation even when the sentence a reader actually
+        // reads has gone stale — which is the single failure this check exists
+        // to catch. Perturbing only the stated length is what showed that, and
+        // it now reddens here.
         assert!(
-            today.contains("3,296"),
-            "the live pin paragraph does not name the descriptor length",
+            today.contains("the canonical descriptor is **3,296 bytes**"),
+            "the live pin paragraph does not state the descriptor length",
         );
     }
 
