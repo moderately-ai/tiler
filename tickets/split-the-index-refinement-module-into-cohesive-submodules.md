@@ -1,7 +1,7 @@
 ---
 id: split-the-index-refinement-module-into-cohesive-submodules
 title: Split the index refinement module into cohesive submodules
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [keep-a-module-size-and-complexity-census-with-a-split-queue]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [refactor, maintainability, ir]
+claimed_from: todo
+assignee: worker-split-refinement
+lease_expires_at: 1787151418
 ---
 ## User-visible outcome
 

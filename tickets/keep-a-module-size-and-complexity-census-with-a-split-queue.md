@@ -33,6 +33,16 @@ Per-crate concentration: tiler-ir 150k lines / 155 files; tiler-compiler 132k / 
 - Decide, with a recorded rationale, whether a mechanical check is worth its maintenance: a size floor can only make regressions loud (e.g. a census script asserting no file exceeds a stated ceiling without a recorded exemption), and per repository rules a check that cannot fail is worse than none. If added, perturb it and quote the failure text; if declined, record why.
 - Complexity between modules is part of the census, not just line counts: where a split reveals a dependency tangle (two modules that cannot separate without a shared-internals module larger than either), record it here as a restructuring candidate rather than forcing a bad seam.
 
+## First tranche landed — 2026-08-19, batch at `3477a693`
+
+All four splits merged green in one batch (builder `56d95195`, target `e723da0f`+`15ce3924`, request `012b1ea4`+`18677074`+`3477a693`, artifact tests `da32ddf8`) with the citation re-anchoring `573cfbe2` and the retired-key refusal pin `77459e19`. Workspace's largest source file is now `crates/tiler-compiler/src/pipeline/tests.rs` (9,438).
+
+**Lessons the batch pinned for every future split ticket's gate list:** (1) `make citations` on the post-split tree — every file move rots line-only citations, and only that gate sees it (14 rotted across the request/target splits; several had rotted long before, resolving by accident); (2) `cargo nextest run -p tiler` — the workspace-invariant scanners (`workspace_unsafe_sites`, which admits only `super::*` globs, and `cited_names_resolve`) live outside every split's package; (3) `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --document-private-items` — the no-private form is blind to intra-doc links in private modules (12 broken links invisible to the weaker gate; 27 more surfaced when the request spine went explicit).
+
+**Defects the batch surfaced and fixed:** the `cited_names_resolve` walk skipped any directory named `target`, hiding 9,513 lines of `src/target/` source (fixed with both-direction perturbation evidence); the request spine's globs silently carried two `#[cfg(test)]` items, 26 dead imports, and 27 accidental doc-link resolutions (now all explicit).
+
+**Recorded follow-ups for the second tranche:** move `target.rs`'s 3,484-line inline test module to `target/tests.rs` (declined in-tranche under the zero-test-edit constraint, correctly); the stale "two crate-private children" comment in `target.rs`; 13 artifact test-fixture exports with no external consumer (recorded by the artifact lane); two malformed section banners preserved verbatim in the artifact tests; snapshot de-pin convention divergence (backtick-boundary move vs historical restatement — pick one when next touched); `point-the-bare-builder-path-mentions-at-the-split-modules` (filed).
+
 ## Closes when
 
-The first tranche of splits is landed and recorded here, the second tranche is filed, and the mechanical-check decision is recorded with its rationale (and failure text, if adopted).
+The first tranche of splits is landed and recorded here (done above), the second tranche is filed, and the mechanical-check decision is recorded with its rationale (and failure text, if adopted).
