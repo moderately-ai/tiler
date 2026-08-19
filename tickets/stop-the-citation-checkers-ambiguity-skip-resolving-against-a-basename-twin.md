@@ -1,7 +1,7 @@
 ---
 id: stop-the-citation-checkers-ambiguity-skip-resolving-against-a-basename-twin
 title: Stop the citation checker's ambiguity skip resolving against a basename twin
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [keep-a-module-size-and-complexity-census-with-a-split-queue, split-the-index-refinement-module-into-cohesive-submodules]
@@ -9,9 +9,6 @@ scopes: [implementation/workspace]
 shared_scopes: [project/tickets]
 paths: [check-citations.sh]
 tags: [gates, citations, correctness]
-claimed_from: todo
-assignee: worker-citation-checker
-lease_expires_at: 1787157651
 ---
 ## User-visible outcome
 
