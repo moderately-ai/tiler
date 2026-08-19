@@ -183,7 +183,7 @@ Updated 2026-08-18: the compilation-selection provenance packet was parked as it
 - The one question: admit the **full exhaustive-source carrier A** (sides-rule bound, `serial-sum-produced-f32.v1` sub-tag, schedule domain unmoved, continuation refused under `reduction-contributor-continuation` until its own admission) versus the **bare-producer slice** (review size only; forces a `.v1→.v2` tag step or day-one presence byte at the second landing — the review's moderate finding). Recommendation: **full carrier A**. Status quo remains the reject option.
 - Presentation order: behind items 19, 20, 21.
 
-## 23. Algebraic capability authority for contraction splits — reviewed, held for queue order
+## 23. Algebraic capability authority for contraction splits — ACCEPTED 2026-08-18 (descriptor maxima are the algebraic fact)
 
 - Ticket: `decide-the-algebraic-capability-authority-for-contraction-splits` (`p1`, `awaiting-decision`); prerequisite `revise-contraction-split-admission-to-contiguous-only-delivery` filed; `admit-reassociated-contraction-schedule-alternatives` (preserved branch `648a372f`) waits on this plus the successor-key chain.
 - Packet evidence: reopened packet authored 2026-08-18 at `c85ef0b2`, independently reviewed at `32e5ecbc` — the single-survivor derivation was attacked from ADR 0014's own text and held (the separate-object reading is self-defeating: the ADR's endorsed carrier is itself identity-encoded definition content; independence means operation-declared versus request-resolved, which the descriptor maxima plus the accepted resolver preserve bidirectionally). Two minor repairs made. Verdict: ready for Tom.

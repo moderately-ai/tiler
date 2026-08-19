@@ -1,7 +1,7 @@
 ---
 id: decide-the-algebraic-capability-authority-for-contraction-splits
 title: Decide the algebraic capability authority for contraction splits
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [decide-the-semantic-order-contract-for-relaxed-contractions]
 related: [accept-the-tensor-contraction-successor-public-surface, replace-the-standard-contraction-key-with-the-accepted-successor, admit-reassociated-contraction-schedule-alternatives, revise-contraction-split-admission-to-contiguous-only-delivery]
@@ -304,3 +304,10 @@ All eight non-survivors were re-checked: options 2/3 fall to the verified subjec
 `cargo nextest run -p tiler-ir -E 'test(the_contraction_declares_no_algebraic_capability)'` — 1 test run, 1 passed, 1198 skipped. `tkt lint --format json` — `ok: true`, no diagnostics. `make citations` — 1166 pinned citations and 6552 local links resolved, no failure. `git diff --check` — clean. `tkt guard tkt/decide-the-algebraic-capability-authority-for-contraction-splits-review --ticket decide-the-algebraic-capability-authority-for-contraction-splits --format json` — severity `ok`, no collisions, no under-declared scopes. The tree outside the two ticket files is byte-identical to `9cf93ebb`. Not reverified: the packet's own pre-commit run of its verification block at `236753a3` (its commands were re-executed here at `9cf93ebb` instead, equivalently, since crates/docs are byte-identical between the bases).
 
 **Verdict: ready for Tom with the named repairs, which are made in this commit.** The re-audit, the descriptor-owned single-survivor claim, both counterargument fates, the eight eliminations, the exact-now/contingent split, the identity table, and the prerequisite wiring all survive independent re-derivation; the two repairs are documentation-alignment and pointer-precision fixes that move neither the option set nor the recommendation nor the question for Tom.
+
+
+## Accepted decision — 2026-08-18
+
+Tom accepted **the single survivor** in the live coordination session with the orchestrator, relayed first-hand by the coordinator, by replying `agreed next decision` after the reviewed packet (`c85ef0b2`, review `32e5ecbc`) was presented in explain-then-recommend form.
+
+The accepted authority: the successor operation's reduction-descriptor order-freedom maxima (field 15's `reassociation: permission-gated`, `permutation: unsupported`) ARE ADR 0014's algebraic fact for the internal F32 reducer, joined to the independently resolved numerical ceiling by the accepted `EffectiveContractionF32Profile` resolver. `OperationAlgebraicCapabilities` stays `none()` on the successor; no scalar-add or tensor-add capability object; no compiler policy table; one appended `StrategyDeclineCause` variant distinguishes the algebraic refusal; lane-strided membership remains refused algebraically until a future key generation declares fold permutation. ADR 0014 needs no supersession; its Implementation-boundary status note becomes owed when the carriers land, as the review recorded. This acceptance moves nothing beyond the already-accepted replacement chain; the exact decline-cause tag and perturbation evidence land with the implementation carriers.
