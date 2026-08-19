@@ -122,11 +122,12 @@ pub(crate) use contract::{
 use elementwise::{
     ElementwiseLeaves, ElementwiseRefusal, RecognizedElementwise, constant_family,
     declared_ordinal, plan_elementwise, recognize_elementwise, recognize_epilogue,
-    recognize_pointwise,
+    recognize_pointwise, recognize_staged_elementwise,
 };
 use folded::{
-    StagedOperandAdmission, materializes_its_result, normalize_contraction,
-    recognize_epilogue_producer, recognize_reduction, recognize_staged_family,
+    ReductionContributorAdmission, StagedOperandAdmission, materializes_its_result,
+    normalize_contraction, recognize_epilogue_producer, recognize_reduction,
+    recognize_staged_family,
 };
 use graph::{
     check_canonical_reduction_axes, constant_bits, element_count_u64, producer, producer_for_value,
@@ -134,9 +135,10 @@ use graph::{
     unsupported_symbolic_extent,
 };
 pub(crate) use normal_form::{
-    BoundaryRead, DeclaredInputOrdinal, NormalizedContraction, NormalizedContractionRead,
-    NormalizedEpilogue, NormalizedOutput, NormalizedPointwise, NormalizedProgram,
-    NormalizedSerialSum, NormalizedStaged, RecognizedPointwise, RecognizedSerialSumMembers,
+    BoundaryRead, ContributorContinuation, DeclaredInputOrdinal, MaterializedContributor,
+    NormalizedContraction, NormalizedContractionRead, NormalizedEpilogue, NormalizedOutput,
+    NormalizedPointwise, NormalizedProgram, NormalizedSerialSum, NormalizedStaged,
+    RecognizedPointwise, RecognizedSerialSumMembers, SerialSumContributor,
 };
 pub(crate) use recognize::recognized_arithmetic;
 use recognize::{recognized_program_arithmetic, select_supported_strategy};

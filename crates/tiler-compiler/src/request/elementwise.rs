@@ -109,24 +109,25 @@ pub(super) enum ElementwiseRefusal {
 }
 
 impl From<ElementwiseRefusal> for RequestError {
-    /// Flattens a discovered materialization boundary into the rule a caller
-    /// with no epilogue to build reports for it.
+    /// Reports one planning refusal for a walk that already reads a staged
+    /// value, and therefore cannot have discovered a boundary.
     ///
-    /// **This is where a fold's chained prologue is refused, and it is a third
-    /// wall rather than either of the two above.** [`recognize_reduction`]'s
-    /// contributor walk is the only caller that reaches it with a `Folded`
-    /// finding, and it discards the finding because [`NormalizedSerialSum`]
-    /// carries no producer field to hang the boundary on — so `sum(sum(x) * 2.0)`
-    /// reports `reduction-contributor-materialization` here rather than reaching
-    /// [`StagedOperandAdmission`]'s guard, which never runs for it.
-    /// [`name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set`](../../../tickets/name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set.md)
-    /// owns the rule name.
+    /// **No caller flattens a discovered boundary any more, and the arm below is
+    /// the statement of that rather than a fallback.** Every walk that can raise
+    /// [`ElementwiseRefusal::Folded`] now retains the value it names:
+    /// [`recognize_elementwise_output`](super::recognize::recognize_elementwise_output) builds a chain from it and
+    /// [`recognize_reduction`] builds a materialized contributor from it, each by
+    /// matching the refusal itself. What reaches this conversion is a walk
+    /// carrying `staged: Some(_)`, for which [`plan_elementwise`]'s discovery is
+    /// gated off entirely — the same operation reports `operation-set` through
+    /// the branch beside it, which is why that is the rule stated here rather
+    /// than a name invented for an unreachable case.
     fn from(refusal: ElementwiseRefusal) -> Self {
         match refusal {
             ElementwiseRefusal::Refused(error) => error,
             ElementwiseRefusal::Folded(_) => Self::UnsupportedCapability {
                 phase: "strategy",
-                rule: "reduction-contributor-materialization",
+                rule: "operation-set",
             },
         }
     }
@@ -274,15 +275,22 @@ pub(super) fn constant_family(arithmetic: ArithmeticType) -> Option<OpKey> {
 ///
 /// # Errors
 ///
-/// Returns [`RequestError::UnsupportedCapability`] naming the exact property
-/// that was not recognized: `operation-set` for a family the expression
-/// vocabulary cannot spell, `elementwise-shape` for a read at another domain,
+/// Returns [`ElementwiseRefusal::Refused`] naming the exact property that was
+/// not recognized: `operation-set` for a family the expression vocabulary cannot
+/// spell, `elementwise-shape` for a read at another domain,
 /// `elementwise-attributes` for an attribute this projection would drop,
 /// `elementwise-arity` for an operand count the vocabulary has no node for, and
 /// every rule [`resolve_elementwise`] reports for the numbering that follows —
 /// which is where `elementwise-expression` comes from, along with
 /// `elementwise-reads`, `input-ordinal`, `elementwise-operand`, and
 /// `elementwise-node-limit`.
+///
+/// **Or [`ElementwiseRefusal::Folded`], which is a finding rather than a
+/// refusal**, naming the value a folding family produced. The caller decides
+/// what to do with it: [`recognize_reduction`] retains it as a materialized
+/// contributor when its admission permits, and refuses by name when it does
+/// not. Reporting it as a rule here would throw away the one fact that decision
+/// needs, which is the reason the variant exists.
 pub(super) fn recognize_elementwise(
     program: &SemanticProgram,
     root: ValueId,
@@ -290,7 +298,7 @@ pub(super) fn recognize_elementwise(
     shape: &Shape,
     laws: &FrozenIndexRealizationLawRegistry,
     arithmetic: ArithmeticType,
-) -> Result<RecognizedElementwise, RequestError> {
+) -> Result<RecognizedElementwise, ElementwiseRefusal> {
     let sourced = SourcedShape::from(shape.clone());
     let plan = plan_elementwise(
         program,
@@ -302,9 +310,8 @@ pub(super) fn recognize_elementwise(
         &sourced,
         laws,
         arithmetic,
-    )
-    .map_err(RequestError::from)?;
-    resolve_elementwise(plan, declared, arithmetic)
+    )?;
+    resolve_elementwise(plan, declared, arithmetic).map_err(ElementwiseRefusal::Refused)
 }
 
 /// Resolves one planned whole-program or prologue expression against the
@@ -947,20 +954,94 @@ pub(super) fn recognize_epilogue(
     laws: &FrozenIndexRealizationLawRegistry,
     arithmetic: ArithmeticType,
 ) -> Result<NormalizedEpilogue, RequestError> {
+    let recognized = recognize_staged_elementwise(
+        program,
+        output.value(),
+        declared,
+        &shape,
+        staged,
+        laws,
+        arithmetic,
+    )?;
+    let producer = recognize_epilogue_producer(program, staged, output.key().clone(), laws)?;
+    let elements = element_count_u64(&shape, "output")?;
+    Ok(NormalizedEpilogue {
+        producer: Box::new(producer),
+        input_keys: program.inputs().map(|input| input.key().clone()).collect(),
+        output_key: output.key().clone(),
+        shape,
+        expression: recognized.expression,
+        reads: recognized.reads,
+        members: recognized.members,
+        inputs: declared.to_vec(),
+        output: output.value(),
+        elements,
+    })
+}
+
+/// One recognized elementwise expression over a value an earlier region staged.
+pub(super) struct RecognizedStagedElementwise {
+    pub(super) expression: PointwiseF32Expression,
+    pub(super) members: Vec<SemanticStage>,
+    /// One entry per expression input leaf, in access order. Exactly one is
+    /// [`BoundaryRead::Staged`].
+    pub(super) reads: Vec<(BoundaryRead, LogicalAccess)>,
+}
+
+/// Recognizes one elementwise expression over a staged producer result.
+///
+/// **Two shapes are built from this one walk, and the reuse is the point.** An
+/// elementwise epilogue *over* a fold and the continuation *between* a producer
+/// and the fold consuming it are the same region — one staged read, the declared
+/// inputs the expression names, the same numbering, and the same
+/// [`crate::physical::RegionSpellingKind::Epilogue`] spelling. Writing the
+/// numbering twice would be two accounts of one order, free to disagree about
+/// which leaf serves which read, which is the drift a single authority exists to
+/// prevent. Only the *domain* differs: an epilogue iterates its published shape,
+/// a continuation the fold's contributor shape.
+///
+/// **The read order is compiler normalization rather than the order the walk
+/// minted leaves in, and that is a correctness requirement rather than
+/// tidiness.** A read list in walk order would give `staged * (b + a)` and
+/// `staged * (a + b)` different spellings solely because their operands were
+/// popped in a different order. The staged read leads because exactly one read
+/// binds it and it carries no declared association to interleave with;
+/// [`canonical_input_reads`]'s rule supplies the rest — declaration groups in
+/// order and each group's distinguishable reads dense-first. Intrinsic schedule
+/// verification sees only the resulting local access positions and fieldless
+/// boundary categories.
+///
+/// # Errors
+///
+/// Returns [`RequestError::UnsupportedCapability`] naming the property that was
+/// not recognized: every rule [`plan_elementwise`], [`mint_elementwise`], and
+/// [`declared_ordinal`] report for this walk. `operation-set` covers the walk
+/// that reaches a *second*, different materialized value, because this walk
+/// already reads one and [`plan_elementwise`]'s boundary discovery is gated on
+/// reading none.
+pub(super) fn recognize_staged_elementwise(
+    program: &SemanticProgram,
+    root: ValueId,
+    declared: &[ValueId],
+    shape: &Shape,
+    staged: ValueId,
+    laws: &FrozenIndexRealizationLawRegistry,
+    arithmetic: ArithmeticType,
+) -> Result<RecognizedStagedElementwise, RequestError> {
     let leaves = ElementwiseLeaves {
         declared,
         staged: Some(staged),
     };
     let sourced = SourcedShape::from(shape.clone());
-    let plan = plan_elementwise(program, output.value(), &leaves, &sourced, laws, arithmetic)
+    let plan = plan_elementwise(program, root, &leaves, &sourced, laws, arithmetic)
         .map_err(RequestError::from)?;
     // The staged read, then whichever declared inputs the expression names. The
-    // *declared* half is now the same rule `canonical_input_reads` states —
-    // groups in declaration order, dense before mapped, an unread input
-    // contributing nothing — and what keeps the walk spelled here is the staged
-    // read: it leads, it binds no declared input, and that function refuses a
-    // leaf which is not one. Reusing it would mean handing it a leaf set it is
-    // defined to reject.
+    // *declared* half is the same rule `canonical_input_reads` states — groups in
+    // declaration order, dense before mapped, an unread input contributing
+    // nothing — and what keeps the walk spelled here is the staged read: it
+    // leads, it binds no declared input, and that function refuses a leaf which
+    // is not one. Reusing it would mean handing it a leaf set it is defined to
+    // reject.
     let mut order: Vec<LeafRead> = plan
         .leaves
         .iter()
@@ -991,19 +1072,10 @@ pub(super) fn recognize_epilogue(
             Ok((read, leaf.map.clone()))
         })
         .collect::<Result<Vec<_>, RequestError>>()?;
-    let producer = recognize_epilogue_producer(program, staged, output.key().clone(), laws)?;
-    let elements = element_count_u64(&shape, "output")?;
-    Ok(NormalizedEpilogue {
-        producer: Box::new(producer),
-        input_keys: program.inputs().map(|input| input.key().clone()).collect(),
-        output_key: output.key().clone(),
-        shape,
+    Ok(RecognizedStagedElementwise {
         expression,
-        reads,
         members: plan.members,
-        inputs: declared.to_vec(),
-        output: output.value(),
-        elements,
+        reads,
     })
 }
 

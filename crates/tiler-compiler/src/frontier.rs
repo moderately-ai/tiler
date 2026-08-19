@@ -3783,15 +3783,19 @@ fn govern_spelling(
                     }
                 },
             ),
-            // The consumer half of a chain, costed like any other elementwise
-            // pass: one dispatch over its own domain, staging bytes only when
-            // the cover made it a producer in turn.
+            // The consumer half of a chain, or the continuation between a
+            // materialized producer and the fold consuming it — one region, two
+            // recognized shapes that supply it. Costed like any other
+            // elementwise pass: one dispatch over its own domain, staging bytes
+            // only when the cover made it a producer in turn.
             crate::physical::RegionSpellingKind::Epilogue(write) => (
                 crate::physical::epilogue_region(
                     request,
-                    output
-                        .epilogue()
-                        .expect("an epilogue spelling resolves to an epilogue output"),
+                    // Resolved from the *output* rather than from `producer`,
+                    // because this is the one region of a partition that is not
+                    // built from a producer's recognized shape.
+                    crate::physical::staged_elementwise_region(output, members)
+                        .expect("an epilogue spelling resolves to a staged elementwise region"),
                     write,
                 )
                 .0,

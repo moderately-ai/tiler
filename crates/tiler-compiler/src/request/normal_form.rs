@@ -50,13 +50,23 @@ impl PartialEq<u32> for DeclaredInputOrdinal {
 /// recognized coverage must not depend on which spelling the caller authored. A
 /// shared constant simply contributes one member instead of two.
 ///
-/// **The prologue set is empty exactly when the fold has no prologue.** A
-/// reduction whose contributor tensor is a declared input — `sum(x)` — claims one
-/// occurrence and needs one region, so its partition has one part and the empty
-/// part is not a member set any cover region may match. That is a fact about the
-/// program rather than a degenerate case: [`NormalizedSerialSum::prologue`] is
-/// `None` for it, and every derivation that would spell a prologue region reads
-/// the option rather than the emptiness.
+/// **The prologue set is empty exactly when the fold has no pointwise prologue.**
+/// A reduction whose contributor tensor is a declared input — `sum(x)` — claims
+/// one occurrence and needs one region, so its partition has one part and the
+/// empty part is not a member set any cover region may match. That is a fact
+/// about the program rather than a degenerate case: the contributor source is
+/// [`SerialSumContributor::DeclaredInput`] for it, and every derivation that
+/// would spell a prologue region asks
+/// [`NormalizedSerialSum::prologue_members`] rather than the emptiness.
+///
+/// **A materialized contributor's occurrences are deliberately not here.** The
+/// producer's members are the producer's own recognized shape's, and a
+/// continuation's are [`ContributorContinuation::members`] — a *third* part of
+/// the fold's partition. Neither may enter [`Self::pointwise`], because that set
+/// is the declared-input prologue and [`Self::all`] is the fused affine
+/// candidate: a continuation folded into either would let
+/// [`crate::physical::fused_prologue_constants`] offer a fused region over reads
+/// that bind a materialization edge.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RecognizedSerialSumMembers {
     pointwise: Vec<SemanticStage>,
@@ -99,56 +109,184 @@ impl RecognizedSerialSumMembers {
     }
 }
 
+/// The elementwise continuation between a materialized producer and the fold
+/// that consumes it.
+///
+/// **It is the epilogue shape, reached from the other side.** `sum(sum(x) * 2)`
+/// computes `* 2` over the value the inner fold staged, which is exactly what
+/// [`NormalizedEpilogue`] describes for `sum(x) * 2` standing alone — same
+/// region, same [`BoundaryRead`] vocabulary, same
+/// [`crate::physical::RegionSpellingKind::Epilogue`] spelling. Carrying it here
+/// rather than in [`RecognizedSerialSumMembers::pointwise`] is what keeps the
+/// fused affine candidate honest: that candidate reads
+/// [`RecognizedSerialSumMembers::all`], and a continuation folded into it would
+/// offer a single fused region for reads one of which binds a materialization
+/// edge.
+///
+/// `None` on [`MaterializedContributor::continuation`] is the fold whose
+/// contributor *is* the produced value — `sum(rms_norm(x, w))` — and it is
+/// recorded as an absence rather than as a synthesized identity expression, for
+/// the reason [`SerialSumContributor::DeclaredInput`] carries no prologue: an
+/// identity continuation would be a region, and its rounding boundary, the
+/// caller's program never asked for.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ContributorContinuation {
+    pub(crate) expression: PointwiseF32Expression,
+    /// One entry per expression input leaf, in access order.
+    ///
+    /// Exactly one entry is [`BoundaryRead::Staged`] — the producer's result —
+    /// for the reason [`NormalizedEpilogue::reads`] carries exactly one.
+    pub(crate) reads: Vec<(BoundaryRead, LogicalAccess)>,
+    /// The occurrences the continuation region itself covers.
+    pub(crate) members: Vec<SemanticStage>,
+}
+
+/// A serial reduction's contributors, computed by a region across a
+/// materialization boundary.
+///
+/// The producer is whatever [`recognize_epilogue_producer`] returns — a
+/// `SerialSum`, a `Contraction`, or a `Staged` occurrence — so this form is not
+/// keyed by producer family. It is boxed on
+/// [`SerialSumContributor::Materialized`] because it is the rare arm and the
+/// enum would otherwise pay for a whole further recognized output at every
+/// value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct MaterializedContributor {
+    /// The recognized shape whose regions write the value the fold consumes.
+    ///
+    /// Its `output_key` is *this* fold's published key, for the reason
+    /// [`NormalizedEpilogue::producer`] states: a producer publishes nothing,
+    /// and the field means the ordered named output the partition it belongs to
+    /// publishes.
+    pub(crate) producer: NormalizedOutput,
+    pub(crate) continuation: Option<ContributorContinuation>,
+}
+
+/// Where a strict serial reduction's contributors come from.
+///
+/// **Exhaustive, and the exhaustiveness is the point.** These three arms used to
+/// be an implicit exclusive-or across `prologue`, `prologue_reads`, and
+/// `contributor_input`, where "a prologue region materializes the contributors"
+/// and "the fold reads a declared input directly" were told apart by which
+/// fields were absent. A materialized producer is a *third* answer that the
+/// absence encoding could not state — it leaves `prologue` empty exactly as a
+/// declared-input fold does — so every consumer deciding on that absence would
+/// have silently classified a produced sum as the neighbour it is not. Naming
+/// the source makes each of those consumers an exhaustive match that stops the
+/// build instead.
+///
+/// Mutual exclusion is therefore the type rather than an invariant: a program
+/// cannot be both a declared-input fold and a materialized one, and no identity
+/// prologue is synthesized for a bare `sum(producer)`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SerialSumContributor {
+    /// The fold reads one declared input tensor directly — `sum(x)`.
+    ///
+    /// **The recognized ordinal rather than zero.** A prologue-less fold's own
+    /// read is the one access no read list describes, so without this the
+    /// physical layer had nothing but the declared arity to derive the
+    /// contributor buffer from, and derived `Input { ordinal: 0 }`. That was
+    /// right while every elementwise walk read every declared input, because
+    /// such a program declared exactly one; `sum(b)` beside an independent
+    /// `a * a` declares two and folds the second.
+    DeclaredInput(DeclaredInputOrdinal),
+    /// A pointwise region over declared inputs materializes the contributors —
+    /// `sum(x * 2 + 1)`.
+    ///
+    /// **The expression is a general one, not a template.** It is whatever the
+    /// contributor walk found between the declared inputs and the reduction's
+    /// operand — any depth, any mix of the recognized families, any number of
+    /// declared inputs, and shared reads.
+    PointwisePrologue {
+        expression: PointwiseF32Expression,
+        /// The prologue region's reads, in access order.
+        reads: Vec<(DeclaredInputOrdinal, LogicalAccess)>,
+    },
+    /// Another region's materialized result feeds the fold, optionally through
+    /// an elementwise continuation — `sum(sum(x) * 2)`, `sum(contract(a, b))`.
+    Materialized(Box<MaterializedContributor>),
+}
+
+impl SerialSumContributor {
+    /// The pointwise prologue this fold computes before folding, when it has
+    /// one.
+    ///
+    /// `None` for both other arms, and the two absences mean different things:
+    /// a declared-input fold computes nothing before the fold at all, while a
+    /// materialized one computes its contributors in *another* region whose
+    /// expression is not a prologue. Callers that must tell them apart match
+    /// the enum; this accessor exists for the ones asking only "is there a
+    /// prologue region here", which is the question
+    /// [`crate::physical::pointwise_region`] and the fused vocabulary ask.
+    pub(crate) const fn prologue(&self) -> Option<&PointwiseF32Expression> {
+        match self {
+            Self::PointwisePrologue { expression, .. } => Some(expression),
+            Self::DeclaredInput(_) | Self::Materialized(_) => None,
+        }
+    }
+
+    /// The prologue region's reads, in access order, or empty when this fold
+    /// has no prologue region.
+    pub(crate) fn prologue_reads(&self) -> &[(DeclaredInputOrdinal, LogicalAccess)] {
+        match self {
+            Self::PointwisePrologue { reads, .. } => reads,
+            Self::DeclaredInput(_) | Self::Materialized(_) => &[],
+        }
+    }
+
+    /// The declared input ordinal the fold reads directly, or `None` when some
+    /// region materializes its contributors.
+    pub(crate) const fn declared_input(&self) -> Option<DeclaredInputOrdinal> {
+        match self {
+            Self::DeclaredInput(ordinal) => Some(*ordinal),
+            Self::PointwisePrologue { .. } | Self::Materialized(_) => None,
+        }
+    }
+
+    /// The materialized producer and its continuation, when another region
+    /// computes this fold's contributors.
+    pub(crate) fn materialized(&self) -> Option<&MaterializedContributor> {
+        match self {
+            Self::Materialized(materialized) => Some(materialized),
+            Self::DeclaredInput(_) | Self::PointwisePrologue { .. } => None,
+        }
+    }
+
+    /// The continuation region's occurrences, when this fold has one.
+    ///
+    /// `None` rather than an empty slice, for the reason
+    /// [`NormalizedSerialSum::prologue_members`] answers `None`: a cover region
+    /// covering no occurrence must not match the part.
+    fn continuation_members(&self) -> Option<&[SemanticStage]> {
+        Some(
+            self.materialized()?
+                .continuation
+                .as_ref()?
+                .members
+                .as_slice(),
+        )
+    }
+}
+
 /// A verified N-input, one-output `f32` program whose output is a strict serial
-/// reduction of a recognized elementwise contributor expression.
+/// reduction of a recognized contributor.
 ///
-/// **The prologue is a general expression, not a template.** It is whatever
-/// [`recognize_elementwise`] found between the declared inputs and the
-/// reduction's operand — any depth, any mix of the recognized families, any
-/// number of declared inputs, and shared reads. `input_keys` and `inputs` are
-/// parallel and in declaration order, which is the order the expression's input
-/// ordinals index and the order the assembled program binds its buffers in.
-///
-/// **And it is optional, because `sum(x)` has none.** A fold whose operand is a
-/// declared input computes nothing before the fold, so there is no expression to
-/// carry and no region to build for one.
+/// **Where the contributors come from is a named source rather than a pattern of
+/// absent fields** — see [`SerialSumContributor`], which states why. `input_keys`
+/// and `inputs` are parallel and in declaration order, which is the order a
+/// prologue expression's input ordinals index and the order the assembled
+/// program binds its buffers in.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NormalizedSerialSum {
     pub(crate) input_keys: Vec<InputKey>,
     pub(crate) output_key: OutputKey,
-    /// The contributor domain: the shape the prologue writes and the fold reads.
+    /// The contributor domain: the shape the contributors are written at and the
+    /// fold reads.
     pub(crate) input_shape: Shape,
     pub(crate) output_shape: Shape,
     pub(crate) reduction_axes: Vec<Axis>,
-    /// The recognized elementwise prologue the fold's contributors come from.
-    ///
-    /// `None` when the fold's operand is a declared input tensor. That is the
-    /// typed statement of "there is no prologue region here", and it is what every
-    /// prologue-spelling derivation asks: an identity expression standing in for
-    /// the absence would let a cover spell a copy kernel whose materialization —
-    /// and whose rounding boundary — the caller's program never asked for.
-    pub(crate) prologue: Option<PointwiseF32Expression>,
-    /// The prologue region's reads, in access order, or empty when there is no
-    /// prologue.
-    ///
-    /// Empty exactly when `prologue` is `None`, for the reason that field is
-    /// `None`: a fold over a declared input has no prologue region, so there is
-    /// no read list to state and an inhabited one would describe a region no
-    /// cover places.
-    pub(crate) prologue_reads: Vec<(DeclaredInputOrdinal, LogicalAccess)>,
-    /// The declared input ordinal the fold reads directly, or `None` when a
-    /// prologue region materializes its contributors.
-    ///
-    /// **`Some` exactly when [`Self::prologue`] is `None`, and it is the
-    /// recognized ordinal rather than zero.** A prologue-less fold's own read is
-    /// the one access no read list describes — `prologue_reads` belongs to a
-    /// region this program does not have — so without this field the physical
-    /// layer had nothing but the declared arity to derive the contributor buffer
-    /// from, and derived `Input { ordinal: 0 }`. That was right while every
-    /// elementwise walk read every declared input, because such a program
-    /// declared exactly one; `sum(b)` beside an independent `a * a` declares two
-    /// and folds the second.
-    pub(crate) contributor_input: Option<DeclaredInputOrdinal>,
+    /// Where this fold's contributors come from.
+    pub(crate) contributor: SerialSumContributor,
     pub(crate) members: RecognizedSerialSumMembers,
     pub(crate) inputs: Vec<ValueId>,
     pub(crate) pointwise_result: ValueId,
@@ -166,7 +304,19 @@ impl NormalizedSerialSum {
     /// state no recognized program is in, and treating it as one is how an empty
     /// member set would acquire a region.
     pub(crate) fn prologue_members(&self) -> Option<&[SemanticStage]> {
-        self.prologue.as_ref().map(|_| self.members.pointwise())
+        self.contributor
+            .prologue()
+            .map(|_| self.members.pointwise())
+    }
+
+    /// The occurrences a continuation region would cover, when this fold's
+    /// contributors are materialized by another region and an expression stands
+    /// between the two.
+    ///
+    /// `None` rather than an empty slice for the reason
+    /// [`Self::prologue_members`] answers `None`.
+    pub(crate) fn continuation_members(&self) -> Option<&[SemanticStage]> {
+        self.contributor.continuation_members()
     }
 }
 
@@ -628,15 +778,6 @@ impl NormalizedOutput {
         }
     }
 
-    pub(crate) const fn epilogue(&self) -> Option<&NormalizedEpilogue> {
-        match self {
-            Self::SerialSum(_) | Self::Pointwise(_) | Self::Contraction(_) | Self::Staged(_) => {
-                None
-            }
-            Self::Epilogue(normalized) => Some(normalized),
-        }
-    }
-
     pub(crate) const fn staged(&self) -> Option<&NormalizedStaged> {
         match self {
             Self::SerialSum(_) | Self::Pointwise(_) | Self::Contraction(_) | Self::Epilogue(_) => {
@@ -654,10 +795,25 @@ impl NormalizedOutput {
                 .reads
                 .iter()
                 .any(|(_, map)| access_is_parametric_broadcast(map)),
-            Self::SerialSum(normalized) => normalized
-                .prologue_reads
-                .iter()
-                .any(|(_, map)| access_is_parametric_broadcast(map)),
+            // The prologue region's reads, or — across a materialization edge —
+            // the continuation region's and the producer's own answer. The
+            // declared-input arm reads no relation at all: the fold's own
+            // contributor access is a `ReductionContributor`, which is not this
+            // carrier.
+            Self::SerialSum(normalized) => match &normalized.contributor {
+                SerialSumContributor::DeclaredInput(_) => false,
+                SerialSumContributor::PointwisePrologue { reads, .. } => reads
+                    .iter()
+                    .any(|(_, map)| access_is_parametric_broadcast(map)),
+                SerialSumContributor::Materialized(materialized) => {
+                    materialized.continuation.as_ref().is_some_and(|chain| {
+                        chain
+                            .reads
+                            .iter()
+                            .any(|(_, map)| access_is_parametric_broadcast(map))
+                    }) || materialized.producer.carries_parametric_broadcast()
+                }
+            },
             Self::Epilogue(chain) => {
                 chain
                     .reads
@@ -693,9 +849,24 @@ impl NormalizedOutput {
     /// descends exactly when the members are not the occurrence's stages, which
     /// is the same question [`crate::physical::spell_region`] answered to reach
     /// this call.
+    ///
+    /// **A fold whose contributors are materialized descends for the same
+    /// reason the staged arm does**, and on the same test: its partition holds
+    /// the fold's own regions *and* the producer's, so it answers itself for the
+    /// first and the producer's own shape for the second. Its continuation
+    /// region is the part not built from either, exactly as a chain's epilogue
+    /// is, and [`crate::physical::staged_elementwise_region`] is what resolves
+    /// that one.
     pub(crate) fn producer_shape_for(&self, members: &[SemanticStage]) -> &Self {
         match self {
-            Self::SerialSum(_) | Self::Pointwise(_) | Self::Contraction(_) => self,
+            Self::Pointwise(_) | Self::Contraction(_) => self,
+            Self::SerialSum(normalized) => normalized
+                .contributor
+                .materialized()
+                .filter(|materialized| materialized.producer.owns_region_members(members))
+                .map_or(self, |materialized| {
+                    materialized.producer.producer_shape_for(members)
+                }),
             Self::Epilogue(chain) => chain.producer.producer_shape_for(members),
             Self::Staged(normalized) => normalized
                 .producer
@@ -762,25 +933,60 @@ impl NormalizedOutput {
     /// says no when an arm reintroduces a domain.
     pub(crate) fn input_elements_at(&self, ordinal: DeclaredInputOrdinal) -> Option<u64> {
         match self {
-            // A prologue region's reads address declared tensors from the
-            // contributor domain; a prologue-less fold's own contributor read
-            // addresses the declared tensor directly, and `input_shape` is that
-            // operand's own shape rather than a domain standing in for it. The
-            // two sources are mutually exclusive — `prologue_reads` is inhabited
-            // exactly when `contributor_input` is `None` — and are folded
-            // together anyway so neither has to restate the exclusion.
-            Self::SerialSum(normalized) => agreed(
-                normalized
-                    .prologue_reads
-                    .iter()
-                    .filter(|(read, _)| *read == ordinal)
-                    .map(|(_, map)| read_tensor_elements(map, normalized.input_elements))
-                    .chain(
-                        (normalized.contributor_input == Some(ordinal))
-                            .then_some(Some(normalized.input_elements)),
-                    ),
-            )
-            .flatten(),
+            // One arm per contributor source, because the three read declared
+            // tensors from three different places. A prologue region's reads
+            // address them from the contributor domain; a declared-input fold's
+            // own contributor read addresses the declared tensor directly, and
+            // `input_shape` is that operand's own shape rather than a domain
+            // standing in for it; and a materialized fold reaches declared
+            // tensors only through its producer's own regions and its
+            // continuation's read list, whose domain is the contributor domain.
+            //
+            // The materialized arm folds its two halves exactly as the chain arm
+            // below folds a chain's, and for the same reason: whether each half
+            // reads the ordinal is asked before what it answers, so a half that
+            // reads it without being able to size it contributes a `None` the
+            // fold compares rather than an absence it cannot tell from silence.
+            Self::SerialSum(normalized) => match &normalized.contributor {
+                SerialSumContributor::DeclaredInput(read) => {
+                    (*read == ordinal).then_some(normalized.input_elements)
+                }
+                SerialSumContributor::PointwisePrologue { reads, .. } => agreed(
+                    reads
+                        .iter()
+                        .filter(|(read, _)| *read == ordinal)
+                        .map(|(_, map)| read_tensor_elements(map, normalized.input_elements)),
+                )
+                .flatten(),
+                SerialSumContributor::Materialized(materialized) => agreed(
+                    materialized
+                        .producer
+                        .reads_declared_input(ordinal)
+                        .then(|| materialized.producer.input_elements_at(ordinal))
+                        .into_iter()
+                        .chain(materialized.continuation.as_ref().and_then(|chain| {
+                            chain
+                                .reads
+                                .iter()
+                                .any(|(read, _)| *read == BoundaryRead::Input(ordinal))
+                                .then(|| {
+                                    agreed(
+                                        chain
+                                            .reads
+                                            .iter()
+                                            .filter(|(read, _)| {
+                                                *read == BoundaryRead::Input(ordinal)
+                                            })
+                                            .map(|(_, map)| {
+                                                read_tensor_elements(map, normalized.input_elements)
+                                            }),
+                                    )
+                                    .flatten()
+                                })
+                        })),
+                )
+                .flatten(),
+            },
             Self::Pointwise(normalized) => agreed(
                 normalized
                     .reads
@@ -863,21 +1069,31 @@ impl NormalizedOutput {
     /// declares three inputs" says nothing about which of them this output
     /// loads. It is exhaustive over the recognized shapes rather than projected
     /// through one of them, because each carries the fact differently: an
-    /// elementwise region in its read list, a fold in its prologue's read list
-    /// *or* its own contributor ordinal, a contraction in its operand count, and
-    /// a chain in both halves of the chain.
+    /// elementwise region in its read list, a fold in whichever of the three
+    /// sources its contributors come from, a contraction in its operand count,
+    /// and a chain in both halves of the chain.
     pub(super) fn reads_declared_input(&self, ordinal: DeclaredInputOrdinal) -> bool {
         match self {
             Self::Pointwise(normalized) => {
                 normalized.reads.iter().any(|(read, _)| *read == ordinal)
             }
-            Self::SerialSum(normalized) => {
-                normalized.contributor_input == Some(ordinal)
-                    || normalized
-                        .prologue_reads
-                        .iter()
-                        .any(|(read, _)| *read == ordinal)
-            }
+            Self::SerialSum(normalized) => match &normalized.contributor {
+                SerialSumContributor::DeclaredInput(read) => *read == ordinal,
+                SerialSumContributor::PointwisePrologue { reads, .. } => {
+                    reads.iter().any(|(read, _)| *read == ordinal)
+                }
+                // The producer's regions are part of this output's partition,
+                // so a declared input only the producer reaches is one this
+                // fold reads — exactly as a chain's producer's are.
+                SerialSumContributor::Materialized(materialized) => {
+                    materialized.continuation.as_ref().is_some_and(|chain| {
+                        chain
+                            .reads
+                            .iter()
+                            .any(|(read, _)| *read == BoundaryRead::Input(ordinal))
+                    }) || materialized.producer.reads_declared_input(ordinal)
+                }
+            },
             Self::Contraction(normalized) => normalized
                 .reads
                 .iter()
@@ -926,23 +1142,39 @@ impl NormalizedOutput {
     /// side and nothing here would say so.
     pub(crate) fn max_input_elements(&self) -> u64 {
         match self {
-            // Same two sources the reading arm folds, and for the same reason:
-            // a prologue region's reads, or a prologue-less fold's own
-            // contributor read of the declared tensor.
-            Self::SerialSum(normalized) => normalized
-                .prologue_reads
-                .iter()
-                .map(|(_, map)| {
-                    read_tensor_elements(map, normalized.input_elements)
-                        .unwrap_or(normalized.input_elements)
-                })
-                .chain(
-                    normalized
-                        .contributor_input
-                        .map(|_| normalized.input_elements),
-                )
-                .max()
-                .unwrap_or_default(),
+            // The same three sources the reading arm distinguishes, and for the
+            // same reason. The materialized arm reports its continuation's
+            // *declared-input* reads only, beside the producer's own answer: the
+            // continuation's staged read addresses a materialization edge rather
+            // than a declared buffer, and reporting its extent here would
+            // overstate the largest declared input this output reads — which is
+            // the chain arm's rule below.
+            Self::SerialSum(normalized) => match &normalized.contributor {
+                SerialSumContributor::DeclaredInput(_) => normalized.input_elements,
+                SerialSumContributor::PointwisePrologue { reads, .. } => reads
+                    .iter()
+                    .map(|(_, map)| {
+                        read_tensor_elements(map, normalized.input_elements)
+                            .unwrap_or(normalized.input_elements)
+                    })
+                    .max()
+                    .unwrap_or_default(),
+                SerialSumContributor::Materialized(materialized) => materialized
+                    .producer
+                    .max_input_elements()
+                    .max(materialized.continuation.as_ref().map_or(0, |chain| {
+                        chain
+                            .reads
+                            .iter()
+                            .filter(|(read, _)| read.declared_ordinal().is_some())
+                            .map(|(_, map)| {
+                                read_tensor_elements(map, normalized.input_elements)
+                                    .unwrap_or(normalized.input_elements)
+                            })
+                            .max()
+                            .unwrap_or_default()
+                    })),
+            },
             Self::Pointwise(normalized) => normalized
                 .reads
                 .iter()
@@ -1002,7 +1234,28 @@ impl NormalizedOutput {
     /// Returns every occurrence this output's walk claimed, in ascending order.
     pub(crate) fn members(&self) -> Vec<SemanticStage> {
         match self {
-            Self::SerialSum(normalized) => normalized.members.all(),
+            // The fold and whatever writes its contributors. A materialized
+            // contributor's producing occurrences are claimed by this walk alone
+            // — nothing else reaches them — exactly as a chain's producer's are,
+            // and [`check_output_cover`](super::recognize::check_output_cover)
+            // refuses a program with an occurrence no walk claimed.
+            Self::SerialSum(normalized) => {
+                let mut members = match &normalized.contributor {
+                    SerialSumContributor::DeclaredInput(_)
+                    | SerialSumContributor::PointwisePrologue { .. } => Vec::new(),
+                    SerialSumContributor::Materialized(materialized) => {
+                        let mut across = materialized.producer.members();
+                        if let Some(chain) = &materialized.continuation {
+                            across.extend_from_slice(&chain.members);
+                        }
+                        across
+                    }
+                };
+                members.extend(normalized.members.all());
+                members.sort_unstable();
+                members.dedup();
+                members
+            }
             Self::Pointwise(normalized) => normalized.members.clone(),
             Self::Contraction(normalized) => normalized.members.clone(),
             Self::Epilogue(chain) => {
@@ -1059,12 +1312,28 @@ impl NormalizedOutput {
     /// [`check_output_cover`](super::recognize::check_output_cover) read.
     pub(crate) fn owns_region_members(&self, members: &[SemanticStage]) -> bool {
         match self {
+            // The fold's own three parts, plus — across a materialization edge —
+            // the continuation's part and every part of the producer's
+            // partition. The continuation is a part of its own and is
+            // deliberately *not* unioned with the fold: no scheduled region
+            // computes an expression over a staged value and a fold of its
+            // result, so a cover grouping both is declined rather than resolved
+            // here, which is the same rule the chain arm below states.
             Self::SerialSum(normalized) => {
                 normalized
                     .prologue_members()
                     .is_some_and(|prologue| members == prologue)
                     || members == normalized.members.reduction()
                     || members == normalized.members.all()
+                    || normalized
+                        .continuation_members()
+                        .is_some_and(|continuation| members == continuation)
+                    || normalized
+                        .contributor
+                        .materialized()
+                        .is_some_and(|materialized| {
+                            materialized.producer.owns_region_members(members)
+                        })
             }
             Self::Pointwise(normalized) => members == normalized.members,
             Self::Contraction(normalized) => members == normalized.members,

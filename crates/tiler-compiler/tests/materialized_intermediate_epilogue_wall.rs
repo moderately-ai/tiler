@@ -72,6 +72,19 @@
 //! materialization boundary deeper — so the admission is bounded rather than
 //! open-ended.
 //!
+//! **The inverse chain compiles too, and the bounding neighbour moved one edge
+//! out with it.** `sum(contract(a, b) * 2.0)` and `sum(sum(x * x) * 2.0)` — a
+//! *fold* consuming what an earlier region materializes, rather than an
+//! expression consuming it — were refused here under
+//! `reduction-contributor-materialization` while the recognized fold had no
+//! producer relation to retain the discovered boundary on. It has one now: the
+//! contributor source's materialized arm carries the producing shape and the
+//! elementwise continuation between it and the fold, so both are one output's
+//! partition and the ordinary cover search places their edges. What still
+//! refuses is one boundary deeper again — a fold whose producer is *itself* a
+//! fold across an edge — and it refuses under `reduction-contributor-depth`,
+//! which names how deep the chain runs rather than a carrier that is missing.
+//!
 //! **The two assertions below measured `operation-set` refusals until that
 //! ticket landed**, and what they measured was real: the elementwise walk
 //! reached an operand produced by a family its expression vocabulary has no node
@@ -301,12 +314,21 @@ fn an_elementwise_epilogue_over_a_contraction_compiles_as_a_chain() {
             Ok(()),
             "{contract:?} refused the contraction epilogue",
         );
+        // The inverse chain — a *fold* consuming what the contraction
+        // materializes — now compiles through the fold's own contributor
+        // source, and the neighbour one boundary deeper still refuses by name.
+        // The pair is what keeps the admission bounded rather than open-ended.
         assert_eq!(
             compile_under(&nested_contraction_chain(), contract),
+            Ok(()),
+            "{contract:?} refused a fold whose contributors a contraction materializes",
+        );
+        assert_eq!(
+            compile_under(&doubly_nested_contraction_chain(), contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "reduction-contributor-materialization"
+                rule: "reduction-contributor-depth"
             }),
-            "{contract:?} did not name the materialization boundary in the reduction contributor",
+            "{contract:?} did not refuse the fold one materialization boundary too deep",
         );
     }
 }
@@ -367,25 +389,35 @@ fn an_elementwise_epilogue_over_a_reduction_compiles_as_a_chain() {
             Ok(()),
             "{contract:?} refused the reduction epilogue",
         );
+        // The inverse chain — a *fold* consuming what an earlier fold
+        // materializes — now compiles through the fold's own contributor
+        // source, and the neighbour one boundary deeper still refuses by name.
         assert_eq!(
             compile_under(&nested_reduction_chain(), contract),
+            Ok(()),
+            "{contract:?} refused a fold whose contributors a fold materializes",
+        );
+        assert_eq!(
+            compile_under(&doubly_nested_reduction_chain(), contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "reduction-contributor-materialization"
+                rule: "reduction-contributor-depth"
             }),
-            "{contract:?} did not name the materialization boundary in the reduction contributor",
+            "{contract:?} did not refuse the fold one materialization boundary too deep",
         );
     }
 }
 
-/// `refolded = sum(contract(a, b) * 2.0, axis 0)` — one missing producer carrier.
+/// `refolded = sum(contract(a, b) * 2.0, axis 0)` — the inverse chain, admitted.
 ///
-/// This is not the two-intermediate-read width wall. Recognition discovers one
-/// materialized contraction producer and the elementwise continuation, but the
-/// serial reduction contributor has no producer relation on which to retain
-/// that chain. `ElementwiseRefusal::Folded` is therefore flattened to
-/// `reduction-contributor-materialization`. The separate carrier decision owns
-/// admitting it; this fixture keeps the current refusal bounded beside the
-/// admitted contraction epilogue.
+/// This is not the two-intermediate-read width wall, and it is no longer a wall
+/// at all. Recognition discovers one materialized contraction producer and the
+/// elementwise continuation between it and the fold, and the fold's contributor
+/// source retains both: `SerialSumContributor::Materialized` carries the
+/// producer's own recognized shape and a `ContributorContinuation` for the
+/// `* 2.0`. What used to be flattened to `reduction-contributor-materialization`
+/// is now the partition of one output — producer region, continuation region,
+/// fold region — and the ordinary cover search places the two edges between
+/// them.
 fn nested_contraction_chain() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let a = builder
@@ -405,18 +437,83 @@ fn nested_contraction_chain() -> SemanticProgram {
     builder.build().unwrap()
 }
 
+/// `refolded = sum(sum(contract(a, b), axis 1) * 2.0, axis 0)` — the contraction
+/// pair's too-deep neighbour.
+///
+/// One materialization boundary further than [`nested_contraction_chain`]: the
+/// fold's producer is *itself* a fold whose own contributors are materialized,
+/// so the producer is reached across an edge and may place none of its own. That
+/// is the sides rule, and it reports `reduction-contributor-depth` — a rule
+/// about how deep a recognized chain runs, not about a carrier that is missing.
+/// Admitting it needs the recursive producer walk to become iterative, which is
+/// the recorded reversal path rather than a guard to delete.
+fn doubly_nested_contraction_chain() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 2]))
+        .unwrap();
+    let b = builder
+        .input::<F32>(InputKey::new("b").unwrap(), Shape::from_dims([2, 2]))
+        .unwrap();
+    let projected =
+        F32TensorContraction::apply(&mut builder, &projection_structure(), a, b).unwrap();
+    let inner = StrictSerialF32Sum::apply(&mut builder, projected, [Axis::new(1)]).unwrap();
+    let two = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+    let scaled = F32Multiply::apply(&mut builder, inner, two).unwrap();
+    let refolded = StrictSerialF32Sum::apply(&mut builder, scaled, [Axis::new(0)]).unwrap();
+    builder
+        .output(OutputKey::new("refolded").unwrap(), refolded)
+        .unwrap();
+    builder.build().unwrap()
+}
+
 /// `refolded = sum(sum(x * x, axis 1) * 2.0, axis 0)` — the reduction pair's
-/// too-deep neighbour, for the reason [`nested_contraction_chain`] states.
+/// inverse chain, admitted for the reason [`nested_contraction_chain`] states.
+///
+/// **It iterates [`reduction_domain`] rather than a wider shape, and the sizing
+/// is deliberate.** This fixture was written at `[2, 4]` while it only had to be
+/// *recognized* and refused, so no region of it was ever costed. Now that it
+/// compiles, its widest region — the `x * x` prologue, one invocation per
+/// element — is assessed against the governed profile's grid axis, which admits
+/// four. At `[2, 4]` this program reports `NoFeasiblePlan` with
+/// `target.grid-axis` `threads=8:4`, which is a fact about the profile and would
+/// make a red run here say nothing about the carrier. Sharing the accepted
+/// control's domain is what keeps the assertion evidence about the chain.
 fn nested_reduction_chain() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let x = builder
-        .input::<F32>(InputKey::new("x").unwrap(), Shape::from_dims([2, 4]))
+        .input::<F32>(InputKey::new("x").unwrap(), reduction_domain())
         .unwrap();
     let squared = F32Multiply::apply(&mut builder, x, x).unwrap();
     let reduced = StrictSerialF32Sum::apply(&mut builder, squared, [Axis::new(1)]).unwrap();
     let two = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
     let scaled = F32Multiply::apply(&mut builder, reduced, two).unwrap();
     let refolded = StrictSerialF32Sum::apply(&mut builder, scaled, [Axis::new(0)]).unwrap();
+    builder
+        .output(OutputKey::new("refolded").unwrap(), refolded)
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// `sum(sum(sum(x, axis 2) * 2.0, axis 1) * 2.0, axis 0)` — the reduction pair's
+/// too-deep neighbour, for the reason [`doubly_nested_contraction_chain`]
+/// states.
+///
+/// Three folds rather than two, so the outermost one's producer is a fold whose
+/// own contributors are materialized. The domain is wider than the profile's
+/// grid axis and that costs nothing: the refusal is the recognizer's, raised
+/// before any region is costed against a target.
+fn doubly_nested_reduction_chain() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let x = builder
+        .input::<F32>(InputKey::new("x").unwrap(), Shape::from_dims([2, 2, 2]))
+        .unwrap();
+    let two = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+    let inner = StrictSerialF32Sum::apply(&mut builder, x, [Axis::new(2)]).unwrap();
+    let scaled = F32Multiply::apply(&mut builder, inner, two).unwrap();
+    let middle = StrictSerialF32Sum::apply(&mut builder, scaled, [Axis::new(1)]).unwrap();
+    let rescaled = F32Multiply::apply(&mut builder, middle, two).unwrap();
+    let refolded = StrictSerialF32Sum::apply(&mut builder, rescaled, [Axis::new(0)]).unwrap();
     builder
         .output(OutputKey::new("refolded").unwrap(), refolded)
         .unwrap();

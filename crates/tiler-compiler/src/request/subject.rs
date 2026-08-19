@@ -38,6 +38,94 @@ pub(crate) struct VerifiedRequestSubject {
     realization_registry: Box<[u8]>,
 }
 
+/// The subject projection of one fold's materialized contributor.
+///
+/// It carries the producer's own subject rather than a summary of it, for the
+/// reason [`NormalizedEpilogueSubject`] does: a region of the producer's
+/// partition binds against exactly the subject it would bind against if the
+/// producer were the whole declared output, so [`crate::physical`]'s binding
+/// recurses instead of restating each producing family's obligations again.
+///
+/// The continuation is carried whole rather than projected. It holds no graph
+/// handle a subject must not bind — an expression, a read list, and the
+/// graph-local member ordinals every other arm's member run already writes —
+/// which is the same reason [`NormalizedOutputSubject::Pointwise`] carries its
+/// recognized shape unprojected.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct MaterializedContributorSubject {
+    producer: NormalizedOutputSubject,
+    continuation: Option<ContributorContinuation>,
+}
+
+impl MaterializedContributorSubject {
+    /// Returns the producer subject a region of the producing partition binds
+    /// against.
+    pub(crate) const fn producer(&self) -> &NormalizedOutputSubject {
+        &self.producer
+    }
+
+    /// Returns the continuation between the producer and the fold, when an
+    /// expression stands between the two.
+    pub(crate) const fn continuation(&self) -> Option<&ContributorContinuation> {
+        self.continuation.as_ref()
+    }
+}
+
+/// The subject projection of one fold's contributor source.
+///
+/// Exhaustive for the reason [`SerialSumContributor`] is, and the encoder below
+/// matches it rather than the fields it used to project: the `Materialized` arm
+/// takes its own framed sub-tag, so no produced sum can be read as the
+/// declared-input or pointwise-prologue neighbour whose bytes it would otherwise
+/// share the grammar with.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SerialSumContributorSubject {
+    DeclaredInput(DeclaredInputOrdinal),
+    PointwisePrologue {
+        expression: PointwiseF32Expression,
+        reads: Vec<(DeclaredInputOrdinal, LogicalAccess)>,
+    },
+    Materialized(Box<MaterializedContributorSubject>),
+}
+
+impl SerialSumContributorSubject {
+    /// The pointwise prologue this fold computes before folding, when it has
+    /// one.
+    pub(crate) const fn prologue(&self) -> Option<&PointwiseF32Expression> {
+        match self {
+            Self::PointwisePrologue { expression, .. } => Some(expression),
+            Self::DeclaredInput(_) | Self::Materialized(_) => None,
+        }
+    }
+
+    /// The prologue region's reads, in access order, or empty when this fold
+    /// has no prologue region.
+    pub(crate) fn prologue_reads(&self) -> &[(DeclaredInputOrdinal, LogicalAccess)] {
+        match self {
+            Self::PointwisePrologue { reads, .. } => reads,
+            Self::DeclaredInput(_) | Self::Materialized(_) => &[],
+        }
+    }
+
+    /// The declared input ordinal the fold reads directly, or `None` when some
+    /// region materializes its contributors.
+    pub(crate) const fn declared_input(&self) -> Option<DeclaredInputOrdinal> {
+        match self {
+            Self::DeclaredInput(ordinal) => Some(*ordinal),
+            Self::PointwisePrologue { .. } | Self::Materialized(_) => None,
+        }
+    }
+
+    /// The materialized producer and its continuation, when another region
+    /// computes this fold's contributors.
+    pub(crate) fn materialized(&self) -> Option<&MaterializedContributorSubject> {
+        match self {
+            Self::Materialized(materialized) => Some(materialized),
+            Self::DeclaredInput(_) | Self::PointwisePrologue { .. } => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NormalizedSerialSumSubject {
     input_keys: Vec<InputKey>,
@@ -45,9 +133,7 @@ pub(crate) struct NormalizedSerialSumSubject {
     input_shape: Shape,
     output_shape: Shape,
     reduction_axes: Vec<Axis>,
-    prologue: Option<PointwiseF32Expression>,
-    prologue_reads: Vec<(DeclaredInputOrdinal, LogicalAccess)>,
-    contributor_input: Option<DeclaredInputOrdinal>,
+    contributor: SerialSumContributorSubject,
     members: RecognizedSerialSumMembers,
     input_elements: u64,
     output_elements: u64,
@@ -289,10 +375,20 @@ impl VerifiedRequestSubject {
 
 /// Appends one recognized output's complete canonical subject encoding.
 ///
-/// Recursive because an epilogue chain's producer is itself a recognized output;
-/// every other arm is flat. The recursion is bounded by the recognizer, which
-/// admits a folding family as a chain's producer and nothing else, so a chain of
-/// chains is not a subject this function can be handed.
+/// Recursive because a chain's producer, a staged occurrence's operand producer,
+/// and a fold's materialized contributor are each themselves a recognized
+/// output; the pointwise and contraction arms are flat.
+///
+/// **The recursion is bounded by the recognizer's sides rule rather than by this
+/// function.** [`recognize_epilogue_producer`] is the one entry reached across a
+/// materialization edge, and it hands `NoEdge` to both admissions — so a
+/// producer's own contributor or staged operand may place no further edge, and
+/// the deepest subject this function can be handed is a consumer, its producer,
+/// and that producer's flat shape. `sum(sum(sum(x) * 2) * 2)` and
+/// `(sum(sum(x) * 2)) * 3` are refused at recognition under
+/// `reduction-contributor-depth`, so a chain of chains is not a subject that
+/// reaches here. Lifting either `NoEdge` without first making this walk
+/// iterative would put program depth on the host stack.
 ///
 /// **Every member run below writes the occurrence ordinal of an attribution
 /// atom and not its stage, and that is complete rather than lossy.** Every
@@ -311,79 +407,24 @@ impl VerifiedRequestSubject {
 /// qualifier with it.
 pub(super) fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &NormalizedOutputSubject) {
     match normalized {
-        NormalizedOutputSubject::SerialSum(normalized) => {
-            // **The sub-tag holds at `v3` although the arm gained an
-            // absent prologue, and the forced-not-chosen standard is what
-            // decides that.** A prologue is written below as its framed
-            // node run, and
-            // `tiler_ir::schedule::PointwiseF32ExpressionBuilder::build`
-            // refuses an expression with no node — so every subject this
-            // arm could encode before carries a node count of at least
-            // one at that position. Writing the absent prologue as a
-            // framed *zero* therefore occupies a byte string no
-            // previously encodable subject can produce, and the run stays
-            // self-delimiting: a count of zero ends the prologue and a
-            // count of `n` is followed by exactly `n` nodes and the root.
-            // Per-tag injectivity closes, no already-encodable subject's
-            // bytes move, and a step would restate every pin for a
-            // separation the encoding already has.
-            //
-            // The earlier step to `v3` was forced, and by the shape this
-            // one is not: the access-relation run is written at the arm's
-            // *end*, so a `v2` subject and a `v3` one carrying no maps
-            // would have differed only by a trailing framed zero, and a
-            // reader with the old framing would have consumed the
-            // following output's tag as this arm's payload.
-            push_slice(bytes, b"serial-sum-f32.v3");
-            push_len(bytes, normalized.input_keys.len());
-            for key in &normalized.input_keys {
-                push_slice(bytes, key.as_str().as_bytes());
+        // **Two sub-tags, chosen by the contributor source rather than by a
+        // field's presence, and the split is the structural control.** A
+        // materialized contributor has no producer slot in the
+        // `serial-sum-f32.v3` grammar to write, so a subject encoded through
+        // that arm would drop the producer entirely: two produced sums differing
+        // only in what writes their contributors would collide, and the
+        // separation from the *old* population would rest on nothing but an
+        // accident of the unread-declared-input run. Matching the source here is
+        // what makes the tag decide, before any payload is read.
+        NormalizedOutputSubject::SerialSum(normalized) => match &normalized.contributor {
+            SerialSumContributorSubject::Materialized(materialized) => {
+                encode_produced_serial_sum(bytes, normalized, materialized);
             }
-            push_slice(bytes, normalized.output_key.as_str().as_bytes());
-            encode_explain_shape(bytes, &normalized.input_shape);
-            encode_explain_shape(bytes, &normalized.output_shape);
-            push_len(bytes, normalized.reduction_axes.len());
-            for axis in &normalized.reduction_axes {
-                bytes.extend_from_slice(&axis.get().to_be_bytes());
+            SerialSumContributorSubject::DeclaredInput(_)
+            | SerialSumContributorSubject::PointwisePrologue { .. } => {
+                encode_serial_sum(bytes, normalized);
             }
-            match &normalized.prologue {
-                Some(prologue) => encode_pointwise_expression(bytes, prologue),
-                None => push_len(bytes, 0),
-            }
-            for members in [
-                normalized.members.pointwise(),
-                normalized.members.reduction(),
-            ] {
-                push_len(bytes, members.len());
-                for atom in members {
-                    bytes.extend_from_slice(&atom.member().0.to_be_bytes());
-                }
-            }
-            bytes.extend_from_slice(&normalized.input_elements.to_be_bytes());
-            bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
-            // The declared inputs this fold's own regions read: the prologue
-            // region's read list, or — when there is no prologue region — the
-            // fold's own contributor read. One run rather than two fields
-            // because what the arm must separate is *which* declared inputs
-            // this output reads, and `sum(a)` and `sum(b)` over the same two
-            // declarations agree on every other field here.
-            //
-            // The contributor read's relation is spelled `LinearIdentity`
-            // rather than the `ReductionContributor` the region carries, and
-            // that is not one fact encoded twice: the arm has already written
-            // the contributor domain, the published domain, and the canonical
-            // reduction axes, which is everything that relation is derived
-            // from. What the entry contributes is the ordinal — and the run
-            // omits a lone dense read, so what reaches the bytes is the marker
-            // for each declared input the fold does not read.
-            let contributor = normalized
-                .contributor_input
-                .map(|ordinal| [(ordinal, LogicalAccess::LinearIdentity)]);
-            let reads = contributor
-                .as_ref()
-                .map_or(normalized.prologue_reads.as_slice(), <[_; 1]>::as_slice);
-            encode_elementwise_reads(bytes, normalized.input_keys.len(), reads);
-        }
+        },
         NormalizedOutputSubject::Pointwise(normalized) => {
             // The sub-tag steps to `v4` because the arm gained each read's
             // access relation, and that fact is *load-bearing for
@@ -504,22 +545,7 @@ pub(super) fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &Normalized
             push_slice(bytes, normalized.output_key.as_str().as_bytes());
             encode_explain_shape(bytes, &normalized.shape);
             encode_pointwise_expression(bytes, &normalized.expression);
-            // The read list, in access order, each entry naming the boundary
-            // tensor it binds and the relation it addresses it with. Both halves
-            // are identity: two chains whose epilogues read the same leaves in a
-            // different order are different regions, and a staged read and a
-            // declared-input read at the same position bind different buffers.
-            push_len(bytes, normalized.reads.len());
-            for (read, map) in &normalized.reads {
-                match read {
-                    BoundaryRead::Staged => bytes.push(0x01),
-                    BoundaryRead::Input(ordinal) => {
-                        bytes.push(0x02);
-                        bytes.extend_from_slice(&ordinal.to_be_bytes());
-                    }
-                }
-                encode_access_relation(bytes, map);
-            }
+            encode_boundary_reads(bytes, &normalized.reads);
             push_len(bytes, normalized.members.len());
             for atom in &normalized.members {
                 bytes.extend_from_slice(&atom.member().0.to_be_bytes());
@@ -589,13 +615,7 @@ pub(super) fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &Normalized
                 .zip(&occurrence.operand_shapes)
                 .zip(&occurrence.operand_elements)
             {
-                match read {
-                    BoundaryRead::Staged => bytes.push(0x01),
-                    BoundaryRead::Input(ordinal) => {
-                        bytes.push(0x02);
-                        bytes.extend_from_slice(&ordinal.to_be_bytes());
-                    }
-                }
+                encode_boundary_read(bytes, *read);
                 encode_explain_shape(bytes, shape);
                 bytes.extend_from_slice(&elements.to_be_bytes());
             }
@@ -617,6 +637,190 @@ pub(super) fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &Normalized
             }
         }
     }
+}
+
+/// Appends the canonical `serial-sum-produced-f32.v1` encoding of one fold whose
+/// contributors another region materializes.
+///
+/// **A sixth sub-tag rather than a step of the enclosing
+/// `tiler.compiler.request-subject.v6` domain, and rather than a widening of
+/// `serial-sum-f32.v3`.** No existing arm's bytes move — a fold over a declared
+/// input or a pointwise prologue still encodes to exactly what it did, byte for
+/// byte, so the `domains.rs` request-subject pin row and every pinned request
+/// qualifier hold — and a reader that reaches this tag is reading a subject the
+/// earlier vocabulary could not express at all.
+///
+/// **Widening the old arm was the alternative, and it fails on both counts.**
+/// Adding a trailing producer presence byte to every serial-sum subject moves the
+/// bytes of every fold already encodable, which is the forced-not-chosen standard
+/// the pointwise and staged arms are held to. And writing a produced sum through
+/// the old grammar without such a byte would drop the producer entirely: two
+/// produced sums differing only in what writes their contributors would collide,
+/// and their separation from the old population would rest on the *accident* that
+/// a dropped-producer forgery emits an [`UNREAD_DECLARED_INPUT_TAG`] for every
+/// declared ordinal — a run no legal old subject produces, because every legal
+/// fold reads at least one declared input in its own regions. Resting identity on
+/// that is exactly what [`encode_elementwise_reads`]'s own comment forbids, so
+/// the framed tag is the control and the marker run is not asked to be one.
+///
+/// The producer is written through [`encode_output_subject`], so a nested fold,
+/// contraction, or staged occurrence encodes exactly as the standalone output of
+/// its family would — the epilogue arm's property, and what keeps two spellings
+/// of one producer from acquiring two identities. The continuation follows it
+/// under a leading presence byte, so the arm stays self-delimiting whether or not
+/// an expression stands between the producer and the fold.
+fn encode_produced_serial_sum(
+    bytes: &mut Vec<u8>,
+    normalized: &NormalizedSerialSumSubject,
+    materialized: &MaterializedContributorSubject,
+) {
+    push_slice(bytes, b"serial-sum-produced-f32.v1");
+    push_len(bytes, normalized.input_keys.len());
+    for key in &normalized.input_keys {
+        push_slice(bytes, key.as_str().as_bytes());
+    }
+    push_slice(bytes, normalized.output_key.as_str().as_bytes());
+    encode_explain_shape(bytes, &normalized.input_shape);
+    encode_explain_shape(bytes, &normalized.output_shape);
+    push_len(bytes, normalized.reduction_axes.len());
+    for axis in &normalized.reduction_axes {
+        bytes.extend_from_slice(&axis.get().to_be_bytes());
+    }
+    // The reduction's own occurrences only. This arm's pointwise part is empty
+    // by construction — a declared-input prologue is a *different* contributor
+    // source — so writing it would be a framed zero stating nothing, and the
+    // continuation's occurrences travel with the continuation below.
+    push_len(bytes, normalized.members.reduction().len());
+    for atom in normalized.members.reduction() {
+        bytes.extend_from_slice(&atom.member().0.to_be_bytes());
+    }
+    bytes.extend_from_slice(&normalized.input_elements.to_be_bytes());
+    bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
+    encode_output_subject(bytes, materialized.producer());
+    match materialized.continuation() {
+        Some(continuation) => {
+            bytes.push(0x01);
+            encode_pointwise_expression(bytes, &continuation.expression);
+            encode_boundary_reads(bytes, &continuation.reads);
+            push_len(bytes, continuation.members.len());
+            for atom in &continuation.members {
+                bytes.extend_from_slice(&atom.member().0.to_be_bytes());
+            }
+        }
+        None => bytes.push(0x00),
+    }
+}
+
+/// Appends one region's [`BoundaryRead`] run, in access order.
+///
+/// Both halves of each entry are identity: two regions whose reads bind the same
+/// tensors in a different order serve different expression leaves from the same
+/// buffers, and a staged read and a declared-input read at the same position bind
+/// different buffers. One definition rather than three, because the epilogue
+/// arm, the staged arm's operand run, and a fold's continuation write the same
+/// vocabulary and each arm's own sub-tag separates the runs before any is read.
+fn encode_boundary_reads(bytes: &mut Vec<u8>, reads: &[(BoundaryRead, LogicalAccess)]) {
+    push_len(bytes, reads.len());
+    for (read, map) in reads {
+        encode_boundary_read(bytes, *read);
+        encode_access_relation(bytes, map);
+    }
+}
+
+/// Appends one boundary tensor role under its canonical tag.
+fn encode_boundary_read(bytes: &mut Vec<u8>, read: BoundaryRead) {
+    match read {
+        BoundaryRead::Staged => bytes.push(0x01),
+        BoundaryRead::Input(ordinal) => {
+            bytes.push(0x02);
+            bytes.extend_from_slice(&ordinal.to_be_bytes());
+        }
+    }
+}
+
+/// Appends the canonical `serial-sum-f32.v3` encoding of one fold whose
+/// contributors are a declared input or a pointwise prologue over declared
+/// inputs.
+///
+/// **These bytes do not move**, which is what keeps the fold this vocabulary
+/// could already express at the request qualifier it already had.
+fn encode_serial_sum(bytes: &mut Vec<u8>, normalized: &NormalizedSerialSumSubject) {
+    // **The sub-tag holds at `v3` although the arm gained an
+    // absent prologue, and the forced-not-chosen standard is what
+    // decides that.** A prologue is written below as its framed
+    // node run, and
+    // `tiler_ir::schedule::PointwiseF32ExpressionBuilder::build`
+    // refuses an expression with no node — so every subject this
+    // arm could encode before carries a node count of at least
+    // one at that position. Writing the absent prologue as a
+    // framed *zero* therefore occupies a byte string no
+    // previously encodable subject can produce, and the run stays
+    // self-delimiting: a count of zero ends the prologue and a
+    // count of `n` is followed by exactly `n` nodes and the root.
+    // Per-tag injectivity closes, no already-encodable subject's
+    // bytes move, and a step would restate every pin for a
+    // separation the encoding already has.
+    //
+    // The earlier step to `v3` was forced, and by the shape this
+    // one is not: the access-relation run is written at the arm's
+    // *end*, so a `v2` subject and a `v3` one carrying no maps
+    // would have differed only by a trailing framed zero, and a
+    // reader with the old framing would have consumed the
+    // following output's tag as this arm's payload.
+    push_slice(bytes, b"serial-sum-f32.v3");
+    push_len(bytes, normalized.input_keys.len());
+    for key in &normalized.input_keys {
+        push_slice(bytes, key.as_str().as_bytes());
+    }
+    push_slice(bytes, normalized.output_key.as_str().as_bytes());
+    encode_explain_shape(bytes, &normalized.input_shape);
+    encode_explain_shape(bytes, &normalized.output_shape);
+    push_len(bytes, normalized.reduction_axes.len());
+    for axis in &normalized.reduction_axes {
+        bytes.extend_from_slice(&axis.get().to_be_bytes());
+    }
+    match normalized.contributor.prologue() {
+        Some(prologue) => encode_pointwise_expression(bytes, prologue),
+        None => push_len(bytes, 0),
+    }
+    for members in [
+        normalized.members.pointwise(),
+        normalized.members.reduction(),
+    ] {
+        push_len(bytes, members.len());
+        for atom in members {
+            bytes.extend_from_slice(&atom.member().0.to_be_bytes());
+        }
+    }
+    bytes.extend_from_slice(&normalized.input_elements.to_be_bytes());
+    bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
+    // The declared inputs this fold's own regions read: the prologue
+    // region's read list, or — when there is no prologue region — the
+    // fold's own contributor read. One run rather than two fields
+    // because what the arm must separate is *which* declared inputs
+    // this output reads, and `sum(a)` and `sum(b)` over the same two
+    // declarations agree on every other field here.
+    //
+    // The contributor read's relation is spelled `LinearIdentity`
+    // rather than the `ReductionContributor` the region carries, and
+    // that is not one fact encoded twice: the arm has already written
+    // the contributor domain, the published domain, and the canonical
+    // reduction axes, which is everything that relation is derived
+    // from. What the entry contributes is the ordinal — and the run
+    // omits a lone dense read, so what reaches the bytes is the marker
+    // for each declared input the fold does not read.
+    //
+    // The materialized source never reaches here: it takes its own tag,
+    // where the producer is written rather than dropped, so this run's
+    // two sources are the two the enclosing match admits.
+    let contributor = normalized
+        .contributor
+        .declared_input()
+        .map(|ordinal| [(ordinal, LogicalAccess::LinearIdentity)]);
+    let reads = contributor
+        .as_ref()
+        .map_or(normalized.contributor.prologue_reads(), <[_; 1]>::as_slice);
+    encode_elementwise_reads(bytes, normalized.input_keys.len(), reads);
 }
 
 /// Appends one numerical contract's complete canonical encoding.
@@ -975,20 +1179,24 @@ impl NormalizedSerialSumSubject {
     pub(crate) fn reduction_axes(&self) -> &[Axis] {
         &self.reduction_axes
     }
+    /// Where this fold's contributors come from.
+    pub(crate) const fn contributor(&self) -> &SerialSumContributorSubject {
+        &self.contributor
+    }
     /// The recognized elementwise prologue the fold's contributors come from, or
-    /// `None` when the fold's operand is a declared input tensor.
+    /// `None` when a declared input or another region's result supplies them.
     pub(crate) const fn prologue(&self) -> Option<&PointwiseF32Expression> {
-        self.prologue.as_ref()
+        self.contributor.prologue()
     }
     /// The prologue region's reads, in access order; empty when there is no
-    /// prologue.
+    /// prologue region.
     pub(crate) fn prologue_reads(&self) -> &[(DeclaredInputOrdinal, LogicalAccess)] {
-        &self.prologue_reads
+        self.contributor.prologue_reads()
     }
-    /// The declared input ordinal a prologue-less fold reads directly, or
-    /// `None` when a prologue region materializes its contributors.
+    /// The declared input ordinal the fold reads directly, or `None` when some
+    /// region materializes its contributors.
     pub(crate) const fn contributor_input(&self) -> Option<DeclaredInputOrdinal> {
-        self.contributor_input
+        self.contributor.declared_input()
     }
     pub(crate) const fn members(&self) -> &RecognizedSerialSumMembers {
         &self.members
@@ -1043,6 +1251,32 @@ pub(super) fn request_subject(
 ///
 /// Recursive because an epilogue chain carries a whole further recognized output
 /// inside it; every other arm is a flat projection.
+/// Projects one recognized fold's contributor source into the subject's own.
+///
+/// Recursive through the materialized arm, because the producer is a whole
+/// further recognized output and binds against exactly the subject it would bind
+/// against standing alone. The other two arms are flat projections of the facts
+/// the fold's own regions are built from.
+fn contributor_subject(contributor: &SerialSumContributor) -> SerialSumContributorSubject {
+    match contributor {
+        SerialSumContributor::DeclaredInput(ordinal) => {
+            SerialSumContributorSubject::DeclaredInput(*ordinal)
+        }
+        SerialSumContributor::PointwisePrologue { expression, reads } => {
+            SerialSumContributorSubject::PointwisePrologue {
+                expression: expression.clone(),
+                reads: reads.clone(),
+            }
+        }
+        SerialSumContributor::Materialized(materialized) => {
+            SerialSumContributorSubject::Materialized(Box::new(MaterializedContributorSubject {
+                producer: output_subject(&materialized.producer),
+                continuation: materialized.continuation.clone(),
+            }))
+        }
+    }
+}
+
 pub(super) fn output_subject(normalized: &NormalizedOutput) -> NormalizedOutputSubject {
     match normalized {
         NormalizedOutput::SerialSum(normalized) => {
@@ -1052,9 +1286,7 @@ pub(super) fn output_subject(normalized: &NormalizedOutput) -> NormalizedOutputS
                 input_shape: normalized.input_shape.clone(),
                 output_shape: normalized.output_shape.clone(),
                 reduction_axes: normalized.reduction_axes.clone(),
-                prologue: normalized.prologue.clone(),
-                prologue_reads: normalized.prologue_reads.clone(),
-                contributor_input: normalized.contributor_input,
+                contributor: contributor_subject(&normalized.contributor),
                 members: normalized.members.clone(),
                 input_elements: normalized.input_elements,
                 output_elements: normalized.output_elements,

@@ -306,23 +306,35 @@ pub(super) fn verify_equivalence(
         // and it is not weaker: it requires the one scheduled region to cover
         // exactly the candidate's occurrences.
         //
-        // **The condition is the prologue, not the family**, and the difference
-        // arrived with `admit-a-reduction-over-a-declared-input-tensor`. This arm
-        // used to exclude every reduced request, on the reasoning that a
-        // reduction's only whole-program region is the fused one and that region
-        // exists exactly when the affine equivalence proof does. `sum(x)` has no
-        // prologue at all: its whole-program region is the plain
-        // `ScalarProgram::StrictSerialSum` folding a declared input, it merges
-        // nothing, and there is no affine pair for a proof to be about — which is
-        // why `fused_prologue_constants` answers `None` for it. A fold that *does*
-        // carry a prologue still falls through to the proving arm below, because
-        // its whole-program region really is a fusion.
+        // **The condition is the declared-input contributor, stated as the fact
+        // it means rather than inferred from two absences.** The exemption used
+        // to read `try_serial_sum().is_none_or(|serial| serial.prologue.is_none())`,
+        // and both halves were absences: a non-serial-sum output was exempt
+        // through `is_none_or`'s vacuous truth, and a fold was exempt whenever
+        // its `prologue` field was empty — which a fold whose contributors
+        // another region *materializes* also is. Under the contributor source
+        // that spelling would have exempted a produced sum from the numerical
+        // replay while claiming to be about a fold that merges nothing.
+        //
+        // What the arm actually needs is that the whole-program region merges
+        // nothing. `sum(x)` satisfies it: its region is the plain
+        // `ScalarProgram::StrictSerialSum` folding a declared input, there is no
+        // affine pair for a proof to be about, and `fused_prologue_constants`
+        // answers `None` for it. A fold with a prologue does not — its
+        // whole-program region really is a fusion — and neither does a fold over
+        // a materialized producer, whose partition spans a producer region, an
+        // optional continuation, and the fold. Both fall through to the proving
+        // arm below rather than being re-derived a second way.
+        //
+        // A non-serial-sum output is exempted by a stated per-family rule rather
+        // than by `is_none_or`: the pointwise and contraction arms publish from
+        // one region that merges nothing, while a chain and a staged family are
+        // several regions by construction and cannot classify `Fused` at all —
+        // so naming them refuses rather than vacuously admits.
+        // [`match-the-declared-input-contributor-in-the-fused-proof-exemption`](../../../tickets/match-the-declared-input-contributor-in-the-fused-proof-exemption.md)
+        // owns this statement.
         (ProgramAlternativeKind::Fused, None)
-            if request.normalized().outputs().iter().all(|output| {
-                output
-                    .try_serial_sum()
-                    .is_none_or(|serial| serial.prologue.is_none())
-            }) =>
+            if request.normalized().outputs().iter().all(merges_nothing) =>
         {
             let candidate = formation.whole_program_candidate().ok_or({
                 CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
@@ -348,6 +360,40 @@ pub(super) fn verify_equivalence(
             rule: "portfolio-equivalence",
         }
         .into()),
+    }
+}
+
+/// Returns whether one recognized output's whole-program region would merge no
+/// occurrences, and therefore has no fusion for a numerical proof to be about.
+///
+/// **Exhaustive over the output vocabulary, and over the fold's contributor
+/// source within it, so a widening is a build error here rather than a silently
+/// widened exemption.** Answering `false` costs a compilation nothing: the
+/// alternative takes the ordinary `portfolio-equivalence` proof path, which is
+/// the fail-closed direction and the one the exemption exists to be narrower
+/// than.
+///
+/// - A pointwise output and a contraction publish from one region computing one
+///   recognized family; neither merges anything.
+/// - A fold merges nothing exactly when it reads a declared input directly. A
+///   pointwise prologue is a merge — that is what the fused scalar program
+///   *is* — and a materialized contributor is a partition of several regions,
+///   whose whole-program classification would be a claim about a cover this
+///   compiler does not assemble.
+/// - A chain and a staged family are several regions by construction, so a
+///   `Fused` receipt over one is forged; refusing here is what keeps the forged
+///   receipt on the replaying path instead of the exempt one.
+fn merges_nothing(output: &crate::request::NormalizedOutput) -> bool {
+    use crate::request::{NormalizedOutput, SerialSumContributor};
+
+    match output {
+        NormalizedOutput::Pointwise(_) | NormalizedOutput::Contraction(_) => true,
+        NormalizedOutput::SerialSum(serial) => match &serial.contributor {
+            SerialSumContributor::DeclaredInput(_) => true,
+            SerialSumContributor::PointwisePrologue { .. }
+            | SerialSumContributor::Materialized(_) => false,
+        },
+        NormalizedOutput::Epilogue(_) | NormalizedOutput::Staged(_) => false,
     }
 }
 

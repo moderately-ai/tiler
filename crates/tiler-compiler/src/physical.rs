@@ -33,9 +33,9 @@ use tiler_ir::schedule::{
 use crate::region::SemanticStage;
 use crate::request::{
     BoundaryRead, DeclaredInputOrdinal, NormalizedContraction, NormalizedContractionRead,
-    NormalizedEpilogue, NormalizedOutput, NormalizedOutputSubject, NormalizedPointwise,
-    NormalizedSerialSum, NormalizedStaged, NumericalPermission, RecognizedPointwise,
-    StrictF32NumericalContract, TargetProfile, VerifiedRequestSubject, VerifiedTargetRequest,
+    NormalizedOutput, NormalizedOutputSubject, NormalizedPointwise, NormalizedSerialSum,
+    NormalizedStaged, NumericalPermission, RecognizedPointwise, StrictF32NumericalContract,
+    TargetProfile, VerifiedRequestSubject, VerifiedTargetRequest,
 };
 use crate::target::feasibility::UnrealizableSynchronization;
 use crate::target::feasibility::{
@@ -68,6 +68,13 @@ use crate::target::honourability::{
 /// The split's *final* pass deliberately does not ask: it folds partials its own
 /// partial pass staged, so its read is the intermediate whatever the fold's
 /// contributor domain is.
+///
+/// **The two intermediates are different regions and the same role.** A fold
+/// with a prologue reads what that prologue region wrote; a fold whose
+/// contributors another region materializes reads what its producer — or the
+/// continuation over that producer — wrote. Neither is a declared buffer, which
+/// is the whole of what this answers, so the ordinal's absence is the fact
+/// rather than a case left unhandled.
 const fn declared_contributor_tensor(
     contributor_input: Option<DeclaredInputOrdinal>,
 ) -> TensorRole {
@@ -84,7 +91,7 @@ const fn declared_contributor_tensor(
 /// live — three spellings of one fold, which the program assembler would then
 /// bind to three different buffers.
 const fn contributor_tensor(serial: &NormalizedSerialSum) -> TensorRole {
-    declared_contributor_tensor(serial.contributor_input)
+    declared_contributor_tensor(serial.contributor.declared_input())
 }
 
 /// The declared input a *fused* region's contributor read binds, or `None` when
@@ -149,14 +156,24 @@ fn fused_contributor_tensor(
 /// that expression maps `-0.0` to `+0.0` — so the affine vocabulary is genuinely
 /// absent here rather than merely unused.
 ///
+/// **A fold whose contributors another region materializes answers `None` by
+/// the same route, and the type is what makes that safe.** Its continuation may
+/// well be `staged * 2.0 + 1.0`, which [`affine_prologue`] would recover
+/// verbatim; fusing it would bind the fused region's one
+/// [`LogicalAccess::ReductionContributor`] read to `Input { ordinal: 0 }` and
+/// fold a declared buffer where the program said "the value the producer wrote".
+/// Asking [`crate::request::SerialSumContributor::prologue`] rather than a
+/// nullable field is what refuses it: only the pointwise-prologue arm answers,
+/// so the materialized arm cannot reach the affine recovery at all.
+///
 /// This is the single authority the whole compilation asks: the region builder,
 /// the request-subject binding, and the whole-program numerical proof all reach
 /// it, so "a fused alternative exists" and "the fused equivalence proof is
 /// claimed" cannot disagree.
 pub(crate) fn fused_prologue_constants(output: &NormalizedOutput) -> Option<(u32, u32)> {
     let serial = output.try_serial_sum()?;
-    fused_contributor_tensor(&serial.prologue_reads)?;
-    affine_prologue(serial.prologue.as_ref()?)
+    fused_contributor_tensor(serial.contributor.prologue_reads())?;
+    affine_prologue(serial.contributor.prologue()?)
 }
 
 /// Recovers the scale and bias one recognized expression spells, or declines.
@@ -870,7 +887,8 @@ fn spell_output(
                 .is_some_and(|prologue| members == prologue)
             {
                 if normalized
-                    .prologue_reads
+                    .contributor
+                    .prologue_reads()
                     .iter()
                     .any(|(_, map)| matches!(map, LogicalAccess::ParametricBroadcast { .. }))
                 {
@@ -885,6 +903,31 @@ fn spell_output(
                 return Some(Ok(RegionSpelling::new(
                     position,
                     RegionSpellingKind::SerialSum,
+                )));
+            }
+            // The continuation between a materialized producer and this fold is
+            // [`RegionSpellingKind::Epilogue`] rather than
+            // [`RegionSpellingKind::Pointwise`], and the difference is the read
+            // vocabulary: its list names one staged value beside whichever
+            // declared inputs the expression reads, which is exactly what
+            // separates the two variants. Sending it through the pointwise
+            // builder would bind that staged read to a declared input buffer.
+            if let Some(continuation) = normalized
+                .contributor
+                .materialized()
+                .and_then(|materialized| materialized.continuation.as_ref())
+                .filter(|continuation| members == continuation.members)
+            {
+                if continuation
+                    .reads
+                    .iter()
+                    .any(|(_, map)| matches!(map, LogicalAccess::ParametricBroadcast { .. }))
+                {
+                    return Some(Err(RegionVocabularyWall::ParametricBroadcast));
+                }
+                return Some(Ok(RegionSpelling::new(
+                    position,
+                    RegionSpellingKind::Epilogue(write),
                 )));
             }
             // Unreachable for a prologue-less fold, and correctly so: its two
@@ -903,7 +946,23 @@ fn spell_output(
             {
                 *partial_fused = Some(RegionVocabularyWall::PartialFusedProgram);
             }
-            None
+            // A member set that is none of this fold's own parts falls through
+            // to the producer across the contributor edge, exactly as an
+            // epilogue chain falls through to its own. It is a fall-through
+            // rather than a decision because a member set outside both is
+            // another output's.
+            normalized
+                .contributor
+                .materialized()
+                .and_then(|materialized| {
+                    spell_output(
+                        &materialized.producer,
+                        position,
+                        members,
+                        write,
+                        partial_fused,
+                    )
+                })
         }
         NormalizedOutput::Epilogue(chain) => {
             if members == chain.members {
@@ -1154,29 +1213,56 @@ fn declared_input_for_verified_access(
                 })
             }
         }
-        NormalizedOutputSubject::SerialSum(serial) => match &region.index.program {
-            RegionProgram::Numerical {
-                scalar: ScalarProgram::PointwiseF32(_),
-                ..
-            } => serial
-                .prologue_reads()
-                .get(position)
-                .map(|(ordinal, _)| *ordinal),
-            RegionProgram::Numerical {
-                scalar: ScalarProgram::FusedMultiplyAddSerialSum { .. },
-                ..
-            } => serial
-                .prologue_reads()
-                .get(position)
-                .map(|(ordinal, _)| *ordinal),
-            RegionProgram::Numerical {
-                scalar: ScalarProgram::StrictSerialSum { .. },
-                ..
-            } => (position == 0)
-                .then(|| serial.contributor_input())
-                .flatten(),
-            _ => None,
-        },
+        // A fold's own regions resolve against its contributor source, and a
+        // region of neither — the continuation, or a region of the producer's
+        // partition across the contributor edge — resolves against the shape it
+        // was built from, exactly as a chain's does. The members decide which,
+        // because a continuation region and a prologue region are both
+        // `PointwiseF32` and the scalar program cannot tell them apart.
+        NormalizedOutputSubject::SerialSum(serial) => {
+            if let Some(materialized) = serial.contributor().materialized() {
+                if materialized
+                    .continuation()
+                    .is_some_and(|continuation| semantic_members == continuation.members)
+                {
+                    return materialized
+                        .continuation()?
+                        .reads
+                        .get(position)
+                        .and_then(|(read, _)| read.declared_ordinal());
+                }
+                if semantic_members != serial.members().reduction()
+                    && semantic_members != serial.members().all()
+                {
+                    return declared_input_for_verified_access(
+                        region,
+                        semantic_members,
+                        materialized.producer(),
+                        position,
+                    );
+                }
+            }
+            match &region.index.program {
+                RegionProgram::Numerical {
+                    scalar: ScalarProgram::PointwiseF32(_),
+                    ..
+                }
+                | RegionProgram::Numerical {
+                    scalar: ScalarProgram::FusedMultiplyAddSerialSum { .. },
+                    ..
+                } => serial
+                    .prologue_reads()
+                    .get(position)
+                    .map(|(ordinal, _)| *ordinal),
+                RegionProgram::Numerical {
+                    scalar: ScalarProgram::StrictSerialSum { .. },
+                    ..
+                } => (position == 0)
+                    .then(|| serial.contributor_input())
+                    .flatten(),
+                _ => None,
+            }
+        }
     }
 }
 
@@ -1738,12 +1824,13 @@ pub(crate) fn pointwise_region(
                 // at the walk it drives.
                 RecognizedPointwise::F32(
                     serial
-                        .prologue
-                        .clone()
-                        .expect("a prologue region is spelled only for a fold that has a prologue"),
+                        .contributor
+                        .prologue()
+                        .expect("a prologue region is spelled only for a fold that has a prologue")
+                        .clone(),
                 ),
                 serial.members.pointwise().to_vec(),
-                serial.prologue_reads.clone(),
+                serial.contributor.prologue_reads().to_vec(),
             )
         };
     // The recognized read list, not the declared arity: one declared input may be
@@ -1887,7 +1974,83 @@ fn elementwise_region(
 /// happens to carry the same expression.
 const EPILOGUE_REGION: RegionId = RegionId::new(5);
 
-/// Builds the canonical elementwise epilogue region for one recognized chain.
+/// The recognized facts one elementwise region over a staged producer result is
+/// built from.
+///
+/// **Two recognized shapes supply these, and the region is the same region.** An
+/// elementwise epilogue *over* a fold and the continuation *between* a producer
+/// and the fold consuming it each read one staged value beside whichever declared
+/// inputs their expression names, and each is spelled
+/// [`RegionSpellingKind::Epilogue`]. Only the domain differs: an epilogue
+/// iterates its published shape, a continuation the fold's contributor shape.
+/// Naming the facts rather than the shape is what lets one builder serve both
+/// instead of a second copy that could drift about read order.
+#[derive(Clone, Copy)]
+pub(crate) struct StagedElementwiseRegion<'a> {
+    shape: &'a Shape,
+    elements: u64,
+    expression: &'a PointwiseF32Expression,
+    reads: &'a [(BoundaryRead, LogicalAccess)],
+    members: &'a [SemanticStage],
+}
+
+/// Resolves the recognized facts the elementwise region over a staged producer
+/// result covering `members` is built from.
+///
+/// `None` is "no part of this output's partition is that region", which is the
+/// caller's own invalid-output condition: [`spell_region`] resolved
+/// [`RegionSpellingKind::Epilogue`] before this is asked, and it does so only
+/// for a member set this function answers for.
+///
+/// Recursive over the same producer relations [`spell_region`] descends, so a
+/// chain whose producer is a fold with its own continuation resolves the
+/// continuation — a shape the sides rule refuses today, and one this function
+/// does not have to be rewritten to admit.
+pub(crate) fn staged_elementwise_region<'a>(
+    output: &'a NormalizedOutput,
+    members: &[SemanticStage],
+) -> Option<StagedElementwiseRegion<'a>> {
+    match output {
+        NormalizedOutput::Pointwise(_) | NormalizedOutput::Contraction(_) => None,
+        NormalizedOutput::Epilogue(chain) => {
+            if members == chain.members {
+                return Some(StagedElementwiseRegion {
+                    shape: &chain.shape,
+                    elements: chain.elements,
+                    expression: &chain.expression,
+                    reads: &chain.reads,
+                    members: &chain.members,
+                });
+            }
+            staged_elementwise_region(&chain.producer, members)
+        }
+        NormalizedOutput::SerialSum(serial) => {
+            let materialized = serial.contributor.materialized()?;
+            if let Some(continuation) = materialized
+                .continuation
+                .as_ref()
+                .filter(|continuation| members == continuation.members)
+            {
+                // The continuation's domain is the fold's *contributor* domain:
+                // it writes what the fold reads, so its iteration count is
+                // `input_elements` and never the published one.
+                return Some(StagedElementwiseRegion {
+                    shape: &serial.input_shape,
+                    elements: serial.input_elements,
+                    expression: &continuation.expression,
+                    reads: &continuation.reads,
+                    members: &continuation.members,
+                });
+            }
+            staged_elementwise_region(&materialized.producer, members)
+        }
+        NormalizedOutput::Staged(staged) => {
+            staged_elementwise_region(staged.producer.as_deref()?, members)
+        }
+    }
+}
+
+/// Builds the canonical elementwise region over one staged producer result.
 ///
 /// **Exactly one read binds the materialization edge the cover hands this
 /// region**, which is the whole difference from [`pointwise_region`]: both build
@@ -1899,10 +2062,10 @@ const EPILOGUE_REGION: RegionId = RegionId::new(5);
 /// checked verification path.
 pub(crate) fn epilogue_region(
     request: &VerifiedTargetRequest,
-    chain: &NormalizedEpilogue,
+    recognized: StagedElementwiseRegion<'_>,
     write: RegionWrite,
 ) -> (ScheduledRegion, Vec<SemanticStage>) {
-    let reads: Vec<(TensorRole, LogicalAccess)> = chain
+    let reads: Vec<(TensorRole, LogicalAccess)> = recognized
         .reads
         .iter()
         .map(|(read, map)| (read.tensor(), map.clone()))
@@ -1910,15 +2073,16 @@ pub(crate) fn epilogue_region(
     let region = elementwise_region(
         request,
         EPILOGUE_REGION,
-        chain.shape.clone(),
-        chain.elements,
+        recognized.shape.clone(),
+        recognized.elements,
         &reads,
-        // An epilogue chain is `f32` by its producer's family key, for the reason
-        // a fold's prologue is; see `pointwise_region`.
-        RecognizedPointwise::F32(chain.expression.clone()),
+        // An epilogue chain and a fold's continuation are both `f32` by the
+        // producing family's own key, for the reason a fold's prologue is; see
+        // `pointwise_region`.
+        RecognizedPointwise::F32(recognized.expression.clone()),
         write,
     );
-    (region, chain.members.clone())
+    (region, recognized.members.to_vec())
 }
 
 /// The region identifier every staged family's producing stage carries.
@@ -2424,7 +2588,7 @@ pub(crate) fn fused_region(
     // The declared input the prologue read, which `fused_prologue_constants`
     // already required to exist: asking again binds the access to the same
     // derivation the alternative's existence was decided by.
-    let contributor = fused_contributor_tensor(&serial.prologue_reads)?;
+    let contributor = fused_contributor_tensor(serial.contributor.prologue_reads())?;
     let write_tensor = write.tensor();
     let region = ScheduledRegion {
         index: IndexRegion {
@@ -3922,6 +4086,51 @@ fn verify_region_output_binding(
                 && epilogue_accesses_match(&region.index.accesses, normalized)
         }
         (NormalizedOutputSubject::SerialSum(normalized), scalar) => {
+            // A fold whose contributors another region materializes binds three
+            // kinds of region, and the *members* separate them before anything
+            // else is compared — a continuation region and a fold's prologue are
+            // both `PointwiseF32`, so the scalar program cannot, and the
+            // coverage can. A region claiming the continuation's members is
+            // checked whole here and never re-offered to the producer, so a
+            // forged continuation cannot fall through and bind as something
+            // else; a region claiming neither the continuation nor one of the
+            // fold's own parts is re-offered to the producer's own subject
+            // exactly as a chain's is.
+            if let Some(materialized) = normalized.contributor().materialized() {
+                if let Some(continuation) = materialized
+                    .continuation()
+                    .filter(|continuation| semantic_members == continuation.members)
+                {
+                    let ScalarProgram::PointwiseF32(expression) = scalar else {
+                        return intrinsic("request-binding", region.index.id);
+                    };
+                    let bound = element_count(normalized.input_shape(), region.index.id)?
+                        == normalized.input_elements()
+                        && region.index.id == EPILOGUE_REGION
+                        && region.index.iteration_shape == *normalized.input_shape()
+                        // The recognized continuation expression itself,
+                        // compared whole, for the reason the epilogue arm
+                        // compares its own: node topology, ordered operands,
+                        // constant bits, shared reads, and the explicit root.
+                        && expression == &continuation.expression
+                        && boundary_reads_match(&region.index.accesses, &continuation.reads);
+                    return if bound {
+                        Ok(())
+                    } else {
+                        intrinsic("request-binding", region.index.id)
+                    };
+                }
+                if semantic_members != normalized.members().reduction()
+                    && semantic_members != normalized.members().all()
+                {
+                    return verify_region_output_binding(
+                        region,
+                        semantic_members,
+                        materialized.producer(),
+                        subject,
+                    );
+                }
+            }
             if !tiler_ir::schedule::axes_are_canonical(
                 normalized.reduction_axes(),
                 normalized.input_shape().rank(),
@@ -4208,13 +4417,31 @@ fn epilogue_accesses_match(
     accesses: &[Access],
     normalized: &crate::request::NormalizedEpilogueSubject,
 ) -> bool {
+    boundary_reads_match(accesses, normalized.reads())
+}
+
+/// Re-derives one staged-elementwise region's reads from the recognized read
+/// list.
+///
+/// **Position by position, both halves.** The boundary tensor says which buffer
+/// the read binds and the relation says how it addresses it, and a region
+/// agreeing on one but not the other computes a different program over the same
+/// buffers — which the intrinsic verifier, seeing only the region, cannot
+/// notice. The staged read's position is checked by this pairing too: two
+/// regions whose reads bind the same tensors in a different order serve
+/// different expression leaves from the same buffers.
+///
+/// One definition rather than two, because a chain's epilogue and a fold's
+/// continuation are one region built from one read vocabulary; a second copy
+/// would be free to disagree about which half a mismatch is in.
+fn boundary_reads_match(accesses: &[Access], recognized: &[(BoundaryRead, LogicalAccess)]) -> bool {
     let Some((_, reads)) = accesses.split_last() else {
         return false;
     };
-    reads.len() == normalized.reads().len()
+    reads.len() == recognized.len()
         && reads
             .iter()
-            .zip(normalized.reads())
+            .zip(recognized)
             .all(|(access, (read, map))| access.tensor == read.tensor() && access.map == *map)
 }
 

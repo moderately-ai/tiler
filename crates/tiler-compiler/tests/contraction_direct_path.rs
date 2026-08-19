@@ -352,9 +352,14 @@ fn a_contraction_with_an_elementwise_epilogue_compiles_as_a_chain() {
     }
 
     // The neighbour that still refuses, and it refuses for the exact relation
-    // the serial-reduction normal form cannot retain: its contributor walk
-    // reaches a materialized producer. The producer family is not the rule;
-    // reduction-contributor materialization is.
+    // the recognized chain's sides rule forbids rather than for a carrier that
+    // is missing: `sum(sum(contract(a, b), axis 1) * 2.0, axis 0)` asks the
+    // *inner* fold — itself reached across the contraction's materialization
+    // edge — to consume contributors across a second one. One boundary
+    // shallower, `sum(contract(a, b) * 2.0)`, compiles through the fold's own
+    // materialized contributor source, and `materialized_intermediate_epilogue_wall`
+    // holds that pair. The producer family is not the rule here either; chain
+    // depth is.
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let activations = builder
         .input::<F32>(
@@ -380,9 +385,9 @@ fn a_contraction_with_an_elementwise_epilogue_compiles_as_a_chain() {
         assert_eq!(
             compile_under(&nested, contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "reduction-contributor-materialization"
+                rule: "reduction-contributor-depth"
             }),
-            "{contract:?} did not name the materialization boundary in the reduction contributor",
+            "{contract:?} did not refuse the fold one materialization boundary too deep",
         );
     }
 }
