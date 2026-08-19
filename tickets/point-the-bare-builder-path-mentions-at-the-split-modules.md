@@ -1,7 +1,7 @@
 ---
 id: point-the-bare-builder-path-mentions-at-the-split-modules
 title: Point the bare builder-path mentions at the split modules
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [re-anchor-the-schedule-builder-line-citations, keep-a-module-size-and-complexity-census-with-a-split-queue]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation, contracts/decisions, research/target-profiles, re
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, maintainability]
-claimed_from: todo
-assignee: worker-bare-paths
-lease_expires_at: 1787151418
 ---
 ## User-visible outcome
 
