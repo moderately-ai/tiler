@@ -1683,7 +1683,20 @@ fn usize_of(index: u32) -> usize {
 ///
 /// Returns [`ArtifactBuildError::SymbolicSemanticInterface`] when an interface
 /// extent names a declared `ShapeEnv` symbol. See that variant for why the
-/// refusal is what keeps the envelope's three carried subjects sufficient.
+/// published interface stays a fixed `Shape` even though the envelope carries
+/// the environment as a retained projection.
+///
+/// **Corrected 2026-08-19 under
+/// `repair-the-stale-three-carried-subject-claims`; the clause was true when
+/// written.** It read
+/// "the refusal is what keeps the envelope's three carried subjects sufficient",
+/// kept on one line so it stays greppable — a later hit for that phrase lands
+/// in this note rather than in a live claim.
+/// `tiler.artifact-program.v17` put the lossless retained shape environment
+/// into the semantic-subject run beside the three reached subjects and folded
+/// all four into artifact identity, so this refusal no longer carries the fifth
+/// subject's injectivity. It is the same repair the variant's own doc already
+/// records, and this comment is repointed at it rather than restating a count.
 fn read_semantic_interface(
     semantic: &SemanticProgram,
 ) -> Result<SemanticInterface, ArtifactBuildError> {

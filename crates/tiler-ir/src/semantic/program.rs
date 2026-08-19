@@ -2562,12 +2562,26 @@ mod tests {
 
     #[test]
     fn no_symbolic_program_reaches_a_verified_kernel_program() {
-        // The coupling the artifact's three carried subjects rest on, asserted
-        // rather than assumed: `project_semantic` does not travel the
-        // shape-environment subject, and that is only sound while no two
-        // packaged artifacts can differ by it. Every artifact is built over a
-        // kernel program, so this refusal is what makes that true. If this test
-        // ever fails, an artifact can ship an unkeyed symbolic program.
+        // The coupling kernel-program identity rests on, asserted rather than
+        // assumed: `encode_identity` writes the semantic graph and the physical
+        // content and no shape-environment slice, so a symbolic interface must
+        // not reach a verified kernel program. Every artifact is built over
+        // one, so this refusal is what makes that true. If this test ever
+        // fails, a kernel program can ship an unkeyed symbolic interface.
+        //
+        // Corrected 2026-08-19 under
+        // `repair-the-stale-three-carried-subject-claims`; both retired clauses
+        // were true when written. They read
+        // "The coupling the artifact's three carried subjects rest on" and
+        // "`project_semantic` does not travel the shape-environment subject",
+        // each kept on one line so it stays greppable — a later hit for
+        // either lands in this note rather than in a live claim. Both
+        // went false at `tiler.artifact-program.v17`: the artifact codec's
+        // `project_semantic` now travels the subject as `retained_shape` and
+        // artifact identity folds it, so two fixed-interface programs differing
+        // only by an otherwise unused environment are two artifacts. The
+        // assertions below are unchanged; only the layer whose injectivity they
+        // protect moves.
         let symbolic = sourced_program(Some(env()), vec![SourcedExtent::Symbol(sym("n"))]).unwrap();
         assert!(
             matches!(
