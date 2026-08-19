@@ -1,7 +1,7 @@
 ---
 id: re-anchor-the-schedule-builder-line-citations
 title: Re-anchor the schedule-builder line citations
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [split-the-schedule-builder-into-cohesive-submodules, keep-a-module-size-and-complexity-census-with-a-split-queue]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions, research/reference, research/scheduling, research/
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, citations, maintainability]
+claimed_from: todo
+assignee: worker-reanchor-builder-citations
+lease_expires_at: 1787148644
 ---
 ## User-visible outcome
 
