@@ -1,7 +1,7 @@
 ---
 id: pin-the-retired-contraction-key-compile-refusal
 title: Pin the retired contraction key's compile refusal
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [replace-the-standard-contraction-key-with-the-accepted-successor]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, tests, correctness]
-claimed_from: todo
-assignee: worker-refusal-pin
-lease_expires_at: 1787148984
 ---
 ## User-visible outcome
 
