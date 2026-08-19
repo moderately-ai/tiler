@@ -338,6 +338,12 @@ fn recognize_output(
             member,
             &root,
             laws,
+            // The declared output's own fold is at the near side of every
+            // materialization edge this walk may place, so it is the one that
+            // may consume contributors another region writes. See
+            // [`ReductionContributorAdmission`] for the far side and its
+            // `reduction-contributor-depth` refusal.
+            ReductionContributorAdmission::OneEdge,
         )
         .map(NormalizedOutput::SerialSum)
     } else if root.key() == &tensor_contraction_f32_op() {

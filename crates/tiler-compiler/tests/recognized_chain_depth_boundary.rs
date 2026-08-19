@@ -8,25 +8,34 @@
 //! rule; this file is the end-to-end measurement of where it leaves a caller,
 //! and the trigger that says when the reason for it has expired.
 //!
-//! # What the rule is, and the two refusals it is not
+//! # What the rule is, and the refusal it is not
 //!
-//! The rule has one guard — `recognize_staged_family`'s `staged-operand-depth`,
-//! reached only through `recognize_epilogue_producer`, which is the one function
-//! recognition enters across an edge. Two neighbouring refusals also fire on a
-//! folded value and say something else, and conflating them is how a widener
-//! deletes the wrong guard:
+//! The rule has two guards, and they are one rule about *sides* written for the
+//! two recognized shapes that can place an edge: `recognize_staged_family`'s
+//! `staged-operand-depth` for a staged occurrence's operand, and
+//! `ReductionContributorAdmission`'s `reduction-contributor-depth` for a fold's
+//! contributor. Both are reached only through `recognize_epilogue_producer`,
+//! which is the one function recognition enters across an edge and the only site
+//! that hands either `NoEdge`.
 //!
-//! - `sum(a, 1) * sum(b, 1)` refuses because one region would read **two** edges,
-//!   and `TensorRole::Intermediate` carries no ordinal to attribute them by. That
-//!   is chain *width*; the walk is still one boundary deep.
-//!   [`admit-a-scheduled-region-that-reads-two-materialization-edges`] owns it.
-//! - `sum(sum(x) * 2.0)` refuses because `NormalizedSerialSum` carries no
-//!   producer field for a fold's prologue to hang a boundary on, so the discovery
-//!   is discarded before any admission runs. It reports
-//!   `reduction-contributor-materialization`: that one *is* about depth, but its
-//!   wall is structural rather than the guard's.
-//!   [`name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set`]
-//!   owns its rule name.
+//! One neighbouring refusal also fires on a folded value and says something
+//! else, and conflating them is how a widener deletes the wrong guard:
+//! `sum(a, 1) * sum(b, 1)` refuses because one region would read **two** edges,
+//! and `TensorRole::Intermediate` carries no ordinal to attribute them by. That
+//! is chain *width*; the walk is still one boundary deep.
+//! [`admit-a-scheduled-region-that-reads-two-materialization-edges`] owns it.
+//!
+//! **`sum(sum(x) * 2.0)` was a third wall here and is not one now.** It refused
+//! because `NormalizedSerialSum` carried no producer field for the discovered
+//! boundary to hang on, so the finding was discarded before any admission ran,
+//! and it reported `reduction-contributor-materialization`.
+//! `replace-the-serial-sum-contributor-fields-with-the-exhaustive-source` gave
+//! the recognized fold a contributor source whose materialized arm retains the
+//! producing shape and the elementwise continuation between it and the fold, so
+//! that program compiles and the retired rule is unreachable. What refuses in
+//! its place is one edge further out — `sum(sum(sum(x) * 2.0) * 2.0)` — under
+//! the reduction guard above, which is the depth rule proper rather than a
+//! structural wall.
 //!
 //! # The measurement, taken 2026-08-08
 //!
@@ -76,7 +85,7 @@
 //!
 //! [`admit-a-recognized-chain-more-than-one-materialization-boundary-deep`]: ../../../tickets/admit-a-recognized-chain-more-than-one-materialization-boundary-deep.md
 //! [`admit-a-scheduled-region-that-reads-two-materialization-edges`]: ../../../tickets/admit-a-scheduled-region-that-reads-two-materialization-edges.md
-//! [`name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set`]: ../../../tickets/name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set.md
+//! [`replace-the-serial-sum-contributor-fields-with-the-exhaustive-source`]: ../../../tickets/replace-the-serial-sum-contributor-fields-with-the-exhaustive-source.md
 
 use tiler_compiler::session::{
     CompileFailureClass, CompileRequest, NumericalContract, TargetCompileFailure, compile,

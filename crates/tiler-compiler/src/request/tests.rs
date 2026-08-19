@@ -1215,6 +1215,22 @@ fn a_staged_subject_separates_two_occurrences_differing_only_in_eps() {
 }
 
 /// Builds the five-node `input * scale + bias` expression a forgery swaps in.
+/// Replaces one recognized fold's prologue expression, leaving its reads alone.
+///
+/// The mutation is the *subject's*, which is what makes the receipt check that
+/// follows a perturbation rather than an assertion edit: the recomputed request
+/// subject carries the forged expression whole, and no other fact moves.
+fn forge_prologue(normalized: &mut NormalizedProgram, expression: PointwiseF32Expression) {
+    let SerialSumContributor::PointwisePrologue {
+        expression: recognized,
+        ..
+    } = &mut normalized.serial_sum_mut().contributor
+    else {
+        panic!("the fixture folds a pointwise prologue over declared inputs");
+    };
+    *recognized = expression;
+}
+
 fn affine_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
     let input = expression.input(AccessOrdinal::FIRST).unwrap();
@@ -1585,8 +1601,8 @@ fn governed_request_selects_the_supported_serial_sum_strategy() {
     // pair the fused region needs is recovered from it rather than stored
     // beside it.
     let prologue = normalized
-        .prologue
-        .as_ref()
+        .contributor
+        .prologue()
         .expect("a fold over a computed contributor has a prologue");
     assert_eq!(prologue.input_count(), 1);
     assert!(matches!(
@@ -1648,8 +1664,8 @@ fn a_multi_input_elementwise_expression_feeding_a_reduction_is_recognized() {
     assert_eq!(recognized.output_shape, Shape::from_dims([2]));
     assert_eq!(
         recognized
-            .prologue
-            .as_ref()
+            .contributor
+            .prologue()
             .expect("a fold over a computed contributor has a prologue")
             .input_count(),
         3,
@@ -1710,19 +1726,31 @@ fn a_reduction_over_a_declared_input_is_recognized_with_no_prologue() {
     let Ok(NormalizedOutput::SerialSum(recognized)) = recognize(&bare) else {
         panic!("a fold over a declared input is recognized as a serial sum");
     };
-    assert_eq!(recognized.prologue, None);
-    assert_eq!(recognized.prologue_reads, []);
+    // The source is *named* rather than inferred from absent fields: the arm
+    // itself is what says this fold reads a declared input, and it carries the
+    // recognized ordinal.
+    assert!(matches!(
+        recognized.contributor,
+        SerialSumContributor::DeclaredInput(ordinal) if ordinal == 0
+    ));
+    assert_eq!(recognized.contributor.prologue(), None);
+    assert_eq!(recognized.contributor.prologue_reads(), []);
     // One part, not two: the empty prologue part is not a member set a cover
     // region may match, which is what `prologue_members` states.
     assert_eq!(recognized.prologue_members(), None);
+    assert_eq!(recognized.continuation_members(), None);
     assert_eq!(recognized.members.reduction().len(), 1);
 
     let neighbour = fold(true);
     let Ok(NormalizedOutput::SerialSum(recognized)) = recognize(&neighbour) else {
         panic!("a fold over a computed contributor is recognized as a serial sum");
     };
-    assert!(recognized.prologue.is_some());
+    assert!(matches!(
+        recognized.contributor,
+        SerialSumContributor::PointwisePrologue { .. }
+    ));
     assert_eq!(recognized.prologue_members().map(<[_]>::len), Some(2));
+    assert_eq!(recognized.continuation_members(), None);
 }
 
 /// Elementwise recognition follows the graph, not a taught depth or arity.
@@ -2392,28 +2420,15 @@ fn every_refusal_names_its_unrecognized_property() {
     );
     assert_eq!(chain.reads[0].0, BoundaryRead::Staged);
 
-    // `reduction-contributor-materialization`, from the one side the
-    // discovery deliberately does not open: a fold whose *contributors*
-    // cross a materialization boundary. The producer is recognized; what
-    // is missing is a place on `NormalizedSerialSum` to retain it.
+    // The one side the discovery used to refuse: a fold whose *contributors*
+    // cross a materialization boundary. The producer was already recognized;
+    // what was missing was a place on `NormalizedSerialSum` to retain it, and
+    // the contributor source is that place — so `sum(sum(x) * 2)` is now the
+    // admitted subject rather than the wall.
     //
-    // **Which of the three folded-value walls refuses it was measured, not
-    // read off the shape.** It is `From<ElementwiseRefusal>`'s flattening:
-    // `NormalizedSerialSum` carries no producer field, so the discovery is
-    // discarded before any admission runs.
-    // `StagedOperandAdmission`'s `staged-operand-depth` guard is never
-    // consulted for this program, and `plan_elementwise`'s
-    // `leaves.staged.is_none()` condition is *true* here, so that guard does
-    // not fire either. Watched on 2026-08-08: renaming this arm's rule to a
-    // probe string made this row report the probe, while renaming the
-    // `leaves.staged.is_none()` arm's left it reporting the contributor
-    // materialization rule.
-    // `name-the-fold-prologue-chain-boundary-instead-of-reporting-operation-set`
-    // owns that stable rule name.
-    //
-    // The accepted neighbour is the same fold over the same scaling of the
-    // *declared input*, so the difference between them is exactly where the
-    // scaled value comes from.
+    // The declared-input neighbour is the same fold over the same scaling of
+    // the *declared input*, so the difference between them is exactly where the
+    // scaled value comes from — which is what the contributor source names.
     let folded_prologue = |nested: bool| {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
@@ -2438,19 +2453,41 @@ fn every_refusal_names_its_unrecognized_property() {
             .unwrap();
         builder.build().unwrap()
     };
+    let Ok(NormalizedOutput::SerialSum(declared)) = recognize(&folded_prologue(false)) else {
+        panic!("a fold over a pointwise prologue is recognized as a serial sum");
+    };
     assert!(matches!(
-        recognize(&folded_prologue(false)),
-        Ok(NormalizedOutput::SerialSum(_)),
+        declared.contributor,
+        SerialSumContributor::PointwisePrologue { .. }
     ));
+    let Ok(NormalizedOutput::SerialSum(produced)) = recognize(&folded_prologue(true)) else {
+        panic!("a fold over a materialized producer is recognized as a serial sum");
+    };
+    let SerialSumContributor::Materialized(materialized) = &produced.contributor else {
+        panic!("a fold over a nested reduction names a materialized contributor");
+    };
+    assert!(matches!(
+        materialized.producer,
+        NormalizedOutput::SerialSum(_)
+    ));
+    let continuation = materialized
+        .continuation
+        .as_ref()
+        .expect("the `* 2` between the producer and the fold is a continuation");
     assert_eq!(
-        recognize(&folded_prologue(true)).unwrap_err(),
-        "reduction-contributor-materialization"
+        continuation
+            .reads
+            .iter()
+            .filter(|(read, _)| *read == BoundaryRead::Staged)
+            .count(),
+        1,
+        "the continuation reads exactly the value the producer staged",
     );
 
-    // The key names the failed contributor relation rather than the
-    // producer family. A staged family reaches the same retained fact as a
-    // nested reduction: it is recognized as a materializing producer, and
-    // the serial-sum normal form has nowhere to bind that producer.
+    // The source names the contributor relation rather than the producer
+    // family: a staged family reaches the same arm a nested reduction does,
+    // and — because the fold's contributor *is* the produced value — with no
+    // continuation rather than a synthesized identity one.
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let value = builder
         .input::<F32>(InputKey::new("value").unwrap(), Shape::from_dims([2, 4]))
@@ -2471,10 +2508,63 @@ fn every_refusal_names_its_unrecognized_property() {
         .output(OutputKey::new("result").unwrap(), reduced)
         .unwrap();
     let staged_contributor = builder.build().unwrap();
+    let Ok(NormalizedOutput::SerialSum(staged)) = recognize(&staged_contributor) else {
+        panic!("a fold over a staged family is recognized as a serial sum");
+    };
+    let SerialSumContributor::Materialized(materialized) = &staged.contributor else {
+        panic!("a fold over a staged family names a materialized contributor");
+    };
+    assert!(matches!(materialized.producer, NormalizedOutput::Staged(_)));
     assert_eq!(
-        recognize(&staged_contributor).unwrap_err(),
-        "reduction-contributor-materialization"
+        materialized.continuation, None,
+        "the fold's contributor *is* the produced value, so no region stands between them",
     );
+
+    // `reduction-contributor-depth`: the same shape one materialization
+    // boundary deeper, where the fold's producer is itself a fold across an
+    // edge. The rule names how deep the chain runs rather than a carrier the
+    // normal form lacks, and it is the sides rule that reports it — the
+    // producer is recognized through `recognize_epilogue_producer`, which
+    // hands `NoEdge`.
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let input = builder
+        .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 2, 2]))
+        .unwrap();
+    let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+    let inner = StrictSerialF32Sum::apply(&mut builder, input, [Axis::new(2)]).unwrap();
+    let scaled = F32Multiply::apply(&mut builder, inner, scale).unwrap();
+    let middle = StrictSerialF32Sum::apply(&mut builder, scaled, [Axis::new(1)]).unwrap();
+    let rescaled = F32Multiply::apply(&mut builder, middle, scale).unwrap();
+    let outer = StrictSerialF32Sum::apply(&mut builder, rescaled, [Axis::new(0)]).unwrap();
+    builder
+        .output(OutputKey::new("result").unwrap(), outer)
+        .unwrap();
+    let too_deep = builder.build().unwrap();
+    assert_eq!(
+        recognize(&too_deep).unwrap_err(),
+        "reduction-contributor-depth"
+    );
+
+    // Width, not depth, and it keeps its own rule: a contributor walk reaching
+    // a *second, different* materialized value has nothing to say which edge
+    // each read binds, so it reports `operation-set` after the retain rather
+    // than taking the first fold and dropping the second.
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let first = builder
+        .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 2]))
+        .unwrap();
+    let second = builder
+        .input::<F32>(InputKey::new("b").unwrap(), Shape::from_dims([2, 2]))
+        .unwrap();
+    let left = StrictSerialF32Sum::apply(&mut builder, first, [Axis::new(1)]).unwrap();
+    let right = StrictSerialF32Sum::apply(&mut builder, second, [Axis::new(1)]).unwrap();
+    let paired = F32Multiply::apply(&mut builder, left, right).unwrap();
+    let folded = StrictSerialF32Sum::apply(&mut builder, paired, [Axis::new(0)]).unwrap();
+    builder
+        .output(OutputKey::new("result").unwrap(), folded)
+        .unwrap();
+    let two_edges = builder.build().unwrap();
+    assert_eq!(recognize(&two_edges).unwrap_err(), "operation-set");
 }
 
 /// Two ordered named outputs whose producers share no occurrence.
@@ -2922,10 +3012,11 @@ fn a_fold_over_a_later_declared_input_retains_its_ordinal() {
         let NormalizedOutput::SerialSum(fold) = normalized else {
             panic!("a reduction output recognizes as a serial sum");
         };
-        assert_eq!(fold.prologue, None);
         assert_eq!(
-            fold.contributor_input,
-            Some(DeclaredInputOrdinal::new(u32::try_from(ordinal).unwrap()))
+            fold.contributor,
+            SerialSumContributor::DeclaredInput(DeclaredInputOrdinal::new(
+                u32::try_from(ordinal).unwrap()
+            ))
         );
 
         let mut bytes = Vec::new();
@@ -4138,8 +4229,10 @@ fn verified_request_receipts_reject_post_verification_mutation() {
     // to be a `scale_bits` edit: the subject now carries the whole
     // expression, so a forged prologue is a forged expression.
     let mut forged = verified.clone();
-    forged.normalized.serial_sum_mut().prologue =
-        Some(affine_expression(3.0_f32.to_bits(), 1.0_f32.to_bits()));
+    forge_prologue(
+        &mut forged.normalized,
+        affine_expression(3.0_f32.to_bits(), 1.0_f32.to_bits()),
+    );
     assert_eq!(
         forged.for_target(0),
         Err(RequestError::UnverifiedTargetSelection)
@@ -4179,8 +4272,10 @@ fn verified_target_receipt_detects_every_governed_subject_mutation_class() {
     // rebuilt rather than edited in place, because it is opaque by
     // construction — which is exactly what makes the subject bind it whole.
     let mut forged = target.clone();
-    forged.normalized.serial_sum_mut().prologue =
-        Some(affine_expression(2.0_f32.to_bits(), 1.0_f32.to_bits() ^ 1));
+    forge_prologue(
+        &mut forged.normalized,
+        affine_expression(2.0_f32.to_bits(), 1.0_f32.to_bits() ^ 1),
+    );
     assert!(!forged.reconstructs_its_authority());
 
     let mut forged = target;
@@ -5288,5 +5383,291 @@ fn parametric_broadcast_request_subject_tag_is_injective() {
         parametric_bytes.first(),
         concrete_bytes.first(),
         "colliding the parametric tag with BroadcastReplication loses injectivity",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The materialized serial-sum contributor: admission, identity, and the walls
+// beside it
+// ---------------------------------------------------------------------------
+
+/// `sum(input * 2.0, [cols])` — the pointwise-prologue neighbour of every
+/// produced fold below, and the shape the `tiler-build` Metal goldens qualify.
+fn pointwise_prologue_fold() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let input = builder
+        .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 4]))
+        .unwrap();
+    let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+    let scaled = F32Multiply::apply(&mut builder, input, scale).unwrap();
+    let folded = StrictSerialF32Sum::apply(&mut builder, scaled, [Axis::new(1)]).unwrap();
+    builder
+        .output(OutputKey::new("result").unwrap(), folded)
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// `sum(input, [cols])` — the declared-input neighbour.
+fn declared_input_fold() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let input = builder
+        .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 4]))
+        .unwrap();
+    let folded = StrictSerialF32Sum::apply(&mut builder, input, [Axis::new(1)]).unwrap();
+    builder
+        .output(OutputKey::new("result").unwrap(), folded)
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// `sum(sum(input, [cols]) * 2.0, [rows])` — a produced fold with a
+/// continuation, over the same declaration as the two neighbours above.
+fn produced_fold_with_continuation() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let input = builder
+        .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 4]))
+        .unwrap();
+    let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+    let inner = StrictSerialF32Sum::apply(&mut builder, input, [Axis::new(1)]).unwrap();
+    let scaled = F32Multiply::apply(&mut builder, inner, scale).unwrap();
+    let outer = StrictSerialF32Sum::apply(&mut builder, scaled, [Axis::new(0)]).unwrap();
+    builder
+        .output(OutputKey::new("result").unwrap(), outer)
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// Renders one encoded subject as lowercase hex, for a pinned comparison.
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    bytes.iter().fold(String::new(), |mut rendered, byte| {
+        let _ = write!(rendered, "{byte:02x}");
+        rendered
+    })
+}
+
+/// Encodes one program's sole recognized output subject.
+fn encoded_subject(program: &SemanticProgram) -> Vec<u8> {
+    let recognized = recognize(program).expect("the fixture is recognized");
+    let mut bytes = Vec::new();
+    encode_output_subject(&mut bytes, &output_subject(&recognized));
+    bytes
+}
+
+/// The two neighbour arms' `serial-sum-f32.v3` bytes did not move.
+///
+/// **Pinned to exact bytes rather than compared structurally**, because what the
+/// accepted carrier promised is that these two subjects encode to *what they
+/// already did* — so the enclosing `tiler.compiler.request-subject.v6` domain
+/// does not step, the `domains.rs` pin row stays where it is, and every governed
+/// compilation keeps its request qualifier. A structural assertion would pass
+/// through exactly the change that breaks that promise.
+///
+/// The two values below were captured at base `441f3215` — before the
+/// contributor source existed — by running this test in a detached worktree at
+/// that commit. They are recorded rather than derived for the reason
+/// `tiler-build`'s standard Metal pins are: the point is that they do **not**
+/// move. A change here is either a deliberate identity revision, which must
+/// step the sub-tag and restate every pin in the commit that states why, or the
+/// defect this test exists to catch.
+#[test]
+fn the_declared_input_and_pointwise_prologue_arms_keep_their_exact_bytes() {
+    const DECLARED_INPUT: &str = "000000000000001173657269616c2d73756d2d6633322e763300000000000000010000000000000005696e7075740000000000000006726573756c740000000000000002000000000000000200000000000000040000000000000001000000000000000200000000000000010000000100000000000000000000000000000000000000000000000100000000000000000000000800000000000000020000000000000000";
+    const POINTWISE_PROLOGUE: &str = "000000000000001173657269616c2d73756d2d6633322e763300000000000000010000000000000005696e7075740000000000000006726573756c74000000000000000200000000000000020000000000000004000000000000000100000000000000020000000000000001000000010000000000000003010000000002400000000400000000000000010000000200000000000000020000000000000001000000000000000100000002000000000000000800000000000000020000000000000000";
+
+    assert_eq!(
+        hex(&encoded_subject(&declared_input_fold())),
+        DECLARED_INPUT
+    );
+    assert_eq!(
+        hex(&encoded_subject(&pointwise_prologue_fold())),
+        POINTWISE_PROLOGUE,
+    );
+}
+
+/// A produced fold takes its own framed sub-tag, and the *tag* is what separates
+/// it — not the unread-declared-input marker run.
+///
+/// **The forgery is built as bytes rather than inferred.** The subject that a
+/// forger would have to write to claim `serial-sum-f32.v3` for a produced fold is
+/// constructed here by perturbing only the recognized contributor source and
+/// re-encoding, so both byte strings are real encoder output over the same fold.
+/// The assertion is then about where they diverge: the framed tag, at position
+/// zero, before any payload is read.
+///
+/// **That distinction is the whole point.** A dropped-producer forgery pushed
+/// through the old grammar emits an `encode_elementwise_reads` run of *only*
+/// unread markers, which no legal old subject produces — so the two strings would
+/// differ even with no tag split, and a test resting on that would pass while the
+/// separation rested on an accident of one program's declaration count. Resting
+/// identity on an unstated invariant is what `encode_elementwise_reads`'s own
+/// comment forbids, so what is asserted is the structural control.
+#[test]
+fn a_produced_fold_cannot_encode_under_the_old_serial_sum_tag() {
+    let framed = |tag: &[u8]| {
+        let mut bytes = Vec::new();
+        push_slice(&mut bytes, tag);
+        bytes
+    };
+    let produced_tag = framed(b"serial-sum-produced-f32.v1");
+    let retained_tag = framed(b"serial-sum-f32.v3");
+
+    let recognized = recognize(&produced_fold_with_continuation()).expect("the produced fold");
+    let mut produced = Vec::new();
+    encode_output_subject(&mut produced, &output_subject(&recognized));
+    assert!(
+        produced.starts_with(&produced_tag),
+        "the materialized arm must open with its own framed tag",
+    );
+
+    // The forgery: the same fold, claiming the neighbour's grammar. Only the
+    // contributor source moves, so every other fact the arm writes is the
+    // produced fold's own.
+    let mut forged = recognized.clone();
+    forged.serial_sum_mut().contributor =
+        SerialSumContributor::DeclaredInput(DeclaredInputOrdinal::new(0));
+    let mut forged_bytes = Vec::new();
+    encode_output_subject(&mut forged_bytes, &output_subject(&forged));
+    assert!(
+        forged_bytes.starts_with(&retained_tag),
+        "the forgery must be real encoder output under the tag it claims",
+    );
+    assert_ne!(produced, forged_bytes);
+    // The separation is *inside the framed tag*, so it holds for every produced
+    // fold rather than only for the ones whose declaration count happens to emit
+    // a marker run. The two tag strings differ in length, so the divergence
+    // lands in the eight-byte length prefix — the first field either arm writes,
+    // and one no payload can reach past.
+    let shared = produced
+        .iter()
+        .zip(&forged_bytes)
+        .take_while(|(left, right)| left == right)
+        .count();
+    assert!(
+        shared < retained_tag.len(),
+        "the two arms must diverge inside the framed tag, before any payload; \
+         they share {shared} of the retained tag's {} bytes",
+        retained_tag.len(),
+    );
+
+    // And the producer itself is bound: two produced folds differing only in
+    // what writes their contributors are different subjects. Un-repaired, an
+    // encoder that dropped the producer would collide them.
+    let mut other_producer = recognized.clone();
+    let SerialSumContributor::Materialized(materialized) =
+        &mut other_producer.serial_sum_mut().contributor
+    else {
+        panic!("the fixture folds a materialized contributor");
+    };
+    let NormalizedOutput::SerialSum(inner_fold) = &mut materialized.producer else {
+        panic!("the fixture's producer is a fold");
+    };
+    inner_fold.reduction_axes = vec![Axis::new(0)];
+    let mut other_bytes = Vec::new();
+    encode_output_subject(&mut other_bytes, &output_subject(&other_producer));
+    assert_ne!(
+        produced, other_bytes,
+        "the producer is written through the recursion, so a different producer is a different subject",
+    );
+}
+
+/// The continuation's presence is written, so omitting it is a different
+/// subject rather than the same one.
+///
+/// A produced fold whose contributor *is* the produced value carries no
+/// continuation; one with an expression between the two carries a presence byte
+/// and the epilogue read vocabulary. The two must not share a byte string, or a
+/// forgery could drop the continuation and keep the fold's identity.
+#[test]
+fn a_produced_folds_continuation_presence_is_bound() {
+    let with_continuation =
+        recognize(&produced_fold_with_continuation()).expect("the produced fold");
+    let mut present = Vec::new();
+    encode_output_subject(&mut present, &output_subject(&with_continuation));
+
+    let mut without = with_continuation.clone();
+    let SerialSumContributor::Materialized(materialized) =
+        &mut without.serial_sum_mut().contributor
+    else {
+        panic!("the fixture folds a materialized contributor");
+    };
+    materialized.continuation = None;
+    let mut absent = Vec::new();
+    encode_output_subject(&mut absent, &output_subject(&without));
+
+    assert_ne!(present, absent);
+    assert!(
+        absent.len() < present.len(),
+        "the absent continuation writes its presence byte and nothing else",
+    );
+    // The presence byte is the last byte of the shorter encoding, and it is
+    // `0x00`; the longer one carries `0x01` at that position and the framed
+    // expression after it. A forgery that truncated the payload but kept the
+    // byte would still be a different subject.
+    assert_eq!(absent.last().copied(), Some(0x00));
+    assert_eq!(present.get(absent.len() - 1).copied(), Some(0x01));
+}
+
+/// A produced fold's `sum(rms_norm(x, w))` shape retains a staged producer and
+/// no synthesized continuation, and a produced sum's fold stays resolvable.
+#[test]
+fn a_produced_folds_partition_claims_the_producer_and_the_continuation() {
+    let recognized = recognize(&produced_fold_with_continuation()).expect("the produced fold");
+    let NormalizedOutput::SerialSum(fold) = &recognized else {
+        panic!("a produced fold recognizes as a serial sum");
+    };
+    let SerialSumContributor::Materialized(materialized) = &fold.contributor else {
+        panic!("the fixture folds a materialized contributor");
+    };
+
+    // Every occurrence is claimed exactly once, which is what
+    // `check_output_cover` requires: the inner fold, the constant, the multiply,
+    // and the outer fold.
+    assert_eq!(
+        recognized.members().len(),
+        produced_fold_with_continuation().operation_count(),
+    );
+
+    // The three parts are disjoint and none of them is the pointwise prologue's.
+    assert_eq!(fold.prologue_members(), None);
+    let continuation = fold
+        .continuation_members()
+        .expect("the `* 2` is a continuation region");
+    assert!(
+        !fold
+            .members
+            .pointwise()
+            .iter()
+            .any(|atom| continuation.contains(atom)),
+        "a continuation member must never enter the declared-input prologue part",
+    );
+    assert!(
+        !fold
+            .members
+            .all()
+            .iter()
+            .any(|atom| continuation.contains(atom)),
+        "the fused affine candidate is prologue-union-fold, so it must not claim the continuation",
+    );
+    for part in [
+        fold.members.reduction(),
+        continuation,
+        &materialized.producer.members(),
+    ] {
+        assert!(
+            recognized.owns_region_members(part),
+            "each part of the fold's partition must resolve to this output",
+        );
+    }
+    // The continuation union the fold is *not* a part: no scheduled region
+    // computes an expression over a staged value and a fold of its result.
+    let mut grouped: Vec<SemanticStage> = continuation.to_vec();
+    grouped.extend_from_slice(fold.members.reduction());
+    grouped.sort_unstable();
+    grouped.dedup();
+    assert!(
+        !recognized.owns_region_members(&grouped),
+        "grouping the continuation with the fold is declined, not flattened",
     );
 }

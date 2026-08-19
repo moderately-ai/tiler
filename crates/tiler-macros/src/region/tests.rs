@@ -1249,28 +1249,58 @@ fn an_unrecognized_region_names_what_a_consumer_would_change() {
         &[("rows", 58)],
     );
 
-    // Three of the ticket's four awaiting shapes stopped waiting while this
+    // A reduction of a reduction of a reduction: one materialization boundary
+    // past what the recognized chain admits.
+    let mut too_deep = serial_sum_region();
+    too_deep.operands = vec![operand(
+        "x",
+        10,
+        "f32",
+        vec![
+            named_axis("rows", 2, 12),
+            named_axis("cols", 2, 14),
+            named_axis("lanes", 2, 16),
+        ],
+    )];
+    too_deep.body = reduction(
+        70,
+        reduction(
+            57,
+            reduction(50, reference("x", 53), &[("lanes", 56)]),
+            &[("cols", 58)],
+        ),
+        &[("rows", 71)],
+    );
+
+    // All four of the ticket's awaiting shapes have stopped waiting while this
     // module stood still, each because a compiler widening landed rather than
     // because this grammar changed — which is what this module's refusal
     // rendering was designed for. The general program-shape recognizer admitted
-    // a multi-input reduction and a deeper elementwise prologue, and
+    // a multi-input reduction and a deeper elementwise prologue;
     // `admit-a-reduction-over-a-declared-input-tensor` admitted the bare
     // reduction by widening the schedule verifier's contributor arm to the
-    // fold's declared contributor domain. All three moved from the refusal
-    // population to the positive assertion below, leaving the one wall the
-    // recognizer still names: a reduction whose prologue meets a
-    // non-elementwise producer (`operation-set`).
+    // fold's declared contributor domain; and
+    // `replace-the-serial-sum-contributor-fields-with-the-exhaustive-source`
+    // admitted the reduction of a reduction by giving the recognized fold a
+    // contributor source whose materialized arm retains the producing shape.
+    // All four moved to the positive assertion below.
     for (label, region) in [
         ("a two-input reduction", &multi_input),
         ("a deeper pointwise chain under a reduction", &deeper),
         ("a bare reduction over a declared input", &bare),
+        ("a reduction of a reduction", &nested),
     ] {
         assert!(
             plans_for_the_bound_declaration(region),
             "{label} must compile under the general recognizer, or this population is wrong",
         );
     }
-    let cases = [("a reduction of a reduction", nested)];
+    // The wall the recognizer still names, one edge past the last admission:
+    // the outermost fold's producer is itself a fold reached across an edge, so
+    // the sides rule refuses it under `reduction-contributor-depth`. Lifting it
+    // needs the recursive producer walk to become iterative, which is what
+    // keeps this population inhabited rather than empty.
+    let cases = [("a reduction of a reduction of a reduction", too_deep)];
     assert_eq!(
         cases.len(),
         1,

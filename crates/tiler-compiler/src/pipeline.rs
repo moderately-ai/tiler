@@ -1852,11 +1852,21 @@ fn region_role(
 
 /// Names one region's role within the partition of the output that owns it.
 ///
-/// Recursive over an epilogue chain, so a region of the producer's partition
-/// keeps the role it would carry if the producer were the whole declared output.
-/// A reader comparing two traces should see the fold called `"reduction"`
-/// whether or not an epilogue consumes it — the region is the same region, and
-/// only what happens after it differs.
+/// Recursive over an epilogue chain and over a fold's materialized contributor,
+/// so a region of the producer's partition keeps the role it would carry if the
+/// producer were the whole declared output. A reader comparing two traces should
+/// see the fold called `"reduction"` whether or not an epilogue consumes it, and
+/// whether or not its own contributors are produced — the region is the same
+/// region, and only what happens around it differs.
+///
+/// **`"whole-program"` names a region covering one output's whole partition, and
+/// a continuation region is emphatically not one.** It is one of at least three
+/// regions — producer, continuation, fold — so reporting it as the whole program
+/// would tell a reader the opposite of what the plan does. The parts are
+/// therefore asked through the recognized partition's own accessors rather than
+/// by comparing against member lists that may legitimately be empty: a fold whose
+/// contributors are materialized has *no* pointwise part, and matching an empty
+/// region against an empty list would name a prologue the program does not have.
 fn output_region_role(
     output: &crate::request::NormalizedOutput,
     members: &[crate::region::SemanticStage],
@@ -1865,13 +1875,31 @@ fn output_region_role(
         crate::request::NormalizedOutput::Pointwise(_)
         | crate::request::NormalizedOutput::Contraction(_) => "whole-program",
         crate::request::NormalizedOutput::SerialSum(normalized) => {
-            let recognized = &normalized.members;
-            if members == recognized.pointwise() {
+            if normalized
+                .prologue_members()
+                .is_some_and(|prologue| members == prologue)
+            {
                 "pointwise"
-            } else if members == recognized.reduction() {
+            } else if members == normalized.members.reduction() {
                 "reduction"
-            } else {
+            } else if normalized
+                .continuation_members()
+                .is_some_and(|continuation| members == continuation)
+            {
+                "epilogue"
+            } else if members == normalized.members.all() {
                 "whole-program"
+            } else {
+                // A region of the producer's partition across the contributor
+                // edge. `"unrecognized"` is unreachable through `region_role`,
+                // which asks `output_for_region` first, and is the fail-closed
+                // answer rather than a role this partition does not have.
+                normalized
+                    .contributor
+                    .materialized()
+                    .map_or("unrecognized", |materialized| {
+                        output_region_role(&materialized.producer, members)
+                    })
             }
         }
         crate::request::NormalizedOutput::Epilogue(chain) => {
