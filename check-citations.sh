@@ -72,6 +72,91 @@
 # `:789-810` suffix the house style already uses, rather than pinning it to a
 # path -- so it is not a citation here and cannot be demanded to resolve.
 #
+# HOW A PARTIAL PATH RESOLVES, AND THE ONE THING NO WORKING TREE RECORDS
+#
+# A citation whose path is not in the tree is matched against every
+# "/"-boundary suffix of every tracked path, because tickets and documents
+# routinely cite a partial one -- `codec/encode.rs:443`, `semantic/identity.rs`
+# -- which is unambiguous to a reader. Exactly one match resolves; more than one
+# is ambiguous and is skipped; none is a failure.
+#
+# A suffix matching exactly one file is stable under deletion. Delete the file it
+# names and the count falls to zero, which is the loud "no file in the tree is or
+# ends with" failure, and deleting anything else cannot change what it names. The
+# *ambiguous* case is the unstable one, and it is unstable in the wrong
+# direction: an ambiguous suffix is skipped, so the day its family shrinks to one
+# member the citation stops being skipped and starts resolving -- against
+# whichever twin survived, which is not the file the citation was written about.
+#
+# That is not hypothetical. `a2e98b27` deleted
+# `crates/tiler-ir/src/index/refinement.rs`, leaving
+# `crates/tiler-ir/src/semantic/accuracy/refinement.rs` alone under the suffix
+# `refinement.rs`. One live snapshot citation began resolving green against the
+# surviving file, which it was never about; four siblings failed only because
+# their line numbers ran past that file, which is 659 lines. A longer survivor
+# would have passed all five in silence.
+#
+# Nothing in a working tree tells "this suffix has always named one file" apart
+# from "this suffix named two until last week" -- the deleted twin leaves no
+# trace in the index. So the memory is written down, in the retired-ambiguity
+# ledger below, and the rule it buys is a pair. Both halves are failures rather
+# than skips, because a skip is the silence this section exists to end.
+#
+#   - A ledgered suffix now matching exactly one file FAILS. The family
+#     collapsed, so resolving would point the citation at the survivor.
+#   - A cited suffix matching more than one file and absent from the ledger
+#     FAILS. It became ambiguous after the ledger was written -- a file was
+#     added, not deleted -- so the citation has silently stopped being checked,
+#     and it becomes the first case the moment that new file goes away.
+#
+# The repair for both is one sentence: re-read which file the claim is about and
+# pin a path long enough to be unique on its own. Recording the suffix in the
+# ledger is the alternative for the second case, and only for the second.
+#
+# The ledger holds suffixes and nothing else -- no candidate paths, no counts --
+# so a file moving inside a family does not touch it, and it changes only when a
+# cited suffix first becomes ambiguous. An entry whose family has gone quiet is
+# inert rather than wrong, so nothing has to be pruned; `refinement.rs` is seeded
+# for exactly that reason, having been observed ambiguous before its collapse and
+# carrying no live citation now. What the ledger already covers is reproduced by:
+#
+#   ./check-citations.sh --verbose |
+#     sed -n 's/^SKIP  [^:]*: `\(.*\)` (ambiguous.*/\1/p' |
+#     sed -E 's/[:[:space:]].*$//' | LC_ALL=C sort -u
+#
+# That is a coverage listing and not a discovery tool: an unledgered ambiguity
+# fails rather than printing a SKIP line, so it never appears there. The failure
+# names the suffix to add, which is the only way an entry is ever added.
+#
+# WHAT THE LEDGER IS NOT, AND THE TWO RULES MEASURED AND REJECTED
+#
+# Measured 2026-08-19 at `bda38064` with the pre-change script, which is what
+# these two were weighed against: 470 citations resolve by unique suffix over 99
+# distinct suffixes, and 329 are skipped as ambiguous over 40. Of those 40, 22
+# match exactly two tracked files and are one deletion from the failure above,
+# carrying 117 citations; replaying both possible deletions against each, 77 of
+# the 117 would resolve silently green against the survivor.
+#
+#   - "Require at least one directory component" is not the rule. Six of those 22
+#     already carry one -- `program/verify.rs`, `program/model.rs`,
+#     `program/handles.rs`, `program/mod.rs`, `builder/proof.rs`, `bf16/tests.rs`
+#     -- so it would leave the exposed population only partly covered, while
+#     failing the 420 of those 470 that are bare basenames and resolve correctly
+#     today. It fails the wrong ones and misses six of the right ones.
+#
+#   - Deriving the memory from `git log --diff-filter=D` is not the rule either,
+#     though it needs no maintenance. It cannot tell a deletion from a rename and
+#     cannot tell whether two paths ever coexisted, so it poisons a suffix
+#     forever on a move. Measured over the 65 paths ever deleted here: one live
+#     citation would newly fail, `payload.rs:289` in
+#     `docs/research/extensions/backend-provider-composition.md`, whose only
+#     historical twin is a deleted `prototypes/serial-sum-compile/src/payload.rs`
+#     and which reading confirms correctly names `check_provenance` in
+#     `crates/tiler-artifact/src/program/codec/payload.rs`. One invented failure,
+#     no caught defect. The ledger records ambiguity this checker observed while
+#     a live citation rested on it, never ambiguity inferred backwards from
+#     history.
+#
 # WHAT COUNTS AS A LINK, AND WHY IT IS A SECOND POPULATION
 #
 # A markdown link is a different claim from a citation and is checked
@@ -319,8 +404,63 @@ fi
 # killed run cannot leave an untracked file for someone else to stage.
 indexfile=$(mktemp)
 fixture=$(mktemp)
-trap 'rm -f "$indexfile" "$fixture"' EXIT INT TERM
+ledgerfile=$(mktemp)
+trap 'rm -f "$indexfile" "$fixture" "$ledgerfile"' EXIT INT TERM
 git ls-files >|"$indexfile"
+
+# The retired-ambiguity ledger, quoted heredoc so nothing here is expanded. One
+# "/"-boundary suffix per line; blank lines and `#` comments are ignored by the
+# reader. Every entry was observed ambiguous while a live citation rested on it,
+# and the section above states what that buys and what it deliberately is not.
+# Entries are added, never retro-derived and never pruned: the floor in report()
+# is what makes a truncation loud rather than a quietly weaker check.
+cat >|"$ledgerfile" <<'LEDGER'
+accuracy.rs
+adapter.rs
+applicability.rs
+bf16.rs
+bf16/tests.rs
+boundary.rs
+builder.rs
+builder/proof.rs
+conformance.rs
+contraction.rs
+expansion.rs
+host.rs
+identity.rs
+key.rs
+lib.rs
+main.rs
+model.rs
+numerics.rs
+perturb.rs
+pointwise.rs
+program.rs
+program/handles.rs
+program/mod.rs
+program/model.rs
+program/verify.rs
+proof.rs
+region.rs
+registry.rs
+# Retired: `a2e98b27` deleted `crates/tiler-ir/src/index/refinement.rs` and left
+# `crates/tiler-ir/src/semantic/accuracy/refinement.rs` alone under this suffix.
+# No live citation carries it now, so the entry costs nothing and stops the next
+# one from resolving against the survivor.
+refinement.rs
+request.rs
+rms_norm.rs
+route.rs
+scheduled-region-model.md
+silu.rs
+softmax.rs
+sourced.rs
+src/adapter.rs
+target.rs
+tests.rs
+validate.rs
+verify.rs
+LEDGER
 
 # The fixture, quoted heredoc so backticks and `$` reach the file intact. Every
 # citation below resolves against this tree and each one is the only guaranteed
@@ -344,6 +484,11 @@ wraps in the source it names: `AGENTS.md "origin/main...main # 0 0"`.
 A citation whose code span straddles a line break in prose, which a
 line-oriented matcher loses in silence: `AGENTS.md
 "Priorities: **correctness, long-term maintainability, then performance**."`
+
+Ambiguity recorded rather than resolved, and the guaranteed instance the ledger
+floor names: `lib.rs:1`. Forty-four tracked files end with that suffix, so it
+names no file; the ledger records the ambiguity, and a tree that deleted all but
+one of them would fail here instead of resolving against the one left standing.
 
 Link form, and the guaranteed instance the link form floor names: [the agent
 guide](AGENTS.md). The fixture has no directory of its own -- it is written to a
@@ -437,7 +582,7 @@ set -- "$fixture" "$@"
 # apostrophe anywhere -- prose included. An apostrophe closes the quote and awk
 # then reports a missing function from somewhere unrelated, which reads as a
 # logic bug rather than a quoting one.
-awk -v terminal="$terminal" -v verbose="$verbose" -v indexfile="$indexfile" -v fixture="$fixture" '
+awk -v terminal="$terminal" -v verbose="$verbose" -v indexfile="$indexfile" -v fixture="$fixture" -v ledgerfile="$ledgerfile" '
 function slurp(path,   line, s) {
 	if (path in content) return content[path]
 	s = ""
@@ -496,6 +641,21 @@ BEGIN {
 	# beside it for a reader to compare. It is a floor and not an equality: a
 	# document added at the root should raise the census without editing this.
 	ROOT_FLOOR = 3
+
+	# The retired-ambiguity ledger. Sized by hand for the same reason ROOT_FLOOR
+	# is -- awk offers no type to count the enumeration from -- and the census
+	# prints the count beside it. A floor and not an equality: an entry added
+	# when a cited suffix first turns ambiguous should raise the census without
+	# editing this. Lowering it is the deliberate edit that removes a guard, in
+	# the same diff as the entry it removes, in front of the same reviewer.
+	LEDGER_FLOOR = 41
+	while ((getline led < ledgerfile) > 0) {
+		if (led == "" || led ~ /^#/) continue
+		if (led in was_ambiguous) continue
+		was_ambiguous[led] = 1
+		ledger_entries++
+	}
+	close(ledgerfile)
 
 	n_terminal = split(terminal, tstates, " ")
 	for (i = 1; i <= n_terminal; i++)
@@ -852,14 +1012,35 @@ function classify(t, wrapped,   path, pin, anchor, form, ln, lo, hi, resolved, h
 			return
 		}
 		if (suffix_count[path] == 1) {
+			# One tracked file ends with this suffix, which is stable under
+			# deletion -- unless the suffix is on the ledger, which records that it
+			# once named several and that a twin has since gone. Resolving here
+			# would silently point the citation at whatever survived; the section
+			# in the header carries the case this was filed from.
+			if (path in was_ambiguous) {
+				checked++; cit_checked[role]++
+				ledger_collapsed++
+				fail(t, sprintf("%s is on the retired-ambiguity ledger in check-citations.sh, and exactly one tracked file ends with it now: %s. A twin was deleted, so resolving would point this citation at the survivor rather than at the file it was written about. Re-read which file the claim is about and pin a path long enough to be unique on its own.", path, suffix_path[path]))
+				return
+			}
 			resolved = suffix_path[path]
 			partial_resolved++
 		} else if (suffix_count[path] > 1) {
 			# Several files end with this suffix. The citation is genuinely
 			# ambiguous rather than absent; guessing a path would invent a
-			# failure or hide one.
+			# failure or hide one. Skipping is safe only while the ambiguity is on
+			# record: an unledgered one has just formed, so this citation stopped
+			# being checked without saying so, and it is one deletion away from the
+			# branch above with nothing recorded to catch it.
+			if (!(path in was_ambiguous)) {
+				checked++; cit_checked[role]++
+				ledger_stale++
+				fail(t, sprintf("%s matches %d tracked files but is absent from the retired-ambiguity ledger in check-citations.sh, so it turned ambiguous after that ledger was written and this citation has silently stopped being checked. Pin a path long enough to be unique on its own, or add the suffix to the ledger so a later deletion cannot repoint it.", path, suffix_count[path]))
+				return
+			}
 			ambiguous++
-			if (verbose) printf "SKIP  %s: `%s` (ambiguous, %d candidates)\n", ticket, t, suffix_count[path]
+			ledger_matched++
+			if (verbose) printf "SKIP  %s: `%s` (ambiguous, %d candidates, on the ledger)\n", ticket, t, suffix_count[path]
 			return
 		} else {
 			# Nothing here is or ends with this path. Before calling that a
@@ -981,6 +1162,8 @@ function report(   starved, empty, live) {
 		cit_line + 0, cit_anchor + 0, cit_both + 0
 	printf "  partial path %d resolved by unique suffix, %d skipped as ambiguous, %d skipped as rooted outside this tree\n", \
 		partial_resolved + 0, ambiguous + 0, external + 0
+	printf "  ambiguity    %d ledger entry(s) against a floor of %d, %d citation(s) matched one, %d collapsed to a survivor, %d ambiguous off the ledger\n", \
+		ledger_entries + 0, LEDGER_FLOOR, ledger_matched + 0, ledger_collapsed + 0, ledger_stale + 0
 	printf "  not checked  %d bare path mention(s) carrying no line or anchor\n", bare_paths + 0
 	# Printed unconditionally, both of them: these two counters are floored
 	# below, so a zero is a failure and must be visible rather than omitted.
@@ -1029,10 +1212,18 @@ function report(   starved, empty, live) {
 	# carries no pinned citation at all, so one would fail on a correct tree.
 	empty += count_floor(files_read["root"], ROOT_FLOOR, "repository-root", "file(s)", \
 		"README.md, AGENTS.md, and CLAUDE.md are tracked at the root and none of them is going away; fewer than that means the *.md glob or role_of stopped reaching them, and a population that reads zero files prints the same green as one that read all three.")
+	# The ledger is the retired-ambiguity memory, and a truncated one is a
+	# weaker check that prints exactly the same green as a whole one: every
+	# entry lost turns a recorded ambiguity back into a suffix that will
+	# resolve against a survivor the day its family collapses. Floored on the
+	# entry count for the same reason the repository-root population is -- what
+	# it contributes on a clean tree is zero failures either way.
+	empty += count_floor(ledger_entries, LEDGER_FLOOR, "retired-ambiguity ledger", "entry(s)", \
+		"Every entry records a suffix observed ambiguous while a live citation rested on it, and entries are added rather than pruned; fewer than the floor means the heredoc was truncated or the reader stopped parsing it, and a suffix off the ledger resolves silently against whichever twin outlives the others.")
 	empty += population_floor(link_ck["root"], "repository-root markdown link", "link(s)", \
 		"README.md is six links of route into docs/ and spikes/, and AGENTS.md links the ADR governing every unsafe site in the workspace; zero means scan_links stopped reaching them, or the entry points stopped pointing anywhere at all.")
 	if (empty > 0)
-		printf "\ncheck-citations: %d corpus population floor(s) went unmet -- a population contributed ZERO checked citations or links, or read fewer files than it must. Another population passing says nothing about this one; separate counts exist so that none can stand in for the others.\n", empty
+		printf "\ncheck-citations: %d population floor(s) went unmet -- a population contributed ZERO checked citations or links, read fewer files than it must, or holds fewer recorded entries than it must. Another population passing says nothing about this one; separate counts exist so that none can stand in for the others.\n", empty
 
 	starved = form_floor(cit_line, "the line-only form (`path:LINE`)", "`AGENTS.md:1`")
 	starved += form_floor(cit_anchor, "the anchor-only form (`path \"anchor\"`)", "`Makefile \"check: citations fmt build lint test\"`")
@@ -1040,6 +1231,7 @@ function report(   starved, empty, live) {
 	starved += form_floor(anchor_wrapped, "the whitespace-collapsing anchor fallback", "`AGENTS.md \"origin/main...main # 0 0\"`, whose subject wraps in the source")
 	starved += form_floor(spanned, "code-span assembly across a line break", "a citation whose backticks straddle two lines of prose")
 	starved += form_floor(link_ck["fixture"], "local markdown link resolution (`[text](target)`)", "`[the agent guide](AGENTS.md)`")
+	starved += form_floor(ledger_matched, "the retired-ambiguity ledger lookup", "`lib.rs:1`, a suffix 44 tracked files end with")
 
 	if (starved > 0)
 		printf "\ncheck-citations: %d citation or link form(s) were parsed ZERO times. The fixture supplies one of each, so this is the matcher losing a form, not a corpus drifting -- and an unexercised branch reports no failures no matter what the tree contains.\n", starved
