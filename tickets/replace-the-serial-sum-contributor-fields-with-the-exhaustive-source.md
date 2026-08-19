@@ -74,7 +74,11 @@ Method: the exact field replacement (the three fields → the contributor source
 
 ## Outcome — 2026-08-19
 
-Landed at `<FINAL>` on `tkt/replace-the-serial-sum-contributor-fields-with-the-exhaustive-source`.
+Landed on `tkt/replace-the-serial-sum-contributor-fields-with-the-exhaustive-source` in four commits by concern: `86154e8a` (the carrier, recognition, spelling, subject encoding, and the verifier repair), `947cc153` (the perturbation suite and the re-sorted refusal population), `41bef513` (this record), and the scope addition below.
+
+**Gates, all green at the final commit.** `make full` — workspace nextest 3817 passed (one leaky verdict, the known macOS pipe-inheritance race, which moved between unrelated tests rather than recurring in one), release numerical 1306 passed, workspace doc-tests 8 passed, `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items`, `tkt lint`, shellcheck. Beside it: `cargo nextest run -p tiler` (58 passed, the workspace-invariant scanners), `cargo clippy -p tiler-compiler --all-targets -- -D warnings`, `cargo fmt --check`, `make citations`, `git diff --check`, and `tkt guard --base 441f3215` (exit 0; the reported WARN is the non-failing declared-area overlap, not a scope escape).
+
+The pre-existing `cargo clippy --workspace` findings under `prototypes/serial-sum-run` are outside the gate's population: `make lint` excludes the three prototype packages by name, for the reason stated beside that target.
 
 ### Identity, proven rather than argued
 
