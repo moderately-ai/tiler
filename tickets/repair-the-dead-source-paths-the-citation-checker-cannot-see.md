@@ -1,7 +1,7 @@
 ---
 id: repair-the-dead-source-paths-the-citation-checker-cannot-see
 title: Repair the dead source paths the citation checker cannot see
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [repoint-the-optimizer-contract-s-request-module-citations, repair-the-ticket-population-facts-the-splits-and-retirements-falsified]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, citations, audit]
-claimed_from: todo
-assignee: worker-deadpath
-lease_expires_at: 1787166711
 ---
 ## User-visible outcome
 
