@@ -17,7 +17,7 @@ ticket: "declare-metal-subgroup-realization-facts-in-the-target-profile"
 
 ADR 0094 decision 7 requires a subgroup-using entry's exact prepared pipeline to report the literal width the compiler verified, by equality, before the routing commit. The gate's loader half landed device-free under `carry-subgroup-width-through-exact-prepared-entry-equality`; what stayed with the owning ticket was the demonstration through the real prepared Metal path. This spike is that demonstration: real `metallib` payloads, real `MTLComputePipelineState`s, the ordinary loader route, and the governed key `tiler.target.prepared-entry.subgroup-width.v1` answered from the exact retained pipeline's `threadExecutionWidth`.
 
-The required width is derived from `tiler_build::BoundMetalSubgroupDeclaration::first_m3_pro_apple9` — the evidence-backed M3 Pro subgroup declaration this spike exists to demonstrate — not from a literal written here. The run refuses, by name, any host or offline toolchain that is not the declaration's own execution row: Apple M3 Pro, macOS build `26A5388g`, offline `metalfe-32023.883`.
+The required width is derived from `BoundMetalSubgroupDeclaration::first_m3_pro_apple9` — the evidence-backed M3 Pro subgroup declaration this spike exists to demonstrate — not from a literal written here. The run refuses, by name, any host or offline toolchain that is not the declaration's own execution row: Apple M3 Pro, macOS build `26A5388g`, offline `metalfe-32023.883`. That declaration was reachable as `tiler_build::BoundMetalSubgroupDeclaration` when this ran; it is crate-private from 2026-08-18, and the **Build exception** below states what that means for a rerun.
 
 ## What routes
 
@@ -48,6 +48,15 @@ The binary records the host and offline toolchain, the kernel and metallib diges
 The reused fixture modules produce dead-code warnings for the members this spike does not route; they are expected.
 
 No `make` target reaches here, per [`spikes/README.md`](../../README.md).
+
+## Build exception — this harness does not compile at `main`
+
+Recorded here rather than repaired, under the close condition of `demote-the-m3-pro-subgroup-declaration-to-an-internal-evidence-fixture`: **rerun this spike from commit `586c508a`**, the commit the retained log below names and the one the demonstration ran at. At the tip of `main` it does not build, for two independent reasons, neither of which touches what the retained run observed.
+
+1. **The declaration is crate-private since 2026-08-18.** Tom did not accept the host-named public profile key, so `BoundMetalSubgroupDeclaration`, its error type, and `first_m3_pro_apple9` are `pub(crate)` inside `tiler-build` and the crate root no longer re-exports them. This spike is its own workspace and a separate crate, so no crate-internal driver path exists for it — `pub(crate)` is unreachable from any other crate by construction, and the alternatives (a feature-gated re-export, a second copy of the rows) would either undo the demotion or mint a second authority over the same evidence. `cargo check` here reports `error[E0432]: unresolved import tiler_build::BoundMetalSubgroupDeclaration` with `no BoundMetalSubgroupDeclaration in the root`. Restoring a build path at the tip is gated on `decide-the-host-evidence-to-profile-composition-model`, which owns how single-host measured evidence composes into profile identity; until it is accepted this evidence stays crate-private.
+2. **The shared runtime fixture drifted first, and independently.** `crates/tiler-runtime/tests/adapter_route/fixture.rs` is reused here through `#[path]` so there is one assembly authority rather than a copy; commit `2cb7c83c` added four `crate::adapter::ScalarEnvironmentSchema` references to it, which resolve in the runtime test binary and not in this spike's crate. That break predates the demotion — the blob at `586c508a` contains no `crate::adapter`, the blob at `2cb7c83c` contains four — so `cargo check` in this directory already failed before any visibility moved, with `error[E0433]: cannot find adapter in crate` four times. A rerun at the tip needs this repaired too, and it is not this spike's to repair.
+
+The demotion changed no row, no validation, no refusal, and no test in the declaration, and the profile key string is retained verbatim, so the retained log remains a faithful record of the code it exercised.
 
 ## Result
 
