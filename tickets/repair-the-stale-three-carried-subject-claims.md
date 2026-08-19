@@ -1,7 +1,7 @@
 ---
 id: repair-the-stale-three-carried-subject-claims
 title: Repair the stale three-carried-subject claims
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [package-the-admitted-live-schedule-into-a-symbolic-kernel-program, evaluate-retained-shape-relations-before-routing-commit]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/artifact, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, artifact, identity]
+claimed_from: todo
+assignee: worker-three-subjects
+lease_expires_at: 1787160394
 ---
 ## User-visible outcome
 

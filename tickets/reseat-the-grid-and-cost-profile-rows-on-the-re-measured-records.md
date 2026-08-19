@@ -1,7 +1,7 @@
 ---
 id: reseat-the-grid-and-cost-profile-rows-on-the-re-measured-records
 title: Reseat the grid and cost profile rows on the re-measured records
-status: todo
+status: in-progress
 priority: p1
 dependencies: [resolve-the-retained-metal-profile-measurement-invocation-authority]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/build, research/target-profiles, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: worker-reseat
+lease_expires_at: 1787160394
 ---
 ## User-visible outcome
 
