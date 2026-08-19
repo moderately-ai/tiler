@@ -285,7 +285,7 @@ const GUARDED_MACRO_NAMESPACES: [&str; 4] = ["core", "std", "tiler", "tiler_macr
 /// The exact private declarative-macro producer population in member source.
 const WORKSPACE_LOCAL_MACRO_RULES: [(&str, &str); 17] = [
     (
-        "crates/tiler-artifact/src/program/codec/tests.rs",
+        "crates/tiler-artifact/src/program/codec/tests/vocabularies.rs",
         "exhaustive_enum_population",
     ),
     (

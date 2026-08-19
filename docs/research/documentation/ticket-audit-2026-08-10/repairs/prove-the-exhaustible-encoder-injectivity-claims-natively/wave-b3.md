@@ -7,7 +7,7 @@ Post-edit content hash: 79e10cd9d7b85b4833f3624b8c4c317b104567e54d0c12ec42c43b84
 Changes applied:
   - Outcome completeness: added ## Fact audit — 2026-08-10 naming kernel `push_index_arithmetic` and artifact `index_arithmetic_tag`/`from_tag` as size-1 exhaustible remainder omitted from the nineteen and from `every_governed_tag_table_round_trips`; withdrew silent completeness; kept status `done`.
   - Moved kernel `push_requirements` out of **Slices and vectors** into a fixed-width ordinals + finite tail bullet alongside almost-exhaustible `push_resources` / `push_numerical` discussion.
-  - Replaced stale `codec/tests.rs:541` and fixed "seven" with searchable anchor `fn every_governed_tag_table_round_trips` and accurate table list (notes index-arithmetic tables are outside that test).
+  - Replaced stale `codec/tests.rs`:541 and fixed "seven" with searchable anchor `fn every_governed_tag_table_round_trips` and accurate table list (notes index-arithmetic tables are outside that test).
   - Optional dated correction included in the same Fact audit block (IndexArithmetic parallel to ContributorOrder; artifact tags outside both nineteen and left-inverse walk).
 
 Optional items skipped (with reason):
