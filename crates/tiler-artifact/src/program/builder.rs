@@ -22,7 +22,7 @@ use tiler_ir::schedule::{NumericalRealization, TensorRole};
 use tiler_ir::semantic::{
     InputKey, OutputKey, ProviderIdentity, ResolvedValueType, SemanticIdentity, SemanticProgram,
 };
-use tiler_ir::shape::{Axis, Shape};
+use tiler_ir::shape::{Axis, BindingSource, RootBinding, Shape, ShapeSymbol, SourcedExtent};
 
 use tiler_ir::kernel::PlanDeterminismWitness;
 
@@ -114,6 +114,16 @@ impl CompilationEnvironment {
 #[derive(Clone, Debug)]
 struct SemanticInterface {
     inputs: Vec<(InputKey, Shape, ResolvedValueType)>,
+    /// The authored per-axis extent sources of every input, in interface order.
+    ///
+    /// The association authority for live input-extent operands: an operand row
+    /// must name an axis whose authored extent is a declared `ShapeEnv` symbol
+    /// rooted at that exact input dimension. Kept beside the narrowed static
+    /// `inputs` column rather than replacing it, because the *published*
+    /// interface representation of a symbolic axis is the packaging decision
+    /// (`package-the-admitted-live-schedule-into-a-symbolic-kernel-program`)
+    /// while the association below must not depend on it.
+    input_extent_sources: Vec<(InputKey, Vec<SourcedExtent>)>,
     outputs: Vec<(OutputKey, Shape, ResolvedValueType)>,
 }
 
@@ -1336,7 +1346,12 @@ impl ArtifactProgramBuilder {
         let mut positions = self.delivery_positions;
         for (index, (spec, stage)) in specs.iter().zip(program.stages()).enumerate() {
             let bindings = self.check_bindings(program, index, spec, stage, facts, derived)?;
-            let input_extents = derive_extent_operands(index, stage)?;
+            let input_extents = derive_extent_operands(
+                index,
+                stage,
+                &self.interface.input_extent_sources,
+                self.retained.bindings(),
+            )?;
             let launch = self.check_launch(index, &spec.launch, stage, facts, &derived.adopted)?;
             refuse_bound_extent_specialization(
                 index,
@@ -1672,6 +1687,7 @@ fn usize_of(index: u32) -> usize {
 fn read_semantic_interface(
     semantic: &SemanticProgram,
 ) -> Result<SemanticInterface, ArtifactBuildError> {
+    let input_extent_sources = semantic_input_extent_sources(semantic);
     let inputs = semantic
         .inputs()
         .map(|input| {
@@ -1696,7 +1712,30 @@ fn read_semantic_interface(
             Ok((output.key().clone(), shape, value_type))
         })
         .collect::<Result<Vec<_>, ArtifactBuildError>>()?;
-    Ok(SemanticInterface { inputs, outputs })
+    Ok(SemanticInterface {
+        inputs,
+        input_extent_sources,
+        outputs,
+    })
+}
+
+/// Projects every input's authored per-axis extent sources, in interface order.
+///
+/// Total over the semantic shape vocabulary: a static boundary is projected
+/// extent by extent exactly as a sourced one, so the association check below
+/// reads one column whichever way the interface was authored.
+pub(super) fn semantic_input_extent_sources(
+    semantic: &SemanticProgram,
+) -> Vec<(InputKey, Vec<SourcedExtent>)> {
+    semantic
+        .inputs()
+        .map(|input| {
+            let sourced = semantic
+                .shape(input.value())
+                .expect("a verified program resolves its own input value");
+            (input.key().clone(), sourced.extents().collect())
+        })
+        .collect()
 }
 
 /// Returns one interface value's fixed shape, refusing a symbolic one.
@@ -1882,9 +1921,16 @@ fn binding_target(
 /// region-local access position; this maps that position through the matching
 /// stage access onto the program-interface key, and refuses an operand whose
 /// access is absent, is not an input, or names an axis the input does not have.
+///
+/// Every surviving row is then associated with the artifact's own semantic
+/// subject through [`check_extent_operand_association`], so a fixed semantic
+/// axis can never acquire a caller-selected extent and a symbolic one is tied
+/// to the exact source-bearing axis of the program's one shape environment.
 fn derive_extent_operands(
     entry: usize,
     stage: StageRef<'_>,
+    interface_sources: &[(InputKey, Vec<SourcedExtent>)],
+    environment: &[(ShapeSymbol, RootBinding)],
 ) -> Result<Vec<ExtentOperandData>, ArtifactBuildError> {
     let kernel = stage.kernel();
     let declared = kernel.input_extents().len();
@@ -1925,6 +1971,22 @@ fn derive_extent_operands(
                 rank,
             });
         }
+        // The scheduled live axis must exist on the *artifact's* semantic
+        // interface, not only on the program's materialized value: the two are
+        // proven interface-equal only later by `check_subject`, and a wrong "no
+        // change needed" here would leave the association proven against the
+        // wrong subject.
+        let Some((_, extents)) = interface_sources
+            .iter()
+            .find(|(declared, _)| declared == key)
+        else {
+            return Err(ArtifactBuildError::ExtentOperandUnbound {
+                entry,
+                access: parameter.access,
+                axis: parameter.axis.get(),
+            });
+        };
+        check_extent_operand_association(entry, key, parameter.axis, extents, environment)?;
         rows.push(ExtentOperandData {
             key: key.clone(),
             axis: parameter.axis,
@@ -1932,6 +1994,115 @@ fn derive_extent_operands(
         });
     }
     Ok(rows)
+}
+
+/// Associates one live input-extent operand with the semantic interface axis it
+/// names and the program's one shape environment.
+///
+/// The operand is a per-invocation binding for the named axis's extent, so the
+/// axis must be one the semantic subject actually leaves open, and the artifact
+/// must be able to prove *which* environment fact the binding answers:
+///
+/// - a **static** axis refuses — a fixed semantic axis acquiring a
+///   caller-selected extent executes meanings outside its own semantic graph;
+/// - a symbol the artifact's one retained environment does not bind refuses —
+///   a foreign symbol or environment has no authority here;
+/// - a symbol rooted anywhere other than an input dimension refuses — the
+///   operand transports an input-dimension fact, and a static, interface
+///   parameter, or target-property root is answered by its own authority;
+/// - a symbol rooted at a *different* input dimension refuses — an axis that
+///   merely names the symbol is an inferred occurrence, and the operand must
+///   name the exact source-bearing axis, exactly as the accepted schedule
+///   marker does.
+///
+/// The symbolic arms are production-reachable only once a symbolic semantic
+/// interface can open a builder at all; today [`read_semantic_interface`]
+/// refuses one first, and lifting that refusal is the packaging decision
+/// (`package-the-admitted-live-schedule-into-a-symbolic-kernel-program`). The
+/// static arm is the live fail-closed defence, and the association is checked
+/// here so the packaging landing inherits it rather than re-deriving it.
+pub(super) fn check_extent_operand_association(
+    entry: usize,
+    key: &InputKey,
+    axis: Axis,
+    extents: &[SourcedExtent],
+    environment: &[(ShapeSymbol, RootBinding)],
+) -> Result<(), ArtifactBuildError> {
+    let position = usize::try_from(axis.get()).unwrap_or(usize::MAX);
+    let Some(extent) = extents.get(position) else {
+        return Err(ArtifactBuildError::ExtentOperandAxis {
+            entry,
+            key: key.as_str().to_owned(),
+            axis: axis.get(),
+            rank: extents.len(),
+        });
+    };
+    if let Some(fixed) = extent.as_static() {
+        return Err(ArtifactBuildError::ExtentOperandStaticAxis {
+            entry,
+            key: key.as_str().to_owned(),
+            axis: axis.get(),
+            extent: fixed.get(),
+        });
+    }
+    let Some(symbol) = extent.symbol() else {
+        // `SourcedExtent` is `#[non_exhaustive]`: a source kind this layer has
+        // not associated must fail closed rather than fall into either arm.
+        return Err(ArtifactBuildError::ExtentOperandUnsourcedSymbol {
+            entry,
+            key: key.as_str().to_owned(),
+            axis: axis.get(),
+            symbol: String::new(),
+            source: "an extent source kind this artifact layer does not associate".to_owned(),
+        });
+    };
+    let Some((_, binding)) = environment.iter().find(|(declared, _)| declared == symbol) else {
+        return Err(ArtifactBuildError::ExtentOperandForeignSymbol {
+            entry,
+            key: key.as_str().to_owned(),
+            axis: axis.get(),
+            symbol: symbol.to_string(),
+        });
+    };
+    match binding.source() {
+        BindingSource::InputDimension {
+            input,
+            axis: root_axis,
+        } if input == key && *root_axis == axis => Ok(()),
+        BindingSource::InputDimension {
+            input,
+            axis: root_axis,
+        } => Err(ArtifactBuildError::ExtentOperandSourceMismatch {
+            entry,
+            key: key.as_str().to_owned(),
+            axis: axis.get(),
+            root_key: input.as_str().to_owned(),
+            root_axis: root_axis.get(),
+        }),
+        source @ (BindingSource::Static(_)
+        | BindingSource::InterfaceParameter { .. }
+        | BindingSource::TargetProperty { .. }) => {
+            Err(ArtifactBuildError::ExtentOperandUnsourcedSymbol {
+                entry,
+                key: key.as_str().to_owned(),
+                axis: axis.get(),
+                symbol: symbol.to_string(),
+                source: render_binding_source(source),
+            })
+        }
+    }
+}
+
+/// Renders one binding source for a typed refusal.
+fn render_binding_source(source: &BindingSource) -> String {
+    match source {
+        BindingSource::Static(extent) => format!("static {}", extent.get()),
+        BindingSource::InputDimension { input, axis } => {
+            format!("input `{}` axis {}", input.as_str(), axis.get())
+        }
+        BindingSource::InterfaceParameter { key } => format!("interface-parameter `{key}`"),
+        BindingSource::TargetProperty { key } => format!("target-property `{key}`"),
+    }
 }
 
 /// Refuses a kernel that baked an extent the entry still treats as a binding.

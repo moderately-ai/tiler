@@ -70,21 +70,21 @@ use std::collections::BTreeMap;
 use tiler_runtime::load::DTypeDispatch;
 
 use tiler_artifact::program::{
-    ApproximationEnvelope, ArithmeticType, ArtifactExecutionPolicy, ArtifactProgramBuilder,
-    AvailabilityPhase, BackendEntryKey, BackendEntryRef, BackendFeatureRequirement, BackendKey,
-    BindingKind, BindingSpec, CANONICAL_DIMENSIONS, CapabilityFamilyKey, CompilationEnvironment,
-    DIMENSION_COUNT, DeferredPredicateSpec, DeliveredRealizationBuilder, DimensionBehaviour,
-    EntryRealization, EntrySpec, ExceptionalValueAssumption, FactSourceProvenance,
-    FeasibilityRuleSetKey, FeasibilityRuleSetRef, HonouringMeans, LaunchSpec,
-    LoweringCapabilitySubject, MaterializationRounding, NumericalDimension, NumericalObligationKey,
-    NumericalPermission, PayloadContent, PayloadMetadata, PayloadPlanDeterminismRefusal,
-    PayloadPlanDeterminismVerifier, PayloadPlatform, PayloadProvenance, PolicyLocus,
-    ProvenanceIdentity, RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey,
-    RouteRequirement, ScalarArithmeticSubject, ScalarArithmeticSubjectIdentity, SchemaVersion,
-    SelectedProvider, SemanticOccurrence, SubnormalMode, TargetEnvironmentDeclaration,
-    TargetEnvironmentDescriptor, TargetEvidenceDeclaration, TargetProfileDescriptorDigest,
-    TargetProfileKey, TargetProfileRef, TargetPropertyKey, ToolComponent, VariantSpec,
-    overlapping_behaviour,
+    ApproximationEnvelope, ArithmeticType, ArtifactBuildError, ArtifactExecutionPolicy,
+    ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey, BackendEntryRef,
+    BackendFeatureRequirement, BackendKey, BindingKind, BindingSpec, CANONICAL_DIMENSIONS,
+    CapabilityFamilyKey, CompilationEnvironment, DIMENSION_COUNT, DeferredPredicateSpec,
+    DeliveredRealizationBuilder, DimensionBehaviour, EntryRealization, EntrySpec,
+    ExceptionalValueAssumption, FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
+    HonouringMeans, LaunchSpec, LoweringCapabilitySubject, MaterializationRounding,
+    NumericalDimension, NumericalObligationKey, NumericalPermission, PayloadContent,
+    PayloadMetadata, PayloadPlanDeterminismRefusal, PayloadPlanDeterminismVerifier,
+    PayloadPlatform, PayloadProvenance, PolicyLocus, ProvenanceIdentity,
+    RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey, RouteRequirement,
+    ScalarArithmeticSubject, ScalarArithmeticSubjectIdentity, SchemaVersion, SelectedProvider,
+    SemanticOccurrence, SubnormalMode, TargetEnvironmentDeclaration, TargetEnvironmentDescriptor,
+    TargetEvidenceDeclaration, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
+    TargetPropertyKey, ToolComponent, VariantSpec, overlapping_behaviour,
 };
 use tiler_artifact::program::{BackendPayloadDescriptor, ValidatedTargetEnvironmentDeclaration};
 use tiler_ir::index::{
@@ -158,8 +158,6 @@ pub const REDUCTION_SYMBOL: &str = "scalar_strict_serial_sum";
 pub const LIVE_EXTENT_SYMBOL: &str = "live_row_major";
 /// Entry symbol of the live strict-contraction routing fixture.
 pub const LIVE_CONTRACTION_SYMBOL: &str = "live_contraction";
-/// The backend's own entry-point symbol for the live-extent aligned variant.
-pub const LIVE_EXTENT_ALIGNED_SYMBOL: &str = "live_row_major_aligned";
 
 /// Governed key of the route requirement this backend owns.
 pub const HOST_ARITHMETIC_FEATURE: &str = "tiler.test.scalar-host.route-requirement.strict-f32";
@@ -197,6 +195,13 @@ pub const SUBGROUP_WIDTH_PROPERTY_KEY: &str = "tiler.target.prepared-entry.subgr
 /// Distinct per entry so answering one entry's row from another's prepared
 /// state is an observable substitution rather than a coincidence.
 pub const SCALAR_SUBGROUP_WIDTHS: [u64; 2] = [4, 8];
+
+/// Live-device property the property-guarded fused member's guard reads.
+///
+/// A route-time selection key the caller binds beside the interface facts. It
+/// exists so a portfolio over the fixed interface can still select different
+/// ranks on different routes without pretending a fixed input axis varies.
+pub const SELECTION_PROPERTY_KEY: &str = "tiler.target.test.selection@1";
 
 /// Rows of the packaged input, which is also the output element count.
 pub const ROWS: u64 = 2;
@@ -485,16 +490,23 @@ pub enum PackagedPlan {
     /// which is a different thing for the loader to do — and the distinction is
     /// only observable against a guard that is not a constant.
     FusedExtentGuarded,
+    /// The same one stage, under `SELECTION_PROPERTY_KEY ≡ 0 (mod 16)`.
+    ///
+    /// Ranked ahead of [`Self::Fused`] in a portfolio, it is selected exactly
+    /// when the caller binds an aligned selection property, so one artifact
+    /// identity selects different routing ranks on different routes.
+    FusedPropertyGuarded,
     /// A pointwise stage and a reduction stage over an explicit intermediate.
     Materialized,
     /// One `LiveRowMajor` stage whose inner extent is a payload operand.
-    LiveExtent,
-    /// The live-extent stage under `N ≡ 0 (mod 16)`.
     ///
-    /// Ranked ahead of [`Self::LiveExtent`] so `StablePriority` selects it only
-    /// when the bound extent is a multiple of 16, and falls through otherwise.
-    LiveExtentAligned,
+    /// Retained as the exact former wrong-positive subject: over this fixture's
+    /// fixed `[2, 3]` semantic graph it now refuses at artifact construction,
+    /// which is what the association test asserts through [`try_assemble`].
+    LiveExtent,
     /// One strict unseeded contraction whose contributor extent is live.
+    ///
+    /// Retained for the same refusal evidence in the contraction spelling.
     LiveContraction,
 }
 
@@ -514,11 +526,11 @@ impl PackagedPlan {
             Self::FusedExtentGuarded => {
                 b"fused-multiply-add-strict-serial-sum rows=2 columns=3 extent-guarded".to_vec()
             }
+            Self::FusedPropertyGuarded => {
+                b"fused-multiply-add-strict-serial-sum rows=2 columns=3 property-guarded".to_vec()
+            }
             Self::Materialized => b"multiply-add then strict-serial-sum rows=2 columns=3".to_vec(),
             Self::LiveExtent => b"live-row-major e0; N is not in this subject".to_vec(),
-            Self::LiveExtentAligned => {
-                b"live-row-major e0; N is not in this subject; aligned-mod-16".to_vec()
-            }
             Self::LiveContraction => b"live-contraction e0; S is not in this subject".to_vec(),
         }
     }
@@ -538,15 +550,13 @@ pub enum FusedGuard {
     NeverHolds,
     /// `1 <= extent(input, 0)`, which needs the input's shape to be bound.
     NeedsBoundInput,
-}
-
-/// Which applicability guard a live-extent plan packages.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LiveExtentGuard {
-    /// A constant that always holds.
-    AlwaysHolds,
-    /// The bound inner extent is a multiple of 16.
-    MultipleOfSixteen,
+    /// The bound [`SELECTION_PROPERTY_KEY`] quantity is a multiple of 16.
+    ///
+    /// A fact-driven guard over a *target property* rather than an input
+    /// extent: the fixture's interface is fixed, so the one per-route fact a
+    /// caller may legitimately vary is a live-device property, and this is
+    /// what lets one portfolio select different ranks on different routes.
+    PropertyMultipleOfSixteen,
 }
 
 /// What one packaged entry's payload declares about itself.
@@ -711,13 +721,14 @@ impl FixtureSpec {
             // The same entries and the same carried image as the fused member:
             // only the packaged guard differs, which is what makes a portfolio
             // holding both a test of selection rather than of two backends.
-            PackagedPlan::FusedInapplicable | PackagedPlan::FusedExtentGuarded => Self {
+            PackagedPlan::FusedInapplicable
+            | PackagedPlan::FusedExtentGuarded
+            | PackagedPlan::FusedPropertyGuarded => Self {
                 plan,
                 ..Self::default()
             },
             PackagedPlan::Materialized => Self::materialized(),
             PackagedPlan::LiveExtent => Self::live_extent(),
-            PackagedPlan::LiveExtentAligned => Self::live_extent_aligned(),
             PackagedPlan::LiveContraction => Self::live_contraction(),
         }
     }
@@ -733,24 +744,6 @@ impl FixtureSpec {
             entries: vec![FixtureEntry {
                 key: entry_key(b"live-row-major"),
                 symbol: LIVE_EXTENT_SYMBOL.to_owned(),
-                transports: vec![0, 1, 2],
-                arithmetic: ArithmeticType::F32,
-            }],
-            ..Self::default()
-        }
-    }
-
-    /// Returns the aligned live-extent member, selected only at `N ≡ 0 (mod 16)`.
-    #[must_use]
-    pub fn live_extent_aligned() -> Self {
-        Self {
-            code: encode(&live_extent_image(LIVE_EXTENT_ALIGNED_SYMBOL)),
-            plan: PackagedPlan::LiveExtentAligned,
-            route_requirements: Vec::new(),
-            deferred_predicates: Vec::new(),
-            entries: vec![FixtureEntry {
-                key: entry_key(b"live-row-major-aligned"),
-                symbol: LIVE_EXTENT_ALIGNED_SYMBOL.to_owned(),
                 transports: vec![0, 1, 2],
                 arithmetic: ArithmeticType::F32,
             }],
@@ -892,6 +885,34 @@ pub fn assemble_portfolio(members: &[FixtureSpec]) -> Fixture {
 /// fixed interface, which this path admits without changing every other case.
 #[must_use]
 pub fn assemble_portfolio_over(members: &[FixtureSpec], semantic: &SemanticProgram) -> Fixture {
+    try_assemble_portfolio_over(members, semantic)
+        .expect("the fixture variant packages the bound plan")
+}
+
+/// [`assemble`], surfacing the artifact layer's variant refusal.
+///
+/// # Errors
+///
+/// Returns the exact [`ArtifactBuildError`] `push_variant` refused with — the
+/// association fail-close's runtime-side evidence path.
+pub fn try_assemble(spec: &FixtureSpec) -> Result<Fixture, ArtifactBuildError> {
+    try_assemble_portfolio_over(std::slice::from_ref(spec), &semantic_program())
+}
+
+/// [`assemble_portfolio_over`], surfacing the artifact layer's variant refusal.
+///
+/// Every *other* fixture obligation still panics: a payload, claim, or record
+/// this file cannot even declare is a fixture defect, while a refused variant
+/// is the artifact layer's own judgment about the packaged plan — the thing a
+/// refusal test asserts.
+///
+/// # Errors
+///
+/// Returns the exact [`ArtifactBuildError`] `push_variant` refused with.
+pub fn try_assemble_portfolio_over(
+    members: &[FixtureSpec],
+    semantic: &SemanticProgram,
+) -> Result<Fixture, ArtifactBuildError> {
     assert!(
         !members.is_empty(),
         "a portfolio packages at least one variant",
@@ -916,7 +937,7 @@ pub fn assemble_portfolio_over(members: &[FixtureSpec], semantic: &SemanticProgr
         .expect("the selected provider was offered");
 
     for spec in members {
-        push_member(&mut draft, semantic, spec);
+        push_member(&mut draft, semantic, spec)?;
     }
 
     declare_realization(&mut draft, members);
@@ -926,7 +947,7 @@ pub fn assemble_portfolio_over(members: &[FixtureSpec], semantic: &SemanticProgr
     let expected =
         RecordedArtifactProgramIdentity::from_bytes(artifact.canonical_identity().as_bytes())
             .expect("the producing side records its own identity");
-    Fixture { bytes, expected }
+    Ok(Fixture { bytes, expected })
 }
 
 /// Declares one member's payload and its variant on a portfolio draft.
@@ -1059,16 +1080,20 @@ fn subject_identity(arithmetic: ArithmeticType) -> ScalarArithmeticSubjectIdenti
     }
 }
 
-fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, spec: &FixtureSpec) {
+fn push_member(
+    draft: &mut ArtifactProgramBuilder,
+    semantic: &SemanticProgram,
+    spec: &FixtureSpec,
+) -> Result<(), ArtifactBuildError> {
     let program = match spec.plan {
         PackagedPlan::Fused => fused_program(semantic, FusedGuard::AlwaysHolds),
         PackagedPlan::FusedInapplicable => fused_program(semantic, FusedGuard::NeverHolds),
         PackagedPlan::FusedExtentGuarded => fused_program(semantic, FusedGuard::NeedsBoundInput),
-        PackagedPlan::Materialized => materialized_program(semantic),
-        PackagedPlan::LiveExtent => live_extent_program(semantic, LiveExtentGuard::AlwaysHolds),
-        PackagedPlan::LiveExtentAligned => {
-            live_extent_program(semantic, LiveExtentGuard::MultipleOfSixteen)
+        PackagedPlan::FusedPropertyGuarded => {
+            fused_program(semantic, FusedGuard::PropertyMultipleOfSixteen)
         }
+        PackagedPlan::Materialized => materialized_program(semantic),
+        PackagedPlan::LiveExtent => live_extent_program(semantic),
         PackagedPlan::LiveContraction => live_contraction_program(semantic),
     };
     let metadata = member_metadata(spec, "aarch64-apple-darwin");
@@ -1094,44 +1119,42 @@ fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, s
         PackagedPlan::Fused
         | PackagedPlan::FusedInapplicable
         | PackagedPlan::FusedExtentGuarded
+        | PackagedPlan::FusedPropertyGuarded
         | PackagedPlan::Materialized
-        | PackagedPlan::LiveExtent
-        | PackagedPlan::LiveExtentAligned => 2,
+        | PackagedPlan::LiveExtent => 2,
     };
-    let variant = draft
-        .push_variant(
-            &program,
-            VariantSpec {
-                target_profile: spec.variant_profile.clone(),
-                feasibility_rules: FeasibilityRuleSetRef {
-                    key: FeasibilityRuleSetKey::new("tiler.test.scalar-host.feasibility")
-                        .expect("a governed rule-set key"),
-                    revision: 1,
-                },
-                deferred_predicates: spec.deferred_predicates.clone(),
-                entries: spec
-                    .entries
-                    .iter()
-                    .map(|entry| EntrySpec {
-                        bindings: vec![
-                            BindingSpec {
-                                kind: BindingKind::Buffer,
-                            };
-                            buffer_bindings
-                        ],
-                        launch: LaunchSpec {
-                            zero_work_skips_dispatch: true,
-                            preconditions: Vec::new(),
-                        },
-                        implementation: BackendEntryRef {
-                            payloads: vec![payload],
-                            entry_key: entry.key.clone(),
-                        },
-                    })
-                    .collect(),
+    let variant = draft.push_variant(
+        &program,
+        VariantSpec {
+            target_profile: spec.variant_profile.clone(),
+            feasibility_rules: FeasibilityRuleSetRef {
+                key: FeasibilityRuleSetKey::new("tiler.test.scalar-host.feasibility")
+                    .expect("a governed rule-set key"),
+                revision: 1,
             },
-        )
-        .expect("the fixture variant packages the bound plan");
+            deferred_predicates: spec.deferred_predicates.clone(),
+            entries: spec
+                .entries
+                .iter()
+                .map(|entry| EntrySpec {
+                    bindings: vec![
+                        BindingSpec {
+                            kind: BindingKind::Buffer,
+                        };
+                        buffer_bindings
+                    ],
+                    launch: LaunchSpec {
+                        zero_work_skips_dispatch: true,
+                        preconditions: Vec::new(),
+                    },
+                    implementation: BackendEntryRef {
+                        payloads: vec![payload],
+                        entry_key: entry.key.clone(),
+                    },
+                })
+                .collect(),
+        },
+    )?;
 
     for requirement in &spec.route_requirements {
         draft
@@ -1176,6 +1199,7 @@ fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, s
             .publish_plan(variant, 0, &witness, &[receipt])
             .expect("the proof-bound claim publishes");
     }
+    Ok(())
 }
 
 /// The scalar host's installed payload plan-determinism verifier.
@@ -2020,7 +2044,7 @@ fn live_row_major_kernel() -> VerifiedKernel {
     lower_scheduled_region(&region.build().expect("region")).expect("lowers")
 }
 
-fn live_extent_program(semantic: &SemanticProgram, kind: LiveExtentGuard) -> VerifiedKernelProgram {
+fn live_extent_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
     let kernel = live_row_major_kernel();
     let mut plan = KernelProgramBuilder::new(semantic).expect("a plan draft");
     let device = |capacity_bytes, ownership| AllocationSpec {
@@ -2101,18 +2125,9 @@ fn live_extent_program(semantic: &SemanticProgram, kind: LiveExtentGuard) -> Ver
     let accessible = plan
         .push_abi_binary(AbiBinaryOp::CheckedMultiply, zero, live_n)
         .expect("accessible");
-    let guard = match kind {
-        LiveExtentGuard::AlwaysHolds => plan
-            .push_abi_root(AbiRoot::BooleanLiteral(true))
-            .expect("guard"),
-        LiveExtentGuard::MultipleOfSixteen => {
-            let sixteen = plan
-                .push_abi_root(AbiRoot::UnsignedLiteral(16))
-                .expect("sixteen");
-            plan.push_abi_binary(AbiBinaryOp::IsMultipleOf, live_n, sixteen)
-                .expect("aligned guard")
-        }
-    };
+    let guard = plan
+        .push_abi_root(AbiRoot::BooleanLiteral(true))
+        .expect("guard");
     plan.applicability_guard(guard).expect("applicability");
     declare_routing_commit(&mut plan);
     plan.push_stage(
@@ -2442,6 +2457,20 @@ pub fn fused_program(semantic: &SemanticProgram, guard: FusedGuard) -> VerifiedK
                 })
                 .expect("the input extent");
             plan.push_abi_binary(AbiBinaryOp::LessOrEqual, one, rows)
+                .expect("the guard predicate")
+        }
+        FusedGuard::PropertyMultipleOfSixteen => {
+            let sixteen = plan
+                .push_abi_root(AbiRoot::UnsignedLiteral(16))
+                .expect("an abi literal");
+            let property = plan
+                .push_abi_root(AbiRoot::TargetProperty {
+                    key: TargetPropertyKey::new(SELECTION_PROPERTY_KEY)
+                        .expect("a governed property key"),
+                    phase: AvailabilityPhase::LiveDevicePreflight,
+                })
+                .expect("the selection property");
+            plan.push_abi_binary(AbiBinaryOp::IsMultipleOf, property, sixteen)
                 .expect("the guard predicate")
         }
     };

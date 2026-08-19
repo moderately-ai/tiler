@@ -2463,42 +2463,13 @@ fn scale_bias_expression() -> tiler_ir::schedule::PointwiseF32Expression {
     expression.build(root).unwrap()
 }
 
+/// The single-stage live-operand plan over the fixture's fixed semantic graph.
+///
+/// Still constructible: the kernel-program layer binds it, and the packaging
+/// interface work owns that layer's own association. What it can no longer do
+/// is reach a verified artifact — `push_variant` refuses it by name, which is
+/// the association fail-close the tests above assert.
 pub(crate) fn live_extent_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
-    live_extent_program_with_guard(semantic, LiveExtentGuard::AlwaysHolds)
-}
-
-pub(crate) fn live_extent_artifact() -> VerifiedArtifactProgram {
-    let semantic = semantic_program();
-    let program = live_extent_program(&semantic);
-    let provider = lowering_provider(1);
-    build_artifact(&semantic, &program, provider.clone(), &[provider])
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LiveExtentGuard {
-    AlwaysHolds,
-    MultipleOfSixteen,
-}
-
-fn live_extent_guard(
-    plan: &mut KernelProgramBuilder,
-    live_n: tiler_ir::program::AbiExprId,
-    kind: LiveExtentGuard,
-) -> tiler_ir::program::AbiExprId {
-    match kind {
-        LiveExtentGuard::AlwaysHolds => plan.push_abi_root(AbiRoot::BooleanLiteral(true)).unwrap(),
-        LiveExtentGuard::MultipleOfSixteen => {
-            let sixteen = plan.push_abi_root(AbiRoot::UnsignedLiteral(16)).unwrap();
-            plan.push_abi_binary(AbiBinaryOp::IsMultipleOf, live_n, sixteen)
-                .unwrap()
-        }
-    }
-}
-
-fn live_extent_program_with_guard(
-    semantic: &SemanticProgram,
-    kind: LiveExtentGuard,
-) -> VerifiedKernelProgram {
     let kernel = live_extent_kernel();
     let mut plan = KernelProgramBuilder::new(semantic).unwrap();
     let device = |capacity_bytes, ownership| AllocationSpec {
@@ -2575,7 +2546,7 @@ fn live_extent_program_with_guard(
     let accessible = plan
         .push_abi_binary(AbiBinaryOp::CheckedMultiply, zero, live_n)
         .unwrap();
-    let guard = live_extent_guard(&mut plan, live_n, kind);
+    let guard = plan.push_abi_root(AbiRoot::BooleanLiteral(true)).unwrap();
     plan.applicability_guard(guard).unwrap();
     for (from, to, fallback_permitted) in [
         (
@@ -2873,70 +2844,6 @@ fn live_contraction_program(semantic: &SemanticProgram) -> VerifiedKernelProgram
     plan.push_output(OutputKey::new("result").unwrap(), output)
         .unwrap();
     plan.build().unwrap()
-}
-
-fn live_contraction_artifact() -> VerifiedArtifactProgram {
-    let semantic = live_contraction_semantic();
-    let program = live_contraction_program(&semantic);
-    let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
-    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-    draft.select_provider(selection(provider)).unwrap();
-    let descriptor = draft.push_payload(payload(0xa1)).unwrap();
-    draft
-        .push_variant(
-            &program,
-            VariantSpec {
-                target_profile: profile(),
-                feasibility_rules: rules(),
-                deferred_predicates: Vec::new(),
-                entries: vec![EntrySpec {
-                    bindings: vec![
-                        BindingSpec {
-                            kind: BindingKind::Buffer,
-                        },
-                        BindingSpec {
-                            kind: BindingKind::Buffer,
-                        },
-                        BindingSpec {
-                            kind: BindingKind::Buffer,
-                        },
-                    ],
-                    launch: LaunchSpec {
-                        zero_work_skips_dispatch: true,
-                        preconditions: Vec::new(),
-                    },
-                    implementation: BackendEntryRef {
-                        payloads: vec![descriptor],
-                        entry_key: BackendEntryKey::from_bytes(b"live-contraction").unwrap(),
-                    },
-                }],
-            },
-        )
-        .unwrap();
-    declare_realization(&mut draft, &program);
-    draft.build().unwrap()
-}
-
-fn live_extent_c1_portfolio() -> VerifiedArtifactProgram {
-    let semantic = semantic_program();
-    let aligned = live_extent_program_with_guard(&semantic, LiveExtentGuard::MultipleOfSixteen);
-    let direct = live_extent_program_with_guard(&semantic, LiveExtentGuard::AlwaysHolds);
-    let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
-    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-    draft.select_provider(selection(provider)).unwrap();
-    let aligned_payload = draft.push_payload(payload(0xa1)).unwrap();
-    let direct_payload = draft.push_payload(payload(0xa2)).unwrap();
-    let formulas = formulas(&mut draft);
-    draft
-        .push_variant(&aligned, variant(&formulas, aligned_payload, b"aligned"))
-        .unwrap();
-    draft
-        .push_variant(&direct, variant(&formulas, direct_payload, b"direct"))
-        .unwrap();
-    declare_realization_over(&mut draft, &aligned, 2);
-    draft.build().unwrap()
 }
 
 // -------------------------------------------------------------------------
@@ -5574,116 +5481,315 @@ fn an_artifact_encodes_an_entry_key_longer_than_the_digest_bound() {
 }
 
 // -------------------------------------------------------------------------
-// Live input-extent operand envelope row
+// Live input-extent operand association with the semantic interface
 // -------------------------------------------------------------------------
+//
+// A live operand makes an interface axis's extent a per-invocation binding, so
+// the axis must be one the semantic subject actually leaves open. The former
+// worked examples here executed a fixed `[2, 3]` subject at bound extents 14
+// and 15 — meanings outside the fixed program's own semantic graph — and their
+// envelope, identity, and addressing evidence is withdrawn until a true
+// symbolic `[2, N]` artifact can be packaged
+// (`package-the-admitted-live-schedule-into-a-symbolic-kernel-program`);
+// `prove-one-live-extent-artifact-payload-and-pipeline-at-two-n` owns the
+// rerun.
 
+/// The exact former wrong-positive, now refused at artifact construction.
+///
+/// Subject perturbed, assertion unchanged: the fused plan over the same
+/// `[2, 3]` semantic program still packages, and adding the live operand on
+/// axis 1 is the one perturbation that flips construction into the refusal.
 #[test]
-fn a_live_extent_operand_round_trips_through_the_envelope() {
-    let artifact = live_extent_artifact();
-    let extents: Vec<_> = artifact
-        .variants()
-        .next()
-        .expect("one variant")
-        .entries()
-        .next()
-        .expect("one entry")
-        .extent_operands()
-        .collect();
-    assert_eq!(extents.len(), 1);
-    assert_eq!(extents[0].key().as_str(), "input");
-    assert_eq!(extents[0].axis(), Axis::new(1));
-    assert_eq!(extents[0].value_type(), super::AbiType::Unsigned);
-
-    let bytes = artifact.encode().expect("a live-extent artifact encodes");
-    let decoded = super::decode_artifact(&bytes).expect("the envelope decodes");
-    let decoded_extents: Vec<_> = decoded
-        .variants()
-        .next()
-        .expect("one variant")
-        .entries()
-        .next()
-        .expect("one entry")
-        .extent_operands()
-        .collect();
-    assert_eq!(decoded_extents.len(), 1);
-    assert_eq!(decoded_extents[0].key().as_str(), "input");
-    assert_eq!(decoded_extents[0].axis(), Axis::new(1));
-    assert_eq!(decoded_extents[0].value_type(), super::AbiType::Unsigned);
-
-    let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
-    binder
-        .bind_input_extent(InputKey::new("input").unwrap(), Axis::new(1), 15)
-        .unwrap();
-    let facts = binder.build();
-    assert_eq!(
-        facts.input_extent(&InputKey::new("input").unwrap(), Axis::new(1)),
-        Some(15),
-        "the same AbiFacts used for range and launch answer the live extent",
+fn a_live_operand_over_a_fixed_semantic_axis_refuses_at_artifact_construction() {
+    let semantic = semantic_program();
+    let static_sibling = fused_program(&semantic, SCALE_BITS);
+    let provider = lowering_provider(1);
+    build_artifact(
+        &semantic,
+        &static_sibling,
+        provider.clone(),
+        std::slice::from_ref(&provider),
     );
+
+    let live = live_extent_program(&semantic);
+    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+    let descriptor = draft.push_payload(payload(0xa1)).unwrap();
+    let formulas = formulas(&mut draft);
+    let error = draft
+        .push_variant(&live, variant(&formulas, descriptor, b"live-row-major"))
+        .expect_err("a fixed semantic axis must not acquire a caller-selected extent");
     assert_eq!(
-        decoded
-            .variants()
-            .next()
-            .expect("one variant")
-            .entries()
-            .next()
-            .expect("one entry")
-            .launch_threads()
-            .evaluate(&facts)
-            .expect("launch evaluates from the same facts"),
-        super::AbiValue::Unsigned(2),
+        error,
+        ArtifactBuildError::ExtentOperandStaticAxis {
+            entry: 0,
+            key: "input".to_owned(),
+            axis: 1,
+            extent: 3,
+        },
+        "the refusal must name the fixed semantic axis, not a later check",
     );
 }
 
+/// The contraction spelling of the same defect refuses identically.
 #[test]
-fn a_live_contraction_nonzero_guard_round_trips_from_the_same_input_extent() {
-    let artifact = live_contraction_artifact();
-    let bytes = artifact.encode().expect("artifact encodes");
-    let decoded = super::decode_artifact(&bytes).expect("artifact decodes");
-    let variant = decoded.variants().next().expect("one variant");
-    let extent = variant
-        .entries()
-        .next()
-        .expect("one entry")
-        .extent_operands()
-        .next()
-        .expect("one live extent operand");
-    assert_eq!(extent.key().as_str(), "left");
-    assert_eq!(extent.axis(), Axis::new(1));
+fn a_live_contraction_operand_over_a_fixed_semantic_axis_refuses() {
+    let semantic = live_contraction_semantic();
+    let program = live_contraction_program(&semantic);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+    let descriptor = draft.push_payload(payload(0xa1)).unwrap();
+    let error = draft
+        .push_variant(
+            &program,
+            VariantSpec {
+                target_profile: profile(),
+                feasibility_rules: rules(),
+                deferred_predicates: Vec::new(),
+                entries: vec![EntrySpec {
+                    bindings: vec![
+                        BindingSpec {
+                            kind: BindingKind::Buffer,
+                        };
+                        3
+                    ],
+                    launch: LaunchSpec {
+                        zero_work_skips_dispatch: true,
+                        preconditions: Vec::new(),
+                    },
+                    implementation: BackendEntryRef {
+                        payloads: vec![descriptor],
+                        entry_key: BackendEntryKey::from_bytes(b"live-contraction").unwrap(),
+                    },
+                }],
+            },
+        )
+        .expect_err("a live contributor extent over a fixed semantic axis must refuse");
+    assert_eq!(
+        error,
+        ArtifactBuildError::ExtentOperandStaticAxis {
+            entry: 0,
+            key: "left".to_owned(),
+            axis: 1,
+            extent: 3,
+        },
+    );
+}
 
-    let key = InputKey::new("left").unwrap();
-    let guard_at = |bound| {
-        let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
-        binder
-            .bind_input_extent(key.clone(), Axis::new(1), bound)
+/// Builds one rank-one two-input symbolic graph `a + b` over `[n]`.
+///
+/// The real construction path for the association's symbolic arms: a verified
+/// semantic program whose interface extents name a declared symbol, exactly as
+/// the compiler's admitted live population authors them. The artifact builder
+/// still refuses the *interface* (`SymbolicSemanticInterface`) — lifting that
+/// is the packaging decision — so the association is exercised through the
+/// same crate-private derivation `push_variant` runs.
+fn symbolic_two_input_semantic(environment: Arc<tiler_ir::shape::ShapeEnv>) -> SemanticProgram {
+    let mut draft =
+        SemanticProgramBuilder::try_standard_with_shape_environment(environment).unwrap();
+    let n = SourcedExtent::Symbol(association_symbol("n"));
+    let a = draft
+        .input_sourced::<F32>(InputKey::new("a").unwrap(), vec![n.clone()])
+        .unwrap();
+    let b = draft
+        .input_sourced::<F32>(InputKey::new("b").unwrap(), vec![n])
+        .unwrap();
+    let root = F32Add::apply(&mut draft, a, b).unwrap();
+    draft
+        .output(OutputKey::new("result").unwrap(), root)
+        .unwrap();
+    draft.build().unwrap()
+}
+
+fn association_symbol(name: &str) -> ShapeSymbol {
+    ShapeSymbol::new(SymbolScope::new("program/0").unwrap(), name).unwrap()
+}
+
+/// One environment declaring `n` at a caller-chosen root.
+fn association_environment(root: BindingSource) -> Arc<tiler_ir::shape::ShapeEnv> {
+    let mut draft = ShapeEnvBuilder::new();
+    let n = association_symbol("n");
+    draft.declare(n.clone()).unwrap();
+    draft
+        .bind(
+            &n,
+            RootBinding::new(
+                root,
+                AvailabilityPhase::LiveDevicePreflight,
+                FactProvenance::RuntimeValidated,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    Arc::new(draft.build().unwrap())
+}
+
+fn input_dimension_root(input: &str, axis: u32) -> BindingSource {
+    BindingSource::InputDimension {
+        input: InputKey::new(input).unwrap(),
+        axis: Axis::new(axis),
+    }
+}
+
+/// The association's inputs, derived from one real verified program.
+#[allow(
+    clippy::type_complexity,
+    reason = "the pair is the association's two exact authorities and is destructured at every call site"
+)]
+fn association_authorities(
+    semantic: &SemanticProgram,
+) -> (
+    Vec<(InputKey, Vec<SourcedExtent>)>,
+    Vec<(ShapeSymbol, RootBinding)>,
+) {
+    let sources = super::builder::semantic_input_extent_sources(semantic);
+    let retained = super::retained::RetainedShapeEnvironment::project(semantic)
+        .expect("the fixture environment projects");
+    (sources, retained.bindings().to_vec())
+}
+
+fn associate(
+    sources: &[(InputKey, Vec<SourcedExtent>)],
+    bindings: &[(ShapeSymbol, RootBinding)],
+    key: &str,
+    axis: u32,
+) -> Result<(), ArtifactBuildError> {
+    let key = InputKey::new(key).unwrap();
+    let (_, extents) = sources
+        .iter()
+        .find(|(declared, _)| *declared == key)
+        .expect("the fixture names a declared input");
+    super::builder::check_extent_operand_association(0, &key, Axis::new(axis), extents, bindings)
+}
+
+/// The accepting arm: the operand names the environment's exact root axis.
+#[test]
+fn a_live_operand_on_the_source_bearing_symbolic_axis_associates() {
+    let semantic =
+        symbolic_two_input_semantic(association_environment(input_dimension_root("a", 0)));
+    let (sources, bindings) = association_authorities(&semantic);
+    associate(&sources, &bindings, "a", 0)
+        .expect("the source-bearing axis is the association's one accepting arm");
+}
+
+/// An equal-shaped sibling axis is an inferred occurrence, not the source.
+#[test]
+fn a_live_operand_on_an_inferred_equal_axis_refuses() {
+    let semantic =
+        symbolic_two_input_semantic(association_environment(input_dimension_root("a", 0)));
+    let (sources, bindings) = association_authorities(&semantic);
+    assert_eq!(
+        associate(&sources, &bindings, "b", 0),
+        Err(ArtifactBuildError::ExtentOperandSourceMismatch {
+            entry: 0,
+            key: "b".to_owned(),
+            axis: 0,
+            root_key: "a".to_owned(),
+            root_axis: 0,
+        }),
+        "an axis that merely names the symbol must not stand in for its root",
+    );
+}
+
+/// A swapped environment leaves the axis's symbol unbound and refuses.
+#[test]
+fn a_live_operand_under_a_swapped_environment_refuses() {
+    let semantic =
+        symbolic_two_input_semantic(association_environment(input_dimension_root("a", 0)));
+    let (sources, _) = association_authorities(&semantic);
+    // A second real environment whose one declared symbol is another scope's:
+    // the foreign-environment perturbation, built exactly as the first.
+    let foreign = {
+        let mut draft = ShapeEnvBuilder::new();
+        let m = ShapeSymbol::new(SymbolScope::new("program/1").unwrap(), "n").unwrap();
+        draft.declare(m.clone()).unwrap();
+        draft
+            .bind(
+                &m,
+                RootBinding::new(
+                    input_dimension_root("a", 0),
+                    AvailabilityPhase::LiveDevicePreflight,
+                    FactProvenance::RuntimeValidated,
+                )
+                .unwrap(),
+            )
             .unwrap();
-        variant
-            .applicability_guard()
-            .evaluate(&binder.build())
-            .expect("the carried guard evaluates")
+        draft.build().unwrap()
     };
-    assert_eq!(guard_at(0), AbiValue::Boolean(false));
-    assert_eq!(guard_at(1), AbiValue::Boolean(true));
-    assert_eq!(guard_at(14), AbiValue::Boolean(true));
-    assert_eq!(guard_at(15), AbiValue::Boolean(true));
+    let foreign_bindings: Vec<_> = foreign
+        .bindings()
+        .map(|(symbol, binding)| (symbol.clone(), binding.clone()))
+        .collect();
+    assert_eq!(
+        associate(&sources, &foreign_bindings, "a", 0),
+        Err(ArtifactBuildError::ExtentOperandForeignSymbol {
+            entry: 0,
+            key: "a".to_owned(),
+            axis: 0,
+            symbol: association_symbol("n").to_string(),
+        }),
+        "a symbol the artifact's one environment does not bind has no authority",
+    );
 }
 
+/// A symbol rooted outside the input dimensions has no operand to answer.
 #[test]
-fn a_zero_live_row_major_extent_remains_an_applicable_no_work_neighbour() {
-    let artifact = live_extent_artifact();
-    let variant = artifact.variants().next().expect("one variant");
-    let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
-    binder
-        .bind_input_extent(InputKey::new("input").unwrap(), Axis::new(1), 0)
-        .unwrap();
+fn a_live_operand_on_a_symbol_without_an_input_source_refuses() {
+    let semantic =
+        symbolic_two_input_semantic(association_environment(BindingSource::TargetProperty {
+            key: TargetPropertyKey::new("tiler.target.test.n@1").unwrap(),
+        }));
+    let (sources, bindings) = association_authorities(&semantic);
     assert_eq!(
-        variant
-            .applicability_guard()
-            .evaluate(&binder.build())
-            .expect("row-major guard evaluates"),
-        AbiValue::Boolean(true),
-        "LiveRowMajor performs all element access inside its empty range"
+        associate(&sources, &bindings, "a", 0),
+        Err(ArtifactBuildError::ExtentOperandUnsourcedSymbol {
+            entry: 0,
+            key: "a".to_owned(),
+            axis: 0,
+            symbol: association_symbol("n").to_string(),
+            source: "target-property `tiler.target.test.n@1`".to_owned(),
+        }),
+        "a target-property root is answered by its own authority, never an operand",
     );
+}
+
+/// An axis outside the semantic rank is absent from the interface.
+#[test]
+fn a_live_operand_outside_the_semantic_rank_refuses() {
+    let semantic =
+        symbolic_two_input_semantic(association_environment(input_dimension_root("a", 0)));
+    let (sources, bindings) = association_authorities(&semantic);
+    assert_eq!(
+        associate(&sources, &bindings, "a", 4),
+        Err(ArtifactBuildError::ExtentOperandAxis {
+            entry: 0,
+            key: "a".to_owned(),
+            axis: 4,
+            rank: 1,
+        }),
+    );
+}
+
+/// The association's static arm refuses either fixed axis, not only axis 1.
+#[test]
+fn the_association_refuses_every_fixed_axis_by_its_own_extent() {
+    let semantic = semantic_program();
+    let (sources, bindings) = association_authorities(&semantic);
+    for (axis, extent) in [(0_u32, 2_u64), (1, 3)] {
+        assert_eq!(
+            associate(&sources, &bindings, "input", axis),
+            Err(ArtifactBuildError::ExtentOperandStaticAxis {
+                entry: 0,
+                key: "input".to_owned(),
+                axis,
+                extent,
+            }),
+            "axis {axis} is fixed at {extent} and must refuse by that value",
+        );
+    }
 }
 
 #[test]
@@ -5695,241 +5801,29 @@ fn empty_extent_lists_do_not_move_previously_encodable_artifact_bytes() {
         again.canonical_identity().as_bytes(),
         "two no-extent artifacts must keep one identity",
     );
+    // A nonempty declaration would be a new subject, but none is constructible
+    // over the current static-only interface — the association refusal above —
+    // so the empty-writes-nothing property alone carries the identity claim.
     assert!(
         super::model::ARTIFACT_DOMAIN.ends_with(b"v20\0"),
         "the ADR 0013 stability-subject step owns v20; empty extent lists still write no bytes",
     );
-    let with = live_extent_artifact();
-    assert_ne!(
-        without.canonical_identity().as_bytes(),
-        with.canonical_identity().as_bytes(),
-        "declaring a live extent is a new subject, not a reinterpretation",
-    );
 }
 
-/// Dense F32 `[2, N]`: semantic `(row = 1, column = 0)` is element `N`, so bytes `4N`.
-const fn dense_f32_row_major_bytes(row: u64, column: u64, inner_extent: u64) -> u64 {
-    4 * (row * inner_extent + column)
-}
-
-/// One live-extent artifact, two bound N values, and a baked neighbour.
+/// Baking either neighbouring extent is a distinct artifact subject.
 ///
-/// The bound value is not an artifact subject. Baking either neighbour is.
+/// The half of the former two-N worked example that survives the association
+/// fail-close: the *baked* programs remain packageable, and their identities
+/// separate. The live subject's equal-identity-across-bindings half returns
+/// with the packaged symbolic artifact.
 #[test]
-fn one_live_extent_artifact_indexes_dense_f32_at_two_n_without_baking() {
-    let artifact = live_extent_artifact();
-    let again = live_extent_artifact();
-    assert_eq!(
-        artifact.canonical_identity().as_bytes(),
-        again.canonical_identity().as_bytes(),
-        "two constructions of the live subject must keep one identity",
-    );
-
-    let entry = artifact
-        .variants()
-        .next()
-        .expect("one variant")
-        .entries()
-        .next()
-        .expect("one entry");
-    let extents: Vec<_> = entry.extent_operands().collect();
-    assert_eq!(extents.len(), 1);
-    assert_eq!(extents[0].key().as_str(), "input");
-    assert_eq!(extents[0].axis(), Axis::new(1));
-
-    let mut addresses = Vec::new();
-    for n in [14_u64, 15] {
-        let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
-        binder
-            .bind_input_extent(InputKey::new("input").unwrap(), Axis::new(1), n)
-            .unwrap();
-        let facts = binder.build();
-        assert_eq!(
-            facts.input_extent(&InputKey::new("input").unwrap(), Axis::new(1)),
-            Some(n),
-            "range, launch, and the payload operand share this bound fact",
-        );
-        let bindings: Vec<_> = entry.bindings().collect();
-        assert_eq!(
-            bindings[0]
-                .accessible_bytes()
-                .evaluate(&facts)
-                .expect("range evaluates from the bound live extent"),
-            super::AbiValue::Unsigned(0),
-            "the LiveRowMajor window is zero-length; the expression still names N={n}",
-        );
-        assert_eq!(
-            entry
-                .launch_threads()
-                .evaluate(&facts)
-                .expect("launch evaluates from the same facts"),
-            super::AbiValue::Unsigned(2),
-        );
-        let address = dense_f32_row_major_bytes(1, 0, n);
-        addresses.push(address);
-    }
-    assert_eq!(
-        addresses,
-        [56, 60],
-        "semantic (row = 1, column = 0) at N=14 and N=15"
-    );
-
+fn baking_neighbouring_extents_mints_distinct_artifact_subjects() {
     let baked_14 = baked_dense_artifact(14);
     let baked_15 = baked_dense_artifact(15);
-    assert_ne!(
-        artifact.canonical_identity().as_bytes(),
-        baked_14.canonical_identity().as_bytes(),
-        "baking N = 14 must change artifact identity",
-    );
     assert_ne!(
         baked_14.canonical_identity().as_bytes(),
         baked_15.canonical_identity().as_bytes(),
         "baking neighbouring extents must change artifact identity",
-    );
-}
-
-/// C1 sequence extents: prefill at 10 and eight decode steps through 18.
-const C1_SEQUENCE_EXTENTS: [u64; 9] = [10, 11, 12, 13, 14, 15, 16, 17, 18];
-
-const RETAINED_HEADS: u64 = 8;
-const RETAINED_WIDTH: u64 = 128;
-const RETAINED_CAPACITY: u64 = 18;
-const RETAINED_ELEMENT_BYTES: u64 = 4;
-
-const fn exact_live_span(sequence: u64) -> u64 {
-    RETAINED_HEADS * sequence * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES
-}
-
-const fn exact_live_head1(sequence: u64) -> u64 {
-    sequence * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES
-}
-
-const fn capacity_strided_head1(capacity: u64) -> u64 {
-    capacity * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES
-}
-
-const fn retained_pool_bytes() -> u64 {
-    RETAINED_CAPACITY * RETAINED_HEADS * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES
-}
-
-/// One artifact identity across C1's nine extents, with the ≡ 0 (mod 16) guard
-/// selecting only at 16.
-#[test]
-fn one_artifact_identity_routes_c1_extents_and_selects_the_aligned_guard_at_sixteen() {
-    let artifact = live_extent_c1_portfolio();
-    let again = live_extent_c1_portfolio();
-    assert_eq!(
-        artifact.canonical_identity().as_bytes(),
-        again.canonical_identity().as_bytes(),
-        "reassembling the C1 portfolio must keep one identity",
-    );
-
-    let mut variants: Vec<_> = artifact.variants().collect();
-    assert_eq!(
-        variants.len(),
-        2,
-        "two complete variants, not one per extent"
-    );
-    let aligned = variants.remove(0);
-    let direct = variants.remove(0);
-    assert_eq!(aligned.routing_rank(), 0);
-    assert_eq!(direct.routing_rank(), 1);
-
-    let mut selected = Vec::new();
-    for sequence in C1_SEQUENCE_EXTENTS {
-        let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
-        binder
-            .bind_input_extent(InputKey::new("input").unwrap(), Axis::new(1), sequence)
-            .unwrap();
-        let facts = binder.build();
-        let aligned_holds = aligned
-            .applicability_guard()
-            .evaluate(&facts)
-            .expect("the aligned guard evaluates from the bound extent");
-        let direct_holds = direct
-            .applicability_guard()
-            .evaluate(&facts)
-            .expect("the direct guard evaluates from the bound extent");
-        assert_eq!(
-            direct_holds,
-            super::AbiValue::Boolean(true),
-            "the fallback variant must remain applicable at S={sequence}",
-        );
-        let rank = if aligned_holds == super::AbiValue::Boolean(true) {
-            0
-        } else {
-            assert_eq!(
-                aligned_holds,
-                super::AbiValue::Boolean(false),
-                "the aligned guard must be boolean at S={sequence}",
-            );
-            1
-        };
-        selected.push(rank);
-    }
-    assert_eq!(
-        selected,
-        [1, 1, 1, 1, 1, 1, 0, 1, 1],
-        "StablePriority must select the ≡ 0 (mod 16) variant only at S=16",
-    );
-}
-
-/// Exact-live addressing inside a capacity-sized pool: span and head-1 come
-/// from the bound extent, never from the allocation length.
-#[test]
-fn a_longer_pool_addresses_the_exact_live_span_and_capacity_stride_fails_the_oracle() {
-    assert_eq!(retained_pool_bytes(), 73_728);
-    assert_eq!(exact_live_span(14), 57_344);
-    assert_eq!(exact_live_span(15), 61_440);
-    assert_eq!(exact_live_head1(14), 7_168);
-    assert_eq!(exact_live_head1(15), 7_680);
-    assert_eq!(capacity_strided_head1(RETAINED_CAPACITY), 9_216);
-
-    let artifact = live_extent_artifact();
-    let entry = artifact
-        .variants()
-        .next()
-        .expect("one variant")
-        .entries()
-        .next()
-        .expect("one entry");
-    let mut addresses = Vec::new();
-    let mut spans = Vec::new();
-    for sequence in [14_u64, 15] {
-        let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
-        binder
-            .bind_input_extent(InputKey::new("input").unwrap(), Axis::new(1), sequence)
-            .unwrap();
-        let facts = binder.build();
-        let bound = facts
-            .input_extent(&InputKey::new("input").unwrap(), Axis::new(1))
-            .expect("the live sequence is the bound fact");
-        assert_eq!(bound, sequence, "the bound fact is S, not the pool length");
-        assert_eq!(
-            entry
-                .extent_operands()
-                .next()
-                .expect("the payload reads the live axis")
-                .axis(),
-            Axis::new(1),
-            "the routed operand is the bound sequence axis, not the allocation",
-        );
-        let allocation_as_sequence =
-            retained_pool_bytes() / (RETAINED_HEADS * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES);
-        assert_eq!(allocation_as_sequence, RETAINED_CAPACITY);
-        assert_ne!(
-            bound, allocation_as_sequence,
-            "deriving S from the allocation would silently pick the capacity stride",
-        );
-        addresses.push(exact_live_head1(bound));
-        spans.push(exact_live_span(bound));
-    }
-    assert_eq!(addresses, [7_168, 7_680]);
-    assert_eq!(spans, [57_344, 61_440]);
-    assert_ne!(
-        exact_live_head1(14),
-        capacity_strided_head1(RETAINED_CAPACITY),
-        "the capacity-strided head-1 address 9,216 must fail the retained oracle",
     );
 }
 
@@ -5959,11 +5853,11 @@ fn packaging_a_kernel_specialized_on_a_bound_extent_is_refused() {
     );
 }
 
-/// A launch that names a different axis than the payload operand refuses before
-/// the bound N can be used as two meanings.
+/// A precondition naming an unbound axis refuses before the bound value can be
+/// used as two meanings.
 #[test]
 fn a_host_side_payload_disagreement_refuses_before_program_work() {
-    let artifact = live_extent_two_n_artifact();
+    let artifact = extent_precondition_artifact();
     let entry = artifact
         .variants()
         .next()
@@ -5974,7 +5868,7 @@ fn a_host_side_payload_disagreement_refuses_before_program_work() {
     let precondition = entry
         .launch_preconditions()
         .next()
-        .expect("the two-N artifact names the live axis in a launch precondition");
+        .expect("the fixture names the inner axis in a launch precondition");
 
     let mut only_rows = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
     only_rows
@@ -6372,10 +6266,14 @@ fn baked_dense_program_with_live_range(
     plan.build().unwrap()
 }
 
-/// The live artifact plus a launch precondition that names the same live axis.
-fn live_extent_two_n_artifact() -> VerifiedArtifactProgram {
+/// The fused artifact plus a launch precondition naming a bound input extent.
+///
+/// A launch precondition may read a bound extent — that is a host predicate,
+/// not a live operand — so this packages without any extent-operand row and
+/// keeps the host-side disagreement refusal testable on a static subject.
+fn extent_precondition_artifact() -> VerifiedArtifactProgram {
     let semantic = semantic_program();
-    let program = live_extent_program(&semantic);
+    let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
     let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
