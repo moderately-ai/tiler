@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-three-adr-implementation-statuses-outside-the-metadata-vocabulary
 title: Reconcile the three ADR implementation statuses outside the metadata vocabulary
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [repair-the-accepted-decision-records-the-splits-and-retirements-falsified]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, decisions, metadata, maturity]
-claimed_from: todo
-assignee: worker-adrstatus
-lease_expires_at: 1787169555
 ---
 ## User-visible outcome
 

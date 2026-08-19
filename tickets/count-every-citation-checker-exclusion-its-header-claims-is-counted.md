@@ -1,7 +1,7 @@
 ---
 id: count-every-citation-checker-exclusion-its-header-claims-is-counted
 title: Count every citation-checker exclusion its header claims is counted
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [fail-a-partial-path-whose-leading-component-has-vanished-instead-of-skipping-it, ledger-the-partial-path-ambiguities-that-collapsed-before-the-ledger-was-seeded, stop-the-citation-checkers-ambiguity-skip-resolving-against-a-basename-twin]
@@ -9,9 +9,6 @@ scopes: [implementation/workspace]
 shared_scopes: [project/tickets]
 paths: [check-citations.sh]
 tags: [gates, citations, correctness]
-claimed_from: todo
-assignee: worker-census
-lease_expires_at: 1787169555
 ---
 ## User-visible outcome
 
