@@ -1,7 +1,7 @@
 ---
 id: package-the-admitted-live-schedule-into-a-symbolic-kernel-program
 title: Package the admitted live schedule into a symbolic kernel program
-status: in-progress
+status: done
 priority: p1
 dependencies: [admit-symbolic-extents-through-schedule-formation]
 related: [deliver-an-artifact-family-from-a-symbolic-region, carry-live-extent-operands-through-the-artifact-envelope, associate-live-extent-operands-with-symbolic-semantic-interface-axes]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, co
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, identity, shapes, public-boundary]
-claimed_from: todo
-assignee: worker-packaging
-lease_expires_at: 1787164922
 ---
 ## User-visible outcome
 

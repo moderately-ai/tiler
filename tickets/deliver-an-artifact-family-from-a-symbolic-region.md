@@ -10,6 +10,16 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, frontend, inline-dx, shapes, milestone-0b]
 ---
+## Re-audit required — 2026-08-19, part of this ticket landed elsewhere
+
+The symbolic packaging carrier ([`package-the-admitted-live-schedule-into-a-symbolic-kernel-program`](package-the-admitted-live-schedule-into-a-symbolic-kernel-program.md)) merged at `8d2619e5`, and its worker reports that **the `deliver macos;` wall moved past delivery rather than into it**: a symbolic region now delivers a full artifact family, because Metal emission for the live carrier already existed (`a_live_extent_is_emitted_as_a_constant_parameter`) and packaging was the last missing step.
+
+**Do not start this ticket from its stated premise.** Re-audit every Fact at your own base first and report a per-Fact verdict, per the stale-Facts rule. Some of what this ticket describes as remaining is already delivered, and a worker who trusts the body will either redo landed work or record a wall that has moved.
+
+**What is explicitly NOT established, stated so it is not assumed either way.** The packaging carrier reports **no execution evidence** — nothing in it runs the artifact on a GPU — and it deliberately added no positive `pass/` facade fixture, because that sits inside this ticket's boundary rather than its own. So "delivers a full artifact family" is a statement about construction and packaging, not about execution. Establishing execution is still open work and this ticket is its likely owner; confirm that when you re-audit.
+
+**Also unresolved and relevant here:** three spikes call `DecodedInput::shape()` and will not compile until rerun, because `spikes/` sits outside the workspace and the carrier did not update it. That is recorded on the carrier's ticket as an unsupported case rather than repaired.
+
 ## User-visible outcome
 
 A region declaring `sym n` states `deliver macos;` and reaches the same expansion-time AOT flow a literal region reaches — compiled, cached, embedded, decoded, and routed — with **one** artifact identity across every extent the consumer later binds.
