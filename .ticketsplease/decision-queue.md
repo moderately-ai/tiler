@@ -168,7 +168,7 @@ Updated 2026-08-18: the compilation-selection provenance packet was parked as it
 
 - Ticket: `accept-the-tensor-contraction-successor-public-surface` (`p1`, filed 2026-08-18 at the item-16 acceptance). The exact drafted descriptor/profile/witness/evaluator surface from the reviewed packet awaits its own accept-with-exclusions-or-revise question. The implementation carrier `replace-the-standard-contraction-key-with-the-accepted-successor` is blocked on it plus the ADR-0013 carrier.
 
-## 21. Retained Metal measurement invocation authority — reviewed, held for queue order
+## 21. Retained Metal measurement invocation authority — ACCEPTED 2026-08-18 ((R, R) + STANDING measurement authorization; never ask per-session again)
 
 - Ticket: `resolve-the-retained-metal-profile-measurement-invocation-authority` (`p1`, `awaiting-decision`); the compilation-selection implementation carrier is blocked on it plus the accepted item 17.
 - Packet evidence: authored 2026-08-18 at `c068d24f`, independently reviewed at `6dcd49da` (all Facts re-derived including an 18-op/26-row census recount, both population evidence chains, and the byte-for-byte toolchain reachability under `/Applications/Xcode.app`; one minor wording repair). Verdict: ready for Tom.

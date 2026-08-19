@@ -1,7 +1,7 @@
 ---
 id: resolve-the-retained-metal-profile-measurement-invocation-authority
 title: Resolve the retained Metal profile measurement invocation authority
-status: awaiting-decision
+status: todo
 priority: p1
 dependencies: [decide-the-compilation-selection-provenance-public-and-wire-surface]
 related: [carry-required-compilation-selection-identity-on-compile-profile-contexts, split-metal-profile-measurement-sources-by-compilation-selection]
@@ -196,3 +196,10 @@ Every reproduction command in the packet's list was rerun with the stated result
 ### Verdict
 
 **Ready for Tom as-is** (with the one minor wording repair made here). The census recounts to eighteen operations / twenty-six rows from source; every population's evidence chain, hash, and scan reproduces exactly; the environment refutation of the prior frontier is measured and byte-for-byte; every elimination survives independent attack, including the recorded-invocation dominance argument and the retain-with-gap unconstructibility under the accepted parent; the three-survivor frontier is genuinely nondominated with (R, R) correctly recommended; the combined question is correctly framed on a source-verified dependency; and the drift-recording choice is right with nothing owed on the accepted parent.
+
+
+## Accepted disposition and standing authorization — 2026-08-18
+
+Tom answered the combined question in the live coordination session with **(R, R)** — the full re-measurement session — and issued a **standing authorization**: measurement sessions on the available hosts as they stand are pre-authorized from now on; per-session permission is never to be requested again ("never ask for permission again, thats why the m3 is there", relayed first-hand by the coordinator). Environment *modifications* (OS/Xcode/SDK/toolchain installs or upgrades) remain outside the grant, since they change what every retained record means.
+
+Execution plan under the accepted disposition: both harnesses driven through the production `CompileRequest`; offline row via `/Applications/Xcode.app` (byte-identical to the ledger's offline table); execution row truthfully re-declared at this host's current build (`26A5406e`, Apple M4 Max) in each population's own record; records pin harness hash and repository base; stop conditions as packeted. Protocol validity note: the grid probe is load-insensitive and may run at any time; the cost row is a timing measurement and runs only in a controlled quiet window on this host (lanes paused), per the repository performance protocol — the standing authorization covers the session, not a noisy measurement.
