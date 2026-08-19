@@ -157,6 +157,71 @@
 #     a live citation rested on it, never ambiguity inferred backwards from
 #     history.
 #
+# WHAT ROOTS A CITATION IN ANOTHER PROJECT, AND WHY THAT IS WRITTEN DOWN TOO
+#
+# A path that is nowhere in this tree, not even as a suffix, is usually drift --
+# but not always. `docs/**` cites upstream sources the way their own repositories
+# spell them, with the revision named in the prose beside the span:
+# `candle-core/src/metal_backend/device.rs:101` at `huggingface/candle`
+# `31f35b14`, and `MTLDevice.h:233-242` under `MacOSX26.5.sdk` in the macOS SDK
+# build `25F70`. Demanding those resolve against Tiler is the unsatisfiable kind
+# of condition the bare-path rule above already names.
+#
+# Until 2026-08-19 that judgement was inferred from the tree: a multi-segment
+# path was called upstream when its leading component matched no component of
+# any tracked path. That reads the wrong thing. It asks which directories exist
+# today, and a directory can stop existing. A live `adapter_route/adapter.rs:422`
+# fails loudly while `adapter_route` is still a tracked component; delete
+# `crates/tiler-runtime/tests/adapter_route/` -- the one deletion that breaks
+# every citation under it -- and the same citation is silently reclassified as
+# belonging to another project. Measured 2026-08-19 at `23eb1bf4` by deleting
+# exactly that directory: of the six pinned citations it broke, five named a path
+# beginning `crates/` or `tests/` and failed, while the sixth, the partial one,
+# printed `(rooted outside this tree: no tracked path has a adapter_route
+# component)` and reported nothing. Same deletion, same defect, and the citation
+# that went quiet was the one whose leading component the deletion removed.
+#
+# So the memory is written down, the way the ambiguity ledger above is: an
+# upstream root is listed by name, and nothing else is upstream. A multi-segment
+# path that resolves nowhere and is not rooted in a listed project FAILS, and the
+# failure names the root to add -- which is the only way an entry is ever added.
+#
+# Two properties make the list safe to hold. First, it can only ever skip fewer
+# citations than the component test did, because a listed root is required to be
+# absent from every tracked path: anything this skips, the old rule skipped too.
+# Measured 2026-08-19 at `23eb1bf4`, it converts none of the skipped population
+# into failures -- all 16 citations reaching the branch are rooted in
+# `candle-core`, `candle-metal-kernels`, or `MacOSX26.5.sdk`. Second, a listed
+# root that IS a tracked component would silence this tree rather than another
+# one, so it aborts the run at exit 2 naming the collision instead of being
+# quietly honoured.
+#
+# The list carries no floor, and the asymmetry with the ledger is the reason
+# rather than an omission. A truncated ledger silently weakens the check: every
+# entry lost is a failure that stops firing. A truncated upstream list does the
+# opposite -- the citations resting on it start failing on the next run -- so
+# truncation is already loud and a floor would add nothing.
+#
+# The version-pinned spelling is the same category reached by a different road,
+# `metal-0.33.0/src/device.rs:74-82` and
+# `objc2-metal-0.3.2/src/generated/MTLDevice.rs:238`, and it carries the same
+# collision guard rather than trusting the shape alone. That guard is not
+# theoretical: five tracked directories already carry a version-pinned name
+# (`docs/research/numerics/sources/arrow-25.0.0` and four siblings), so on the
+# shape test alone a partial citation rooted in one of them would be skipped as
+# somebody else's dependency while the file it names sits in the index.
+#
+# The two skips are counted separately, and that separation is the point. They
+# shared one counter until 2026-08-19, under a census line that named only the
+# second; the 32 it printed at `bda38064` was 16 of each, and it was read off as
+# the size of one branch into a ticket Fact. A census line that sums two
+# exclusions under one name is a silence of its own.
+#
+# A single-segment name is never upstream. A bare filename is the shorthand this
+# repository uses for its own files, and one that resolves nowhere is drift or a
+# citation that should have carried its provenance -- both of which must fail
+# rather than skip.
+#
 # WHAT COUNTS AS A LINK, AND WHY IT IS A SECOND POPULATION
 #
 # A markdown link is a different claim from a citation and is checked
@@ -405,8 +470,25 @@ fi
 indexfile=$(mktemp)
 fixture=$(mktemp)
 ledgerfile=$(mktemp)
-trap 'rm -f "$indexfile" "$fixture" "$ledgerfile"' EXIT INT TERM
+upstreamfile=$(mktemp)
+trap 'rm -f "$indexfile" "$fixture" "$ledgerfile" "$upstreamfile"' EXIT INT TERM
 git ls-files >|"$indexfile"
+
+# The upstream-root list, quoted heredoc so nothing here is expanded. One leading
+# path component per line; blank lines and `#` comments are ignored by the
+# reader. A citation whose path resolves nowhere in this tree is called somebody
+# else's only when its leading component is named here -- never because the
+# directory it names happens to be absent today, which is the fail-open rule the
+# section above records and measures. Entries are added when a real upstream
+# citation lands and the run names the root it wants; a root that is also a
+# component of a tracked path aborts the run rather than being honoured.
+cat >|"$upstreamfile" <<'UPSTREAM'
+# huggingface/candle, cited at the revision named in the prose beside each span.
+candle-core
+candle-metal-kernels
+# The macOS SDK headers, cited with the SDK build named beside them.
+MacOSX26.5.sdk
+UPSTREAM
 
 # The retired-ambiguity ledger, quoted heredoc so nothing here is expanded. One
 # "/"-boundary suffix per line; blank lines and `#` comments are ignored by the
@@ -582,7 +664,7 @@ set -- "$fixture" "$@"
 # apostrophe anywhere -- prose included. An apostrophe closes the quote and awk
 # then reports a missing function from somewhere unrelated, which reads as a
 # logic bug rather than a quoting one.
-awk -v terminal="$terminal" -v verbose="$verbose" -v indexfile="$indexfile" -v fixture="$fixture" -v ledgerfile="$ledgerfile" '
+awk -v terminal="$terminal" -v verbose="$verbose" -v indexfile="$indexfile" -v fixture="$fixture" -v ledgerfile="$ledgerfile" -v upstreamfile="$upstreamfile" '
 function slurp(path,   line, s) {
 	if (path in content) return content[path]
 	s = ""
@@ -657,6 +739,18 @@ BEGIN {
 	}
 	close(ledgerfile)
 
+	# The recorded upstream roots. Read the same way as the ledger and
+	# deliberately floored differently: the header section says why a truncation
+	# here is already loud on the next run, so a floor would guard nothing. What
+	# this list carries instead is the collision check after the index below.
+	while ((getline up < upstreamfile) > 0) {
+		if (up == "" || up ~ /^#/) continue
+		if (up in upstream_root) continue
+		upstream_root[up] = 1
+		upstream_entries++
+	}
+	close(upstreamfile)
+
 	n_terminal = split(terminal, tstates, " ")
 	for (i = 1; i <= n_terminal; i++)
 		if (tstates[i] != "") is_terminal[tstates[i]] = 1
@@ -673,10 +767,12 @@ BEGIN {
 			if (!sub(/^[^\/]*\//, "", suffix)) break
 		}
 		# Every "/"-separated component of every tracked path, at any depth.
-		# This is what lets a path rooted in another project be told apart from
-		# one rooted here that has drifted; see the external branch in
-		# classify() for why the test is over components rather than over root
-		# entries.
+		# This no longer decides that a path is upstream -- the recorded list
+		# does, and the header says why inferring it from the tree fails open on
+		# a directory deletion. What it decides now is the opposite direction: a
+		# name this tree uses at any depth cannot be claimed by another project,
+		# which is what the collision check below and the version-pinned skip in
+		# classify() both rest on.
 		nseg = split(p, segs, "/")
 		for (si = 1; si <= nseg; si++) component[segs[si]] = 1
 
@@ -689,6 +785,21 @@ BEGIN {
 		while (sub(/\/[^\/]*$/, "", dir)) treedir[dir] = 1
 	}
 	close(indexfile)
+
+	# A recorded upstream root that is also a component of a tracked path would
+	# silence this tree rather than another one: every unresolvable citation
+	# under that name would skip instead of failing, which is exactly the defect
+	# the list was written to remove. There is no safe way to honour such an
+	# entry, so the run stops and names it. This is also what lets the skip in
+	# classify() test the list alone, with no component test beside it.
+	for (up in upstream_root)
+		if (up in component)
+			collisions = collisions "\n        " up
+	if (collisions != "") {
+		printf "check-citations: upstream root(s) recorded in check-citations.sh are also components of tracked paths, so citations under them would be skipped instead of checked:%s\n", collisions
+		aborted = 1
+		exit 2
+	}
 
 	# PATHRE is path-shaped on its face: it carries an extension. PATHRE_LOOSE
 	# also admits an extensionless name so `Makefile:34` and
@@ -793,7 +904,10 @@ FNR == 1 {
 	scan_line($0)
 }
 
-END { end_file(); report() }
+# A BEGIN abort still runs END, so the report would print a census over an
+# empty run and exit 1, hiding both the message and the exit status that says
+# the run could not be trusted rather than that it found defects.
+END { if (aborted) exit 2; end_file(); report() }
 
 function decide(   parent) {
 	decided = 1
@@ -965,7 +1079,7 @@ function end_file() {
 	ticket = ""
 }
 
-function classify(t, wrapped,   path, pin, anchor, form, ln, lo, hi, resolved, hay, lead) {
+function classify(t, wrapped,   path, pin, anchor, form, ln, lo, hi, resolved, hay, lead, has_dir) {
 	sub(/^[ \t]+/, "", t)
 	sub(/[ \t]+$/, "", t)
 	if (t == "") return
@@ -1002,12 +1116,27 @@ function classify(t, wrapped,   path, pin, anchor, form, ln, lo, hi, resolved, h
 
 	resolved = path
 	if (!exists(path)) {
-		if (path ~ /^[A-Za-z0-9_-]+-[0-9]+\.[0-9]+\.[0-9]+\//) {
+		# Both skips below say the citation belongs to another project, and both
+		# decide that from the leading component. A path with no directory
+		# component is never either one: a bare filename is the shorthand this
+		# repository uses for its own files, so one that resolves nowhere is
+		# drift and has to fail.
+		lead = path
+		has_dir = sub(/\/.*$/, "", lead)
+
+		if (has_dir && !(lead in component) && lead ~ /^[A-Za-z0-9_-]+-[0-9]+\.[0-9]+\.[0-9]+$/) {
 			# A dependency source pinned by version, e.g.
 			# `objc2-metal-0.3.2/src/generated/MTLDevice.rs:238`. It names a
 			# real revision of a real crate that simply is not in this tree,
 			# so it is outside what a working-tree check can decide.
-			external++
+			#
+			# The component test beside the shape test is what keeps this from
+			# being the fail-open hole the header describes. Vendored sources
+			# here carry version-pinned directory names of their own, five of
+			# them under docs/research/numerics/sources/, so on the shape alone
+			# a partial citation rooted in one of those would be skipped while
+			# the file it names sits in the index.
+			external_pinned++
 			if (verbose) printf "SKIP  %s: `%s` (external crate source)\n", ticket, t
 			return
 		}
@@ -1052,26 +1181,24 @@ function classify(t, wrapped,   path, pin, anchor, form, ln, lo, hi, resolved, h
 			# a caught defect. It is the same category the version-pinned skip
 			# above already carries, reached by a different spelling.
 			#
-			# The test is over path *components*, not root entries, and the
-			# difference is load-bearing. A partial-path citation names an
-			# inner directory -- `codec/encode.rs:443`, `semantic/identity.rs`
-			# -- so a root-entry test would call every unresolvable one of
-			# those external and silently stop reporting exactly the drift this
-			# check exists for. `candle-core` and `candle-metal-kernels` are
-			# components of nothing here; `src`, `codec`, and `semantic` are.
-			#
-			# A single-segment name is never external. A bare filename is the
-			# shorthand this repository uses for its own files, and one that
-			# resolves nowhere is drift or a citation that should have carried
-			# its provenance -- both of which must fail rather than skip.
-			lead = path
-			if (sub(/\/.*$/, "", lead) && !(lead in component)) {
-				external++
-				if (verbose) printf "SKIP  %s: `%s` (rooted outside this tree: no tracked path has a %s component)\n", ticket, t, lead
+			# The answer comes from the recorded list of upstream roots and from
+			# nothing else. Reading it off the tree instead -- calling a path
+			# upstream when no tracked path carries its leading component --
+			# fails open on the one event that breaks every citation under a
+			# directory at once, which is deleting the directory; the header
+			# carries the measurement. A listed root that is also a tracked
+			# component aborts the run in BEGIN, so the list alone is enough
+			# here and this skip can never be wider than the old test was.
+			if (has_dir && (lead in upstream_root)) {
+				external_rooted++
+				if (verbose) printf "SKIP  %s: `%s` (rooted in %s, a recorded upstream project)\n", ticket, t, lead
 				return
 			}
 			checked++; cit_checked[role]++
-			fail(t, "no file in the tree is or ends with " path)
+			if (has_dir)
+				fail(t, sprintf("no file in the tree is or ends with %s, and %s is not a recorded upstream root in check-citations.sh. If this names a file in this repository the citation has drifted, so re-read the source at your own base and pin a path long enough to be unique on its own. If it names another project, add %s to that list so the skip is recorded rather than inferred from whichever directories happen to exist today.", path, lead, lead))
+			else
+				fail(t, "no file in the tree is or ends with " path)
 			return
 		}
 	}
@@ -1160,8 +1287,14 @@ function report(   starved, empty, live) {
 		cit_checked["fixture"] + 0, FIXTURE_LABEL
 	printf "  forms        %d line-only, %d anchor-only, %d line+anchor\n", \
 		cit_line + 0, cit_anchor + 0, cit_both + 0
-	printf "  partial path %d resolved by unique suffix, %d skipped as ambiguous, %d skipped as rooted outside this tree\n", \
-		partial_resolved + 0, ambiguous + 0, external + 0
+	# The two "belongs to another project" skips are counted on their own
+	# numbers. They shared one counter under a line that named only the second
+	# until 2026-08-19, and the sum was read off as the size of that branch into
+	# a ticket Fact -- a census line that adds two exclusions under one name is
+	# a silence in the same way an uncounted exclusion is.
+	printf "  partial path %d resolved by unique suffix, %d skipped as ambiguous, %d skipped as a version-pinned dependency source, %d skipped as rooted in a recorded upstream project\n", \
+		partial_resolved + 0, ambiguous + 0, external_pinned + 0, external_rooted + 0
+	printf "  upstream     %d recorded upstream root(s), none of which may be a component of any tracked path\n", upstream_entries + 0
 	printf "  ambiguity    %d ledger entry(s) against a floor of %d, %d citation(s) matched one, %d collapsed to a survivor, %d ambiguous off the ledger\n", \
 		ledger_entries + 0, LEDGER_FLOOR, ledger_matched + 0, ledger_collapsed + 0, ledger_stale + 0
 	printf "  not checked  %d bare path mention(s) carrying no line or anchor\n", bare_paths + 0
