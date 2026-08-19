@@ -43,6 +43,7 @@
 //! because it is the half nobody re-verifies by hand.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// This file's own name, excluded from the resolution universe.
@@ -176,10 +177,19 @@ fn workspace_crates() -> PathBuf {
 
 /// Returns every `.rs` file under `root`, in a deterministic order.
 ///
-/// `target/` is skipped: a build directory holds generated and vendored sources
-/// whose identifiers would enlarge the resolution universe with names no comment
-/// in this workspace is talking about, and whose presence depends on whether
-/// anyone has built yet.
+/// A Cargo *build* directory is skipped: it holds generated and vendored
+/// sources whose identifiers would enlarge the resolution universe with names no
+/// comment in this workspace is talking about, and whose presence depends on
+/// whether anyone has built yet. What identifies one is its position — a
+/// `target` directory beside the `Cargo.toml` of the package that builds into it
+/// — and not its name alone.
+///
+/// **A source directory named `target` must be scanned.** `tiler-compiler`'s
+/// declaration vocabulary lives in `src/target/`, so a name-only test would put
+/// that whole module tree outside both scans at once: its definitions would
+/// leave the resolution universe, making live citations elsewhere read as
+/// dangling, and its own comments would stop being checked at all. Both
+/// directions fail silently, which is why the discriminator is positional.
 fn rust_files(root: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     collect_rust_files(root, &mut found);
@@ -198,13 +208,30 @@ fn collect_rust_files(directory: &Path, found: &mut Vec<PathBuf>) {
             .path();
         let name = path.file_name().unwrap_or_default().to_owned();
         if path.is_dir() {
-            if name != "target" {
+            if !is_build_directory(directory, &name) {
                 collect_rust_files(&path, found);
             }
         } else if path.extension().is_some_and(|extension| extension == "rs") && name != SELF_FILE {
             found.push(path);
         }
     }
+}
+
+/// Whether `name`, a directory inside `parent`, is a package's Cargo build
+/// directory.
+///
+/// Cargo puts a package's build output in a `target` directory beside its
+/// `Cargo.toml`, so that pairing is what distinguishes one from a source
+/// directory that happens to be called `target`. The manifest test is the
+/// load-bearing half: without it the predicate is a name test, and
+/// [`rust_files`] records what a name test costs.
+///
+/// It errs toward scanning. An unrecognized build directory enlarges the
+/// resolution universe, which can only mask a dangling citation; an unscanned
+/// source directory removes real definitions and invents dangling ones, and
+/// silences that directory's own citations as well.
+fn is_build_directory(parent: &Path, name: &OsStr) -> bool {
+    name == "target" && parent.join("Cargo.toml").is_file()
 }
 
 /// Returns every identifier that appears outside a comment, plus every file stem.
