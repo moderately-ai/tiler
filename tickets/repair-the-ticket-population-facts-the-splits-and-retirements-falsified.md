@@ -5,8 +5,8 @@ status: todo
 priority: p1
 dependencies: []
 related: [repair-the-accepted-decision-records-the-splits-and-retirements-falsified, repair-the-navigation-and-contract-docs-the-audit-falsified, repair-the-research-records-the-key-replacement-and-splits-falsified, emit-the-indirect-gather-on-metal]
-scopes: [project/tickets]
-shared_scopes: []
+scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, audit, tickets]
 ---
@@ -53,6 +53,10 @@ The full `tickets/` census at this base is far wider than the six rows above —
 - Rerun every reproducing command in a ticket you touch. Repair the ones that error; report any that run but return a different result than the ticket claims.
 - Produce the closing census over `tickets/` **and** state the state partition (which files were repaired, which are `done`/`closed` history left alone) with counts.
 - For `emit-the-indirect-gather-on-metal`, deliver the readiness determination described above as a written finding; leave the state change to the coordinator.
+
+## Coordination
+
+`project/tickets` is declared **shared** rather than exclusive so this lane can run beside its three sibling document tickets, which each append to their own ticket file under the repository's default shared declaration. That is safe only because the file sets are disjoint, and keeping them disjoint is this lane's obligation: **do not edit `repair-the-accepted-decision-records-the-splits-and-retirements-falsified.md`, `repair-the-navigation-and-contract-docs-the-audit-falsified.md`, `repair-the-research-records-the-key-replacement-and-splits-falsified.md`, `size-the-numerical-realization-flag-list-from-its-type.md`, or `re-derive-the-contraction-fusion-role-rationale-after-the-key-replacement.md`.** Report the exact file list you touched so the coordinator can confirm disjointness against the sibling diffs before merging.
 
 ## Non-goals
 
