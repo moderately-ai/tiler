@@ -1,7 +1,7 @@
 ---
 id: replace-the-serial-sum-contributor-fields-with-the-exhaustive-source
 title: Replace the serial-sum contributor fields with the exhaustive source
-status: todo
+status: in-progress
 priority: p3
 dependencies: [admit-a-materialized-producer-in-a-serial-reduction-contributor]
 related: [match-the-declared-input-contributor-in-the-fused-proof-exemption, admit-a-recognized-chain-more-than-one-materialization-boundary-deep]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, identity, numerics]
+claimed_from: todo
+assignee: worker-contributor-source
+lease_expires_at: 1787159586
 ---
 ## User-visible outcome
 
