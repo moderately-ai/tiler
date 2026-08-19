@@ -1,7 +1,7 @@
 ---
 id: decide-the-host-evidence-to-profile-composition-model
 title: Decide the host evidence to profile composition model
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [declare-metal-subgroup-realization-facts-in-the-target-profile]
@@ -9,9 +9,6 @@ scopes: [research/target-profiles, contracts/artifacts, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: worker-composition-model
-lease_expires_at: 1787105011
 ---
 ## User-visible outcome
 
@@ -185,3 +182,11 @@ Frontmatter and shape conform (status `deferred`, ends with `## Trigger check lo
 ### Verdict
 
 **Ready for Tom**, with the three minor repairs made in place and one owed companion repair (Discrepancy 2) recorded. Every anchor resolves against the file it names; every Fact-audit verdict survives independent re-derivation from source; each elimination's gate reason is real and verified from code, records, or accepted decisions rather than restated from the packet; the dominance of 2b over 4-heavy holds against the two located defect records and against a search for defects in the population 4-heavy would guard; the six components are consistent with ADR 0086, 0092, 0094, 0043, and the accepted (R, R) plan; the identity-consequences table is derived correctly from the encoders; and the deferred prerequisite is well-formed with reproducible triggers. Nothing found changes the recommendation or the option set.
+
+## Accepted decision — 2026-08-19
+
+Tom accepted **model 2b, components 1–6 exactly as stated in the packet** (authored `6236feef`, independently reviewed `427b2080`, both merged at `1578c113`), with the stated consequences: the M3 Pro width record permanently stays a crate-private evidence fixture; the demoted spike's rerun-from-`586c508a` exception becomes the permanent disposition; and the standard profile's subgroup path is a new pre-registered measurement on the current host under the standing measurement authorization.
+
+- Provenance: Tom, 2026-08-19, live coordination session ("accepted, next decision" on item 25 of `.ticketsplease/decision-queue.md`, presented in explain-then-recommend form immediately beforehand).
+- What this accepts: claim-scoped family keys with no procurement identifiers (review-time naming convention, no typed grammar); per-population measured provenance inside identity (zero encoder change); protocol-pre-registered single-host-to-family composition at `MeasuredEnvironment` validity; scope matching answered at the host-bearing phases by byte-exact row equality that stays necessary-not-sufficient under ADR 0086; in-family contradiction resolved by withdrawal, never per-host key variants; "attestation" reserved for ADR 0086's mechanism, provenance carrying host identification.
+- Remainder: the acceptance sweep is split to [`apply-the-accepted-host-evidence-composition-model`](apply-the-accepted-host-evidence-composition-model.md) — the ADR recording components 1–6 verbatim, the standard-deferral premise repair and trigger update, the spike README/catalogue permanent-disposition pair, and the `metal_subgroup_declaration.rs` module-doc paragraph. The option-independent prerequisite `define-host-applicability-for-profiles-whose-rows-span-environments` stays deferred with its trigger log. This decision ticket closes done.
