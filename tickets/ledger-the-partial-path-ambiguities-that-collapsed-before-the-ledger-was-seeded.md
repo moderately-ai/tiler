@@ -1,7 +1,7 @@
 ---
 id: ledger-the-partial-path-ambiguities-that-collapsed-before-the-ledger-was-seeded
 title: Ledger the partial-path ambiguities that collapsed before the ledger was seeded
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [stop-the-citation-checkers-ambiguity-skip-resolving-against-a-basename-twin]
@@ -9,9 +9,6 @@ scopes: [implementation/workspace, research/extensions]
 shared_scopes: [project/tickets]
 paths: [check-citations.sh, docs/research/extensions/backend-provider-composition.md]
 tags: [gates, citations, correctness]
-claimed_from: todo
-assignee: worker-ledger
-lease_expires_at: 1787167036
 ---
 ## User-visible outcome
 
