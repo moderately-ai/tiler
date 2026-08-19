@@ -1,7 +1,7 @@
 ---
 id: package-the-admitted-live-schedule-into-a-symbolic-kernel-program
 title: Package the admitted live schedule into a symbolic kernel program
-status: in-progress
+status: awaiting-decision
 priority: p1
 dependencies: [admit-symbolic-extents-through-schedule-formation]
 related: [deliver-an-artifact-family-from-a-symbolic-region, carry-live-extent-operands-through-the-artifact-envelope, associate-live-extent-operands-with-symbolic-semantic-interface-axes]

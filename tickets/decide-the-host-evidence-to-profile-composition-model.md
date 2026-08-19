@@ -1,7 +1,7 @@
 ---
 id: decide-the-host-evidence-to-profile-composition-model
 title: Decide the host evidence to profile composition model
-status: in-progress
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: [declare-metal-subgroup-realization-facts-in-the-target-profile]
