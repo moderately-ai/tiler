@@ -4,9 +4,9 @@
 the module was one file, its layers share one import surface, and each child \
 globs that surface from the root exactly as `pipeline`'s children do. \
 Enumerating the parent's imports per child would restate the same forty names \
-thirteen times and would have to be restated again on every change. The globs \
-are scoped to one parent whose contents sit in the same directory, and the \
-root's own re-export globs carry each item at its own declared visibility"
+thirteen times and would have to be restated again on every change. The child \
+globs are `super::*` only — the parent form the workspace macro-boundary scan \
+admits — while the root itself enumerates every carried item explicitly"
 )]
 
 //! The compilation request boundary.
@@ -98,26 +98,82 @@ mod subject;
 mod verified;
 mod verify;
 
-// One glob per child, carrying each item at its own declared visibility rather
-// than at the re-export's, so the surface reachable as `crate::request::_` is
-// exactly what it was while this module was one file. `budget` is the only child
+// One explicit import block per child, carrying each item at its own declared
+// visibility rather than at the re-export's, so the surface reachable as
+// `crate::request::_` is exactly what it was while this module was one file.
+// Explicit names rather than globs because the workspace macro-boundary scan
+// admits only parent globs: a non-parent glob could import an untracked macro
+// name, so the spine enumerates what it carries. `budget` is the only child
 // holding `pub` items — `crate::session` re-exports `BudgetRefusal` and
-// `BudgetResource` onto the public surface — and `elementwise`, `folded`,
-// `graph`, and `structural` hold nothing above `pub(super)`, so their globs are
-// plain imports: a wider spelling there would assert a reach no item has.
-pub(crate) use authority::*;
-pub use budget::*;
-pub(crate) use contract::*;
-use elementwise::*;
-use folded::*;
-use graph::*;
-pub(crate) use normal_form::*;
-pub(crate) use recognize::*;
-pub(crate) use refusal::*;
-use structural::*;
-pub(crate) use subject::*;
-pub(crate) use verified::*;
-pub(crate) use verify::*;
+// `BudgetResource` onto the public surface. `pub(super)` items appear here as
+// plain imports so siblings reach them through their own `use super::*`; a
+// wider spelling would assert a reach no item has.
+pub(crate) use authority::{
+    CompilationRequest, CompilerCapabilitySnapshot, LoweringProviderIdentity,
+};
+use authority::{REQUEST_SCHEMA_VERSION, carries_program_environment};
+pub(crate) use budget::DeterministicBudgets;
+use budget::check_budget;
+pub use budget::{BudgetRefusal, BudgetResource};
+pub(crate) use contract::{
+    ExceptionalValueDimensionKind, IncoherentContract, MAX_NUMERICAL_CONTRACT_PREFERENCES,
+    NumericalContractPreference, StrictF32NumericalContract, coherence, contract_key_element_bytes,
+};
+use elementwise::{
+    ElementwiseLeaves, ElementwiseRefusal, RecognizedElementwise, constant_family,
+    declared_ordinal, plan_elementwise, recognize_elementwise, recognize_epilogue,
+    recognize_pointwise,
+};
+use folded::{
+    StagedOperandAdmission, materializes_its_result, normalize_contraction,
+    recognize_epilogue_producer, recognize_reduction, recognize_staged_family,
+};
+use graph::{
+    check_canonical_reduction_axes, constant_bits, element_count_u64, producer, producer_for_value,
+    reduction_axes, sourced_shape, sourced_shape_ref, static_shape, static_shape_ref,
+    unsupported_symbolic_extent,
+};
+pub(crate) use normal_form::{
+    BoundaryRead, DeclaredInputOrdinal, NormalizedContraction, NormalizedContractionRead,
+    NormalizedEpilogue, NormalizedOutput, NormalizedPointwise, NormalizedProgram,
+    NormalizedSerialSum, NormalizedStaged, RecognizedPointwise, RecognizedSerialSumMembers,
+};
+pub(crate) use recognize::recognized_arithmetic;
+use recognize::{recognized_program_arithmetic, select_supported_strategy};
+pub(crate) use refusal::{ContractRejection, DTypeDispatchRefusalDisposition, RequestError};
+use refusal::{mismatch, unsupported};
+use structural::{is_structural_family, recognize_structural_read};
+pub(crate) use subject::{
+    NormalizedEpilogueSubject, NormalizedOutputSubject, NormalizedSerialSumSubject,
+    VerifiedRequestSubject, permission_tag,
+};
+use subject::{VerifiedRequestAuthorities, request_subject};
+pub(crate) use verified::{
+    VerifiedCompilationRequest, VerifiedRequest, VerifiedTargetRequest, VerifiedTargetResolution,
+    VerifiedTargetSlot,
+};
+pub(crate) use verify::verify_request;
+use verify::{require_elementary_accuracy, verify_program};
+
+// The `#[cfg(test)]` half of the carried surface: items the children gate to
+// test builds, plus items whose only cross-module consumers are the test
+// modules below. A glob carried these silently; explicit imports must state
+// the gate or the lib build would deny them as unused.
+#[cfg(test)]
+pub(crate) use contract::is_f32_contract_key;
+#[cfg(test)]
+use contract::{canonical_contract_key, contract_key_arithmetic};
+#[cfg(test)]
+use recognize::{check_output_cover, published_and_consumed_overlap, recognize_program_outputs};
+#[cfg(test)]
+use subject::{
+    PARAMETRIC_BROADCAST_ACCESS_TAG, UNREAD_DECLARED_INPUT_TAG, encode_access_relation,
+    encode_elementwise_reads, encode_explain_shape, encode_output_subject, output_subject,
+};
+#[cfg(test)]
+pub(crate) use verified::verify_planned_request;
+#[cfg(test)]
+use verify::{canonical_program_value_types, check_program_budgets, resolve_numerical_contract};
 
 #[cfg(test)]
 mod subject_budget;
