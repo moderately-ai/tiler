@@ -56,6 +56,7 @@ use super::payload::{decode_metadata, payload_identity};
 use tiler_ir::kernel::KernelType;
 use tiler_ir::program::abi::compare_expr_nodes;
 use tiler_ir::program::{StorageEncoding, StorageScalar};
+use tiler_ir::shape::{BindingSource, ShapeSymbol, SourcedExtent};
 
 /// Proves every artifact-model obligation a decoded envelope can discharge.
 ///
@@ -87,6 +88,10 @@ pub(super) fn validate(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecE
     check_plan_determinism(envelope)?;
     check_entry_mappings(envelope)?;
     check_extent_operand_static_axes(envelope)?;
+    // After the interface's own structural obligations and before any expression
+    // check, because an axis whose symbol the environment does not declare has
+    // no binding a later evaluation could resolve.
+    check_interface_symbol_coherence(envelope)?;
     let facts = ExpressionFacts::derive(envelope.expressions());
     check_expression_closure(envelope)?;
     check_backend_entries(envelope)?;
@@ -172,7 +177,7 @@ fn interface_facts(envelope: &ArtifactEnvelope) -> AbiFacts {
         // A decoded interface may repeat a key only if it also survives the
         // identity comparison, so a duplicate here is recorded and left to that
         // check rather than masked by a binder rejection.
-        let _ = binder.bind_input_shape(&input.key, &input.shape);
+        let _ = binder.bind_declared_extents(&input.key, &input.extents);
     }
     binder.build()
 }
@@ -393,7 +398,7 @@ fn check_extent_operands(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCode
                     key: operand.key.as_str().to_owned(),
                 });
             };
-            let rank = input.shape.rank();
+            let rank = input.rank();
             if usize::try_from(operand.axis.get()).unwrap_or(usize::MAX) >= rank {
                 return Err(ArtifactCodecError::ExtentOperandAxis {
                     key: operand.key.as_str().to_owned(),
@@ -412,14 +417,20 @@ fn check_extent_operands(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCode
     Ok(())
 }
 
-/// Refuses every live-extent operand row the published interface fixes.
+/// Refuses every live-extent operand row over an axis the published interface
+/// fixes.
 ///
-/// The decoded interface grammar states only literal extents, so the axis a
-/// row names is fixed by the artifact's own published interface, and a fixed
-/// semantic axis must not acquire a caller-selected extent. Until a symbolic
-/// interface representation exists on the wire (the packaging decision), every
-/// declared row is therefore refused by name — the decode-side half of the
-/// construction-time `ExtentOperandStaticAxis` association.
+/// A fixed semantic axis must not acquire a caller-selected extent, and this is
+/// the decode-side half of the construction-time `ExtentOperandStaticAxis`
+/// association.
+///
+/// **Per-axis since `tiler.artifact-program.v21`.** The decoded interface
+/// grammar used to state only literal extents, so *every* axis a row could name
+/// was fixed and this refused every declared row by name. The grammar now states
+/// each axis literal-or-symbol, so the question is asked of the axis the row
+/// actually names: a literal one is refused and reports its own extent, and a
+/// symbolic one is the case the row exists for and passes on to the association
+/// checks.
 ///
 /// Deliberately after [`check_extent_operands`] and `check_entry_mappings`, so
 /// a row that is *also* structurally broken — misordered, duplicated, out of
@@ -431,7 +442,7 @@ fn check_extent_operand_static_axes(envelope: &ArtifactEnvelope) -> Result<(), A
         .iter()
         .flat_map(|variant| &variant.entries)
     {
-        if let Some(operand) = entry.input_extents.first() {
+        for operand in &entry.input_extents {
             let input = envelope
                 .inputs()
                 .iter()
@@ -439,14 +450,120 @@ fn check_extent_operand_static_axes(envelope: &ArtifactEnvelope) -> Result<(), A
                 .expect("check_extent_operands proved every operand key is declared");
             let axis = usize::try_from(operand.axis.get())
                 .expect("check_extent_operands proved the axis is inside the input's rank");
-            return Err(ArtifactCodecError::ExtentOperandStaticAxis {
-                key: operand.key.as_str().to_owned(),
-                axis: operand.axis.get(),
-                extent: input.shape.extents()[axis].get(),
+            if let Some(literal) = input.extents[axis].as_static() {
+                return Err(ArtifactCodecError::ExtentOperandStaticAxis {
+                    key: operand.key.as_str().to_owned(),
+                    axis: operand.axis.get(),
+                    extent: literal.get(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Proves the two spellings of one symbolic boundary cannot disagree.
+///
+/// The published interface names a symbol per axis; the retained environment
+/// declares symbols and roots some of them at an exact `(input, axis)`. Those
+/// are independent statements about one program, and the wire carries both, so
+/// this refuses the only two ways they could contradict each other rather than
+/// resolving one in favour of the other.
+///
+/// 1. **Declaration.** An interface axis naming a symbol the retained
+///    environment does not declare has no binding a consumer could resolve it
+///    through. Refused as `UndeclaredInterfaceSymbol`.
+/// 2. **Root agreement.** Where the environment roots a symbol at `(key, axis)`
+///    *and* that input's own interface entry names a symbol at that axis, the
+///    two must be the same symbol. Otherwise one axis is spelled by two
+///    different names and a consumer resolving the root would bind a quantity
+///    the interface calls something else. Refused as `RootedAxisDisagreement`.
+///
+/// **A literal at a rooted axis is not a disagreement, and refusing it would be
+/// a defect.** An environment may legitimately root a symbol at a statically
+/// known dimension — the `S`/`C`/`T` carriers root at `input[0]` and `input[1]`
+/// while the interface fixes both — and `tiler.artifact-program.v17` pins that
+/// an unused retained environment is identity-bearing precisely so such a
+/// program is representable. The symbol is simply determined there.
+///
+/// **A symbol on an axis the environment roots elsewhere is not one either.** In
+/// the admitted same-shape population every input wears `n` while only one of
+/// them roots it; that states an equality the retained constraints and the
+/// runtime binding decide, not a contradiction in the spelling.
+///
+/// Outputs are checked for declaration only: an output axis has no root row of
+/// its own, so agreement has nothing to compare against on that side.
+///
+/// A root naming an input the artifact does not declare, or an axis outside its
+/// rank, is left alone here — `RetainedShapeEnvironment::evaluate` already
+/// reports both as an invalid evaluation domain, and duplicating them would give
+/// one fact two refusals.
+fn check_interface_symbol_coherence(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecError> {
+    let retained = &envelope.semantic().retained_shape;
+    for (key, axis, symbol) in envelope
+        .inputs()
+        .iter()
+        .flat_map(|input| declared_symbols(input.key.as_str(), &input.extents))
+        .chain(
+            envelope
+                .outputs()
+                .iter()
+                .flat_map(|output| declared_symbols(output.key.as_str(), &output.extents)),
+        )
+    {
+        if !retained
+            .bindings()
+            .iter()
+            .any(|(declared, _)| declared == symbol)
+        {
+            return Err(ArtifactCodecError::UndeclaredInterfaceSymbol {
+                key: key.to_owned(),
+                axis,
+                symbol: symbol.to_string(),
+            });
+        }
+    }
+    for (symbol, binding) in retained.bindings() {
+        let BindingSource::InputDimension { input, axis } = binding.source() else {
+            continue;
+        };
+        let Some(entry) = envelope.inputs().iter().find(|entry| entry.key == *input) else {
+            continue;
+        };
+        let Some(declared) = usize::try_from(axis.get())
+            .ok()
+            .and_then(|axis| entry.extents.get(axis))
+        else {
+            continue;
+        };
+        let Some(spelled) = declared.symbol() else {
+            continue;
+        };
+        if spelled != symbol {
+            return Err(ArtifactCodecError::RootedAxisDisagreement {
+                key: input.as_str().to_owned(),
+                axis: axis.get(),
+                rooted: symbol.to_string(),
+                declared: spelled.to_string(),
             });
         }
     }
     Ok(())
+}
+
+/// Returns every symbolic axis of one declared boundary, with its position.
+fn declared_symbols<'a>(
+    key: &'a str,
+    extents: &'a [SourcedExtent],
+) -> impl Iterator<Item = (&'a str, u32, &'a ShapeSymbol)> {
+    extents
+        .iter()
+        .enumerate()
+        .filter_map(move |(axis, extent)| {
+            extent
+                .symbol()
+                .map(|symbol| (key, u32::try_from(axis).unwrap_or(u32::MAX), symbol))
+        })
 }
 
 fn check_target_component(

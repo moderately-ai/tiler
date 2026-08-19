@@ -139,6 +139,8 @@ pub(crate) enum TagSubject {
     /// encoding, so a tag naming it would give one record two spellings.
     /// `super::payload` states why that matters for payload identity.
     PayloadPlatform,
+    /// The source kind of one declared interface axis: a literal or a symbol.
+    InterfaceExtentSource,
 }
 
 impl fmt::Display for TagSubject {
@@ -615,13 +617,18 @@ pub(crate) enum ArtifactCodecError {
     },
     /// A live-extent operand row names an interface axis the artifact fixes.
     ///
-    /// The decoded interface grammar carries only literal extents, so every
-    /// axis a row can name is fixed by the artifact's own published interface —
-    /// and a fixed semantic axis must not acquire a caller-selected extent.
-    /// The same combination is refused at construction as
+    /// A fixed semantic axis must not acquire a caller-selected extent. The
+    /// same combination is refused at construction as
     /// `ArtifactBuildError::ExtentOperandStaticAxis`; this is the re-proof on
-    /// bytes no builder wrote, and it holds for every row until a symbolic
-    /// interface representation exists on the wire.
+    /// bytes no builder wrote.
+    ///
+    /// **Per-axis since `tiler.artifact-program.v21`, not blanket.** The
+    /// decoded interface grammar used to carry only literal extents, so every
+    /// axis a row could name was fixed and every row was refused by this rule.
+    /// The grammar now spells each axis literal-or-symbol, so the rule asks the
+    /// question it was always about: a row over a *literal* axis is refused and
+    /// names that axis's one extent, while a row over a symbolic axis is the
+    /// case the row exists for and passes to the association checks.
     ExtentOperandStaticAxis {
         /// Stable input key the row named.
         key: String,
@@ -629,6 +636,55 @@ pub(crate) enum ArtifactCodecError {
         axis: u32,
         /// The one extent the published interface fixes for that axis.
         extent: u64,
+    },
+    /// A declared interface axis named a scope or symbol name the shape
+    /// vocabulary refuses to construct.
+    InvalidInterfaceSymbol {
+        /// Why the constructor refused.
+        cause: tiler_ir::shape::ShapeEnvError,
+    },
+    /// A declared interface axis names a symbol the retained environment does
+    /// not declare.
+    ///
+    /// The two spellings of one boundary — the per-axis interface symbol and
+    /// the retained environment's declarations — must agree, and this is the
+    /// direction in which the interface could name a symbol from nowhere. A
+    /// consumer resolving that axis would have no binding to resolve it
+    /// through, so the artifact is refused rather than loaded with an axis
+    /// nothing can bind.
+    UndeclaredInterfaceSymbol {
+        /// Stable interface key whose axis named the symbol.
+        key: String,
+        /// Axis that named it.
+        axis: u32,
+        /// The scoped symbol the axis named, as `scope::name`.
+        symbol: String,
+    },
+    /// Two different symbols name one axis: the one the environment roots there
+    /// and the one the published interface spells there.
+    ///
+    /// The retained environment roots a symbol at an exact `(input, axis)`, and
+    /// that input's interface entry independently names its axes. Where both
+    /// name a *symbol* at the same axis it must be the same symbol; otherwise a
+    /// consumer resolving the root binds a quantity the interface calls
+    /// something else. Refused rather than resolved by precedence: silently
+    /// preferring one spelling would let a producer publish a boundary its own
+    /// environment contradicts.
+    ///
+    /// Deliberately narrower than "the rooted axis must be symbolic". An
+    /// environment may root a symbol at a statically known dimension — the
+    /// symbol is then simply determined there — and
+    /// `tiler.artifact-program.v17` pins that such an artifact is
+    /// representable and identity-bearing.
+    RootedAxisDisagreement {
+        /// Stable input key the environment roots at.
+        key: String,
+        /// Root axis the environment names.
+        axis: u32,
+        /// The scoped symbol the environment roots there, as `scope::name`.
+        rooted: String,
+        /// The scoped symbol the interface spells at that axis.
+        declared: String,
     },
     /// A payload mapping places a live-extent operand on a slot that is not the
     /// next buffer index after the tensor table.
@@ -802,6 +858,7 @@ impl Error for ArtifactCodecError {
             Self::InvalidTargetEnvironment { cause } => Some(cause),
             Self::InvalidOperationKey { cause } => Some(cause),
             Self::InvalidInterfaceKey { cause } => Some(cause),
+            Self::InvalidInterfaceSymbol { cause } => Some(cause),
             Self::InvalidProviderIdentity { cause } => Some(cause),
             Self::InvalidShape { cause } => Some(cause),
             Self::InvalidAlignment { cause } => Some(cause),
@@ -854,6 +911,8 @@ impl Error for ArtifactCodecError {
             | Self::ExtentOperandAxis { .. }
             | Self::ExtentOperandType { .. }
             | Self::ExtentOperandStaticAxis { .. }
+            | Self::UndeclaredInterfaceSymbol { .. }
+            | Self::RootedAxisDisagreement { .. }
             | Self::ExtentOperandTransport { .. }
             | Self::DeclaredFeatureMismatch
             | Self::ArtifactIdentityMismatch

@@ -22,7 +22,7 @@ use tiler_ir::schedule::{NumericalRealization, TensorRole};
 use tiler_ir::semantic::{
     InputKey, OutputKey, ProviderIdentity, ResolvedValueType, SemanticIdentity, SemanticProgram,
 };
-use tiler_ir::shape::{Axis, BindingSource, RootBinding, Shape, ShapeSymbol, SourcedExtent};
+use tiler_ir::shape::{Axis, BindingSource, RootBinding, ShapeSymbol, SourcedExtent};
 
 use tiler_ir::kernel::PlanDeterminismWitness;
 
@@ -111,20 +111,33 @@ impl CompilationEnvironment {
 }
 
 /// The unforgeable ordered semantic interface every packaged variant realizes.
+///
+/// Boundaries are held in the sourced vocabulary, which is also what the
+/// published interface now carries. The separate `input_extent_sources` column
+/// this used to keep beside a narrowed static one is gone rather than kept in
+/// agreement: it existed only because the *published* representation of a
+/// symbolic axis was still an open decision while the live-operand association
+/// already needed the authored sources, and that decision has landed as the
+/// per-axis sourced entry. One column is what makes the association check and
+/// the published record two readings of one fact.
 #[derive(Clone, Debug)]
-struct SemanticInterface {
-    inputs: Vec<(InputKey, Shape, ResolvedValueType)>,
-    /// The authored per-axis extent sources of every input, in interface order.
+pub(super) struct SemanticInterface {
+    inputs: Vec<(InputKey, Vec<SourcedExtent>, ResolvedValueType)>,
+    outputs: Vec<(OutputKey, Vec<SourcedExtent>, ResolvedValueType)>,
+}
+
+impl SemanticInterface {
+    /// Returns each input's authored per-axis extent sources, in interface order.
     ///
     /// The association authority for live input-extent operands: an operand row
     /// must name an axis whose authored extent is a declared `ShapeEnv` symbol
-    /// rooted at that exact input dimension. Kept beside the narrowed static
-    /// `inputs` column rather than replacing it, because the *published*
-    /// interface representation of a symbolic axis is the packaging decision
-    /// (`package-the-admitted-live-schedule-into-a-symbolic-kernel-program`)
-    /// while the association below must not depend on it.
-    input_extent_sources: Vec<(InputKey, Vec<SourcedExtent>)>,
-    outputs: Vec<(OutputKey, Shape, ResolvedValueType)>,
+    /// rooted at that exact input dimension.
+    pub(super) fn input_extent_sources(&self) -> Vec<(InputKey, Vec<SourcedExtent>)> {
+        self.inputs
+            .iter()
+            .map(|(key, extents, _)| (key.clone(), extents.clone()))
+            .collect()
+    }
 }
 
 /// The portfolio-wide facts the first packaged variant establishes.
@@ -1349,7 +1362,7 @@ impl ArtifactProgramBuilder {
             let input_extents = derive_extent_operands(
                 index,
                 stage,
-                &self.interface.input_extent_sources,
+                &self.interface.input_extent_sources(),
                 self.retained.bindings(),
             )?;
             let launch = self.check_launch(index, &spec.launch, stage, facts, &derived.adopted)?;
@@ -1681,94 +1694,89 @@ fn usize_of(index: u32) -> usize {
 ///
 /// # Errors
 ///
-/// Returns [`ArtifactBuildError::SymbolicSemanticInterface`] when an interface
-/// extent names a declared `ShapeEnv` symbol. See that variant for why the
-/// published interface stays a fixed `Shape` even though the envelope carries
-/// the environment as a retained projection.
+/// Returns [`ArtifactBuildError::UnpublishableInterfaceExtent`] when an
+/// interface extent names a source kind the manifest grammar has no tag for.
 ///
-/// **Corrected 2026-08-19 under
-/// `repair-the-stale-three-carried-subject-claims`; the clause was true when
-/// written.** It read
+/// **Corrected 2026-08-19 by
+/// `package-the-admitted-live-schedule-into-a-symbolic-kernel-program`, which
+/// landed; both retired clauses were true when written.** This read that it
+/// returned `ArtifactBuildError::SymbolicSemanticInterface` "when an interface
+/// extent names a declared `ShapeEnv` symbol", and before that closed with
 /// "the refusal is what keeps the envelope's three carried subjects sufficient",
-/// kept on one line so it stays greppable — a later hit for that phrase lands
-/// in this note rather than in a live claim.
-/// `tiler.artifact-program.v17` put the lossless retained shape environment
-/// into the semantic-subject run beside the three reached subjects and folded
-/// all four into artifact identity, so this refusal no longer carries the fifth
-/// subject's injectivity. It is the same repair the variant's own doc already
-/// records, and this comment is repointed at it rather than restating a count.
-fn read_semantic_interface(
+/// each kept on one line so it stays greppable — a later hit for either lands
+/// in this note rather than in a live claim. The second went at
+/// `tiler.artifact-program.v17`, which put the lossless retained shape
+/// environment into the semantic-subject run beside the three reached subjects
+/// and folded all four into artifact identity. The first went at
+/// `tiler.artifact-program.v21`, which states each published interface axis
+/// literal-or-symbol with the source tag written unconditionally: a declared
+/// symbol is publishable and is spelled by name, so the refusal that stood in
+/// its place has nothing left to protect. What is still refused is a
+/// `SourcedExtent` kind this profile has no wire spelling for, which is what
+/// lets both encoders write the interface run infallibly.
+pub(super) fn read_semantic_interface(
     semantic: &SemanticProgram,
 ) -> Result<SemanticInterface, ArtifactBuildError> {
-    let input_extent_sources = semantic_input_extent_sources(semantic);
     let inputs = semantic
         .inputs()
         .map(|input| {
-            let shape = static_interface_shape(semantic, input.value(), input.key().as_str())?;
+            let extents = publishable_extents(semantic, input.value(), input.key().as_str())?;
             let value_type = semantic
                 .value(input.value())
                 .expect("a verified program resolves its own input value")
                 .resolved_type()
                 .clone();
-            Ok((input.key().clone(), shape, value_type))
+            Ok((input.key().clone(), extents, value_type))
         })
         .collect::<Result<Vec<_>, ArtifactBuildError>>()?;
     let outputs = semantic
         .outputs()
         .map(|output| {
-            let shape = static_interface_shape(semantic, output.value(), output.key().as_str())?;
+            let extents = publishable_extents(semantic, output.value(), output.key().as_str())?;
             let value_type = semantic
                 .value(output.value())
                 .expect("a verified program resolves its own output value")
                 .resolved_type()
                 .clone();
-            Ok((output.key().clone(), shape, value_type))
+            Ok((output.key().clone(), extents, value_type))
         })
         .collect::<Result<Vec<_>, ArtifactBuildError>>()?;
-    Ok(SemanticInterface {
-        inputs,
-        input_extent_sources,
-        outputs,
-    })
+    Ok(SemanticInterface { inputs, outputs })
 }
 
-/// Projects every input's authored per-axis extent sources, in interface order.
+/// Returns one interface value's per-axis boundary in the published vocabulary.
 ///
-/// Total over the semantic shape vocabulary: a static boundary is projected
-/// extent by extent exactly as a sourced one, so the association check below
-/// reads one column whichever way the interface was authored.
-pub(super) fn semantic_input_extent_sources(
-    semantic: &SemanticProgram,
-) -> Vec<(InputKey, Vec<SourcedExtent>)> {
-    semantic
-        .inputs()
-        .map(|input| {
-            let sourced = semantic
-                .shape(input.value())
-                .expect("a verified program resolves its own input value");
-            (input.key().clone(), sourced.extents().collect())
-        })
-        .collect()
-}
-
-/// Returns one interface value's fixed shape, refusing a symbolic one.
+/// The single place this builder reads the semantic layer's total shape view for
+/// publication, so the admitted source kinds cannot be extended for the input
+/// side and forgotten for the output side.
 ///
-/// The single place this builder narrows the semantic layer's total shape view,
-/// so the refusal cannot be extended for the input side and forgotten for the
-/// output side.
-fn static_interface_shape(
+/// **Total over the two source kinds this profile has a wire spelling for**, and
+/// fail-closed past them. A literal axis publishes its extent and a declared
+/// `ShapeEnv` symbol publishes its scope and name; a source kind `SourcedExtent`
+/// grows later has no tag in the manifest grammar, so it is refused by name here
+/// rather than encoded as whichever neighbour it resembles. That refusal is what
+/// lets the two encoders write the run infallibly.
+fn publishable_extents(
     semantic: &SemanticProgram,
     value: tiler_ir::semantic::ValueId,
     interface: &str,
-) -> Result<Shape, ArtifactBuildError> {
+) -> Result<Vec<SourcedExtent>, ArtifactBuildError> {
     semantic
         .shape(value)
         .expect("a verified program resolves its own interface value")
-        .as_static()
-        .cloned()
-        .ok_or_else(|| ArtifactBuildError::SymbolicSemanticInterface {
-            interface: interface.to_owned(),
+        .extents()
+        .enumerate()
+        .map(|(axis, extent)| {
+            if extent.as_static().is_some() || extent.symbol().is_some() {
+                Ok(extent)
+            } else {
+                Err(ArtifactBuildError::UnpublishableInterfaceExtent {
+                    interface: interface.to_owned(),
+                    axis: u32::try_from(axis).unwrap_or(u32::MAX),
+                })
+            }
         })
+        .collect()
 }
 
 /// Projects the artifact's published interface from one variant's program.
@@ -1795,7 +1803,7 @@ fn project_interface(
     ArtifactBuildError,
 > {
     let mut inputs = Vec::with_capacity(interface.inputs.len());
-    for (key, shape, value_type) in &interface.inputs {
+    for (key, extents, value_type) in &interface.inputs {
         let values: Vec<_> = program
             .values()
             .filter(|value| match value.origin() {
@@ -1806,13 +1814,13 @@ fn project_interface(
         let components = project_components(value_type, &values)?;
         inputs.push(InterfaceEntryData {
             key: key.clone(),
-            shape: shape.clone(),
+            extents: extents.clone(),
             logical_type: value_type.canonical_encoding().as_bytes().to_vec(),
             components,
         });
     }
     let mut outputs = Vec::with_capacity(interface.outputs.len());
-    for (key, shape, value_type) in &interface.outputs {
+    for (key, extents, value_type) in &interface.outputs {
         let values: Vec<_> = program
             .outputs()
             .filter(|output| output.key() == key)
@@ -1821,7 +1829,7 @@ fn project_interface(
         let components = project_components(value_type, &values)?;
         outputs.push(InterfaceEntryData {
             key: key.clone(),
-            shape: shape.clone(),
+            extents: extents.clone(),
             logical_type: value_type.canonical_encoding().as_bytes().to_vec(),
             components,
         });

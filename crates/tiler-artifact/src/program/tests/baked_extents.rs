@@ -38,12 +38,14 @@ fn empty_extent_lists_do_not_move_previously_encodable_artifact_bytes() {
         again.canonical_identity().as_bytes(),
         "two no-extent artifacts must keep one identity",
     );
-    // A nonempty declaration would be a new subject, but none is constructible
-    // over the current static-only interface — the association refusal above —
-    // so the empty-writes-nothing property alone carries the identity claim.
+    // A nonempty declaration is a new subject, and since
+    // `tiler.artifact-program.v21` the published interface can spell the
+    // symbolic axis such a row names — so the claim this pins is the narrower
+    // one it always was: an *empty* extent list writes no bytes, and the domain
+    // at which that holds is the current one.
     assert!(
-        super::super::model::ARTIFACT_DOMAIN.ends_with(b"v20\0"),
-        "the ADR 0013 stability-subject step owns v20; empty extent lists still write no bytes",
+        super::super::model::ARTIFACT_DOMAIN.ends_with(b"v21\0"),
+        "the sourced-interface step owns v21; empty extent lists still write no bytes",
     );
 }
 

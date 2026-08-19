@@ -513,8 +513,8 @@ pub(super) fn project_interface(
     let mut inputs = Vec::with_capacity(artifact.inputs().len());
     for (position, entry) in artifact.inputs().enumerate() {
         let elements = entry
-            .shape()
-            .element_count()
+            .static_shape()
+            .and_then(|shape| shape.element_count())
             .ok_or(InterfaceProjectionError::Interface(
                 ProofInterfaceError::ShapeNotRepresentable {
                     direction: ProofDirection::Input,
@@ -526,8 +526,8 @@ pub(super) fn project_interface(
     let mut outputs = Vec::with_capacity(artifact.outputs().len());
     for (position, entry) in artifact.outputs().enumerate() {
         let elements = entry
-            .shape()
-            .element_count()
+            .static_shape()
+            .and_then(|shape| shape.element_count())
             .ok_or(InterfaceProjectionError::Interface(
                 ProofInterfaceError::ShapeNotRepresentable {
                     direction: ProofDirection::Expected,

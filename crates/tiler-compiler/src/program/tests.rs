@@ -500,7 +500,7 @@ fn host_expression_overflow_is_a_hard_failure() {
         },
     ];
     assert_eq!(
-        evaluate_expressions(&overflowing),
+        evaluate_expressions(&overflowing, Vec::new()),
         Err(ProgramError::HostExpression {
             rule: "overflow",
             expression: HostExprId(2),

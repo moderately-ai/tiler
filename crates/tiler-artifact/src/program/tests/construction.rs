@@ -128,7 +128,11 @@ fn builds_a_verified_single_variant_artifact() {
     );
     let input = artifact.inputs().next().expect("one declared input");
     assert_eq!(input.key().as_str(), "input");
-    assert_eq!(input.shape(), &input_shape());
+    assert_eq!(
+        input.static_shape(),
+        Some(input_shape()),
+        "a wholly literal boundary still reads back as one fixed shape",
+    );
     assert_eq!(
         input
             .components()
@@ -147,7 +151,7 @@ fn builds_a_verified_single_variant_artifact() {
     );
     let output = artifact.outputs().next().expect("one declared output");
     assert_eq!(output.key().as_str(), "result");
-    assert_eq!(output.shape(), &output_shape());
+    assert_eq!(output.static_shape(), Some(output_shape()));
 }
 
 #[test]

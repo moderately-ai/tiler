@@ -236,7 +236,7 @@ fn bind_facts(program: &DecodedProgram) -> AbiFacts {
         AbiFactBinder::new(tiler_artifact::program::AvailabilityPhase::LiveDevicePreflight);
     for input in program.inputs() {
         binder
-            .bind_input_shape(input.key(), input.shape())
+            .bind_declared_extents(input.key(), input.extents())
             .expect("the transported interface binds");
     }
     binder.build()

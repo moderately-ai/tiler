@@ -23,7 +23,7 @@ use crate::semantic::{
     EncodedComponentRole, InputKey, OutputKey, ResolvedValueType, SemanticGraphIdentity,
     SemanticProgram,
 };
-use crate::shape::{Axis, Shape};
+use crate::shape::{Axis, Shape, ShapeEnvIdentity};
 
 use super::abi::{
     AbiBinaryOp, AbiFacts, AbiRoot, AbiType, AbiUnaryOp, AbiValue, AvailabilityPhase, ExprNode,
@@ -60,6 +60,10 @@ use super::{
 #[derive(Clone, Debug)]
 pub(super) struct SemanticSubject {
     pub(super) graph: SemanticGraphIdentity,
+    /// The realized program's shape-environment subject, read from the same
+    /// verified [`SemanticProgram`] the graph is, so a producer cannot pair one
+    /// program's graph with another's environment.
+    pub(super) shape_environment: ShapeEnvIdentity,
     pub(super) operations: u32,
     pub(super) inputs: Vec<(InputKey, Shape, ResolvedValueType)>,
     pub(super) outputs: Vec<(OutputKey, Shape, ResolvedValueType)>,
@@ -120,8 +124,8 @@ impl KernelProgramBuilder {
                 limit: MAX_STAGE_COVERAGE,
             }
         })?;
-        let inputs = interface_input_shapes(semantic)?;
-        let outputs = interface_output_shapes(semantic)?;
+        let inputs = interface_input_shapes(semantic);
+        let outputs = interface_output_shapes(semantic);
         if inputs.iter().any(|(_, _, value_type)| {
             value_type
                 .encoded_numeric_parts()
@@ -137,6 +141,7 @@ impl KernelProgramBuilder {
             owner,
             subject: SemanticSubject {
                 graph: semantic.semantic_identity().graph().clone(),
+                shape_environment: semantic.semantic_identity().shape_environment().clone(),
                 operations,
                 inputs,
                 outputs,
@@ -957,11 +962,13 @@ impl KernelProgramBuilder {
     /// [`Self::build`] is the only caller. Verification reads the assembled
     /// value, so nothing observes the window.
     ///
-    /// `semantic_graph` is still copied because `verify_program` reads
-    /// `self.subject` on the same call, so the builder must keep its own.
+    /// `semantic_graph` and `shape_environment` are still copied because
+    /// `verify_program` reads `self.subject` on the same call, so the builder
+    /// must keep its own.
     fn take_data(&mut self) -> KernelProgramData {
         KernelProgramData {
             semantic_graph: self.subject.graph.clone(),
+            shape_environment: self.subject.shape_environment.clone(),
             stages: std::mem::take(&mut self.stages),
             values: std::mem::take(&mut self.values),
             views: std::mem::take(&mut self.views),
@@ -1621,72 +1628,85 @@ impl KernelProgramBuilder {
 /// Reads the ordered input interface of a verified semantic program.
 ///
 /// A verified program always resolves its own interface values, so the lookup
-/// is a program invariant rather than caller input. The *shape* is not: an
-/// input may name a declared `ShapeEnv` symbol, and a kernel program's covered
-/// boundary must be a fixed quantity, so a symbolic one is refused.
-///
-/// # Errors
-///
-/// Returns [`KernelProgramBuildError::SymbolicInterfaceExtent`] for an input
-/// whose shape names a symbol.
-fn interface_input_shapes(
-    semantic: &SemanticProgram,
-) -> Result<Vec<(InputKey, Shape, ResolvedValueType)>, KernelProgramBuildError> {
+/// is a program invariant rather than caller input, and the shape projection is
+/// total over the semantic shape vocabulary.
+fn interface_input_shapes(semantic: &SemanticProgram) -> Vec<(InputKey, Shape, ResolvedValueType)> {
     semantic
         .inputs()
         .map(|input| {
-            let shape = static_interface_shape(semantic, input.value(), input.key().as_str())?;
+            let shape = interface_extent_shape(semantic, input.value());
             let resolved_type = semantic
                 .value(input.value())
                 .expect("a verified program resolves its own input value")
                 .resolved_type()
                 .clone();
-            Ok((input.key().clone(), shape, resolved_type))
+            (input.key().clone(), shape, resolved_type)
         })
         .collect()
 }
 
 /// Reads the ordered output interface of a verified semantic program.
-///
-/// # Errors
-///
-/// Returns [`KernelProgramBuildError::SymbolicInterfaceExtent`] for an output
-/// whose shape names a symbol.
 fn interface_output_shapes(
     semantic: &SemanticProgram,
-) -> Result<Vec<(OutputKey, Shape, ResolvedValueType)>, KernelProgramBuildError> {
+) -> Vec<(OutputKey, Shape, ResolvedValueType)> {
     semantic
         .outputs()
         .map(|output| {
-            let shape = static_interface_shape(semantic, output.value(), output.key().as_str())?;
+            let shape = interface_extent_shape(semantic, output.value());
             let resolved_type = semantic
                 .value(output.value())
                 .expect("a verified program resolves its own output value")
                 .resolved_type()
                 .clone();
-            Ok((output.key().clone(), shape, resolved_type))
+            (output.key().clone(), shape, resolved_type)
         })
         .collect()
 }
 
-/// Returns one interface value's fixed shape, refusing a symbolic one.
+/// Returns one interface value's covered boundary under the zero-extent convention.
 ///
 /// The single place this builder narrows the semantic layer's total shape view,
-/// so the refusal cannot be extended for the input side and forgotten for the
+/// so the rule cannot be extended for the input side and forgotten for the
 /// output side.
-fn static_interface_shape(
-    semantic: &SemanticProgram,
-    value: crate::semantic::ValueId,
-    interface: &str,
-) -> Result<Shape, KernelProgramBuildError> {
-    semantic
+///
+/// **Total rather than refusing, and what that costs.** A kernel program's
+/// covered boundary is a *static* quantity — every allocation, view, and byte
+/// window is sized from it — so a symbolic axis occupies a zero static extent
+/// and the honest quantity is carried instead by the ABI expression arena, where
+/// a symbolic axis is an [`AbiRoot::InputExtent`] root resolving at
+/// [`AvailabilityPhase::LiveDevicePreflight`]. That is the same convention the
+/// compiler's own input side already writes, and making it total here is what
+/// lets a program's shape-environment subject reach identity as a represented
+/// subject rather than as a refusal.
+///
+/// **The consequence, stated rather than hidden.** Under this convention a
+/// symbolic axis and a genuinely empty one produce the same subject shape, so
+/// [`KernelProgramBuilder::evaluate_static_abi`]'s agreement check is vacuous
+/// for a symbolic boundary: it compares zero against zero. Nothing is lost that
+/// this layer ever had — a symbolic extent has no compile-time value to check
+/// against — and the two boundaries stay *distinguishable in identity* through
+/// the folded [`SemanticGraphIdentity`], whose `SourcedExtent` encoding writes a
+/// source tag and the scoped symbol name, and through the folded
+/// shape-environment subject. What replaces the compile-time check is the live
+/// preflight rebinding of those roots from bound facts.
+/// # Panics
+///
+/// Never for a boundary a verified program can hold: `SourcedShape` admits its
+/// rank at construction against the same governed bound `Shape` enforces, so the
+/// projection preserves an already-admitted rank.
+fn interface_extent_shape(semantic: &SemanticProgram, value: crate::semantic::ValueId) -> Shape {
+    let sourced = semantic
         .shape(value)
-        .expect("a verified program resolves its own interface value")
-        .as_static()
-        .cloned()
-        .ok_or_else(|| KernelProgramBuildError::SymbolicInterfaceExtent {
-            interface: interface.to_owned(),
-        })
+        .expect("a verified program resolves its own interface value");
+    if let Some(shape) = sourced.as_static() {
+        return shape.clone();
+    }
+    Shape::try_from_dims(
+        sourced
+            .extents()
+            .map(|extent| extent.as_static().map_or(0, crate::shape::Extent::get)),
+    )
+    .expect("a verified sourced boundary's rank is already an admitted shape rank")
 }
 
 fn expected_component(

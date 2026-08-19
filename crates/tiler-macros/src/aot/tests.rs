@@ -573,77 +573,71 @@ fn a_contract_this_declaration_cannot_honour_is_refused_at_the_target() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-/// A constructible symbolic region reaches the compiler rather than a
-/// frontend-local refuse, and the compiler's typed decline is what the
-/// consumer sees.
+/// A constructible symbolic region reaches the compiler and delivers, and the
+/// two retired walls in front of it stay retired.
 ///
-/// Same-shape elementwise constructs and is recognized; since the accepted
-/// source-bound live schedule landed, `compile()` forms, verifies, and selects
-/// its live plan and then declines at program packaging — the next true wall —
-/// because the artifact envelope cannot yet carry a live-extent output.
-/// Lifting the schedule gate must not convert that into a silent fallback or
-/// a compiled plan specialized on a representative extent. The stated cache
-/// root does not exist and could not be created, so a case that reached
-/// backend work would fail differently.
+/// **This replaces `a_symbolic_region_reaches_the_compilers_typed_decline`,
+/// whose subject was the last of three walls in a row.** The frontend-local
+/// `AotRefusal::SymbolicExtent` gate went first, the schedule-stage
+/// `symbolic-extent` refuse second when the source-bound live schedule landed,
+/// and `program-assembly.named-output-symbolic` third at
+/// `tiler.kernel-program.v13`, which folds the shape-environment subject so a
+/// packaged symbolic program's identity is complete rather than under-keyed.
 ///
-/// Watched failing under the retired `AotRefusal::SymbolicExtent` gate, then
-/// under the retired schedule-stage `symbolic-extent` refuse: handing this
-/// program to `deliver` used to name each of those before the layer behind it
-/// widened. It is now `AotRefusal::Compile` with rule `named-output-symbolic`.
+/// **Metal emission is not this ticket's, and it is not being claimed here.**
+/// The MSL side landed separately — `tiler_metal`'s
+/// `a_live_extent_is_emitted_as_a_constant_parameter` pins that the live extent
+/// becomes a read-only scalar parameter rather than a baked literal — so what
+/// this records is that packaging was the last missing step and the chain now
+/// completes, not that anything about the emitted kernel was decided here.
+///
+/// What still has to be true is that delivering did not *erase* the refusals in
+/// front of it: each retired diagnostic is asserted absent below, so restoring
+/// any one of the three turns this red rather than leaving it quietly passing on
+/// a different path.
 #[test]
-fn a_symbolic_region_reaches_the_compilers_typed_decline() {
+fn a_symbolic_region_delivers_and_its_retired_walls_stay_retired() {
     let program = symbolic_approved_region();
     assert!(
         program.inputs().any(|input| program
             .shape(input.value())
             .is_ok_and(|shape| shape.as_static().is_none())),
-        "the fixture must carry a symbolic interface, or this tests the wrong refuse",
+        "the fixture must carry a symbolic interface, or this tests the wrong path",
     );
 
-    let refusal = deliver(
+    let root = scratch("symbolic-delivers");
+    let delivered = deliver(
         &program,
         flushing(),
         macos_selection(),
-        &stating(std::path::Path::new("/tiler-no-such-cache-root")),
+        &stating(&root),
         &PreflightGate::new(),
         &automatic(&EvictionGate::new()),
         &Toolchain::system(),
-    )
-    .expect_err("a symbolic launch is a typed decline, not a delivered family");
-    let AotRefusal::Compile(source) = &refusal else {
-        panic!("unexpected refusal: {refusal:?}");
+    );
+    let delivered = match delivered {
+        Ok(delivered) => delivered,
+        Err(refusal) => {
+            let diagnostic = refusal.to_string();
+            for retired in [
+                "cannot schedule a launch over a symbolic extent",
+                "needs every extent to be known at expansion time",
+                "`named-output-symbolic`",
+            ] {
+                assert!(
+                    !diagnostic.contains(retired),
+                    "a retired wall was restored: {diagnostic}",
+                );
+            }
+            let _ = std::fs::remove_dir_all(&root);
+            panic!("the admitted symbolic region must deliver, got {refusal:?}");
+        }
     };
     assert!(
-        matches!(
-            source.class(),
-            CompileFailureClass::UnsupportedCapability {
-                rule: "named-output-symbolic",
-            }
-        ),
-        "the compiler must name the program-assembly packaging wall, got {:?}",
-        source.class(),
+        delivered.route_facts.is_some(),
+        "a delivering symbolic region must name the artifact its loader routes",
     );
-    let diagnostic = refusal.to_string();
-    assert!(
-        diagnostic.contains("formed and verified a live schedule"),
-        "the diagnostic must say the schedule exists and packaging is the wall: {diagnostic}",
-    );
-    assert!(
-        diagnostic.contains("`named-output-symbolic`"),
-        "the diagnostic must carry the compiler's rule key: {diagnostic}",
-    );
-    assert!(
-        !diagnostic.contains("cannot schedule a launch over a symbolic extent"),
-        "the retired schedule-geometry text must not name this admitted population: {diagnostic}",
-    );
-    assert!(
-        !diagnostic.contains("needs every extent to be known at expansion time"),
-        "the retired frontend gate must not remain reachable: {diagnostic}",
-    );
-    assert!(
-        !diagnostic.contains("carry-symbolic-extents-into-the-semantic-program"),
-        "the consumer-facing remedy must not name the done research parent: {diagnostic}",
-    );
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// Every selection the bound declaration does not compile is refused, and the

@@ -17,7 +17,7 @@
 //! ask when a value became true.
 
 use tiler_ir::semantic::InputKey;
-use tiler_ir::shape::{Axis, Shape};
+use tiler_ir::shape::{Axis, Shape, SourcedExtent};
 
 use super::error::{ArtifactBuildError, ArtifactLimitKind, limit};
 use super::expr::TargetPropertyKey;
@@ -143,6 +143,38 @@ impl AbiFactBinder {
                 limit: MAX_BOUND_INPUT_EXTENTS,
             })?;
             self.bind_input_extent(key.clone(), Axis::new(axis), extent.get())?;
+        }
+        Ok(())
+    }
+
+    /// Binds the *literal* axes of one input's declared per-axis boundary.
+    ///
+    /// **A symbolic axis is skipped rather than defaulted, and that is the whole
+    /// point.** A declared `ShapeEnv` symbol has no value the artifact declares —
+    /// its value is the caller's bound buffer at live preflight — so binding one
+    /// here would state a fact the artifact does not know. Leaving it unbound
+    /// makes every expression over it fail closed as an unbound input extent
+    /// until the caller supplies it through
+    /// [`AbiFactBinder::bind_input_extent`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`AbiFactBinder::bind_input_extent`].
+    pub fn bind_declared_extents(
+        &mut self,
+        key: &InputKey,
+        extents: &[SourcedExtent],
+    ) -> Result<(), AbiBindingError> {
+        for (axis, extent) in extents.iter().enumerate() {
+            let Some(literal) = extent.as_static() else {
+                continue;
+            };
+            let axis = u32::try_from(axis).map_err(|_| AbiBindingError::StructuralLimit {
+                resource: ArtifactLimitKind::BoundInputExtents,
+                actual: axis,
+                limit: MAX_BOUND_INPUT_EXTENTS,
+            })?;
+            self.bind_input_extent(key.clone(), Axis::new(axis), literal.get())?;
         }
         Ok(())
     }

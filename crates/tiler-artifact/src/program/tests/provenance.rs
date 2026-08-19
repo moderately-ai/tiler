@@ -1,8 +1,7 @@
 //! Reached versus unused provenance (ADR 0072).
 
 use super::super::{
-    ArtifactBuildError, ArtifactProgramBuilder, AvailabilityPhase, CompilationEnvironment,
-    SelectedProvider,
+    ArtifactProgramBuilder, AvailabilityPhase, CompilationEnvironment, SelectedProvider,
 };
 use super::support::artifacts::lowering_subject;
 use super::support::graphs::{checked_coverage_over, checked_coverage_under, strict_contract};
@@ -269,17 +268,22 @@ fn a_reached_semantic_provider_revision_changes_identity() {
     );
 }
 
-/// A symbolic semantic program never opens an artifact builder.
+/// A symbolic semantic program opens an artifact builder, and its symbol is
+/// published rather than erased.
 ///
-/// A symbolic *interface* still never opens an artifact builder.
+/// **This replaces `a_symbolic_semantic_program_never_reaches_the_artifact_builder`.**
+/// That test pinned the published interface as a fixed `Shape`, so an extent
+/// naming a declared symbol was refused here rather than encoded. Since
+/// `tiler.artifact-program.v21` the entry states each axis literal-or-symbol, so
+/// the boundary has an honest encoding and the refusal has nothing left to
+/// protect.
 ///
-/// The envelope now carries the fifth subject's lossless retained environment,
-/// so two fixed-interface programs that differ only by an unused environment
-/// are different artifacts. What this test still pins is the published
-/// interface: an extent that names a declared symbol is refused here rather
-/// than encoded as a static `Shape`.
+/// What has to stay true is that publishing it did not erase which axis is
+/// symbolic. The assertion below reads the published entry back and requires the
+/// symbol by name — a spelling that collapsed the axis to a literal, zero or
+/// otherwise, fails here.
 #[test]
-fn a_symbolic_semantic_program_never_reaches_the_artifact_builder() {
+fn a_symbolic_semantic_program_publishes_its_symbol_by_name() {
     let scope = SymbolScope::new("artifact/0").unwrap();
     let rows = ShapeSymbol::new(scope, "rows").unwrap();
     let mut draft = ShapeEnvBuilder::new();
@@ -321,16 +325,23 @@ fn a_symbolic_semantic_program_never_reaches_the_artifact_builder() {
     let provider = lowering_provider(1);
     let environment = CompilationEnvironment::new([provider]).expect("environment");
     assert!(
-        matches!(
-            ArtifactProgramBuilder::new(&symbolic, environment.clone()),
-            Err(ArtifactBuildError::SymbolicSemanticInterface { interface })
-                if interface == "input",
-        ),
-        "a symbolic interface extent is refused before any subject is projected",
+        ArtifactProgramBuilder::new(&symbolic, environment.clone()).is_ok(),
+        "a symbolic interface extent has a published per-axis spelling",
     );
     assert!(
         ArtifactProgramBuilder::new(&semantic_program(), environment).is_ok(),
         "the neighbour differing only in the extent's source kind opens",
+    );
+
+    let published = super::super::builder::read_semantic_interface(&symbolic)
+        .expect("the fixture's boundary is publishable");
+    let (_, extents) = &published.input_extent_sources()[0];
+    assert_eq!(
+        extents,
+        &vec![SourcedExtent::Symbol(
+            ShapeSymbol::new(SymbolScope::new("artifact/0").unwrap(), "rows").unwrap()
+        )],
+        "the published boundary must name the symbol, not a literal standing for it",
     );
 }
 

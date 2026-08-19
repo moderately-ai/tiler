@@ -7,8 +7,6 @@
 //! different gate, and keeping them in one file is what makes the gates legible
 //! as a set:
 //!
-//! - a symbolic extent constructs as a verified program and then meets the
-//!   compiler's typed `symbolic-extent` schedule refuse;
 //! - a family the one bound Metal compile-time declaration does not measure has
 //!   no target to compile for;
 //! - a deployment minimum below the governed floor for the standard Tiler
@@ -24,16 +22,16 @@
 //! which one it was.
 
 fn main() {
-    // A symbolic extent: the region is well formed, its policy is buildable,
-    // and the program constructs. The compiler then declines a launch over the
-    // symbol rather than specializing the plan on a representative extent.
-    let _symbolic = tiler::tensor! {
-        sym n;
-        in a: f32[n], b: f32[n];
-        deliver macos;
-        contract flush_subnormals_to_zero_f32;
-        out a * b
-    };
+    // The symbolic `deliver macos;` case used to lead this file, meeting the
+    // compiler's typed `named-output-symbolic` packaging refuse. It is gone
+    // rather than rewritten: `tiler.kernel-program.v13` folds the
+    // shape-environment subject, so the admitted rank-one same-shape population
+    // packages and delivers and there is no refusal here to golden. The positive
+    // frontend fixture for a delivering symbolic region belongs to
+    // `deliver-an-artifact-family-from-a-symbolic-region`, which owns the
+    // frontend contract flips; `tiler-macros`'
+    // `a_symbolic_region_delivers_and_its_retired_walls_stay_retired` holds the
+    // property in the meantime, including that each retired wall stays retired.
 
     // A family with no measured compile-time declaration.
     let _ios = tiler::tensor! {

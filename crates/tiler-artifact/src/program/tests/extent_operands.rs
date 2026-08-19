@@ -383,10 +383,10 @@ fn a_live_contraction_operand_over_a_fixed_semantic_axis_refuses() {
 ///
 /// The real construction path for the association's symbolic arms: a verified
 /// semantic program whose interface extents name a declared symbol, exactly as
-/// the compiler's admitted live population authors them. The artifact builder
-/// still refuses the *interface* (`SymbolicSemanticInterface`) — lifting that
-/// is the packaging decision — so the association is exercised through the
-/// same crate-private derivation `push_variant` runs.
+/// the compiler's admitted live population authors them. Since
+/// `tiler.artifact-program.v21` the published interface carries such a boundary,
+/// so the association below reads the *production* projection
+/// `ArtifactProgramBuilder::new` builds rather than a test-local one.
 fn symbolic_two_input_semantic(environment: Arc<tiler_ir::shape::ShapeEnv>) -> SemanticProgram {
     let mut draft =
         SemanticProgramBuilder::try_standard_with_shape_environment(environment).unwrap();
@@ -445,7 +445,9 @@ fn association_authorities(
     Vec<(InputKey, Vec<SourcedExtent>)>,
     Vec<(ShapeSymbol, RootBinding)>,
 ) {
-    let sources = super::super::builder::semantic_input_extent_sources(semantic);
+    let sources = super::super::builder::read_semantic_interface(semantic)
+        .expect("the fixture's boundary is publishable")
+        .input_extent_sources();
     let retained = super::super::retained::RetainedShapeEnvironment::project(semantic)
         .expect("the fixture environment projects");
     (sources, retained.bindings().to_vec())

@@ -36,7 +36,7 @@ use tiler_ir::schedule::{
     SubgroupRealizationSubject, SubgroupTransfer, SubgroupWidth, SynchronizationSubject,
 };
 use tiler_ir::semantic::{EncodedComponentRole, InputKey, OpKey, OutputKey, ProviderIdentity};
-use tiler_ir::shape::Shape;
+use tiler_ir::shape::{Extent, Shape, ShapeSymbol, SourcedExtent, SymbolScope};
 
 use super::super::error::ArtifactBuildError;
 use super::super::expr::{
@@ -52,13 +52,13 @@ use super::super::model::{
     ArtifactSchema, BINDING_TARGET_INTERNAL, BINDING_TARGET_PROGRAM_INPUT,
     BINDING_TARGET_PROGRAM_OUTPUT, BackendPayloadDescriptor, BindingData, BindingKind,
     BindingTargetData, DeferredPredicateData, InterfaceComponentData, InterfaceEntryData,
-    LaunchData, LoweringCapabilitySubject, RoutingPolicy, SUBGROUP_REQUIREMENT_BLOCK_TAG,
-    SchemaVersion, SelectedProvider, StageDependencyData, StageDependencyReason,
-    address_space_from_tag, approximation_envelope_from_tag, buffer_access_from_tag,
-    element_type_from_tag, exceptional_assumption_from_tag, index_arithmetic_from_tag,
-    memory_ordering_from_tag, permission_from_tag, storage_scalar_from_tag,
-    subgroup_transfer_from_tag, subnormal_from_tag, synchronization_kind_from_tag,
-    synchronization_scope_from_tag,
+    LaunchData, LoweringCapabilitySubject, RoutingPolicy, SOURCED_EXTENT_LITERAL,
+    SOURCED_EXTENT_SYMBOL, SUBGROUP_REQUIREMENT_BLOCK_TAG, SchemaVersion, SelectedProvider,
+    StageDependencyData, StageDependencyReason, address_space_from_tag,
+    approximation_envelope_from_tag, buffer_access_from_tag, element_type_from_tag,
+    exceptional_assumption_from_tag, index_arithmetic_from_tag, memory_ordering_from_tag,
+    permission_from_tag, storage_scalar_from_tag, subgroup_transfer_from_tag, subnormal_from_tag,
+    synchronization_kind_from_tag, synchronization_scope_from_tag,
 };
 use super::super::realization::DeliveredRealizationRecord;
 use super::super::realization::codec::decode as decode_realization;
@@ -443,7 +443,7 @@ fn read_inputs(
             Ok(InterfaceEntryData {
                 key: InputKey::from_owned(cursor.text()?)
                     .map_err(|cause| ArtifactCodecError::InvalidInterfaceKey { cause })?,
-                shape: cursor.shape()?,
+                extents: cursor.sourced_extents()?,
                 logical_type: cursor.slice()?.to_vec(),
                 components: cursor.interface_components()?,
             })
@@ -462,7 +462,7 @@ fn read_outputs(
             Ok(InterfaceEntryData {
                 key: OutputKey::from_owned(cursor.text()?)
                     .map_err(|cause| ArtifactCodecError::InvalidInterfaceKey { cause })?,
-                shape: cursor.shape()?,
+                extents: cursor.sourced_extents()?,
                 logical_type: cursor.slice()?.to_vec(),
                 components: cursor.interface_components()?,
             })
@@ -1378,6 +1378,39 @@ impl<'a> Cursor<'a> {
             extents.push(self.u64()?);
         }
         Shape::try_from_dims(extents).map_err(|cause| ArtifactCodecError::InvalidShape { cause })
+    }
+
+    /// Reads one published interface boundary as a run of tagged axes.
+    ///
+    /// The inverse of `super::super::model::push_sourced_extents`. The tag is
+    /// unconditional, so a wholly literal boundary is read by this one path
+    /// rather than by a second untagged grammar, and an unrecognized tag is
+    /// refused by name instead of being consumed as extent bytes.
+    fn sourced_extents(&mut self) -> Result<Vec<SourcedExtent>, ArtifactCodecError> {
+        let rank = self.count(MAX_INTERFACE_SHAPE_RANK, CodecLimitKind::ShapeRank)?;
+        let mut extents = Vec::with_capacity(rank);
+        for _ in 0..rank {
+            extents.push(match self.u8()? {
+                SOURCED_EXTENT_LITERAL => SourcedExtent::Static(Extent::new(self.u64()?)),
+                SOURCED_EXTENT_SYMBOL => {
+                    let scope = SymbolScope::new(self.slice()?)
+                        .map_err(|cause| ArtifactCodecError::InvalidInterfaceSymbol { cause })?;
+                    let name = self.text()?;
+                    SourcedExtent::Symbol(
+                        ShapeSymbol::new(scope, name).map_err(|cause| {
+                            ArtifactCodecError::InvalidInterfaceSymbol { cause }
+                        })?,
+                    )
+                }
+                tag => {
+                    return Err(ArtifactCodecError::UnknownTag {
+                        subject: TagSubject::InterfaceExtentSource,
+                        tag,
+                    });
+                }
+            });
+        }
+        Ok(extents)
     }
 
     fn interface_components(&mut self) -> Result<Vec<InterfaceComponentData>, ArtifactCodecError> {

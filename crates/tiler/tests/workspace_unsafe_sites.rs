@@ -331,7 +331,7 @@ const WORKSPACE_LOCAL_MACRO_RULES: [(&str, &str); 17] = [
 ];
 
 /// Exact guarded `tensor!` invocation identities in ordinary and rustdoc source.
-const TENSOR_FIXTURE_INVOCATION_COUNT: usize = 72;
+const TENSOR_FIXTURE_INVOCATION_COUNT: usize = 71;
 const TENSOR_RUSTDOC_INVOCATION_COUNT: usize = 1;
 const TENSOR_FIXTURE_INVOCATION_PINS: [(&str, usize); 13] = [
     (
@@ -340,7 +340,10 @@ const TENSOR_FIXTURE_INVOCATION_PINS: [(&str, usize); 13] = [
     ),
     (
         "crates/tiler/tests/facade/fail/deliver_selects_an_artifact_family.rs",
-        4,
+        // Three since the packaged-symbolic-interface step: the `sym n; deliver
+        // macos;` region that led this fixture now compiles, so it is no longer
+        // a refusal this file goldens.
+        3,
     ),
     (
         "crates/tiler/tests/facade/fail/deliver_statement_diagnostics.rs",

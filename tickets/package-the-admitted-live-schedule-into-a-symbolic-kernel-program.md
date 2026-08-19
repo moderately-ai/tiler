@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [admit-symbolic-extents-through-schedule-formation]
 related: [deliver-an-artifact-family-from-a-symbolic-region, carry-live-extent-operands-through-the-artifact-envelope, associate-live-extent-operands-with-symbolic-semantic-interface-axes]
-scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/artifacts]
+scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/artifacts, implementation/runtime, implementation/conformance, implementation/frontend, implementation/candle, implementation/build, contracts/foundation, contracts/decisions, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, identity, shapes, public-boundary]
@@ -167,3 +167,105 @@ Tom accepted **Option A, the complete-subject fold**, exactly as recommended by 
 - Standing instruction from the packet, reaffirmed at acceptance: **exact version numbers are rederived at the implementation base** — the concurrent contraction-key migration moves identity values across the same tree, and the packet's own review already caught one stale number (`tiler.kernel.v9`, not v7) inside a single day's drift.
 - Sequencing: this ticket now proceeds as its own implementation carrier and joins the **solo identity-migration queue** (it moves kernel-program, artifact, and manifest identity plus every dependent pin), ordered behind the running contraction replacement and the previously queued migrations; it must not run beside any other pin-moving lane.
 - The prose-repair prerequisite [`repair-the-stale-three-carried-subject-claims`](repair-the-stale-three-carried-subject-claims.md) stays independent; where this carrier's implementation rewrites a censused site (the `SymbolicInterfaceExtent` doc in particular), that ticket re-audits and repairs only the remainder, per its own instruction.
+
+## Implementation — 2026-08-19, base `f7a356de4a06f0023cb5d1cbe5f3e475fca278f7`
+
+Worker `worker-packaging`. Option A landed as accepted. `compile()` of the admitted population returns a compiled product; `deliver macos;` returns a delivered artifact family.
+
+### Exact-base Fact audit, re-run before any edit
+
+Every anchor in the audit and packet sections above was re-grepped against the file its citation names, at this base. **All resolve; no Fact is false at this base.** Verdicts:
+
+- **Fact 1 (compiler assembler gate) — verified.** `named-output-symbolic` and `identity boundary owned by its ticket` each resolve once in `crates/tiler-compiler/src/program.rs`, inside `CoverAssembly::from_plan`'s named-output loop; `Symbolic axes occupy a zero static extent` resolves once in `build_cover_core`'s input side.
+- **Fact 2 (kernel-program identity gap) — verified.** `SymbolicInterfaceExtent` and its dated note's `unrepresented in the artifact's three carried subjects` both resolved in `crates/tiler-ir/src/program/error.rs`; the v17 carrier chain resolved at all four cited sites; `data.semantic_graph.as_bytes()` resolved once in `encode_identity`, which was read in full and folded no environment slice.
+- **Fact 3 (operand row) — verified.** Both cited tickets `done`; `ExtentOperandStaticAxis` refused at construction and `check_extent_operand_static_axes` at decode.
+- **The two paths repaired on 2026-08-19 — verified at this base.** `a_compiled_plan_does_not_fold_a_bound_extent_value` resolves in `crates/tiler-compiler/src/request/tests.rs`; `baking_neighbouring_extents_mints_distinct_artifact_subjects` in `crates/tiler-artifact/src/program/tests/baked_extents.rs`.
+- **Identity-consequence set — verified and then rederived.** `PROGRAM_DOMAIN` was `tiler.kernel-program.v12`, `ARTIFACT_DOMAIN` `tiler.artifact-program.v20`, `MANIFEST_SCHEMA` `(20, 0)`, `tiler.kernel.v9`, `tiler.schedule.v7`, `tiler.semantic-graph.v3`, `tiler.shape-env.v3`. **The packet's stale-numbers warning did not fire: every figure it named was still current at this base.**
+
+### Identity values, before and after
+
+| Subject | Before | After |
+| --- | --- | --- |
+| `PROGRAM_DOMAIN` (`crates/tiler-ir/src/program/model.rs`) | `tiler.kernel-program.v12` | `tiler.kernel-program.v13` |
+| `ARTIFACT_DOMAIN` (`crates/tiler-artifact/src/program/model.rs`) | `tiler.artifact-program.v20` | `tiler.artifact-program.v21` |
+| `MANIFEST_SCHEMA` (`crates/tiler-artifact/src/program/codec/encode.rs`) | `(20, 0)` | `(21, 0)` |
+| Standard Metal artifact identity | `a90c6575…01f82274` | `5b55dde1…b70f2160` |
+| Standard Metal cache subject | `ea3e346e…3e9b1717` | `c6f105fc…04f4c2f7` |
+| Standard Metal envelope fixed content | 91,891 bytes | 91,945 bytes |
+| First present-subgroup identity digest | `04 d9 a0 5b …` | `29 34 e6 62 …` |
+| `tiler.schedule.v7`, `tiler.kernel.v9`, `tiler.semantic-graph.v3`, `tiler.shape-env.v3`, `tiler.artifact-program.stage.v4`, operand row `{key, axis, value_type}` | — | **unchanged, as the acceptance states** |
+
+The fixed-content delta factors exactly as `51 + 3`: the framed empty shape-environment subject the kernel-program identity now folds, carried once in this one-variant envelope's `KernelProgramSubject` section, plus one unconditional source tag per published interface axis (the `[2, 2]` input's two and the rank-one output's one). The 43-byte-framed-as-51 figure is the same one the `v17` retained-environment step measured, and perturbation D below prints it.
+
+### What landed
+
+- **`tiler.kernel-program.v12 → v13`.** `KernelProgramData` gains `shape_environment: ShapeEnvIdentity`, read at `KernelProgramBuilder::new` from the same verified `SemanticProgram` the graph is; `encode_identity` folds it as one framed slice immediately after the framed graph. Total: no environment folds the empty subject's bytes.
+- **`SymbolicInterfaceExtent` removed.** `interface_extent_shape` is total under the zero-extent convention. Its doc states the cost outright: `evaluate_static_abi`'s agreement check compares zero against zero for a symbolic boundary, and the two boundaries stay distinguishable through the folded graph and environment subjects.
+- **`named-output-symbolic` replaced by `named-output-unrooted-symbolic`.** Condition-shaped: a symbolic output axis packages when the program's own environment roots its symbol at a *declared program input's* dimension inside that input's rank, and declines by name otherwise. The rank-one same-shape single-symbol population gate stays in `admits_source_bound_live_schedule`.
+- **Honest internal byte formulas.** `declare_element_count` gives internals the per-axis chain the input side already had, with symbolic factors rooted through `symbolic_output_roots` — decoded from the retained identity bytes through the public `decode_shape_env_subject`, never from `ExtentSources::determined` or any bound value.
+- **`tiler.artifact-program.v20 → v21`, manifest `20.0 → 21.0`.** `InterfaceEntryData.shape: Shape` becomes `extents: Vec<SourcedExtent>`, encoded per axis with an unconditional literal-or-symbol tag. `SymbolicSemanticInterface` is replaced by `UnpublishableInterfaceExtent`, which refuses only a source kind the grammar has no tag for — which is what lets both encoders write the run infallibly.
+- **Two decode-side coherence checks.** `UndeclaredInterfaceSymbol` and `RootedAxisDisagreement`, the second deliberately narrow (see below). `check_extent_operand_static_axes` becomes per-axis.
+- **`SemanticInterface::input_extent_sources` collapses onto the published column.** The separate sources column existed only because the published representation was undecided; that reason is gone, so the association check and the published record are now two readings of one field.
+- **Public surface.** `DecodedInput`/`DecodedOutput`/`ArtifactInputRef`/`ArtifactOutputRef` replace `shape() -> &Shape` with `extents() -> &[SourcedExtent]` plus `static_shape() -> Option<Shape>`; `AbiFactBinder` gains `bind_declared_extents`, which binds only the literal axes so a symbolic one fails closed as an unbound input extent rather than being defaulted.
+
+### The population census
+
+`the_packaging_population_is_exactly_the_admitted_population` (`crates/tiler-compiler/src/request/tests.rs`) walks six symbolic fixtures, prints the census, and asserts `admits_source_bound_live_schedule(request) == compile(request).is_ok()` for each. Measured:
+
+```
+packaging census: admitted-unbound: admitted=true packaged=true
+packaging census: admitted-bound-4: admitted=true packaged=true
+packaging census: root-at-b: admitted=true packaged=true
+packaging census: interface-parameter-root: admitted=false packaged=false
+packaging census: unread-root-input: admitted=false packaged=false
+packaging census: parametric-broadcast: admitted=false packaged=false
+```
+
+Three and three, asserted so one answer six times cannot look green. The census caught the author's own miscount: `root-at-b` is admitted (the region reads `b` densely), which a hand-written `(2, 2)` expectation got wrong. The parametric-broadcast row is the one that mattered most: the schedule gate lets that carrier past on a *separate* arm, so "nothing else reaches `from_plan`" was not safe to assume, and the census is what settles it.
+
+### Perturbations run, with the failure text
+
+Each perturbs the subject, never an assertion, and each was reverted.
+
+1. **Drop the folded slice from `encode_identity`** — all four `shape_environment_fold` tests redden, but *identically*, at `range end index 8388354963917401860 out of range for slice of length 19310` inside the framing reader. Recorded as too coarse to show which assertion is load-bearing; the three below isolate.
+2. **A (constraint separation): `encode_environment` writes no constraints.** `4 tests run: 3 passed, 1 failed` — `assertion left != right failed: a constraint-differing neighbour must not share a v13 identity`.
+3. **B (unused-binding separation): `encode_environment` writes at most one entry.** `4 tests run: 3 passed, 1 failed` — `assertion left != right failed: an unused-binding neighbour must not share a v13 identity`.
+4. **D (empty-subject totality): `shape_environment_identity(None)` returns a one-symbol environment.** `4 tests run: 3 passed, 1 failed` — `assertion left == right failed: a program with no environment must fold the empty subject's exact bytes`, printing the 51-byte framed empty subject against the 90-byte perturbed one.
+5. **E (root agreement over-strong): require `declared.symbol() == Some(symbol)` rather than skipping a literal.** `344 tests run: 339 passed, 5 failed` — `a_literal_on_a_rooted_axis_is_admitted` fails with `RootedAxisDisagreement { key: "input", axis: 0, rooted: "forged/0::S", declared: "2" }`, and it reddens four `program::retained` tests beside it including the `invocation_bindings_do_not_enter_artifact_identity` negative control. **This is why the check is narrower than the packet's wording suggests** — see below.
+
+`re_framing_the_folded_slice_moves_the_identity` is not isolated by a code perturbation: its subject is the byte string it forges itself. What makes its inequality about framing rather than about length is the `forged.len() == identity.len()` assertion that precedes it, and its demonstrated failure mode is the coarse perturbation in row 1, where the framing it reads is absent.
+
+### One narrowing of the accepted wording, and why
+
+The acceptance says decode must check that "a root axis's interface symbol must agree with the binding the environment roots there". Implemented literally as *every rooted axis must be symbolic*, this **falsifies a pinned negative control**: the `S`/`C`/`T` retained carriers root symbols at `input[0]` and `input[1]` while the interface fixes both, and `tiler.artifact-program.v17` pins that such an artifact is representable and identity-bearing. Perturbation E above is that reading, and it reddens `invocation_bindings_do_not_enter_artifact_identity` among others.
+
+The check therefore reads the packet's clause as it is written — *"a root axis's interface symbol"* presupposes the axis has one — and fires only when both spellings name a symbol and the symbols differ. A literal at a rooted axis means the symbol is determined there, which is not a disagreement. `a_literal_on_a_rooted_axis_is_admitted` is the negative control for that narrowing. **This is a reading of the accepted clause, not a departure from it**, but it is recorded here because the stronger reading is the one a reader might reconstruct.
+
+### Negative controls
+
+All three named in the packet are **retained and pass unchanged**: `baking_neighbouring_extents_mints_distinct_artifact_subjects`, `invocation_bindings_do_not_enter_artifact_identity` with its `changing C, T, and S must not mint a second artifact` assertion, and — in its value-never-enters-identity content — `a_compiled_plan_does_not_fold_a_bound_extent_value`.
+
+The last one's *wall* assertion changed and could not have been kept: it required `compile()` to decline at `named-output-symbolic`, which is exactly what the accepted decision removes. Its value-exclusion assertions (the authored shape is not rewritten, no value collapses to the bound value, recognition keeps the symbol) are verbatim, and it is strengthened in the direction the packet predicted — it now also asserts no packaged value is sized by 4 and that the live quantity is carried as an `AbiRoot::InputExtent` root over the environment's decoded root.
+
+### Scope additions
+
+Four were added on the coordinator's in-flight correction (`implementation/runtime`, `implementation/conformance`, `implementation/frontend`, `implementation/candle`) and four more were forced by the same lockstep-codec consequence and by mechanical doc-mirror checks:
+
+- `implementation/build` — `crates/tiler-build/src/metal_plan.rs` holds the identity pins the step moves.
+- `contracts/foundation` — `docs/ir.md` carried the now-retired live claim "no symbolic program reaches a physical plan or a packaged artifact" and cited both renamed tests.
+- `contracts/decisions` — ADR 0072's ledger sentence names the kernel-program domain and enumerates what its identity folds.
+- `research/target-profiles` — `docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md`. **The coordinator said this scope is live on another lane.** The edit was not optional: `the_authority_ledger_mirrors_the_live_standard_metal_pins` slices that document and asserts the live artifact identity, cache subject, and fixed-content byte count appear inside it, so the gate cannot be green without it. Flagged for the coordinator rather than worked around.
+
+### Consequence beyond this ticket's stated outcome
+
+The Outcome expected the `deliver macos;` wall to move *into* artifact family delivery. It moved **past** it: a symbolic region now delivers. Metal emission for the live carrier already existed and is pinned by `tiler_metal`'s `a_live_extent_is_emitted_as_a_constant_parameter`, so packaging was the last missing step rather than something decided here. Consequences the coordinator should route:
+
+- `deliver-an-artifact-family-from-a-symbolic-region` needs its outcome re-audited; part of it has landed as a side effect.
+- The frontend contract flip is that ticket's per this ticket's non-goals, so **no positive `pass/` facade fixture was added**. The symbolic case was removed from `crates/tiler/tests/facade/fail/deliver_selects_an_artifact_family.rs` because it no longer fails, and `tiler-macros`' `a_symbolic_region_delivers_and_its_retired_walls_stay_retired` holds the property meanwhile.
+- **No execution evidence.** Nothing here runs the delivered symbolic artifact on a GPU. That the artifact is *coherent* is checked — `a_well_placed_live_extent_row_over_a_symbolic_axis_is_admitted` shows the operand row the live loop needs is now representable and admitted at decode — but whether it computes the right answer is untested by this ticket.
+
+### Unsupported and unverified
+
+- The zero-extent convention makes `evaluate_static_abi`'s and `verify_host_contract`'s byte-agreement checks vacuous for a symbolic boundary (zero against zero). Nothing is lost that those layers ever had, and the live quantity is rebound at preflight, but it is a real reduction in compile-time checking for this population and is documented at both sites.
+- `spikes/` is outside the workspace and was **not** updated. `spikes/target-profiles/scalar-cpu-vertical`, `spikes/target-profiles/metal-subgroup-width-route-gate`, and `spikes/runtime/backend-provider-portfolio` each call `DecodedInput::shape()` / `bind_input_shape` and will not compile against the new accessor until their own maintainer reruns them.
+- `named-output-unrooted-symbolic` is **not reachable through `compile()`**: every population it would refuse is already refused at the schedule wall. It is a fail-closed backstop, and the census above is what states that rather than a test of the rule firing.

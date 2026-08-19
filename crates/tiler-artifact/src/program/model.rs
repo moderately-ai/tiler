@@ -33,7 +33,7 @@ use tiler_ir::semantic::{
     SemanticAdmissionProvenanceIdentity, SemanticDefinitionProjectionIdentity,
     SemanticGraphIdentity, SemanticIdentity,
 };
-use tiler_ir::shape::{Axis, Shape};
+use tiler_ir::shape::{Axis, Extent, Shape, SourcedExtent};
 
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::program::abi::{AbiArenaTraversal, canonical_arena_traversal, compare_expr_nodes};
@@ -294,11 +294,35 @@ use super::requirement::{RouteRequirement, push_requirements};
 /// `Plan` and the identical artifact claiming nothing are two artifacts, and a
 /// cache holding a `v19` identity must miss rather than match.
 ///
+/// # Why this is a `v21` step
+///
+/// The published interface's per-axis boundary becomes literal-or-symbol, with
+/// the tag written unconditionally. That is a framing change *inside* each
+/// repeated interface record — where a `v20` reader saw a rank followed by that
+/// many bare `u64` extents, a `v21` encoding writes a rank followed by that many
+/// tagged axes — so a `v20` reader handed these bytes recovers a different
+/// interface rather than failing, which is the condition that decides a step. It
+/// moves every artifact's identity, including every wholly literal one, and that
+/// is the price of one grammar instead of two.
+///
+/// The subject genuinely widens with it: a `v20` identity described an artifact
+/// whose interface could only be fixed, so a symbolic boundary had no encoding
+/// at all and the artifact could not be built. There is no `v20` artifact this
+/// reinterprets into a wrong one, because the population it admits is new; what
+/// the step buys is that a cache holding a `v20` identity misses rather than
+/// matching a `v21` artifact whose interface bytes happen to align.
+///
+/// The nested domains below do not step for this. [`STAGE_KEY_DOMAIN`],
+/// `tiler.kernel-program`, and the semantic subjects are all folded here *by
+/// reference* through their own separators, so their values move while their
+/// grammars are untouched — the same reasoning the `v15` and `v19` notes above
+/// record for the records they trail.
+///
 /// Crate-visible because [`RecordedArtifactProgramIdentity::from_bytes`] admits
 /// bytes by `starts_with` on this separator, so a governed domain that prefixed
 /// it would let another subject's bytes be accepted as an artifact identity.
 /// `crate::domains` enumerates it and checks that no such domain exists.
-pub(crate) const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v20\0";
+pub(crate) const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v21\0";
 
 /// [`ARTIFACT_DOMAIN`] without its terminator, for rendering in a diagnostic.
 ///
@@ -998,12 +1022,44 @@ pub(super) struct VariantData {
     pub(super) scope: Vec<PlanDeterminismScope>,
 }
 
+/// One published interface entry, with its boundary in the sourced vocabulary.
+///
+/// **The boundary is per-axis literal-or-symbol, and the tag is unconditional.**
+/// A wholly literal entry writes a literal tag on every axis rather than a
+/// shorter untagged run, following the semantic graph's own `v2` to `v3`
+/// precedent: one boundary has one spelling, so a reader never has to decide
+/// which grammar it is looking at from the content before it.
+///
+/// A zero-extent literal spelling was rejected outright. [`Extent`] documents
+/// zero as an *empty* axis, so a decoded record would either misreport a
+/// symbolic axis as `[0]` to every interface reader or reinterpret the
+/// pre-existing genuinely-empty population; and the retained environment cannot
+/// disambiguate, because a root binding names only its root `(key, axis)` and a
+/// non-root symbolic axis is symbolic only in the semantic graph, which travels
+/// as opaque identity bytes no decoder reads structurally.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct InterfaceEntryData<K> {
     pub(super) key: K,
-    pub(super) shape: Shape,
+    pub(super) extents: Vec<SourcedExtent>,
     pub(super) logical_type: Vec<u8>,
     pub(super) components: Vec<InterfaceComponentData>,
+}
+
+impl<K> InterfaceEntryData<K> {
+    /// Returns the declared rank.
+    pub(super) fn rank(&self) -> usize {
+        self.extents.len()
+    }
+
+    /// Returns the fixed boundary, for a wholly literal entry only.
+    ///
+    /// `None` for an entry any of whose axes names a symbol — the honest answer,
+    /// and the one a consumer needing a sized boundary fails closed on.
+    pub(super) fn static_shape(&self) -> Option<Shape> {
+        let literals: Option<Vec<Extent>> =
+            self.extents.iter().map(SourcedExtent::as_static).collect();
+        literals.and_then(|literals| Shape::try_new(literals).ok())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1482,10 +1538,23 @@ impl<'a> ArtifactInputRef<'a> {
         &self.artifact.data.inputs[self.input].key
     }
 
-    /// Returns the logical tensor shape the input must be bound with.
+    /// Returns the declared per-axis boundary the input must be bound with.
+    ///
+    /// Total over the interface vocabulary: a literal axis and a declared
+    /// `ShapeEnv` symbol are two spellings this one run carries, so a reader
+    /// never mistakes a symbolic axis for an empty one.
     #[must_use]
-    pub fn shape(self) -> &'a Shape {
-        &self.artifact.data.inputs[self.input].shape
+    pub fn extents(self) -> &'a [SourcedExtent] {
+        &self.artifact.data.inputs[self.input].extents
+    }
+
+    /// Returns the fixed tensor shape, for a wholly literal boundary only.
+    ///
+    /// `None` when an axis names a symbol; a consumer that needs a sized
+    /// boundary fails closed there rather than reading a convention.
+    #[must_use]
+    pub fn static_shape(self) -> Option<Shape> {
+        self.artifact.data.inputs[self.input].static_shape()
     }
 
     /// Returns the canonical logical resolved-type encoding.
@@ -1518,10 +1587,16 @@ impl<'a> ArtifactOutputRef<'a> {
         &self.artifact.data.outputs[self.output].key
     }
 
-    /// Returns the logical tensor shape the output is published with.
+    /// Returns the declared per-axis boundary the output is published with.
     #[must_use]
-    pub fn shape(self) -> &'a Shape {
-        &self.artifact.data.outputs[self.output].shape
+    pub fn extents(self) -> &'a [SourcedExtent] {
+        &self.artifact.data.outputs[self.output].extents
+    }
+
+    /// Returns the fixed tensor shape, for a wholly literal boundary only.
+    #[must_use]
+    pub fn static_shape(self) -> Option<Shape> {
+        self.artifact.data.outputs[self.output].static_shape()
     }
 
     /// Returns the canonical logical resolved-type encoding.
@@ -3024,14 +3099,50 @@ fn push_interface(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
     push_len(bytes, envelope.inputs().len());
     for input in envelope.inputs() {
         push_slice(bytes, input.key.as_str().as_bytes());
-        push_shape(bytes, &input.shape);
+        push_sourced_extents(bytes, &input.extents);
         push_interface_components(bytes, input);
     }
     push_len(bytes, envelope.outputs().len());
     for output in envelope.outputs() {
         push_slice(bytes, output.key.as_str().as_bytes());
-        push_shape(bytes, &output.shape);
+        push_sourced_extents(bytes, &output.extents);
         push_interface_components(bytes, output);
+    }
+}
+
+/// Governed wire tag of a literal interface extent.
+pub(super) const SOURCED_EXTENT_LITERAL: u8 = 0x01;
+/// Governed wire tag of a symbolic interface extent, spelled by name.
+pub(super) const SOURCED_EXTENT_SYMBOL: u8 = 0x02;
+
+/// Writes one interface boundary as a length-framed run of tagged axes.
+///
+/// The tag is unconditional, so a wholly literal boundary and a symbolic one are
+/// read against one grammar rather than two. A symbol is written as its scope
+/// and its name, both length-framed, because the name alone is not the symbol:
+/// two regions may each declare `n` and they are two symbols.
+///
+/// # Panics
+///
+/// Never for an extent an envelope can hold. `ArtifactProgramBuilder::new`
+/// refuses a source kind this profile has no wire spelling for, and decoding
+/// refuses an unknown tag, so both routes into an envelope have already proven
+/// the vocabulary. A widened `SourcedExtent` therefore stops at those two typed
+/// refusals rather than silently re-encoding every artifact identity here.
+pub(super) fn push_sourced_extents(bytes: &mut Vec<u8>, extents: &[SourcedExtent]) {
+    push_len(bytes, extents.len());
+    for extent in extents {
+        if let Some(literal) = extent.as_static() {
+            bytes.push(SOURCED_EXTENT_LITERAL);
+            bytes.extend_from_slice(&literal.get().to_be_bytes());
+        } else {
+            let symbol = extent
+                .symbol()
+                .expect("an admitted interface extent is a literal or a named symbol");
+            bytes.push(SOURCED_EXTENT_SYMBOL);
+            push_slice(bytes, symbol.scope().as_bytes());
+            push_slice(bytes, symbol.name().as_bytes());
+        }
     }
 }
 

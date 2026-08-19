@@ -26,7 +26,7 @@ use crate::schedule::TensorRole;
 use crate::semantic::{
     EncodedComponentRole, InputKey, OutputKey, ResolvedValueType, SemanticGraphIdentity,
 };
-use crate::shape::Shape;
+use crate::shape::{Shape, ShapeEnvIdentity};
 
 use super::MAX_PROGRAM_IDENTITY_BYTES;
 use super::abi::{AbiArenaTraversal, ExprNode, canonical_arena_traversal};
@@ -885,6 +885,10 @@ pub(super) struct ProgramOutputData {
 #[derive(Clone, Debug)]
 pub(super) struct KernelProgramData {
     pub(super) semantic_graph: SemanticGraphIdentity,
+    /// The realized program's shape-environment subject, total over the
+    /// vocabulary: a program that declares no symbol carries the empty
+    /// environment's identity rather than an absent one.
+    pub(super) shape_environment: ShapeEnvIdentity,
     pub(super) stages: Vec<StageData>,
     pub(super) values: Vec<MaterializedValueData>,
     pub(super) views: Vec<ViewData>,
@@ -1899,7 +1903,36 @@ const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
 /// `tiler.artifact-program.v15`, and manifest schema 15.0 one layer up. A domain
 /// stepped without a grammar change would cost a cache miss it had no reading to
 /// protect.
-const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v12\0";
+///
+/// `v13` folds the realized program's complete shape-environment subject as one
+/// framed slice beside the semantic graph. It is a *new* framed section written
+/// unconditionally, on the `v6`, `v10`, and `v11` precedent above and for the
+/// reason each recorded: every program's bytes move and a cache or artifact
+/// holding a `v12` identity must miss rather than match.
+///
+/// **Why the subject has to be here and not left transitive.** The semantic
+/// graph identity carries symbol *occurrences* — `SourcedExtent::encode` writes
+/// a source tag and then the scoped symbol name — and the honest
+/// [`AbiRoot::InputExtent`](super::abi::AbiRoot::InputExtent) formulas carry a
+/// *referenced* root's `(key, axis)`. Neither carries a
+/// `SemanticInputConstraint`, which has no root spelling at all, nor an
+/// unreferenced symbol's binding, which generates no formula. Two verified
+/// programs over environments differing only in one of those, with identical
+/// physical content, shared `v12` bytes. That is an identity conflation under a
+/// subject whose declared purpose is attested reuse: the ADR 0013
+/// plan-determinism witness binds
+/// [`CanonicalKernelProgramIdentity`], so a receipt proven against one
+/// environment would transfer to a program whose constraint set a backend could
+/// legitimately have specialized against.
+///
+/// **Total, not optional.** A program that declares no symbol folds the empty
+/// environment's identity, the same totality
+/// [`SemanticIdentity::shape_environment`](crate::semantic::SemanticIdentity::shape_environment)
+/// and the artifact's `tiler.artifact-program.v17` carrier both took. "Declares
+/// no symbols" and "has an empty environment" are one fact about the program, so
+/// a subject that could be absent would give one fact two spellings and this
+/// encoding a presence tag to frame.
+const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v13\0";
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());
@@ -2268,6 +2301,14 @@ pub(super) fn encode_identity(
     let mut bytes = Vec::new();
     bytes.extend_from_slice(PROGRAM_DOMAIN);
     push_slice(&mut bytes, data.semantic_graph.as_bytes());
+    // The complete shape-environment subject, framed beside the graph rather
+    // than inside it: binding provenance is interface-side, so folding it into
+    // the graph subject would make two programs of identical meaning that source
+    // one extent from different inputs report different *graph* identity. Total
+    // over the vocabulary — a program with no environment folds the empty
+    // subject's bytes — so the slice is a fixed position rather than a presence
+    // tag, and the subject's own `tiler.shape-env` separator opens it.
+    push_slice(&mut bytes, data.shape_environment.as_bytes());
     arena.encode(&data.abi_expressions, &mut bytes);
 
     // A stage names only its bound implementation and complete proof-bound

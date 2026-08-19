@@ -108,9 +108,9 @@ use std::path::{Path, PathBuf};
 ///
 /// A spelling appears once however many sites write it. Some rows are
 /// superseded spellings a test restates deliberately, and they are pinned for
-/// the same reason the live ones are: `v6` through `v10` of
-/// `tiler.kernel-program` sit beside the live `v11` because `program::tests`
-/// names them to prove the six stay distinct, and
+/// the same reason the live ones are: `v6` through `v12` of
+/// `tiler.kernel-program` sit beside the live `v13` because `program::tests`
+/// names them to prove the eight stay distinct, and
 /// `tiler.ir.index-refinement-subject.v1` sits beside `v2` because
 /// `LEGACY_SUBJECT_IDENTITY_TAG` — itself `#[cfg(test)]` — is what
 /// `index::refinement`'s test re-encodes under to show the step separated two
@@ -152,6 +152,7 @@ const PINNED_IDENTITY_DOMAINS: &[&[u8]] = &[
     b"tiler.kernel-program.v10\0",
     b"tiler.kernel-program.v11\0",
     b"tiler.kernel-program.v12\0",
+    b"tiler.kernel-program.v13\0",
     b"tiler.kernel-program.v6\0",
     b"tiler.kernel-program.v7\0",
     b"tiler.kernel-program.v8\0",

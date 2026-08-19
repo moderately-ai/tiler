@@ -2560,42 +2560,47 @@ mod tests {
         );
     }
 
+    /// A symbolic program opens a kernel-program builder, and the two source
+    /// kinds stay two subjects rather than collapsing into one.
+    ///
+    /// **This replaces `no_symbolic_program_reaches_a_verified_kernel_program`,
+    /// and the reason the refusal went is the reason this assertion can stand.**
+    /// That test held the coupling kernel-program identity rested on:
+    /// `encode_identity` wrote the semantic graph and the physical content and
+    /// no shape-environment slice, so a symbolic interface had to be refused or
+    /// a kernel program could ship an unkeyed symbolic interface.
+    /// `tiler.kernel-program.v13` folds the complete shape-environment subject,
+    /// so the boundary is keyed and the refusal has nothing left to protect.
+    ///
+    /// What has to stay true is that making the *covered boundary* total under
+    /// the zero-extent convention did not make two boundaries one program. It
+    /// did not: the graph subject encodes each axis's source kind and scoped
+    /// symbol name, so `[n]` and the static `[0]` its covered boundary projects
+    /// to are different graph identities and therefore different kernel-program
+    /// subjects.
     #[test]
-    fn no_symbolic_program_reaches_a_verified_kernel_program() {
-        // The coupling kernel-program identity rests on, asserted rather than
-        // assumed: `encode_identity` writes the semantic graph and the physical
-        // content and no shape-environment slice, so a symbolic interface must
-        // not reach a verified kernel program. Every artifact is built over
-        // one, so this refusal is what makes that true. If this test ever
-        // fails, a kernel program can ship an unkeyed symbolic interface.
-        //
-        // Corrected 2026-08-19 under
-        // `repair-the-stale-three-carried-subject-claims`; both retired clauses
-        // were true when written. They read
-        // "The coupling the artifact's three carried subjects rest on" and
-        // "`project_semantic` does not travel the shape-environment subject",
-        // each kept on one line so it stays greppable — a later hit for
-        // either lands in this note rather than in a live claim. Both
-        // went false at `tiler.artifact-program.v17`: the artifact codec's
-        // `project_semantic` now travels the subject as `retained_shape` and
-        // artifact identity folds it, so two fixed-interface programs differing
-        // only by an otherwise unused environment are two artifacts. The
-        // assertions below are unchanged; only the layer whose injectivity they
-        // protect moves.
+    fn a_symbolic_program_opens_a_builder_over_a_keyed_boundary() {
         let symbolic = sourced_program(Some(env()), vec![SourcedExtent::Symbol(sym("n"))]).unwrap();
         assert!(
-            matches!(
-                crate::program::KernelProgramBuilder::new(&symbolic),
-                Err(crate::program::KernelProgramBuildError::SymbolicInterfaceExtent { interface })
-                    if interface == "rows",
-            ),
-            "a symbolic interface extent has no fixed boundary a physical plan could cover",
+            crate::program::KernelProgramBuilder::new(&symbolic).is_ok(),
+            "a symbolic interface extent occupies a zero static covered boundary",
         );
 
         let literal = sourced_program(None, vec![SourcedExtent::Static(Extent::new(4))]).unwrap();
         assert!(
             crate::program::KernelProgramBuilder::new(&literal).is_ok(),
             "the neighbour differing only in the extent's source kind opens",
+        );
+
+        // The zero-extent projection is a *covering* convention, not an
+        // identity: the boundary a symbolic program projects to is spelled by
+        // the graph subject as a symbol, and the genuinely empty neighbour is
+        // spelled as a literal zero.
+        let empty = sourced_program(None, vec![SourcedExtent::Static(Extent::new(0))]).unwrap();
+        assert_ne!(
+            symbolic.semantic_identity().graph(),
+            empty.semantic_identity().graph(),
+            "a symbolic axis and a genuinely empty one must stay two subjects",
         );
     }
 

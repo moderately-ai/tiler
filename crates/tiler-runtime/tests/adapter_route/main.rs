@@ -98,7 +98,7 @@ fn selection_property_binder(program: &DecodedProgram) -> AbiFactBinder {
     let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
     for input in program.inputs() {
         binder
-            .bind_input_shape(input.key(), input.shape())
+            .bind_declared_extents(input.key(), input.extents())
             .expect("the fixture's declared interface binds");
     }
     binder
@@ -1148,7 +1148,8 @@ fn the_routed_interface_is_the_one_the_artifact_declares() {
     assert_eq!(inputs.len(), 1);
     assert_eq!(inputs[0].key(), &fixture::input_key());
     let extents: Vec<u64> = inputs[0]
-        .shape()
+        .static_shape()
+        .expect("the fixture interface is wholly literal")
         .extents()
         .iter()
         .map(|extent| extent.get())
