@@ -1,7 +1,7 @@
 ---
 id: repair-the-ticket-population-facts-the-splits-and-retirements-falsified
 title: Repair the ticket-population facts the splits and retirements falsified
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [repair-the-accepted-decision-records-the-splits-and-retirements-falsified, repair-the-navigation-and-contract-docs-the-audit-falsified, repair-the-research-records-the-key-replacement-and-splits-falsified, emit-the-indirect-gather-on-metal]
@@ -9,9 +9,6 @@ scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, audit, tickets]
-claimed_from: todo
-assignee: worker-tickets
-lease_expires_at: 1787162948
 ---
 ## User-visible outcome
 

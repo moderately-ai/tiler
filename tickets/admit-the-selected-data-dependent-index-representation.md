@@ -1,7 +1,7 @@
 ---
 id: admit-the-selected-data-dependent-index-representation
 title: Admit the selected data-dependent index representation
-status: blocked
+status: todo
 priority: p1
 dependencies: [accept-adr-0108-data-dependent-index-coordinate-siting, decide-the-data-dependent-index-representation-public-surface]
 related: [revise-adr-0108-with-a-complete-data-dependent-index-vertical, admit-an-invocation-scoped-gather-index-validation-receipt, emit-the-indirect-gather-on-metal]
@@ -10,6 +10,16 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing, gather, verification, identity, decision, needs-tom, public-boundary]
 ---
+## Status repair — 2026-08-19, this ticket was `blocked` with no surviving ground
+
+Found by the ticket-population sweep and confirmed by the coordinator at `1c56a977`. Both declared dependencies are `done`: `accept-adr-0108-data-dependent-index-coordinate-siting` (ADR 0108 carries `decision_status: "accepted"`, accepted 2026-08-12) and `decide-the-data-dependent-index-representation-public-surface` (which records Tom's acceptance under its own `## Accepted decision — 2026-08-18` heading). The body below stated no blocking reason at all, and `git log -S "status: blocked"` attributes the status to `f01c1c92 tickets: gate data-dependent index public surface` — it was gating on exactly the decision that has since been accepted.
+
+`.ticketsplease/decision-queue.md` item 12 already recorded the consequence on 2026-08-18 — "the p1 carrier `admit-the-selected-data-dependent-index-representation` is unblocked and joins the solo identity-migration queue" — but **the ticket's status was never flipped**, so a p1 sat parked for a day and held `emit-the-indirect-gather-on-metal` and the receipt tickets behind it. Status moved to `todo`; no other field changed.
+
+**What is accepted, and what is still not.** Tom accepted option B — literal-only with the source-side `index_access` field — as the exact reviewed packet at `a25f4268b768f1b0391db34798676f910d4f1660`. That acceptance covers the public surface this ticket implements. It does **not** cover sourced boundary/domain gather support, which stays a separate future decision, and it authorizes no kernel, artifact, Metal, cache, or dispatch route past the KIR `body-refinement` wall. The `needs-tom` and `public-boundary` tags stay on the frontmatter because the *surface* is Tom's and must not be re-spelled by a worker; they are not a second unresolved gate.
+
+**Scheduling.** This is a solo identity migration — it moves the `LogicalAccess` grammar and carries the named narrow ADR 0108 schedule-clause amendment — so it takes the solo migration slot and must not run beside other identity-moving work.
+
 ## User-visible outcome
 
 The representation ADR 0108 ultimately accepts is admitted as a complete verified logical index form, while every existing direct-access byte and verifier guarantee remains unchanged.
