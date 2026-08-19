@@ -1,7 +1,7 @@
 ---
 id: replace-the-standard-contraction-key-with-the-accepted-successor
 title: Replace the standard contraction key with the accepted successor
-status: in-progress
+status: done
 priority: p1
 dependencies: [accept-the-tensor-contraction-successor-public-surface, implement-the-adr-0013-plan-determinism-stability-subject]
 related: [decide-the-semantic-order-contract-for-relaxed-contractions]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/reference, implementation/compiler, i
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: worker-contraction-replacement
-lease_expires_at: 1787104037
 ---
 ## User-visible outcome
 

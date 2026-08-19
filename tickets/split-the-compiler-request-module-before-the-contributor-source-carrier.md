@@ -1,7 +1,7 @@
 ---
 id: split-the-compiler-request-module-before-the-contributor-source-carrier
 title: Split the compiler request module before the contributor-source carrier
-status: blocked
+status: in-progress
 priority: p2
 dependencies: []
 related: [keep-a-module-size-and-complexity-census-with-a-split-queue, replace-the-serial-sum-contributor-fields-with-the-exhaustive-source]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [refactor, maintainability, compiler, identity-adjacent]
+claimed_from: todo
+assignee: worker-split-compiler-request
+lease_expires_at: 1787147268
 ---
 ## User-visible outcome
 

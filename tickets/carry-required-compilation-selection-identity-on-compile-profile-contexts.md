@@ -1,7 +1,7 @@
 ---
 id: carry-required-compilation-selection-identity-on-compile-profile-contexts
 title: Carry required compilation-selection identity on compile-profile contexts
-status: blocked
+status: todo
 priority: p1
 dependencies: [record-the-compilation-selection-in-target-measurement-provenance, refuse-unknown-fact-source-provenance-schemas-in-artifact-decode, decide-the-compilation-selection-provenance-public-and-wire-surface, resolve-the-retained-metal-profile-measurement-invocation-authority]
 related: [split-metal-profile-measurement-sources-by-compilation-selection]
