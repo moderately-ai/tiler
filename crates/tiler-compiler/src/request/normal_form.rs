@@ -1361,8 +1361,14 @@ impl NormalizedOutput {
         }
     }
 
+    /// The recognized fold a fixture perturbs, for the crate's own tests.
+    ///
+    /// Crate-test-visible so a perturbation can move the *subject* — the
+    /// contributor source, the producer, the continuation — and require the
+    /// recomputed identity to reject it. Editing the assertion instead would
+    /// prove only that the assertion runs.
     #[cfg(test)]
-    fn serial_sum_mut(&mut self) -> &mut NormalizedSerialSum {
+    pub(super) fn serial_sum_mut(&mut self) -> &mut NormalizedSerialSum {
         match self {
             Self::SerialSum(normalized) => normalized,
             Self::Pointwise(_) | Self::Contraction(_) | Self::Epilogue(_) | Self::Staged(_) => {
@@ -1574,7 +1580,7 @@ impl NormalizedProgram {
     }
 
     #[cfg(test)]
-    pub(super) fn serial_sum_mut(&mut self) -> &mut NormalizedSerialSum {
+    pub(crate) fn serial_sum_mut(&mut self) -> &mut NormalizedSerialSum {
         let [output] = self.outputs.as_mut_slice() else {
             panic!("the fixture declares one output");
         };

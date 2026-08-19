@@ -6079,4 +6079,198 @@ mod tests {
             ));
         }
     }
+
+    /// The request whose fold consumes what an earlier fold materializes:
+    /// `sum(sum(input, [cols]) * 2.0 + 1.0, [rows])`.
+    ///
+    /// The continuation is deliberately the *affine* expression the fused
+    /// vocabulary can spell, so a fused offer would be a real mis-binding rather
+    /// than one the shape happens to rule out.
+    fn produced_request() -> VerifiedTargetRequest {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 2]))
+            .unwrap();
+        let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let bias = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let inner = StrictSerialF32Sum::apply(&mut builder, input, [Axis::new(1)]).unwrap();
+        let product = F32Multiply::apply(&mut builder, inner, scale).unwrap();
+        let continuation = F32Add::apply(&mut builder, product, bias).unwrap();
+        let outer = StrictSerialF32Sum::apply(&mut builder, continuation, [Axis::new(0)]).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), outer)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let request = verify_planned_request(CompilationRequest::governed(&program)).unwrap();
+        request.for_target(0).unwrap()
+    }
+
+    /// The fused affine vocabulary is never offered for a continuation over a
+    /// staged value, and the *type* is what refuses it.
+    ///
+    /// **This is the perturbation option (2) of the carrier decision was
+    /// eliminated for.** `staged * 2.0 + 1.0` is exactly the expression
+    /// [`affine_prologue`] recovers, so a carrier that stored the continuation in
+    /// the prologue slot would offer a fused region here — one whose single
+    /// [`LogicalAccess::ReductionContributor`] read binds `Input { ordinal: 0 }`
+    /// and folds a declared buffer where the program said "the value the inner
+    /// fold wrote". That is a silently wrong result, not a lost candidate.
+    ///
+    /// The control beside it is the same affine expression over a *declared*
+    /// input, which does fuse: without it, a green run here would be consistent
+    /// with a build where nothing fuses at all.
+    #[test]
+    fn a_continuation_over_a_staged_value_has_no_fused_spelling() {
+        let declared = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
+        assert_eq!(
+            fused_prologue_constants(declared.sole_output()),
+            Some((2.0_f32.to_bits(), 1.0_f32.to_bits())),
+            "the declared-input control must fuse, or this test measures nothing",
+        );
+
+        let produced = produced_request();
+        let output = produced.sole_output();
+        // The continuation really is the affine expression, so the refusal below
+        // is the contributor source's and not the expression's.
+        let serial = output.serial_sum();
+        let materialized = serial
+            .contributor
+            .materialized()
+            .expect("the fixture folds a materialized contributor");
+        let continuation = materialized
+            .continuation
+            .as_ref()
+            .expect("the `* 2.0 + 1.0` is a continuation region");
+        assert_eq!(
+            super::affine_prologue(&continuation.expression),
+            Some((2.0_f32.to_bits(), 1.0_f32.to_bits())),
+            "the continuation must be spellable affine, or the refusal is the expression's",
+        );
+        assert_eq!(
+            continuation
+                .reads
+                .iter()
+                .filter(|(read, _)| *read == BoundaryRead::Staged)
+                .count(),
+            1,
+            "the continuation reads the staged value the fused region has nowhere to bind",
+        );
+
+        assert_eq!(fused_prologue_constants(output), None);
+        assert!(fused_region(&produced, output, RegionWrite::ProgramOutput).is_none());
+    }
+
+    /// A produced fold's regions each resolve to the spelling their part names,
+    /// and the continuation is an epilogue rather than a prologue.
+    ///
+    /// **The continuation's read list is what separates the two spellings**, and
+    /// sending it through [`pointwise_region`] would bind its staged read to a
+    /// declared input buffer. Asserting the *kind* is what says the builder that
+    /// receives it is the staged-read one.
+    #[test]
+    fn a_produced_folds_parts_spell_producer_continuation_and_fold() {
+        let produced = produced_request();
+        let output = produced.sole_output();
+        let serial = output.serial_sum();
+        let materialized = serial
+            .contributor
+            .materialized()
+            .expect("the fixture folds a materialized contributor");
+        let continuation = materialized
+            .continuation
+            .as_ref()
+            .expect("the fixture has a continuation");
+
+        assert_eq!(
+            spell_region(&produced, &continuation.members, RegionWrite::Materialized)
+                .expect("the continuation is a part")
+                .kind(),
+            RegionSpellingKind::Epilogue(RegionWrite::Materialized),
+        );
+        assert_eq!(
+            spell_region(
+                &produced,
+                serial.members.reduction(),
+                RegionWrite::ProgramOutput
+            )
+            .expect("the fold is a part")
+            .kind(),
+            RegionSpellingKind::SerialSum,
+        );
+        // The producer's own fold, spelled exactly as it would be standing
+        // alone — which is what the recursion buys.
+        let producer_members = materialized.producer.members();
+        assert_eq!(
+            spell_region(&produced, &producer_members, RegionWrite::Materialized)
+                .expect("the producer's fold is a part")
+                .kind(),
+            RegionSpellingKind::SerialSum,
+        );
+
+        // The continuation region is built from the *contributor* domain, and
+        // its reads carry the staged tensor rather than a declared input.
+        let recognized = staged_elementwise_region(output, &continuation.members)
+            .expect("the continuation resolves a staged elementwise region");
+        let (region, members) = epilogue_region(&produced, recognized, RegionWrite::Materialized);
+        assert_eq!(members, continuation.members);
+        assert_eq!(region.index.iteration_shape, serial.input_shape);
+        assert_eq!(
+            region
+                .index
+                .accesses
+                .iter()
+                .filter(|access| access.mode == AccessMode::Read
+                    && access.tensor == TensorRole::Intermediate)
+                .count(),
+            1,
+            "the continuation reads exactly the edge its producer wrote",
+        );
+    }
+
+    /// Perturbing the continuation's occurrences into the fold's *pointwise*
+    /// part makes the prologue spelling unreachable rather than binding declared
+    /// inputs for it.
+    ///
+    /// **The subject is perturbed, not the assertion.** Continuation members are
+    /// moved into `RecognizedSerialSumMembers::pointwise` — the one place the
+    /// carrier forbids them — and the question asked is what the physical layer
+    /// then does. It must not hand those occurrences to `pointwise_region`,
+    /// which would build a `PointwiseF32` region whose reads all bind
+    /// `TensorRole::Input` while the recognized expression reads a staged value.
+    #[test]
+    fn continuation_members_moved_into_the_prologue_part_bind_no_declared_inputs() {
+        let produced = produced_request();
+        let output = produced.sole_output();
+        let serial = output.serial_sum();
+        let continuation = serial
+            .contributor
+            .materialized()
+            .and_then(|materialized| materialized.continuation.as_ref())
+            .expect("the fixture has a continuation");
+
+        // `prologue_members` answers `None` for a materialized contributor
+        // however the member sets are arranged, because the *source* decides it
+        // — which is what stops the perturbed set from acquiring a prologue
+        // region. It is the type, not a member comparison.
+        assert_eq!(serial.prologue_members(), None);
+        assert_eq!(
+            spell_region(&produced, &continuation.members, RegionWrite::Materialized)
+                .expect("the continuation is a part")
+                .kind(),
+            RegionSpellingKind::Epilogue(RegionWrite::Materialized),
+            "a continuation must never resolve to the pointwise prologue spelling",
+        );
+        // And the fused union stays the prologue-union-fold set, which for this
+        // fold is the fold alone: the continuation is not in it, so no fused
+        // region can absorb it.
+        assert_eq!(serial.members.all(), serial.members.reduction());
+        assert!(
+            !serial
+                .members
+                .all()
+                .iter()
+                .any(|atom| continuation.members.contains(atom)),
+            "the fused affine candidate must not claim the continuation",
+        );
+    }
 }

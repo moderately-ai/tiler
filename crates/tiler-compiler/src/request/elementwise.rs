@@ -851,7 +851,8 @@ pub(super) fn mint_elementwise(
 /// discover one — the strict serial sum, the strict tensor contraction, and any
 /// registered family whose realization law spans a region sequence — are `f32`
 /// throughout. Asking for the `f32` vocabulary directly is what keeps
-/// [`NormalizedSerialSum::prologue`] and [`NormalizedEpilogue::expression`] typed
+/// [`SerialSumContributor::PointwisePrologue`] and
+/// [`NormalizedEpilogue::expression`] typed
 /// as the one vocabulary they can hold, instead of carrying a width neither
 /// shape can reach.
 fn mint_elementwise_f32(

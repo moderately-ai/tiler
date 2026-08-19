@@ -43,11 +43,14 @@ pub(super) fn materializes_its_result(
 /// one.
 ///
 /// **The producer is at the far side of an edge, so it places none of its own**
-/// — [`StagedOperandAdmission::NoEdge`] below. This is the only site that hands
-/// that value, and of the three arms only the staged one can place an edge at
-/// all, so the whole depth rule is reachable from here.
-/// [`StagedOperandAdmission`] is where it is stated, including the measured
-/// reason it stays and the two neighbouring folded-value walls it is not.
+/// — [`StagedOperandAdmission::NoEdge`] and
+/// [`ReductionContributorAdmission::NoEdge`] below. This is the only site that
+/// hands either value, and the two arms that can place an edge at all are the
+/// ones it hands them to: a staged occurrence through its operand walk, and a
+/// fold through its contributor walk. The contraction arm places none by its
+/// own `contraction-operands` refusal, so the whole depth rule is reachable from
+/// here. [`StagedOperandAdmission`] is where the rule is stated, including the
+/// measured reason it stays and the neighbouring folded-value wall it is not.
 pub(super) fn recognize_epilogue_producer(
     program: &SemanticProgram,
     staged: ValueId,
@@ -159,7 +162,7 @@ pub(super) enum StagedOperandAdmission {
 /// counter would be the wrong shape here for the reason it is wrong there, and a
 /// reader can refute the rule by checking the two call sites.
 ///
-/// [`recognize_output`](super::recognize::recognize_output) passes `OneEdge` — the declared output's own fold is at
+/// The recognition entry for a declared output passes `OneEdge` — that fold is at
 /// the near side of every edge this walk may place. [`recognize_epilogue_producer`]
 /// passes `NoEdge`, because a fold it recognizes is already the far side of one.
 /// The call graph is therefore at most
@@ -368,7 +371,7 @@ pub(super) fn recognize_staged_family(
 /// than flattened**, which is what [`SerialSumContributor::Materialized`] is for.
 /// The walk raises [`ElementwiseRefusal::Folded`] naming the produced value; this
 /// function then re-plans the contributor with that value as the walk's staged
-/// leaf — the numbering [`recognize_epilogue`](super::elementwise::recognize_epilogue) already states — and recognizes the
+/// leaf — the numbering [`recognize_epilogue`] already states — and recognizes the
 /// producer through [`recognize_epilogue_producer`], so `sum(sum(x) * 2)` is one
 /// output's partition end to end. The finding is *never* mapped through the
 /// elementwise refusal's flattening once a retain is attempted: falling back to a
@@ -524,7 +527,7 @@ pub(super) fn recognize_reduction(
 /// # Errors
 ///
 /// Returns every rule [`recognize_epilogue_producer`] reports for the producing
-/// half and every rule [`recognize_staged_elementwise`](super::elementwise::recognize_staged_elementwise) reports for the
+/// half and every rule [`recognize_staged_elementwise`] reports for the
 /// continuation — `operation-set` among them, which is what the re-planned walk
 /// reports when it reaches a *second*, different materialized value.
 fn recognize_materialized_contributor(

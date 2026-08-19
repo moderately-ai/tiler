@@ -119,6 +119,25 @@ impl VerifiedTargetRequest {
         output
     }
 
+    /// Replaces the sole recognized fold's contributor source, for the crate's
+    /// own perturbation tests.
+    ///
+    /// **A seam for perturbing the *subject*, and deliberately a narrow one.** A
+    /// check that a produced fold takes the ordinary numerical-proof path cannot
+    /// be written by editing the check: no genuine produced-sum plan classifies
+    /// `Fused` — its partition is at least a producer region and a fold — so the
+    /// only way to reach that arm with a materialized source is to move the
+    /// source on a request that already has such a plan. Naming the mutation
+    /// here keeps it to that one field rather than exposing the whole recognized
+    /// program.
+    #[cfg(test)]
+    pub(crate) fn perturb_serial_sum_contributor(
+        &mut self,
+        contributor: crate::request::SerialSumContributor,
+    ) {
+        self.normalized.serial_sum_mut().contributor = contributor;
+    }
+
     /// The sole recognized output's serial-sum shape, for fixtures.
     ///
     /// `#[cfg(test)]`, and the three below with it. Compile-path code resolves
