@@ -1316,6 +1316,14 @@ fn operands_for(structure: &ContractionIndexStructure) -> Vec<ValueFact> {
         .collect()
 }
 
+/// The successor keeps `OperationAlgebraicCapabilities::none()`.
+///
+/// The operand-level record speaks for the operation's admitted signatures —
+/// its operand chain — and regrouping a contraction *chain* consumes
+/// distributivity, which ADR 0095 declines. The fold's algebraic authority is
+/// the reduction descriptor's order-freedom maxima (2026-08-18 acceptance),
+/// so an operand-level declaration here would be an identity-encoded claim of
+/// a freedom that is either false or unconsumable.
 #[test]
 fn the_contraction_declares_no_algebraic_capability() {
     let registry = FrozenSemanticRegistry::standard().expect("the standard registry builds");
@@ -1325,8 +1333,10 @@ fn the_contraction_declares_no_algebraic_capability() {
             .expect("the contraction is registered")
             .algebraic_capabilities()
             .declares_ordered_associativity(),
-        "a strict fold whose contributors may not be regrouped must not declare \
-         ordered associativity: a missing declaration is unknown, never the inverse law"
+        "the successor's operand-level record must stay none(): the fold's \
+         algebraic authority is the reduction descriptor's order-freedom maxima, \
+         and an operand-chain regrouping claim would consume distributivity, \
+         which ADR 0095 declines"
     );
 }
 
