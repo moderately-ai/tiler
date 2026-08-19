@@ -512,7 +512,7 @@ fn the_direct_contraction_plan_never_enumerates_a_simdgroup_realization() {
 /// observations, not a device probe and not a claim that the finite corpus
 /// proves unpublished MMA order or NaN behaviour. They are why the structural
 /// prohibition exists: fused rounding and a `+0.0` seed compute different
-/// values from `tiler::strict-tensor-contraction-f32@1`.
+/// values from `tiler::tensor-contraction-f32@1`.
 #[test]
 fn contraction_pair_and_negative_zero_seed_disagree_with_the_strict_operation() {
     let operand = f32::from_bits(0x3eb9_7ef9);

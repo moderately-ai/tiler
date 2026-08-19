@@ -1,6 +1,6 @@
 #![feature(variant_count)]
 
-//! The exceptional-value corpus for `tiler::strict-tensor-contraction-f32@1`,
+//! The exceptional-value corpus for `tiler::tensor-contraction-f32@1`,
 //! through the public semantic and reference boundary.
 //!
 //! # Where the numbers come from
@@ -422,11 +422,14 @@ const REDUCTION_CONTRACT_LEDGER: &[LedgerEntry] = &[
         coverage: Coverage::Ordinary(&[
             OrdinaryTest {
                 source: REFERENCE_UNIT,
-                name: "the_governed_signature_decodes_to_the_unseeded_binary32_fold",
+                name: "the_governed_descriptor_derives_the_unseeded_binary32_fold",
             },
+            // The per-field perturbation table lives with the sole decoder in
+            // `tiler-ir` — a second per-field reading in this crate is what
+            // the accepted successor contract forbids.
             OrdinaryTest {
-                source: REFERENCE_UNIT,
-                name: "a_declaration_this_reference_does_not_compute_is_refused_by_field",
+                source: SEMANTIC,
+                name: "the_descriptor_decoder_refuses_every_deviation_by_name",
             },
         ]),
     },

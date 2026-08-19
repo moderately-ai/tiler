@@ -788,8 +788,8 @@ pub fn builtin_scalar_value_types() -> Vec<ResolvedValueType> {
 /// from an empty descriptor: a parameterized or encoded-numeric identity has
 /// facts, and they are not a *scalar* row's.
 ///
-/// This exists for the same reason
-/// [`crate::semantic::strict_tensor_contraction_f32_facts`] does: a consumer that
+/// This exists for the same reason the contraction's typed reduction
+/// descriptor ([`crate::semantic::ContractionF32ReductionDescriptor`]) does: a consumer that
 /// must parameterize itself on a format — deciding whether
 /// `tiler::ulp-reference-gap@1` can measure it, for instance — has to read the
 /// descriptor rather than carry its own copy of the parameters, because a copy is

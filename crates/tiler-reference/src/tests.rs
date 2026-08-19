@@ -2274,3 +2274,147 @@ fn an_empty_split_commits_the_identity_in_every_partition() {
         vec![0.0_f32.to_bits(); 2]
     );
 }
+
+/// The two outer reference-registry identities: fixed-byte pins and nested
+/// snapshot movement watches.
+///
+/// The accepted contraction replacement (2026-08-18) obliges direct
+/// semantic-only and scalar-only movement watches beside the successor-key
+/// pins, so a future encoder that silently drops either nested snapshot fails
+/// here rather than collapsing two authorities into one identity.
+///
+/// Three properties per identity: the domain tag is unchanged; the exact
+/// nested snapshot bytes are embedded — length-framed immediately after the
+/// tag, which is the structural fact that makes a snapshot-only change move
+/// the outer value; and the complete outer bytes match a pinned digest
+/// computed on the merged successor tree. A semantic-only perturbation is also
+/// driven directly: one extension operation added to the semantic registry
+/// moves the outer reference identity while the reference provider, its
+/// capability rows, and the domain tag all stay fixed.
+///
+/// The scalar-only direction follows from the position-anchored containment
+/// assertion below rather than from a second live perturbation: the scalar
+/// outer identity is the domain tag, then the length-framed scalar snapshot at
+/// a fixed offset, then the capability rows, so a scalar-snapshot-only change
+/// moves the outer bytes by construction — and an encoder that stopped
+/// embedding the snapshot fails the containment check loudly.
+#[test]
+fn outer_reference_identities_pin_bytes_and_watch_their_nested_snapshots() {
+    const DOMAIN: &[u8] = b"tiler.test.reference-identity-pin\0";
+    let reference = FrozenReferenceRegistry::standard().unwrap();
+    let semantic = reference.semantic_registry();
+    let outer = reference.canonical_identity().as_bytes();
+    assert!(outer.starts_with(b"tiler.reference-registry.v2\0"));
+    let snapshot = semantic.snapshot_identity().as_bytes();
+    let mut framed = (snapshot.len() as u64).to_be_bytes().to_vec();
+    framed.extend_from_slice(snapshot);
+    assert_eq!(
+        &outer[b"tiler.reference-registry.v2\0".len()..][..framed.len()],
+        framed.as_slice(),
+        "the semantic snapshot is embedded verbatim at the head of the outer identity"
+    );
+    assert_eq!(
+        tiler_digest::DigestAlgorithm::GOVERNED
+            .digest(DOMAIN, outer)
+            .label(),
+        "77c9352c0eba4bd9d8eaec7baee8b7c716a33a82be622d5e7dabd08286afac5a",
+        "the complete outer semantic reference-registry identity moved"
+    );
+
+    let scalar_reference = FrozenScalarReferenceRegistry::standard().unwrap();
+    let scalar_outer = scalar_reference.canonical_identity().as_bytes();
+    assert!(scalar_outer.starts_with(b"tiler.scalar-reference-registry.v1\0"));
+    let scalar_snapshot = tiler_ir::index::FrozenScalarRegistry::standard()
+        .unwrap()
+        .snapshot_identity()
+        .as_bytes()
+        .to_vec();
+    let mut scalar_framed = (scalar_snapshot.len() as u64).to_be_bytes().to_vec();
+    scalar_framed.extend_from_slice(&scalar_snapshot);
+    assert_eq!(
+        &scalar_outer[b"tiler.scalar-reference-registry.v1\0".len()..][..scalar_framed.len()],
+        scalar_framed.as_slice(),
+        "the scalar snapshot is embedded verbatim at the head of the scalar outer identity"
+    );
+    assert_eq!(
+        tiler_digest::DigestAlgorithm::GOVERNED
+            .digest(DOMAIN, scalar_outer)
+            .label(),
+        "ebd9a727624707dc730f97455e0d81f84c3dd40fc3ab96f63416a2f68478683a",
+        "the complete outer scalar reference-registry identity moved"
+    );
+
+    // Semantic-only movement: one extension operation in the semantic registry
+    // and nothing else. The reference provider, every capability row, and the
+    // domain tag stay fixed, and the outer identity still moves — through the
+    // embedded snapshot alone.
+    let mut widened_semantics = SemanticRegistryBuilder::standard().unwrap();
+    widened_semantics
+        .register_provider(&SnapshotOnlyProvider)
+        .unwrap();
+    let widened_semantics = widened_semantics.freeze().unwrap();
+    assert_ne!(
+        widened_semantics.snapshot_identity().as_bytes(),
+        snapshot,
+        "the perturbation must actually move the semantic snapshot"
+    );
+    let mut widened = ReferenceRegistryBuilder::new(widened_semantics);
+    widened
+        .register_provider(&crate::standard::StandardReferenceProvider)
+        .unwrap();
+    let widened = widened.freeze().unwrap();
+    let widened_outer = widened.canonical_identity().as_bytes();
+    assert!(widened_outer.starts_with(b"tiler.reference-registry.v2\0"));
+    assert_ne!(
+        widened_outer, outer,
+        "a semantic-only snapshot movement must move the outer reference identity"
+    );
+}
+
+/// A provider whose only effect is a semantic-snapshot movement: it registers
+/// one extension operation nothing references and no reference capability.
+struct SnapshotOnlyProvider;
+
+impl tiler_ir::semantic::SemanticRegistryProvider for SnapshotOnlyProvider {
+    fn identity(&self) -> tiler_ir::semantic::ProviderIdentity {
+        tiler_ir::semantic::ProviderIdentity::new("test", "snapshot-only", 1).unwrap()
+    }
+
+    fn register(
+        &self,
+        registrar: &mut tiler_ir::semantic::SemanticRegistryRegistrar<'_>,
+    ) -> Result<(), tiler_ir::semantic::RegistryError> {
+        registrar.register_operation(tiler_ir::semantic::OperationDefinition::new(
+            tiler_ir::semantic::OpKey::new("test", "snapshot-only-op", 1).unwrap(),
+            tiler_ir::semantic::OperationSchema::new(
+                tiler_ir::semantic::OperationArity::exact(1),
+                tiler_ir::semantic::OperationArity::exact(1),
+                [],
+            )
+            .unwrap(),
+            tiler_ir::semantic::NormativeDefinitionRef::new("test snapshot-only operation")?,
+            tiler_ir::semantic::OperationDefinitionFacts::new(
+                tiler_ir::semantic::CanonicalValue::boolean(true),
+            ),
+            tiler_ir::semantic::OperationConformance::new(
+                tiler_ir::semantic::CanonicalValue::boolean(true),
+            ),
+            tiler_ir::semantic::OperationEffect::Pure,
+            std::sync::Arc::new(IdentityInferencer),
+        ))
+    }
+}
+
+/// Passes one operand's fact through unchanged.
+struct IdentityInferencer;
+
+impl tiler_ir::semantic::OperationInferencer for IdentityInferencer {
+    fn infer(
+        &self,
+        request: tiler_ir::semantic::OperationInferenceRequest<'_>,
+        outputs: &mut tiler_ir::semantic::OperationInferenceOutputs<'_>,
+    ) -> Result<(), tiler_ir::semantic::OperationInferenceError> {
+        let operand = request.operands()[0].clone();
+        outputs.try_push(operand)
+    }
+}

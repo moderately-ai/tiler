@@ -2485,7 +2485,7 @@ mod tests {
     #[test]
     fn a_contraction_resolves_only_at_its_registered_binary_signature() {
         let installed = crate::request::CompilerCapabilitySnapshot::governed();
-        let contraction = OpKey::new("tiler", "strict-tensor-contraction-f32", 1).unwrap();
+        let contraction = OpKey::new("tiler", "tensor-contraction-f32", 1).unwrap();
         assert!(
             installed
                 .lowering()
@@ -2505,7 +2505,7 @@ mod tests {
         ));
         assert_eq!(
             error.to_string(),
-            "no index-access lowering capability for operation tiler::strict-tensor-contraction-f32@1"
+            "no index-access lowering capability for operation tiler::tensor-contraction-f32@1"
         );
         // A family the build registers no capability for at all still refuses,
         // so the resolution above is a decision about what is installed rather

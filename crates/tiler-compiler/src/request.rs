@@ -23,7 +23,7 @@ use tiler_ir::semantic::{
     REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind, ResolvedValueType, SemanticIdentity,
     SemanticProgram, TypeKey, ValueId, add_bf16_op, add_f32_op, broadcast_f32_op, constant_bf16_op,
     constant_f32_op, multiply_bf16_op, multiply_f32_op, reindex_f32_op, silu_f32_op,
-    strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
+    strict_serial_sum_f32_op, tensor_contraction_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, ExtentSources, Shape, SourcedExtent, SourcedShape};
 
@@ -5779,7 +5779,7 @@ fn recognize_output(
             laws,
         )
         .map(NormalizedOutput::SerialSum)
-    } else if root.key() == &strict_tensor_contraction_f32_op() {
+    } else if root.key() == &tensor_contraction_f32_op() {
         normalize_contraction(program, output.value(), output.key().clone())
             .map(|normalized| NormalizedOutput::Contraction(Box::new(normalized)))
     } else if laws.family_realizes_region_sequence(root.key()) {
@@ -7435,7 +7435,7 @@ fn materializes_its_result(
     laws: &FrozenIndexRealizationLawRegistry,
 ) -> bool {
     operation.key() == &strict_serial_sum_f32_op()
-        || operation.key() == &strict_tensor_contraction_f32_op()
+        || operation.key() == &tensor_contraction_f32_op()
         || laws.family_realizes_region_sequence(operation.key())
 }
 
@@ -7463,7 +7463,7 @@ fn recognize_epilogue_producer(
     if root.key() == &strict_serial_sum_f32_op() {
         recognize_reduction(program, staged, output_key, member, &root, laws)
             .map(NormalizedOutput::SerialSum)
-    } else if root.key() == &strict_tensor_contraction_f32_op() {
+    } else if root.key() == &tensor_contraction_f32_op() {
         normalize_contraction(program, staged, output_key)
             .map(|normalized| NormalizedOutput::Contraction(Box::new(normalized)))
     } else if laws.family_realizes_region_sequence(root.key()) {
@@ -7847,7 +7847,7 @@ fn normalize_contraction(
     // the producer half of it: [`recognize_epilogue`] reaches here with the
     // contraction's own result value rather than a declared program output, and
     // `contraction_region` writes whichever tensor the cover assigns.
-    let (ordinal, operation) = producer(program, result, &strict_tensor_contraction_f32_op())?;
+    let (ordinal, operation) = producer(program, result, &tensor_contraction_f32_op())?;
     if operation.results().collect::<Vec<_>>() != [result] {
         return mismatch("contraction-output");
     }

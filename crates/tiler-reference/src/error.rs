@@ -11,8 +11,7 @@ use std::sync::Arc;
 
 use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::{
-    AttributeFieldId, InputKey, OpKey, ProviderIdentity, RegistryError, ResolvedValueType,
-    ValueConformanceRejection,
+    InputKey, OpKey, ProviderIdentity, RegistryError, ResolvedValueType, ValueConformanceRejection,
 };
 use tiler_ir::shape::{Shape, ShapeSymbol};
 
@@ -32,42 +31,35 @@ pub enum ReferenceRegistryResource {
     CanonicalIdentityBytes,
 }
 
-/// Why a declared contraction numerical signature cannot be realized here.
+/// Why the governed contraction contract cannot parameterize this reference.
 ///
-/// The reference reads `tiler::strict-tensor-contraction-f32@1`'s fourteen-field
-/// signature instead of restating it, so a declaration naming a contract this
-/// evaluator does not compute has to be refusable. Refusing *by field* is what
-/// makes the refusal usable: a reader learns which declared term moved, and the
-/// public [`tiler_ir::semantic`] field-ID constants name it.
+/// The reference is parameterized by `tiler::tensor-contraction-f32@1`'s typed
+/// reduction descriptor, decoded by the **sole decoder**
+/// [`tiler_ir::semantic::ContractionF32ReductionDescriptor::decode`] rather
+/// than by a second per-field reading here — two decoders would be two places
+/// for one fact to be read differently. A definition the sole decoder refuses
+/// therefore cannot parameterize an evaluator, and the refusal carries the
+/// decoder's own typed verdict.
 ///
-/// A declaration this evaluator would over-satisfy is refused on the same
-/// footing as one it would under-satisfy. Evaluating a weaker contract strictly
-/// and reporting bit equality would assert a guarantee the contract never made.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// The semantic registrar already refuses to register an untyped governed
+/// contraction definition, so through any frozen semantic registry this
+/// refusal is a defence in depth rather than a reachable path.
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum UnsupportedContractionDeclaration {
-    /// The facts were not a record of the governed field set.
-    MalformedRecord,
-    /// One field declared a value this reference does not realize.
-    UnrealizableFact {
-        /// The contraction fact field, by its stable schema-local ID.
-        field: AttributeFieldId,
-    },
+    /// The sole descriptor decoder refused the reached governed definition.
+    ///
+    /// Boxed because the decoder's verdict carries operation keys, and this
+    /// refusal rides inside every registry-construction result.
+    Descriptor(Box<tiler_ir::semantic::ContractionF32DescriptorError>),
 }
 
 impl UnsupportedContractionDeclaration {
-    /// Names one field's declared value as unrealizable.
-    #[must_use]
-    pub const fn unrealizable(field: AttributeFieldId) -> Self {
-        Self::UnrealizableFact { field }
-    }
-
     /// The stable diagnostic rule this refusal reports under.
     #[must_use]
-    pub const fn rule(self) -> &'static str {
+    pub const fn rule(&self) -> &'static str {
         match self {
-            Self::MalformedRecord => "reference.contraction.malformed-signature",
-            Self::UnrealizableFact { .. } => "reference.contraction.unrealizable-fact",
+            Self::Descriptor(_) => "reference.contraction.descriptor",
         }
     }
 }
@@ -75,21 +67,22 @@ impl UnsupportedContractionDeclaration {
 impl fmt::Display for UnsupportedContractionDeclaration {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MalformedRecord => write!(
+            Self::Descriptor(source) => write!(
                 formatter,
-                "{}: the declared contraction signature is not the governed fact record",
-                self.rule()
-            ),
-            Self::UnrealizableFact { field } => write!(
-                formatter,
-                "{}: contraction fact field {field} declares a contract this reference does not compute",
+                "{}: the governed contraction definition failed the sole descriptor decoder: {source}",
                 self.rule()
             ),
         }
     }
 }
 
-impl Error for UnsupportedContractionDeclaration {}
+impl Error for UnsupportedContractionDeclaration {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Descriptor(source) => Some(source),
+        }
+    }
+}
 
 /// Why a staged contraction could not be planned.
 ///

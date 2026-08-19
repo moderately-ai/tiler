@@ -58,6 +58,7 @@ AGENTS.md holds a type-system reservation, an architectural seam, implemented su
 
 ```text
 S = contraction(Q, Kᵀ)        # tiler::strict-tensor-contraction-f32@1, structure grtd,gsd->grts
+                              # (key spelling at this record's date; ADR 0112 renamed it tiler::tensor-contraction-f32@1)
 P = softmax(S)                # tiler::softmax-f32@1, a max-fold then a sum-fold
 O = contraction(P, V)         # tiler::strict-tensor-contraction-f32@1, structure grts,gsd->grtd
 ```

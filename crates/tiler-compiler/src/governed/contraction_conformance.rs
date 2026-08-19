@@ -8,7 +8,7 @@
 //!    returned for the occurrence, executed by `tiler-reference`'s independent
 //!    index-region oracle;
 //! 2. the **registered reference evaluator** for
-//!    `tiler::strict-tensor-contraction-f32@1`, which decodes the family's
+//!    `tiler::tensor-contraction-f32@1`, which decodes the family's
 //!    fourteen-field numerical signature rather than restating it; and
 //! 3. the **retained `result_sha256`** of the L3 realization probe's `direct`
 //!    kernel, measured on an Apple M4 Max and recorded under

@@ -13,7 +13,7 @@ use super::{
     constant_f32_op, gather_f32_op, multiply_bf16_op, multiply_f32_op, reindex_f32_op,
     rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute, rms_norm_f32_op, silu_f32_op,
     slice_f32_op, softmax_f32_axis_attribute, softmax_f32_op, strict_serial_sum_f32_op,
-    strict_tensor_contraction_f32_op,
+    tensor_contraction_f32_op,
 };
 
 /// Exact binary32 constant from its IEEE-754 payload.
@@ -285,7 +285,7 @@ impl F32TensorContraction {
         .map_err(BuildError::InvalidOperationAttributes)?;
         apply_single(
             builder,
-            strict_tensor_contraction_f32_op(),
+            tensor_contraction_f32_op(),
             attributes,
             &[left.erase(), right.erase()],
         )

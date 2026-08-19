@@ -19,7 +19,7 @@
 //!
 //! Nothing here registers an operation, adds a form, or admits a structure.
 //! Every occurrence is one of the eight already-registered keys —
-//! `tiler::rms-norm-f32@1`, `tiler::strict-tensor-contraction-f32@1`,
+//! `tiler::rms-norm-f32@1`, `tiler::tensor-contraction-f32@1`,
 //! `tiler::reindex-f32@1`, `tiler::broadcast-f32@2`, `tiler::multiply-f32@1`,
 //! `tiler::add-f32@1`, `tiler::constant-f32@1`, and `tiler::softmax-f32@1` — and
 //! the block is a *shape* over them.
@@ -150,7 +150,7 @@ use tiler_ir::semantic::{
     F32RmsNorm, F32Softmax, F32TensorContraction, InputKey, OpKey, OutputKey,
     RMS_NORM_F32_REFERENCE_EPS_BITS, RegistryError, ReindexForm, SemanticProgram,
     SemanticProgramBuilder, Value, add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op,
-    reindex_f32_op, rms_norm_f32_op, softmax_f32_op, strict_tensor_contraction_f32_op,
+    reindex_f32_op, rms_norm_f32_op, softmax_f32_op, tensor_contraction_f32_op,
 };
 use tiler_ir::shape::{
     Axis, BindingSource, Extent, ExtentRelation, ExtentTerm, FactProvenance, RootBinding,
@@ -1419,7 +1419,7 @@ fn the_block_verifies_at_the_c1_prefill_shape() {
         (reindex_f32_op(), 16),
         (rms_norm_f32_op(), 3),
         (softmax_f32_op(), 1),
-        (strict_tensor_contraction_f32_op(), 6),
+        (tensor_contraction_f32_op(), 6),
     ];
     expected.sort_by(|left, right| left.0.cmp(&right.0));
     assert_eq!(counts, expected);
@@ -1449,7 +1449,7 @@ fn the_block_verifies_at_the_c1_prefill_shape() {
 
 /// One keyed family carries every contraction, with its structure as an attribute.
 ///
-/// `tiler::strict-tensor-contraction-f32@1` is a single key whose occurrences
+/// `tiler::tensor-contraction-f32@1` is a single key whose occurrences
 /// differ by the index structure they declare, so reading that attribute back off
 /// each occurrence is how a program's contractions are told apart — and an
 /// unrecognized structure is a panic rather than an uncounted occurrence, so the
@@ -1466,7 +1466,7 @@ fn all_three_contraction_index_structures_occur_exactly_once_or_four_times() {
     let mut values = 0;
     for operation in program
         .operations()
-        .filter(|operation| operation.key() == &strict_tensor_contraction_f32_op())
+        .filter(|operation| operation.key() == &tensor_contraction_f32_op())
     {
         let attributes = operation.attributes();
         let structure = attributes

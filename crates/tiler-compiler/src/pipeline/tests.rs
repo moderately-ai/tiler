@@ -6310,8 +6310,8 @@ fn retaining_the_candidate_does_not_move_canonical_identities() {
     assert_eq!(
         labels,
         [
-            "program-alternative:46e6724372a67204",
-            "program-alternative:3de1c7941b7aeced",
+            "program-alternative:375b3a2bd8575034",
+            "program-alternative:cc9b86b61e7ddf9d",
         ],
         "successful plan identities must not move when retention is added"
     );

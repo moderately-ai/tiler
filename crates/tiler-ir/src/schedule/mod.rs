@@ -139,6 +139,8 @@
 
 mod blocked;
 mod builder;
+mod contraction_profile;
+mod contraction_topology;
 mod cooperative;
 mod error;
 mod handles;
@@ -157,6 +159,13 @@ pub use blocked::{
     prove_blocked_bijection, prove_blocked_predicated_cover,
 };
 pub use builder::ScheduledRegionBuilder;
+pub use contraction_profile::{
+    EffectiveContractionF32Profile, EffectiveContractionF32ProfileError,
+};
+pub use contraction_topology::{
+    ContractionF32TopologyLimits, ContractionF32TreeError, ContractionF32TreeNode,
+    InvalidContractionF32TopologyLimits, OrderedContractionF32Tree,
+};
 pub use cooperative::{
     AntiDependencyEdge, ContributorArrival, CooperativePhase, CooperativeTile,
     LocalCoordinateSource, LocalCoordinates, ParticipantRange, ParticipantSpace, StagedElement,

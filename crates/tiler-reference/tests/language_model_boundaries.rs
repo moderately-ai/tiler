@@ -49,7 +49,7 @@ use tiler_ir::semantic::{
     RMS_NORM_F32_REFERENCE_EPS_BITS, ReindexForm, ResolvedValueType, SemanticProgram,
     SemanticProgramBuilder, SliceAxisSelection, SliceSelection, broadcast_f32_op, gather_f32_op,
     gather_index_resolved_type, reindex_f32_op, rms_norm_f32_op, slice_f32_op,
-    strict_tensor_contraction_f32_op,
+    tensor_contraction_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape};
 use tiler_reference::{
@@ -519,11 +519,7 @@ fn exact_c1_prefill_and_decode_programs_have_the_measured_shapes_and_counts() {
         };
         assert_eq!(
             operation_keys(&p3.program),
-            vec![
-                widening,
-                rms_norm_f32_op(),
-                strict_tensor_contraction_f32_op(),
-            ]
+            vec![widening, rms_norm_f32_op(), tensor_contraction_f32_op(),]
         );
     }
 }
@@ -670,7 +666,7 @@ fn the_two_logits_modes_are_distinguished_by_their_declared_output_shape() {
                 slice_f32_op(),
                 reindex_f32_op(),
                 rms_norm_f32_op(),
-                strict_tensor_contraction_f32_op(),
+                tensor_contraction_f32_op(),
             ]
         );
         assert_eq!(final_position.program.input_count(), 3);

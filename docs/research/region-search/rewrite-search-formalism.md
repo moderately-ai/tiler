@@ -131,6 +131,7 @@ The naive attention chain, written as registered semantic operations with no fla
 
 ```text
 S = contraction(Q, Kᵀ)        # tiler::strict-tensor-contraction-f32@1
+                              # (key spelling at this record's date; ADR 0112 renamed it tiler::tensor-contraction-f32@1)
 P = softmax(S)                # tiler::softmax-f32@1, a max-fold then a sum-fold
 O = contraction(P, V)
 ```

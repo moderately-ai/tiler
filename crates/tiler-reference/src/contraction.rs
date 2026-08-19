@@ -1,4 +1,4 @@
-//! Reference semantics for `tiler::strict-tensor-contraction-f32@1`.
+//! Reference semantics for `tiler::tensor-contraction-f32@1`'s strict cell.
 //!
 //! # The fold, and the part of it that is easy to get wrong
 //!
@@ -22,27 +22,23 @@
 //! # Why the contract is decoded rather than restated
 //!
 //! Every value this fold is parameterized by is declared by the operation's own
-//! fourteen-field numerical signature, which
-//! [`strict_tensor_contraction_f32_facts`] returns. Four are read as values — the
-//! accumulator type, the result type, the canonical arithmetic-NaN payload, and
-//! the seed. The other ten are *verified*: the declaration must say the one thing
-//! this evaluator realizes, and a record saying anything else is refused by field
-//! ID rather than evaluated under whichever reading the code happens to
-//! implement.
+//! thirteen-field numerical signature, validated and read through the **sole
+//! decoder** — [`ContractionF32ReductionDescriptor`] in `tiler-ir` — rather
+//! than by a second per-field reading here. The accepted successor contract
+//! forbids a second compiler or reference decoder, because two readings are
+//! two places for one fact to move apart; what this module used to verify
+//! field by field the sole decoder now verifies once, for every consumer.
 //!
-//! Refusing is what makes both directions matter. A declaration this evaluator
-//! over-satisfies is as wrong to accept as one it under-satisfies: accepting a
-//! boundary-only canonicalization and canonicalizing per combine anyway would
-//! report a bitwise agreement the contract never promised, which is exactly how
-//! an oracle comes to answer a question it was not asked.
-//!
-//! This reading lives here, in the one consumer, rather than in `tiler-ir` beside
-//! the declaration. A second consumer needing it should promote it to the
-//! declaring crate rather than write a second reading of the same record.
+//! What survives here is the *cell selection*: this evaluator computes the
+//! strict left fold, which is the successor's result under every request
+//! withholding reassociation — bit-identical to the retired strict key's
+//! answer. A realization permitting reassociation never reaches this evaluator:
+//! [`ReferenceNumericalConformance::from_realization`] refuses it first, and
+//! the explicit topology evaluator is the only relaxed reference route.
 //!
 //! # What per-combine canonicalization does and does not change here
 //!
-//! D-8 is answered in the declared signature as
+//! D-8 is answered in the declared signature's canonicalization fact as
 //! `after-every-combine-and-at-the-result-boundary`, and this evaluator
 //! implements exactly that: the product, every accumulation step, and the result
 //! all commit the canonical payload. That is strictly stronger than canonicalizing
@@ -106,16 +102,9 @@ use std::fmt;
 
 use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::{
-    CONTRACTION_F32_FACT_ACCUMULATOR_TYPE, CONTRACTION_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED,
-    CONTRACTION_F32_FACT_CANONICAL_NAN_BITS, CONTRACTION_F32_FACT_COMPUTATION_PRECISION,
-    CONTRACTION_F32_FACT_CONTRIBUTOR_SEQUENCE, CONTRACTION_F32_FACT_CONVERSION,
-    CONTRACTION_F32_FACT_DETERMINISM, CONTRACTION_F32_FACT_DISTRIBUTIVITY,
-    CONTRACTION_F32_FACT_EMPTY_CONTRACTED_DOMAIN, CONTRACTION_F32_FACT_NAN_CANONICALIZATION,
-    CONTRACTION_F32_FACT_PERMUTATION_PERMITTED, CONTRACTION_F32_FACT_REASSOCIATION_PERMITTED,
-    CONTRACTION_F32_FACT_RESULT_TYPE, CONTRACTION_F32_FACT_SEED,
-    CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalValue, CanonicalValueView, ContractionIndex,
-    ContractionIndexStructure, F32, OperationAttributes, ResolvedValueType, TypeKey,
-    strict_tensor_contraction_f32_facts,
+    CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, ContractionF32ReductionDescriptor, ContractionF32Seed,
+    ContractionIndex, ContractionIndexStructure, F32, FrozenSemanticRegistry, OperationAttributes,
+    ResolvedValueType, tensor_contraction_f32_reduction_descriptor,
 };
 use tiler_ir::shape::{Extent, Shape};
 
@@ -172,144 +161,58 @@ pub(crate) struct ContractionContract {
 }
 
 impl ContractionContract {
-    /// Decodes the governed `tiler::strict-tensor-contraction-f32@1` signature.
+    /// Derives the strict-cell contract from the standard registry's governed
+    /// `tiler::tensor-contraction-f32@1` definition, through the sole decoder.
     ///
     /// # Errors
     ///
-    /// Returns the field whose declared value this reference does not realize.
+    /// Returns the sole decoder's typed refusal. Unreachable through any
+    /// frozen semantic registry, because the semantic registrar refuses to
+    /// register an untyped governed contraction definition.
     pub(crate) fn governed() -> Result<Self, UnsupportedContractionDeclaration> {
-        Self::decode(&strict_tensor_contraction_f32_facts())
+        // A standard registry that cannot build leaves the governed definition
+        // unreachable, which is the same refusal as an absent operation.
+        let registry = FrozenSemanticRegistry::standard().map_err(|_| {
+            UnsupportedContractionDeclaration::Descriptor(Box::new(
+                tiler_ir::semantic::ContractionF32DescriptorError::OperationMissing {
+                    operation: tiler_ir::semantic::tensor_contraction_f32_op(),
+                },
+            ))
+        })?;
+        Self::from_registry(&registry)
     }
 
-    /// Decodes one fourteen-field contraction numerical signature.
-    ///
-    /// Every field is consulted, and a record carrying a different number of them
-    /// is malformed rather than partially honoured: a field this reading skipped
-    /// would be a declared contract term the oracle silently did not follow.
+    /// Derives the strict-cell contract from one semantic registry's reached
+    /// governed definition, through the sole decoder.
     ///
     /// # Errors
     ///
-    /// Returns the field whose declared value this reference does not realize.
-    pub(crate) fn decode(
-        facts: &CanonicalValue,
+    /// Returns the sole decoder's typed refusal for an absent or invalid
+    /// governed definition.
+    pub(crate) fn from_registry(
+        registry: &FrozenSemanticRegistry,
     ) -> Result<Self, UnsupportedContractionDeclaration> {
-        let CanonicalValueView::Record(fields) = facts.view() else {
-            return Err(UnsupportedContractionDeclaration::MalformedRecord);
+        let descriptor = tensor_contraction_f32_reduction_descriptor(registry)
+            .map_err(|source| UnsupportedContractionDeclaration::Descriptor(Box::new(source)))?;
+        Ok(Self::from_descriptor(descriptor))
+    }
+
+    /// Projects the strict-cell fold parameters out of a decoded descriptor.
+    ///
+    /// Infallible by construction: holding a descriptor is evidence the sole
+    /// decoder validated every fact, and the four values this fold reads — the
+    /// accumulator type, the result type, the canonical arithmetic-NaN
+    /// payload, and the seed — are all fixed by that validation.
+    fn from_descriptor(descriptor: ContractionF32ReductionDescriptor) -> Self {
+        let seed = match descriptor.seed() {
+            ContractionF32Seed::FirstProduct => ContractionSeed::FirstProduct,
         };
-        let mut declared = BTreeMap::new();
-        for field in fields {
-            if declared.insert(field.id(), field.value()).is_some() {
-                return Err(UnsupportedContractionDeclaration::MalformedRecord);
-            }
-        }
-        if declared.len() != CONTRACTION_SIGNATURE_FIELDS {
-            return Err(UnsupportedContractionDeclaration::MalformedRecord);
-        }
-        let fact = |id| {
-            declared
-                .get(&id)
-                .copied()
-                .ok_or(UnsupportedContractionDeclaration::MalformedRecord)
-        };
-
-        // The seven verified strings. Each must say the one thing the arithmetic
-        // below realizes; the refusal names the field, so a reader learns *which*
-        // term moved rather than only that the record did.
-        for (id, expected) in [
-            (
-                CONTRACTION_F32_FACT_COMPUTATION_PRECISION,
-                "binary32-operands-and-binary32-products",
-            ),
-            (
-                CONTRACTION_F32_FACT_CONVERSION,
-                "none-operands-products-accumulator-and-result-are-binary32",
-            ),
-            (
-                CONTRACTION_F32_FACT_CONTRIBUTOR_SEQUENCE,
-                "ascending-lexicographic-over-the-canonically-ordered-contracted-index-space",
-            ),
-            (
-                CONTRACTION_F32_FACT_EMPTY_CONTRACTED_DOMAIN,
-                "refused-an-unseeded-fold-has-no-empty-result",
-            ),
-            (
-                CONTRACTION_F32_FACT_DISTRIBUTIVITY,
-                "absent-no-expressible-numerical-permission-grants-it",
-            ),
-            (
-                CONTRACTION_F32_FACT_NAN_CANONICALIZATION,
-                "after-every-combine-and-at-the-result-boundary",
-            ),
-            (CONTRACTION_F32_FACT_DETERMINISM, "plan-deterministic"),
-        ] {
-            let CanonicalValueView::Utf8(declared) = fact(id)?.view() else {
-                return Err(UnsupportedContractionDeclaration::unrealizable(id));
-            };
-            if declared != expected {
-                return Err(UnsupportedContractionDeclaration::unrealizable(id));
-            }
-        }
-        // The three permissions, each of which would turn one value into a result
-        // set. `conformance` refuses the same three on a declared *realization*;
-        // this is that rule reaching the semantics the realization implements.
-        for id in [
-            CONTRACTION_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED,
-            CONTRACTION_F32_FACT_REASSOCIATION_PERMITTED,
-            CONTRACTION_F32_FACT_PERMUTATION_PERMITTED,
-        ] {
-            if !matches!(fact(id)?.view(), CanonicalValueView::Bool(false)) {
-                return Err(UnsupportedContractionDeclaration::unrealizable(id));
-            }
-        }
-
-        // The four read values.
-        let accumulator_type = declared_type(fact(CONTRACTION_F32_FACT_ACCUMULATOR_TYPE)?)
-            .ok_or_else(|| {
-                UnsupportedContractionDeclaration::unrealizable(
-                    CONTRACTION_F32_FACT_ACCUMULATOR_TYPE,
-                )
-            })?;
-        let result_type =
-            declared_type(fact(CONTRACTION_F32_FACT_RESULT_TYPE)?).ok_or_else(|| {
-                UnsupportedContractionDeclaration::unrealizable(CONTRACTION_F32_FACT_RESULT_TYPE)
-            })?;
-        let canonical_nan_bits = declared_f32_bits(fact(CONTRACTION_F32_FACT_CANONICAL_NAN_BITS)?)
-            .ok_or_else(|| {
-                UnsupportedContractionDeclaration::unrealizable(
-                    CONTRACTION_F32_FACT_CANONICAL_NAN_BITS,
-                )
-            })?;
-        let seed = declared_seed(fact(CONTRACTION_F32_FACT_SEED)?).ok_or_else(|| {
-            UnsupportedContractionDeclaration::unrealizable(CONTRACTION_F32_FACT_SEED)
-        })?;
-
-        // The two declared types are read, and then required to be the one type
-        // the host arithmetic below computes in. Any other declaration is a
-        // contract this evaluator cannot compute, not one it should approximate
-        // by rounding through `f32` anyway.
-        if accumulator_type != F32::resolved_type() {
-            return Err(UnsupportedContractionDeclaration::unrealizable(
-                CONTRACTION_F32_FACT_ACCUMULATOR_TYPE,
-            ));
-        }
-        if result_type != F32::resolved_type() {
-            return Err(UnsupportedContractionDeclaration::unrealizable(
-                CONTRACTION_F32_FACT_RESULT_TYPE,
-            ));
-        }
-        // A canonical payload that is not a NaN would make every canonicalization
-        // site replace an arithmetic NaN with a finite value.
-        if !f32::from_bits(canonical_nan_bits).is_nan() {
-            return Err(UnsupportedContractionDeclaration::unrealizable(
-                CONTRACTION_F32_FACT_CANONICAL_NAN_BITS,
-            ));
-        }
-        Ok(Self {
-            accumulator_type,
-            result_type,
-            canonical_nan_bits,
+        Self {
+            accumulator_type: F32::resolved_type(),
+            result_type: F32::resolved_type(),
+            canonical_nan_bits: descriptor.canonical_nan_bits(),
             seed,
-        })
+        }
     }
 
     /// Returns the contract this one declares, with a different accumulator seed.
@@ -338,56 +241,18 @@ impl ContractionContract {
     }
 }
 
-/// Fields the governed contraction's numerical signature declares.
-const CONTRACTION_SIGNATURE_FIELDS: usize = 14;
-
-fn declared_type(value: &CanonicalValue) -> Option<ResolvedValueType> {
-    match value.view() {
-        CanonicalValueView::Type(resolved) => Some(resolved.clone()),
-        _ => None,
-    }
-}
-
-fn declared_f32_bits(value: &CanonicalValue) -> Option<u32> {
-    let CanonicalValueView::FloatBits(payload) = value.view() else {
-        return None;
-    };
-    if payload.format() != &TypeKey::new("tiler", "f32", 1).ok()? {
-        return None;
-    }
-    <[u8; 4]>::try_from(payload.bits())
-        .ok()
-        .map(u32::from_be_bytes)
-}
-
-/// Decodes the declared accumulator seed.
-///
-/// Only the unseeded spelling is admitted, because it is the only one any
-/// registered contraction declares. [`ContractionSeed::Initial`] deliberately has
-/// no canonical spelling here: inventing one would introduce a semantics the
-/// normative text has not defined, and the fold expresses the seeded operation
-/// without a record needing to name it.
-fn declared_seed(value: &CanonicalValue) -> Option<ContractionSeed> {
-    match value.view() {
-        CanonicalValueView::Utf8("none-the-accumulator-starts-at-the-first-product") => {
-            Some(ContractionSeed::FirstProduct)
-        }
-        _ => None,
-    }
-}
-
 /// The registered reference implementation of the governed contraction.
-pub(crate) struct StrictTensorContractionF32Reference {
+pub(crate) struct TensorContractionF32Reference {
     contract: ContractionContract,
 }
 
-impl StrictTensorContractionF32Reference {
+impl TensorContractionF32Reference {
     pub(crate) const fn new(contract: ContractionContract) -> Self {
         Self { contract }
     }
 }
 
-impl ReferenceOperation for StrictTensorContractionF32Reference {
+impl ReferenceOperation for TensorContractionF32Reference {
     fn evaluate(
         &self,
         request: ReferenceEvaluationRequest<'_>,
@@ -796,31 +661,31 @@ impl<'operands> ContractionFold<'operands> {
 /// # Why a slab boundary cannot change a folded value
 ///
 /// This is the load-bearing claim, and it is read out of the registered
-/// signature — [`strict_tensor_contraction_f32_facts`] — rather than assumed
-/// from the shape of the loop.
+/// signature — through the sole decoder,
+/// [`ContractionF32ReductionDescriptor`] — rather than assumed from the shape
+/// of the loop.
 ///
-/// - [`CONTRACTION_F32_FACT_CONTRIBUTOR_SEQUENCE`] declares
+/// - The declared contributor sequence is
 ///   `ascending-lexicographic-over-the-canonically-ordered-contracted-index-space`.
 ///   The sequence one output element folds therefore ranges over the *contracted*
 ///   index space alone. By [`ContractionIndexStructure`]'s own derivation the
 ///   contracted set is exactly the operand indices absent from the output tuple,
 ///   so no output coordinate is a member of any contributor sequence and no
 ///   output element appears in another's.
-/// - [`CONTRACTION_F32_FACT_SEED`] declares
+/// - The declared seed is
 ///   `none-the-accumulator-starts-at-the-first-product`. Each fold's initial
 ///   value is its own first product, so no accumulator state is carried from one
 ///   output element to the next. (The declarable explicit-initial alternative
 ///   would be a declared constant, not a carried value, so the conclusion does
 ///   not depend on which seed is declared.)
-/// - [`CONTRACTION_F32_FACT_REASSOCIATION_PERMITTED`] and
-///   [`CONTRACTION_F32_FACT_PERMUTATION_PERMITTED`] are both `false`, and
-///   slabbing exercises neither: it regroups nothing and reorders nothing *within*
-///   a contributor sequence. What it reorders is the traversal of whole output
-///   elements, and the signature's fourteen fields declare no output traversal
-///   order — there is no term for one to violate.
-/// - [`CONTRACTION_F32_FACT_DETERMINISM`] declares `plan-deterministic`: the
-///   value is a function of the declared plan, and a slab width is not a plan
-///   term.
+/// - This staged fold computes the strict cell, whose effective reassociation
+///   and permutation are both false, and slabbing exercises neither: it
+///   regroups nothing and reorders nothing *within* a contributor sequence.
+///   What it reorders is the traversal of whole output elements, and the
+///   signature's thirteen fields declare no output traversal order — there is
+///   no term for one to violate.
+/// - The declared stability record binds ADR 0013 plan determinism: the value
+///   is a function of the declared plan, and a slab width is not a plan term.
 ///
 /// The mechanical statement matching that reading: `evaluate_outputs` reads only
 /// the immutable operand elements and writes only the result it returns, and
@@ -859,9 +724,9 @@ pub struct StagedStrictTensorContractionF32<'operands> {
 impl<'operands> StagedStrictTensorContractionF32<'operands> {
     /// Plans a staged fold with the widest slab the work bound admits.
     ///
-    /// The contract is the governed `tiler::strict-tensor-contraction-f32@1`
-    /// signature, decoded by the same fourteen-field reading the registered
-    /// operation is parameterized by — not a second reading of it.
+    /// The contract is the governed `tiler::tensor-contraction-f32@1`
+    /// signature's strict cell, decoded by the same sole-decoder reading the
+    /// registered operation is parameterized by — not a second reading of it.
     ///
     /// # Errors
     ///
@@ -1068,6 +933,8 @@ enum AxisReader {
     /// The contracted coordinate at this position of the contracted set.
     Contracted(usize),
 }
+
+pub(crate) mod topology;
 
 #[cfg(test)]
 mod tests;

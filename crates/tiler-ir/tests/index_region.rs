@@ -2664,7 +2664,7 @@ fn closure_verification_failure_preserves_recoverable_diagnostic() {
 /// The contraction access relation: two operand maps projecting away *different*
 /// iteration coordinates.
 ///
-/// `tiler::strict-tensor-contraction-f32@1`'s index structure `td,od->to` has
+/// `tiler::tensor-contraction-f32@1`'s index structure `td,od->to` has
 /// iteration domain `(t, o)`, reduction domain `(d)`, operand 0's map
 /// `(t, o, d) -> (t, d)` never mentioning `o`, and operand 1's map
 /// `(t, o, d) -> (o, d)` never mentioning `t`. Both are pure projections of the

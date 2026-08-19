@@ -1,7 +1,7 @@
 //! Both reference oracles as bit-exact checks on the L3 contraction profile cells.
 //!
 //! Two independent implementations answer the same six cells here: the
-//! registered `tiler::strict-tensor-contraction-f32@1` evaluator, whose fold is
+//! registered `tiler::tensor-contraction-f32@1` evaluator, whose fold is
 //! staged in output slabs, and the verified index-region oracle, whose walk is
 //! staged in spans of root points. Each was blocked by a *different* bound
 //! and each is reached without moving one; the second half starts at

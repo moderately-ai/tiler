@@ -450,6 +450,7 @@
 pub mod abi;
 mod alignment;
 mod builder;
+mod contraction_witness;
 mod error;
 mod handles;
 mod model;
@@ -457,6 +458,7 @@ mod verify;
 
 pub use alignment::{AlignmentGuarantee, AlignmentRequirement, ByteAlignment, ByteAlignmentError};
 pub use builder::KernelProgramBuilder;
+pub use contraction_witness::{ContractionF32PlanWitness, ContractionF32PlanWitnessError};
 pub use error::{
     KernelProgramBuildError, KernelProgramDiagnostic, KernelProgramVerificationError,
     ProgramAbiUse, ProgramEntityKind, ProgramLimitKind,

@@ -1,27 +1,20 @@
-//! Unit evidence for the contraction reference's signature decode and fold.
+//! Unit evidence for the contraction reference's contract derivation and fold.
 //!
 //! The bit-exact corpus lives in `tests/contraction_conformance.rs`, which drives
-//! the public boundary. These cover what that path cannot reach: the refusals of
-//! a perturbed declaration, and the seeded fold, which no registered contraction
-//! declares and which therefore has no public spelling to drive it through.
+//! the public boundary. These cover what that path cannot reach: the sole-decoder
+//! derivation of the strict-cell contract, and the seeded fold, which no
+//! registered contraction declares and which therefore has no public spelling to
+//! drive it through. The perturbation table over the governed fact record lives
+//! with the sole decoder in `tiler-ir` — a second per-field reading here is
+//! exactly what the accepted successor contract forbids.
 
-use tiler_ir::semantic::{
-    CONTRACTION_F32_FACT_ACCUMULATOR_TYPE, CONTRACTION_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED,
-    CONTRACTION_F32_FACT_CANONICAL_NAN_BITS, CONTRACTION_F32_FACT_COMPUTATION_PRECISION,
-    CONTRACTION_F32_FACT_CONTRIBUTOR_SEQUENCE, CONTRACTION_F32_FACT_CONVERSION,
-    CONTRACTION_F32_FACT_DETERMINISM, CONTRACTION_F32_FACT_DISTRIBUTIVITY,
-    CONTRACTION_F32_FACT_EMPTY_CONTRACTED_DOMAIN, CONTRACTION_F32_FACT_NAN_CANONICALIZATION,
-    CONTRACTION_F32_FACT_PERMUTATION_PERMITTED, CONTRACTION_F32_FACT_REASSOCIATION_PERMITTED,
-    CONTRACTION_F32_FACT_RESULT_TYPE, CONTRACTION_F32_FACT_SEED, CanonicalField, CanonicalValue,
-    CanonicalValueView, ContractionIndex, ContractionIndexStructure, F32, U8,
-    strict_tensor_contraction_f32_facts,
-};
+use tiler_ir::semantic::{ContractionIndex, ContractionIndexStructure, F32};
 use tiler_ir::shape::Shape;
 
 use super::{ContractionContract, ContractionSeed, contract_operands};
 use crate::MAX_REFERENCE_TENSOR_ELEMENTS;
 use crate::conformance::ReferenceNumericalConformance;
-use crate::error::{ReferenceOperationError, UnsupportedContractionDeclaration};
+use crate::error::ReferenceOperationError;
 use crate::evaluate::{f32_element, f32_elements};
 use crate::tensor::Tensor;
 
@@ -59,141 +52,13 @@ fn result_bits(tensor: &Tensor) -> Vec<u32> {
         .collect()
 }
 
-/// Replaces one field of the governed signature, keeping every other field.
-fn perturbed(
-    field: tiler_ir::semantic::AttributeFieldId,
-    value: &CanonicalValue,
-) -> CanonicalValue {
-    let governed = strict_tensor_contraction_f32_facts();
-    let CanonicalValueView::Record(fields) = governed.view() else {
-        panic!("the governed signature is a record");
-    };
-    let mut replaced = false;
-    let rebuilt: Vec<CanonicalField> = fields
-        .iter()
-        .map(|existing| {
-            if existing.id() == field {
-                replaced = true;
-                CanonicalField::new(field, value.clone())
-            } else {
-                existing.clone()
-            }
-        })
-        .collect();
-    assert!(replaced, "the perturbed field must exist in the record");
-    CanonicalValue::record(rebuilt).expect("the perturbed record is canonical")
-}
-
-fn text(value: &str) -> CanonicalValue {
-    CanonicalValue::utf8(value).expect("a bounded fact")
-}
-
 #[test]
-fn the_governed_signature_decodes_to_the_unseeded_binary32_fold() {
-    let contract = ContractionContract::governed().expect("the governed signature is realizable");
+fn the_governed_descriptor_derives_the_unseeded_binary32_fold() {
+    let contract = ContractionContract::governed().expect("the governed contract derives");
     assert_eq!(contract.seed, ContractionSeed::FirstProduct);
     assert_eq!(contract.accumulator_type, F32::resolved_type());
     assert_eq!(contract.result_type, F32::resolved_type());
     assert_eq!(contract.canonical_nan_bits, 0x7fc0_0000);
-}
-
-/// Every declared term the fold depends on can refuse, under its own field ID.
-///
-/// Written as a table over the fourteen fields rather than as one representative
-/// case, because a decode that silently ignored a field would still pass a
-/// representative case — and an ignored field is a contract term the oracle did
-/// not honour.
-#[test]
-fn a_declaration_this_reference_does_not_compute_is_refused_by_field() {
-    for (field, value) in [
-        (
-            CONTRACTION_F32_FACT_COMPUTATION_PRECISION,
-            text("binary32-operands-and-binary64-products"),
-        ),
-        (
-            CONTRACTION_F32_FACT_ACCUMULATOR_TYPE,
-            CanonicalValue::value_type(U8::resolved_type()),
-        ),
-        (
-            CONTRACTION_F32_FACT_RESULT_TYPE,
-            CanonicalValue::value_type(U8::resolved_type()),
-        ),
-        (
-            CONTRACTION_F32_FACT_CONVERSION,
-            text("widen-products-to-binary64-and-round-the-result"),
-        ),
-        (
-            CONTRACTION_F32_FACT_CONTRIBUTOR_SEQUENCE,
-            text("descending-lexicographic-over-the-canonically-ordered-contracted-index-space"),
-        ),
-        (
-            CONTRACTION_F32_FACT_SEED,
-            text("positive-zero-the-accumulator-starts-at-an-explicit-initial"),
-        ),
-        (
-            CONTRACTION_F32_FACT_EMPTY_CONTRACTED_DOMAIN,
-            text("positive-zero-the-seed-is-the-empty-result"),
-        ),
-        (
-            CONTRACTION_F32_FACT_REASSOCIATION_PERMITTED,
-            CanonicalValue::boolean(true),
-        ),
-        (
-            CONTRACTION_F32_FACT_PERMUTATION_PERMITTED,
-            CanonicalValue::boolean(true),
-        ),
-        (
-            CONTRACTION_F32_FACT_DISTRIBUTIVITY,
-            text("permitted-over-addition"),
-        ),
-        (
-            CONTRACTION_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED,
-            CanonicalValue::boolean(true),
-        ),
-        (
-            CONTRACTION_F32_FACT_CANONICAL_NAN_BITS,
-            CanonicalValue::float_bits(
-                tiler_ir::semantic::TypeKey::new("tiler", "f32", 1).unwrap(),
-                0x3f80_0000_u32.to_be_bytes(),
-            )
-            .unwrap(),
-        ),
-        (
-            // The boundary-only reading D-8 did not take. Refused rather than
-            // accepted-and-over-satisfied: this fold canonicalizes per combine,
-            // and reporting agreement with a weaker declaration would assert a
-            // guarantee that declaration never made.
-            CONTRACTION_F32_FACT_NAN_CANONICALIZATION,
-            text("at-the-result-boundary-only"),
-        ),
-        (
-            CONTRACTION_F32_FACT_DETERMINISM,
-            text("run-to-run-nondeterministic"),
-        ),
-    ] {
-        assert_eq!(
-            ContractionContract::decode(&perturbed(field, &value)).unwrap_err(),
-            UnsupportedContractionDeclaration::unrealizable(field),
-            "field {field} must be able to refuse"
-        );
-    }
-}
-
-#[test]
-fn a_record_that_is_not_the_governed_field_set_is_malformed() {
-    assert_eq!(
-        ContractionContract::decode(&text("not a record")).unwrap_err(),
-        UnsupportedContractionDeclaration::MalformedRecord
-    );
-    let governed = strict_tensor_contraction_f32_facts();
-    let CanonicalValueView::Record(fields) = governed.view() else {
-        panic!("the governed signature is a record");
-    };
-    let short: Vec<CanonicalField> = fields.iter().skip(1).cloned().collect();
-    assert_eq!(
-        ContractionContract::decode(&CanonicalValue::record(short).unwrap()).unwrap_err(),
-        UnsupportedContractionDeclaration::MalformedRecord
-    );
 }
 
 /// The seed is a read parameter, and the two seeds compute different values.
@@ -208,7 +73,7 @@ fn the_first_product_seed_and_a_positive_zero_seed_disagree_on_signed_zero() {
     let structure = structure();
     let left = tensor([1, 16], &[0xbf80_0000; 16]);
     let right = tensor([1, 16], &[0x0000_0000; 16]);
-    let governed = ContractionContract::governed().expect("the governed signature is realizable");
+    let governed = ContractionContract::governed().expect("the governed contract derives");
     assert_eq!(
         result_bits(
             &contract_operands(
@@ -247,7 +112,7 @@ fn the_first_product_seed_and_a_positive_zero_seed_disagree_on_signed_zero() {
 /// proves this branch can say no rather than being unreachable prose.
 #[test]
 fn an_empty_contracted_domain_is_refused_rather_than_returning_a_seed() {
-    let contract = ContractionContract::governed().expect("the governed signature is realizable");
+    let contract = ContractionContract::governed().expect("the governed contract derives");
     let left = tensor([1, 0], &[]);
     let right = tensor([1, 0], &[]);
     assert_eq!(
@@ -299,7 +164,7 @@ fn an_empty_contracted_domain_is_refused_rather_than_returning_a_seed() {
 /// allocates its result or takes a step, so the test costs two small operands.
 #[test]
 fn an_iteration_space_over_the_bound_is_refused_as_iteration_work() {
-    let contract = ContractionContract::governed().expect("the governed signature is realizable");
+    let contract = ContractionContract::governed().expect("the governed contract derives");
     let ones = |count: usize| vec![0x3f80_0000_u32; count];
 
     // `td,od->to` with `d = 1`: `t * o` steps producing `t * o` elements.
@@ -394,7 +259,7 @@ fn a_fold_over_one_window_is_walked_in_several_when_the_allowance_admits_it() {
     const { assert!(OUTPUTS <= MAX_REFERENCE_TENSOR_ELEMENTS) };
     const { assert!(STEPS > MAX_REFERENCE_TENSOR_ELEMENTS) };
 
-    let contract = ContractionContract::governed().expect("the governed signature is realizable");
+    let contract = ContractionContract::governed().expect("the governed contract derives");
     // `a[t] = (t, 1, 0, ...)` and `b[o] = (512, o, 0, ...)`, so the fold's
     // ascending contributor sequence is `512 * t`, then `o`, then sixty-three
     // exact zeros.
@@ -489,7 +354,7 @@ fn exact(value: usize) -> u32 {
 /// A disagreeing extent on a shared index is refused, not silently truncated.
 #[test]
 fn a_contracted_extent_that_disagrees_between_operands_is_refused() {
-    let contract = ContractionContract::governed().expect("the governed signature is realizable");
+    let contract = ContractionContract::governed().expect("the governed contract derives");
     let left = tensor([1, 3], &[0x3f80_0000; 3]);
     let right = tensor([1, 2], &[0x3f80_0000; 2]);
     assert_eq!(
@@ -502,5 +367,192 @@ fn a_contracted_extent_that_disagrees_between_operands_is_refused() {
             ReferenceNumericalConformance::strict()
         ),
         Err(ReferenceOperationError::InvalidApplication)
+    );
+}
+
+// --- The accepted F32 result-population fixture ------------------------------
+
+use tiler_ir::schedule::{
+    ContractionF32TopologyLimits, ContractionF32TreeError, ContractionF32TreeNode,
+    OrderedContractionF32Tree,
+};
+
+/// The packet's exact leaves: `2^24`, `1`, `-2^24` (and a second `1` at `K = 4`).
+const P: u32 = 0x4b80_0000;
+const O: u32 = 0x3f80_0000;
+const N: u32 = 0xcb80_0000;
+
+/// Folds one row `[1, K] x [1, K] -> [1, 1]` along one validated tree.
+fn tree_bits(leaves: &[u32], nodes: Vec<ContractionF32TreeNode>) -> u32 {
+    let contract = ContractionContract::governed().expect("the governed contract derives");
+    let k = u64::try_from(leaves.len()).expect("a fixture is small");
+    let left = tensor_row(leaves);
+    let ones = vec![O; leaves.len()];
+    let right = tensor_row(&ones);
+    let structure = structure();
+    let fold = super::ContractionFold::plan(&contract, &structure, &left, &right)
+        .expect("the fixture plans");
+    let tree = OrderedContractionF32Tree::try_from_postorder(
+        k,
+        nodes,
+        ContractionF32TopologyLimits::new(64, 64).expect("valid limits"),
+    )
+    .expect("the fixture tree is a full ordered binary tree");
+    let results = fold
+        .evaluate_every_output_tree(&contract, ReferenceNumericalConformance::strict(), &tree)
+        .expect("the fixture folds");
+    result_bits(
+        &Tensor::dense(F32::resolved_type(), Shape::from_dims([1, 1]), results)
+            .expect("a scalar result"),
+    )[0]
+}
+
+fn tensor_row(bits: &[u32]) -> Tensor {
+    tensor(
+        [1, u64::try_from(bits.len()).expect("a fixture is small")],
+        bits,
+    )
+}
+
+const fn leaf(contributor: u64) -> ContractionF32TreeNode {
+    ContractionF32TreeNode::Leaf { contributor }
+}
+
+const fn add(left: u32, right: u32) -> ContractionF32TreeNode {
+    ContractionF32TreeNode::Add { left, right }
+}
+
+/// Grouping alone is observable: two legal members of one occurrence's
+/// ordered-tree result set differ in their exact bits.
+///
+/// The packet's `[2^24, 1, -2^24]` fixture: the left grouping `(P + O) + N`
+/// is `0.0` (`0x00000000`) because `P + O` rounds back to `P` under
+/// round-to-nearest ties-to-even, and the right grouping `P + (O + N)` is
+/// `1.0` (`0x3f800000`) because `O + N` is exactly representable. Preserving
+/// leaf order and changing only grouping changes the answer, which is why a
+/// plan must witness one exact tree rather than claim set membership.
+#[test]
+fn grouping_is_observable_between_two_legal_ordered_trees() {
+    let leaves = [P, O, N];
+    let left_chain = tree_bits(
+        &leaves,
+        vec![leaf(0), leaf(1), add(0, 1), leaf(2), add(2, 3)],
+    );
+    assert_eq!(left_chain, 0x0000_0000, "((2^24 + 1) + -2^24) is 0.0");
+    let right_grouping = tree_bits(
+        &leaves,
+        vec![leaf(0), leaf(1), leaf(2), add(1, 2), add(0, 3)],
+    );
+    assert_eq!(right_grouping, 0x3f80_0000, "(2^24 + (1 + -2^24)) is 1.0");
+    assert_ne!(left_chain, right_grouping);
+}
+
+/// Membership is not grouping: the lane-strided value is outside the
+/// ordered-tree result set, and the tree carrier cannot even spell it.
+///
+/// The packet's `[2^24, 1, -2^24, 1]` fixture holds two two-leaf partitions
+/// and the ascending merge fixed and changes only membership: contiguous
+/// `(p0 + p1) + (p2 + p3)` is `1.0`, and lane-strided `(p0 + p2) + (p1 + p3)`
+/// is `2.0`. The lane value needs the non-adjacent grouping `{0, 2}`, which
+/// the interval rules refuse, so lane-strided membership is unrepresentable as
+/// a witness rather than a member that happens not to be chosen — physical
+/// membership, algebraic commutativity, and numerical permutation permission
+/// are three separate obligations.
+#[test]
+fn lane_strided_membership_is_outside_the_ordered_tree_result_set() {
+    let leaves = [P, O, N, O];
+    let contiguous = tree_bits(
+        &leaves,
+        vec![
+            leaf(0),
+            leaf(1),
+            add(0, 1),
+            leaf(2),
+            leaf(3),
+            add(3, 4),
+            add(2, 5),
+        ],
+    );
+    assert_eq!(contiguous, 0x3f80_0000, "contiguous membership is 1.0");
+    // The strict chain is also a member, and at these leaves it happens to
+    // agree with the contiguous split — which is exactly why the grouping
+    // fixture above exists on three leaves where the two differ.
+    let strict = tree_bits(
+        &leaves,
+        vec![
+            leaf(0),
+            leaf(1),
+            add(0, 1),
+            leaf(2),
+            add(2, 3),
+            leaf(3),
+            add(4, 5),
+        ],
+    );
+    assert_eq!(strict, 0x3f80_0000);
+
+    // The lane-strided value, computed by direct host arithmetic so the
+    // observable difference is stated rather than implied.
+    let a = |x: f32, y: f32| x + y;
+    let lane = a(
+        a(f32::from_bits(P), f32::from_bits(N)),
+        a(f32::from_bits(O), f32::from_bits(O)),
+    )
+    .to_bits();
+    assert_eq!(lane, 0x4000_0000, "lane-strided membership is 2.0");
+    assert_ne!(lane, contiguous);
+
+    // And the tree carrier refuses to spell it: the first lane pair `{0, 2}`
+    // is non-adjacent in the canonical contributor sequence.
+    assert_eq!(
+        OrderedContractionF32Tree::try_from_postorder(
+            4,
+            vec![
+                leaf(0),
+                leaf(2),
+                add(0, 1),
+                leaf(1),
+                leaf(3),
+                add(3, 4),
+                add(2, 5)
+            ],
+            ContractionF32TopologyLimits::new(64, 64).expect("valid limits"),
+        )
+        .expect_err("a lane-strided grouping is not a full ordered binary tree"),
+        ContractionF32TreeError::NonAdjacentChildren { node: 2 }
+    );
+}
+
+/// Permutation is not reassociation: reordering the contributor sequence
+/// changes the strict answer, and the tree carrier cannot express it.
+///
+/// The packet's order fixture: the strict left fold of `[2^24, -2^24, 1]` is
+/// `1.0` and of `[2^24, 1, -2^24]` is `0.0` — one multiset, two sequences,
+/// two answers. A tree's in-order leaf traversal is required to be exactly the
+/// canonical sequence, so a "tree" visiting leaf 2 before leaf 1 is refused
+/// structurally; permutation stays operation-owned unsupported rather than
+/// becoming a grouping nobody validated.
+#[test]
+fn permutation_is_unspellable_and_observably_different() {
+    let original = tree_bits(
+        &[P, N, O],
+        vec![leaf(0), leaf(1), add(0, 1), leaf(2), add(2, 3)],
+    );
+    assert_eq!(original, 0x3f80_0000, "((2^24 + -2^24) + 1) is 1.0");
+    let permuted = tree_bits(
+        &[P, O, N],
+        vec![leaf(0), leaf(1), add(0, 1), leaf(2), add(2, 3)],
+    );
+    assert_eq!(permuted, 0x0000_0000, "((2^24 + 1) + -2^24) is 0.0");
+    assert_ne!(original, permuted);
+
+    assert_eq!(
+        OrderedContractionF32Tree::try_from_postorder(
+            3,
+            vec![leaf(0), leaf(2), add(0, 1), leaf(1), add(2, 3)],
+            ContractionF32TopologyLimits::new(64, 64).expect("valid limits"),
+        )
+        .expect_err("a permuted leaf order is not a full ordered binary tree"),
+        ContractionF32TreeError::NonAdjacentChildren { node: 2 }
     );
 }

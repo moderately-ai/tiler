@@ -749,6 +749,37 @@ impl FrozenReferenceRegistry {
         &self.0.semantic_registry
     }
 
+    /// Returns the registered successor contraction capability's provenance:
+    /// its owning provider, capability revision, and reached semantic
+    /// authority. `None` when the capability is absent.
+    ///
+    /// Crate-internal plumbing for the concrete topology evaluator's
+    /// availability check; it deliberately exposes provenance and never the
+    /// implementation, so no second dispatch route exists.
+    pub(crate) fn contraction_capability_provenance(
+        &self,
+    ) -> Option<(
+        ProviderIdentity,
+        ReferenceCapabilityRevision,
+        SemanticCapabilityAuthority,
+    )> {
+        use tiler_ir::semantic::{F32, tensor_contraction_f32_op};
+        let signature = ReferenceSignature::new(
+            [F32::resolved_type(), F32::resolved_type()],
+            [F32::resolved_type()],
+        )
+        .ok()?;
+        let capability = self.0.capabilities.get(&ReferenceCapabilityKey {
+            operation: tensor_contraction_f32_op(),
+            signature,
+        })?;
+        Some((
+            capability.provider.clone(),
+            capability.revision,
+            capability.semantic_authority.clone(),
+        ))
+    }
+
     pub(crate) fn resolve(
         &self,
         operation: &OpKey,
