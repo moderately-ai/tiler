@@ -9,7 +9,7 @@ Changes applied:
   - Same paragraph: replaced `legality.rs:393` with searchable anchor `self.receipt.final_scalar_authority()` on `PendingIndexRefinement::scalar_authority` in `crates/tiler-compiler/src/legality.rs` (verified at current line 415).
   - Same paragraph: replaced `model.rs:1118` / `scalar.rs:2275` with anchors `pub const fn region` on `VerifiedScheduledRegion` / `ScalarAuthorityEvidence` (verified at current model.rs:1287 and scalar.rs:2510).
   - Outcome `const fn` constraint note: aligned the remaining reach description to the same post-rename anchor (`self.receipt.final_scalar_authority()`) so the retired `:393` / pre-rename call spelling does not linger.
-  - Optional consistency: dated perturbation FAIL lines `refinement.rs:4486` / `:5524` as branch-local at Outcome time (2026-08-06), not stable locators.
+  - Optional consistency: dated perturbation FAIL lines index/refinement.rs 4486 / 5524 as branch-local at Outcome time (2026-08-06), not stable locators.
 
 Optional items skipped (with reason):
   - none (optional perturbation dating applied as cheap same-ticket hygiene).

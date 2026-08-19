@@ -5,7 +5,7 @@ status: in-progress
 priority: p3
 dependencies: []
 related: [keep-a-module-size-and-complexity-census-with-a-split-queue]
-scopes: [implementation/ir]
+scopes: [implementation/ir, research/documentation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [refactor, maintainability, ir]
