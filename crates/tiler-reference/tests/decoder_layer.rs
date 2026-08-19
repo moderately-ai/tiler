@@ -103,7 +103,7 @@ use tiler_ir::semantic::{
     RMS_NORM_F32_REFERENCE_EPS_BITS, RegistryError, ReindexForm, SemanticProgram,
     SemanticProgramBuilder, Value, add_f32_op, broadcast_f32_op, concatenate_f32_op,
     constant_f32_op, multiply_f32_op, reindex_f32_op, rms_norm_f32_op, silu_f32_op, softmax_f32_op,
-    strict_tensor_contraction_f32_op,
+    tensor_contraction_f32_op,
 };
 use tiler_ir::shape::{
     Axis, BindingSource, Extent, ExtentRelation, ExtentTerm, FactProvenance, FragmentViolation,
@@ -1717,7 +1717,7 @@ fn the_layer_verifies_at_the_c1_prefill_row() {
         (silu_f32_op(), 1),
         (softmax_f32_op(), 1),
         // 4 attention projections + score + value + 3 MLP
-        (strict_tensor_contraction_f32_op(), 9),
+        (tensor_contraction_f32_op(), 9),
     ]);
     assert_eq!(occurrences_by_key(&program), expected);
 
@@ -1804,7 +1804,7 @@ fn the_layer_verifies_at_the_c1_decode_row() {
 /// One keyed family carries every contraction, with its structure as an attribute.
 ///
 /// Structurally different contractions are structure *values* under
-/// `tiler::strict-tensor-contraction-f32@1` rather than separate keys, so reading
+/// `tiler::tensor-contraction-f32@1` rather than separate keys, so reading
 /// the attribute back off each occurrence is how a program's contractions are
 /// told apart, and an unrecognized structure is a panic rather than an uncounted
 /// occurrence. The worked instance is what the MLP adds: no fourth structure, only
@@ -1817,7 +1817,7 @@ fn all_three_contraction_index_structures_occur() {
     let (mut projections, mut scores, mut values) = (0, 0, 0);
     for operation in program
         .operations()
-        .filter(|operation| operation.key() == &strict_tensor_contraction_f32_op())
+        .filter(|operation| operation.key() == &tensor_contraction_f32_op())
     {
         let structure = operation
             .attributes()

@@ -72,6 +72,12 @@ pub use conformance::{
     ConformanceSubject, ReferenceNumericalConformance, UnsupportedReferenceContract,
 };
 pub use contraction::StagedStrictTensorContractionF32;
+pub use contraction::topology::{
+    ContractionF32ReferenceBudget, ContractionF32ReferenceResource,
+    ContractionF32TopologyEvaluation, ContractionF32TopologyEvaluationError,
+    ContractionF32TopologyEvaluationRequest, ContractionF32TopologyEvaluator,
+    ContractionF32TopologyEvaluatorUnavailable, InvalidContractionF32ReferenceBudget,
+};
 pub use error::{
     EvaluationError, ReferenceOperationError, ReferenceRegistryError, ReferenceRegistryResource,
     ReferenceResource, ReferenceValueError, StagedContractionError, UnsupportedBf16Declaration,

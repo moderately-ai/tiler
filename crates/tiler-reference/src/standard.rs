@@ -15,7 +15,7 @@
 //! binary32:
 //!
 //! - `tiler::multiply-f32@1`, `tiler::add-f32@1`, `tiler::strict-serial-sum-f32@1`,
-//!   and `tiler::strict-tensor-contraction-f32@1` name
+//!   and `tiler::tensor-contraction-f32@1` name
 //!   [`ArithmeticType::F32`] and apply it
 //!   at every operand and every produced value;
 //! - `tiler::silu-f32@1`, `tiler::rms-norm-f32@1`, and `tiler::softmax-f32@1` name
@@ -51,11 +51,11 @@ use tiler_ir::semantic::{
     MIN_CONCATENATE_OPERANDS, ProviderIdentity, TypeKey, add_f32_op, broadcast_f32_op,
     concatenate_f32_op, constant_f32_op, gather_f32_op, gather_index_resolved_type,
     multiply_f32_op, reindex_f32_op, rms_norm_f32_op, silu_f32_op, slice_f32_op, softmax_f32_op,
-    strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
+    strict_serial_sum_f32_op, tensor_contraction_f32_op,
 };
 
 use super::bf16::register_standard_bf16;
-use super::contraction::{ContractionContract, StrictTensorContractionF32Reference};
+use super::contraction::{ContractionContract, TensorContractionF32Reference};
 use super::error::{ReferenceOperationError, ReferenceRegistryError, ReferenceValueError};
 use super::evaluate::{binary, reduction_axes, strict_sum};
 use super::quantization::register_standard_quantization;
@@ -76,8 +76,13 @@ use super::tensor::{FloatBitOrder, ReferenceElement, Tensor, TensorPayloadView};
 pub(crate) struct StandardReferenceProvider;
 
 impl ReferenceRegistryProvider for StandardReferenceProvider {
+    /// The provider revision moved from 7 to 8 with the accepted contraction
+    /// replacement (2026-08-18): the concrete topology evaluator is
+    /// output-affecting behaviour of this same provider, which now owns both
+    /// the strict-cell capability and topology evaluation for
+    /// `tiler::tensor-contraction-f32@1`.
     fn identity(&self) -> ProviderIdentity {
-        ProviderIdentity::new("tiler", "standard-reference", 7)
+        ProviderIdentity::new("tiler", "standard-reference", 8)
             .expect("the governed reference provider identity is valid")
     }
 
@@ -113,20 +118,28 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
             revision,
             Arc::new(F32BinaryReference::Add),
         )?;
-        // The contraction's own numerical signature parameterizes its evaluator,
-        // so a declaration this reference cannot compute refuses the registration
-        // rather than binding an implementation that would answer for it anyway.
-        let contraction = ContractionContract::governed().map_err(|source| {
-            ReferenceRegistryError::UnsupportedContraction {
-                operation: strict_tensor_contraction_f32_op(),
-                source,
-            }
-        })?;
+        // The contraction's own reduction descriptor parameterizes its
+        // evaluator through the sole decoder, read from the exact semantic
+        // registry this reference registry is being built against — so a
+        // definition the decoder refuses (unreachable through any frozen
+        // registry, which the semantic registrar already guards) refuses the
+        // registration rather than binding an implementation that would answer
+        // for it anyway. The capability revision moved from 7 to 8 with the
+        // accepted successor replacement: the strict cell it computes is the
+        // retired key's answer bit for bit, but the row's operation key,
+        // governing definition, and owning provider behaviour all moved.
+        let contraction =
+            ContractionContract::from_registry(registrar.semantic_registry).map_err(|source| {
+                ReferenceRegistryError::UnsupportedContraction {
+                    operation: tensor_contraction_f32_op(),
+                    source,
+                }
+            })?;
         registrar.register(
-            strict_tensor_contraction_f32_op(),
+            tensor_contraction_f32_op(),
             binary_signature,
-            revision,
-            Arc::new(StrictTensorContractionF32Reference::new(contraction)),
+            ReferenceCapabilityRevision::new(8)?,
+            Arc::new(TensorContractionF32Reference::new(contraction)),
         )?;
         let unary_signature =
             ReferenceSignature::new([F32::resolved_type()], [F32::resolved_type()])?;

@@ -171,7 +171,16 @@ impl SemanticProgram {
             })
     }
 
-    pub(crate) fn canonical_operation_ordinal(&self, operation: OperationRef<'_>) -> u32 {
+    /// Returns the canonical occurrence ordinal of one graph-owned operation.
+    ///
+    /// This is the ordinal a [`crate::program::SemanticOccurrence`] names: the
+    /// operation's position in the canonical numbering the graph identity
+    /// fixes, independent of transient construction order. Public because an
+    /// occurrence-scoped consumer — the contraction plan witness and the
+    /// concrete topology reference evaluator — must resolve an occurrence back
+    /// to its operation without a second numbering that could drift.
+    #[must_use]
+    pub fn canonical_operation_ordinal(&self, operation: OperationRef<'_>) -> u32 {
         debug_assert_eq!(operation.owner, self.data.owner);
         self.data.canonical_operation_ordinals[operation.index.as_usize()]
     }

@@ -4,7 +4,7 @@
 //! # What these structures are
 //!
 //! They are structure *values* under the one governed key
-//! `tiler::strict-tensor-contraction-f32@1`, not new keys — ADR 0087 accepts a
+//! `tiler::tensor-contraction-f32@1`, not new keys — ADR 0087 accepts a
 //! single family whose node carries its index structure as an attribute. Nothing
 //! in `tiler-ir` or `tiler-reference` was widened to admit them: the five
 //! structural rules already admit every well-formed binary structure, and the
