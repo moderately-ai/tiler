@@ -1,7 +1,7 @@
 ---
 id: re-enumerate-the-plan-freedom-sites-over-the-widened-topology-vocabulary
 title: Re-enumerate the plan freedom sites over the widened topology vocabulary
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [repair-the-research-records-the-key-replacement-and-splits-falsified]
@@ -9,6 +9,9 @@ scopes: [research/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, documentation, plan-freedom, enumeration]
+claimed_from: todo
+assignee: worker-freedom
+lease_expires_at: 1787164923
 ---
 ## User-visible outcome
 

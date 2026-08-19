@@ -1,7 +1,7 @@
 ---
 id: repoint-the-optimizer-contract-s-request-module-citations
 title: Repoint the optimizer contract's request-module citations
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [repair-the-navigation-and-contract-docs-the-audit-falsified, re-derive-the-contraction-fusion-role-rationale-after-the-key-replacement]
@@ -9,6 +9,9 @@ scopes: [contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, optimizer, citations]
+claimed_from: todo
+assignee: worker-optcite
+lease_expires_at: 1787164923
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: split-metal-profile-measurement-sources-by-compilation-selection
 title: Split Metal profile measurement sources by compilation selection
-status: todo
+status: done
 priority: p1
 dependencies: [carry-required-compilation-selection-identity-on-compile-profile-contexts]
 related: [construct-and-bind-the-first-authoritative-metal-compile-profile, declare-the-bf16-rows-on-the-authoritative-metal-profile]
@@ -44,6 +44,23 @@ The current `tiler-build` declaration shares one measured source across grid, co
 **Not determinable from `tickets/` alone, and left for the coordinator.** Whether these three fully discharge this bullet — in particular whether they cover a facts-only mutation held against an unchanged selection, which is the exact perturbation the next bullet still demands — requires reading `crates/tiler-build/src/metal_declaration.rs` in full. This lane holds neither `implementation/build` nor `implementation/compiler` and did not read those test bodies, so no closure claim is made here. The bullet is repaired rather than deleted precisely because the delivery obligation may still be partly live; the stale *name* is what is withdrawn, not the requirement that both directions be evidenced.
 - Update the authority ledger, descriptor pins, request/explain pins, standard artifact/envelope/cache pins, source populations, and documentation from exact current values.
 - Perturb one selection field while leaving facts unchanged, and one facts field while leaving selection unchanged; quote both failures.
+
+## Closure determination — 2026-08-19, coordinator, satisfied
+
+Made at `fac004c6` by reading `crates/tiler-build/src/metal_declaration.rs` test bodies in full, which is the read the ticket-population sweep correctly declined to claim without the `implementation/build` scope. Per-item verdict against `## Required delivery`:
+
+- **Selection derived, never hand-copied — satisfied.** `PopulationRows` builds each expected selection through `CompileRequest::new(...).compilation_selection_identity()` rather than transcribing flags.
+- **Grid evidence has its own source — satisfied.** Four `PopulationRows` (`grid`, `cost`, `tree_width`, `dispatch_numerics`) over a `variant_count`-sized `MetalProfileMeasurementPopulation`.
+- **Cost and numerical share only on equal canonical selection, else split — satisfied, and they are in fact split**: {grid, cost} on the `26A5406e` execution row, {tree-width, dispatchability/numerics} on `26A5388g`.
+- **Typed refusal on mismatch — satisfied.** `BoundMetalDeclarationError::CompilationSelectionMismatch { population }`, raised before any profile descriptor exists.
+- **The retired-test bullet — satisfied by its successor obligation**, as the 2026-08-19 correction above records. The three named replacements are present.
+- **Ledger, pins, populations, documentation — satisfied** by the carrier and the grid-and-cost reseat, with `docs/backends/metal.md` and `docs/status.md` corrected to four validated overlaps on 2026-08-19.
+- **Both perturbations, with quoted failures — satisfied in both directions**, which was the one item genuinely open:
+  - *Facts moved, selection unchanged*: `a_language_standard_change_moves_selection_identity_and_the_descriptor` changes `rows.facts` to MSL 3.2 while leaving every population's `selection` untouched, and asserts both the typed error and its exact display text (`retained grid-axis selection differs from the production CompileRequest selection`). `a_second_artifact_family_cannot_wear_this_profiles_measured_rows` is the same shape over `MetalPlatform`.
+  - *Selection moved, facts unchanged*: `every_populations_selection_mismatch_is_named_independently` moves exactly one record's optimization row off the production `-O2` per case, reads the population back out of both the typed error and its display text, and sizes its case array by `MetalProfileMeasurementPopulation::ALL.len()` so a widened enum fails at the array rather than leaving a record uncompared.
+  - The coherent direction is covered too: moving facts **and** every population's selection together moves both the canonical descriptor and the AOT target, asserted in the same test.
+
+Closed as satisfied. No bounded remainder split off — the only item that could have produced one, the retired test's obligation, is discharged by a strictly stronger control than the bullet asked for.
 
 ## Non-goals
 
