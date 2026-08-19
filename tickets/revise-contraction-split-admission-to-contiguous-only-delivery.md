@@ -1,7 +1,7 @@
 ---
 id: revise-contraction-split-admission-to-contiguous-only-delivery
 title: Revise contraction split admission to contiguous-only delivery
-status: in-progress
+status: done
 priority: p2
 dependencies: [decide-the-algebraic-capability-authority-for-contraction-splits]
 related: [admit-reassociated-contraction-schedule-alternatives, decide-the-semantic-order-contract-for-relaxed-contractions]
@@ -9,9 +9,6 @@ scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: worker-split-admission-revision
-lease_expires_at: 1787147268
 ---
 ## User-visible outcome
 
