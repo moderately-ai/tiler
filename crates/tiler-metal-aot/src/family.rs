@@ -362,10 +362,23 @@ impl ArtifactFamilySelection {
                 bytes.push(0x01);
                 push_len(&mut bytes, families.len());
                 for selected in families {
-                    push_str(&mut bytes, selected.family.as_str());
-                    bytes.extend_from_slice(&selected.deployment_minimum.major().to_be_bytes());
-                    bytes.extend_from_slice(&selected.deployment_minimum.minor().to_be_bytes());
-                    push_str(&mut bytes, selected.msl_version.semantic_name());
+                    // Destructured irrefutably for the reason the policy arms
+                    // are. This leaf record is where the per-family facts are
+                    // hand-projected into identity bytes, and it is the only
+                    // step of the encoding a widened vocabulary could leave
+                    // silently: a field added to `SelectedFamily` is a compile
+                    // error at its construction sites, none of which is here, so
+                    // without this pattern two selections meaning different
+                    // things would keep sharing canonical bytes.
+                    let SelectedFamily {
+                        family,
+                        deployment_minimum,
+                        msl_version,
+                    } = selected;
+                    push_str(&mut bytes, family.as_str());
+                    bytes.extend_from_slice(&deployment_minimum.major().to_be_bytes());
+                    bytes.extend_from_slice(&deployment_minimum.minor().to_be_bytes());
+                    push_str(&mut bytes, msl_version.semantic_name());
                 }
             }
         }
