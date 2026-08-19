@@ -1,0 +1,29 @@
+Both checks were proved able to fail under the new production-CompileRequest compile path before the retained result was trusted, reproducing the 2026-08-04 protocol's two mutations. Each perturbation edited probe.metal only, was run through the identical harness and selection (the captured headers carry the same `selection.compile_flags` as the retained run), and probe.metal was restored byte-identically before the retained run (verified by diff against a pristine copy; retained hash c6b583bc3db4fc5e66eaa10338bd6f12e0b3a55df0849a290d2ed0a1b5a5b7ed equals the checked-in file's).
+
+Perturbation 1 — the salt dropped (kernel body `out[tid] = tid;`), run 2026-08-19T00:20Z:
+
+    extent	threadgroup_width	status	verified_slots	first_mismatch	observed
+    1	1	completed	0	0	00000000
+    1	32	completed	0	0	00000000
+    1	1024	completed	0	0	00000000
+
+    # widest extent verified at every tested threadgroup width	0
+
+Every width failed its first rung with `observed 00000000` against the expected `0 ^ 9e3779b9`. The salt is therefore load-bearing: the check cannot be satisfied by a value the kernel could produce without reading the dispatch-time buffer.
+
+Perturbation 2 — every third invocation withholding its write (kernel guarded by `if (tid % 3u != 2u)`), run 2026-08-19T00:21Z:
+
+    extent	threadgroup_width	status	verified_slots	first_mismatch	observed
+    1	1	completed	1	none	none
+    2	1	completed	2	none	none
+    3	1	completed	2	2	deadbeef
+    1	32	completed	1	none	none
+    2	32	completed	2	none	none
+    3	32	completed	2	2	deadbeef
+    1	1024	completed	1	none	none
+    2	1024	completed	2	none	none
+    3	1024	completed	2	2	deadbeef
+
+    # widest extent verified at every tested threadgroup width	2
+
+Extent 3 reported `verified_slots 2`, `first_mismatch 2`, `observed deadbeef` at every width. Poison detection therefore distinguishes "the invocation did not run" from "the invocation ran", which is what makes a passing row evidence that the whole grid executed.

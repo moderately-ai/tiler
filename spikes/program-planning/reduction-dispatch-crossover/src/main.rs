@@ -78,6 +78,13 @@
 //! is a newer Xcode links through a compiler the profile was not measured under,
 //! which is a different environment and makes the run unqualified.
 //!
+//! **The timed sweep is load-sensitive and runs only on an otherwise idle
+//! host** — every other agent lane drained, nothing dispatched during it — per
+//! the repository performance protocol. `--smoke` runs the load-insensitive
+//! half alone: it compiles, prepares, and oracle-verifies one small cell in one
+//! untimed submission per alternative and then stops, so the pipeline can be
+//! proven working without waiting for the quiet window the sweep needs.
+//!
 //! No `make` target reaches here, per `spikes/README.md`.
 
 mod buffer;
@@ -197,6 +204,22 @@ fn main() {
     // 200 microseconds, which is more than most cells' whole submission.
     let queue = device.new_command_queue();
     let toolchain = Toolchain::system();
+    let smoke = std::env::args().any(|argument| argument == "--smoke");
+
+    // The selection every cell compiles under, spelled by the same request
+    // constructor every `prepare` call uses, and the offline tools resolved by
+    // the same driver that will run them. Printing these from the executing
+    // objects rather than transcribing them is what makes the retained record's
+    // selection identity request-derived.
+    let selection = CompileRequest::new(
+        String::new(),
+        declaration.aot_target(),
+        OptimizationLevel::Default,
+        declaration.numerical_realization(),
+    );
+    let resolved = toolchain
+        .resolve(declaration.aot_target().sdk())
+        .expect("the offline toolchain resolves before any cell compiles");
 
     println!("# spike\treduction-dispatch-crossover");
     println!("# metric\twall-clock microseconds, commit to completed");
@@ -205,6 +228,20 @@ fn main() {
     println!("# batch\t{BATCH}");
     println!("# contract\tFLUSH_AND_REASSOCIATE_F32");
     println!("# declaration\tBoundMetalCompileDeclaration::first_macos_apple9");
+    println!("# offline.metal\t{}", resolved.metal.version);
+    println!("# offline.linker\t{}", resolved.metallib.version);
+    println!(
+        "# offline.sdk\t{} ({})",
+        resolved.sdk.version, resolved.sdk.build
+    );
+    println!(
+        "# selection.compile_flags\t{}",
+        selection.compile_flags().join(" ")
+    );
+    println!(
+        "# selection.link_flag_count\t{}",
+        selection.link_flags().len()
+    );
     println!("# device\t{}", device.name());
     println!(
         "# device_max_threads_per_threadgroup\t{}",
@@ -215,6 +252,25 @@ fn main() {
         device.max_threadgroup_memory_length(),
     );
     println!("# load_before\t{}", load_average());
+
+    if smoke {
+        let mut cells = 0_usize;
+        for rows in ROWS {
+            for contributors in CONTRIBUTORS {
+                if rows * contributors > MAX_ELEMENTS {
+                    continue;
+                }
+                cells += 1;
+                smoke_cell(&device, &queue, &toolchain, &declaration, rows, contributors);
+            }
+        }
+        println!(
+            "# smoke.cells\t{cells}\tevery cell compiled through the production CompileRequest, \
+             prepared, and verified against the oracle in one untimed submission per alternative; \
+             nothing was timed"
+        );
+        return;
+    }
 
     println!(
         "rows\tcontributors\telements\tpartitions\tper_partition\tstrategy\tencoders\t\
@@ -248,15 +304,28 @@ fn main() {
     println!("# load_after\t{}", load_average());
 }
 
-/// Compiles, verifies, and times every retained alternative of one shape.
-fn measure_cell(
+/// One shape's alternatives, compiled and verified inputs ready to submit.
+struct PreparedCell {
+    prepared: Vec<Prepared>,
+    expected: f32,
+    elements: u64,
+    partitions: u64,
+    per_partition: u64,
+}
+
+/// Compiles, allocates, and orders every retained alternative of one shape.
+///
+/// This is the whole untimed half of a cell — semantic compilation, MSL
+/// emission, the production `CompileRequest` compilation, pipeline preparation,
+/// and allocation — shared by the timed sweep and the `--smoke` pipeline check
+/// so the two cannot drift apart.
+fn prepare_cell(
     device: &Device,
-    queue: &CommandQueue,
     toolchain: &Toolchain,
     declaration: &BoundMetalCompileDeclaration,
     rows: u64,
     contributors: u64,
-) {
+) -> PreparedCell {
     let elements = rows * contributors;
     let program = reduction_program(rows, contributors);
     let request = CompilerRequest::new(
@@ -304,7 +373,70 @@ fn measure_cell(
         .collect();
     prepared.sort_by_key(|entry| entry.strategy);
 
-    verify_and_warm(queue, &prepared, expected, rows, contributors);
+    PreparedCell {
+        prepared,
+        expected,
+        elements,
+        partitions,
+        per_partition,
+    }
+}
+
+/// Compiles, verifies, and reports one cell without timing anything.
+///
+/// The `--smoke` pipeline check: it proves emission, the production
+/// `CompileRequest` compilation, pipeline preparation, allocation, the
+/// stage-model agreement, and the oracle agreement all work for one cell, in
+/// one untimed submission per alternative, and then stops. No warm-up runs and
+/// no sample is taken, so it may run on a loaded host; the timed sweep may not,
+/// and keeping this path separate is what lets the whole matrix's pipeline be
+/// proven outside the controlled quiet window the sweep requires.
+fn smoke_cell(
+    device: &Device,
+    queue: &CommandQueue,
+    toolchain: &Toolchain,
+    declaration: &BoundMetalCompileDeclaration,
+    rows: u64,
+    contributors: u64,
+) {
+    let cell = prepare_cell(device, toolchain, declaration, rows, contributors);
+    verify(queue, &cell.prepared, cell.expected, rows, contributors);
+    let alternatives = cell
+        .prepared
+        .iter()
+        .map(|entry| {
+            format!(
+                "{}:{}:{}",
+                entry.strategy.key(),
+                entry.encoders,
+                entry.widest_workgroup,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\t");
+    println!("# smoke\t{rows}x{contributors}\tverified\t{alternatives}");
+}
+
+/// Compiles, verifies, and times every retained alternative of one shape.
+fn measure_cell(
+    device: &Device,
+    queue: &CommandQueue,
+    toolchain: &Toolchain,
+    declaration: &BoundMetalCompileDeclaration,
+    rows: u64,
+    contributors: u64,
+) {
+    let cell = prepare_cell(device, toolchain, declaration, rows, contributors);
+    let PreparedCell {
+        prepared,
+        expected,
+        elements,
+        partitions,
+        per_partition,
+    } = cell;
+
+    verify(queue, &prepared, expected, rows, contributors);
+    warm(queue, &prepared);
     let single = timed_rounds(queue, &prepared, 1);
     let batched = timed_rounds(queue, &prepared, BATCH);
 
@@ -346,14 +478,13 @@ fn measure_cell(
     }
 }
 
-/// Checks every alternative against the oracle, then warms every one of them.
+/// Checks every alternative against the oracle in one untimed submission each.
 ///
 /// **Correctness before timing, always.** A strategy that returns the wrong bits
 /// has no meaningful cost, and timing it would put a number on a plan that does
-/// not compute the program. The warm-up follows rather than precedes it, at both
-/// encode counts, so no sample carries a first-touch page fault or a cold
-/// pipeline.
-fn verify_and_warm(
+/// not compute the program. The `--smoke` check ends here; the sweep continues
+/// into [`warm`] and the timed rounds.
+fn verify(
     queue: &CommandQueue,
     prepared: &[Prepared],
     expected: f32,
@@ -375,6 +506,14 @@ fn verify_and_warm(
             );
         }
     }
+}
+
+/// Warms every alternative at both encode counts.
+///
+/// The warm-up follows verification rather than preceding it, at both encode
+/// counts, so no timed sample carries a first-touch page fault or a cold
+/// pipeline.
+fn warm(queue: &CommandQueue, prepared: &[Prepared]) {
     for entry in prepared {
         for _ in 0..WARMUP {
             entry

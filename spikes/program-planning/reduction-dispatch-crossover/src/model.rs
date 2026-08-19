@@ -119,6 +119,63 @@ pub fn governed_partition(contributors: u64) -> Option<(u64, u64)> {
     None
 }
 
+/// The capped participant rule the compiler's `capped_tree_partition` chooses.
+///
+/// The admissible participant count nearest `MEASURED_TREE_PARTICIPANT_CAP`
+/// (256), ties going to the narrower, where a count is admissible when it
+/// splits the contributor sequence exactly into at least two partitions of at
+/// least two contributors each. Reimplemented here for the same reason as
+/// [`governed_partition`]: the compiler's rule is `pub(crate)` and this spike
+/// may not widen a compiler boundary to measure it. The sweep does not trust
+/// this copy either — the launch geometry derived from it is compared against
+/// the geometry the compiler actually published, and the cell refuses when they
+/// disagree. This is the width `MEASURED_TREE_PARTICIPANT_CAP` gave the tree
+/// after the 2026-08-07 sweep ran; the retained 2026-08-07 record names the
+/// balanced-width tree it timed as an inherited boundary, and a re-run under
+/// this rule times the tree the compiler now dispatches.
+#[must_use]
+pub fn capped_tree_partition(contributors: u64) -> Option<(u64, u64)> {
+    const CAP: u64 = 256;
+    if contributors < 4 {
+        return None;
+    }
+    let ceiling = CAP.min(contributors / 2);
+    let mut below = None;
+    let mut candidate = ceiling;
+    while candidate >= 2 {
+        if contributors.is_multiple_of(candidate) {
+            below = Some(candidate);
+            break;
+        }
+        candidate -= 1;
+    }
+    let Some(below) = below else {
+        // Nothing at or below the cap divides the sequence: take the smallest
+        // divisor above it, bounded by the integer square root, exactly as the
+        // compiler's rule does.
+        let limit = contributors.isqrt();
+        let mut candidate = ceiling + 1;
+        while candidate <= limit {
+            if contributors.is_multiple_of(candidate) {
+                return Some((candidate, contributors / candidate));
+            }
+            candidate += 1;
+        }
+        return None;
+    };
+    // A count above the cap is nearer than `below` exactly when it is under
+    // `2 * CAP - below`.
+    let nearer_than_below = 2 * CAP - below;
+    let mut candidate = CAP + 1;
+    while candidate < nearer_than_below && candidate <= contributors / 2 {
+        if contributors.is_multiple_of(candidate) {
+            return Some((candidate, contributors / candidate));
+        }
+        candidate += 1;
+    }
+    Some((below, contributors / below))
+}
+
 /// The stage shapes one strategy declares for one `rows x contributors` shape.
 ///
 /// The structures are those `crates/tiler-compiler/src/physical.rs` documents:
@@ -128,10 +185,11 @@ pub fn governed_partition(contributors: u64) -> Option<(u64, u64)> {
 /// - **single-workgroup tree** — the same prologue, then one workgroup per
 ///   output position holding `partitions` participants, each folding its
 ///   `contributors_per_partition` run before the committing participant folds
-///   the `partitions` staged slots;
+///   the `partitions` staged slots, at [`capped_tree_partition`]'s width;
 /// - **multi-pass split** — the same prologue, then one invocation per
 ///   partition folding its run into a materialized partial, then one invocation
-///   per output position folding the `partitions` partials.
+///   per output position folding the `partitions` partials, at
+///   [`governed_partition`]'s balanced width.
 ///
 /// The prologue is identical in all three and is deliberately included rather
 /// than subtracted: it is what every one of these plans actually dispatches,
@@ -155,7 +213,7 @@ pub fn stages(strategy: Strategy, rows: u64, contributors: u64) -> Option<Vec<St
             },
         ]),
         Strategy::SingleWorkgroupTree => {
-            let (partitions, per_partition) = governed_partition(contributors)?;
+            let (partitions, per_partition) = capped_tree_partition(contributors)?;
             Some(vec![
                 prologue,
                 Stage {

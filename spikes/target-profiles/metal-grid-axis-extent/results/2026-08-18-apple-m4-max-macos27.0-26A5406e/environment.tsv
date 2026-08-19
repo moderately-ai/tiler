@@ -1,0 +1,27 @@
+key	value
+environment.date_utc	2026-08-19T00:21:54Z
+environment.os.product	macOS
+environment.os.version	27.0
+environment.os.build	26A5406e
+environment.architecture	arm64
+environment.device	Apple M4 Max
+environment.cpu.logical_cores	14
+environment.developer_dir	/Applications/Xcode.app
+environment.xcode	Xcode 26.6 Build version 17F113
+environment.sdk.macosx.version	26.5
+environment.sdk.macosx.build	25F70
+environment.offline_compiler	Apple metal version 32023.883 (metalfe-32023.883)
+environment.offline_linker	AIR-LLD 32023.883 (metalfe-32023.883) (compatible with legacy metallib linker)
+environment.default_developer_dir	/Applications/Xcode-beta.app/Contents/Developer
+environment.rustc	rustc 1.99.0-nightly (eff8269f7 2026-07-18)
+environment.toolchain	nightly-2026-07-19
+environment.repository_base	ea5c615db289e4fee044045ec948c5eecca68ffe
+selection.compile_flags	-target air64-apple-macos26.0 -std=metal4.0 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off
+selection.link_flag_count	0
+selection.source	tiler_metal_aot::CompileRequest — target ApplePlatform::MacOs / DeploymentMinimum 26.0 / MslVersion::Metal4_0, OptimizationLevel::Default, NumericalRealization::strict_baseline(); flags transcribed from the executed compilation's ArtifactProvenance, printed by the harness itself
+harness.main_rs_sha256	334430da150e22502fb6f81b49fee61308eaaaf5aed333b80d63b78b896c8656
+harness.readback_rs_sha256	562f45fc0e0a0a5e4d558546fc86bf473c192736a6c025f96f883588b2bfa549
+harness.probe_metal_sha256	c6b583bc3db4fc5e66eaa10338bd6f12e0b3a55df0849a290d2ed0a1b5a5b7ed
+harness.cargo_toml_sha256	0be6053f1f7aaf29c958a5ab60d3d9e93501ba78e4bc8c6f2009933c5ee1daff
+extent.sha256	4885de97d844ef427265dd4dea0cf761bd66871b99d55e31188c3670f7212ef3
+host.occupancy	live agent lanes were running on this host; the probe is a load-insensitive capability check (nothing is timed), per the accepted (R, R) session protocol
