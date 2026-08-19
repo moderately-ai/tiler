@@ -1146,7 +1146,7 @@ fn every_structural_rule_refuses_at_four_wide_tuples_too() {
 /// three-outcome path, and a disproof names both observed operand axes.
 ///
 /// **The unresolved outcome remains unreachable, exactly as the projection
-/// profile's landing recorded.** `StrictTensorContractionF32::infer` narrows
+/// profile's landing recorded.** `TensorContractionF32::infer` narrows
 /// each operand through `OperationInferenceRequest::static_operand_shape` before
 /// that operand's extents reach binding or equality. A sourced `S` therefore
 /// receives that named host refusal rather than reaching equality; this family
@@ -1278,7 +1278,7 @@ fn the_value_structure_refuses_a_zero_context_length() {
 /// Neither attention structure moves the family's identity.
 ///
 /// They are structure *values* under the one key ADR 0087 accepts, so the
-/// registered definition, its schema, and its fourteen-field signature are
+/// registered definition, its schema, and its thirteen-field signature are
 /// unchanged by admitting them. A second key would be the collision that ADR
 /// rejects, and this is the check that would notice one appearing.
 #[test]

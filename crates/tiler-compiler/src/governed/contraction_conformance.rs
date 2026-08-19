@@ -9,7 +9,7 @@
 //!    index-region oracle;
 //! 2. the **registered reference evaluator** for
 //!    `tiler::tensor-contraction-f32@1`, which decodes the family's
-//!    fourteen-field numerical signature rather than restating it; and
+//!    thirteen-field numerical signature rather than restating it; and
 //! 3. the **retained `result_sha256`** of the L3 realization probe's `direct`
 //!    kernel, measured on an Apple M4 Max and recorded under
 //!    `spikes/scheduling/metal_contraction_vertical/results/`.

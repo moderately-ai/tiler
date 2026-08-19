@@ -135,7 +135,7 @@ pub const REINDEX_FORM_FACTORS: AttributeFieldId = AttributeFieldId::new(4);
 /// unconditional on this definition: absence is a malformed record, never a
 /// default. None of them is numerical, because a reindex performs no arithmetic
 /// — which is itself the fact a reader needs, and the reason this family's
-/// signature is four fields where the contraction's is fourteen.
+/// signature is four fields where the contraction's is thirteen.
 pub const REINDEX_FACT_VALUE_BEHAVIOUR: AttributeFieldId = AttributeFieldId::new(1);
 /// Fact field naming the mapping's totality and bijectivity guarantee.
 pub const REINDEX_FACT_MAPPING_CLASS: AttributeFieldId = AttributeFieldId::new(2);
