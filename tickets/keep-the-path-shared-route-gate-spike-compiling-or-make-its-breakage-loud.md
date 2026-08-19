@@ -1,7 +1,7 @@
 ---
 id: keep-the-path-shared-route-gate-spike-compiling-or-make-its-breakage-loud
 title: Keep the path-shared route-gate spike compiling or make its breakage loud
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [demote-the-m3-pro-subgroup-declaration-to-an-internal-evidence-fixture]
@@ -9,9 +9,6 @@ scopes: [implementation/runtime, research/target-profiles, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: worker-routegate
-lease_expires_at: 1787164922
 ---
 ## User-visible outcome
 
