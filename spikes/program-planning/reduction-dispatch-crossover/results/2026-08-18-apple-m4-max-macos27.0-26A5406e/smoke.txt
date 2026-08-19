@@ -1,0 +1,109 @@
+# spike	reduction-dispatch-crossover
+# metric	wall-clock microseconds, commit to completed
+# warmup	8
+# repetitions	30
+# batch	16
+# contract	FLUSH_AND_REASSOCIATE_F32
+# declaration	BoundMetalCompileDeclaration::first_macos_apple9
+# offline.metal	Apple metal version 32023.883 (metalfe-32023.883)
+# offline.linker	AIR-LLD 32023.883 (metalfe-32023.883) (compatible with legacy metallib linker)
+# offline.sdk	26.5 (25F70)
+# selection.compile_flags	-target air64-apple-macos26.0 -std=metal4.0 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off
+# selection.link_flag_count	0
+# device	Apple M4 Max
+# device_max_threads_per_threadgroup	1024
+# device_max_threadgroup_memory	32768
+# load_before	25.50 11.14 7.21
+# smoke	1x4	verified	serial-fold:2:1	single-workgroup-tree:2:2	multi-pass-split:3:1
+# smoke	1x16	verified	serial-fold:2:1	single-workgroup-tree:2:8	multi-pass-split:3:1
+# smoke	1x32	verified	serial-fold:2:1	single-workgroup-tree:2:16	multi-pass-split:3:1
+# smoke	1x64	verified	serial-fold:2:1	single-workgroup-tree:2:32	multi-pass-split:3:1
+# smoke	1x128	verified	serial-fold:2:1	single-workgroup-tree:2:64	multi-pass-split:3:1
+# smoke	1x256	verified	serial-fold:2:1	single-workgroup-tree:2:128	multi-pass-split:3:1
+# smoke	1x1024	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	1x2048	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	1x4096	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	1x8192	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	1x16384	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	4x4	verified	serial-fold:2:1	single-workgroup-tree:2:2	multi-pass-split:3:1
+# smoke	4x16	verified	serial-fold:2:1	single-workgroup-tree:2:8	multi-pass-split:3:1
+# smoke	4x32	verified	serial-fold:2:1	single-workgroup-tree:2:16	multi-pass-split:3:1
+# smoke	4x64	verified	serial-fold:2:1	single-workgroup-tree:2:32	multi-pass-split:3:1
+# smoke	4x128	verified	serial-fold:2:1	single-workgroup-tree:2:64	multi-pass-split:3:1
+# smoke	4x256	verified	serial-fold:2:1	single-workgroup-tree:2:128	multi-pass-split:3:1
+# smoke	4x1024	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	4x2048	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	4x4096	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	4x8192	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	4x16384	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	16x4	verified	serial-fold:2:1	single-workgroup-tree:2:2	multi-pass-split:3:1
+# smoke	16x16	verified	serial-fold:2:1	single-workgroup-tree:2:8	multi-pass-split:3:1
+# smoke	16x32	verified	serial-fold:2:1	single-workgroup-tree:2:16	multi-pass-split:3:1
+# smoke	16x64	verified	serial-fold:2:1	single-workgroup-tree:2:32	multi-pass-split:3:1
+# smoke	16x128	verified	serial-fold:2:1	single-workgroup-tree:2:64	multi-pass-split:3:1
+# smoke	16x256	verified	serial-fold:2:1	single-workgroup-tree:2:128	multi-pass-split:3:1
+# smoke	16x1024	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	16x2048	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	16x4096	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	16x8192	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	16x16384	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	64x4	verified	serial-fold:2:1	single-workgroup-tree:2:2	multi-pass-split:3:1
+# smoke	64x16	verified	serial-fold:2:1	single-workgroup-tree:2:8	multi-pass-split:3:1
+# smoke	64x32	verified	serial-fold:2:1	single-workgroup-tree:2:16	multi-pass-split:3:1
+# smoke	64x64	verified	serial-fold:2:1	single-workgroup-tree:2:32	multi-pass-split:3:1
+# smoke	64x128	verified	serial-fold:2:1	single-workgroup-tree:2:64	multi-pass-split:3:1
+# smoke	64x256	verified	serial-fold:2:1	single-workgroup-tree:2:128	multi-pass-split:3:1
+# smoke	64x1024	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	64x2048	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	64x4096	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	64x8192	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	64x16384	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	256x4	verified	serial-fold:2:1	single-workgroup-tree:2:2	multi-pass-split:3:1
+# smoke	256x16	verified	serial-fold:2:1	single-workgroup-tree:2:8	multi-pass-split:3:1
+# smoke	256x32	verified	serial-fold:2:1	single-workgroup-tree:2:16	multi-pass-split:3:1
+# smoke	256x64	verified	serial-fold:2:1	single-workgroup-tree:2:32	multi-pass-split:3:1
+# smoke	256x128	verified	serial-fold:2:1	single-workgroup-tree:2:64	multi-pass-split:3:1
+# smoke	256x256	verified	serial-fold:2:1	single-workgroup-tree:2:128	multi-pass-split:3:1
+# smoke	256x1024	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	256x2048	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	256x4096	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	256x8192	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	256x16384	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	1024x4	verified	serial-fold:2:1	single-workgroup-tree:2:2	multi-pass-split:3:1
+# smoke	1024x16	verified	serial-fold:2:1	single-workgroup-tree:2:8	multi-pass-split:3:1
+# smoke	1024x32	verified	serial-fold:2:1	single-workgroup-tree:2:16	multi-pass-split:3:1
+# smoke	1024x64	verified	serial-fold:2:1	single-workgroup-tree:2:32	multi-pass-split:3:1
+# smoke	1024x128	verified	serial-fold:2:1	single-workgroup-tree:2:64	multi-pass-split:3:1
+# smoke	1024x256	verified	serial-fold:2:1	single-workgroup-tree:2:128	multi-pass-split:3:1
+# smoke	1024x1024	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	1024x2048	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	1024x4096	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	1024x8192	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	1024x16384	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	4096x4	verified	serial-fold:2:1	single-workgroup-tree:2:2	multi-pass-split:3:1
+# smoke	4096x16	verified	serial-fold:2:1	single-workgroup-tree:2:8	multi-pass-split:3:1
+# smoke	4096x32	verified	serial-fold:2:1	single-workgroup-tree:2:16	multi-pass-split:3:1
+# smoke	4096x64	verified	serial-fold:2:1	single-workgroup-tree:2:32	multi-pass-split:3:1
+# smoke	4096x128	verified	serial-fold:2:1	single-workgroup-tree:2:64	multi-pass-split:3:1
+# smoke	4096x256	verified	serial-fold:2:1	single-workgroup-tree:2:128	multi-pass-split:3:1
+# smoke	4096x1024	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	4096x2048	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	4096x4096	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	16384x4	verified	serial-fold:2:1	single-workgroup-tree:2:2	multi-pass-split:3:1
+# smoke	16384x16	verified	serial-fold:2:1	single-workgroup-tree:2:8	multi-pass-split:3:1
+# smoke	16384x32	verified	serial-fold:2:1	single-workgroup-tree:2:16	multi-pass-split:3:1
+# smoke	16384x64	verified	serial-fold:2:1	single-workgroup-tree:2:32	multi-pass-split:3:1
+# smoke	16384x128	verified	serial-fold:2:1	single-workgroup-tree:2:64	multi-pass-split:3:1
+# smoke	16384x256	verified	serial-fold:2:1	single-workgroup-tree:2:128	multi-pass-split:3:1
+# smoke	16384x1024	verified	serial-fold:2:1	single-workgroup-tree:2:256	multi-pass-split:3:1
+# smoke	65536x4	verified	serial-fold:2:1	single-workgroup-tree:2:2	multi-pass-split:3:1
+# smoke	65536x16	verified	serial-fold:2:1	single-workgroup-tree:2:8	multi-pass-split:3:1
+# smoke	65536x32	verified	serial-fold:2:1	single-workgroup-tree:2:16	multi-pass-split:3:1
+# smoke	65536x64	verified	serial-fold:2:1	single-workgroup-tree:2:32	multi-pass-split:3:1
+# smoke	65536x128	verified	serial-fold:2:1	single-workgroup-tree:2:64	multi-pass-split:3:1
+# smoke	65536x256	verified	serial-fold:2:1	single-workgroup-tree:2:128	multi-pass-split:3:1
+# smoke	262144x4	verified	serial-fold:2:1	single-workgroup-tree:2:2	multi-pass-split:3:1
+# smoke	262144x16	verified	serial-fold:2:1	single-workgroup-tree:2:8	multi-pass-split:3:1
+# smoke	262144x32	verified	serial-fold:2:1	single-workgroup-tree:2:16	multi-pass-split:3:1
+# smoke	262144x64	verified	serial-fold:2:1	single-workgroup-tree:2:32	multi-pass-split:3:1
+# smoke.cells	92	every cell compiled through the production CompileRequest, prepared, and verified against the oracle in one untimed submission per alternative; nothing was timed

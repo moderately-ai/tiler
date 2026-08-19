@@ -14,6 +14,12 @@ publish = false
 # exercises the route Tiler actually encodes rather than a second one.
 metal = "0.33.0"
 
+# The production offline compiler driver. Since the 2026-08-18 re-measurement
+# the probe compiles through `tiler_metal_aot::CompileRequest`, so the executed
+# selection identity derives from the request production plans compile with
+# rather than from a hand-spelled `xcrun` invocation.
+tiler-metal-aot = { path = "../../../crates/tiler-metal-aot" }
+
 [lints.rust]
 missing_docs = "warn"
 # `deny` rather than `forbid`, and the difference is the whole reason this line

@@ -9,7 +9,7 @@ implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement", "exhaustive-finite"]
 supports: ["tiler.research.target-profiles.first-macos-metal-compile-profile-authority-ledger"]
 entrypoints: ["spikes/target-profiles/metal-grid-axis-extent/src/main.rs"]
-last_verified: "2026-08-04"
+last_verified: "2026-08-18"
 ticket: "establish-an-upper-bound-authority-for-the-metal-grid-axis-row"
 ---
 
@@ -37,7 +37,7 @@ One invocation per grid point writes `tid ^ salt` into its own slot of a buffer 
 
 Three things are held to the profile's own choices rather than to whatever is convenient:
 
-- the kernel is compiled **offline** for `air64-apple-macos26.0` under `-std=metal4.0`, which is the compilation the authority ledger's rows are scoped to, and offline rather than through `newLibraryWithSource:` because [ADR 0086](../../../docs/decisions/0086-require-attributable-or-attested-native-translation.md) item 4 excludes the runtime compiler by name;
+- the kernel is compiled **offline through the production `tiler_metal_aot::CompileRequest`** — target `air64-apple-macos26.0`, `-std=metal4.0`, `OptimizationLevel::Default`, `NumericalRealization::strict_baseline()` — so the executed compilation selection equals the one every production plan compiles with, byte for byte, and the record's `selection.compile_flags` row is transcribed from the executed request's own provenance (offline rather than through `newLibraryWithSource:` because [ADR 0086](../../../docs/decisions/0086-require-attributable-or-attested-native-translation.md) item 4 excludes the runtime compiler by name; the 2026-08-04 run predated this rework and compiled through a hand-spelled `xcrun` invocation carrying target and standard only);
 - it declares `uint tid [[thread_position_in_grid]]`, which is the launch-index realization the profile selects (`LaunchIndexRealization::ThreadPositionInGridUInt`);
 - it is dispatched through `dispatchThreads:threadsPerThreadgroup:` with an `MTLSize`, which is the route the runtime prototype encodes.
 
@@ -54,9 +54,21 @@ DEVELOPER_DIR=/Applications/Xcode.app cargo run --release > results/<date>-<host
 
 No `make` target reaches here, per [`spikes/README.md`](../../README.md).
 
-## Result
+## Result — 2026-08-18 re-measurement through the production request
 
-**Measurement, 2026-08-04**, retained at [`results/2026-08-04-apple-m4-max-macos27.0-26A5388g/extent.tsv`](results/2026-08-04-apple-m4-max-macos27.0-26A5388g/extent.tsv).
+**Measurement, 2026-08-18**, retained at [`results/2026-08-18-apple-m4-max-macos27.0-26A5406e/`](results/2026-08-18-apple-m4-max-macos27.0-26A5406e/extent.tsv), run under the accepted (R, R) disposition of `resolve-the-retained-metal-profile-measurement-invocation-authority`.
+
+The probe was compiled through the production `tiler_metal_aot::CompileRequest`, and the retained header's `selection.compile_flags` row — transcribed by the harness from the executed compilation's provenance — reads exactly `-target air64-apple-macos26.0 -std=metal4.0 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off`, with zero additional linker flags after `xcrun --sdk macosx --find metallib` tool selection (`selection.link_flag_count 0`). That is byte-for-byte the selection every production plan compiles with, so the selection identity derives from the request whose compilation executed.
+
+Offline compilation environment: `Apple metal version 32023.883 (metalfe-32023.883)`, `AIR-LLD 32023.883 (metalfe-32023.883)`, Xcode 26.6 build 17F113, macOS SDK 26.5 build 25F70 — byte-identical to the authority ledger's offline table. Execution environment: macOS 27.0 build **`26A5406e`**, `arm64`, Apple M4 Max, `device_apple9_support` true — a **different OS build** from the 2026-08-04 run's `26A5388g`, declared truthfully in this record's own environment rows; the sibling [`environment.tsv`](results/2026-08-18-apple-m4-max-macos27.0-26A5406e/environment.tsv) pins the harness source SHA-256s, the repository base `ea5c615db289e4fee044045ec948c5eecca68ffe`, and the result digest, closing the harness-binding gap the 2026-08-04 record carried.
+
+**Every one of the 6,294 dispatched rows reached `Completed` and verified every slot.** The widest extent verified at all three threadgroup widths is **268,435,456** (`2^28`) — the same ladder, the same stop condition, and the same outcome as the 2026-08-04 run. No rung failed, so the row is not narrowed. The prepared pipeline reported `maxTotalThreadsPerThreadgroup = 1024` and `threadExecutionWidth = 32`; the device reported `maxBufferLength = 22,613,000,192`.
+
+Both mutation proofs were rerun under the new compile path before the result was trusted and are retained in the same directory's [`perturbations.txt`](results/2026-08-18-apple-m4-max-macos27.0-26A5406e/perturbations.txt): the dropped salt failed every width's first rung with `observed 00000000`, and the withheld third invocation failed extent 3 with `observed deadbeef` at every width.
+
+## Result — 2026-08-04 (retained; pre-rework compilation)
+
+**Measurement, 2026-08-04**, retained at [`results/2026-08-04-apple-m4-max-macos27.0-26A5388g/extent.tsv`](results/2026-08-04-apple-m4-max-macos27.0-26A5388g/extent.tsv). This run predates the production-`CompileRequest` rework: its probe was compiled by a hand-spelled `xcrun` invocation carrying target and standard only, with no optimization or numerical-selection flags, and its record binds no harness hash or repository revision. Its disposition under the accepted (R, R) decision is recorded in `resolve-the-retained-metal-profile-measurement-invocation-authority`.
 
 Offline compilation environment: `Apple metal version 32023.883 (metalfe-32023.883)`, `AIR-LLD 32023.883 (metalfe-32023.883)`, Xcode 26.6 build 17F113, macOS SDK 26.5 build 25F70, `-std=metal4.0`, target `air64-apple-macos26.0`. Execution environment: macOS 27.0 build `26A5388g`, `arm64`, Apple M4 Max, `device_apple9_support` true. **Both match the authority ledger's two environment tables in every field**, which is why the row this measurement sources joins the profile's existing measurement context instead of adding a second one.
 
@@ -77,7 +89,7 @@ Without these, a harness that read a stale buffer, or one whose verification loo
 
 ## Boundary
 
-- **One environment, and the row it sources says so.** The declared profile row carries `TargetCompileProfileMeasurementSource`, whose validity is the exact offline and execution environments above, together. It is not a portable guarantee, not an Apple-family claim, and not a statement about any other OS row, GPU family, or toolchain.
+- **One environment per retained record, and the row it sources says so.** The declared profile row carries `TargetCompileProfileMeasurementSource`, whose validity is the exact offline and execution environments of the one retained record it consumes, together. The two retained runs above were taken on two different OS builds and never share a context. It is not a portable guarantee, not an Apple-family claim, and not a statement about any other OS row, GPU family, or toolchain.
 - **It establishes a floor, never a maximum.** Nothing here measures a failure, so nothing here says where one is. A later run that found a failing extent would narrow the row; this one cannot widen into "the hardware supports exactly this much".
 - **Exhaustive below 2,049 and sampled above.** The guarantee between two sampled rungs is an interpolation over a monotone-looking observation, and the retained TSV is what a reader checks that against.
 - **No performance claim of any kind.** Nothing is timed. The result is about which dispatches execute correctly, not how fast any of them runs.

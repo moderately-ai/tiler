@@ -31,10 +31,15 @@
 //! about the whole grid.
 //!
 //! Three things are held to the profile's own choices rather than to whatever is
-//! convenient. The kernel is compiled offline for `air64-apple-macos26.0` under
-//! `-std=metal4.0`, which is the compilation the authority ledger's rows are
-//! scoped to. It declares `uint tid [[thread_position_in_grid]]`, which is the
-//! launch-index realization the profile selects. And it is dispatched through
+//! convenient. The kernel is compiled offline through the production
+//! `tiler_metal_aot::CompileRequest` — target `air64-apple-macos26.0`,
+//! `-std=metal4.0`, `OptimizationLevel::Default`, and
+//! `NumericalRealization::strict_baseline()` — so the executed compilation
+//! selection is the one every production plan compiles with, byte for byte, and
+//! the retained record's selection identity derives from the request that ran
+//! rather than from a hand-spelled `xcrun` invocation. It declares
+//! `uint tid [[thread_position_in_grid]]`, which is the launch-index
+//! realization the profile selects. And it is dispatched through
 //! `dispatchThreads:threadsPerThreadgroup:` with an `MTLSize`, which is the
 //! route `prototypes/serial-sum-run` encodes.
 //!
@@ -66,6 +71,16 @@ use metal::{
     Buffer, CommandBufferRef, ComputePipelineDescriptor, ComputePipelineState, Device,
     MTLCommandBufferStatus, MTLGPUFamily, MTLResourceOptions, MTLSize,
 };
+use tiler_metal_aot::driver::Toolchain as OfflineToolchain;
+use tiler_metal_aot::input::{
+    ApplePlatform, CompileRequest, DeploymentMinimum, MetalTarget, MslVersion,
+    NumericalRealization, OptimizationLevel,
+};
+use tiler_metal_aot::record::{ArtifactProvenance, CompiledArtifact};
+
+/// The probe kernel's MSL source, embedded so the compiled bytes are exactly
+/// the checked-in file's and no working-directory lookup can substitute them.
+const PROBE_SOURCE: &str = include_str!("../probe.metal");
 
 /// The value every slot holds before a dispatch, and must not hold after one.
 ///
@@ -114,9 +129,9 @@ const EXHAUSTIVE_BELOW: u64 = 2_049;
 
 fn main() {
     let device = Device::system_default().expect("this host exposes a default Metal device");
-    let toolchain = Toolchain::observe();
-    let object = compile_probe();
-    let pipeline = pipeline_for(&device, &object);
+    let host = Host::observe();
+    let artifact = compile_probe();
+    let pipeline = pipeline_for(&device, &artifact.metallib);
     let queue = device.new_command_queue();
 
     let widths = threadgroup_widths(&pipeline);
@@ -134,7 +149,7 @@ fn main() {
         MTLResourceOptions::StorageModeShared,
     );
 
-    print_environment(&device, &toolchain, &pipeline, largest);
+    print_environment(&device, &host, &artifact.provenance, &pipeline, largest);
     println!("extent\tthreadgroup_width\tstatus\tverified_slots\tfirst_mismatch\tobserved");
 
     let mut ceiling = u64::MAX;
@@ -321,48 +336,36 @@ fn threadgroup_widths(pipeline: &ComputePipelineState) -> Vec<u64> {
     widths
 }
 
-/// Compiles the probe offline under the profile's own flags.
+/// Compiles the probe offline through the production `CompileRequest`.
 ///
 /// Offline rather than through `newLibraryWithSource:`, because Tiler's AOT
 /// route supplies no source and ADR 0086 excludes the runtime compiler by name
-/// from anything this profile is built from.
-fn compile_probe() -> Vec<u8> {
-    let directory = std::env::temp_dir().join(format!(
-        "tiler-grid-axis-extent-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&directory).expect("the scratch directory is creatable");
-    let air = directory.join("probe.air");
-    let metallib = directory.join("probe.metallib");
-    run(
-        "xcrun",
-        &[
-            "--sdk",
-            "macosx",
-            "metal",
-            "-std=metal4.0",
-            "-target",
-            "air64-apple-macos26.0",
-            "-c",
-            "probe.metal",
-            "-o",
-            air.to_str().expect("a UTF-8 scratch path"),
-        ],
+/// from anything this profile is built from. Through
+/// `tiler_metal_aot::CompileRequest` rather than a hand-spelled `xcrun`
+/// invocation, because the row this measurement sources is consumed by plans
+/// whose kernels compile through exactly this request — target
+/// `air64-apple-macos26.0`, `-std=metal4.0`, `OptimizationLevel::Default`, and
+/// `NumericalRealization::strict_baseline()` — and a probe compiled under any
+/// other selection would be evidence about a different compilation. The
+/// returned artifact carries the executed provenance: the resolved tools that
+/// ran and the exact ordered flags they ran with, which is what the retained
+/// record's selection rows are printed from.
+fn compile_probe() -> CompiledArtifact {
+    let target = MetalTarget::new(
+        ApplePlatform::MacOs,
+        DeploymentMinimum::new(26, 0),
+        MslVersion::Metal4_0,
+    )
+    .expect("MSL 4.0 targeting macOS 26.0 is the profile's own valid target");
+    let request = CompileRequest::new(
+        PROBE_SOURCE,
+        target,
+        OptimizationLevel::Default,
+        NumericalRealization::strict_baseline(),
     );
-    run(
-        "xcrun",
-        &[
-            "--sdk",
-            "macosx",
-            "metallib",
-            air.to_str().expect("a UTF-8 scratch path"),
-            "-o",
-            metallib.to_str().expect("a UTF-8 scratch path"),
-        ],
-    );
-    let object = std::fs::read(&metallib).expect("the linked object is readable");
-    std::fs::remove_dir_all(&directory).expect("the scratch directory is removable");
-    object
+    OfflineToolchain::system()
+        .compile(&request)
+        .expect("the production offline toolchain compiles and links the probe")
 }
 
 /// Builds the compute pipeline for the probe's single entry point.
@@ -380,19 +383,19 @@ fn pipeline_for(device: &Device, object: &[u8]) -> ComputePipelineState {
         .expect("the probe prepares")
 }
 
-/// The exact toolchain and platform components this run observed.
-struct Toolchain {
-    metal: String,
-    linker: String,
+/// The host components this run observed that the compiled provenance does not
+/// carry: the Xcode release that owns the selected toolchain and the execution
+/// platform. The offline compiler, linker, SDK, target, and flags are read from
+/// the executed compilation's own provenance instead, so those rows describe
+/// the binaries that actually produced the probe's bytes.
+struct Host {
     xcode: String,
-    sdk_version: String,
-    sdk_build: String,
     platform_version: String,
     platform_build: String,
     architecture: String,
 }
 
-impl Toolchain {
+impl Host {
     /// Reads every component from the tool that owns it.
     ///
     /// Nothing here is defaulted or inferred: a component whose command fails
@@ -400,14 +403,7 @@ impl Toolchain {
     /// cannot source a profile row.
     fn observe() -> Self {
         Self {
-            metal: first_line(&run("xcrun", &["--sdk", "macosx", "metal", "--version"])),
-            linker: first_line(&run("xcrun", &["--sdk", "macosx", "metallib", "-version"])),
             xcode: run("xcodebuild", &["-version"]).replace('\n', " ").trim().to_owned(),
-            sdk_version: first_line(&run("xcrun", &["--sdk", "macosx", "--show-sdk-version"])),
-            sdk_build: first_line(&run(
-                "xcrun",
-                &["--sdk", "macosx", "--show-sdk-build-version"],
-            )),
             platform_version: first_line(&run("sw_vers", &["-productVersion"])),
             platform_build: first_line(&run("sw_vers", &["-buildVersion"])),
             architecture: first_line(&run("uname", &["-m"])),
@@ -416,26 +412,41 @@ impl Toolchain {
 }
 
 /// Writes the provenance header every retained row is scoped by.
+///
+/// The `offline.*` and `selection.*` rows come from the executed compilation's
+/// [`ArtifactProvenance`], not from separate version queries: the recorded
+/// compiler is the binary that compiled the probe, and the recorded flags are
+/// the exact ordered flags of the request that ran, which is what makes the
+/// record's selection identity request-derived rather than transcribed.
 fn print_environment(
     device: &Device,
-    toolchain: &Toolchain,
+    host: &Host,
+    provenance: &ArtifactProvenance,
     pipeline: &ComputePipelineState,
     largest: u64,
 ) {
-    println!("# offline.metal\t{}", toolchain.metal);
-    println!("# offline.linker\t{}", toolchain.linker);
-    println!("# offline.xcode\t{}", toolchain.xcode);
+    println!("# offline.metal\t{}", provenance.metal.version);
+    println!("# offline.linker\t{}", provenance.metallib.version);
+    println!("# offline.xcode\t{}", host.xcode);
     println!(
         "# offline.sdk\t{} ({})",
-        toolchain.sdk_version, toolchain.sdk_build
+        provenance.sdk.version, provenance.sdk.build
     );
-    println!("# offline.std\t-std=metal4.0");
-    println!("# offline.target\tair64-apple-macos26.0");
+    println!("# offline.std\t-std={}", provenance.msl_version.semantic_name());
+    println!("# offline.target\t{}", provenance.target_triple);
+    println!(
+        "# selection.compile_flags\t{}",
+        provenance.compile_flags.join(" ")
+    );
+    println!(
+        "# selection.link_flag_count\t{}",
+        provenance.link_flags.len()
+    );
     println!(
         "# execution.platform\tmacos {} ({})",
-        toolchain.platform_version, toolchain.platform_build
+        host.platform_version, host.platform_build
     );
-    println!("# execution.architecture\t{}", toolchain.architecture);
+    println!("# execution.architecture\t{}", host.architecture);
     println!("# execution.device\t{}", device.name());
     println!(
         "# execution.apple9\t{}",
