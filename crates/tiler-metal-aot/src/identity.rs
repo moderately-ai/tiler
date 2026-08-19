@@ -194,6 +194,12 @@ impl CompileRequest {
 /// optimization and numerical appear exactly once through the emitted flags,
 /// so a field added to [`CompileRequest`] fails to compile here rather than
 /// silently leaving both identities.
+///
+/// The target's *own* fields are covered one level down, by the irrefutable
+/// pattern in [`CompileRequest::compile_flags`]. The guard cannot live here:
+/// `MetalTarget`'s fields are private to the `input` module, and making them
+/// visible to this one would let any module in the crate assemble a target that
+/// `MetalTarget::new` never validated — a worse trade than the guard buys.
 fn encode_request_selection(bytes: &mut Vec<u8>, request: &CompileRequest) {
     let CompileRequest {
         source: _,
@@ -929,7 +935,19 @@ mod tests {
         assert_eq!(request().compilation_selection_identity(), baseline);
 
         // Every reachable selection field moves the selection.
-        let strict = NumericalRealization::strict_baseline();
+        //
+        // The strict baseline is destructured irrefutably rather than read
+        // through `.`, so a dimension added to `NumericalRealization` is a
+        // pattern error here and this list cannot silently stop covering the
+        // vocabulary this test's name claims totality over. That is the same
+        // mechanism `NumericalRealization::flags` carries, asserted again here
+        // because the projection and the test watching it are two populations
+        // that can shrink independently.
+        let NumericalRealization {
+            math_mode: strict_math_mode,
+            fp32_functions: strict_fp32_functions,
+            fp_contract: strict_fp_contract,
+        } = NumericalRealization::strict_baseline();
         let selection_of = |request: &CompileRequest| request.compilation_selection_identity();
         let mut platform = request();
         platform.target = MetalTarget::new(
@@ -949,21 +967,32 @@ mod tests {
         optimization.optimization = OptimizationLevel::Aggressive;
         let mut math_mode = request();
         math_mode.numerical =
-            NumericalRealization::new(MathMode::Relaxed, strict.fp32_functions, strict.fp_contract);
+            NumericalRealization::new(MathMode::Relaxed, strict_fp32_functions, strict_fp_contract);
         let mut fp32 = request();
         fp32.numerical =
-            NumericalRealization::new(strict.math_mode, Fp32Functions::Fast, strict.fp_contract);
+            NumericalRealization::new(strict_math_mode, Fp32Functions::Fast, strict_fp_contract);
         let mut contraction = request();
         contraction.numerical =
-            NumericalRealization::new(strict.math_mode, strict.fp32_functions, FpContract::On);
-        for (name, perturbed) in [
+            NumericalRealization::new(strict_math_mode, strict_fp32_functions, FpContract::On);
+        let cases = [
             ("the platform/target", &platform),
             ("the language standard", &standard),
             ("the optimization level", &optimization),
             ("the math mode", &math_mode),
             ("the fp32-functions mode", &fp32),
             ("the contraction mode", &contraction),
-        ] {
+        ];
+        // The destructure above makes a *widened* vocabulary loud. Rust has no
+        // field-count intrinsic to size this array from, so a *deleted* case is
+        // caught by a floor with the surviving census printed, per AGENTS.md's
+        // rule for a population that cannot be typed.
+        assert!(
+            cases.len() >= 6,
+            "the selection perturbation census shrank: expected at least 6 cases, found {}: {:?}",
+            cases.len(),
+            cases.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+        );
+        for (name, perturbed) in cases {
             assert_ne!(
                 selection_of(perturbed),
                 baseline,

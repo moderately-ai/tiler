@@ -720,15 +720,36 @@ impl NumericalRealization {
     }
 
     /// Returns the exact ordered numerical compiler flags for this realization.
+    ///
+    /// **This projection is the only route by which a numerical dimension
+    /// reaches identity.** Both
+    /// [`CompilationIdentity`](crate::identity::CompilationIdentity) and
+    /// [`CompilationSelectionIdentity`](crate::identity::CompilationSelectionIdentity)
+    /// destructure [`CompileRequest`] with `numerical: _` and encode the emitted
+    /// flag runs instead of the structured choices they came from, so a
+    /// dimension present in this struct and absent from this array leaves both
+    /// subjects and two differently rounded compilations encode identical bytes.
+    ///
+    /// The irrefutable destructure below is that guard and is not style. A field
+    /// added to [`NumericalRealization`] is forced through [`Self::new`] by the
+    /// struct literal there, but nothing would force it through this projection
+    /// and the omission would compile; naming every field in a pattern carrying
+    /// no `..` makes the widened struct a pattern error here instead. The
+    /// declared `[String; 3]` is not a second independent count — the array
+    /// literal is type-checked against it — so the pattern is the single place
+    /// the field count is stated. Rust offers no field-count intrinsic to size
+    /// it from; `core::mem::variant_count` covers enums only.
     #[must_use]
     pub fn flags(self) -> [String; 3] {
+        let Self {
+            math_mode,
+            fp32_functions,
+            fp_contract,
+        } = self;
         [
-            format!("-fmetal-math-mode={}", self.math_mode.token()),
-            format!(
-                "-fmetal-math-fp32-functions={}",
-                self.fp32_functions.token()
-            ),
-            format!("-ffp-contract={}", self.fp_contract.token()),
+            format!("-fmetal-math-mode={}", math_mode.token()),
+            format!("-fmetal-math-fp32-functions={}", fp32_functions.token()),
+            format!("-ffp-contract={}", fp_contract.token()),
         ]
     }
 }
@@ -954,12 +975,35 @@ impl CompileRequest {
     ///
     /// The order is stable: target triple, language standard, optimization
     /// level, then the three numerical realization flags.
+    ///
+    /// [`MetalTarget`] is destructured irrefutably for the reason
+    /// [`NumericalRealization::flags`] gives about its own struct: a field added
+    /// to the target is forced through [`MetalTarget::new`]'s struct literal,
+    /// but nothing would force it through this projection, and both identity
+    /// subjects are derived from the runs this function returns. The pattern
+    /// makes a widened target a compile error here instead. It lives in this
+    /// module rather than beside the encoder in `crate::identity` because the
+    /// target's fields are private to this module, and widening them so the
+    /// encoder could name them would let any module in the crate assemble a
+    /// target [`MetalTarget::new`] never validated.
+    ///
+    /// The three `_` bindings are accounted for rather than excluded:
+    /// `deployment_minimum` is encoded through the triple, `msl_version`
+    /// through the `std_token` it selected at construction, and `platform`
+    /// through the triple here plus the SDK-selector and family runs that
+    /// `crate::identity` derives from it.
     #[must_use]
     pub fn compile_flags(&self) -> Vec<String> {
+        let MetalTarget {
+            platform: _,
+            deployment_minimum: _,
+            msl_version: _,
+            std_token,
+        } = self.target;
         let mut flags = vec![
             "-target".to_owned(),
             self.target.triple(),
-            format!("-std={}", self.target.std_token()),
+            format!("-std={std_token}"),
             self.optimization.flag().to_owned(),
         ];
         flags.extend(self.numerical.flags());
