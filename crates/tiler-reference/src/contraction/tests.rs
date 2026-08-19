@@ -369,3 +369,190 @@ fn a_contracted_extent_that_disagrees_between_operands_is_refused() {
         Err(ReferenceOperationError::InvalidApplication)
     );
 }
+
+// --- The accepted F32 result-population fixture ------------------------------
+
+use tiler_ir::schedule::{
+    ContractionF32TopologyLimits, ContractionF32TreeError, ContractionF32TreeNode,
+    OrderedContractionF32Tree,
+};
+
+/// The packet's exact leaves: `2^24`, `1`, `-2^24` (and a second `1` at `K = 4`).
+const P: u32 = 0x4b80_0000;
+const O: u32 = 0x3f80_0000;
+const N: u32 = 0xcb80_0000;
+
+/// Folds one row `[1, K] x [1, K] -> [1, 1]` along one validated tree.
+fn tree_bits(leaves: &[u32], nodes: Vec<ContractionF32TreeNode>) -> u32 {
+    let contract = ContractionContract::governed().expect("the governed contract derives");
+    let k = u64::try_from(leaves.len()).expect("a fixture is small");
+    let left = tensor_row(leaves);
+    let ones = vec![O; leaves.len()];
+    let right = tensor_row(&ones);
+    let structure = structure();
+    let fold = super::ContractionFold::plan(&contract, &structure, &left, &right)
+        .expect("the fixture plans");
+    let tree = OrderedContractionF32Tree::try_from_postorder(
+        k,
+        nodes,
+        ContractionF32TopologyLimits::new(64, 64).expect("valid limits"),
+    )
+    .expect("the fixture tree is a full ordered binary tree");
+    let results = fold
+        .evaluate_every_output_tree(&contract, ReferenceNumericalConformance::strict(), &tree)
+        .expect("the fixture folds");
+    result_bits(
+        &Tensor::dense(F32::resolved_type(), Shape::from_dims([1, 1]), results)
+            .expect("a scalar result"),
+    )[0]
+}
+
+fn tensor_row(bits: &[u32]) -> Tensor {
+    tensor(
+        [1, u64::try_from(bits.len()).expect("a fixture is small")],
+        bits,
+    )
+}
+
+const fn leaf(contributor: u64) -> ContractionF32TreeNode {
+    ContractionF32TreeNode::Leaf { contributor }
+}
+
+const fn add(left: u32, right: u32) -> ContractionF32TreeNode {
+    ContractionF32TreeNode::Add { left, right }
+}
+
+/// Grouping alone is observable: two legal members of one occurrence's
+/// ordered-tree result set differ in their exact bits.
+///
+/// The packet's `[2^24, 1, -2^24]` fixture: the left grouping `(P + O) + N`
+/// is `0.0` (`0x00000000`) because `P + O` rounds back to `P` under
+/// round-to-nearest ties-to-even, and the right grouping `P + (O + N)` is
+/// `1.0` (`0x3f800000`) because `O + N` is exactly representable. Preserving
+/// leaf order and changing only grouping changes the answer, which is why a
+/// plan must witness one exact tree rather than claim set membership.
+#[test]
+fn grouping_is_observable_between_two_legal_ordered_trees() {
+    let leaves = [P, O, N];
+    let left_chain = tree_bits(
+        &leaves,
+        vec![leaf(0), leaf(1), add(0, 1), leaf(2), add(2, 3)],
+    );
+    assert_eq!(left_chain, 0x0000_0000, "((2^24 + 1) + -2^24) is 0.0");
+    let right_grouping = tree_bits(
+        &leaves,
+        vec![leaf(0), leaf(1), leaf(2), add(1, 2), add(0, 3)],
+    );
+    assert_eq!(right_grouping, 0x3f80_0000, "(2^24 + (1 + -2^24)) is 1.0");
+    assert_ne!(left_chain, right_grouping);
+}
+
+/// Membership is not grouping: the lane-strided value is outside the
+/// ordered-tree result set, and the tree carrier cannot even spell it.
+///
+/// The packet's `[2^24, 1, -2^24, 1]` fixture holds two two-leaf partitions
+/// and the ascending merge fixed and changes only membership: contiguous
+/// `(p0 + p1) + (p2 + p3)` is `1.0`, and lane-strided `(p0 + p2) + (p1 + p3)`
+/// is `2.0`. The lane value needs the non-adjacent grouping `{0, 2}`, which
+/// the interval rules refuse, so lane-strided membership is unrepresentable as
+/// a witness rather than a member that happens not to be chosen — physical
+/// membership, algebraic commutativity, and numerical permutation permission
+/// are three separate obligations.
+#[test]
+fn lane_strided_membership_is_outside_the_ordered_tree_result_set() {
+    let leaves = [P, O, N, O];
+    let contiguous = tree_bits(
+        &leaves,
+        vec![
+            leaf(0),
+            leaf(1),
+            add(0, 1),
+            leaf(2),
+            leaf(3),
+            add(3, 4),
+            add(2, 5),
+        ],
+    );
+    assert_eq!(contiguous, 0x3f80_0000, "contiguous membership is 1.0");
+    // The strict chain is also a member, and at these leaves it happens to
+    // agree with the contiguous split — which is exactly why the grouping
+    // fixture above exists on three leaves where the two differ.
+    let strict = tree_bits(
+        &leaves,
+        vec![
+            leaf(0),
+            leaf(1),
+            add(0, 1),
+            leaf(2),
+            add(2, 3),
+            leaf(3),
+            add(4, 5),
+        ],
+    );
+    assert_eq!(strict, 0x3f80_0000);
+
+    // The lane-strided value, computed by direct host arithmetic so the
+    // observable difference is stated rather than implied.
+    let a = |x: f32, y: f32| x + y;
+    let lane = a(
+        a(f32::from_bits(P), f32::from_bits(N)),
+        a(f32::from_bits(O), f32::from_bits(O)),
+    )
+    .to_bits();
+    assert_eq!(lane, 0x4000_0000, "lane-strided membership is 2.0");
+    assert_ne!(lane, contiguous);
+
+    // And the tree carrier refuses to spell it: the first lane pair `{0, 2}`
+    // is non-adjacent in the canonical contributor sequence.
+    assert_eq!(
+        OrderedContractionF32Tree::try_from_postorder(
+            4,
+            vec![
+                leaf(0),
+                leaf(2),
+                add(0, 1),
+                leaf(1),
+                leaf(3),
+                add(3, 4),
+                add(2, 5)
+            ],
+            ContractionF32TopologyLimits::new(64, 64).expect("valid limits"),
+        )
+        .expect_err("a lane-strided grouping is not a full ordered binary tree"),
+        ContractionF32TreeError::NonAdjacentChildren { node: 2 }
+    );
+}
+
+/// Permutation is not reassociation: reordering the contributor sequence
+/// changes the strict answer, and the tree carrier cannot express it.
+///
+/// The packet's order fixture: the strict left fold of `[2^24, -2^24, 1]` is
+/// `1.0` and of `[2^24, 1, -2^24]` is `0.0` — one multiset, two sequences,
+/// two answers. A tree's in-order leaf traversal is required to be exactly the
+/// canonical sequence, so a "tree" visiting leaf 2 before leaf 1 is refused
+/// structurally; permutation stays operation-owned unsupported rather than
+/// becoming a grouping nobody validated.
+#[test]
+fn permutation_is_unspellable_and_observably_different() {
+    let original = tree_bits(
+        &[P, N, O],
+        vec![leaf(0), leaf(1), add(0, 1), leaf(2), add(2, 3)],
+    );
+    assert_eq!(original, 0x3f80_0000, "((2^24 + -2^24) + 1) is 1.0");
+    let permuted = tree_bits(
+        &[P, O, N],
+        vec![leaf(0), leaf(1), add(0, 1), leaf(2), add(2, 3)],
+    );
+    assert_eq!(permuted, 0x0000_0000, "((2^24 + 1) + -2^24) is 0.0");
+    assert_ne!(original, permuted);
+
+    assert_eq!(
+        OrderedContractionF32Tree::try_from_postorder(
+            3,
+            vec![leaf(0), leaf(2), add(0, 1), leaf(1), add(2, 3)],
+            ContractionF32TopologyLimits::new(64, 64).expect("valid limits"),
+        )
+        .expect_err("a permuted leaf order is not a full ordered binary tree"),
+        ContractionF32TreeError::NonAdjacentChildren { node: 2 }
+    );
+}

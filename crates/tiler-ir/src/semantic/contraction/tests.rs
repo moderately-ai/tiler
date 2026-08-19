@@ -1875,3 +1875,130 @@ fn the_ordered_tree_validates_postorder_structure_and_limits() {
         })
     );
 }
+
+// --- The successor-key graph movement control --------------------------------
+
+/// Replacing only the occurrence's operation key moves `tiler.semantic-graph.v3`.
+///
+/// The accepted replacement's inverse identity control: two programs that are
+/// byte-identical in inputs, shapes, structure attribute, and outputs, and
+/// differ only in whether the contraction occurrence names the successor or
+/// the retired key. The graph identities differ and both are pinned, while
+/// `ShapeEnvIdentity` stays byte-identical — an operation-key replacement
+/// cannot move the environment subject.
+///
+/// This pinned movement is what closes the artifact join for the old/successor
+/// cross: `ArtifactProgramBuilder::push_variant`'s first check compares
+/// exactly `semantic_graph_identity()`, and
+/// `rejects_a_variant_realizing_another_semantic_graph` (tiler-artifact)
+/// proves that any two programs whose graph identities differ refuse with
+/// `SemanticSubjectMismatch`. With the key-only movement pinned here, a
+/// crossed old-key/successor-key pair is such a pair by construction. The
+/// retired key itself is buildable only through an explicit extension
+/// provider — no standard vertical registers it — which is itself the
+/// no-alias/no-fallback half of the acceptance.
+#[test]
+fn replacing_only_the_occurrence_key_moves_the_semantic_graph_identity() {
+    const DOMAIN: &[u8] = b"tiler.test.contraction-graph-pin\0";
+
+    /// An extension provider carrying the retired key, for this perturbation
+    /// only. Its definition content is irrelevant to the subject under test —
+    /// `tiler.semantic-graph.v3` deliberately excludes definitions — so it
+    /// reuses the live schema and inferencer; what it must NOT be is a
+    /// standard registration.
+    struct RetiredKeyProvider;
+
+    impl crate::semantic::SemanticRegistryProvider for RetiredKeyProvider {
+        fn identity(&self) -> crate::semantic::ProviderIdentity {
+            crate::semantic::ProviderIdentity::new("test", "retired-contraction", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut crate::semantic::SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            registrar.register_operation(OperationDefinition::new(
+                retired_key(),
+                OperationSchema::new(
+                    OperationArity::exact(2),
+                    OperationArity::exact(1),
+                    [OperationAttributeSchema::required(
+                        CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE,
+                        CanonicalValueKind::Record,
+                    )],
+                )
+                .unwrap(),
+                NormativeDefinitionRef::new("test retired strict contraction key")?,
+                OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                standard_conformance("test-retired-contraction"),
+                OperationEffect::Pure,
+                Arc::new(TensorContractionF32),
+            ))
+        }
+    }
+
+    fn retired_key() -> crate::semantic::OpKey {
+        crate::semantic::OpKey::new("tiler", "strict-tensor-contraction-f32", 1).unwrap()
+    }
+
+    fn build(with_key: Option<crate::semantic::OpKey>) -> crate::semantic::SemanticProgram {
+        let mut builder = if with_key.is_none() {
+            SemanticProgramBuilder::try_standard().unwrap()
+        } else {
+            let mut registry = crate::semantic::SemanticRegistryBuilder::standard().unwrap();
+            registry.register_provider(&RetiredKeyProvider).unwrap();
+            SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap()
+        };
+        let left = builder
+            .input::<F32>(InputKey::new("left").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let right = builder
+            .input::<F32>(InputKey::new("right").unwrap(), Shape::from_dims([4, 3]))
+            .unwrap();
+        let structure = workload_structure();
+        let result = match with_key {
+            None => {
+                crate::semantic::F32TensorContraction::apply(&mut builder, &structure, left, right)
+                    .unwrap()
+            }
+            Some(key) => builder
+                .apply_typed_single::<F32>(
+                    key,
+                    attributes(structure.canonical_value().clone()),
+                    &[left.erase(), right.erase()],
+                )
+                .unwrap(),
+        };
+        builder
+            .output(crate::semantic::OutputKey::new("out").unwrap(), result)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    let successor = build(None);
+    let retired = build(Some(retired_key()));
+
+    let successor_graph = successor.semantic_identity().graph();
+    let retired_graph = retired.semantic_identity().graph();
+    assert_ne!(
+        successor_graph, retired_graph,
+        "a key-only replacement must move canonical graph bytes (ADR 0072)"
+    );
+    assert_eq!(
+        successor.semantic_identity().shape_environment(),
+        retired.semantic_identity().shape_environment(),
+        "the environment subject is built from bindings, not operation keys"
+    );
+    assert_eq!(
+        tiler_digest::DigestAlgorithm::GOVERNED
+            .digest(DOMAIN, successor_graph.as_bytes())
+            .label(),
+        "1d3bd76985de28d7ca0c86eb1c6b763af2b17bcfc57c12fc615440e40f87b0bf",
+    );
+    assert_eq!(
+        tiler_digest::DigestAlgorithm::GOVERNED
+            .digest(DOMAIN, retired_graph.as_bytes())
+            .label(),
+        "cdcdd0da639451f7772686e3a01bcc00336d951f229aa8f4285e845f1755cb75",
+    );
+}
