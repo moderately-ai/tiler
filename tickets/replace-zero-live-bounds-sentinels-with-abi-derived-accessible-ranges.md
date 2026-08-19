@@ -1,17 +1,14 @@
 ---
 id: replace-zero-live-bounds-sentinels-with-abi-derived-accessible-ranges
 title: Replace zero live-bounds sentinels with ABI-derived accessible ranges
-status: in-progress
+status: blocked
 priority: p0
-dependencies: [associate-live-extent-operands-with-symbolic-semantic-interface-axes, package-the-admitted-live-schedule-into-a-symbolic-kernel-program]
+dependencies: [associate-live-extent-operands-with-symbolic-semantic-interface-axes, package-the-admitted-live-schedule-into-a-symbolic-kernel-program, decide-how-a-dynamic-bounds-witness-enters-the-schedule-vocabulary]
 related: [bind-repeated-invocations-over-caller-retained-tensors, prove-one-live-extent-artifact-payload-and-pipeline-at-two-n]
 scopes: [implementation/ir, implementation/artifact, implementation/runtime, implementation/build, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, runtime, abi, correctness]
-claimed_from: todo
-assignee: worker-live-bounds
-lease_expires_at: 1787159586
 ---
 ## User-visible outcome
 
