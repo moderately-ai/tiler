@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [record-the-compilation-selection-in-target-measurement-provenance, refuse-unknown-fact-source-provenance-schemas-in-artifact-decode, decide-the-compilation-selection-provenance-public-and-wire-surface, resolve-the-retained-metal-profile-measurement-invocation-authority]
 related: [split-metal-profile-measurement-sources-by-compilation-selection]
-scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/metal-aot, implementation/build, contracts/numerics, contracts/artifacts, contracts/decisions, research/target-profiles]
+scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/metal-aot, implementation/build, contracts/numerics, contracts/artifacts, contracts/decisions, research/target-profiles, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [target-profiles, provenance, identity, numerics, public-boundary, fail-closed]
