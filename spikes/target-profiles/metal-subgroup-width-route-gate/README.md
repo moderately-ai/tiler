@@ -4,7 +4,7 @@ id: "tiler.spike.target-profiles.metal-subgroup-width-route-gate"
 kind: "experiment"
 title: "The prepared subgroup-width equality gate on the real Metal route"
 topics: ["target-profiles", "metal", "subgroup", "runtime", "feasibility"]
-experiment_status: "reproducible"
+experiment_status: "blocked"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.target-profiles.first-macos-metal-compile-profile-authority-ledger", "tiler.research.scheduling.subgroup-execution-tier"]

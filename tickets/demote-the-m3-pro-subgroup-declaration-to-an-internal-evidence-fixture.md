@@ -1,7 +1,7 @@
 ---
 id: demote-the-m3-pro-subgroup-declaration-to-an-internal-evidence-fixture
 title: Demote the M3 Pro subgroup declaration to an internal evidence fixture
-status: in-progress
+status: done
 priority: p2
 dependencies: [declare-metal-subgroup-realization-facts-in-the-target-profile]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/build, contracts/decisions, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: worker-profile-demotion
-lease_expires_at: 1787104037
 ---
 ## User-visible outcome
 
