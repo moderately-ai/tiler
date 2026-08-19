@@ -159,7 +159,14 @@ pub(crate) struct OfflineToolchainRow {
     pub(crate) sdk_build: &'static str,
 }
 
-/// The ledger's execution environment, the host that ran the measured kernels.
+/// One population's execution environment, the host that ran its measured
+/// kernels.
+///
+/// One row per population rather than one for the profile: the ledger presents
+/// two of these — `26A5406e` for the re-measured grid-axis and saturated-cost
+/// rows, `26A5388g` for the tree-width policy and the dispatchability and
+/// numerical rows — and contexts differing here never share a source whatever
+/// their selection bytes.
 ///
 /// `pub(crate)` for the same reason as [`OfflineToolchainRow`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
