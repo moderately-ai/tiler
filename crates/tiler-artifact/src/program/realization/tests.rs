@@ -35,11 +35,12 @@
 //! and proves nothing about any measured target.
 
 use tiler_ir::numerics::{
-    CANONICAL_DIMENSIONS, CompilerBuildIdentity, CompilerBuildRole, DIMENSION_COUNT,
-    DimensionBehaviour, ExecutionEnvironmentIdentity, FACT_SOURCE_PROVENANCE_SCHEMA_VERSION,
-    FactAuthority, FactEvidenceBasis, FactSourceProvenance, FactValidityScope, HonouringMeans,
-    MeasurementContext, NumericalDimension, NumericalObligationKey, PolicyLocus,
-    ProvenanceIdentity, RelaxationRequirement, ScalarArithmeticSubject,
+    CANONICAL_DIMENSIONS, CompilationSelectionIdentity, CompileProfileMeasurementContext,
+    CompilerBuildIdentity, CompilerBuildRole, DIMENSION_COUNT, DimensionBehaviour,
+    ExecutionEnvironmentIdentity, FACT_SOURCE_PROVENANCE_SCHEMA_VERSION, FactSourceProvenance,
+    HonouringMeans, MeasurementContext, NumericalDimension, NumericalObligationKey, PolicyLocus,
+    PostCompileMeasurementAuthority, ProvenanceIdentity, RelaxationRequirement,
+    ScalarArithmeticSubject,
 };
 use tiler_ir::program::SemanticOccurrence;
 use tiler_ir::program::abi::AvailabilityPhase;
@@ -103,43 +104,39 @@ fn other_profile() -> TargetProfileRef {
     }
 }
 
-/// A complete, structurally valid measured provenance statement.
+/// The fixed compilation selection every fixture context carries.
+const TEST_SELECTION: &[u8] = b"test-selection.v1";
+
+/// A complete, structurally valid compile-profile measured provenance
+/// statement, its one context carrying [`TEST_SELECTION`].
 fn measured_source(compiler_version: &str, platform_build: &str) -> FactSourceProvenance {
-    FactSourceProvenance::new(
-        AvailabilityPhase::CompileProfile,
-        FactAuthority::MeasuredProfile,
-        FactValidityScope::MeasuredEnvironment,
+    FactSourceProvenance::compile_profile_measured(
         ProvenanceIdentity::new("tiler.test.measured-authority.v1", 1),
-        FactEvidenceBasis::Measurement {
-            contexts: vec![MeasurementContext::new(
-                vec![CompilerBuildIdentity::new(
-                    CompilerBuildRole::CodeGenerator,
-                    "test-offline-compiler",
-                    compiler_version,
-                    None,
-                )],
-                ExecutionEnvironmentIdentity::new(
-                    "test-platform",
-                    "1.0",
-                    platform_build,
-                    "test-architecture",
-                    "test-hardware",
-                ),
+        vec![CompileProfileMeasurementContext::new(
+            vec![CompilerBuildIdentity::new(
+                CompilerBuildRole::CodeGenerator,
+                "test-offline-compiler",
+                compiler_version,
+                None,
             )],
-        },
+            ExecutionEnvironmentIdentity::new(
+                "test-platform",
+                "1.0",
+                platform_build,
+                "test-architecture",
+                "test-hardware",
+            ),
+            CompilationSelectionIdentity::from_bytes(TEST_SELECTION)
+                .expect("a nonempty bounded test selection"),
+        )],
     )
 }
 
 /// A governed-guarantee provenance statement.
 fn governed_source() -> FactSourceProvenance {
-    FactSourceProvenance::new(
-        AvailabilityPhase::CompileProfile,
-        FactAuthority::GovernedProfile,
-        FactValidityScope::PortableProfile,
+    FactSourceProvenance::governed(
         ProvenanceIdentity::new("tiler.test.governed-authority.v1", 1),
-        FactEvidenceBasis::GovernedGuarantee {
-            guarantee: ProvenanceIdentity::new("tiler.test.governed-guarantee.v1", 1),
-        },
+        ProvenanceIdentity::new("tiler.test.governed-guarantee.v1", 1),
     )
 }
 
@@ -774,34 +771,42 @@ fn an_unsupported_provenance_schema_is_refused_before_the_body_is_read() {
         "unsupported-provenance-schema: UnknownProvenanceSchema { version: 1 }"
     );
 
-    let newer = poke_provenance_schema(&bytes, &record, 4);
-    let error = decode(&newer).expect_err("schema 4 is newer");
+    // Schema 3 is the retired predecessor whose compile-profile measurement
+    // lacks the required selection. Only the schema word of otherwise current
+    // v4-domain bytes moves, so the refusal is subject-perturbation evidence
+    // rather than a directly constructed display control.
+    let retired = poke_provenance_schema(&bytes, &record, 3);
+    let error = decode(&retired).expect_err("schema 3 is retired");
     assert_eq!(
         error,
-        RealizationCodecError::NewerProvenanceSchema { version: 4 }
+        RealizationCodecError::RetiredProvenanceSchema { version: 3 }
     );
     assert_eq!(
         error.to_string(),
-        "unsupported-provenance-schema: NewerProvenanceSchema { version: 4 }"
+        "unsupported-provenance-schema: RetiredProvenanceSchema { version: 3 }"
+    );
+
+    let newer = poke_provenance_schema(&bytes, &record, 5);
+    let error = decode(&newer).expect_err("schema 5 is newer");
+    assert_eq!(
+        error,
+        RealizationCodecError::NewerProvenanceSchema { version: 5 }
+    );
+    assert_eq!(
+        error.to_string(),
+        "unsupported-provenance-schema: NewerProvenanceSchema { version: 5 }"
     );
 
     // Trash the first body byte after the schema word. If dispatch still
     // interpreted the body, this would be an unknown phase tag; the schema
     // refusal must win.
-    let mut newer_and_broken = poke_provenance_schema(&bytes, &record, 4);
+    let mut newer_and_broken = poke_provenance_schema(&bytes, &record, 5);
     newer_and_broken[at + 4] ^= 0xff;
     let error = decode(&newer_and_broken).expect_err("schema is refused before the body");
     assert_eq!(
         error,
-        RealizationCodecError::NewerProvenanceSchema { version: 4 },
+        RealizationCodecError::NewerProvenanceSchema { version: 5 },
         "a damaged body must not be interpreted after an unsupported schema, got {error}"
-    );
-
-    let retired = RealizationCodecError::RetiredProvenanceSchema { version: 2 };
-    assert_eq!(retired.rule(), "unsupported-provenance-schema");
-    assert_eq!(
-        retired.to_string(),
-        "unsupported-provenance-schema: RetiredProvenanceSchema { version: 2 }"
     );
 }
 
@@ -924,6 +929,56 @@ fn first_provenance_schema_offset(record: &DeliveredRealizationRecord) -> usize 
         "source.encode is the tail of the evidence row"
     );
     head + row_bytes.len() - source.len()
+}
+
+/// The byte offset of the first evidence row's compile-context count word.
+///
+/// Computed from the fixture's own field widths, and every poke site asserts
+/// the word it lands on holds the expected value before writing, so a layout
+/// drift fails loudly rather than perturbing a neighbouring byte.
+fn first_context_count_offset(record: &DeliveredRealizationRecord) -> usize {
+    let identity_key = "tiler.test.measured-authority.v1";
+    first_provenance_schema_offset(record)
+        + 4 // schema word
+        + 3 // phase, authority, validity
+        + 8 + identity_key.len() + 4 // framed authority identity key + revision
+        + 1 // basis tag
+}
+
+/// The byte offset of the first context's compiler-build count word.
+fn first_build_count_offset(record: &DeliveredRealizationRecord) -> usize {
+    first_context_count_offset(record) + 8
+}
+
+/// The byte offset of the first context's selection length word.
+fn first_selection_length_offset(record: &DeliveredRealizationRecord) -> usize {
+    let build_run = 1 // role tag
+        + 8 + "test-offline-compiler".len()
+        + 8 + "1.0".len()
+        + 1; // build-absent byte
+    let environment: usize = [
+        "test-platform",
+        "1.0",
+        "test-build-a",
+        "test-architecture",
+        "test-hardware",
+    ]
+    .iter()
+    .map(|field| 8 + field.len())
+    .sum();
+    first_build_count_offset(record) + 8 + build_run + environment
+}
+
+/// Reads one big-endian u64 at `at`.
+fn read_u64(bytes: &[u8], at: usize) -> u64 {
+    u64::from_be_bytes(bytes[at..at + 8].try_into().expect("eight bytes"))
+}
+
+/// Writes one big-endian u64 at `at`.
+fn poke_u64(bytes: &[u8], at: usize, value: u64) -> Vec<u8> {
+    let mut corrupt = bytes.to_vec();
+    corrupt[at..at + 8].copy_from_slice(&value.to_be_bytes());
+    corrupt
 }
 
 fn poke_provenance_schema(
@@ -1374,7 +1429,10 @@ fn every_check_is_watched_refusing_on_its_own_rule() {
         "evidence-behaviour-mismatch",
     ));
 
-    // Provenance whose authority triple names no readable moment.
+    // Provenance that decodes structurally and is not internally consistent:
+    // a zero authority-identity revision. The incoherent-triple shape the raw
+    // constructors used to mint is wire-only now and is perturbed separately
+    // below by poking the phase byte of a governed row.
     let image = DeliveredRealizationRecord::from_canonical_parts(
         record.profile().clone(),
         vec![TargetEvidence::from_canonical_parts(
@@ -1383,14 +1441,25 @@ fn every_check_is_watched_refusing_on_its_own_rule() {
             forbidden,
             HonouringMeans::SupportedExactly,
             record.profile().clone(),
-            FactSourceProvenance::new(
-                AvailabilityPhase::CompileProfile,
-                FactAuthority::LaunchInstance,
-                FactValidityScope::MeasuredEnvironment,
-                ProvenanceIdentity::new("tiler.test.measured-authority.v1", 1),
-                FactEvidenceBasis::Measurement {
-                    contexts: Vec::new(),
-                },
+            FactSourceProvenance::compile_profile_measured(
+                ProvenanceIdentity::new("tiler.test.measured-authority.v1", 0),
+                vec![CompileProfileMeasurementContext::new(
+                    vec![CompilerBuildIdentity::new(
+                        CompilerBuildRole::CodeGenerator,
+                        "test-offline-compiler",
+                        "1.0",
+                        None,
+                    )],
+                    ExecutionEnvironmentIdentity::new(
+                        "test-platform",
+                        "1.0",
+                        "test-build-a",
+                        "test-architecture",
+                        "test-hardware",
+                    ),
+                    CompilationSelectionIdentity::from_bytes(TEST_SELECTION)
+                        .expect("a nonempty bounded test selection"),
+                )],
             ),
         )],
         subjects.clone(),
@@ -1403,6 +1472,33 @@ fn every_check_is_watched_refusing_on_its_own_rule() {
         &image,
         "incomplete-provenance",
     ));
+
+    // The phase-laundering closure, from the wire side: mutate only the phase
+    // byte of an otherwise valid compile-profile-measured row. The triple no
+    // longer coheres with its basis, nothing normalizes it, and the refusal
+    // comes only after every bounded syntax and ordering check has run.
+    let laundered_at = first_provenance_schema_offset(&record) + 4;
+    let mut laundered = bytes.clone();
+    assert_ne!(
+        laundered[laundered_at],
+        AvailabilityPhase::LaunchPreflight.tag(),
+        "the perturbation must move the phase byte",
+    );
+    laundered[laundered_at] = AvailabilityPhase::LaunchPreflight.tag();
+    let error = decode(&laundered).expect_err("a laundered phase byte");
+    assert_eq!(
+        error,
+        RealizationCodecError::IncompleteProvenance { index: 0 },
+        "a phase-incoherent evidence row refuses by index, got {error}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "incomplete-provenance: IncompleteProvenance { index: 0 }"
+    );
+    observed.push(Perturbation {
+        name: "laundered phase byte on a measured row",
+        observed: rule_of(&error),
+    });
 
     // Only the schema word of an otherwise valid record. The body is the
     // current grammar; the old decoder would have discarded the number,
@@ -1419,15 +1515,127 @@ fn every_check_is_watched_refusing_on_its_own_rule() {
         observed: rule_of(&error),
     });
 
-    let newer = poke_provenance_schema(&bytes, &record, 4);
+    let newer = poke_provenance_schema(&bytes, &record, 5);
     let error = decode(&newer).expect_err("a newer provenance schema");
     assert_eq!(
         error,
-        RealizationCodecError::NewerProvenanceSchema { version: 4 },
-        "schema 4 is newer than this decoder, got {error}"
+        RealizationCodecError::NewerProvenanceSchema { version: 5 },
+        "schema 5 is newer than this decoder, got {error}"
     );
     observed.push(Perturbation {
         name: "newer provenance schema",
+        observed: rule_of(&error),
+    });
+
+    // Schema 3 is the first decoder-reachable retired subject: only the schema
+    // word of otherwise current v4-body bytes moves, and the refusal is the
+    // listed retirement rather than a normalization into 4.
+    let retired = poke_provenance_schema(&bytes, &record, 3);
+    let error = decode(&retired).expect_err("the retired provenance schema");
+    assert_eq!(
+        error,
+        RealizationCodecError::RetiredProvenanceSchema { version: 3 },
+        "schema 3 is retired, not normalized, got {error}"
+    );
+    observed.push(Perturbation {
+        name: "retired provenance schema",
+        observed: rule_of(&error),
+    });
+
+    // --- the bounded context grammar's own refusals ------------------------
+    // Each just-read count or length refuses before its children are consumed:
+    // an over-limit word with nothing behind it is `MalformedIdentity`, never a
+    // truncation discovered while consuming children that were never going to
+    // be admitted.
+    let context_count = first_context_count_offset(&record);
+    assert_eq!(
+        read_u64(&bytes, context_count),
+        1,
+        "the computed offset must land on the context count word",
+    );
+    for (name, count) in [
+        ("zero compile-context count", 0),
+        ("over-limit compile-context count", 65),
+    ] {
+        let corrupt = poke_u64(&bytes, context_count, count);
+        let error = decode(&corrupt).expect_err(name);
+        assert_eq!(
+            error,
+            RealizationCodecError::MalformedIdentity {
+                subject: TagSubject::MeasurementContexts,
+            },
+            "{name} must refuse on the count itself, got {error}"
+        );
+        observed.push(Perturbation {
+            name,
+            observed: rule_of(&error),
+        });
+    }
+
+    let build_count = first_build_count_offset(&record);
+    assert_eq!(
+        read_u64(&bytes, build_count),
+        1,
+        "the computed offset must land on the compiler-build count word",
+    );
+    for (name, count) in [
+        ("zero compiler-build count", 0),
+        ("over-limit compiler-build count", 17),
+    ] {
+        let corrupt = poke_u64(&bytes, build_count, count);
+        let error = decode(&corrupt).expect_err(name);
+        assert_eq!(
+            error,
+            RealizationCodecError::MalformedIdentity {
+                subject: TagSubject::CompilerBuilds,
+            },
+            "{name} must refuse on the count itself, got {error}"
+        );
+        observed.push(Perturbation {
+            name,
+            observed: rule_of(&error),
+        });
+    }
+
+    let selection_length = first_selection_length_offset(&record);
+    assert_eq!(
+        read_u64(&bytes, selection_length),
+        TEST_SELECTION.len() as u64,
+        "the computed offset must land on the selection length word",
+    );
+    for (name, length) in [
+        ("zero selection length", 0),
+        // One past the 64-KiB ceiling, with no such payload behind it: the
+        // limit check wins over truncation, exactly as the boundary matrix
+        // fixes.
+        ("over-ceiling selection length", 65_537),
+    ] {
+        let corrupt = poke_u64(&bytes, selection_length, length);
+        let error = decode(&corrupt).expect_err(name);
+        assert_eq!(
+            error,
+            RealizationCodecError::MalformedIdentity {
+                subject: TagSubject::CompilationSelectionIdentity,
+            },
+            "{name} must refuse on the length itself, got {error}"
+        );
+        observed.push(Perturbation {
+            name,
+            observed: rule_of(&error),
+        });
+    }
+
+    // An admitted length whose payload the input cannot supply is a
+    // truncation naming exactly the missing byte count.
+    let truncated_selection = &bytes[..selection_length + 8 + TEST_SELECTION.len() - 1];
+    let error = decode(truncated_selection).expect_err("a truncated selection payload");
+    assert_eq!(
+        error,
+        RealizationCodecError::Truncated { needed: 1 },
+        "an admitted selection length with a short payload truncates, got {error}"
+    );
+    observed.push(Perturbation {
+        name: "truncated selection payload",
         observed: rule_of(&error),
     });
 
@@ -1581,41 +1789,37 @@ fn every_check_is_watched_refusing_on_its_own_rule() {
     distinct.dedup();
     assert_eq!(
         observed.len(),
-        40,
+        49,
         "the perturbation population is stated, so a dropped case is a failure rather than a smaller pass: {:?}",
         observed.iter().map(|entry| entry.name).collect::<Vec<_>>()
     );
     assert_eq!(
         distinct.len(),
         26,
-        "40 perturbations cover all 26 distinct rule identifiers the two vocabularies define"
+        "49 perturbations cover all 26 distinct rule identifiers the two vocabularies define"
     );
 }
 
 /// A complete measured provenance readable only from live device preflight.
 fn device_source() -> FactSourceProvenance {
-    FactSourceProvenance::new(
-        AvailabilityPhase::LiveDevicePreflight,
-        FactAuthority::DeviceRuntime,
-        FactValidityScope::DeviceInstance,
+    FactSourceProvenance::post_compile_measured(
+        PostCompileMeasurementAuthority::DeviceRuntime,
         ProvenanceIdentity::new("tiler.test.device-authority.v1", 1),
-        FactEvidenceBasis::Measurement {
-            contexts: vec![MeasurementContext::new(
-                vec![CompilerBuildIdentity::new(
-                    CompilerBuildRole::RuntimeCompiler,
-                    "test-runtime-compiler",
-                    "1.0",
-                    None,
-                )],
-                ExecutionEnvironmentIdentity::new(
-                    "test-platform",
-                    "1.0",
-                    "test-build-a",
-                    "test-architecture",
-                    "test-hardware",
-                ),
+        vec![MeasurementContext::new(
+            vec![CompilerBuildIdentity::new(
+                CompilerBuildRole::RuntimeCompiler,
+                "test-runtime-compiler",
+                "1.0",
+                None,
             )],
-        },
+            ExecutionEnvironmentIdentity::new(
+                "test-platform",
+                "1.0",
+                "test-build-a",
+                "test-architecture",
+                "test-hardware",
+            ),
+        )],
     )
 }
 
@@ -1744,18 +1948,14 @@ fn builder_perturbations() -> Vec<Perturbation> {
         observed: error.rule().to_owned(),
     });
 
-    // Provenance that is structurally incomplete: a measurement basis whose
-    // authority triple names no readable moment.
+    // Provenance that is structurally incomplete: a compile-profile
+    // measurement with no context measured nothing. The incoherent triples the
+    // raw constructors could mint are unrepresentable from this crate now.
     let mut builder = base.clone();
     let mut incomplete = exact_evidence(strict_input);
-    incomplete.source = FactSourceProvenance::new(
-        AvailabilityPhase::CompileProfile,
-        FactAuthority::LaunchInstance,
-        FactValidityScope::MeasuredEnvironment,
+    incomplete.source = FactSourceProvenance::compile_profile_measured(
         ProvenanceIdentity::new("tiler.test.measured-authority.v1", 1),
-        FactEvidenceBasis::Measurement {
-            contexts: Vec::new(),
-        },
+        Vec::new(),
     );
     let error = builder
         .require(

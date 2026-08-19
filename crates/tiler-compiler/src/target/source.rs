@@ -8,13 +8,12 @@
 
 use std::sync::Arc;
 
-use tiler_ir::program::abi::AvailabilityPhase;
-
-use crate::target::feasibility::{FactAuthority, FactValidityScope};
 use crate::target::honourability::{
-    CompilerBuildIdentity, CompilerBuildRole, ExecutionEnvironmentIdentity, FactSourceProvenance,
-    MAX_COMPILER_BUILDS_PER_CONTEXT, MAX_MEASUREMENT_CONTEXTS_PER_SOURCE,
-    MAX_PROVENANCE_TEXT_BYTES, MeasurementContext, ProvenanceIdentity,
+    CompilationSelectionIdentity, CompileProfileMeasurementContext, CompilerBuildIdentity,
+    CompilerBuildRole, ExecutionEnvironmentIdentity, FactSourceProvenance,
+    MAX_COMPILATION_SELECTION_IDENTITY_BYTES, MAX_COMPILER_BUILDS_PER_CONTEXT,
+    MAX_MEASUREMENT_CONTEXTS_PER_SOURCE, MAX_PROVENANCE_TEXT_BYTES, MeasurementContext,
+    PostCompileMeasurementAuthority, ProvenanceIdentity,
 };
 
 /// Maximum UTF-8 byte length of one target-fact provenance field.
@@ -23,6 +22,13 @@ pub const MAX_TARGET_PROVENANCE_TEXT_BYTES: usize = MAX_PROVENANCE_TEXT_BYTES;
 pub const MAX_TARGET_COMPILER_BUILDS_PER_CONTEXT: usize = MAX_COMPILER_BUILDS_PER_CONTEXT;
 /// Maximum measurement contexts admitted in one measured source.
 pub const MAX_TARGET_MEASUREMENT_CONTEXTS_PER_SOURCE: usize = MAX_MEASUREMENT_CONTEXTS_PER_SOURCE;
+/// Maximum byte length of one compile-profile compilation-selection identity.
+///
+/// Exactly the existing complete-target-descriptor ceiling, not a new narrower
+/// policy; the profile builder's cumulative descriptor limit remains the final
+/// authority when several contexts and sources are combined.
+pub const MAX_TARGET_COMPILATION_SELECTION_IDENTITY_BYTES: usize =
+    MAX_COMPILATION_SELECTION_IDENTITY_BYTES;
 
 /// A validated versioned identity for an external target-fact producer.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -96,28 +102,14 @@ pub enum MeasuredFactAuthority {
 }
 
 impl MeasuredFactAuthority {
-    const fn internal(self) -> (AvailabilityPhase, FactAuthority, FactValidityScope) {
+    /// The IR post-compile authority this public authority derives, which is
+    /// what fixes the phase/authority/validity triple by construction.
+    const fn internal(self) -> PostCompileMeasurementAuthority {
         match self {
-            Self::ArtifactEvidence => (
-                AvailabilityPhase::ArtifactEvidence,
-                FactAuthority::ArtifactEvidence,
-                FactValidityScope::PreparedArtifact,
-            ),
-            Self::DeviceRuntime => (
-                AvailabilityPhase::LiveDevicePreflight,
-                FactAuthority::DeviceRuntime,
-                FactValidityScope::DeviceInstance,
-            ),
-            Self::PreparedKernel => (
-                AvailabilityPhase::PreparedKernelPreflight,
-                FactAuthority::PreparedKernel,
-                FactValidityScope::PreparedArtifact,
-            ),
-            Self::LaunchInstance => (
-                AvailabilityPhase::LaunchPreflight,
-                FactAuthority::LaunchInstance,
-                FactValidityScope::LaunchInstance,
-            ),
+            Self::ArtifactEvidence => PostCompileMeasurementAuthority::ArtifactEvidence,
+            Self::DeviceRuntime => PostCompileMeasurementAuthority::DeviceRuntime,
+            Self::PreparedKernel => PostCompileMeasurementAuthority::PreparedKernel,
+            Self::LaunchInstance => PostCompileMeasurementAuthority::LaunchInstance,
         }
     }
 }
@@ -306,32 +298,108 @@ impl TargetMeasurementContext {
         compiler_builds: impl IntoIterator<Item = TargetCompilerBuild>,
         environment: TargetExecutionEnvironment,
     ) -> Result<Self, TargetFactSourceError> {
-        let compiler_builds = compiler_builds
-            .into_iter()
-            .take(MAX_TARGET_COMPILER_BUILDS_PER_CONTEXT + 1)
-            .collect::<Vec<_>>();
-        if compiler_builds.is_empty() {
-            return Err(TargetFactSourceError::EmptyCompilerBuildSet);
-        }
-        if compiler_builds.len() > MAX_TARGET_COMPILER_BUILDS_PER_CONTEXT {
-            return Err(TargetFactSourceError::TooManyCompilerBuilds {
-                actual: compiler_builds.len(),
-                max: MAX_TARGET_COMPILER_BUILDS_PER_CONTEXT,
-            });
-        }
-        if compiler_builds
-            .iter()
-            .enumerate()
-            .any(|(index, build)| compiler_builds[..index].contains(build))
-        {
-            return Err(TargetFactSourceError::DuplicateCompilerBuild);
-        }
-        let value = MeasurementContext::new(
-            compiler_builds.into_iter().map(|build| build.0).collect(),
+        let compiler_builds = collect_compiler_builds(compiler_builds)?;
+        let value = MeasurementContext::new(compiler_builds, environment.0);
+        Ok(Self(value))
+    }
+}
+
+/// The exact backend-owned compilation-selection identity of one
+/// compile-profile measurement.
+///
+/// Opaque to the compiler on purpose: the producing backend owns the grammar,
+/// and this layer only validates the envelope, retains the exact bytes,
+/// compares them, and exposes them.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetCompilationSelectionIdentity(CompilationSelectionIdentity);
+
+impl TargetCompilationSelectionIdentity {
+    /// Admits exact selection bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TargetFactSourceError::EmptyCompilationSelectionIdentity`] for
+    /// no bytes and
+    /// [`TargetFactSourceError::CompilationSelectionIdentityTooLong`] past the
+    /// existing complete-target-descriptor ceiling. Both refuse before any
+    /// proportional allocation.
+    pub fn from_bytes(value: impl AsRef<[u8]>) -> Result<Self, TargetFactSourceError> {
+        use tiler_ir::numerics::CompilationSelectionIdentityError;
+        CompilationSelectionIdentity::from_bytes(value)
+            .map(Self)
+            .map_err(|error| match error {
+                CompilationSelectionIdentityError::Empty => {
+                    TargetFactSourceError::EmptyCompilationSelectionIdentity
+                }
+                CompilationSelectionIdentityError::TooLong { actual, max } => {
+                    TargetFactSourceError::CompilationSelectionIdentityTooLong { actual, max }
+                }
+                // The IR error vocabulary is non-exhaustive; a widened refusal
+                // must gain its own target spelling rather than borrow one.
+                _ => unreachable!("the selection-identity bounds are empty and too-long"),
+            })
+    }
+
+    /// The exact admitted bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
+
+/// One compile-profile measurement: compiler builds, the environment they ran
+/// in, and the required exact compilation selection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetCompileProfileMeasurementContext(CompileProfileMeasurementContext);
+
+impl TargetCompileProfileMeasurementContext {
+    /// Constructs a compile-profile context. At least one distinct compiler
+    /// build and exactly one admitted selection are required; there is no
+    /// selection-free spelling.
+    ///
+    /// # Errors
+    ///
+    /// Returns a set-specific diagnostic for an empty, duplicated, or oversized
+    /// compiler-build set.
+    pub fn new(
+        compiler_builds: impl IntoIterator<Item = TargetCompilerBuild>,
+        environment: TargetExecutionEnvironment,
+        compilation_selection: TargetCompilationSelectionIdentity,
+    ) -> Result<Self, TargetFactSourceError> {
+        let compiler_builds = collect_compiler_builds(compiler_builds)?;
+        let value = CompileProfileMeasurementContext::new(
+            compiler_builds,
             environment.0,
+            compilation_selection.0,
         );
         Ok(Self(value))
     }
+}
+
+fn collect_compiler_builds(
+    compiler_builds: impl IntoIterator<Item = TargetCompilerBuild>,
+) -> Result<Vec<CompilerBuildIdentity>, TargetFactSourceError> {
+    let compiler_builds = compiler_builds
+        .into_iter()
+        .take(MAX_TARGET_COMPILER_BUILDS_PER_CONTEXT + 1)
+        .collect::<Vec<_>>();
+    if compiler_builds.is_empty() {
+        return Err(TargetFactSourceError::EmptyCompilerBuildSet);
+    }
+    if compiler_builds.len() > MAX_TARGET_COMPILER_BUILDS_PER_CONTEXT {
+        return Err(TargetFactSourceError::TooManyCompilerBuilds {
+            actual: compiler_builds.len(),
+            max: MAX_TARGET_COMPILER_BUILDS_PER_CONTEXT,
+        });
+    }
+    if compiler_builds
+        .iter()
+        .enumerate()
+        .any(|(index, build)| compiler_builds[..index].contains(build))
+    {
+        return Err(TargetFactSourceError::DuplicateCompilerBuild);
+    }
+    Ok(compiler_builds.into_iter().map(|build| build.0).collect())
 }
 
 /// Structured source attribution for target-profile facts.
@@ -349,22 +417,46 @@ pub struct TargetCompileProfileMeasurementSource(pub(super) Arc<FactSourceProven
 impl TargetCompileProfileMeasurementSource {
     /// Constructs compiler-profile measurement provenance.
     ///
+    /// Every context carries its required exact compilation selection: the
+    /// count bound is over contexts, not the aggregate encoded source length,
+    /// so a standalone admitted source can retain at most 64 × 64 KiB of
+    /// selection payload, and the complete-descriptor ceiling remains the
+    /// cumulative authority.
+    ///
     /// # Errors
     ///
     /// Returns a set-specific diagnostic for an empty, duplicated, or oversized
     /// measurement-context collection.
     pub fn new(
         producer: TargetFactProducerIdentity,
-        contexts: impl IntoIterator<Item = TargetMeasurementContext>,
+        contexts: impl IntoIterator<Item = TargetCompileProfileMeasurementContext>,
     ) -> Result<Self, TargetFactSourceError> {
-        let contexts = collect_measurement_contexts(contexts)?;
-        Ok(Self(Arc::new(FactSourceProvenance::measured(
-            AvailabilityPhase::CompileProfile,
-            FactAuthority::MeasuredProfile,
-            FactValidityScope::MeasuredEnvironment,
-            producer.0,
-            contexts,
-        ))))
+        let contexts = contexts
+            .into_iter()
+            .take(MAX_TARGET_MEASUREMENT_CONTEXTS_PER_SOURCE + 1)
+            .collect::<Vec<_>>();
+        if contexts.is_empty() {
+            return Err(TargetFactSourceError::EmptyMeasurementContextSet);
+        }
+        if contexts.len() > MAX_TARGET_MEASUREMENT_CONTEXTS_PER_SOURCE {
+            return Err(TargetFactSourceError::TooManyMeasurementContexts {
+                actual: contexts.len(),
+                max: MAX_TARGET_MEASUREMENT_CONTEXTS_PER_SOURCE,
+            });
+        }
+        if contexts
+            .iter()
+            .enumerate()
+            .any(|(index, context)| contexts[..index].contains(context))
+        {
+            return Err(TargetFactSourceError::DuplicateMeasurementContext);
+        }
+        Ok(Self(Arc::new(
+            FactSourceProvenance::compile_profile_measured(
+                producer.0,
+                contexts.into_iter().map(|context| context.0).collect(),
+            ),
+        )))
     }
 }
 
@@ -398,10 +490,9 @@ impl TargetFactSource {
         authority: MeasuredFactAuthority,
         contexts: impl IntoIterator<Item = TargetMeasurementContext>,
     ) -> Result<Self, TargetFactSourceError> {
-        let (phase, authority, validity) = authority.internal();
         let contexts = collect_measurement_contexts(contexts)?;
         let value =
-            FactSourceProvenance::measured(phase, authority, validity, producer.0, contexts);
+            FactSourceProvenance::post_compile_measured(authority.internal(), producer.0, contexts);
         Ok(Self(Arc::new(value)))
     }
 
@@ -489,6 +580,19 @@ pub enum TargetFactSourceError {
         /// Observed cardinality, capped at `max + 1`.
         actual: usize,
         /// Maximum admitted cardinality.
+        max: usize,
+    },
+    /// A compile-profile compilation-selection identity carried no bytes.
+    ///
+    /// Absence is not a selection, and there is no default, sentinel, or
+    /// inference to fall back to.
+    EmptyCompilationSelectionIdentity,
+    /// A compilation-selection identity exceeded the complete-target-descriptor
+    /// ceiling.
+    CompilationSelectionIdentityTooLong {
+        /// Actual byte length offered.
+        actual: usize,
+        /// Maximum admitted byte length.
         max: usize,
     },
 }

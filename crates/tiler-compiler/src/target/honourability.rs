@@ -64,33 +64,34 @@ use crate::target::feasibility::{FactProvenance, TargetProfileIdentity};
 // resolving, so the relocation is invisible to the assessment logic that is
 // this module's actual subject.
 pub(crate) use tiler_ir::numerics::{
-    CANONICAL_DIMENSIONS, CompilerBuildIdentity, CompilerBuildRole, DimensionBehaviour,
-    ExecutionEnvironmentIdentity, FactAuthority, FactEvidenceBasis, FactSourceProvenance,
-    FactValidityScope, HonouringMeans, MAX_COMPILER_BUILDS_PER_CONTEXT,
+    CANONICAL_DIMENSIONS, CompilationSelectionIdentity, CompileProfileMeasurementContext,
+    CompilerBuildIdentity, CompilerBuildRole, DimensionBehaviour, ExecutionEnvironmentIdentity,
+    FactAuthority, FactEvidenceBasis, FactSourceProvenance, FactValidityScope, HonouringMeans,
+    MAX_COMPILATION_SELECTION_IDENTITY_BYTES, MAX_COMPILER_BUILDS_PER_CONTEXT,
     MAX_MEASUREMENT_CONTEXTS_PER_SOURCE, MAX_PROVENANCE_TEXT_BYTES, MeasurementContext,
-    NumericalDimension, ProvenanceIdentity,
+    NumericalDimension, PostCompileMeasurementAuthority, ProvenanceIdentity,
 };
 pub(crate) use tiler_ir::program::abi::AvailabilityPhase;
 
-/// Compile-profile measurement provenance for one exact build and environment.
+/// Compile-profile measurement provenance for one exact build, environment, and
+/// compilation selection.
 ///
-/// The three parameters are the three knobs a test varies to change *only* the
+/// The four parameters are the four knobs a test varies to change *only* the
 /// evidence behind a refusal: which authority made the measurement, on which
-/// compiler build, in which execution environment. Nothing here touches the
-/// declared behaviour or the means, so a difference observed downstream is
-/// attributable to provenance alone.
+/// compiler build, in which execution environment, under which exact backend
+/// compilation selection. Nothing here touches the declared behaviour or the
+/// means, so a difference observed downstream is attributable to provenance
+/// alone.
 #[cfg(test)]
-pub(crate) fn measured_profile_source(
+pub(crate) fn measured_profile_source_with_selection(
     authority_key: &str,
     compiler_version: &str,
     platform_build: &str,
+    selection: &[u8],
 ) -> Arc<FactSourceProvenance> {
-    Arc::new(FactSourceProvenance::measured(
-        AvailabilityPhase::CompileProfile,
-        FactAuthority::MeasuredProfile,
-        FactValidityScope::MeasuredEnvironment,
+    Arc::new(FactSourceProvenance::compile_profile_measured(
         ProvenanceIdentity::new(authority_key, 1),
-        vec![MeasurementContext::new(
+        vec![CompileProfileMeasurementContext::new(
             vec![CompilerBuildIdentity::new(
                 CompilerBuildRole::CodeGenerator,
                 "test-offline-compiler",
@@ -104,8 +105,25 @@ pub(crate) fn measured_profile_source(
                 "test-architecture",
                 "test-hardware",
             ),
+            CompilationSelectionIdentity::from_bytes(selection)
+                .expect("a nonempty bounded test selection"),
         )],
     ))
+}
+
+/// [`measured_profile_source_with_selection`] under one fixed test selection.
+#[cfg(test)]
+pub(crate) fn measured_profile_source(
+    authority_key: &str,
+    compiler_version: &str,
+    platform_build: &str,
+) -> Arc<FactSourceProvenance> {
+    measured_profile_source_with_selection(
+        authority_key,
+        compiler_version,
+        platform_build,
+        b"test-selection.v1",
+    )
 }
 
 pub(crate) fn governed_profile_source() -> Arc<FactSourceProvenance> {
@@ -235,19 +253,15 @@ pub(crate) fn encode_honourability_facts(
 }
 
 fn encode_declaration_table(bytes: &mut Vec<u8>, declarations: &[&DeclaredBehaviour]) {
-    let mut sources: Vec<_> = declarations
-        .iter()
-        .map(|declaration| {
-            let source = declaration.source.as_ref();
-            (source.canonical_bytes(), source)
-        })
-        .collect();
-    sources.sort_by(|left, right| left.0.cmp(&right.0));
-    sources.dedup_by(|left, right| left.0 == right.0);
-
-    push_len(bytes, sources.len());
-    for (_, source) in &sources {
-        source.encode(bytes);
+    let table = SourceTable::collect(declarations.iter().map(|declaration| {
+        let source: &FactSourceProvenance = declaration.source.as_ref();
+        source
+    }));
+    push_len(bytes, table.entries().len());
+    for entry in table.entries() {
+        // The entry bytes *are* `source.encode`'s output, written raw exactly
+        // as before the encode-once repair.
+        bytes.extend_from_slice(entry);
     }
 
     let mut subjects: Vec<_> = declarations
@@ -263,10 +277,7 @@ fn encode_declaration_table(bytes: &mut Vec<u8>, declarations: &[&DeclaredBehavi
 
     let mut rows = Vec::with_capacity(declarations.len());
     for declaration in declarations {
-        let source_key = declaration.source.canonical_bytes();
-        let source_index = sources
-            .binary_search_by(|candidate| candidate.0.cmp(&source_key))
-            .expect("every declaration source was collected into the source table");
+        let source_index = table.index_of(declaration.source.as_ref());
         let subject_key = declaration.subject_bytes();
         let subject_index = subjects
             .binary_search(&subject_key)
@@ -280,6 +291,98 @@ fn encode_declaration_table(bytes: &mut Vec<u8>, declarations: &[&DeclaredBehavi
     push_len(bytes, rows.len());
     for row in rows {
         bytes.extend_from_slice(&row);
+    }
+}
+
+/// One canonical, deduplicated source table with precomputed compact indexes.
+///
+/// The encode-once repair both source-table encoders share: sources are
+/// deduplicated **structurally** before any canonical encoding, so
+/// `FactSourceProvenance::canonical_bytes` runs exactly once per structurally
+/// unique source rather than once per declaration and again per row. One source
+/// reused by every scalar row therefore contributes one canonical copy, not one
+/// per row, and temporary storage is linear in the retained unique source
+/// population. The table's byte ordering and its collision collapse — equal
+/// canonical runs share one entry and one index — are byte-identical to the
+/// previous per-declaration encoding.
+pub(crate) struct SourceTable<'a> {
+    /// Unique canonical source encodings, in canonical byte order.
+    entries: Vec<Vec<u8>>,
+    /// Structurally sorted sources, each with its assigned compact index.
+    index: Vec<(&'a FactSourceProvenance, usize)>,
+}
+
+impl<'a> SourceTable<'a> {
+    /// Collects one deduplicated table over `sources`, encoding each
+    /// structurally unique source exactly once.
+    pub(crate) fn collect(sources: impl Iterator<Item = &'a FactSourceProvenance>) -> Self {
+        let mut unique: Vec<&'a FactSourceProvenance> = sources.collect();
+        unique.sort_unstable();
+        unique.dedup();
+        let mut canonical: Vec<(Vec<u8>, &'a FactSourceProvenance)> = unique
+            .into_iter()
+            .map(|source| {
+                #[cfg(test)]
+                source_encoding_census::record();
+                (source.canonical_bytes(), source)
+            })
+            .collect();
+        canonical.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut entries: Vec<Vec<u8>> = Vec::new();
+        let mut index: Vec<(&'a FactSourceProvenance, usize)> = Vec::with_capacity(canonical.len());
+        for (bytes, source) in canonical {
+            // Equal canonical runs collapse into one table entry, and every
+            // structural source in the run shares that entry's index.
+            if entries.last().is_none_or(|last| last != &bytes) {
+                entries.push(bytes);
+            }
+            index.push((source, entries.len() - 1));
+        }
+        index.sort_unstable_by(|left, right| left.0.cmp(right.0));
+        Self { entries, index }
+    }
+
+    /// The unique canonical source encodings, in canonical byte order.
+    pub(crate) fn entries(&self) -> &[Vec<u8>] {
+        &self.entries
+    }
+
+    /// The compact index assigned to `source`, without re-encoding it.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `source` was not collected, which no encoder can reach: both
+    /// callers collect the exact populations their row loops walk.
+    pub(crate) fn index_of(&self, source: &FactSourceProvenance) -> usize {
+        let position = self
+            .index
+            .binary_search_by(|(candidate, _)| (*candidate).cmp(source))
+            .expect("every declaration source was collected into the source table");
+        self.index[position].1
+    }
+}
+
+/// Test-only census of canonical source encodings, so the encode-once contract
+/// is a counted property rather than a comment.
+#[cfg(test)]
+pub(crate) mod source_encoding_census {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CANONICAL_SOURCE_ENCODINGS: AtomicUsize = AtomicUsize::new(0);
+
+    /// Zeroes the census before an instrumented encode.
+    pub(crate) fn reset() {
+        CANONICAL_SOURCE_ENCODINGS.store(0, Ordering::SeqCst);
+    }
+
+    /// How many canonical source encodings ran since the last reset.
+    pub(crate) fn count() -> usize {
+        CANONICAL_SOURCE_ENCODINGS.load(Ordering::SeqCst)
+    }
+
+    /// Records one canonical source encoding.
+    pub(crate) fn record() {
+        CANONICAL_SOURCE_ENCODINGS.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -835,5 +938,107 @@ impl DeferredDimension {
     /// The earliest phase that can supply the declaration.
     pub(crate) const fn phase(&self) -> AvailabilityPhase {
         self.phase
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tiler_ir::schedule::SubnormalMode;
+    use tiler_ir::semantic::F32;
+
+    use super::*;
+
+    /// One declaration under the shared source, in one arithmetic-distinct row
+    /// so the census counts sources, not row dedup.
+    fn declaration(row: usize, source: &Arc<FactSourceProvenance>) -> DeclaredBehaviour {
+        let arithmetic = match row % 3 {
+            0 => ArithmeticType::F32,
+            1 => ArithmeticType::F16,
+            _ => ArithmeticType::Bf16,
+        };
+        DeclaredBehaviour::new(
+            NumericalDimension::InputSubnormals,
+            arithmetic,
+            F32::resolved_type(),
+            DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
+            HonouringMeans::SupportedExactly,
+            Arc::clone(source),
+        )
+    }
+
+    /// The encode-once contract, counted: a declaration table over rows that
+    /// share one structural source runs `canonical_bytes` exactly once, and a
+    /// single row whose source differs only in its compilation selection makes
+    /// it exactly two. Both source-table encoders are counted independently.
+    ///
+    /// The census is a process-global atomic; nextest's process-per-test
+    /// execution keeps it unshared, and the resets below scope each count to
+    /// the encode they precede.
+    #[test]
+    fn a_shared_source_encodes_once_and_a_differing_selection_adds_exactly_one() {
+        let shared = measured_profile_source("tiler.test-authority.v1", "1.0", "build-a");
+        let declarations: Vec<DeclaredBehaviour> =
+            (0..21).map(|row| declaration(row, &shared)).collect();
+        assert_eq!(declarations.len(), 21, "the declared population is 21 rows");
+
+        source_encoding_census::reset();
+        let mut bytes = Vec::new();
+        encode_declared_behaviours(&mut bytes, &declarations);
+        assert_eq!(
+            source_encoding_census::count(),
+            1,
+            "21 declarations over one structural source must canonically encode it once"
+        );
+
+        let facts: Vec<NumericalHonourabilityFact> = declarations
+            .iter()
+            .map(|declaration| {
+                declaration.attributed_to(TargetProfileIdentity::new("tiler.test.profile.v1"))
+            })
+            .collect();
+        source_encoding_census::reset();
+        let mut bytes = Vec::new();
+        encode_honourability_facts(&mut bytes, &facts);
+        assert_eq!(
+            source_encoding_census::count(),
+            1,
+            "the checked-fact encoder shares the encode-once source table"
+        );
+
+        // One row whose source differs from the shared one only in its
+        // compilation selection bytes: the census moves to exactly two, so a
+        // selection difference is structural for source identity.
+        let reselected = measured_profile_source_with_selection(
+            "tiler.test-authority.v1",
+            "1.0",
+            "build-a",
+            b"test-selection.v2",
+        );
+        let mut widened = declarations.clone();
+        widened.push(declaration(21, &reselected));
+
+        source_encoding_census::reset();
+        let mut bytes = Vec::new();
+        encode_declared_behaviours(&mut bytes, &widened);
+        assert_eq!(
+            source_encoding_census::count(),
+            2,
+            "a source differing only in selection must encode as a second table entry"
+        );
+
+        let widened_facts: Vec<NumericalHonourabilityFact> = widened
+            .iter()
+            .map(|declaration| {
+                declaration.attributed_to(TargetProfileIdentity::new("tiler.test.profile.v1"))
+            })
+            .collect();
+        source_encoding_census::reset();
+        let mut bytes = Vec::new();
+        encode_honourability_facts(&mut bytes, &widened_facts);
+        assert_eq!(
+            source_encoding_census::count(),
+            2,
+            "the checked-fact encoder counts the selection-distinct source too"
+        );
     }
 }

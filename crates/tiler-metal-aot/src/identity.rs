@@ -124,6 +124,90 @@ use crate::record::{ResolvedTool, ResolvedToolchain, SdkIdentity};
 /// width.
 const COMPILATION_DOMAIN: &[u8] = b"tiler.metal-aot.compilation-identity.v1\0";
 
+/// Versioned domain tag opening one compilation-selection identity's bytes.
+///
+/// An independently named subject rather than a reuse of
+/// [`COMPILATION_DOMAIN`]: the selection deliberately excludes the source text
+/// and the resolved toolchain, which have separate provenance authorities, so
+/// its bytes must never be mistakable for the complete compilation key. The
+/// exact one-occurrence owner census lives in this module's tests.
+const COMPILATION_SELECTION_DOMAIN: &[u8] = b"tiler.metal-aot.compilation-selection.v1\0";
+
+/// The exact backend-owned compilation-selection identity of one request.
+///
+/// The provenance subject required on every compile-profile measurement
+/// context: the SDK selector, requested platform and target, and the exact
+/// ordered compile and linker flag runs — and nothing else. Source text and
+/// resolved toolchain facts are excluded because they have separate provenance
+/// authorities.
+///
+/// A *derived* identity in the sense of ADR 0074 convention 2: it has no public
+/// constructor, `from_bytes`, `from_flags`, mutable access, or `Default`, so no
+/// caller can mint selection bytes the producing request never derived.
+///
+/// ```compile_fail,E0451
+/// let _ = tiler_metal_aot::identity::CompilationSelectionIdentity {
+///     bytes: Vec::new(),
+/// };
+/// ```
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct CompilationSelectionIdentity {
+    bytes: Vec<u8>,
+}
+
+impl CompilationSelectionIdentity {
+    /// Returns the canonical bytes identifying this compilation selection.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+impl CompileRequest {
+    /// Derives this request's compilation-selection identity.
+    ///
+    /// The only producer of [`CompilationSelectionIdentity`]: the value exists
+    /// exactly when a request does, so retained selection bytes are always the
+    /// claim of some spellable request rather than free-floating flag text.
+    #[must_use]
+    pub fn compilation_selection_identity(&self) -> CompilationSelectionIdentity {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(COMPILATION_SELECTION_DOMAIN);
+        encode_request_selection(&mut bytes, self);
+        CompilationSelectionIdentity { bytes }
+    }
+}
+
+/// Appends the selection fields of one request: SDK selector, platform, triple,
+/// then the exact ordered compile and linker flag runs.
+///
+/// One helper serving two subjects. [`CompilationIdentity::encode`] calls it at
+/// the exact position those five runs already occupied — after its evidence
+/// byte — so every existing full compilation-identity byte stays byte-for-byte
+/// unchanged, and [`CompileRequest::compilation_selection_identity`] prefixes
+/// it with its own domain. The SDK selector is included even though derived,
+/// because it selects the `xcrun` tool and is absent from the compile flags;
+/// platform and triple remain distinct requested-family and target subjects.
+///
+/// The request is irrefutably destructured over `source`, `target`,
+/// `optimization`, and `numerical`: source is explicitly excluded, while
+/// optimization and numerical appear exactly once through the emitted flags,
+/// so a field added to [`CompileRequest`] fails to compile here rather than
+/// silently leaving both identities.
+fn encode_request_selection(bytes: &mut Vec<u8>, request: &CompileRequest) {
+    let CompileRequest {
+        source: _,
+        target,
+        optimization: _,
+        numerical: _,
+    } = request;
+    push_str(bytes, target.sdk().selector());
+    push_str(bytes, target.platform().as_str());
+    push_str(bytes, &target.triple());
+    push_strs(bytes, &request.compile_flags());
+    push_strs(bytes, &request.link_flags());
+}
+
 /// How well the toolchain that runs a compilation is identified.
 ///
 /// # Why this is a field of identity rather than of provenance
@@ -352,7 +436,7 @@ impl CompilationIdentity {
     ) -> Vec<u8> {
         let CompileRequest {
             source,
-            target,
+            target: _,
             optimization: _,
             numerical: _,
         } = request;
@@ -366,22 +450,19 @@ impl CompilationIdentity {
         bytes.extend_from_slice(COMPILATION_DOMAIN);
         bytes.push(evidence.tag());
 
+        // The selection fields, factored into `encode_request_selection` at
+        // exactly this position so the full compilation identity's bytes did
+        // not move when the selection became an independently named subject.
         // The SDK selector is an invocation input that never appears in the
         // compiler flags: it is passed to `xcrun --sdk`, and it is what selects
-        // which `metal` binary runs at all.
-        push_str(&mut bytes, target.sdk().selector());
-        push_str(&mut bytes, target.platform().as_str());
-        push_str(&mut bytes, &target.triple());
-
-        // The exact ordered invocations rather than the structured choices they
-        // are derived from. `optimization` and `numerical` are destructured
-        // above and deliberately not encoded a second time: encoding both would
-        // create two records of one fact that a future change could move apart,
-        // and the flags are the ground truth of what the compiler is asked to
-        // do. An output-affecting flag added to `CompileRequest::compile_flags`
-        // reaches identity with no edit here.
-        push_strs(&mut bytes, &request.compile_flags());
-        push_strs(&mut bytes, &request.link_flags());
+        // which `metal` binary runs at all. The exact ordered flag runs are
+        // encoded rather than the structured choices they are derived from —
+        // `optimization` and `numerical` are destructured above and
+        // deliberately not encoded a second time, because the flags are the
+        // ground truth of what the compiler is asked to do, and an
+        // output-affecting flag added to `CompileRequest::compile_flags`
+        // reaches both identities with no edit here.
+        encode_request_selection(&mut bytes, request);
 
         push_sdk(&mut bytes, sdk);
         push_tool_version(&mut bytes, metal);
@@ -491,8 +572,8 @@ impl std::error::Error for IdentityError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        COMPILATION_DOMAIN, CompilationIdentity, IdentityError, IdentityReuseScope,
-        ToolchainEvidence,
+        COMPILATION_DOMAIN, COMPILATION_SELECTION_DOMAIN, CompilationIdentity, IdentityError,
+        IdentityReuseScope, ToolchainEvidence,
     };
     use crate::input::{
         ApplePlatform, CompileRequest, DeploymentMinimum, Fp32Functions, FpContract, MathMode,
@@ -803,6 +884,178 @@ mod tests {
         .to_string();
         assert!(rendered.contains("reported-versions"), "{rendered}");
         assert!(rendered.contains("same-host"), "{rendered}");
+    }
+
+    /// The selection identity is derived from exactly the request's selection
+    /// fields: source and resolved toolchain move the full compilation
+    /// identity and leave the selection fixed, while every reachable request
+    /// selection field moves both.
+    #[test]
+    fn the_selection_excludes_source_and_toolchain_and_tracks_every_selection_field() {
+        let baseline = request().compilation_selection_identity();
+        assert!(
+            baseline
+                .as_bytes()
+                .starts_with(COMPILATION_SELECTION_DOMAIN)
+        );
+        assert!(
+            baseline.as_bytes().len() > COMPILATION_SELECTION_DOMAIN.len(),
+            "the domain tag must precede content rather than be the whole subject",
+        );
+
+        // Source-only and toolchain-only changes: full identity moves, the
+        // selection does not.
+        let mut other_source = request();
+        other_source.source = "kernel void main1() {}".to_owned();
+        assert_ne!(
+            bytes_of(&other_source, &toolchain()),
+            baseline_full_identity(),
+            "the source must reach the full compilation identity",
+        );
+        assert_eq!(
+            other_source.compilation_selection_identity(),
+            baseline,
+            "the source is excluded from the selection",
+        );
+        let mut other_toolchain = toolchain();
+        other_toolchain.metal.version = "Metal 32024.1".to_owned();
+        assert_ne!(
+            bytes_of(&request(), &other_toolchain),
+            baseline_full_identity(),
+            "the resolved toolchain must reach the full compilation identity",
+        );
+        // The selection is derived from the request alone, so a toolchain
+        // change cannot reach it by construction; stated for the reader.
+        assert_eq!(request().compilation_selection_identity(), baseline);
+
+        // Every reachable selection field moves the selection.
+        let strict = NumericalRealization::strict_baseline();
+        let selection_of = |request: &CompileRequest| request.compilation_selection_identity();
+        let mut platform = request();
+        platform.target = MetalTarget::new(
+            ApplePlatform::IOsSimulator,
+            DeploymentMinimum::new(17, 0),
+            MslVersion::Metal3_1,
+        )
+        .expect("the alternate target is valid");
+        let mut standard = request();
+        standard.target = MetalTarget::new(
+            ApplePlatform::MacOs,
+            DeploymentMinimum::new(14, 0),
+            MslVersion::Metal3_0,
+        )
+        .expect("the alternate target is valid");
+        let mut optimization = request();
+        optimization.optimization = OptimizationLevel::Aggressive;
+        let mut math_mode = request();
+        math_mode.numerical =
+            NumericalRealization::new(MathMode::Relaxed, strict.fp32_functions, strict.fp_contract);
+        let mut fp32 = request();
+        fp32.numerical =
+            NumericalRealization::new(strict.math_mode, Fp32Functions::Fast, strict.fp_contract);
+        let mut contraction = request();
+        contraction.numerical =
+            NumericalRealization::new(strict.math_mode, strict.fp32_functions, FpContract::On);
+        for (name, perturbed) in [
+            ("the platform/target", &platform),
+            ("the language standard", &standard),
+            ("the optimization level", &optimization),
+            ("the math mode", &math_mode),
+            ("the fp32-functions mode", &fp32),
+            ("the contraction mode", &contraction),
+        ] {
+            assert_ne!(
+                selection_of(perturbed),
+                baseline,
+                "{name} must move the selection identity",
+            );
+        }
+
+        // The additional-linker-flag run after tool/SDK selection is the empty
+        // counted run: a census assertion over the production input, never a
+        // fabricated flag posing as a production perturbation.
+        assert!(request().link_flags().is_empty());
+    }
+
+    fn baseline_full_identity() -> Vec<u8> {
+        bytes_of(&request(), &toolchain())
+    }
+
+    /// The full compilation identity and the selection identity remain two
+    /// domains, and neither embeds the other's tag.
+    #[test]
+    fn the_two_identity_domains_stay_disjoint() {
+        let full = CompilationIdentity::new(&request(), &toolchain());
+        assert!(full.as_bytes().starts_with(COMPILATION_DOMAIN));
+        assert!(
+            !full
+                .as_bytes()
+                .windows(COMPILATION_SELECTION_DOMAIN.len())
+                .any(|window| window == COMPILATION_SELECTION_DOMAIN),
+            "the full identity must not embed the selection domain",
+        );
+        let selection = request().compilation_selection_identity();
+        assert!(
+            !selection
+                .as_bytes()
+                .windows(COMPILATION_DOMAIN.len())
+                .any(|window| window == COMPILATION_DOMAIN),
+            "the selection must not embed the full-identity domain",
+        );
+    }
+
+    /// The new domain's owning census: exactly one textual occurrence of the
+    /// selection domain in `src/`, owned by `identity.rs`.
+    ///
+    /// The needle is constructed from two fragments so this assertion does not
+    /// create a second occurrence, and the recursive walk's file floor keeps an
+    /// empty traversal from reporting an intact population.
+    #[test]
+    fn the_compilation_selection_domain_has_one_exact_owner() {
+        let needle = format!("tiler.metal-aot.{}{}", "compilation-", "selection.v1");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        collect_rust_sources(&root, &mut files);
+        files.sort();
+        assert!(
+            files.len() >= 7,
+            "tiler-metal-aot compilation-selection domain source census did not reach its              population: expected at least 7 Rust files, found {}",
+            files.len(),
+        );
+        let mut occurrences = Vec::new();
+        for path in &files {
+            let text = std::fs::read_to_string(path).expect("a crate source file is readable");
+            for (line, content) in text.lines().enumerate() {
+                if content.contains(&needle) {
+                    occurrences.push(format!("{}:{}", path.display(), line + 1));
+                }
+            }
+        }
+        assert!(
+            occurrences.len() == 1 && occurrences[0].contains("identity.rs"),
+            "tiler-metal-aot compilation-selection domain census changed: expected 1 occurrence in src/ owned by identity.rs, found {}: {:?}",
+            occurrences.len(),
+            occurrences,
+        );
+
+        // And the derived subject starts with the owned domain and carries
+        // content after it.
+        let derived = request().compilation_selection_identity();
+        assert!(derived.as_bytes().starts_with(COMPILATION_SELECTION_DOMAIN));
+        assert!(derived.as_bytes().len() > COMPILATION_SELECTION_DOMAIN.len());
+    }
+
+    /// Collects every Rust source file under one directory recursively.
+    fn collect_rust_sources(directory: &std::path::Path, into: &mut Vec<std::path::PathBuf>) {
+        let entries = std::fs::read_dir(directory).expect("the source directory is readable");
+        for entry in entries {
+            let path = entry.expect("a directory entry is readable").path();
+            if path.is_dir() {
+                collect_rust_sources(&path, into);
+            } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs") {
+                into.push(path);
+            }
+        }
     }
 
     /// Every evidence class states a reuse scope, and today's is the narrow one.

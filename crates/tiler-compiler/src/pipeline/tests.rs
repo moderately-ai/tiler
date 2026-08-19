@@ -2583,7 +2583,7 @@ fn product_is_deterministic_and_preserves_the_materialized_boundary() {
     }
     let target = &first.targets[0];
     let rendered = target.explain.render();
-    assert!(rendered.starts_with("tiler-explain-v9 request="));
+    assert!(rendered.starts_with("tiler-explain-v10 request="));
     assert!(rendered.contains("feasibility:threads-per-workgroup:deferred"));
     assert!(rendered.contains("feasibility:buffer-bindings:admitted"));
     assert!(rendered.contains("event=selection:tiler.selection.structural-pareto.v1:selected"));
@@ -3933,7 +3933,7 @@ fn every_wired_authority_emits_its_typed_explain_records() {
         .find(|record| record.rule().key().as_str() == "fusion.legality.v1")
         .expect("a fusion-legality record");
     assert_eq!(legality.event().disposition(), ExplainDisposition::Admitted);
-    assert!(trace.render().starts_with("tiler-explain-v9 request="));
+    assert!(trace.render().starts_with("tiler-explain-v10 request="));
 }
 
 /// Asserts the honourability half of the end-to-end explain conformance.
@@ -4168,7 +4168,7 @@ fn normalization_converges_duplicated_and_shared_constants_on_one_portfolio() {
     let rendered = from_duplicated.targets[0].compilation_explain.render();
     let request_headers = rendered
         .lines()
-        .filter(|line| line.starts_with("tiler-explain-v9 request="))
+        .filter(|line| line.starts_with("tiler-explain-v10 request="))
         .collect::<Vec<_>>();
     assert_eq!(request_headers.len(), 2);
     assert_ne!(
@@ -6310,8 +6310,8 @@ fn retaining_the_candidate_does_not_move_canonical_identities() {
     assert_eq!(
         labels,
         [
-            "program-alternative:375b3a2bd8575034",
-            "program-alternative:cc9b86b61e7ddf9d",
+            "program-alternative:c527a8ac5399e781",
+            "program-alternative:d0e6fb8b6fa9ea68",
         ],
         "successful plan identities must not move when retention is added"
     );
@@ -6785,7 +6785,7 @@ fn mixed_frontier_records_exact_opaque_call_rejection_detail() {
         "a local rejection is never cost evidence"
     );
     let rendered = trace.render();
-    assert!(rendered.starts_with("tiler-explain-v9 "));
+    assert!(rendered.starts_with("tiler-explain-v10 "));
     assert!(rendered.contains("opaque-call:call-owner/mystery@3[input=access#0,output=access#1]"));
     assert!(rendered.contains("provider:tiler.test.physical::opaque@7"));
     assert!(rendered.contains("admitted-count:count=1"));
@@ -8961,7 +8961,7 @@ fn a_staged_realization_names_its_regions_and_its_handed_value() {
 /// Restated here rather than imported because `tiler-compiler` may not depend on
 /// `tiler-build`; that crate's `the_declared_profile_states_the_measured_cost_row`
 /// is what keeps the two from drifting.
-const MEASURED_SATURATED_FOLD_STEPS: u64 = 1_056;
+const MEASURED_SATURATED_FOLD_STEPS: u64 = 1_280;
 
 /// The reduction family the retained sweep measured: an affine prologue feeding
 /// a sum over the trailing axis.
@@ -9236,20 +9236,20 @@ fn a_profile_declaring_no_cost_row_selects_and_encodes_exactly_as_before() {
 /// **The mutation proof, on the declared term.**
 ///
 /// Perturbing the declared value changes the selected alternative on a named
-/// shape, and the perturbation is the retained sweep's own: **1,024 rows of 64
-/// contributors, at the fitted 1,056 and at four times it.** That scale is the
-/// one that matters, because the sweep determines the row only to about a factor
-/// of four — quadrupling it holds held-out agreement at 24 of 26 separated cells
-/// and improves the worst penalty from 1.81x to 1.20x — so a mutation test at a
-/// smaller factor would prove the term is read without proving the *measured*
-/// value is what decides.
+/// shape, and the perturbation is the retained sweep's own quarter/quadruple
+/// pair: **1,248 rows of 64 contributors, at the re-measured fitted 1,280 and
+/// at four times it.** That scale is the one that matters — the 2026-08-18
+/// record's own perturbation table shows quartering the row degrading the
+/// separated held-out agreement while the fitted value holds it — so a
+/// mutation test at a smaller factor would prove the term is read without
+/// proving the *measured* value is what decides.
 ///
 /// The shape is where the contour runs. The selector's serial-or-parallel
 /// crossing is at `rows * contributors ~ contributors * P`, that is at `rows ~ P`,
 /// which is the physics the model asserts: the fold wins exactly where the row
-/// count alone already saturates the device. 1,024 rows sits just under the fitted
-/// 1,056, so the verdict is genuinely near the boundary rather than deep in one
-/// regime.
+/// count alone already saturates the device. 1,248 rows sits just under the
+/// re-measured fitted 1,280, so the verdict is genuinely near the boundary
+/// rather than deep in one regime.
 ///
 /// **This cell is deliberately not offered as agreement with the measurement.**
 /// Its retained medians are 7.24 microseconds for the fold, 7.61 for the split
@@ -9261,12 +9261,12 @@ fn a_profile_declaring_no_cost_row_selects_and_encodes_exactly_as_before() {
 /// leaves the fold selected at every row and fails the quadrupled assertion.
 #[test]
 fn perturbing_the_declared_cost_row_moves_the_selected_reduction() {
-    let near_contour = reduction_family(1_024, 64);
+    let near_contour = reduction_family(1_248, 64);
     let at =
         |steps: u64| selected_reduction_strategy(&near_contour, three_strategy_target(Some(steps)));
 
     let (fitted, retained) = at(MEASURED_SATURATED_FOLD_STEPS);
-    assert_all_three_retained(&retained, "1,024 rows of 64 contributors");
+    assert_all_three_retained(&retained, "1,248 rows of 64 contributors");
     assert_eq!(
         fitted,
         ReductionStrategy::SerialFold,

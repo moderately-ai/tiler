@@ -83,7 +83,12 @@ use crate::target::feasibility::ResolvedPredicate;
 use crate::target::honourability::HonouredDimension;
 
 /// Canonical domain-separation tag for one selected-plan identity.
-const SELECTED_PLAN_IDENTITY_TAG: &[u8] = b"tiler.compiler.selected-physical-plan.v2\0";
+/// `v3` because [`encode_honoured`] raw-appends [`HonouredDimension::canonical_key`],
+/// whose source table carries fact-source provenance unframed, and that
+/// provenance stepped its schema from 3 to 4 (the required compilation
+/// selection). An unframed nested grammar moving is a grammar change of this
+/// identity, so the step moves every value in the domain.
+const SELECTED_PLAN_IDENTITY_TAG: &[u8] = b"tiler.compiler.selected-physical-plan.v3\0";
 /// Canonical domain-separation tag for one selected-portfolio identity.
 const SELECTED_PORTFOLIO_IDENTITY_TAG: &[u8] = b"tiler.compiler.selected-physical-portfolio.v1\0";
 /// The structural-Pareto selection policy this authority applies. It matches the
@@ -2389,23 +2394,19 @@ mod tests {
     fn honoured_fact_compiler_and_environment_provenance_enter_plan_identity() {
         use std::sync::Arc;
 
-        use crate::target::feasibility::{
-            AvailabilityPhase, FactAuthority, FactValidityScope, TargetProfileIdentity,
-        };
+        use crate::target::feasibility::TargetProfileIdentity;
         use crate::target::honourability::{
-            CompilerBuildIdentity, CompilerBuildRole, DeclaredBehaviour, DimensionBehaviour,
-            ExecutionEnvironmentIdentity, FactSourceProvenance, HonouredDimension, HonouringMeans,
-            MeasurementContext, NumericalDimension, ProvenanceIdentity,
+            CompilationSelectionIdentity, CompileProfileMeasurementContext, CompilerBuildIdentity,
+            CompilerBuildRole, DeclaredBehaviour, DimensionBehaviour, ExecutionEnvironmentIdentity,
+            FactSourceProvenance, HonouredDimension, HonouringMeans, NumericalDimension,
+            ProvenanceIdentity,
         };
         use tiler_ir::schedule::{ArithmeticType, SubnormalMode};
 
         fn honoured(compiler_build: &str, environment_build: &str) -> HonouredDimension {
-            let source = Arc::new(FactSourceProvenance::measured(
-                AvailabilityPhase::CompileProfile,
-                FactAuthority::GovernedProfile,
-                FactValidityScope::PortableProfile,
+            let source = Arc::new(FactSourceProvenance::compile_profile_measured(
                 ProvenanceIdentity::new("tiler.test.measured-profile-authority.v1", 1),
-                vec![MeasurementContext::new(
+                vec![CompileProfileMeasurementContext::new(
                     vec![CompilerBuildIdentity::new(
                         CompilerBuildRole::Frontend,
                         "metalfe",
@@ -2419,6 +2420,8 @@ mod tests {
                         "arm64",
                         "Apple M4 Max",
                     ),
+                    CompilationSelectionIdentity::from_bytes(b"test-selection.v1")
+                        .expect("a nonempty bounded test selection"),
                 )],
             ));
             HonouredDimension::new(

@@ -140,10 +140,11 @@ use core::fmt;
 use std::error::Error;
 
 use tiler_compiler::target::{
-    SubgroupSupport, TargetCompileProfileMeasurementSource, TargetCompilerBuild,
-    TargetCompilerRole, TargetCompilerRoleIdentity, TargetExecutionEnvironment,
-    TargetFactProducerIdentity, TargetMeasurementContext, TargetProfile, TargetProfileBuildError,
-    TargetProfileBuilder, TargetProfileKey, TargetProfileKeyError,
+    SubgroupSupport, TargetCompilationSelectionIdentity, TargetCompileProfileMeasurementContext,
+    TargetCompileProfileMeasurementSource, TargetCompilerBuild, TargetCompilerRole,
+    TargetCompilerRoleIdentity, TargetExecutionEnvironment, TargetFactProducerIdentity,
+    TargetProfile, TargetProfileBuildError, TargetProfileBuilder, TargetProfileKey,
+    TargetProfileKeyError,
 };
 use tiler_ir::program::abi::{
     AvailabilityPhase, TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
@@ -189,6 +190,18 @@ struct SubgroupLedgerRows {
     /// the mandatory query so a test can observe the builder's
     /// missing-query refusal at `build()`.
     subgroup_property_key: Option<&'static str>,
+    /// The exact recorded compiler invocation the frozen `profile_strict`
+    /// population was compiled with, transcribed from the retained record.
+    ///
+    /// **Caller-vouched fixture provenance, not a Metal-derived selection.**
+    /// The probe passed no optimization flag and orders its flags differently
+    /// from the production `CompileRequest`, so its invocation is not
+    /// representable by `CompileRequest::compilation_selection_identity()` and
+    /// must not pretend to be: transcribing the recorded text is the generic
+    /// caller-authored route the accepted selection decision preserves, and it
+    /// carries no Metal-production authentication claim — exactly like the
+    /// rest of this demoted evidence fixture.
+    recorded_invocation: &'static str,
     offline: OfflineToolchainRow,
     execution: ExecutionRow,
 }
@@ -222,6 +235,13 @@ const FIRST_M3PRO_APPLE9_SUBGROUP: SubgroupLedgerRows = SubgroupLedgerRows {
     // `threadExecutionWidth` under the `tiler`/`prepared-entry-properties`@1
     // provider.
     subgroup_property_key: Some("tiler.target.prepared-entry.subgroup-width.v1"),
+    // `CompilerSelection::ProfileStrict` in the retained harness's population
+    // table: the flags after the sdk selector and before `-c`, in the recorded
+    // order, with no optimization flag.
+    recorded_invocation: "spike:metal-thread-execution-width:profile_strict:xcrun --sdk macosx \
+                          metal -std=metal4.0 -target air64-apple-macos26.0 \
+                          -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise \
+                          -ffp-contract=off -c",
     // The retained record's offline compilation table — identical, field for
     // field, to the standard declaration's ledger row, and re-observed on the
     // measuring host before the run rather than inherited.
@@ -422,7 +442,11 @@ fn measured_source(
         .architecture(rows.execution.architecture.to_owned())
         .hardware(rows.execution.hardware.to_owned())
         .build()?;
-    let context = TargetMeasurementContext::new(builds, environment)?;
+    let context = TargetCompileProfileMeasurementContext::new(
+        builds,
+        environment,
+        TargetCompilationSelectionIdentity::from_bytes(rows.recorded_invocation.as_bytes())?,
+    )?;
     Ok(TargetCompileProfileMeasurementSource::new(
         TargetFactProducerIdentity::new(MEASURED_PRODUCER.to_owned(), 1)?,
         [context],

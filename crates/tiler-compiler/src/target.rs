@@ -250,6 +250,7 @@ pub use accuracy::{ElementaryRealization, ElementaryRealizationError};
 pub use builder::TargetProfileBuilder;
 pub use error::TargetProfileBuildError;
 pub use evidence::{
+    TargetCompileProfileMeasurementContextReference, TargetCompileProfileMeasurementContexts,
     TargetCompilerBuildReference, TargetCompilerBuilds, TargetCompilerRoleReference,
     TargetExecutionEnvironmentReference, TargetFactAuthority, TargetFactValidityScope,
     TargetMeasurementContextReference, TargetMeasurementContexts, TargetNumericalEvidenceBasis,
@@ -266,8 +267,10 @@ pub use rows::{
     WorkgroupTreeWidthPolicyResolution,
 };
 pub use source::{
-    MAX_TARGET_COMPILER_BUILDS_PER_CONTEXT, MAX_TARGET_MEASUREMENT_CONTEXTS_PER_SOURCE,
-    MAX_TARGET_PROVENANCE_TEXT_BYTES, MeasuredFactAuthority, TargetCompileProfileMeasurementSource,
+    MAX_TARGET_COMPILATION_SELECTION_IDENTITY_BYTES, MAX_TARGET_COMPILER_BUILDS_PER_CONTEXT,
+    MAX_TARGET_MEASUREMENT_CONTEXTS_PER_SOURCE, MAX_TARGET_PROVENANCE_TEXT_BYTES,
+    MeasuredFactAuthority, TargetCompilationSelectionIdentity,
+    TargetCompileProfileMeasurementContext, TargetCompileProfileMeasurementSource,
     TargetCompilerBuild, TargetCompilerRole, TargetCompilerRoleIdentity,
     TargetExecutionEnvironment, TargetExecutionEnvironmentBuilder, TargetFactProducerIdentity,
     TargetFactSource, TargetFactSourceError, TargetMeasurementContext,
@@ -323,7 +326,8 @@ mod tests {
     };
     use crate::target::honourability::{
         CANONICAL_DIMENSIONS, CompilerBuildIdentity, CompilerBuildRole,
-        ExecutionEnvironmentIdentity, MeasurementContext, NumericalRequirement, ProvenanceIdentity,
+        ExecutionEnvironmentIdentity, MeasurementContext, NumericalRequirement,
+        PostCompileMeasurementAuthority, ProvenanceIdentity,
     };
     use tiler_ir::numerics::{
         RelaxationRequirement, ScalarArithmeticSubjectError, ScalarArithmeticSubjectIdentity,
@@ -355,10 +359,8 @@ mod tests {
     }
 
     fn measured_capability_source() -> Arc<FactSourceProvenance> {
-        Arc::new(FactSourceProvenance::measured(
-            AvailabilityPhase::LiveDevicePreflight,
-            FactAuthority::DeviceRuntime,
-            FactValidityScope::DeviceInstance,
+        Arc::new(FactSourceProvenance::post_compile_measured(
+            PostCompileMeasurementAuthority::DeviceRuntime,
             ProvenanceIdentity::new("test.capability-producer.v1", 1),
             vec![MeasurementContext::new(
                 vec![CompilerBuildIdentity::new(
@@ -427,6 +429,20 @@ mod tests {
         compiler_version: &str,
         platform_build: &str,
     ) -> TargetCompileProfileMeasurementSource {
+        compile_profile_measurement_source_with_selection(
+            producer_revision,
+            compiler_version,
+            platform_build,
+            b"test-selection.v1",
+        )
+    }
+
+    fn compile_profile_measurement_source_with_selection(
+        producer_revision: u32,
+        compiler_version: &str,
+        platform_build: &str,
+        selection: &[u8],
+    ) -> TargetCompileProfileMeasurementSource {
         let compiler = TargetCompilerBuild::new(
             TargetCompilerRole::CodeGenerator,
             "test-code-generator".to_owned(),
@@ -442,7 +458,12 @@ mod tests {
             .hardware("test-hardware".to_owned())
             .build()
             .unwrap();
-        let context = TargetMeasurementContext::new([compiler], environment).unwrap();
+        let context = TargetCompileProfileMeasurementContext::new(
+            [compiler],
+            environment,
+            TargetCompilationSelectionIdentity::from_bytes(selection).unwrap(),
+        )
+        .unwrap();
         TargetCompileProfileMeasurementSource::new(
             TargetFactProducerIdentity::new(
                 "test.compile-profile-measurement.v1".to_owned(),
@@ -764,10 +785,8 @@ mod tests {
     #[test]
     fn malformed_structured_producer_attribution_is_rejected() {
         let mut builder = TargetProfileBuilder::governed();
-        builder.quantitative[0].source = Arc::new(FactSourceProvenance::measured(
-            AvailabilityPhase::LiveDevicePreflight,
-            FactAuthority::DeviceRuntime,
-            FactValidityScope::DeviceInstance,
+        builder.quantitative[0].source = Arc::new(FactSourceProvenance::post_compile_measured(
+            PostCompileMeasurementAuthority::DeviceRuntime,
             ProvenanceIdentity::new("test.empty-measurement.v1", 1),
             Vec::new(),
         ));
@@ -777,10 +796,8 @@ mod tests {
         );
 
         let mut builder = TargetProfileBuilder::governed();
-        builder.scalar[0].source = Arc::new(FactSourceProvenance::measured(
-            AvailabilityPhase::LiveDevicePreflight,
-            FactAuthority::DeviceRuntime,
-            FactValidityScope::DeviceInstance,
+        builder.scalar[0].source = Arc::new(FactSourceProvenance::post_compile_measured(
+            PostCompileMeasurementAuthority::DeviceRuntime,
             ProvenanceIdentity::new("test.empty-scalar-measurement.v1", 1),
             Vec::new(),
         ));
@@ -793,10 +810,8 @@ mod tests {
         builder.dispatchability = vec![DTypeDispatchabilityFact {
             resolved_type: F32::resolved_type(),
             verdict: DTypeDispatchability::Dispatchable,
-            source: Arc::new(FactSourceProvenance::measured(
-                AvailabilityPhase::LiveDevicePreflight,
-                FactAuthority::DeviceRuntime,
-                FactValidityScope::DeviceInstance,
+            source: Arc::new(FactSourceProvenance::post_compile_measured(
+                PostCompileMeasurementAuthority::DeviceRuntime,
                 ProvenanceIdentity::new("test.empty-dispatch-measurement.v1", 1),
                 Vec::new(),
             )),
@@ -920,10 +935,11 @@ mod tests {
         assert_eq!(source.0.validity(), FactValidityScope::MeasuredEnvironment);
         assert!(matches!(
             source.0.basis(),
-            crate::target::honourability::FactEvidenceBasis::Measurement { contexts }
+            crate::target::honourability::FactEvidenceBasis::CompileProfileMeasurement { contexts }
                 if contexts.len() == 1
                     && contexts[0].compiler_builds()[0].version() == "1.0"
                     && contexts[0].environment().platform_build() == "build-1"
+                    && contexts[0].compilation_selection().as_bytes() == b"test-selection.v1"
         ));
     }
 
@@ -1552,7 +1568,7 @@ mod tests {
             TargetCompileProfileMeasurementSource::new(producer(), std::iter::empty()),
             Err(TargetFactSourceError::EmptyMeasurementContextSet)
         );
-        let context = TargetMeasurementContext::new(
+        let context = TargetCompileProfileMeasurementContext::new(
             [TargetCompilerBuild::new(
                 TargetCompilerRole::RuntimeCompiler,
                 "test-compiler".to_owned(),
@@ -1561,6 +1577,7 @@ mod tests {
             )
             .unwrap()],
             environment(),
+            TargetCompilationSelectionIdentity::from_bytes(b"test-selection.v1").unwrap(),
         )
         .unwrap();
         assert_eq!(

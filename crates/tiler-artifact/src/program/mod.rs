@@ -685,12 +685,13 @@ pub use retained::{RetainedShapeRelationFailure, RetainedShapeRelationFailureCla
 // space, means, or locus. Nothing was removed from the requirement re-export —
 // it never carried a rationale of its own.
 pub use tiler_ir::numerics::{
-    BehaviourSpace, CANONICAL_DIMENSIONS, CompilerBuildIdentity, CompilerBuildRole,
-    DIMENSION_COUNT, DimensionBehaviour, ExecutionEnvironmentIdentity, FactAuthority,
-    FactEvidenceBasis, FactSourceProvenance, FactValidityScope, HonouringMeans, MeasurementContext,
-    NumericalDimension, NumericalObligationKey, PolicyLocus, ProvenanceIdentity,
-    RelaxationRequirement, ScalarArithmeticSubject, ScalarArithmeticSubjectError,
-    ScalarArithmeticSubjectIdentity,
+    BehaviourSpace, CANONICAL_DIMENSIONS, CompilationSelectionIdentity,
+    CompilationSelectionIdentityError, CompileProfileMeasurementContext, CompilerBuildIdentity,
+    CompilerBuildRole, DIMENSION_COUNT, DimensionBehaviour, ExecutionEnvironmentIdentity,
+    FactAuthority, FactEvidenceBasis, FactSourceProvenance, FactValidityScope, HonouringMeans,
+    MeasurementContext, NumericalDimension, NumericalObligationKey, PolicyLocus,
+    PostCompileMeasurementAuthority, ProvenanceIdentity, RelaxationRequirement,
+    ScalarArithmeticSubject, ScalarArithmeticSubjectError, ScalarArithmeticSubjectIdentity,
 };
 // [`DimensionBehaviour`]'s own payloads, and the arithmetic type a subject
 // identity names. Re-exported for the reason [`BufferAccess`] is, and now

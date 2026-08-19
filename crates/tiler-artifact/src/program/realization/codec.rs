@@ -16,17 +16,23 @@
 //! while still calling the executable artifact validated. An incoming
 //! fact-source provenance schema is dispatched before the body is read: only a
 //! schema with an explicit decoder is admitted, and a foreign schema is never
-//! reconstructed through [`FactSourceProvenance::new`].
+//! reconstructed through a raw [`FactSourceProvenance`] constructor — none
+//! exists; a decoded value re-derives its triple through the same public
+//! basis-specific routes every producer uses.
 
 use std::error::Error;
 use std::fmt;
 
+use tiler_ir::identity::push_slice;
 use tiler_ir::numerics::{
-    CANONICAL_DIMENSIONS, CompilerBuildIdentity, CompilerBuildRole, DIMENSION_COUNT,
-    DimensionBehaviour, ExecutionEnvironmentIdentity, FACT_SOURCE_PROVENANCE_SCHEMA_VERSION,
-    FactAuthority, FactEvidenceBasis, FactSourceProvenance, FactValidityScope, HonouringMeans,
-    MeasurementContext, NumericalDimension, NumericalObligationKey, PolicyLocus,
-    ProvenanceIdentity, RelaxationRequirement, ScalarArithmeticSubjectIdentity,
+    CANONICAL_DIMENSIONS, CompilationSelectionIdentity, CompileProfileMeasurementContext,
+    CompilerBuildIdentity, CompilerBuildRole, DIMENSION_COUNT, DimensionBehaviour,
+    ExecutionEnvironmentIdentity, FACT_SOURCE_PROVENANCE_SCHEMA_VERSION, FactAuthority,
+    FactSourceProvenance, FactValidityScope, HonouringMeans,
+    MAX_COMPILATION_SELECTION_IDENTITY_BYTES, MAX_COMPILER_BUILDS_PER_CONTEXT,
+    MAX_MEASUREMENT_CONTEXTS_PER_SOURCE, MeasurementContext, NumericalDimension,
+    NumericalObligationKey, PolicyLocus, PostCompileMeasurementAuthority, ProvenanceIdentity,
+    RelaxationRequirement, ScalarArithmeticSubjectIdentity,
 };
 use tiler_ir::program::SemanticOccurrence;
 use tiler_ir::program::abi::AvailabilityPhase;
@@ -68,6 +74,12 @@ pub enum TagSubject {
     FactEvidenceBasis,
     /// A compiler build role.
     CompilerBuildRole,
+    /// A measurement-context count, ordinary or compile-profile.
+    MeasurementContexts,
+    /// A compiler-build count within one measurement context.
+    CompilerBuilds,
+    /// A compilation-selection identity length.
+    CompilationSelectionIdentity,
 }
 
 /// The ordered table a canonicality rejection names.
@@ -246,11 +258,10 @@ pub enum RealizationCodecError {
     ///
     /// Distinct from [`Self::UnknownProvenanceSchema`]: retirement is a listed
     /// withdrawal, not "any number below the current constant". This generation
-    /// lists none — [`FACT_SOURCE_PROVENANCE_SCHEMA_VERSION`] was introduced at
-    /// 3 and no predecessor wire grammar was implemented. The variant exists so
-    /// a later withdrawal is a typed case rather than a collapse into unknown.
-    /// Labelled draft under ADR 0075 until Tom accepts the exact decode-error
-    /// surface.
+    /// lists exactly schema 3, whose compile-profile measurement lacks the
+    /// now-required compilation selection and is refused rather than
+    /// normalized into schema 4. Labelled draft under ADR 0075 until Tom
+    /// accepts the exact decode-error surface.
     RetiredProvenanceSchema {
         /// The schema number read from the wire.
         version: u32,
@@ -439,7 +450,7 @@ pub fn decode(bytes: &[u8]) -> Decoded<DeliveredRealizationRecord> {
     strictly_increasing(
         &evidence,
         OrderedSubject::Evidence,
-        TargetEvidence::canonical_key,
+        DecodedEvidence::ordering_key,
     )?;
 
     let subject_count = cursor.len()?;
@@ -487,6 +498,26 @@ pub fn decode(bytes: &[u8]) -> Decoded<DeliveredRealizationRecord> {
     }
 
     check_references(&subjects, &obligations, &evidence, &bindings)?;
+    // Every row's source proved coherent inside `check_references`, so the
+    // materialization below cannot fail; it is after the checks so that the
+    // boundary matrix's precedence — bounded syntax, ordering, references, and
+    // only then provenance coherence — holds to the letter.
+    let evidence = evidence
+        .into_iter()
+        .map(|row| {
+            let DecodedProvenance::Coherent(source) = row.source else {
+                unreachable!("check_references refused every phase-incoherent row");
+            };
+            TargetEvidence::from_canonical_parts(
+                row.subject,
+                row.dimension,
+                row.declared,
+                row.means,
+                row.profile,
+                source,
+            )
+        })
+        .collect();
     Ok(DeliveredRealizationRecord::from_canonical_parts(
         profile,
         evidence,
@@ -663,10 +694,12 @@ fn decode_environment(cursor: &mut Cursor<'_>) -> Decoded<ExecutionEnvironmentId
 
 /// Schema numbers this decoder once implemented and no longer reads.
 ///
-/// Empty at schema 3: the constant was introduced at 3 and no predecessor wire
-/// grammar was implemented in this tree. Retirement is a listed withdrawal, not
-/// "any number below the current constant".
-const RETIRED_FACT_SOURCE_PROVENANCE_SCHEMAS: &[u32] = &[];
+/// Exactly `[3]`: schema 3's compile-profile measurement lacked the
+/// now-required compilation selection, so it is retired rather than normalized
+/// into 4 — old compile-profile evidence has no selection to recover.
+/// Retirement is a listed withdrawal, not "any number below the current
+/// constant": schemas 1 and 2 were never implemented and stay unknown.
+const RETIRED_FACT_SOURCE_PROVENANCE_SCHEMAS: &[u32] = &[3];
 
 fn unsupported_provenance_schema(version: u32) -> RealizationCodecError {
     if RETIRED_FACT_SOURCE_PROVENANCE_SCHEMAS.contains(&version) {
@@ -678,20 +711,44 @@ fn unsupported_provenance_schema(version: u32) -> RealizationCodecError {
     }
 }
 
-fn decode_provenance(cursor: &mut Cursor<'_>) -> Decoded<FactSourceProvenance> {
-    // Dispatch on the incoming schema before any body field is read. Reconstructing
-    // through `FactSourceProvenance::new` stamps the current schema, so a foreign
-    // schema whose remaining bytes happened to parse as the current grammar used
-    // to be silently normalized. `is_valid` cannot catch that: it only sees the
-    // reconstructed value.
+/// One decoded provenance run: either the coherent value, or the exact wire
+/// bytes of a run whose phase/authority/validity triple does not cohere with
+/// its basis.
+///
+/// The split exists because the raw `FactSourceProvenance` constructors are
+/// gone: every public route derives its triple, so an incoherent wire triple
+/// has no value to become. It is retained as bytes rather than refused where it
+/// is read, because the boundary matrix fixes the precedence — bounded syntax,
+/// ordering, and trailing bytes are all checked before a phase-incoherent
+/// evidence row returns `incomplete-provenance` — and normalizing the triple
+/// through a derived constructor would silently launder it instead.
+enum DecodedProvenance {
+    /// The wire triple matched the one its basis derives.
+    Coherent(FactSourceProvenance),
+    /// The wire triple does not cohere with its basis; the exact consumed
+    /// bytes are kept for the canonical-order check.
+    PhaseIncoherent {
+        /// The exact wire bytes of the whole provenance run.
+        raw: Vec<u8>,
+    },
+}
+
+fn decode_provenance(cursor: &mut Cursor<'_>) -> Decoded<DecodedProvenance> {
+    // Dispatch on the incoming schema before any body field is read, and on the
+    // exact literal rather than the constant: matching the current constant to
+    // a decoder written for an older grammar would reinterpret the new body
+    // through the old grammar. The assertion beside the literal keeps the two
+    // from drifting.
+    const _: () = assert!(FACT_SOURCE_PROVENANCE_SCHEMA_VERSION == 4);
     let schema = cursor.u32()?;
     match schema {
-        FACT_SOURCE_PROVENANCE_SCHEMA_VERSION => decode_provenance_v3(cursor),
+        4 => decode_provenance_v4(cursor),
         version => Err(unsupported_provenance_schema(version)),
     }
 }
 
-fn decode_provenance_v3(cursor: &mut Cursor<'_>) -> Decoded<FactSourceProvenance> {
+fn decode_provenance_v4(cursor: &mut Cursor<'_>) -> Decoded<DecodedProvenance> {
+    let start = cursor.offset - 4;
     let raw_phase = cursor.byte()?;
     let phase = tag(
         AvailabilityPhase::from_tag(raw_phase),
@@ -712,26 +769,59 @@ fn decode_provenance_v3(cursor: &mut Cursor<'_>) -> Decoded<FactSourceProvenance
     )?;
     let authority_identity = decode_provenance_identity(cursor)?;
     let raw_basis = cursor.byte()?;
-    let basis = match raw_basis {
-        0x01 => FactEvidenceBasis::GovernedGuarantee {
-            guarantee: decode_provenance_identity(cursor)?,
-        },
-        0x03 => FactEvidenceBasis::ExternalGuarantee {
-            reference: decode_provenance_identity(cursor)?,
-        },
+    // Each basis decodes its body, then states the value the derived public
+    // constructor would build for it. The wire triple is compared against that
+    // value's own triple below rather than being fed into a constructor that
+    // would normalize it.
+    let value = match raw_basis {
+        0x01 => {
+            FactSourceProvenance::governed(authority_identity, decode_provenance_identity(cursor)?)
+        }
+        0x03 => FactSourceProvenance::externally_guaranteed(
+            authority_identity,
+            decode_provenance_identity(cursor)?,
+        ),
         0x02 => {
-            let count = cursor.len()?;
-            let mut contexts = Vec::with_capacity(count.min(64));
-            for _ in 0..count {
-                let builds = cursor.len()?;
-                let mut compiler_builds = Vec::with_capacity(builds.min(16));
-                for _ in 0..builds {
-                    compiler_builds.push(decode_compiler_build(cursor)?);
-                }
+            let contexts = decode_measurement_contexts(cursor, |cursor| {
+                let builds = decode_context_builds(cursor)?;
                 let environment = decode_environment(cursor)?;
-                contexts.push(MeasurementContext::new(compiler_builds, environment));
-            }
-            FactEvidenceBasis::Measurement { contexts }
+                Ok(MeasurementContext::new(builds, environment))
+            })?;
+            // The wire triple selects which post-compile authority the run
+            // claims; a triple naming none is phase-incoherent rather than a
+            // normalized neighbour.
+            let Some(post_compile) = post_compile_authority(phase, authority, validity) else {
+                return Ok(DecodedProvenance::PhaseIncoherent {
+                    raw: cursor.bytes[start..cursor.offset].to_vec(),
+                });
+            };
+            FactSourceProvenance::post_compile_measured(post_compile, authority_identity, contexts)
+        }
+        0x04 => {
+            let contexts = decode_measurement_contexts(cursor, |cursor| {
+                let builds = decode_context_builds(cursor)?;
+                let environment = decode_environment(cursor)?;
+                // The selection is last, so the build/environment prefix stays
+                // one grammar. Its just-read length is checked against the
+                // 64-KiB ceiling before the payload is consumed: a declared
+                // over-ceiling length with no payload is `MalformedIdentity`,
+                // not `Truncated`.
+                let length = cursor.len()?;
+                if length == 0 || length > MAX_COMPILATION_SELECTION_IDENTITY_BYTES {
+                    return Err(RealizationCodecError::MalformedIdentity {
+                        subject: TagSubject::CompilationSelectionIdentity,
+                    });
+                }
+                let payload = cursor.take(length)?;
+                let selection = CompilationSelectionIdentity::from_bytes(payload)
+                    .expect("the just-checked length is nonempty and within the ceiling");
+                Ok(CompileProfileMeasurementContext::new(
+                    builds,
+                    environment,
+                    selection,
+                ))
+            })?;
+            FactSourceProvenance::compile_profile_measured(authority_identity, contexts)
         }
         _ => {
             return Err(RealizationCodecError::UnknownTag {
@@ -740,19 +830,122 @@ fn decode_provenance_v3(cursor: &mut Cursor<'_>) -> Decoded<FactSourceProvenance
             });
         }
     };
-    // `new` stamps `FACT_SOURCE_PROVENANCE_SCHEMA_VERSION`. This arm is reached
-    // only after that exact incoming schema was matched, so re-encoding cannot
-    // silently change the number.
-    Ok(FactSourceProvenance::new(
-        phase,
-        authority,
-        validity,
-        authority_identity,
-        basis,
-    ))
+    if (value.phase(), value.authority(), value.validity()) != (phase, authority, validity) {
+        return Ok(DecodedProvenance::PhaseIncoherent {
+            raw: cursor.bytes[start..cursor.offset].to_vec(),
+        });
+    }
+    Ok(DecodedProvenance::Coherent(value))
 }
 
-fn decode_evidence(cursor: &mut Cursor<'_>) -> Decoded<TargetEvidence> {
+/// Decodes one bounded context run shared by basis `0x02` and `0x04`.
+///
+/// The just-read count is checked before any child is consumed: a zero or
+/// over-limit count is `MalformedIdentity`, never a truncation discovered while
+/// consuming children that were never going to be admitted.
+fn decode_measurement_contexts<T>(
+    cursor: &mut Cursor<'_>,
+    mut context: impl FnMut(&mut Cursor<'_>) -> Decoded<T>,
+) -> Decoded<Vec<T>> {
+    let count = cursor.len()?;
+    if count == 0 || count > MAX_MEASUREMENT_CONTEXTS_PER_SOURCE {
+        return Err(RealizationCodecError::MalformedIdentity {
+            subject: TagSubject::MeasurementContexts,
+        });
+    }
+    let mut contexts = Vec::with_capacity(count);
+    for _ in 0..count {
+        contexts.push(context(cursor)?);
+    }
+    Ok(contexts)
+}
+
+/// Decodes one bounded compiler-build run, checking the count first.
+fn decode_context_builds(cursor: &mut Cursor<'_>) -> Decoded<Vec<CompilerBuildIdentity>> {
+    let builds = cursor.len()?;
+    if builds == 0 || builds > MAX_COMPILER_BUILDS_PER_CONTEXT {
+        return Err(RealizationCodecError::MalformedIdentity {
+            subject: TagSubject::CompilerBuilds,
+        });
+    }
+    let mut compiler_builds = Vec::with_capacity(builds);
+    for _ in 0..builds {
+        compiler_builds.push(decode_compiler_build(cursor)?);
+    }
+    Ok(compiler_builds)
+}
+
+/// The one coherent post-compile authority a wire triple names, or `None`.
+///
+/// A fail-closed restatement of the derived constructors' own table: any drift
+/// is caught by `is_valid` at reference checking, which runs on every
+/// constructed value, so this mapping can only make decode refuse more, never
+/// admit more.
+const fn post_compile_authority(
+    phase: AvailabilityPhase,
+    authority: FactAuthority,
+    validity: FactValidityScope,
+) -> Option<PostCompileMeasurementAuthority> {
+    match (phase, authority, validity) {
+        (
+            AvailabilityPhase::ArtifactEvidence,
+            FactAuthority::ArtifactEvidence,
+            FactValidityScope::PreparedArtifact,
+        ) => Some(PostCompileMeasurementAuthority::ArtifactEvidence),
+        (
+            AvailabilityPhase::LiveDevicePreflight,
+            FactAuthority::DeviceRuntime,
+            FactValidityScope::DeviceInstance,
+        ) => Some(PostCompileMeasurementAuthority::DeviceRuntime),
+        (
+            AvailabilityPhase::PreparedKernelPreflight,
+            FactAuthority::PreparedKernel,
+            FactValidityScope::PreparedArtifact,
+        ) => Some(PostCompileMeasurementAuthority::PreparedKernel),
+        (
+            AvailabilityPhase::LaunchPreflight,
+            FactAuthority::LaunchInstance,
+            FactValidityScope::LaunchInstance,
+        ) => Some(PostCompileMeasurementAuthority::LaunchInstance),
+        _ => None,
+    }
+}
+
+/// One decoded evidence row, its provenance possibly phase-incoherent.
+///
+/// A `TargetEvidence` cannot hold an incoherent source — the raw constructors
+/// are gone — so the row stays in this form until every bounded syntax,
+/// ordering, and trailing-byte check has run, and materializes only when its
+/// source is coherent.
+struct DecodedEvidence {
+    subject: u32,
+    dimension: NumericalDimension,
+    declared: DimensionBehaviour,
+    means: HonouringMeans,
+    profile: TargetProfileRef,
+    source: DecodedProvenance,
+}
+
+impl DecodedEvidence {
+    /// The canonical ordering key, byte-identical to
+    /// [`TargetEvidence::canonical_key`] for a coherent row.
+    fn ordering_key(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&self.subject.to_be_bytes());
+        bytes.push(self.dimension.tag());
+        self.declared.encode(&mut bytes);
+        self.means.encode(&mut bytes);
+        push_slice(&mut bytes, self.profile.key.as_str().as_bytes());
+        push_slice(&mut bytes, self.profile.descriptor.as_bytes());
+        match &self.source {
+            DecodedProvenance::Coherent(source) => source.encode(&mut bytes),
+            DecodedProvenance::PhaseIncoherent { raw } => bytes.extend_from_slice(raw),
+        }
+        bytes
+    }
+}
+
+fn decode_evidence(cursor: &mut Cursor<'_>) -> Decoded<DecodedEvidence> {
     let subject = cursor.u32()?;
     let dimension = decode_dimension(cursor)?;
     let declared = cursor.behaviour()?;
@@ -765,9 +958,14 @@ fn decode_evidence(cursor: &mut Cursor<'_>) -> Decoded<TargetEvidence> {
     let means = decode_means(cursor)?;
     let profile = decode_profile(cursor)?;
     let source = decode_provenance(cursor)?;
-    Ok(TargetEvidence::from_canonical_parts(
-        subject, dimension, declared, means, profile, source,
-    ))
+    Ok(DecodedEvidence {
+        subject,
+        dimension,
+        declared,
+        means,
+        profile,
+        source,
+    })
 }
 
 fn decode_subject(cursor: &mut Cursor<'_>) -> Decoded<NumericalPolicySubject> {
@@ -859,22 +1057,28 @@ fn decode_obligation(cursor: &mut Cursor<'_>) -> Decoded<NumericalObligation> {
 fn check_references(
     subjects: &[NumericalPolicySubject],
     obligations: &[NumericalObligation],
-    evidence: &[TargetEvidence],
+    evidence: &[DecodedEvidence],
     bindings: &[EntryPolicyBinding],
 ) -> Decoded<()> {
     for (index, row) in evidence.iter().enumerate() {
-        if row.subject() as usize >= subjects.len() {
+        if row.subject as usize >= subjects.len() {
             return Err(RealizationCodecError::DanglingReference {
                 subject: ReferenceSubject::EvidenceSubject,
-                index: row.subject() as usize,
+                index: row.subject as usize,
             });
         }
-        if !row.source().is_valid() {
+        // A phase-incoherent triple and an invalid coherent value refuse under
+        // one rule: the row's provenance is not complete and internally
+        // consistent.
+        let DecodedProvenance::Coherent(source) = &row.source else {
+            return Err(RealizationCodecError::IncompleteProvenance { index });
+        };
+        if !source.is_valid() {
             return Err(RealizationCodecError::IncompleteProvenance { index });
         }
-        if row.source().phase() > LATEST_DELIVERED_PHASE {
+        if source.phase() > LATEST_DELIVERED_PHASE {
             return Err(RealizationCodecError::FactPhaseEscape {
-                available_at: row.source().phase(),
+                available_at: source.phase(),
                 admitted_through: LATEST_DELIVERED_PHASE,
             });
         }
@@ -897,17 +1101,17 @@ fn check_references(
         // been wrong in a hand-built fixture before the check existed: an
         // obligation pointing at a neighbouring dimension's fact, and one
         // pointing at the right dimension of the wrong subject.
-        if fact.subject() != row.subject() || fact.dimension() != row.dimension() {
+        if fact.subject != row.subject() || fact.dimension != row.dimension() {
             return Err(RealizationCodecError::DanglingReference {
                 subject: ReferenceSubject::ObligationEvidence,
                 index: row.evidence() as usize,
             });
         }
-        if fact.declared() != row.required() {
+        if fact.declared != row.required() {
             return Err(RealizationCodecError::BehaviourMismatch {
                 dimension: row.dimension(),
                 required: row.required(),
-                declared: fact.declared(),
+                declared: fact.declared,
             });
         }
     }
