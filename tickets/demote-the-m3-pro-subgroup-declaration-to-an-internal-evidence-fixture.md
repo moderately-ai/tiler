@@ -36,7 +36,7 @@ Per-Fact verdicts, each from a full read of the named source at this base, befor
 
 ## Delivery — 2026-08-18
 
-Implemented on `tkt/demote-the-m3-pro-subgroup-declaration-to-an-internal-evidence-fixture` from base `50327207`, at the commits recorded under **Commits** below.
+Implemented at `9107812e` (the demotion, the compile evidence, the spike exception, and both ticket records) plus the closing commit that adds this hash, on `tkt/demote-the-m3-pro-subgroup-declaration-to-an-internal-evidence-fixture` from base `50327207`. Every check below was run at `9107812e`; the closing commit is a `tickets/`-only delta.
 
 ### Visibility census
 
