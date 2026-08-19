@@ -90,6 +90,15 @@ impl RetainedShapeEnvironment {
         &self.bytes
     }
 
+    /// Returns the decoded root bindings, in the canonical symbol order.
+    ///
+    /// The artifact's one shape-environment authority. A live input-extent
+    /// operand is associated against exactly these bindings, so a symbol from
+    /// any other environment has no row here and fails closed.
+    pub(crate) fn bindings(&self) -> &[(ShapeSymbol, RootBinding)] {
+        &self.bindings
+    }
+
     /// Evaluates every retained semantic input constraint against bound facts.
     pub(crate) fn evaluate(
         &self,

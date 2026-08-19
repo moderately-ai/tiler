@@ -453,6 +453,77 @@ pub enum ArtifactBuildError {
         /// Rank of the bound input.
         rank: usize,
     },
+    /// A kernel live-extent operand names a semantic interface axis the bound
+    /// program fixes.
+    ///
+    /// The operand would make the axis's extent a caller-selected binding while
+    /// the semantic subject states one exact value, so an execution at any
+    /// other extent would carry the fixed program's coverage and identity for a
+    /// meaning outside its own semantic graph. Refused at construction; the
+    /// decoded-envelope validator refuses the same combination on bytes no
+    /// builder wrote.
+    ExtentOperandStaticAxis {
+        /// Ordered entry position.
+        entry: usize,
+        /// Stable input key the operand names.
+        key: String,
+        /// Axis the kernel named.
+        axis: u32,
+        /// The one extent the semantic interface fixes for that axis.
+        extent: u64,
+    },
+    /// A live-extent operand's symbolic axis names a symbol the program's one
+    /// retained shape environment does not bind.
+    ///
+    /// The artifact carries exactly one environment subject; a symbol from any
+    /// other environment has no root binding here, so the operand's meaning
+    /// cannot be proven and the association fails closed.
+    ExtentOperandForeignSymbol {
+        /// Ordered entry position.
+        entry: usize,
+        /// Stable input key the operand names.
+        key: String,
+        /// Axis the kernel named.
+        axis: u32,
+        /// The unbound symbol the axis names.
+        symbol: String,
+    },
+    /// A live-extent operand's symbol is not rooted at any input dimension.
+    ///
+    /// The operand transports an input-dimension fact to the payload; a symbol
+    /// rooted at a static value, an interface parameter, or a target property
+    /// is answered by that authority instead, so an operand claiming it would
+    /// give one symbol two authorities.
+    ExtentOperandUnsourcedSymbol {
+        /// Ordered entry position.
+        entry: usize,
+        /// Stable input key the operand names.
+        key: String,
+        /// Axis the kernel named.
+        axis: u32,
+        /// The symbol the axis names.
+        symbol: String,
+        /// Rendered root source of that symbol.
+        source: String,
+    },
+    /// A live-extent operand names an axis that is not its symbol's root.
+    ///
+    /// The environment roots the symbol at one exact input dimension; every
+    /// other axis naming the same symbol is an inferred occurrence. The operand
+    /// must name the source-bearing axis — the same rule the accepted schedule
+    /// marker follows — or one bound value acquires two interface spellings.
+    ExtentOperandSourceMismatch {
+        /// Ordered entry position.
+        entry: usize,
+        /// Stable input key the operand names.
+        key: String,
+        /// Axis the kernel named.
+        axis: u32,
+        /// Input key of the symbol's root binding.
+        root_key: String,
+        /// Axis of the symbol's root binding.
+        root_axis: u32,
+    },
     /// A kernel baked a per-invocation bound extent into its signature.
     ///
     /// The entry's accessible-range or launch formula names an
@@ -764,6 +835,10 @@ impl Error for ArtifactBuildError {
             | Self::DeliveryCardinality { .. }
             | Self::ExtentOperandUnbound { .. }
             | Self::ExtentOperandAxis { .. }
+            | Self::ExtentOperandStaticAxis { .. }
+            | Self::ExtentOperandForeignSymbol { .. }
+            | Self::ExtentOperandUnsourcedSymbol { .. }
+            | Self::ExtentOperandSourceMismatch { .. }
             | Self::BoundExtentSpecialization { .. }
             | Self::BindingCardinality { .. }
             | Self::UnnameableBindingTarget { .. }

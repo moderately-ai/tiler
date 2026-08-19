@@ -613,6 +613,23 @@ pub(crate) enum ArtifactCodecError {
         /// Axis the row named.
         axis: u32,
     },
+    /// A live-extent operand row names an interface axis the artifact fixes.
+    ///
+    /// The decoded interface grammar carries only literal extents, so every
+    /// axis a row can name is fixed by the artifact's own published interface —
+    /// and a fixed semantic axis must not acquire a caller-selected extent.
+    /// The same combination is refused at construction as
+    /// `ArtifactBuildError::ExtentOperandStaticAxis`; this is the re-proof on
+    /// bytes no builder wrote, and it holds for every row until a symbolic
+    /// interface representation exists on the wire.
+    ExtentOperandStaticAxis {
+        /// Stable input key the row named.
+        key: String,
+        /// Axis the row named.
+        axis: u32,
+        /// The one extent the published interface fixes for that axis.
+        extent: u64,
+    },
     /// A payload mapping places a live-extent operand on a slot that is not the
     /// next buffer index after the tensor table.
     ExtentOperandTransport {
@@ -836,6 +853,7 @@ impl Error for ArtifactCodecError {
             | Self::UnknownExtentOperandKey { .. }
             | Self::ExtentOperandAxis { .. }
             | Self::ExtentOperandType { .. }
+            | Self::ExtentOperandStaticAxis { .. }
             | Self::ExtentOperandTransport { .. }
             | Self::DeclaredFeatureMismatch
             | Self::ArtifactIdentityMismatch

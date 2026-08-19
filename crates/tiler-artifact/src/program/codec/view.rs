@@ -1348,6 +1348,7 @@ impl From<ArtifactCodecError> for ArtifactCodecFailure {
             | ArtifactCodecError::UnknownExtentOperandKey { .. }
             | ArtifactCodecError::ExtentOperandAxis { .. }
             | ArtifactCodecError::ExtentOperandType { .. }
+            | ArtifactCodecError::ExtentOperandStaticAxis { .. }
             | ArtifactCodecError::ExtentOperandTransport { .. }
             | ArtifactCodecError::DeclaredFeatureMismatch
             | ArtifactCodecError::MissingReference { .. }

@@ -86,6 +86,7 @@ pub(super) fn validate(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecE
     // After the position check, whose count every scope run is locked to.
     check_plan_determinism(envelope)?;
     check_entry_mappings(envelope)?;
+    check_extent_operand_static_axes(envelope)?;
     let facts = ExpressionFacts::derive(envelope.expressions());
     check_expression_closure(envelope)?;
     check_backend_entries(envelope)?;
@@ -353,7 +354,10 @@ fn check_binding_targets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCode
 /// The live *value* is not in the envelope. What is decidable here is the
 /// declaration: the key is one the interface names, the axis is in rank, the
 /// type is the unsigned quantity Metal binds, and the list is in canonical
-/// `(key, axis)` order without duplicates.
+/// `(key, axis)` order without duplicates. Whether the named axis is one the
+/// published interface leaves open at all is
+/// [`check_extent_operand_static_axes`], which runs after the transport checks
+/// so each structural refusal stays reachable.
 fn check_extent_operands(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecError> {
     for entry in envelope
         .variants()
@@ -403,6 +407,43 @@ fn check_extent_operands(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCode
                     axis: operand.axis.get(),
                 });
             }
+        }
+    }
+    Ok(())
+}
+
+/// Refuses every live-extent operand row the published interface fixes.
+///
+/// The decoded interface grammar states only literal extents, so the axis a
+/// row names is fixed by the artifact's own published interface, and a fixed
+/// semantic axis must not acquire a caller-selected extent. Until a symbolic
+/// interface representation exists on the wire (the packaging decision), every
+/// declared row is therefore refused by name — the decode-side half of the
+/// construction-time `ExtentOperandStaticAxis` association.
+///
+/// Deliberately after [`check_extent_operands`] and `check_entry_mappings`, so
+/// a row that is *also* structurally broken — misordered, duplicated, out of
+/// rank, mistyped, or misplaced on its transport — still reports the narrower
+/// structural refusal those checks own.
+fn check_extent_operand_static_axes(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecError> {
+    for entry in envelope
+        .variants()
+        .iter()
+        .flat_map(|variant| &variant.entries)
+    {
+        if let Some(operand) = entry.input_extents.first() {
+            let input = envelope
+                .inputs()
+                .iter()
+                .find(|input| input.key == operand.key)
+                .expect("check_extent_operands proved every operand key is declared");
+            let axis = usize::try_from(operand.axis.get())
+                .expect("check_extent_operands proved the axis is inside the input's rank");
+            return Err(ArtifactCodecError::ExtentOperandStaticAxis {
+                key: operand.key.as_str().to_owned(),
+                axis: operand.axis.get(),
+                extent: input.shape.extents()[axis].get(),
+            });
         }
     }
     Ok(())

@@ -33,11 +33,11 @@ mod image;
 mod retained;
 
 use adapter::{DispatchFamily, Perturbation, ScalarHostAdapter, Stage};
-use fixture::{FixtureSpec, PackagedPlan, assemble, assemble_portfolio, assemble_portfolio_over};
+use fixture::{FixtureSpec, PackagedPlan, assemble, assemble_portfolio};
 use image::{ScalarEntry, ScalarImage, ScalarPayloadRefusal, encode};
 
 use tiler_artifact::program::{
-    AbiFactBinder, AbiFacts, ArithmeticType, AvailabilityPhase, BackendKey,
+    AbiFactBinder, AbiFacts, ArithmeticType, ArtifactBuildError, AvailabilityPhase, BackendKey,
     RecordedArtifactProgramIdentity, RouteFeatureKey, RouteRequirementSubject, TargetProfileKey,
 };
 use tiler_reference::{
@@ -45,8 +45,8 @@ use tiler_reference::{
 };
 use tiler_runtime::adapter::{AdapterRouteFailure, route_with_adapter};
 use tiler_runtime::load::{
-    DTypeDispatch, DTypeDispatchResolution, DecodedProgram, ExecutionEnvironment, LoadRejection,
-    TargetCompatibility, VariantIneligibility,
+    DTypeDispatch, DTypeDispatchResolution, DecodedProgram, LoadRejection, TargetCompatibility,
+    VariantIneligibility,
 };
 
 /// The one delivery position every artifact here is built for.
@@ -86,13 +86,22 @@ type Outcome = Result<
 /// with this test's expectation, and the two halves would then agree because
 /// they were told to.
 fn bind_facts(program: &DecodedProgram) -> AbiFacts {
+    selection_property_binder(program).build()
+}
+
+/// The same interface facts, with the binder left open for route-fact extras.
+///
+/// A caller may legitimately add live-device facts — the determinism suite
+/// binds the selection target property — but the interface facts always come
+/// from the artifact's own declaration, exactly as [`bind_facts`] reads them.
+fn selection_property_binder(program: &DecodedProgram) -> AbiFactBinder {
     let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
     for input in program.inputs() {
         binder
             .bind_input_shape(input.key(), input.shape())
             .expect("the fixture's declared interface binds");
     }
-    binder.build()
+    binder
 }
 
 /// Runs one fixture through one adapter, end to end.
@@ -2199,400 +2208,57 @@ fn a_dtype_refusal_arrives_while_a_fallback_is_still_permitted() {
         "a dtype is decided inside selection, long before the commit: {failure}",
     );
 }
+// -------------------------------------------------------------------------
+// Live input-extent members refuse at artifact construction
+// -------------------------------------------------------------------------
+//
+// The former worked examples here executed a fixed `[2, 3]` semantic subject
+// at caller-selected extents 14 and 15 — meanings outside the fixed program's
+// own semantic graph. `one_live_extent_payload_and_pipeline_indexes_dense_f32_at_two_n`,
+// its zero-extent, C1-rebinding, capacity-pool, and preflight siblings are
+// reworked into the refusals below; their execution, addressing, and
+// pipeline-identity evidence is withdrawn until a true symbolic `[2, N]`
+// artifact can be packaged
+// (`package-the-admitted-live-schedule-into-a-symbolic-kernel-program`), and
+// `prove-one-live-extent-artifact-payload-and-pipeline-at-two-n` owns the
+// rerun over that subject.
 
-/// Dense F32 `[2, N]`: semantic `(row = 1, column = 0)` is element `N`, so bytes `4N`.
-const fn dense_f32_row_major_bytes(row: u64, column: u64, inner_extent: u64) -> u64 {
-    4 * (row * inner_extent + column)
-}
-
-fn live_extent_facts(n: u64) -> AbiFacts {
-    let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
-    binder
-        .bind_input_extent(fixture::input_key(), tiler_ir::shape::Axis::new(1), n)
-        .expect("the live axis binds");
-    binder.build()
-}
-
-fn live_extent_environment() -> ExecutionEnvironment {
-    let mut dtype_dispatch = std::collections::BTreeMap::new();
-    dtype_dispatch.insert(ArithmeticType::F32, DTypeDispatch::Dispatchable);
-    ExecutionEnvironment {
-        target_profile: fixture::profile(),
-        backend: fixture::backend(),
-        representation: fixture::representation(),
-        dtype_dispatch,
-    }
-}
-
-fn route_live(built: &fixture::Fixture, n: u64, input: &[u32]) -> (Outcome, ScalarHostAdapter) {
-    let mut program = DecodedProgram::decode(&built.bytes, SOLE_DELIVERY)
-        .expect("the live-extent artifact decodes");
-    let mut host = ScalarHostAdapter::new(input);
-    let outcome = route_with_adapter(
-        &mut program,
-        &mut host,
-        &built.expected,
-        &live_extent_facts(n),
-    );
-    (outcome, host)
-}
-
-fn mapped_bits(operand_bits: u32) -> u32 {
-    let operand = f32::from_bits(operand_bits);
-    (operand * f32::from_bits(fixture::SCALE_BITS) + f32::from_bits(fixture::BIAS_BITS)).to_bits()
-}
-
+/// The exact former wrong-positive subject, now refused where it is packaged.
+///
+/// Subject perturbed, assertion unchanged: `FixtureSpec::default()` — the same
+/// `[2, 3]` semantic graph without a live operand — still assembles through
+/// this very fixture path, and declaring the live operand on axis 1 is the one
+/// perturbation that flips assembly into the typed refusal.
 #[test]
-fn one_live_extent_payload_and_pipeline_indexes_dense_f32_at_two_n() {
-    let built = assemble(&FixtureSpec::live_extent());
+fn the_live_extent_member_refuses_at_artifact_construction() {
+    let _static_sibling = assemble(&FixtureSpec::default());
+    let error = fixture::try_assemble(&FixtureSpec::live_extent())
+        .expect_err("a fixed semantic axis must not acquire a caller-selected extent");
     assert_eq!(
-        built.expected.as_bytes(),
-        assemble(&FixtureSpec::live_extent()).expected.as_bytes(),
-        "artifact identity excludes the bound N",
-    );
-    assert_ne!(
-        built.expected.as_bytes(),
-        assemble(&FixtureSpec::default()).expected.as_bytes(),
-        "a baked static neighbour is a different artifact subject",
-    );
-
-    // One input buffer, sized for the larger N, with a unique value at every
-    // dense F32 slot. (row = 1, column = 0) is element N, so the two bindings
-    // must read different slots if execute uses the live extent.
-    let input: Vec<u32> = (0..fixture::ROWS * 15)
-        .map(|index| {
-            let slot = u16::try_from(index).expect("the two-N fixture stays small");
-            f32::from(slot + 1).to_bits()
-        })
-        .collect();
-
-    let mut addresses = Vec::new();
-    let mut observed = Vec::new();
-    for n in [14_u64, 15] {
-        let (outcome, host) = route_live(&built, n, &input);
-        let completion = outcome.unwrap_or_else(|failure| {
-            panic!("N={n} must dispatch through the same payload: {failure}")
-        });
-        assert!(
-            host.stages.contains(&Stage::Dispatch),
-            "N={n} must reach program work, not stop at preflight",
-        );
-        assert_eq!(completion.executed, fixture::ROWS);
-        let address = dense_f32_row_major_bytes(1, 0, n);
-        let element = usize::try_from(address / 4).expect("the two-N fixture stays small");
-        let bits = completion.result_bits[element];
-        assert_eq!(
-            bits,
-            mapped_bits(input[element]),
-            "N={n} must execute the LiveRowMajor read at byte {address}",
-        );
-        addresses.push(address);
-        observed.push(bits);
-    }
-    assert_eq!(
-        addresses,
-        [56, 60],
-        "semantic (row = 1, column = 0) at N=14 and N=15",
-    );
-    assert_ne!(
-        observed[0], observed[1],
-        "the two executed oracles must disagree",
+        error,
+        ArtifactBuildError::ExtentOperandStaticAxis {
+            entry: 0,
+            key: "input".to_owned(),
+            axis: 1,
+            extent: 3,
+        },
+        "the refusal must name the fixed semantic axis",
     );
 }
 
+/// The contraction spelling of the same defect refuses identically.
 #[test]
-fn a_zero_live_row_major_extent_executes_no_elements_and_remains_routable() {
-    let built = assemble(&FixtureSpec::live_extent());
-    let (outcome, host) = route_live(&built, 0, &[]);
-    let completion = outcome.expect("an empty LiveRowMajor range is a legal no-work route");
-    assert_eq!(completion.result_bits, Vec::<u32>::new());
-    assert_eq!(
-        completion.executed,
-        fixture::ROWS,
-        "the static outer invocations run, while their inner element ranges are empty",
-    );
-    assert!(host.stages.contains(&Stage::Dispatch));
-}
-
-fn live_contraction_facts(bound: u64) -> AbiFacts {
-    let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
-    binder
-        .bind_input_extent(
-            tiler_ir::semantic::InputKey::new("left").expect("left key"),
-            tiler_ir::shape::Axis::new(1),
-            bound,
-        )
-        .expect("live contraction extent");
-    binder.build()
-}
-
-#[test]
-fn a_zero_live_contraction_refuses_before_payload_or_program_work() {
+fn the_live_contraction_member_refuses_at_artifact_construction() {
     let semantic = fixture::live_contraction_semantic_program();
-    let built = assemble_portfolio_over(&[FixtureSpec::live_contraction()], &semantic);
-    let mut program = DecodedProgram::decode(&built.bytes, SOLE_DELIVERY)
-        .expect("the live contraction artifact decodes");
-    let mut host = ScalarHostAdapter::new(&[]);
-    let outcome = route_with_adapter(
-        &mut program,
-        &mut host,
-        &built.expected,
-        &live_contraction_facts(0),
-    );
-    let Err(AdapterRouteFailure::Load(LoadRejection::NoApplicableVariant { packaged, filtered })) =
-        outcome
-    else {
-        panic!("S=0 must fail applicability before routing commit");
-    };
-    assert_eq!(packaged, 1);
-    assert!(
-        filtered.is_empty(),
-        "the variant was eligible but inapplicable"
-    );
-    assert_eq!(host.stages, [Stage::Bind]);
-}
-
-#[test]
-fn positive_live_contraction_neighbours_reach_the_same_preflight_entry() {
-    let semantic = fixture::live_contraction_semantic_program();
-    let built = assemble_portfolio_over(&[FixtureSpec::live_contraction()], &semantic);
-    let mut selected = Vec::new();
-    for bound in [1_u64, 14, 15] {
-        let mut program = DecodedProgram::decode(&built.bytes, SOLE_DELIVERY)
-            .expect("the live contraction artifact decodes");
-        let preflight = program
-            .preflight(
-                &live_extent_environment(),
-                &built.expected,
-                &live_contraction_facts(bound),
-            )
-            .unwrap_or_else(|failure| panic!("S={bound} must pass preflight: {failure}"));
-        assert_eq!(preflight.entries().len(), 1);
-        assert_eq!(preflight.entries()[0].extent_parameters()[0].value(), bound);
-        selected.push(preflight.kernel_program_identity().to_vec());
-    }
-    assert!(selected.windows(2).all(|pair| pair[0] == pair[1]));
-}
-
-#[test]
-fn a_live_extent_host_side_payload_disagreement_refuses_before_program_work() {
-    let built = assemble(&FixtureSpec::live_extent());
-    let mut program = DecodedProgram::decode(&built.bytes, SOLE_DELIVERY)
-        .expect("the live-extent artifact decodes");
-    let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
-    binder
-        .bind_input_extent(
-            fixture::input_key(),
-            tiler_ir::shape::Axis::new(0),
-            fixture::ROWS,
-        )
-        .expect("the static row axis binds");
-    let rejection = program
-        .preflight(&live_extent_environment(), &built.expected, &binder.build())
-        .expect_err("binding the static row axis is not an answer for the live inner extent");
-    assert!(
-        matches!(
-            rejection,
-            LoadRejection::AbiEvaluation { .. } | LoadRejection::UnboundInputExtent { .. }
-        ),
-        "a disagreement must refuse before program work, got {rejection}",
-    );
-    let text = rejection.to_string();
-    assert!(
-        text.contains("Axis(1)") || text.contains("axis 1") || text.contains("UnboundInputExtent"),
-        "the refusal must name the missing live axis: {text}",
-    );
-}
-
-/// C1 sequence extents: prefill at 10 and eight decode steps through 18.
-const C1_SEQUENCE_EXTENTS: [u64; 9] = [10, 11, 12, 13, 14, 15, 16, 17, 18];
-
-const RETAINED_HEADS: u64 = 8;
-const RETAINED_WIDTH: u64 = 128;
-const RETAINED_CAPACITY: u64 = 18;
-const RETAINED_ELEMENT_BYTES: u64 = 4;
-
-const fn exact_live_span(sequence: u64) -> u64 {
-    RETAINED_HEADS * sequence * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES
-}
-
-const fn exact_live_head1(sequence: u64) -> u64 {
-    sequence * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES
-}
-
-const fn capacity_strided_head1(capacity: u64) -> u64 {
-    capacity * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES
-}
-
-const fn retained_pool_bytes() -> u64 {
-    RETAINED_CAPACITY * RETAINED_HEADS * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES
-}
-
-fn c1_portfolio() -> fixture::Fixture {
-    assemble_portfolio(&[
-        FixtureSpec::live_extent_aligned(),
-        FixtureSpec::live_extent(),
-    ])
-}
-
-/// One artifact identity and one prepared pipeline per selected variant across
-/// C1's nine rebound extents. The ≡ 0 (mod 16) variant is selected only at 16.
-#[test]
-fn one_artifact_and_pipeline_rebind_c1_extents_and_select_the_aligned_guard_at_sixteen() {
-    let built = c1_portfolio();
+    let error = fixture::try_assemble_portfolio_over(&[FixtureSpec::live_contraction()], &semantic)
+        .expect_err("a live contributor extent over a fixed semantic axis must refuse");
     assert_eq!(
-        built.expected.as_bytes(),
-        c1_portfolio().expected.as_bytes(),
-        "reassembling the C1 portfolio must keep one identity",
-    );
-
-    let pool_elements = usize::try_from(retained_pool_bytes() / 4).expect("the C1 pool is small");
-    let input: Vec<u32> = (0..pool_elements)
-        .map(|index| {
-            let slot = u16::try_from(index).expect("the C1 pool stays inside u16");
-            f32::from(slot + 1).to_bits()
-        })
-        .collect();
-
-    let mut identities = Vec::new();
-    let mut pipelines = Vec::new();
-    let mut symbols = Vec::new();
-    for sequence in C1_SEQUENCE_EXTENTS {
-        let mut program =
-            DecodedProgram::decode(&built.bytes, SOLE_DELIVERY).expect("the C1 portfolio decodes");
-        let preflight = program
-            .preflight(
-                &live_extent_environment(),
-                &built.expected,
-                &live_extent_facts(sequence),
-            )
-            .unwrap_or_else(|failure| {
-                panic!("S={sequence} must route from the same artifact: {failure}")
-            });
-        identities.push(preflight.identity().as_bytes().to_vec());
-        pipelines.push(preflight.kernel_program_identity().to_vec());
-        symbols.push(preflight.entries()[0].entry_symbol().to_owned());
-
-        let (outcome, host) = route_live(&built, sequence, &input);
-        let completion = outcome.unwrap_or_else(|failure| {
-            panic!("S={sequence} must dispatch through the prepared pipeline: {failure}")
-        });
-        assert!(
-            host.stages.contains(&Stage::Dispatch),
-            "S={sequence} must reach program work",
-        );
-        assert_eq!(completion.executed, fixture::ROWS);
-    }
-
-    assert!(
-        identities.windows(2).all(|pair| pair[0] == pair[1]),
-        "a per-invocation compilation would mint a new artifact identity",
-    );
-    assert_eq!(
-        symbols,
-        [
-            fixture::LIVE_EXTENT_SYMBOL,
-            fixture::LIVE_EXTENT_SYMBOL,
-            fixture::LIVE_EXTENT_SYMBOL,
-            fixture::LIVE_EXTENT_SYMBOL,
-            fixture::LIVE_EXTENT_SYMBOL,
-            fixture::LIVE_EXTENT_SYMBOL,
-            fixture::LIVE_EXTENT_ALIGNED_SYMBOL,
-            fixture::LIVE_EXTENT_SYMBOL,
-            fixture::LIVE_EXTENT_SYMBOL,
-        ],
-        "StablePriority must select the ≡ 0 (mod 16) variant only at S=16",
-    );
-
-    let mut distinct_pipelines = pipelines.clone();
-    distinct_pipelines.sort();
-    distinct_pipelines.dedup();
-    assert_eq!(
-        distinct_pipelines.len(),
-        2,
-        "nine extents must prepare two pipelines (one per variant), not one per extent: {}",
-        distinct_pipelines.len(),
-    );
-    assert_eq!(
-        pipelines[0], pipelines[5],
-        "S=10 and S=15 select the same variant and must share one pipeline",
-    );
-    assert_ne!(
-        pipelines[0], pipelines[6],
-        "S=16 selects the aligned variant and must prepare its own pipeline",
-    );
-}
-
-/// A capacity-sized pool bound at a shorter live extent addresses the exact
-/// live span. Deriving the stride from the allocation length fails the oracle.
-#[test]
-fn a_capacity_pool_addresses_the_exact_live_span_and_the_wrong_stride_fails() {
-    assert_eq!(retained_pool_bytes(), 73_728);
-    assert_eq!(exact_live_span(14), 57_344);
-    assert_eq!(exact_live_span(15), 61_440);
-    assert_eq!(exact_live_head1(14), 7_168);
-    assert_eq!(exact_live_head1(15), 7_680);
-    assert_eq!(capacity_strided_head1(RETAINED_CAPACITY), 9_216);
-
-    let built = assemble(&FixtureSpec::live_extent());
-    let pool_elements = usize::try_from(retained_pool_bytes() / 4).expect("the C1 pool is small");
-    let input: Vec<u32> = (0..pool_elements)
-        .map(|index| {
-            let slot = u16::try_from(index.min(u16::MAX as usize)).expect("index fits");
-            f32::from(slot.saturating_add(1)).to_bits()
-        })
-        .collect();
-    assert_eq!(
-        u64::try_from(input.len() * 4).expect("the C1 pool is small"),
-        retained_pool_bytes(),
-    );
-
-    let mut observed = Vec::new();
-    for sequence in [14_u64, 15] {
-        let mut program = DecodedProgram::decode(&built.bytes, SOLE_DELIVERY)
-            .expect("the live-extent artifact decodes");
-        let preflight = program
-            .preflight(
-                &live_extent_environment(),
-                &built.expected,
-                &live_extent_facts(sequence),
-            )
-            .unwrap_or_else(|failure| {
-                panic!("S={sequence} must preflight against the capacity pool: {failure}")
-            });
-        let bound = preflight.entries()[0].extent_parameters()[0].value();
-        assert_eq!(
-            bound, sequence,
-            "the routed operand is the bound S, not the pool"
-        );
-        let allocation_as_sequence =
-            retained_pool_bytes() / (RETAINED_HEADS * RETAINED_WIDTH * RETAINED_ELEMENT_BYTES);
-        assert_eq!(allocation_as_sequence, RETAINED_CAPACITY);
-        assert_ne!(
-            bound, allocation_as_sequence,
-            "addressing from the allocation length would read the wrong head",
-        );
-        assert_eq!(exact_live_head1(bound), exact_live_head1(sequence));
-        assert_eq!(exact_live_span(bound), exact_live_span(sequence));
-        assert!(
-            retained_pool_bytes() >= exact_live_span(sequence),
-            "the capacity pool must be legal at the shorter live span",
-        );
-
-        let (outcome, host) = route_live(&built, sequence, &input);
-        outcome.unwrap_or_else(|failure| {
-            panic!("a capacity-sized pool at live S={sequence} must dispatch: {failure}")
-        });
-        assert!(
-            host.stages.contains(&Stage::Dispatch),
-            "S={sequence} must reach program work against the longer pool",
-        );
-        observed.push(exact_live_head1(bound));
-    }
-    assert_eq!(observed, [7_168, 7_680]);
-    assert_ne!(
-        exact_live_head1(14),
-        capacity_strided_head1(RETAINED_CAPACITY),
-        "the capacity-strided interpretation addresses byte 9,216 and must fail the oracle",
+        error,
+        ArtifactBuildError::ExtentOperandStaticAxis {
+            entry: 0,
+            key: "left".to_owned(),
+            axis: 1,
+            extent: 1,
+        },
     );
 }

@@ -374,40 +374,39 @@ fn object_only_relinking_moves_the_envelope_digest_and_the_subject() {
 /// Another routing rank: one envelope, one environment, two coordinates.
 ///
 /// The selected-variant perturbation, rank half: the same claimed portfolio is
-/// routed twice with different bound extents, so the aligned member is
-/// selected at `N = 16` and the general member at `N = 8`. The digest and the
-/// environment hold; the rank and the projected kernel-program identity move.
+/// routed twice with different bound selection properties, so the
+/// property-guarded member is selected at an aligned `16` and the general
+/// member at `8`. The digest and the environment hold; the rank and the
+/// projected kernel-program identity move.
 #[test]
 fn another_routing_rank_moves_only_the_selected_coordinate() {
-    let claimed_live = |spec: FixtureSpec| FixtureSpec {
+    let claimed = |plan: PackagedPlan| FixtureSpec {
         environment: Some(fixture::environment_declaration()),
         claim_plan: true,
-        ..spec
+        ..FixtureSpec::for_plan(plan)
     };
     let built = assemble_portfolio(&[
-        claimed_live(FixtureSpec::live_extent_aligned()),
-        claimed_live(FixtureSpec::live_extent()),
+        claimed(PackagedPlan::FusedPropertyGuarded),
+        claimed(PackagedPlan::Fused),
     ]);
-    let pool_elements =
-        usize::try_from(crate::retained_pool_bytes() / 4).expect("the pool is small");
-    let input: Vec<u32> = (0..pool_elements)
-        .map(|index| f32::from(u16::try_from(index).expect("a small pool") + 1).to_bits())
-        .collect();
 
     let mut subjects = Vec::new();
     let mut kernel_programs = Vec::new();
-    for extent in [16_u64, 8] {
+    for width in [16_u64, 8] {
         let mut program = DecodedProgram::decode(&built.bytes, SOLE_DELIVERY)
             .expect("the claimed portfolio decodes");
-        let mut host = ScalarHostAdapter::new(&input)
-            .registering_environment_schema(fixture::environment_schema());
-        route_with_adapter(
-            &mut program,
-            &mut host,
-            &built.expected,
-            &crate::live_extent_facts(extent),
-        )
-        .unwrap_or_else(|failure| panic!("N={extent} must route: {failure}"));
+        let mut host = registered_adapter();
+        let mut binder = crate::selection_property_binder(&program);
+        binder
+            .bind_target_property(
+                tiler_artifact::program::TargetPropertyKey::new(fixture::SELECTION_PROPERTY_KEY)
+                    .expect("a governed property key"),
+                tiler_artifact::program::AvailabilityPhase::LiveDevicePreflight,
+                width,
+            )
+            .expect("the selection property binds");
+        route_with_adapter(&mut program, &mut host, &built.expected, &binder.build())
+            .unwrap_or_else(|failure| panic!("width {width} must route: {failure}"));
         subjects.push(parse_subject(
             host.subject_at_dispatch()
                 .expect("a claimed route's subject"),
@@ -419,10 +418,13 @@ fn another_routing_rank_moves_only_the_selected_coordinate() {
         );
     }
 
-    assert_eq!(subjects[0].rank, 0, "N=16 selects the aligned member");
+    assert_eq!(
+        subjects[0].rank, 0,
+        "an aligned selection property selects the property-guarded member",
+    );
     assert_eq!(
         subjects[1].rank, 1,
-        "N=8 falls through to the general member"
+        "an unaligned one falls through to the general member",
     );
     assert_eq!(
         subjects[0].digest, subjects[1].digest,
