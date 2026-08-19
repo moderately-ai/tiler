@@ -1,7 +1,7 @@
 ---
 id: apply-the-accepted-host-evidence-composition-model
 title: Apply the accepted host-evidence composition model
-status: todo
+status: in-progress
 priority: p2
 dependencies: [decide-the-host-evidence-to-profile-composition-model]
 related: [reseat-the-grid-and-cost-profile-rows-on-the-re-measured-records, define-host-applicability-for-profiles-whose-rows-span-environments, declare-metal-subgroup-realization-facts-in-the-target-profile]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions, contracts/navigation, implementation/build, resear
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, target-profiles, provenance, adr-carrier]
+claimed_from: todo
+assignee: worker-composition-sweep
+lease_expires_at: 1787159001
 ---
 ## User-visible outcome
 

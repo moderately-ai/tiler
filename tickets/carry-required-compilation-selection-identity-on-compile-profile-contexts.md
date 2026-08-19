@@ -1,7 +1,7 @@
 ---
 id: carry-required-compilation-selection-identity-on-compile-profile-contexts
 title: Carry required compilation-selection identity on compile-profile contexts
-status: in-progress
+status: done
 priority: p1
 dependencies: [record-the-compilation-selection-in-target-measurement-provenance, refuse-unknown-fact-source-provenance-schemas-in-artifact-decode, decide-the-compilation-selection-provenance-public-and-wire-surface, resolve-the-retained-metal-profile-measurement-invocation-authority]
 related: [split-metal-profile-measurement-sources-by-compilation-selection]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [target-profiles, provenance, identity, numerics, public-boundary, fail-closed]
-claimed_from: todo
-assignee: worker-selection-carrier
-lease_expires_at: 1787151418
 ---
 ## User-visible outcome
 
