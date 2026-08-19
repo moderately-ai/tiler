@@ -491,9 +491,14 @@ impl IndexRealizationLaw {
         }
     }
 
-    /// Standard strict-tensor-contraction-f32 law.
+    /// Standard tensor-contraction-f32 law.
+    ///
+    /// The realization it states is the strict ascending-lexicographic left
+    /// fold — the successor key's sole registered legal realization, and the
+    /// exact answer of its strict request cell. The variant name spells the
+    /// realization, not the retired key.
     #[must_use]
-    pub const fn strict_tensor_contraction_f32() -> Self {
+    pub const fn tensor_contraction_f32() -> Self {
         Self::StrictTensorContractionF32 {
             structure_attribute: CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE,
         }
@@ -3464,7 +3469,7 @@ mod tests {
             IndexRealizationLaw::strict_serial_sum_f32(),
             IndexRealizationLaw::reindex_f32(),
             IndexRealizationLaw::broadcast_f32(),
-            IndexRealizationLaw::strict_tensor_contraction_f32(),
+            IndexRealizationLaw::tensor_contraction_f32(),
         ] {
             let mut encoded = Vec::new();
             old.encode(&mut encoded);
@@ -3492,7 +3497,7 @@ mod tests {
             IndexRealizationLaw::strict_serial_sum_f32(),
             IndexRealizationLaw::reindex_f32(),
             IndexRealizationLaw::broadcast_f32(),
-            IndexRealizationLaw::strict_tensor_contraction_f32(),
+            IndexRealizationLaw::tensor_contraction_f32(),
             IndexRealizationLaw::strict_affine_u4_dequantize(),
         ] {
             let mut encoded = Vec::new();
@@ -3927,7 +3932,7 @@ mod tests {
             IndexRealizationLaw::strict_serial_sum_f32(),
             IndexRealizationLaw::reindex_f32(),
             IndexRealizationLaw::broadcast_f32(),
-            IndexRealizationLaw::strict_tensor_contraction_f32(),
+            IndexRealizationLaw::tensor_contraction_f32(),
             IndexRealizationLaw::strict_affine_u4_dequantize(),
             IndexRealizationLaw::staged_strict_serial_sum_then_multiply_f32(),
         ] {
@@ -4485,7 +4490,7 @@ mod tests {
             IndexRealizationLaw::strict_serial_sum_f32(),
             IndexRealizationLaw::reindex_f32(),
             IndexRealizationLaw::broadcast_f32(),
-            IndexRealizationLaw::strict_tensor_contraction_f32(),
+            IndexRealizationLaw::tensor_contraction_f32(),
             IndexRealizationLaw::strict_affine_u4_dequantize(),
             IndexRealizationLaw::staged_strict_serial_sum_then_multiply_f32(),
             IndexRealizationLaw::staged_root_mean_square_scale_f32(),
@@ -4771,7 +4776,7 @@ mod tests {
             IndexRealizationLaw::strict_serial_sum_f32(),
             IndexRealizationLaw::reindex_f32(),
             IndexRealizationLaw::broadcast_f32(),
-            IndexRealizationLaw::strict_tensor_contraction_f32(),
+            IndexRealizationLaw::tensor_contraction_f32(),
             IndexRealizationLaw::strict_affine_u4_dequantize(),
             IndexRealizationLaw::staged_strict_serial_sum_then_multiply_f32(),
             IndexRealizationLaw::staged_root_mean_square_scale_f32(),
@@ -4836,7 +4841,7 @@ mod tests {
             IndexRealizationLaw::strict_serial_sum_f32(),
             IndexRealizationLaw::reindex_f32(),
             IndexRealizationLaw::broadcast_f32(),
-            IndexRealizationLaw::strict_tensor_contraction_f32(),
+            IndexRealizationLaw::tensor_contraction_f32(),
             IndexRealizationLaw::strict_affine_u4_dequantize(),
             IndexRealizationLaw::staged_strict_serial_sum_then_multiply_f32(),
             IndexRealizationLaw::staged_root_mean_square_scale_f32(),

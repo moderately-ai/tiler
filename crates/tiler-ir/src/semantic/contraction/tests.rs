@@ -100,7 +100,7 @@ fn infer(
     FrozenSemanticRegistry::standard()
         .expect("the standard registry builds")
         .infer_operation(
-            &strict_tensor_contraction_f32_op(),
+            &tensor_contraction_f32_op(),
             operands,
             &attributes(structure),
         )
@@ -316,7 +316,7 @@ fn the_authoring_facade_admits_the_profile_through_the_governed_path() {
     assert_eq!(program.operation_count(), 1);
     let occurrence = program
         .operations()
-        .find(|operation| operation.key() == &strict_tensor_contraction_f32_op())
+        .find(|operation| operation.key() == &tensor_contraction_f32_op())
         .expect("the contraction occurrence");
     // The occurrence carries the canonical structure, so two spellings of one
     // structure produce byte-identical attribute identity.
@@ -584,7 +584,7 @@ fn an_empty_contracted_domain_is_refused_because_the_fold_is_unseeded() {
 fn the_numerical_signature_is_complete_against_the_realization_record() {
     let registry = FrozenSemanticRegistry::standard().expect("the standard registry builds");
     let facts = registry
-        .operation_facts(&strict_tensor_contraction_f32_op())
+        .operation_facts(&tensor_contraction_f32_op())
         .expect("the contraction is registered")
         .value();
     let CanonicalValueView::Record(fields) = facts.view() else {
@@ -608,14 +608,6 @@ fn the_numerical_signature_is_complete_against_the_realization_record() {
     assert_eq!(
         read(CONTRACTION_F32_FACT_RESULT_TYPE),
         CanonicalValue::value_type(F32::resolved_type())
-    );
-    assert_eq!(
-        read(CONTRACTION_F32_FACT_REASSOCIATION_PERMITTED),
-        CanonicalValue::boolean(false)
-    );
-    assert_eq!(
-        read(CONTRACTION_F32_FACT_PERMUTATION_PERMITTED),
-        CanonicalValue::boolean(false)
     );
     assert_eq!(
         read(CONTRACTION_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED),
@@ -656,17 +648,39 @@ fn the_numerical_signature_is_complete_against_the_realization_record() {
             CONTRACTION_F32_FACT_NAN_CANONICALIZATION,
             "after-every-combine-and-at-the-result-boundary",
         ),
-        (CONTRACTION_F32_FACT_DETERMINISM, "plan-deterministic"),
     ] {
         assert_eq!(
             read(id),
             CanonicalValue::utf8(expected).expect("a test fact is bounded")
         );
     }
+
+    // Field 14 is the seven-row ADR 0013 stability record and field 15 the
+    // six-row reduction descriptor; both are records rather than atoms, and
+    // their exact closed rows are validated by the sole descriptor decoder,
+    // exercised in the descriptor tests below.
+    for (id, rows) in [
+        (CONTRACTION_F32_FACT_DETERMINISM, 7_usize),
+        (CONTRACTION_F32_FACT_REDUCTION_DESCRIPTOR, 6),
+    ] {
+        let value = read(id);
+        let CanonicalValueView::Record(record) = value.view() else {
+            panic!("field {id} is a canonical record");
+        };
+        assert_eq!(record.len(), rows, "field {id} row count");
+    }
+
+    // Retired field IDs 8 and 9 are never reused.
+    for retired in [AttributeFieldId::new(8), AttributeFieldId::new(9)] {
+        assert!(
+            fields.iter().all(|field| field.id() != retired),
+            "retired field {retired} must stay absent"
+        );
+    }
     assert_eq!(
         fields.len(),
-        14,
-        "the signature has exactly the fourteen published fields, so a new one \
+        13,
+        "the signature has exactly the thirteen published fields, so a new one \
          cannot be added without moving this count and the identity behind it"
     );
 }
@@ -1282,7 +1296,7 @@ fn admitting_the_attention_structures_registers_no_second_key() {
         assert!(
             registry
                 .infer_operation(
-                    &strict_tensor_contraction_f32_op(),
+                    &tensor_contraction_f32_op(),
                     &operands_for(&structure),
                     &attributes(structure.canonical_value().clone()),
                 )
@@ -1307,11 +1321,557 @@ fn the_contraction_declares_no_algebraic_capability() {
     let registry = FrozenSemanticRegistry::standard().expect("the standard registry builds");
     assert!(
         !registry
-            .operation_definition(&strict_tensor_contraction_f32_op())
+            .operation_definition(&tensor_contraction_f32_op())
             .expect("the contraction is registered")
             .algebraic_capabilities()
             .declares_ordered_associativity(),
         "a strict fold whose contributors may not be regrouped must not declare \
          ordered associativity: a missing declaration is unknown, never the inverse law"
+    );
+}
+
+// --- The typed reduction descriptor and its resolver -------------------------
+
+use crate::schedule::{
+    ApproximationEnvelope, ContractionF32TopologyLimits, ContractionF32TreeError,
+    ContractionF32TreeNode, EffectiveContractionF32ProfileError, ExceptionalValueAssumption,
+    NumericalPermission, NumericalRealization, OrderedContractionF32Tree, SubnormalMode,
+};
+use crate::semantic::{
+    ContractionF32ContributorSequence, ContractionF32DescriptorError,
+    ContractionF32DescriptorField, ContractionF32EmptyDomain, ContractionF32LeafPrimitive,
+    ContractionF32NanCanonicalization, ContractionF32OrderFreedom, ContractionF32ReducerPrimitive,
+    ContractionF32ReductionDescriptor, ContractionF32ResultClass, ContractionF32Seed,
+    ContractionF32StabilityScope, add_f32_op, tensor_contraction_f32_reduction_descriptor,
+};
+
+/// The registered definition decodes to exactly the accepted contract.
+#[test]
+fn the_registered_definition_decodes_to_the_accepted_descriptor() {
+    let registry = FrozenSemanticRegistry::standard().expect("the standard registry builds");
+    let descriptor = tensor_contraction_f32_reduction_descriptor(&registry)
+        .expect("the governed registration always decodes");
+    assert_eq!(
+        descriptor.contributors(),
+        ContractionF32ContributorSequence::AscendingLexicographicCanonicalContractedIndexSpace
+    );
+    assert_eq!(
+        descriptor.leaf(),
+        ContractionF32LeafPrimitive::TransformOperandsRoundBinary32NearestTiesEvenMultiplyCanonicalizeNanTransformResult
+    );
+    assert_eq!(
+        descriptor.reducer(),
+        ContractionF32ReducerPrimitive::TransformOperandsRoundBinary32NearestTiesEvenAddCanonicalizeNanTransformResult
+    );
+    assert_eq!(descriptor.seed(), ContractionF32Seed::FirstProduct);
+    assert_eq!(
+        descriptor.empty_domain(),
+        ContractionF32EmptyDomain::Refused
+    );
+    assert_eq!(
+        descriptor.reassociation(),
+        ContractionF32OrderFreedom::PermissionGated,
+        "reassociation is operation-supported and permission-gated"
+    );
+    assert_eq!(
+        descriptor.permutation(),
+        ContractionF32OrderFreedom::Unsupported,
+        "permutation is operation-owned unsupported; no ceiling can grant it"
+    );
+    assert_eq!(
+        descriptor.signed_zero_elimination(),
+        ContractionF32OrderFreedom::Unsupported
+    );
+    assert!(!descriptor.arithmetic_contraction_supported());
+    assert!(!descriptor.distributivity_supported());
+    assert_eq!(
+        descriptor.canonical_nan_bits(),
+        CANONICAL_F32_ARITHMETIC_NAN_BITS
+    );
+    assert_eq!(
+        descriptor.nan_canonicalization(),
+        ContractionF32NanCanonicalization::AfterEachArithmeticOperationAndResultBoundary
+    );
+    assert_eq!(
+        descriptor.stability(),
+        ContractionF32StabilityScope::PlanDeterministic
+    );
+}
+
+/// Builds the governed definition with substituted facts, for perturbation.
+fn definition_with_facts(facts: CanonicalValue) -> OperationDefinition {
+    OperationDefinition::new(
+        tensor_contraction_f32_op(),
+        OperationSchema::new(
+            OperationArity::exact(2),
+            OperationArity::exact(1),
+            [OperationAttributeSchema::required(
+                CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE,
+                CanonicalValueKind::Record,
+            )],
+        )
+        .expect("the governed contraction schema is valid"),
+        NormativeDefinitionRef::new("test perturbed governed contraction")
+            .expect("a test normative reference is bounded"),
+        OperationDefinitionFacts::new(facts),
+        standard_conformance("tensor-contraction-f32"),
+        OperationEffect::Pure,
+        Arc::new(TensorContractionF32),
+    )
+}
+
+/// Returns the registered fact record's fields, for rebuilding perturbed twins.
+fn governed_fields() -> Vec<CanonicalField> {
+    let facts = contraction_f32_facts();
+    let CanonicalValueView::Record(fields) = facts.view() else {
+        panic!("the governed facts are a record");
+    };
+    fields.to_vec()
+}
+
+fn record(fields: Vec<CanonicalField>) -> CanonicalValue {
+    CanonicalValue::record(fields).expect("a test record is canonical")
+}
+
+/// Replaces one outer field's value.
+fn with_outer(id: AttributeFieldId, value: &CanonicalValue) -> CanonicalValue {
+    record(
+        governed_fields()
+            .into_iter()
+            .map(|field| {
+                if field.id() == id {
+                    CanonicalField::new(id, value.clone())
+                } else {
+                    field
+                }
+            })
+            .collect(),
+    )
+}
+
+/// Rebuilds the field-15 reduction record with one row replaced.
+fn with_reduction_row(id: AttributeFieldId, value: &CanonicalValue) -> CanonicalValue {
+    let fields = governed_fields();
+    let reduction = fields
+        .iter()
+        .find(|field| field.id() == CONTRACTION_F32_FACT_REDUCTION_DESCRIPTOR)
+        .expect("the reduction record is present")
+        .value()
+        .clone();
+    let CanonicalValueView::Record(rows) = reduction.view() else {
+        panic!("the reduction record is a record");
+    };
+    let rebuilt = record(
+        rows.iter()
+            .map(|row| {
+                if row.id() == id {
+                    CanonicalField::new(id, value.clone())
+                } else {
+                    row.clone()
+                }
+            })
+            .collect(),
+    );
+    with_outer(CONTRACTION_F32_FACT_REDUCTION_DESCRIPTOR, &rebuilt)
+}
+
+/// Every decoder refusal is reachable and named, and a malformed descriptor
+/// never resolves — failure at decode is the only alternative to a fully
+/// validated value, so no `resolve` exists to call.
+#[test]
+fn the_descriptor_decoder_refuses_every_deviation_by_name() {
+    let registry = FrozenSemanticRegistry::standard().expect("the standard registry builds");
+    let atom = |value: &str| CanonicalValue::utf8(value).expect("a test atom is bounded");
+
+    // Another operation's definition is refused before any fact is read.
+    let add = registry
+        .operation_definition(&add_f32_op())
+        .expect("the governed add is registered");
+    assert!(matches!(
+        ContractionF32ReductionDescriptor::decode(add),
+        Err(ContractionF32DescriptorError::WrongOperation { .. })
+    ));
+
+    // Facts that are not a record.
+    assert!(matches!(
+        ContractionF32ReductionDescriptor::decode(&definition_with_facts(CanonicalValue::boolean(
+            true
+        ))),
+        Err(ContractionF32DescriptorError::MalformedFacts {
+            actual: CanonicalValueKind::Bool
+        })
+    ));
+
+    // A twelve-field record fails the arity gate.
+    let missing_descriptor = record(
+        governed_fields()
+            .into_iter()
+            .filter(|field| field.id() != CONTRACTION_F32_FACT_REDUCTION_DESCRIPTOR)
+            .collect(),
+    );
+    assert!(matches!(
+        ContractionF32ReductionDescriptor::decode(&definition_with_facts(missing_descriptor)),
+        Err(ContractionF32DescriptorError::FactCount {
+            expected: 13,
+            actual: 12
+        })
+    ));
+
+    // Reviving retired field 9 in place of field 15 is a foreign field.
+    let revived_retired = record(
+        governed_fields()
+            .into_iter()
+            .map(|field| {
+                if field.id() == CONTRACTION_F32_FACT_REDUCTION_DESCRIPTOR {
+                    CanonicalField::new(AttributeFieldId::new(9), CanonicalValue::boolean(false))
+                } else {
+                    field
+                }
+            })
+            .collect(),
+    );
+    assert!(matches!(
+        ContractionF32ReductionDescriptor::decode(&definition_with_facts(revived_retired)),
+        Err(ContractionF32DescriptorError::UnexpectedField {
+            field: ContractionF32DescriptorField::Outer(field)
+        }) if field == AttributeFieldId::new(9)
+    ));
+
+    // A mis-kinded outer field names its kind pair.
+    assert!(matches!(
+        ContractionF32ReductionDescriptor::decode(&definition_with_facts(with_outer(
+            CONTRACTION_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED,
+            &atom("false"),
+        ))),
+        Err(ContractionF32DescriptorError::WrongKind {
+            field: ContractionF32DescriptorField::Outer(field),
+            expected: CanonicalValueKind::Bool,
+            actual: CanonicalValueKind::Utf8,
+        }) if field == CONTRACTION_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED
+    ));
+
+    // A permitted arithmetic contraction is a well-kinded unsupported value.
+    assert!(matches!(
+        ContractionF32ReductionDescriptor::decode(&definition_with_facts(with_outer(
+            CONTRACTION_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED,
+            &CanonicalValue::boolean(true),
+        ))),
+        Err(ContractionF32DescriptorError::UnsupportedValue {
+            field: ContractionF32DescriptorField::Outer(field)
+        }) if field == CONTRACTION_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED
+    ));
+
+    // A wrong canonical NaN payload is refused.
+    assert!(matches!(
+        ContractionF32ReductionDescriptor::decode(&definition_with_facts(with_outer(
+            CONTRACTION_F32_FACT_CANONICAL_NAN_BITS,
+            &canonical_f32_bits(0x7fc0_0001),
+        ))),
+        Err(ContractionF32DescriptorError::UnsupportedValue {
+            field: ContractionF32DescriptorField::Outer(field)
+        }) if field == CONTRACTION_F32_FACT_CANONICAL_NAN_BITS
+    ));
+
+    // A missing reduction row is reported under its row id.
+    let fields = governed_fields();
+    let reduction = fields
+        .iter()
+        .find(|field| field.id() == CONTRACTION_F32_FACT_REDUCTION_DESCRIPTOR)
+        .expect("the reduction record is present")
+        .value()
+        .clone();
+    let CanonicalValueView::Record(rows) = reduction.view() else {
+        panic!("the reduction record is a record");
+    };
+    let truncated = record(
+        rows.iter()
+            .filter(|row| row.id() != AttributeFieldId::new(6))
+            .cloned()
+            .collect(),
+    );
+    assert!(matches!(
+        ContractionF32ReductionDescriptor::decode(&definition_with_facts(with_outer(
+            CONTRACTION_F32_FACT_REDUCTION_DESCRIPTOR,
+            &truncated,
+        ))),
+        Err(ContractionF32DescriptorError::MissingField {
+            field: ContractionF32DescriptorField::Reduction(field)
+        }) if field == AttributeFieldId::new(6)
+    ));
+
+    // A foreign reduction row is reported under its row id.
+    let mut widened_rows: Vec<CanonicalField> = rows.to_vec();
+    widened_rows.push(CanonicalField::new(
+        AttributeFieldId::new(7),
+        atom("unsupported"),
+    ));
+    assert!(matches!(
+        ContractionF32ReductionDescriptor::decode(&definition_with_facts(with_outer(
+            CONTRACTION_F32_FACT_REDUCTION_DESCRIPTOR,
+            &record(widened_rows),
+        ))),
+        Err(ContractionF32DescriptorError::UnexpectedField {
+            field: ContractionF32DescriptorField::Reduction(field)
+        }) if field == AttributeFieldId::new(7)
+    ));
+
+    // Reassociation maximum `unsupported` contradicts the two-cell
+    // result-class rule.
+    assert!(matches!(
+        ContractionF32ReductionDescriptor::decode(&definition_with_facts(with_reduction_row(
+            AttributeFieldId::new(4),
+            &atom("unsupported"),
+        ))),
+        Err(ContractionF32DescriptorError::ContradictoryFields {
+            first: ContractionF32DescriptorField::Reduction(first),
+            second: ContractionF32DescriptorField::Reduction(second),
+        }) if first == AttributeFieldId::new(3) && second == AttributeFieldId::new(4)
+    ));
+
+    // A permission-gated permutation maximum is a well-spelled value this key
+    // generation does not admit; a future generation widens the decoder, not a
+    // caller's ceiling.
+    assert!(matches!(
+        ContractionF32ReductionDescriptor::decode(&definition_with_facts(with_reduction_row(
+            AttributeFieldId::new(5),
+            &atom("permission-gated"),
+        ))),
+        Err(ContractionF32DescriptorError::UnsupportedValue {
+            field: ContractionF32DescriptorField::Reduction(field)
+        }) if field == AttributeFieldId::new(5)
+    ));
+
+    // A stability clause outside the ADR 0013 scope is refused under its row.
+    let stability = fields
+        .iter()
+        .find(|field| field.id() == CONTRACTION_F32_FACT_DETERMINISM)
+        .expect("the stability record is present")
+        .value()
+        .clone();
+    let CanonicalValueView::Record(stability_rows) = stability.view() else {
+        panic!("the stability record is a record");
+    };
+    let perturbed_stability = record(
+        stability_rows
+            .iter()
+            .map(|row| {
+                if row.id() == AttributeFieldId::new(1) {
+                    CanonicalField::new(AttributeFieldId::new(1), atom("timing-deterministic"))
+                } else {
+                    row.clone()
+                }
+            })
+            .collect(),
+    );
+    assert!(matches!(
+        ContractionF32ReductionDescriptor::decode(&definition_with_facts(with_outer(
+            CONTRACTION_F32_FACT_DETERMINISM,
+            &perturbed_stability,
+        ))),
+        Err(ContractionF32DescriptorError::UnsupportedValue {
+            field: ContractionF32DescriptorField::Stability(field)
+        }) if field == AttributeFieldId::new(1)
+    ));
+}
+
+fn ceiling(
+    reassociation: NumericalPermission,
+    permutation: NumericalPermission,
+) -> NumericalRealization {
+    NumericalRealization::new(
+        "test.contraction.ceiling",
+        CANONICAL_F32_ARITHMETIC_NAN_BITS,
+        SubnormalMode::Preserve,
+        SubnormalMode::Preserve,
+        NumericalPermission::Forbidden,
+        reassociation,
+        permutation,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ApproximationEnvelope::Forbidden,
+        ExceptionalValueAssumption::MakeNoAssumption,
+        ExceptionalValueAssumption::MakeNoAssumption,
+    )
+}
+
+/// The two-fact join: the descriptor supports reassociation, so the ceiling
+/// decides the cell — strict under a withholding ceiling, the ordered-tree
+/// result set under a permitting one — while permutation stays forbidden under
+/// both because the operation maximum is `unsupported`. These are the accepted
+/// successors of the retired field-8/field-9 perturbation controls.
+#[test]
+fn the_effective_profile_joins_descriptor_maximum_and_ceiling() {
+    let registry = FrozenSemanticRegistry::standard().expect("the standard registry builds");
+    let descriptor = tensor_contraction_f32_reduction_descriptor(&registry)
+        .expect("the governed registration always decodes");
+
+    let strict = descriptor
+        .resolve(ceiling(
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+        ))
+        .expect("a strict ceiling resolves");
+    assert_eq!(
+        strict.result_class(),
+        ContractionF32ResultClass::StrictLeftFold
+    );
+    assert!(!strict.permits_reassociation());
+    assert!(!strict.permits_permutation());
+    assert!(!strict.permits_arithmetic_contraction());
+    assert!(!strict.permits_signed_zero_elimination());
+
+    let permissive = descriptor
+        .resolve(ceiling(
+            NumericalPermission::Permitted,
+            NumericalPermission::Forbidden,
+        ))
+        .expect("a permissive ceiling resolves");
+    assert_eq!(
+        permissive.result_class(),
+        ContractionF32ResultClass::OrderedFullBinaryTrees
+    );
+    assert!(permissive.permits_reassociation());
+    assert!(!permissive.permits_permutation());
+
+    // A ceiling granting permutation cannot: the operation maximum forbids it,
+    // and the stored ceiling is retained unchanged rather than edited.
+    let permuting = descriptor
+        .resolve(ceiling(
+            NumericalPermission::Permitted,
+            NumericalPermission::Permitted,
+        ))
+        .expect("the ceiling itself is coherent");
+    assert!(!permuting.permits_permutation());
+    assert!(
+        permuting.ceiling().permits_permutation(),
+        "the raw ceiling is unchanged"
+    );
+    assert_eq!(permuting.ceiling().profile_key, "test.contraction.ceiling");
+
+    // A ceiling whose canonical NaN payload disagrees never resolves.
+    let mut wrong_nan = ceiling(
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+    );
+    wrong_nan.canonical_arithmetic_nan_bits = 0x7fc0_0001;
+    assert_eq!(
+        descriptor.resolve(wrong_nan),
+        Err(EffectiveContractionF32ProfileError::CanonicalNanMismatch {
+            expected: CANONICAL_F32_ARITHMETIC_NAN_BITS,
+            actual: 0x7fc0_0001,
+        })
+    );
+}
+
+/// The ordered-tree witness carrier validates structure and limits.
+#[test]
+fn the_ordered_tree_validates_postorder_structure_and_limits() {
+    let limits = ContractionF32TopologyLimits::new(64, 64).expect("valid limits");
+    let leaf = |contributor: u64| ContractionF32TreeNode::Leaf { contributor };
+    let add = |left: u32, right: u32| ContractionF32TreeNode::Add { left, right };
+
+    // The strict left chain over three contributors.
+    let chain = OrderedContractionF32Tree::try_from_postorder(
+        3,
+        vec![leaf(0), leaf(1), add(0, 1), leaf(2), add(2, 3)],
+        limits,
+    )
+    .expect("the left chain is a full ordered binary tree");
+    assert_eq!(chain.contributor_count(), 3);
+    assert_eq!(chain.root(), 4);
+    assert_eq!(chain.depth(), 3);
+
+    // The right grouping over the same leaves is a different legal member.
+    let right = OrderedContractionF32Tree::try_from_postorder(
+        3,
+        vec![leaf(0), leaf(1), leaf(2), add(1, 2), add(0, 3)],
+        limits,
+    )
+    .expect("the right grouping is a full ordered binary tree");
+    assert_ne!(chain.nodes(), right.nodes());
+
+    // Structural refusals, each under its own name.
+    for (count, nodes, expected) in [
+        (0, vec![], ContractionF32TreeError::EmptyContributors),
+        (
+            2,
+            vec![leaf(0), leaf(1)],
+            ContractionF32TreeError::NodeCount {
+                expected: 3,
+                actual: 2,
+            },
+        ),
+        (
+            2,
+            vec![leaf(0), leaf(1), add(1, 0)],
+            ContractionF32TreeError::NonAdjacentChildren { node: 2 },
+        ),
+        (
+            2,
+            vec![leaf(1), leaf(0), add(0, 1)],
+            ContractionF32TreeError::NonAdjacentChildren { node: 2 },
+        ),
+        (
+            2,
+            vec![leaf(0), leaf(2), add(0, 1)],
+            ContractionF32TreeError::ContributorOutOfRange {
+                contributor: 2,
+                count: 2,
+            },
+        ),
+        (
+            2,
+            vec![leaf(0), leaf(0), add(0, 1)],
+            ContractionF32TreeError::ContributorMultiplicity {
+                contributor: 0,
+                actual: 2,
+            },
+        ),
+        (
+            2,
+            vec![leaf(0), add(0, 0), leaf(1)],
+            ContractionF32TreeError::ReferenceCount {
+                node: 0,
+                expected: 1,
+                actual: 2,
+            },
+        ),
+    ] {
+        assert_eq!(
+            OrderedContractionF32Tree::try_from_postorder(count, nodes, limits),
+            Err(expected)
+        );
+    }
+
+    // A cycle-shaped self reference is a child-not-earlier refusal.
+    assert_eq!(
+        OrderedContractionF32Tree::try_from_postorder(2, vec![leaf(0), leaf(1), add(2, 1)], limits),
+        Err(ContractionF32TreeError::ChildNotEarlier { node: 2, child: 2 })
+    );
+
+    // Caller limits bound nodes and depth before retention.
+    let tight = ContractionF32TopologyLimits::new(3, 2).expect("valid limits");
+    assert_eq!(
+        OrderedContractionF32Tree::try_from_postorder(
+            3,
+            vec![leaf(0), leaf(1), add(0, 1), leaf(2), add(2, 3)],
+            tight
+        ),
+        Err(ContractionF32TreeError::NodeLimit {
+            limit: 3,
+            actual: 5
+        })
+    );
+    let shallow = ContractionF32TopologyLimits::new(64, 2).expect("valid limits");
+    assert_eq!(
+        OrderedContractionF32Tree::try_from_postorder(
+            3,
+            vec![leaf(0), leaf(1), add(0, 1), leaf(2), add(2, 3)],
+            shallow
+        ),
+        Err(ContractionF32TreeError::DepthLimit {
+            limit: 2,
+            actual: 3
+        })
     );
 }

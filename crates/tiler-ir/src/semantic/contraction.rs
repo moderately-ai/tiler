@@ -79,13 +79,20 @@ pub const CONTRACTION_STRUCTURE_CONTRACTED_INDICES: AttributeFieldId = Attribute
 
 /// Fact field naming the precision every operand and product is computed at.
 ///
-/// The fourteen fields below are the contraction's numerical signature. ADR 0009
-/// requires a contraction to expose computation/input precision, accumulator
-/// dtype, result dtype, conversion behaviour, and an order contract rather than
-/// only an operand dtype and a result dtype, and ADR 0087 item 5 requires the
-/// signature to be stated once, generically, parameterized by the structure.
-/// Every one is unconditional on this definition: absence is a malformed record,
-/// never a default.
+/// The thirteen fields below are the contraction's numerical signature. ADR
+/// 0009 requires a contraction to expose computation/input precision,
+/// accumulator dtype, result dtype, conversion behaviour, and an order contract
+/// rather than only an operand dtype and a result dtype, and ADR 0087 item 5
+/// requires the signature to be stated once, generically, parameterized by the
+/// structure. Every one is unconditional on this definition: absence is a
+/// malformed record, never a default.
+///
+/// Field IDs 8 and 9 are retired and never reused. They carried the retired
+/// `tiler::strict-tensor-contraction-f32@1` key's two Boolean order facts;
+/// the successor's order contract is the typed reduction descriptor at
+/// [`CONTRACTION_F32_FACT_REDUCTION_DESCRIPTOR`], whose order-freedom maxima
+/// state per freedom whether it is unsupported or permission-gated rather than
+/// collapsing declaration and permission into one bit.
 ///
 /// One value the profile's measurements record is deliberately *not* here. The
 /// `FlushSubnormalsToZeroF32` realization is a property of the qualified
@@ -105,10 +112,6 @@ pub const CONTRACTION_F32_FACT_CONTRIBUTOR_SEQUENCE: AttributeFieldId = Attribut
 pub const CONTRACTION_F32_FACT_SEED: AttributeFieldId = AttributeFieldId::new(6);
 /// Fact field naming the behaviour on an empty contracted domain.
 pub const CONTRACTION_F32_FACT_EMPTY_CONTRACTED_DOMAIN: AttributeFieldId = AttributeFieldId::new(7);
-/// Fact field stating whether the reduction's contributors may be regrouped.
-pub const CONTRACTION_F32_FACT_REASSOCIATION_PERMITTED: AttributeFieldId = AttributeFieldId::new(8);
-/// Fact field stating whether the reduction's contributors may be reordered.
-pub const CONTRACTION_F32_FACT_PERMUTATION_PERMITTED: AttributeFieldId = AttributeFieldId::new(9);
 /// Fact field naming this operation's distributivity dimension.
 ///
 /// Not a Boolean, because absent and forbidden are different states: no
@@ -122,21 +125,51 @@ pub const CONTRACTION_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED: AttributeFieldI
 pub const CONTRACTION_F32_FACT_CANONICAL_NAN_BITS: AttributeFieldId = AttributeFieldId::new(12);
 /// Fact field naming where the canonical NaN payload is installed.
 pub const CONTRACTION_F32_FACT_NAN_CANONICALIZATION: AttributeFieldId = AttributeFieldId::new(13);
-/// Fact field naming this family's determinism guarantee.
+/// Fact field carrying this family's determinism stability record.
+///
+/// A required seven-field canonical record binding the ADR 0013
+/// plan-determinism scope into provider-independent definition bytes rather
+/// than an explanatory UTF-8 atom: scope, equal-inputs, artifact, selected
+/// plan, declared target environment, result, and recompilation-boundary
+/// clauses, in private schema-local row order 1–7. The sole decoder is
+/// [`ContractionF32ReductionDescriptor::decode`].
 pub const CONTRACTION_F32_FACT_DETERMINISM: AttributeFieldId = AttributeFieldId::new(14);
+/// Fact field carrying the typed reduction descriptor.
+///
+/// A required six-row canonical record naming the leaf primitive, the reducer
+/// primitive, the result-class rule, and the operation's maximum
+/// reassociation, permutation, and signed-zero-elimination freedoms, in
+/// private schema-local row order 1–6. The order-freedom maxima are the
+/// operation-declared half of ADR 0014's two-fact legality rule for this
+/// family's internal fold; the caller's resolved numerical ceiling is the
+/// independent second half, joined only by
+/// [`ContractionF32ReductionDescriptor::resolve`].
+pub const CONTRACTION_F32_FACT_REDUCTION_DESCRIPTOR: AttributeFieldId = AttributeFieldId::new(15);
 
 /// Domain separator of a canonical contraction index-structure encoding.
 const CONTRACTION_INDEX_STRUCTURE_DOMAIN: &[u8] = b"tiler.contraction-index-structure.v1\0";
 
-/// Returns the governed strict binary32 tensor-contraction operation key.
+/// Returns the governed binary32 tensor-contraction operation key.
+///
+/// `tiler::tensor-contraction-f32@1` is the documented successor to the
+/// retired `tiler::strict-tensor-contraction-f32@1`, accepted 2026-08-18 in
+/// `decide-the-semantic-order-contract-for-relaxed-contractions`: under a
+/// request withholding reassociation its result is the retired key's strict
+/// left fold bit for bit, and under a request permitting reassociation it
+/// denotes the set of all full ordered binary trees over the unchanged
+/// canonical leaves. Permutation remains operation-owned unsupported. The
+/// retired key is absent from the standard vertical — no alias, equivalence
+/// rule, fallback, or duplicate selection policy exists — and a subsequent
+/// incompatible meaning change requires another key generation rather than
+/// mutating this one (ADR 0034, ADR 0072).
 ///
 /// # Panics
 ///
 /// Panics only if Tiler's compile-time governed key violates its own canonical
 /// identity grammar.
 #[must_use]
-pub fn strict_tensor_contraction_f32_op() -> OpKey {
-    OpKey::new("tiler", "strict-tensor-contraction-f32", 1)
+pub fn tensor_contraction_f32_op() -> OpKey {
+    OpKey::new("tiler", "tensor-contraction-f32", 1)
         .expect("the governed tensor-contraction key is valid")
 }
 
@@ -888,7 +921,7 @@ pub(super) fn register_standard_contraction(
     registrar: &mut SemanticRegistryRegistrar<'_>,
 ) -> Result<(), RegistryError> {
     registrar.register_operation(OperationDefinition::new(
-        strict_tensor_contraction_f32_op(),
+        tensor_contraction_f32_op(),
         OperationSchema::new(
             OperationArity::exact(2),
             OperationArity::exact(1),
@@ -899,36 +932,25 @@ pub(super) fn register_standard_contraction(
         )
         .expect("the governed contraction schema is valid"),
         NormativeDefinitionRef::new(
-            "tiler::strict-tensor-contraction-f32@1; binary32 products folded strictly in ascending lexicographic order over the canonically ordered contracted index space, unseeded",
+            "tiler::tensor-contraction-f32@1; binary32 products over the canonically ordered contracted index space, unseeded; under forbidden effective reassociation the strict ascending-lexicographic left fold, and under permitted effective reassociation the set of all full ordered binary trees over that unchanged contributor sequence; permutation unsupported",
         )?,
         OperationDefinitionFacts::new(contraction_f32_facts()),
-        standard_conformance("strict-tensor-contraction-f32"),
+        standard_conformance("tensor-contraction-f32"),
         OperationEffect::Pure,
-        Arc::new(StrictTensorContractionF32),
+        Arc::new(TensorContractionF32),
     ))
-    // No algebraic capability is declared, deliberately. A missing declaration
-    // is unknown rather than the inverse law, and this family's reduction is a
-    // strict fold whose contributors may not be regrouped: declaring ordered
-    // associativity here would hand a rewrite the numerical facts below forbid.
-}
-
-/// Returns the exact numerical-signature record this family's definition carries.
-///
-/// The value this module's registration installs on the definition, from the
-/// same constructor rather than a restatement of it, so a consumer that parameterizes
-/// itself on the declared signature and the registered definition cannot
-/// disagree about what was declared. The fourteen fields documented above are
-/// the record's complete content.
-///
-/// This exists because a normative *reference* has to read the contract instead
-/// of reimplementing it: the accumulator type, the seed, the contributor order,
-/// the empty-domain declaration, and the canonicalization site are declared
-/// here, and an evaluator that hardcoded them would keep computing its old
-/// answer after this record changed. A consumer reads them from this value and
-/// refuses a value it does not realize rather than defaulting one.
-#[must_use]
-pub fn strict_tensor_contraction_f32_facts() -> CanonicalValue {
-    contraction_f32_facts()
+    // No operation-wide algebraic capability is declared, deliberately. The
+    // record's law speaks for the operation's admitted signatures — its operand
+    // chain — and regrouping a *contraction* chain consumes distributivity,
+    // which ADR 0095 declines. The fold's own algebraic authority is the typed
+    // reduction descriptor's order-freedom maxima (fact field 15), the
+    // subject-bound carrier the 2026-08-18 algebraic-authority acceptance
+    // fixes; declaring the operand-level law here would be an identity-encoded
+    // claim of a freedom that is either false or unconsumable.
+    //
+    // The registrar refuses a governed contraction definition this module's
+    // descriptor decoder does not validate, so an untyped governed definition
+    // never registers (`RegistryError::InvalidGovernedContractionDescriptor`).
 }
 
 fn contraction_f32_facts() -> CanonicalValue {
@@ -962,14 +984,6 @@ fn contraction_f32_facts() -> CanonicalValue {
             fact("refused-an-unseeded-fold-has-no-empty-result"),
         ),
         CanonicalField::new(
-            CONTRACTION_F32_FACT_REASSOCIATION_PERMITTED,
-            CanonicalValue::boolean(false),
-        ),
-        CanonicalField::new(
-            CONTRACTION_F32_FACT_PERMUTATION_PERMITTED,
-            CanonicalValue::boolean(false),
-        ),
-        CanonicalField::new(
             CONTRACTION_F32_FACT_DISTRIBUTIVITY,
             fact("absent-no-expressible-numerical-permission-grants-it"),
         ),
@@ -985,18 +999,82 @@ fn contraction_f32_facts() -> CanonicalValue {
             CONTRACTION_F32_FACT_NAN_CANONICALIZATION,
             fact("after-every-combine-and-at-the-result-boundary"),
         ),
-        CanonicalField::new(CONTRACTION_F32_FACT_DETERMINISM, fact("plan-deterministic")),
+        CanonicalField::new(CONTRACTION_F32_FACT_DETERMINISM, stability_record()),
+        CanonicalField::new(
+            CONTRACTION_F32_FACT_REDUCTION_DESCRIPTOR,
+            reduction_descriptor_record(),
+        ),
     ])
     .expect("the governed contraction facts are canonical")
+}
+
+/// Builds the seven-row ADR-0013 stability record fact field 14 carries.
+///
+/// Private row IDs 1–7 encode the clause order; the closed values bind the
+/// plan-determinism scope into provider-independent definition bytes. The sole
+/// reader is [`ContractionF32ReductionDescriptor::decode`].
+fn stability_record() -> CanonicalValue {
+    CanonicalValue::record(
+        [
+            "plan-deterministic",
+            "same-input-bits-and-runtime-bindings",
+            "same-artifact-digest",
+            "same-selected-plan-variant",
+            "same-declared-target-environment",
+            "identical-output-bits",
+            "different-artifact-may-select-a-different-legal-result",
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(row, value)| {
+            CanonicalField::new(
+                AttributeFieldId::new(
+                    u32::try_from(row + 1).expect("seven stability rows fit a field id"),
+                ),
+                fact(value),
+            )
+        }),
+    )
+    .expect("the governed stability record is canonical")
+}
+
+/// Builds the six-row reduction descriptor record fact field 15 carries.
+///
+/// Private row IDs 1–6 name the leaf primitive, reducer primitive,
+/// result-class rule, and the three order-freedom maxima. The maxima are the
+/// operation-declared half of ADR 0014's two-fact legality rule; the sole
+/// reader is [`ContractionF32ReductionDescriptor::decode`].
+fn reduction_descriptor_record() -> CanonicalValue {
+    CanonicalValue::record(
+        [
+            "input-transform-each-factor-round-binary32-nearest-ties-even-multiply-canonicalize-nan-result-transform",
+            "input-transform-each-addend-round-binary32-nearest-ties-even-add-canonicalize-nan-result-transform",
+            "strict-left-fold-or-ordered-full-binary-trees-by-effective-reassociation",
+            "permission-gated",
+            "unsupported",
+            "unsupported",
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(row, value)| {
+            CanonicalField::new(
+                AttributeFieldId::new(
+                    u32::try_from(row + 1).expect("six reduction rows fit a field id"),
+                ),
+                fact(value),
+            )
+        }),
+    )
+    .expect("the governed reduction descriptor record is canonical")
 }
 
 fn fact(value: &str) -> CanonicalValue {
     CanonicalValue::utf8(value).expect("a governed contraction fact is bounded")
 }
 
-struct StrictTensorContractionF32;
+struct TensorContractionF32;
 
-impl OperationInferencer for StrictTensorContractionF32 {
+impl OperationInferencer for TensorContractionF32 {
     fn infer(
         &self,
         request: OperationInferenceRequest<'_>,
@@ -1146,6 +1224,16 @@ fn op_error(code: &str, message: String) -> OperationInferenceError {
     )
     .expect("a governed diagnostic message is canonical")
 }
+
+mod descriptor;
+
+pub use descriptor::{
+    ContractionF32ContributorSequence, ContractionF32DescriptorError,
+    ContractionF32DescriptorField, ContractionF32EmptyDomain, ContractionF32LeafPrimitive,
+    ContractionF32NanCanonicalization, ContractionF32OrderFreedom, ContractionF32ReducerPrimitive,
+    ContractionF32ReductionDescriptor, ContractionF32ResultClass, ContractionF32Seed,
+    ContractionF32StabilityScope, tensor_contraction_f32_reduction_descriptor,
+};
 
 #[cfg(test)]
 mod tests;

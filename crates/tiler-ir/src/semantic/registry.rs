@@ -1038,6 +1038,23 @@ impl SemanticRegistryRegistrar<'_> {
         if let Some(error) = self.prior_failure() {
             return Err(error);
         }
+        // The governed contraction key never registers an untyped definition:
+        // its complete fact record — the thirteen outer fields, the field-14
+        // stability record, and the field-15 reduction descriptor — must pass
+        // the sole descriptor decoder before any provider may claim the key.
+        // The check sits here rather than only in the standard provider so a
+        // from-scratch registry cannot install a governed contraction whose
+        // order contract nothing validated.
+        if definition.key() == &super::contraction::tensor_contraction_f32_op() {
+            super::contraction::ContractionF32ReductionDescriptor::decode(&definition).map_err(
+                |source| {
+                    let error = RegistryError::InvalidGovernedContractionDescriptor {
+                        source: Box::new(source),
+                    };
+                    self.fail(&error)
+                },
+            )?;
+        }
         self.admit_definition_value(
             DefinitionValueSubject::OperationDefinitionFacts,
             definition.canonical_facts().value(),
@@ -2277,6 +2294,18 @@ pub enum RegistryError {
         /// Actual UTF-8 bytes.
         bytes: usize,
     },
+    /// A governed contraction definition failed the sole descriptor decoder.
+    ///
+    /// `tiler::tensor-contraction-f32@1`'s order contract is typed definition
+    /// content, and a definition claiming that key registers only after
+    /// [`ContractionF32ReductionDescriptor::decode`] validates its complete
+    /// fact record. An untyped governed contraction definition never registers.
+    ///
+    /// [`ContractionF32ReductionDescriptor::decode`]: super::ContractionF32ReductionDescriptor::decode
+    InvalidGovernedContractionDescriptor {
+        /// The exact typed decode refusal.
+        source: Box<super::ContractionF32DescriptorError>,
+    },
 }
 
 impl fmt::Display for RegistryError {
@@ -2363,6 +2392,10 @@ impl fmt::Display for RegistryError {
                 formatter,
                 "normative definition reference has {bytes} bytes, exceeding {MAX_DEFINITION_REFERENCE_BYTES}"
             ),
+            Self::InvalidGovernedContractionDescriptor { source } => write!(
+                formatter,
+                "governed contraction definition failed the descriptor decoder: {source}"
+            ),
         }
     }
 }
@@ -2373,6 +2406,7 @@ impl Error for RegistryError {
             Self::InvalidProviderIdentity(source) | Self::InvalidDefinitionValue { source, .. } => {
                 Some(source)
             }
+            Self::InvalidGovernedContractionDescriptor { source } => Some(source.as_ref()),
             Self::RejectedTypeInstance(rejection) => Some(&rejection.source),
             Self::RejectedOperationApplication(rejection) => Some(&rejection.source),
             Self::ExtentSource(error) => Some(error),
@@ -2596,8 +2630,8 @@ impl SemanticRegistryProvider for StandardSemantics {
                 IndexRealizationLaw::slice_f32(),
             ),
             (
-                super::contraction::strict_tensor_contraction_f32_op(),
-                IndexRealizationLaw::strict_tensor_contraction_f32(),
+                super::contraction::tensor_contraction_f32_op(),
+                IndexRealizationLaw::tensor_contraction_f32(),
             ),
             (
                 super::quantization::dequantize_strict_affine_op(),
@@ -3249,6 +3283,52 @@ mod tests {
         }
     }
 
+    /// The registrar never registers an untyped governed contraction: any
+    /// provider claiming `tiler::tensor-contraction-f32@1` must pass the sole
+    /// descriptor decoder, so a from-scratch registry cannot install a governed
+    /// contraction whose order contract nothing validated.
+    #[test]
+    fn an_untyped_governed_contraction_definition_never_registers() {
+        struct UntypedContractionProvider;
+
+        impl SemanticRegistryProvider for UntypedContractionProvider {
+            fn identity(&self) -> ProviderIdentity {
+                ProviderIdentity::new("test", "untyped-contraction", 1).unwrap()
+            }
+
+            fn register(
+                &self,
+                registrar: &mut SemanticRegistryRegistrar<'_>,
+            ) -> Result<(), RegistryError> {
+                registrar.register_operation(OperationDefinition::new(
+                    super::super::contraction::tensor_contraction_f32_op(),
+                    exact_schema(2, 1, []),
+                    NormativeDefinitionRef::new("test untyped governed contraction")?,
+                    OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                    OperationConformance::new(CanonicalValue::boolean(true)),
+                    OperationEffect::Pure,
+                    Arc::new(BinaryF32),
+                ))
+            }
+        }
+
+        let mut builder = SemanticRegistryBuilder::new();
+        let error = builder
+            .register_provider(&UntypedContractionProvider)
+            .expect_err("an untyped governed contraction definition never registers");
+        assert!(
+            matches!(
+                &error,
+                RegistryError::InvalidGovernedContractionDescriptor { source }
+                    if matches!(
+                        source.as_ref(),
+                        crate::semantic::ContractionF32DescriptorError::MalformedFacts { .. }
+                    )
+            ),
+            "the refusal names the typed decode failure: {error}"
+        );
+    }
+
     struct TestProvider {
         name: &'static str,
         revision: u32,
@@ -3338,14 +3418,21 @@ mod tests {
 
     /// The slice enters as one revision-one row and changes no earlier row.
     ///
-    /// The fifteen old row pins were captured at exact base `946e0328`, before
-    /// the slice law existed. Each row is checked independently rather than by
-    /// slicing the new sidecar: rows are ordered by operation key, so inserting a
-    /// new key in the middle moves later byte offsets without changing any row.
-    /// The semantic snapshot pin stays the base value because law rows are a
-    /// sidecar. The complete law-registry pin moves from
-    /// `2b382beb419307175cd2bdb516c0b316be5c0e6b0d81ed4a09c09903b89de105`
-    /// to the asserted value because the sidecar count and one row changed.
+    /// Fourteen of the fifteen old row pins were captured at exact base
+    /// `946e0328`, before the slice law existed. Each row is checked
+    /// independently rather than by slicing the new sidecar: rows are ordered
+    /// by operation key, so inserting a new key in the middle moves later byte
+    /// offsets without changing any row. The complete law-registry pin moved
+    /// from `2b382beb419307175cd2bdb516c0b316be5c0e6b0d81ed4a09c09903b89de105`
+    /// when the sidecar count and one row changed.
+    ///
+    /// The contraction row and the two aggregate pins were recomputed for the
+    /// accepted `tiler::tensor-contraction-f32@1` replacement (2026-08-18):
+    /// the row's law payload is byte-identical — the strict left fold remains
+    /// its sole registered realization — and only the operation-key spelling
+    /// moved, which is why its width shrinks by exactly the seven bytes the
+    /// retired `strict-` prefix carried. The semantic snapshot pin moves with
+    /// the successor definition's thirteen-field facts.
     #[test]
     fn the_standard_slice_law_is_one_append_only_revision_one_row() {
         const DOMAIN: &[u8] = b"tiler.test.index-realization-law-row-pin\0";
@@ -3360,8 +3447,8 @@ mod tests {
             tiler_digest::DigestAlgorithm::GOVERNED
                 .digest(DOMAIN, semantic.snapshot_identity().as_bytes())
                 .label(),
-            "e2e2b84254505cfe46c5204d3a52490180d5460862257ff94f7bd5bc750913db",
-            "the snapshot moves with the slice source-bearing definition, participation tag, and provider revision"
+            "3b7f49b2c9dd802bfd01bcbabbebcce16a8050986708e9a6ede5a5c5f9bfd0d1",
+            "the snapshot moves with the successor contraction definition: the tensor-contraction-f32 key, thirteen-field facts, stability record, and reduction descriptor"
         );
         assert!(
             laws.identity()
@@ -3373,13 +3460,13 @@ mod tests {
             tiler_digest::DigestAlgorithm::GOVERNED
                 .digest(DOMAIN, laws.identity().as_bytes())
                 .label(),
-            "0b8eba7dfbbdb33c376b642dc978afd81b1afa8b4a752e7fad5fec067458254d",
-            "the complete law-registry identity pins the source-bearing slice definition"
+            "1e771f9e787a8f4b9fccaa3f8b0085b76d17e9ceb25bcf704fc053424d2479b4",
+            "the complete law-registry identity pins the successor contraction row beside the source-bearing slice definition"
         );
         assert_eq!(
             semantic.encode_index_realization_law_sidecar().len(),
-            1_766,
-            "the 1,680-byte base sidecar gains exactly the 86-byte slice row"
+            1_759,
+            "the sidecar is the 1,766-byte slice-bearing run minus the seven bytes the successor key spelling removes from the contraction row"
         );
         assert_eq!(semantic.index_realization_laws().len(), 16);
 
@@ -3455,9 +3542,9 @@ mod tests {
                 "26ed77bb26a39c300a8781e8092aac7d3148052a3abc69685ca703e913f8cef4",
             ),
             (
-                "tiler::strict-tensor-contraction-f32@1",
-                106,
-                "d6b5dd49d65375dd703f27f8bb78678be938a79fb2abc39517d189dd3a6270ff",
+                "tiler::tensor-contraction-f32@1",
+                99,
+                "3b55fa5ae89e131c545ac0b5a2261d96613bd7c5967fdc3e75a091006a63f314",
             ),
         ];
         let old_rows = semantic
