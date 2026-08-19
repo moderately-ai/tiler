@@ -1,7 +1,7 @@
 ---
 id: repair-the-stale-schedule-vocabulary-facts-in-two-live-records
 title: Repair the stale schedule-vocabulary Facts in two live records
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [point-the-bare-builder-path-mentions-at-the-split-modules]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, research/scheduling]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, doc-drift]
-claimed_from: todo
-assignee: worker-schedule-facts
-lease_expires_at: 1787157651
 ---
 ## User-visible outcome
 

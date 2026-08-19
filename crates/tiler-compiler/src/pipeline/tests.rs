@@ -9360,8 +9360,8 @@ fn the_selection_agrees_with_the_retained_sweep() {
 /// side already scaled by that row so the two are directly comparable, and the
 /// per-stage maximum of the two summed — which is what was compared. A reader can
 /// see which side decided, and on this shape it is the span: the fold's critical
-/// path is the whole 4,096-contributor run, so its span term is 4,096 x 1,056 and
-/// dwarfs its work.
+/// path is the whole 4,096-contributor run, so its span term is 4,096 x the
+/// declared row and dwarfs its work.
 ///
 /// **Watched failing.** Dropping either side of the `max` from the record fails
 /// the term loop; recording the total without the row fails the term assertion,

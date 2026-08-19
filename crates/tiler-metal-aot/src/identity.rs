@@ -1019,7 +1019,7 @@ mod tests {
         files.sort();
         assert!(
             files.len() >= 7,
-            "tiler-metal-aot compilation-selection domain source census did not reach its              population: expected at least 7 Rust files, found {}",
+            "tiler-metal-aot compilation-selection domain source census did not reach its population: expected at least 7 Rust files, found {}",
             files.len(),
         );
         let mut occurrences = Vec::new();

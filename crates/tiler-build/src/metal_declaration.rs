@@ -942,10 +942,12 @@ impl BoundMetalCompileDeclaration {
         // Five of the six are normatively sourced. The grid axis is not, and it
         // is the one row whose class the ledger had to change: an authority that
         // caps the space cannot fill a row consumed as a guarantee, so this one
-        // carries the same `TargetCompileProfileMeasurementSource` the
-        // dispatchability and numerical rows do — the same one, not a second,
-        // because the extent ladder ran on exactly the offline and execution
-        // environments those rows were taken on.
+        // carries a `TargetCompileProfileMeasurementSource` of its own
+        // population. It is *not* the dispatchability and numerical rows'
+        // source: those rest on the `26A5388g` execution row, while the grid
+        // ladder is the 2026-08-18 re-measurement on `26A5406e`, and contexts
+        // differing in execution environment never share whatever their
+        // selection.
         builder.declare_measured_max_threads_per_grid_axis(rows.grid_axis_threads, grid_source)?;
         builder.declare_max_threads_per_workgroup_query(
             TargetPropertyQuery::new(
@@ -997,10 +999,11 @@ impl BoundMetalCompileDeclaration {
         // the descriptor section it encodes into is written only when it holds a
         // row.
         //
-        // The same measured source, not a second one: the dispatch sweep ran on
-        // exactly the offline and execution environments the rows above were taken
-        // on, so a second source would claim a second population that does not
-        // exist.
+        // Its own population's source, shared with the grid row and with
+        // nothing else: the 2026-08-18 quiet-window sweep ran on the same
+        // `26A5406e` execution row as the extent ladder and under the same
+        // production selection, so the two share one table entry, while the
+        // `26A5388g` rows below do not.
         if let Some(steps) = rows.saturated_parallel_fold_steps {
             builder.declare_measured_saturated_parallel_fold_steps(steps, cost_source)?;
         }
@@ -1008,9 +1011,10 @@ impl BoundMetalCompileDeclaration {
         // ---- the one tree-width policy, measured ---------------------------
         // Not a cost row and not a capability. Silence makes the tree
         // unavailable; it does not inherit 256 or substitute the balanced
-        // partition. The same measured source, not a second one: the partition
-        // calibration ran on exactly the offline and execution environments
-        // the rows above were taken on.
+        // partition. Its population shares the dispatchability and numerical
+        // rows' source — the partition calibration ran on exactly their
+        // `26A5388g` offline and execution environments — and not the grid and
+        // cost rows', which are the 2026-08-18 re-measurement on `26A5406e`.
         if let Some(policy) = rows.workgroup_tree_width_policy {
             builder.declare_measured_workgroup_tree_width_policy(policy, tree_width_source)?;
         }
