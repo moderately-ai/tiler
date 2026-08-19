@@ -1,7 +1,7 @@
 ---
 id: repair-the-accepted-decision-records-the-splits-and-retirements-falsified
 title: Repair the accepted decision records the splits and retirements falsified
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [repair-the-navigation-and-contract-docs-the-audit-falsified, repair-the-research-records-the-key-replacement-and-splits-falsified, repair-the-ticket-population-facts-the-splits-and-retirements-falsified]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, decisions, audit]
+claimed_from: todo
+assignee: worker-adr
+lease_expires_at: 1787162948
 ---
 ## User-visible outcome
 

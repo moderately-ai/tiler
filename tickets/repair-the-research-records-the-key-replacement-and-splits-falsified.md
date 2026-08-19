@@ -1,7 +1,7 @@
 ---
 id: repair-the-research-records-the-key-replacement-and-splits-falsified
 title: Repair the research records the key replacement and splits falsified
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [repair-the-accepted-decision-records-the-splits-and-retirements-falsified, repair-the-navigation-and-contract-docs-the-audit-falsified, repair-the-ticket-population-facts-the-splits-and-retirements-falsified]
@@ -9,6 +9,9 @@ scopes: [research/scheduling, research/reference, research/indexing, research/sh
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, audit, research]
+claimed_from: todo
+assignee: worker-research
+lease_expires_at: 1787162948
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: size-the-numerical-realization-flag-list-from-its-type
 title: Size the numerical realization flag list from its type
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [carry-required-compilation-selection-identity-on-compile-profile-contexts]
@@ -9,6 +9,9 @@ scopes: [implementation/metal-aot]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, identity, hardening, metal-aot]
+claimed_from: todo
+assignee: worker-flags
+lease_expires_at: 1787162948
 ---
 ## User-visible outcome
 
