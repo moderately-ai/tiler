@@ -5,7 +5,7 @@ status: in-progress
 priority: p3
 dependencies: [admit-a-materialized-producer-in-a-serial-reduction-contributor]
 related: [match-the-declared-input-contributor-in-the-fused-proof-exemption, admit-a-recognized-chain-more-than-one-materialization-boundary-deep]
-scopes: [implementation/compiler]
+scopes: [implementation/compiler, contracts/optimizer, implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, identity, numerics]
@@ -108,3 +108,12 @@ The third row is recorded rather than dropped because it is the one that says wh
 ### Unsupported populations, unchanged
 
 `reduction-contributor-depth` for a fold whose producer is itself across an edge; `staged-operand-depth`; `contraction-operands`; `operation-set` for the width case `sum(sum(a) * sum(b))`, which the re-planned walk reports naturally once a retain is attempted. The worklist producer walk stays the recorded reversal path and is unfiled.
+
+### Scopes added during the work — 2026-08-19
+
+Two scopes beyond the claimed `implementation/compiler`, both required by authorized work rather than expansions of it, so they are added as scheduling metadata and explained here.
+
+- **`contracts/optimizer`.** The Required work above names "the optimizer-contract sentence beside the retiring `reduction-contributor-materialization`". That sentence is in `docs/compiler/optimizer.md`, which this scope owns. The edit retires the unreachable key, states `reduction-contributor-depth` in its place, and records what the predecessor meant so a reader of an older trace can still resolve it.
+- **`implementation/frontend`.** `crates/tiler-macros`. Not anticipated by the ticket and not discretionary: `region::tests::an_unrecognized_region_names_what_a_consumer_would_change` enumerates the grammar-expressible shapes this build does not recognize, and the carrier empties that population — its last case, a `tensor!` region whose reduction's operand is itself a reduction, now compiles. A population of zero is a check that cannot say no, so the case moves to the compiling population and a reduction-of-a-reduction-of-a-reduction replaces it under `reduction-contributor-depth`. Nothing else in the crate is touched, and no lane held this scope at dispatch.
+
+`tkt guard` additionally reports `implementation/build` and `implementation/conformance` as affected *transitively via reverse-deps* of `implementation/compiler`. No file in either crate is edited on this branch.
