@@ -34,6 +34,15 @@
 //! materialized member's two stages share one format rather than needing a
 //! second one. See [`IDENTITY_SCALE_BITS`] for why the reduction stage's affine
 //! map is an exact identity rather than an approximate one.
+//!
+//! # This module is path-shared
+//!
+//! It is compiled into `tests/identity_join/main.rs` and into
+//! `spikes/target-profiles/metal-subgroup-width-route-gate/src/main.rs` through
+//! `#[path]`, neither of which carries an `adapter` module. So nothing here may
+//! root a path — or an intra-doc link, which resolves the same way — at
+//! `crate::` outside this shared set. The arrangement's owner, its cost, and
+//! the target that now checks it are stated once, in `fixture.rs`.
 
 use std::fmt;
 
@@ -579,9 +588,10 @@ impl std::error::Error for ExecutionFault {}
 /// # Panics
 ///
 /// Panics if a placement names an allocation that was not supplied.
-/// [`crate::adapter::ScalarHostAdapter`] allocates from its own pre-commit plan
-/// immediately after the commit, so a missing allocation is a defect in the
-/// adapter rather than a route it should have refused.
+/// `adapter::ScalarHostAdapter` — a code span rather than a `crate::`-rooted
+/// intra-doc link, per this module's path-shared note — allocates from its own
+/// pre-commit plan immediately after the commit, so a missing allocation is a
+/// defect in the adapter rather than a route it should have refused.
 /// Contributor-loop width: the bound live extent when the route published one,
 /// otherwise the image's baked column count.
 #[must_use]

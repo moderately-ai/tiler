@@ -64,6 +64,37 @@
 //! `check_subject` requires every variant of one artifact to declare the same
 //! *variant* target profile, so a member varies the profile its **payload** was
 //! built for, which is per-payload by design.
+//!
+//! # This module is path-shared, and what that costs
+//!
+//! This file and `image.rs` beside it are compiled into roots other than
+//! `tests/adapter_route/main.rs` through `#[path]`, so that one assembly
+//! authority exists rather than a copy. `tests/identity_join/main.rs` takes
+//! `image.rs` that way, and
+//! `spikes/target-profiles/metal-subgroup-width-route-gate/src/main.rs` takes
+//! both — a root outside this workspace entirely.
+//!
+//! The cost is that a `crate::`-rooted path here resolves in the owning test
+//! binary and nowhere else. That is not hypothetical: commit `2cb7c83c` added
+//! four `crate::adapter::ScalarEnvironmentSchema` references to this file, the
+//! owning suite stayed green because it *does* have an `adapter` module, and
+//! the out-of-workspace consumer was left failing to compile with four
+//! `error[E0433]: cannot find adapter in crate` — discovered months later by
+//! hand, not by any check. `ScalarEnvironmentSchema` is declared above as a
+//! result, and this module now reaches only `crate::image`.
+//!
+//! **The owner is this directory**, `crates/tiler-runtime/tests/adapter_route`:
+//! a change here is the shared authority moving, and the sharing consumers do
+//! not get a vote. **The check is
+//! `crates/tiler-runtime/tests/adapter_route_portability.rs`**, a test target
+//! whose only job is to compile this closed module set from a second root, the
+//! way `prototypes/serial-sum-run/tests/lint_table.rs` compiles the
+//! conformance crate's lint reader from a second root. It runs in the ordinary
+//! package gate, so a back-edge added here is a compile error at the same
+//! moment it is written. It also enumerates every `#[path]` consumer in the
+//! repository and fails when one shares a module it does not cover, because a
+//! hand-written module list that has stopped covering its domain reports no
+//! drift exactly as loudly as one that has.
 
 use std::collections::BTreeMap;
 
@@ -83,8 +114,9 @@ use tiler_artifact::program::{
     RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey, RouteRequirement,
     ScalarArithmeticSubject, ScalarArithmeticSubjectIdentity, SchemaVersion, SelectedProvider,
     SemanticOccurrence, SubnormalMode, TargetEnvironmentDeclaration, TargetEnvironmentDescriptor,
-    TargetEvidenceDeclaration, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
-    TargetPropertyKey, ToolComponent, VariantSpec, overlapping_behaviour,
+    TargetEnvironmentDescriptorSchema, TargetEnvironmentReasonCode, TargetEvidenceDeclaration,
+    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, TargetPropertyKey,
+    ToolComponent, VariantSpec, overlapping_behaviour,
 };
 use tiler_artifact::program::{BackendPayloadDescriptor, ValidatedTargetEnvironmentDeclaration};
 use tiler_ir::index::{
@@ -1272,16 +1304,67 @@ pub fn revised_provider_declaration() -> TargetEnvironmentDeclaration {
     .expect("a nonzero schema major")
 }
 
+/// One test provider's registered target-environment descriptor schema.
+///
+/// The scalar host's whole authority claim is byte equality with one exact
+/// canonical spelling: the process *is* the execution-environment class its
+/// schema names, which is the strongest claim a single-process interpreter can
+/// honestly make and exactly the shape the ADR 0013 contract requires a
+/// provider to prove before registering positive support.
+///
+/// It is declared here rather than beside the adapter because both of its
+/// constructors are here — [`producer_schema`] below is private to this module
+/// and cannot reach out of it, so a declaration in `adapter.rs` is a back-edge
+/// this module's non-owning consumers cannot resolve. See this file's
+/// "path-shared" module note for what that costs and what now checks it.
+#[derive(Clone, Debug)]
+pub struct ScalarEnvironmentSchema {
+    /// Provider identity, with its exact nonzero revision.
+    pub provider: ProviderIdentity,
+    /// Exact schema version.
+    pub schema: SchemaVersion,
+    /// The canonical descriptor spellings this schema admits, one per class.
+    ///
+    /// Each admitted value is the exactly-one canonical spelling of its own
+    /// environment class; a second class is a second member of this set, never
+    /// a second spelling of the first. That is what makes a declared-versus-
+    /// observed class mismatch representable while validation still accepts
+    /// exactly one byte spelling per class.
+    pub admitted: Vec<Vec<u8>>,
+}
+
+impl TargetEnvironmentDescriptorSchema for ScalarEnvironmentSchema {
+    fn provider(&self) -> &ProviderIdentity {
+        &self.provider
+    }
+
+    fn schema_version(&self) -> SchemaVersion {
+        self.schema
+    }
+
+    fn validate_canonical_descriptor(
+        &self,
+        descriptor: &[u8],
+    ) -> Result<(), TargetEnvironmentReasonCode> {
+        if self.admitted.iter().any(|value| value == descriptor) {
+            Ok(())
+        } else {
+            Err(
+                TargetEnvironmentReasonCode::new("scalar-host.not-the-canonical-spelling")
+                    .expect("a literal governed reason code"),
+            )
+        }
+    }
+}
+
 /// The producer-side registration one declaration was validated under.
 ///
 /// Derived from the declaration itself: the producer's authority is its own
 /// registration, and whether the *consumer's* independently selected adapter
 /// registers the same provider, revision, schema, and class is exactly the
 /// question the runtime filter answers.
-fn producer_schema(
-    declaration: &TargetEnvironmentDeclaration,
-) -> crate::adapter::ScalarEnvironmentSchema {
-    crate::adapter::ScalarEnvironmentSchema {
+fn producer_schema(declaration: &TargetEnvironmentDeclaration) -> ScalarEnvironmentSchema {
+    ScalarEnvironmentSchema {
         provider: declaration.provider().clone(),
         schema: declaration.descriptor_schema(),
         admitted: vec![declaration.descriptor().as_bytes().to_vec()],
@@ -1293,8 +1376,8 @@ fn producer_schema(
 /// Two admitted classes, each with exactly one canonical spelling, so a
 /// declared-versus-observed class mismatch is representable.
 #[must_use]
-pub fn environment_schema() -> crate::adapter::ScalarEnvironmentSchema {
-    crate::adapter::ScalarEnvironmentSchema {
+pub fn environment_schema() -> ScalarEnvironmentSchema {
+    ScalarEnvironmentSchema {
         provider: environment_provider(),
         schema: SchemaVersion::new(1, 0),
         admitted: vec![
