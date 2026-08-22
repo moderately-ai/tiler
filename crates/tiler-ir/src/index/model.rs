@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::semantic::ResolvedValueType;
-use crate::shape::{ExtentSources, SourcedExtent, SourcedShape};
+use crate::shape::{Axis, Extent, ExtentSources, Shape, SourcedExtent, SourcedShape};
 
 use super::handles::VerifiedRegionOwner;
 use super::sourced::SourcedIndexInteger;
@@ -134,12 +134,98 @@ pub(super) struct TensorData {
     pub value_type: ResolvedValueType,
     pub shape: SourcedShape,
 }
+/// One draft access, as the checked sum of the admitted access kinds.
+///
+/// A sum rather than a struct with optional gather fields because the two kinds
+/// disagree about what a "tensor" and a "coordinate list" even are: a direct
+/// access names one tensor and one coordinate run, while a gather names two
+/// tensors and two runs whose arities are derived from *different* ranks. A
+/// shared struct would make every consumer decide which reading applied from
+/// data rather than from the type, which is exactly the association defect
+/// [`GatherReadAccessData`] exists to close.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(super) struct AccessData {
+pub(super) enum AccessData {
+    Direct(DirectAccessData),
+    GatherRead(GatherReadAccessData),
+}
+
+impl AccessData {
+    /// Returns the canonical in-scope dimension ordinals.
+    pub(super) fn domain(&self) -> &[u32] {
+        match self {
+            Self::Direct(direct) => &direct.domain,
+            Self::GatherRead(gather) => &gather.domain,
+        }
+    }
+    /// Returns the direct payload, or `None` for a gather read.
+    pub(super) const fn direct(&self) -> Option<&DirectAccessData> {
+        match self {
+            Self::Direct(direct) => Some(direct),
+            Self::GatherRead(_) => None,
+        }
+    }
+    /// Returns the gather payload, or `None` for a direct access.
+    pub(super) const fn gather_read(&self) -> Option<&GatherReadAccessData> {
+        match self {
+            Self::Direct(_) => None,
+            Self::GatherRead(gather) => Some(gather),
+        }
+    }
+    /// Returns whether this access touches `tensor` in **any** role.
+    ///
+    /// A gather touches two boundaries, so reachability must ask this rather
+    /// than compare against a single ordinal — a source-only comparison would
+    /// report the index operand as an unused input.
+    pub(super) fn touches_tensor(&self, tensor: u32) -> bool {
+        match self {
+            Self::Direct(direct) => direct.tensor == tensor,
+            Self::GatherRead(gather) => gather.source == tensor || gather.index == tensor,
+        }
+    }
+    /// Returns every coordinate expression ordinal this access reads, in
+    /// canonical order: a gather's source run precedes its index run.
+    ///
+    /// Used by the resource and structural checks that care only about how many
+    /// expressions an access retains and which they are, never by proof or
+    /// encoding logic — those must distinguish the two runs and so match on the
+    /// kind instead.
+    pub(super) fn coordinate_ordinals(&self) -> Vec<u32> {
+        match self {
+            Self::Direct(direct) => direct.coordinates.clone(),
+            Self::GatherRead(gather) => gather
+                .source_coordinates
+                .iter()
+                .chain(gather.index_coordinates.iter())
+                .copied()
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(super) struct DirectAccessData {
     pub tensor: u32,
     pub mode: AccessMode,
     pub domain: Vec<u32>,
     pub coordinates: Vec<u32>,
+}
+
+/// One address-only indirect read of `source` at coordinates `index` holds.
+///
+/// The gathered axis is stored as an ordinal into the *source* rank, and the
+/// two coordinate runs are stored separately because their arities come from
+/// different ranks: `source_coordinates` supplies every source axis except
+/// `axis`, in source-axis order, and `index_coordinates` supplies every index
+/// axis in index-axis order. The value loaded from `index` supplies exactly the
+/// omitted `axis` coordinate and never becomes a scalar SSA value.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(super) struct GatherReadAccessData {
+    pub source: u32,
+    pub index: u32,
+    pub axis: u32,
+    pub domain: Vec<u32>,
+    pub source_coordinates: Vec<u32>,
+    pub index_coordinates: Vec<u32>,
 }
 #[derive(Clone, Copy, Debug)]
 pub(super) enum BoundsProof {
@@ -171,8 +257,44 @@ pub(super) enum JointPartitionProof {
         facts: IndexDomainFactSource,
     },
 }
+/// One verified access, as the checked sum matching [`AccessData`].
+///
+/// The two arms carry different evidence because they discharge different
+/// obligations: a direct access retains an optional interval/enumeration bounds
+/// proof and, for a write, complete-write evidence, while a gather retains a
+/// *total* bounds resolution that is either a closed static proof or the exact
+/// invocation-validation requirement standing in for one. A gather has no
+/// ownership proof because it never writes, and it has no `Option` bounds slot
+/// because its obligation is never absent — only discharged one of two ways.
 #[derive(Clone, Debug)]
-pub(super) struct VerifiedAccessData {
+pub(super) enum VerifiedAccessData {
+    Direct(VerifiedDirectAccessData),
+    GatherRead(Box<VerifiedGatherReadAccessData>),
+}
+
+impl VerifiedAccessData {
+    pub(super) const fn mode(&self) -> AccessMode {
+        match self {
+            Self::Direct(direct) => direct.mode,
+            Self::GatherRead(_) => AccessMode::Read,
+        }
+    }
+    pub(super) fn domain(&self) -> &[u32] {
+        match self {
+            Self::Direct(direct) => &direct.domain,
+            Self::GatherRead(gather) => &gather.domain,
+        }
+    }
+    pub(super) const fn direct(&self) -> Option<&VerifiedDirectAccessData> {
+        match self {
+            Self::Direct(direct) => Some(direct),
+            Self::GatherRead(_) => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct VerifiedDirectAccessData {
     pub tensor: u32,
     pub mode: AccessMode,
     pub domain: Vec<u32>,
@@ -186,6 +308,58 @@ pub(super) struct VerifiedAccessData {
     /// than a rule two optional fields would have to keep between them.
     pub bounds_facts: IndexDomainFactSource,
     pub ownership_proof: Option<WriteOwnershipProof>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct VerifiedGatherReadAccessData {
+    pub source: u32,
+    pub index: u32,
+    pub axis: u32,
+    pub domain: Vec<u32>,
+    pub source_coordinates: Vec<u32>,
+    pub index_coordinates: Vec<u32>,
+    pub bounds_resolution: GatherIndexBoundsResolutionData,
+}
+
+/// One access after compaction, before its bounds resolution is minted.
+///
+/// A distinct type rather than a `VerifiedAccessData` with an absent
+/// resolution, because the ordering it encodes is load-bearing: a gather's
+/// proof binds the canonical region identity, and that identity is computed
+/// *from* the compacted accesses. Giving the compaction stage a type that
+/// cannot carry a resolution makes the cycle unrepresentable rather than a rule
+/// a reader has to know. Nothing in this type is optional, so no consumer can
+/// mistake "not yet derived" for "no obligation".
+#[derive(Clone, Debug)]
+pub(super) enum CompactedAccess {
+    Direct(VerifiedDirectAccessData),
+    GatherRead(Box<CompactedGatherReadAccess>),
+}
+
+impl CompactedAccess {
+    pub(super) const fn direct(&self) -> Option<&VerifiedDirectAccessData> {
+        match self {
+            Self::Direct(direct) => Some(direct),
+            Self::GatherRead(_) => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct CompactedGatherReadAccess {
+    pub source: u32,
+    pub index: u32,
+    pub axis: u32,
+    pub domain: Vec<u32>,
+    pub source_coordinates: Vec<u32>,
+    pub index_coordinates: Vec<u32>,
+}
+
+/// The gather's discharged bounds obligation, as retained region state.
+#[derive(Clone, Debug)]
+pub(super) enum GatherIndexBoundsResolutionData {
+    StaticallyProved(GatherIndexBoundsProof),
+    InvocationValidationRequired(GatherIndexValidationRequirement),
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -616,6 +790,15 @@ impl VerifiedIndexRegion {
         predicate: IndexDomainPredicate,
     ) -> Result<(), VerifiedIndexHandleError> {
         let access = self.access(subject)?;
+        // Index-domain predicates are a *direct* access's obligation. A gather
+        // read discharges its coordinate obligation through the total bounds
+        // resolution on the access itself, so naming one here is a malformed
+        // handle rather than a predicate this region could have proved.
+        let Some(direct) = access.data.direct() else {
+            return Err(VerifiedIndexHandleError::InvalidHandle {
+                entity: IndexEntityKind::TensorAccess,
+            });
+        };
         let expression = match predicate {
             IndexDomainPredicate::NonNegative { expression }
             | IndexDomainPredicate::LessThanExtent { expression, .. } => expression,
@@ -623,7 +806,7 @@ impl VerifiedIndexRegion {
         self.index_expression(expression)?;
         let expression_index =
             u32::try_from(expression.as_usize()).expect("verified handles fit u32");
-        if !access.data.coordinates.contains(&expression_index) {
+        if !direct.coordinates.contains(&expression_index) {
             return Err(VerifiedIndexHandleError::InvalidHandle {
                 entity: IndexEntityKind::IndexExpression,
             });
@@ -634,7 +817,7 @@ impl VerifiedIndexRegion {
                     self.dimension(dimension)?;
                     let dimension_index =
                         u32::try_from(dimension.as_usize()).expect("verified handles fit u32");
-                    if !access.data.domain.contains(&dimension_index) {
+                    if !direct.domain.contains(&dimension_index) {
                         return Err(VerifiedIndexHandleError::InvalidHandle {
                             entity: IndexEntityKind::Dimension,
                         });
@@ -642,10 +825,10 @@ impl VerifiedIndexRegion {
                 }
                 IndexExtentRef::TensorAxis { tensor, axis } => {
                     let tensor = self.tensor(tensor)?;
-                    if tensor.id.as_usize() != access.data.tensor as usize
+                    if tensor.id.as_usize() != direct.tensor as usize
                         || usize::try_from(axis).ok().is_none_or(|axis| {
                             axis >= tensor.data.shape.rank()
-                                || access.data.coordinates.get(axis) != Some(&expression_index)
+                                || direct.coordinates.get(axis) != Some(&expression_index)
                         })
                     {
                         return Err(VerifiedIndexHandleError::InvalidHandle {
@@ -954,24 +1137,93 @@ impl<'a> TensorAccessRef<'a> {
         self.id
     }
     /// Returns whether this access reads or writes.
+    ///
+    /// A gather read's mode is always [`AccessMode::Read`].
     #[must_use]
     pub const fn mode(self) -> AccessMode {
-        self.data.mode
-    }
-    /// Returns the referenced tensor boundary.
-    #[must_use]
-    pub fn tensor(self) -> VerifiedTensorId {
-        self.region.tensor_id(self.data.tensor as usize)
+        self.data.mode()
     }
     /// Returns the canonical in-scope dimension set.
+    ///
+    /// This is the one coordinate-shaped question with a single truthful answer
+    /// for both kinds: every admitted access iterates one ordered domain. The
+    /// tensor, coordinate, and proof questions do not, which is why they moved
+    /// to [`Self::view`].
     #[must_use]
     pub fn domain(self) -> impl ExactSizeIterator<Item = VerifiedDimensionId> + 'a {
         let owner = self.region.data.owner;
         self.data
-            .domain
+            .domain()
             .iter()
             .copied()
             .map(move |index| VerifiedDimensionId::from_verified(owner, index))
+    }
+    /// Returns the kind-specific inspection surface.
+    ///
+    /// Exhaustive by construction: a consumer must prove it considered every
+    /// admitted access kind. The removed common `tensor()`, `coordinates()`,
+    /// `bounds_proof()`, and `write_ownership_proof()` had no single truthful
+    /// meaning across both arms — a gather names *two* tensors and *two*
+    /// coordinate runs, and its bounds obligation is total rather than
+    /// optional — so answering them from the wrapper would have made a caller
+    /// read one kind's answer for the other.
+    #[must_use]
+    pub const fn view(self) -> TensorAccessView<'a> {
+        match self.data {
+            VerifiedAccessData::Direct(direct) => TensorAccessView::Direct(DirectTensorAccessRef {
+                data: direct,
+                region: self.region,
+            }),
+            VerifiedAccessData::GatherRead(gather) => {
+                TensorAccessView::GatherRead(GatherReadAccessRef {
+                    data: gather,
+                    region: self.region,
+                })
+            }
+        }
+    }
+}
+
+/// Exhaustive kind-specific view of one verified access.
+#[derive(Clone, Copy, Debug)]
+pub enum TensorAccessView<'a> {
+    /// An ordinary read or write of one tensor at authored coordinates.
+    Direct(DirectTensorAccessRef<'a>),
+    /// An address-only indirect read of a source at coordinates an index holds.
+    GatherRead(GatherReadAccessRef<'a>),
+}
+
+impl<'a> TensorAccessView<'a> {
+    /// Returns the direct view, or `None` for a gather read.
+    #[must_use]
+    pub const fn direct(self) -> Option<DirectTensorAccessRef<'a>> {
+        match self {
+            Self::Direct(direct) => Some(direct),
+            Self::GatherRead(_) => None,
+        }
+    }
+    /// Returns the gather view, or `None` for a direct access.
+    #[must_use]
+    pub const fn gather_read(self) -> Option<GatherReadAccessRef<'a>> {
+        match self {
+            Self::Direct(_) => None,
+            Self::GatherRead(gather) => Some(gather),
+        }
+    }
+}
+
+/// Borrowed inspection of one direct tensor access.
+#[derive(Clone, Copy, Debug)]
+pub struct DirectTensorAccessRef<'a> {
+    data: &'a VerifiedDirectAccessData,
+    region: &'a VerifiedIndexRegion,
+}
+
+impl<'a> DirectTensorAccessRef<'a> {
+    /// Returns the referenced tensor boundary.
+    #[must_use]
+    pub fn tensor(self) -> VerifiedTensorId {
+        self.region.tensor_id(self.data.tensor as usize)
     }
     /// Returns ordered tensor-coordinate expressions.
     #[must_use]
@@ -1025,6 +1277,364 @@ impl<'a> TensorAccessRef<'a> {
         })
     }
 }
+
+/// Borrowed inspection of one address-only indirect read.
+#[derive(Clone, Copy, Debug)]
+pub struct GatherReadAccessRef<'a> {
+    data: &'a VerifiedGatherReadAccessData,
+    region: &'a VerifiedIndexRegion,
+}
+
+impl<'a> GatherReadAccessRef<'a> {
+    /// Returns the gathered-from tensor boundary.
+    #[must_use]
+    pub fn source(self) -> VerifiedTensorId {
+        self.region.tensor_id(self.data.source as usize)
+    }
+    /// Returns the address-supplying tensor boundary.
+    ///
+    /// Always distinct from [`Self::source`]: one `TensorId` cannot play both
+    /// semantic roles. Storage a future alias model proves equivalent is
+    /// neither detected nor authorized here.
+    #[must_use]
+    pub fn index(self) -> VerifiedTensorId {
+        self.region.tensor_id(self.data.index as usize)
+    }
+    /// Returns the gathered source axis.
+    #[must_use]
+    pub const fn axis(self) -> Axis {
+        Axis::new(self.data.axis)
+    }
+    /// Returns the source coordinates, one per source axis except the gathered
+    /// one, in source-axis order.
+    #[must_use]
+    pub fn source_coordinates(self) -> impl ExactSizeIterator<Item = VerifiedIndexExprId> + 'a {
+        let owner = self.region.data.owner;
+        self.data
+            .source_coordinates
+            .iter()
+            .copied()
+            .map(move |index| VerifiedIndexExprId::from_verified(owner, index))
+    }
+    /// Returns the index coordinates, one per index axis, in index-axis order.
+    #[must_use]
+    pub fn index_coordinates(self) -> impl ExactSizeIterator<Item = VerifiedIndexExprId> + 'a {
+        let owner = self.region.data.owner;
+        self.data
+            .index_coordinates
+            .iter()
+            .copied()
+            .map(move |index| VerifiedIndexExprId::from_verified(owner, index))
+    }
+    /// Returns how this gather's exact bounds obligation was discharged.
+    ///
+    /// Total rather than optional: every admitted gather either carries a
+    /// closed static proof or names the exact invocation validation that must
+    /// run. There is no third answer and no absent answer.
+    #[must_use]
+    pub const fn bounds_resolution(self) -> GatherIndexBoundsResolution<'a> {
+        match &self.data.bounds_resolution {
+            GatherIndexBoundsResolutionData::StaticallyProved(proof) => {
+                GatherIndexBoundsResolution::StaticallyProved(proof)
+            }
+            GatherIndexBoundsResolutionData::InvocationValidationRequired(requirement) => {
+                GatherIndexBoundsResolution::InvocationValidationRequired(requirement)
+            }
+        }
+    }
+}
+
+/// Opaque canonical identity of one closed static gather-index bounds proof.
+///
+/// No public constructor and no byte conversion: only the verifier-private
+/// deriver mints one, so holding a value of this type is itself evidence that
+/// the closed proof ran. [`Self::as_bytes`] is the whole public surface.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct GatherIndexBoundsProofIdentity(pub(super) Vec<u8>);
+
+impl GatherIndexBoundsProofIdentity {
+    /// Returns canonical bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+/// Opaque canonical identity of one exact invocation-validation requirement.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct GatherIndexValidationRequirementIdentity(pub(super) Vec<u8>);
+
+impl GatherIndexValidationRequirementIdentity {
+    /// Returns canonical bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+/// Which closed argument proved a gather's index values in range.
+///
+/// Both forms conclude without reading one index element. Neither can be
+/// selected by a caller: the deriver applies a fixed precedence, and no sample,
+/// caller assertion, target fact, profile, or reference run mints either.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum GatherIndexBoundsProofKind {
+    /// Some result extent is proved zero, so the obligation holds vacuously.
+    ///
+    /// Inspected over the **complete** result domain rather than the index
+    /// shape alone: a source of `[0, 5]` gathered on axis 1 by an index of
+    /// `[3]` has result `[0, 3]` and is vacuous even though the index is
+    /// inhabited.
+    VacuousEmptyResultDomain,
+    /// The gathered source extent is at least `2^32`, so it contains every
+    /// exact U32 value the index operand could hold.
+    ///
+    /// Compared in exact `u64` extent space; the threshold is never narrowed
+    /// into U32, where it would wrap to zero.
+    U32RangeContainedBySourceExtent,
+}
+
+/// How one gather's exact index-bounds obligation was discharged.
+///
+/// Total, not optional. The two arms are the only admitted answers, and a
+/// requirement is deliberately *not* a weaker proof: it carries no proof kind
+/// and no fact source because it is evidence of an outstanding obligation
+/// rather than of a discharged one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GatherIndexBoundsResolution<'a> {
+    /// A closed argument proved every index value in range.
+    StaticallyProved(&'a GatherIndexBoundsProof),
+    /// The exact validation one invocation must run before the read is legal.
+    InvocationValidationRequired(&'a GatherIndexValidationRequirement),
+}
+
+impl<'a> GatherIndexBoundsResolution<'a> {
+    /// Returns the static proof, or `None` when validation is required.
+    #[must_use]
+    pub const fn statically_proved(self) -> Option<&'a GatherIndexBoundsProof> {
+        match self {
+            Self::StaticallyProved(proof) => Some(proof),
+            Self::InvocationValidationRequired(_) => None,
+        }
+    }
+    /// Returns the outstanding requirement, or `None` when statically proved.
+    #[must_use]
+    pub const fn invocation_validation_required(
+        self,
+    ) -> Option<&'a GatherIndexValidationRequirement> {
+        match self {
+            Self::StaticallyProved(_) => None,
+            Self::InvocationValidationRequired(requirement) => Some(requirement),
+        }
+    }
+}
+
+/// The complete region-local subject both gather bounds records frame.
+///
+/// Shared by the proof and the requirement because they bind the *same*
+/// region-local facts and differ only in whether an argument closed over them.
+/// Keeping one payload is what makes "a requirement is not a weaker proof" a
+/// difference of type rather than of which optional fields happen to be set.
+#[derive(Clone, Debug)]
+pub(super) struct GatherIndexBoundsSubject {
+    pub region: CanonicalIndexRegionIdentity,
+    pub access: VerifiedTensorAccessId,
+    pub source: VerifiedTensorId,
+    pub index: VerifiedTensorId,
+    pub source_type: ResolvedValueType,
+    pub index_type: ResolvedValueType,
+    pub source_shape: Shape,
+    pub index_shape: Shape,
+    pub result_shape: Shape,
+    pub axis: Axis,
+    pub source_extent: Extent,
+    pub domain: Vec<VerifiedDimensionId>,
+}
+
+/// Retained evidence that one gather's index values are provably in range.
+#[derive(Clone, Debug)]
+pub struct GatherIndexBoundsProof {
+    pub(super) identity: GatherIndexBoundsProofIdentity,
+    pub(super) kind: GatherIndexBoundsProofKind,
+    pub(super) facts: IndexDomainFactSource,
+    pub(super) subject: GatherIndexBoundsSubject,
+}
+
+impl GatherIndexBoundsProof {
+    /// Returns the opaque canonical proof identity.
+    #[must_use]
+    pub const fn identity(&self) -> &GatherIndexBoundsProofIdentity {
+        &self.identity
+    }
+    /// Returns which closed argument discharged the obligation.
+    #[must_use]
+    pub const fn kind(&self) -> GatherIndexBoundsProofKind {
+        self.kind
+    }
+    /// Returns which facts the complete proof subject was allowed to read.
+    ///
+    /// Derived from the complete subject independently of the kind short
+    /// circuit, so a proof that concluded early still records that a declared
+    /// symbol participated.
+    #[must_use]
+    pub const fn facts(&self) -> IndexDomainFactSource {
+        self.facts
+    }
+    /// Returns the owning region's canonical identity.
+    #[must_use]
+    pub const fn region(&self) -> &CanonicalIndexRegionIdentity {
+        &self.subject.region
+    }
+    /// Returns the proved access.
+    #[must_use]
+    pub const fn access(&self) -> VerifiedTensorAccessId {
+        self.subject.access
+    }
+    /// Returns the gathered-from tensor.
+    #[must_use]
+    pub const fn source(&self) -> VerifiedTensorId {
+        self.subject.source
+    }
+    /// Returns the address-supplying tensor.
+    #[must_use]
+    pub const fn index(&self) -> VerifiedTensorId {
+        self.subject.index
+    }
+    /// Returns the source element type.
+    #[must_use]
+    pub const fn source_type(&self) -> &ResolvedValueType {
+        &self.subject.source_type
+    }
+    /// Returns the index element type.
+    #[must_use]
+    pub const fn index_type(&self) -> &ResolvedValueType {
+        &self.subject.index_type
+    }
+    /// Returns the concrete source boundary shape.
+    #[must_use]
+    pub const fn source_shape(&self) -> &Shape {
+        &self.subject.source_shape
+    }
+    /// Returns the concrete index boundary shape.
+    #[must_use]
+    pub const fn index_shape(&self) -> &Shape {
+        &self.subject.index_shape
+    }
+    /// Returns the concrete derived result shape.
+    #[must_use]
+    pub const fn result_shape(&self) -> &Shape {
+        &self.subject.result_shape
+    }
+    /// Returns the gathered source axis.
+    #[must_use]
+    pub const fn axis(&self) -> Axis {
+        self.subject.axis
+    }
+    /// Returns the gathered source axis's concrete extent.
+    #[must_use]
+    pub const fn source_extent(&self) -> Extent {
+        self.subject.source_extent
+    }
+    /// Returns the exact ordered literal access domain.
+    #[must_use]
+    pub fn domain(&self) -> impl ExactSizeIterator<Item = VerifiedDimensionId> + '_ {
+        self.subject.domain.iter().copied()
+    }
+}
+
+/// The exact validation one invocation must run before a gather read is legal.
+///
+/// Deliberately exposes no `kind()` and no `facts()`: a requirement is not
+/// proof evidence, and giving it either accessor would let a consumer read an
+/// outstanding obligation as a discharged one.
+#[derive(Clone, Debug)]
+pub struct GatherIndexValidationRequirement {
+    pub(super) identity: GatherIndexValidationRequirementIdentity,
+    pub(super) subject: GatherIndexBoundsSubject,
+}
+
+impl GatherIndexValidationRequirement {
+    /// Returns the opaque canonical requirement identity.
+    #[must_use]
+    pub const fn identity(&self) -> &GatherIndexValidationRequirementIdentity {
+        &self.identity
+    }
+    /// Returns the owning region's canonical identity.
+    #[must_use]
+    pub const fn region(&self) -> &CanonicalIndexRegionIdentity {
+        &self.subject.region
+    }
+    /// Returns the access whose obligation is outstanding.
+    #[must_use]
+    pub const fn access(&self) -> VerifiedTensorAccessId {
+        self.subject.access
+    }
+    /// Returns the gathered-from tensor.
+    #[must_use]
+    pub const fn source(&self) -> VerifiedTensorId {
+        self.subject.source
+    }
+    /// Returns the address-supplying tensor.
+    #[must_use]
+    pub const fn index(&self) -> VerifiedTensorId {
+        self.subject.index
+    }
+    /// Returns the source element type.
+    #[must_use]
+    pub const fn source_type(&self) -> &ResolvedValueType {
+        &self.subject.source_type
+    }
+    /// Returns the index element type.
+    #[must_use]
+    pub const fn index_type(&self) -> &ResolvedValueType {
+        &self.subject.index_type
+    }
+    /// Returns the concrete source boundary shape.
+    #[must_use]
+    pub const fn source_shape(&self) -> &Shape {
+        &self.subject.source_shape
+    }
+    /// Returns the concrete index boundary shape.
+    #[must_use]
+    pub const fn index_shape(&self) -> &Shape {
+        &self.subject.index_shape
+    }
+    /// Returns the concrete derived result shape.
+    #[must_use]
+    pub const fn result_shape(&self) -> &Shape {
+        &self.subject.result_shape
+    }
+    /// Returns the gathered source axis.
+    #[must_use]
+    pub const fn axis(&self) -> Axis {
+        self.subject.axis
+    }
+    /// Returns the gathered source axis's concrete extent.
+    #[must_use]
+    pub const fn source_extent(&self) -> Extent {
+        self.subject.source_extent
+    }
+    /// Returns the exact ordered literal access domain.
+    #[must_use]
+    pub fn domain(&self) -> impl ExactSizeIterator<Item = VerifiedDimensionId> + '_ {
+        self.subject.domain.iter().copied()
+    }
+}
+
+impl PartialEq for GatherIndexBoundsProof {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity == other.identity
+    }
+}
+impl Eq for GatherIndexBoundsProof {}
+
+impl PartialEq for GatherIndexValidationRequirement {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity == other.identity
+    }
+}
+impl Eq for GatherIndexValidationRequirement {}
 
 /// Public view of one sound bounds proof.
 ///

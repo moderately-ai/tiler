@@ -4,7 +4,7 @@
 //! second index-expression or extent language.
 
 use super::handles::VerifiedRegionOwner;
-use super::model::{TensorData, VerifiedAccessData};
+use super::model::{CompactedAccess, TensorData};
 use super::{
     IndexEntityKind, IndexExprClass, ProofResource, VerifiedDimensionId, VerifiedIndexExprId,
     VerifiedIndexHandleError, VerifiedTensorAccessId, VerifiedTensorId,
@@ -203,7 +203,7 @@ pub struct DischargedIndexDomainPredicate {
 #[derive(Clone, Copy)]
 pub(super) struct IndexDomainPredicateContext<'a> {
     owner: VerifiedRegionOwner,
-    accesses: &'a [VerifiedAccessData],
+    accesses: &'a [CompactedAccess],
     tensors: &'a [TensorData],
     expression_count: usize,
     dimension_count: usize,
@@ -212,7 +212,7 @@ pub(super) struct IndexDomainPredicateContext<'a> {
 impl<'a> IndexDomainPredicateContext<'a> {
     pub(super) const fn new(
         owner: VerifiedRegionOwner,
-        accesses: &'a [VerifiedAccessData],
+        accesses: &'a [CompactedAccess],
         tensors: &'a [TensorData],
         expression_count: usize,
         dimension_count: usize,
@@ -409,12 +409,12 @@ fn check_predicate_handles(
             entity: IndexEntityKind::TensorAccess,
         });
     }
-    let access =
-        accesses
-            .get(subject.as_usize())
-            .ok_or(VerifiedIndexHandleError::InvalidHandle {
-                entity: IndexEntityKind::TensorAccess,
-            })?;
+    let access = accesses
+        .get(subject.as_usize())
+        .and_then(CompactedAccess::direct)
+        .ok_or(VerifiedIndexHandleError::InvalidHandle {
+            entity: IndexEntityKind::TensorAccess,
+        })?;
     let expression = match predicate {
         IndexDomainPredicate::NonNegative { expression }
         | IndexDomainPredicate::LessThanExtent { expression, .. } => expression,
@@ -508,7 +508,7 @@ const fn expression_class_is_stateable(class: IndexExprClass) -> bool {
 mod tests {
     use super::super::handles::{VerifiedDimensionId, VerifiedIndexExprId, VerifiedTensorAccessId};
     use super::super::handles::{VerifiedTensorId, next_builder_id};
-    use super::super::model::{TensorData, VerifiedAccessData};
+    use super::super::model::{CompactedAccess, TensorData, VerifiedDirectAccessData};
     use super::{
         DischargedIndexDomainPredicate, IndexDomainEvidence, IndexDomainFactSource,
         IndexDomainPredicate, IndexDomainPredicateContext, IndexDomainSoundProof, IndexExprClass,
@@ -518,9 +518,9 @@ mod tests {
     use crate::semantic::{ResolvedValueType, TypeKey};
     use crate::shape::{Shape, SourcedShape};
 
-    fn records_fixture() -> (Vec<VerifiedAccessData>, Vec<TensorData>) {
+    fn records_fixture() -> (Vec<CompactedAccess>, Vec<TensorData>) {
         (
-            vec![VerifiedAccessData {
+            vec![CompactedAccess::Direct(VerifiedDirectAccessData {
                 tensor: 0,
                 mode: crate::index::AccessMode::Read,
                 domain: vec![0],
@@ -528,7 +528,7 @@ mod tests {
                 bounds_proof: None,
                 bounds_facts: IndexDomainFactSource::Program,
                 ownership_proof: None,
-            }],
+            })],
             vec![TensorData {
                 role: TensorRole::Input,
                 value_type: ResolvedValueType::nominal(

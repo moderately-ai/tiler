@@ -3107,6 +3107,9 @@ mod tests {
                     region
                         .access(binding.write_access())
                         .unwrap()
+                        .view()
+                        .direct()
+                        .expect("a direct access")
                         .write_ownership_proof(),
                     Some(WriteOwnershipProofView::PartitionMember {
                         joint: JointPartitionProofView::Interval {
@@ -4571,7 +4574,11 @@ mod tests {
             region
                 .accesses()
                 .filter(|access| access.mode() == AccessMode::Read)
-                .all(|access| access.bounds_proof()
+                .all(|access| access
+                    .view()
+                    .direct()
+                    .expect("a direct access")
+                    .bounds_proof()
                     == Some(BoundsProofView::Interval {
                         facts: IndexDomainFactSource::ShapeEnvironment,
                     })),

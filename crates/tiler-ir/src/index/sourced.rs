@@ -602,7 +602,11 @@ mod tests {
         // unknown. And the environment, not the program: the bound came from
         // `n`'s declared extent and nothing in the region carries it.
         assert!(
-            bounded.accesses().any(|access| access.bounds_proof()
+            bounded.accesses().any(|access| access
+                .view()
+                .direct()
+                .expect("a direct access")
+                .bounds_proof()
                 == Some(BoundsProofView::Interval {
                     facts: IndexDomainFactSource::ShapeEnvironment,
                 })),
@@ -619,11 +623,17 @@ mod tests {
             .accesses()
             .find(|access| access.mode() == AccessMode::Read)
             .unwrap();
-        let expression = read.coordinates().next().unwrap();
+        let expression = read
+            .view()
+            .direct()
+            .expect("a direct access")
+            .coordinates()
+            .next()
+            .unwrap();
         let predicate = IndexDomainPredicate::LessThanExtent {
             expression,
             extent: IndexExtentRef::TensorAxis {
-                tensor: read.tensor(),
+                tensor: read.view().direct().expect("a direct access").tensor(),
                 axis: 0,
             },
         };
@@ -1053,7 +1063,11 @@ mod tests {
         // nothing could have been walked. The symbolic axis is what the proof
         // read, so the facts name the environment.
         assert!(
-            roomy.accesses().any(|access| access.bounds_proof()
+            roomy.accesses().any(|access| access
+                .view()
+                .direct()
+                .expect("a direct access")
+                .bounds_proof()
                 == Some(BoundsProofView::Interval {
                     facts: IndexDomainFactSource::ShapeEnvironment,
                 })),
@@ -1171,12 +1185,14 @@ mod tests {
             builder.build().expect("the sourced region verifies")
         });
         assert!(
-            region
-                .accesses()
-                .any(|access| access.write_ownership_proof()
-                    == Some(WriteOwnershipProofView::CoordinatePermutation {
-                        facts: IndexDomainFactSource::ShapeEnvironment,
-                    })),
+            region.accesses().any(|access| access
+                .view()
+                .direct()
+                .expect("a direct access")
+                .write_ownership_proof()
+                == Some(WriteOwnershipProofView::CoordinatePermutation {
+                    facts: IndexDomainFactSource::ShapeEnvironment,
+                })),
             "the write is owned through the environment's equality class"
         );
         assert_eq!(census.semantic_closure, 1);
@@ -1246,12 +1262,14 @@ mod tests {
         ))
         .expect("an output sized `m == n` is covered exactly by a domain sized `n`");
         assert!(
-            same_extent
-                .accesses()
-                .any(|access| access.write_ownership_proof()
-                    == Some(WriteOwnershipProofView::CoordinatePermutation {
-                        facts: IndexDomainFactSource::ShapeEnvironment,
-                    })),
+            same_extent.accesses().any(|access| access
+                .view()
+                .direct()
+                .expect("a direct access")
+                .write_ownership_proof()
+                == Some(WriteOwnershipProofView::CoordinatePermutation {
+                    facts: IndexDomainFactSource::ShapeEnvironment,
+                })),
             "ownership is the permutation argument, discharged through the environment",
         );
 
@@ -1383,7 +1401,11 @@ mod tests {
 
         assert!(
             region.accesses().all(|access| {
-                access.bounds_proof()
+                access
+                    .view()
+                    .direct()
+                    .expect("a direct access")
+                    .bounds_proof()
                     == Some(BoundsProofView::ProvedExtentEquality {
                         facts: IndexDomainFactSource::ShapeEnvironment,
                     })
@@ -1394,7 +1416,11 @@ mod tests {
             region
                 .accesses()
                 .filter(|access| access.mode() == AccessMode::Write)
-                .all(|access| access.write_ownership_proof()
+                .all(|access| access
+                    .view()
+                    .direct()
+                    .expect("a direct access")
+                    .write_ownership_proof()
                     == Some(WriteOwnershipProofView::CoordinatePermutation {
                         facts: IndexDomainFactSource::ShapeEnvironment,
                     })),
@@ -1644,7 +1670,12 @@ mod tests {
             bounded
                 .accesses()
                 .filter(|access| access.mode() == AccessMode::Read)
-                .all(|access| access.bounds_proof().is_none()),
+                .all(|access| access
+                    .view()
+                    .direct()
+                    .expect("a direct access")
+                    .bounds_proof()
+                    .is_none()),
             "nothing proved the read in bounds, and no proof kind claims otherwise",
         );
 
@@ -1995,7 +2026,11 @@ mod tests {
             symbolic
                 .accesses()
                 .filter(|access| access.mode() == AccessMode::Read)
-                .all(|access| access.bounds_proof()
+                .all(|access| access
+                    .view()
+                    .direct()
+                    .expect("a direct access")
+                    .bounds_proof()
                     == Some(BoundsProofView::Interval {
                         facts: IndexDomainFactSource::ShapeEnvironment,
                     })),
@@ -2014,7 +2049,11 @@ mod tests {
             literal
                 .accesses()
                 .filter(|access| access.mode() == AccessMode::Read)
-                .all(|access| access.bounds_proof()
+                .all(|access| access
+                    .view()
+                    .direct()
+                    .expect("a direct access")
+                    .bounds_proof()
                     == Some(BoundsProofView::Interval {
                         facts: IndexDomainFactSource::Program,
                     })),
@@ -2047,7 +2086,12 @@ mod tests {
             unbounded
                 .accesses()
                 .filter(|access| access.mode() == AccessMode::Read)
-                .all(|access| access.bounds_proof().is_none()),
+                .all(|access| access
+                    .view()
+                    .direct()
+                    .expect("a direct access")
+                    .bounds_proof()
+                    .is_none()),
             "one open atom leaves the access unproved, and no proof kind claims otherwise",
         );
     }
@@ -2100,6 +2144,9 @@ mod tests {
             .filter(|access| access.mode() == AccessMode::Write)
         {
             let proof = access
+                .view()
+                .direct()
+                .expect("a direct access")
                 .write_ownership_proof()
                 .expect("each write retains ownership evidence");
             let WriteOwnershipProofView::PartitionMember { joint } = proof else {
@@ -2232,7 +2279,11 @@ mod tests {
             .find(|access| access.mode() == AccessMode::Write)
             .unwrap();
         assert_eq!(
-            write.write_ownership_proof(),
+            write
+                .view()
+                .direct()
+                .expect("a direct access")
+                .write_ownership_proof(),
             Some(WriteOwnershipProofView::Exhaustive {
                 points: 4,
                 facts: IndexDomainFactSource::ShapeEnvironment,
@@ -2315,6 +2366,9 @@ mod tests {
                 .accesses()
                 .find(|access| access.mode() == AccessMode::Read)
                 .unwrap()
+                .view()
+                .direct()
+                .expect("a direct access")
                 .bounds_proof(),
             Some(BoundsProofView::Exhaustive {
                 points: 5,
@@ -2327,6 +2381,9 @@ mod tests {
                 .accesses()
                 .find(|access| access.mode() == AccessMode::Write)
                 .unwrap()
+                .view()
+                .direct()
+                .expect("a direct access")
                 .bounds_proof(),
             Some(BoundsProofView::Interval {
                 facts: IndexDomainFactSource::Program,

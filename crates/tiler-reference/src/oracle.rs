@@ -15,21 +15,22 @@ use std::sync::{Arc, OnceLock};
 
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::{
-    AccessMode, CanonicalScalarDefinitionProjection, FrozenScalarRegistry, IndexExprView,
-    IndexInteger, MAX_INDEX_INTEGER_BYTES, ReducerBodyValueDefinitionView, ReductionTraversal,
-    ScalarAttributeField, ScalarAttributes, ScalarAuthorityEvidence, ScalarOpKey,
-    ScalarOperationDefinition, ScalarOperationKindRef, ScalarOperationRef, ScalarReductionRef,
-    ScalarRegistryError, ScalarValueDefinitionView, SourcedIndexInteger, TensorAccessRef,
-    TensorRole, VerifiedDimensionId, VerifiedIndexExprId, VerifiedIndexHandleError,
-    VerifiedIndexRegion, VerifiedReducerBodyOperationId, VerifiedReducerBodyValueId,
-    VerifiedScalarOperationId, VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId,
-    add_f32_scalar_op, canonicalize_nan_f32_scalar_op, constant_f32_scalar_op,
-    multiply_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
+    AccessMode, CanonicalScalarDefinitionProjection, FrozenScalarRegistry, GatherReadAccessRef,
+    IndexExprView, IndexInteger, MAX_INDEX_INTEGER_BYTES, ReducerBodyValueDefinitionView,
+    ReductionTraversal, ScalarAttributeField, ScalarAttributes, ScalarAuthorityEvidence,
+    ScalarOpKey, ScalarOperationDefinition, ScalarOperationKindRef, ScalarOperationRef,
+    ScalarReductionRef, ScalarRegistryError, ScalarValueDefinitionView, SourcedIndexInteger,
+    TensorAccessRef, TensorAccessView, TensorRole, VerifiedDimensionId, VerifiedIndexExprId,
+    VerifiedIndexHandleError, VerifiedIndexRegion, VerifiedReducerBodyOperationId,
+    VerifiedReducerBodyValueId, VerifiedScalarOperationId, VerifiedScalarValueId,
+    VerifiedTensorAccessId, VerifiedTensorId, add_f32_scalar_op, canonicalize_nan_f32_scalar_op,
+    constant_f32_scalar_op, multiply_f32_scalar_op, strict_affine_u4_dequantize_scalar_op,
 };
 use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::{
     CanonicalField, CanonicalValue, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE,
-    FrozenSemanticRegistry, ProviderIdentity, ResolvedValueType, TypeKey, U4,
+    FrozenSemanticRegistry, GatherError, ProviderIdentity, ResolvedValueType, TypeKey, U4,
+    decide_gather_index, gather_index_resolved_type,
 };
 use tiler_ir::shape::{Extent, Shape, SourcedExtent};
 
@@ -1202,6 +1203,23 @@ pub enum IndexRegionEvaluationError {
         /// Root points the spans covered before finishing.
         evaluated: u64,
     },
+    /// A gather's loaded index element is outside the gathered axis.
+    ///
+    /// Reported after the malformed-handle, type, shape, and coordinate checks
+    /// and **before** any source payload is read, so an out-of-range address
+    /// never causes a read at an invented location. The value is never clamped
+    /// to the axis and never wrapped modulo its extent.
+    GatherIndexOutOfBounds {
+        /// The offending gather access.
+        access: VerifiedTensorAccessId,
+        /// Row-major address of the element **in the index operand**, not a
+        /// result coordinate.
+        index_offset: usize,
+        /// The value it held.
+        value: u32,
+        /// The gathered axis's extent.
+        extent: u64,
+    },
     /// The region uses a feature outside this bounded oracle profile.
     Unsupported {
         /// Rejected region feature.
@@ -2265,9 +2283,16 @@ impl<'a> RegionEvaluation<'a> {
             let access = region
                 .access(output.access())
                 .map_err(IndexRegionEvaluationError::Handle)?;
-            if access.mode() != AccessMode::Write {
+            // A write root is a direct access by construction; a gather has no
+            // write spelling at all, so this refuses both a read root and a
+            // structurally impossible gather root under one rule.
+            let Some(direct) = access
+                .view()
+                .direct()
+                .filter(|_| access.mode() == AccessMode::Write)
+            else {
                 return Err(IndexRegionEvaluationError::MalformedRegion);
-            }
+            };
             // Built before the boundary's own budget so a symbolic extent is
             // reported as one wherever the root sits in region order.
             let root = OutputRoot {
@@ -2278,7 +2303,7 @@ impl<'a> RegionEvaluation<'a> {
             // Ordered by each boundary's first root, so a region no partition
             // touches produces exactly the plans, in exactly the order, that one
             // plan per root produced.
-            if let Some(position) = planned.get(&access.tensor()) {
+            if let Some(position) = planned.get(&direct.tensor()) {
                 plans
                     .get_mut(*position)
                     .ok_or(IndexRegionEvaluationError::MalformedRegion)?
@@ -2287,7 +2312,7 @@ impl<'a> RegionEvaluation<'a> {
                 continue;
             }
             let tensor = region
-                .tensor(access.tensor())
+                .tensor(direct.tensor())
                 .map_err(IndexRegionEvaluationError::Handle)?;
             let shape = tensor
                 .shape()
@@ -2308,7 +2333,7 @@ impl<'a> RegionEvaluation<'a> {
                     u64::try_from(retained).unwrap_or(u64::MAX),
                 ));
             }
-            planned.insert(access.tensor(), plans.len());
+            planned.insert(direct.tensor(), plans.len());
             plans.push(OutputPlan {
                 roots: vec![root],
                 value_type: tensor.value_type().clone(),
@@ -2362,8 +2387,15 @@ impl<'a> RegionEvaluation<'a> {
             return Err(IndexRegionEvaluationError::MalformedRegion);
         }
         let element = dense_element(&value)?;
-        let offset = self.access_offset(&mut frame, root.access, shape)?;
+        let coordinates = root
+            .access
+            .view()
+            .direct()
+            .ok_or(IndexRegionEvaluationError::MalformedRegion)?
+            .coordinates()
+            .collect();
         let access = root.access.id();
+        let offset = self.access_offset(&mut frame, access, coordinates, shape)?;
         let slot = elements
             .get_mut(offset)
             .ok_or(IndexRegionEvaluationError::CoordinateOutOfBounds { access })?;
@@ -2377,20 +2409,24 @@ impl<'a> RegionEvaluation<'a> {
         Ok(())
     }
 
+    /// Linearizes one authored coordinate run against one boundary shape.
+    ///
+    /// Takes the run explicitly rather than reading it off the access, because
+    /// a gather has *two* runs against *two* boundaries and neither is "the"
+    /// coordinate list. `access` is retained only to name the subject in a
+    /// diagnostic.
     fn access_offset(
         &mut self,
         frame: &mut Frame,
-        access: TensorAccessRef<'a>,
+        access: VerifiedTensorAccessId,
+        coordinates: Vec<VerifiedIndexExprId>,
         shape: &Shape,
     ) -> Result<usize, IndexRegionEvaluationError> {
-        let coordinates: Vec<_> = access.coordinates().collect();
         let extents = shape.extents();
         if coordinates.len() != extents.len() {
             return Err(IndexRegionEvaluationError::MalformedRegion);
         }
-        let outside = IndexRegionEvaluationError::CoordinateOutOfBounds {
-            access: access.id(),
-        };
+        let outside = IndexRegionEvaluationError::CoordinateOutOfBounds { access };
         let mut linear = 0_usize;
         for (expression, extent) in coordinates.into_iter().zip(extents) {
             let evaluated = self.expression(frame, expression)?;
@@ -2522,37 +2558,163 @@ impl<'a> RegionEvaluation<'a> {
         value_type: &ResolvedValueType,
     ) -> Result<Tensor, IndexRegionEvaluationError> {
         let region = self.region;
+        let id = access;
         let access = region
             .access(access)
             .map_err(IndexRegionEvaluationError::Handle)?;
-        let tensor = region
-            .tensor(access.tensor())
-            .map_err(IndexRegionEvaluationError::Handle)?;
-        if access.mode() != AccessMode::Read || tensor.value_type() != value_type {
+        if access.mode() != AccessMode::Read {
             return Err(IndexRegionEvaluationError::MalformedRegion);
         }
-        let shape = tensor
+        // Matched rather than refused generically, so a gather is *evaluated*
+        // here rather than reported as an unsupported region feature.
+        match access.view() {
+            TensorAccessView::Direct(direct) => {
+                let tensor = region
+                    .tensor(direct.tensor())
+                    .map_err(IndexRegionEvaluationError::Handle)?;
+                if tensor.value_type() != value_type {
+                    return Err(IndexRegionEvaluationError::MalformedRegion);
+                }
+                let shape = tensor
+                    .shape()
+                    .as_static()
+                    .ok_or_else(|| unsupported(UnsupportedRegionFeature::SymbolicTensorShape))?;
+                let offset =
+                    self.access_offset(frame, id, direct.coordinates().collect(), shape)?;
+                let element = self.dense_input(direct.tensor(), offset, id)?;
+                Tensor::scalar(value_type.clone(), element)
+                    .map_err(|source| IndexRegionEvaluationError::Value(Arc::new(source)))
+            }
+            TensorAccessView::GatherRead(gather) => self.gather(frame, id, gather, value_type),
+        }
+    }
+
+    /// Evaluates one address-only indirect read at the frame's current point.
+    ///
+    /// The order is the semantics: the index-coordinate run is evaluated first
+    /// and one exact U32 element is loaded, its value is inserted at `axis`
+    /// among the source-coordinate results, and only then is the F32 source
+    /// element read. No scalar SSA value is created for the loaded index, which
+    /// is what keeps the address read from becoming a value input.
+    ///
+    /// Bounds are checked here regardless of the retained resolution. A
+    /// requirement resolution validates the observed value and mints nothing; a
+    /// static resolution is *also* checked defensively, because a reference
+    /// oracle that trusted a proof would stop being an independent check of it.
+    /// Evaluating either is an oracle result only and creates no compiler
+    /// executable coverage, cache identity, or dispatch permission.
+    fn gather(
+        &mut self,
+        frame: &mut Frame,
+        id: VerifiedTensorAccessId,
+        gather: GatherReadAccessRef<'a>,
+        value_type: &ResolvedValueType,
+    ) -> Result<Tensor, IndexRegionEvaluationError> {
+        let region = self.region;
+        let source = region
+            .tensor(gather.source())
+            .map_err(IndexRegionEvaluationError::Handle)?;
+        let index = region
+            .tensor(gather.index())
+            .map_err(IndexRegionEvaluationError::Handle)?;
+        if source.value_type() != value_type || index.value_type() != &gather_index_resolved_type()
+        {
+            return Err(IndexRegionEvaluationError::MalformedRegion);
+        }
+        let source_shape = source
             .shape()
             .as_static()
             .ok_or_else(|| unsupported(UnsupportedRegionFeature::SymbolicTensorShape))?;
-        let offset = self.access_offset(frame, access, shape)?;
+        let index_shape = index
+            .shape()
+            .as_static()
+            .ok_or_else(|| unsupported(UnsupportedRegionFeature::SymbolicTensorShape))?;
+        let axis = gather.axis().get() as usize;
+        let extents = source_shape.extents();
+        let extent = extents
+            .get(axis)
+            .ok_or(IndexRegionEvaluationError::MalformedRegion)?;
+        // The index offset is the row-major address *in the index operand*, not
+        // a result coordinate, which is what makes it usable to locate the
+        // offending element in the caller's own buffer.
+        let index_offset =
+            self.access_offset(frame, id, gather.index_coordinates().collect(), index_shape)?;
+        let loaded = self.dense_input(gather.index(), index_offset, id)?;
+        let value = <[u8; 4]>::try_from(loaded.as_bytes())
+            .map(u32::from_be_bytes)
+            .map_err(|_| IndexRegionEvaluationError::MalformedRegion)?;
+        // Decided by the semantic family's own rule rather than restated here,
+        // so this enforcement boundary refuses under one definition instead of
+        // a second copy of it — and so it cannot drift into clamping or
+        // wrapping, which `decide_gather_index` refuses by construction.
+        let selected =
+            decide_gather_index(index_offset, u64::from(value), *extent).map_err(|error| {
+                match error {
+                    GatherError::IndexOutOfBounds {
+                        position,
+                        value,
+                        extent,
+                    } => IndexRegionEvaluationError::GatherIndexOutOfBounds {
+                        access: id,
+                        index_offset: position,
+                        value: u32::try_from(value).unwrap_or(u32::MAX),
+                        extent,
+                    },
+                    _ => IndexRegionEvaluationError::MalformedRegion,
+                }
+            })?;
+        let authored: Vec<_> = gather.source_coordinates().collect();
+        if authored.len() != extents.len().saturating_sub(1) {
+            return Err(IndexRegionEvaluationError::MalformedRegion);
+        }
+        let outside = IndexRegionEvaluationError::CoordinateOutOfBounds { access: id };
+        let mut coordinates = Vec::with_capacity(extents.len());
+        for expression in authored {
+            let evaluated = self.expression(frame, expression)?;
+            coordinates.push(
+                evaluated
+                    .to_u64()
+                    .and_then(|value| usize::try_from(value).ok())
+                    .ok_or_else(|| outside.clone())?,
+            );
+        }
+        coordinates.insert(axis, selected);
+        let mut linear = 0_usize;
+        for (coordinate, extent) in coordinates.into_iter().zip(extents) {
+            let bound = usize::try_from(extent.get()).map_err(|_| outside.clone())?;
+            if coordinate >= bound {
+                return Err(outside);
+            }
+            linear = linear
+                .checked_mul(bound)
+                .and_then(|base| base.checked_add(coordinate))
+                .ok_or_else(|| outside.clone())?;
+        }
+        let element = self.dense_input(gather.source(), linear, id)?;
+        Tensor::scalar(value_type.clone(), element)
+            .map_err(|source| IndexRegionEvaluationError::Value(Arc::new(source)))
+    }
+
+    /// Loads one element from a bound dense input boundary.
+    fn dense_input(
+        &self,
+        tensor: VerifiedTensorId,
+        offset: usize,
+        access: VerifiedTensorAccessId,
+    ) -> Result<ReferenceElement, IndexRegionEvaluationError> {
         let bound = *self
             .inputs
-            .get(&access.tensor())
+            .get(&tensor)
             .ok_or(IndexRegionEvaluationError::MalformedRegion)?;
         let TensorPayloadView::Dense(elements) = bound.payload() else {
             return Err(unsupported(
                 UnsupportedRegionFeature::CompoundValueRepresentation,
             ));
         };
-        let element = elements
+        elements
             .get(offset)
-            .ok_or(IndexRegionEvaluationError::CoordinateOutOfBounds {
-                access: access.id(),
-            })?
-            .clone();
-        Tensor::scalar(value_type.clone(), element)
-            .map_err(|source| IndexRegionEvaluationError::Value(Arc::new(source)))
+            .ok_or(IndexRegionEvaluationError::CoordinateOutOfBounds { access })
+            .cloned()
     }
 
     fn operation(

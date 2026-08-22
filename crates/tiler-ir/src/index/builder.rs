@@ -42,17 +42,19 @@ use num_traits::{Signed, ToPrimitive, Zero};
 
 use crate::convenience::{CheckedBuildError, build_checked};
 use crate::identity::{push_len, push_slice};
-use crate::semantic::ResolvedValueType;
-use crate::shape::{Extent, Shape};
+use crate::semantic::{F32, ResolvedValueType, gather_index_resolved_type, gather_result_shape};
+use crate::shape::{Axis, Extent, Shape};
 
 use super::error::invalid_handle;
-use super::handles::{BuilderId, next_builder_id};
+use super::handles::{BuilderId, VerifiedRegionOwner, next_builder_id};
 use super::model::{
-    AccessData, BoundsProof, DimensionData, IndexExprData, IndexNode, JointPartitionProof,
+    AccessData, BoundsProof, CompactedAccess, CompactedGatherReadAccess, DimensionData,
+    DirectAccessData, GatherReadAccessData, IndexExprData, IndexNode, JointPartitionProof,
     LinearTermData, OutputData, ReducerBodyOperationData, ReducerBodyValueData,
     ReducerBodyValueSource, ScalarOperationData, ScalarOperationKindData, ScalarReducerBodyData,
     ScalarValueData, ScalarValueDefinition, TensorData, VerifiedAccessData,
-    VerifiedIndexRegionData, WriteOwnershipProof,
+    VerifiedDirectAccessData, VerifiedGatherReadAccessData, VerifiedIndexRegionData,
+    WriteOwnershipProof,
 };
 use super::scalar::{
     ScalarApplyError, ScalarInferenceCapacity, ScalarInferenceHostFailure, encode_canonical,
@@ -61,9 +63,9 @@ use super::scalar::{
 use super::sourced::{SourcedIndexInteger, SymbolicExtentError};
 use super::{
     AccessMode, CanonicalIndexRegionIdentity, DimensionId, DischargedIndexDomainPredicate,
-    DomainRole, FrozenScalarRegistry, IndexBuildError, IndexDomainEvidence, IndexDomainFactSource,
-    IndexDomainPredicate, IndexDomainSoundProof, IndexDomainUnknownReason, IndexEntityKind,
-    IndexExprClass, IndexExprId, IndexExtentRef, IndexInteger, IndexLimitKind,
+    DomainRole, FrozenScalarRegistry, GatherAccessRule, IndexBuildError, IndexDomainEvidence,
+    IndexDomainFactSource, IndexDomainPredicate, IndexDomainSoundProof, IndexDomainUnknownReason,
+    IndexEntityKind, IndexExprClass, IndexExprId, IndexExtentRef, IndexInteger, IndexLimitKind,
     IndexRegionBuildError, IndexRegionDiagnostic, MAX_ACCESS_CANONICAL_BYTES,
     MAX_BOUNDARY_CANONICAL_BYTES, MAX_BOUNDARY_TENSORS, MAX_DOMAIN_DIMENSIONS,
     MAX_EXHAUSTIVE_PROOF_BYTES, MAX_EXHAUSTIVE_PROOF_CELLS, MAX_INDEX_CANONICAL_BYTES,
@@ -72,8 +74,8 @@ use super::{
     MAX_SCALAR_CANONICAL_BYTES, MAX_SCALAR_EXPRESSION_DEPTH, MAX_SCALAR_EXPRESSIONS,
     MAX_SCALAR_OPERANDS, MAX_TENSOR_ACCESSES, MAX_TENSOR_RANK, ProofResource, ReductionTraversal,
     ScalarAttributes, ScalarOpKey, ScalarOperationId, ScalarResultIndex, ScalarValueId,
-    TensorAccessId, TensorId, TensorRole, UnknownIndexDomainPredicate, VerifiedIndexExprId,
-    VerifiedIndexRegion, VerifiedTensorAccessId, VerifiedTensorId,
+    TensorAccessId, TensorId, TensorRole, UnknownIndexDomainPredicate, VerifiedDimensionId,
+    VerifiedIndexExprId, VerifiedIndexRegion, VerifiedTensorAccessId, VerifiedTensorId,
 };
 use crate::shape::{
     ExtentInterval, ExtentSourceError, ExtentSources, ShapeEnv, ShapeSymbol, SourcedExtent,
@@ -161,7 +163,7 @@ struct CompactedRegion {
     dimensions: Vec<DimensionData>,
     tensors: Vec<TensorData>,
     expressions: Vec<IndexExprData>,
-    accesses: Vec<VerifiedAccessData>,
+    accesses: Vec<CompactedAccess>,
     index_domain_evidence: Vec<DischargedIndexDomainPredicate>,
     unknown_index_domain_predicates: Vec<UnknownIndexDomainPredicate>,
     operations: Vec<ScalarOperationData>,
@@ -973,7 +975,7 @@ impl IndexRegionBuilder {
     /// coordinate expressions themselves.
     fn access_fact_source(
         &self,
-        access: &AccessData,
+        access: &DirectAccessData,
         shape: &SourcedShape,
     ) -> IndexDomainFactSource {
         let reads_environment = access.domain.iter().any(|dimension| {
@@ -1002,8 +1004,12 @@ impl IndexRegionBuilder {
     fn partition_fact_source(&self, tensor: u32, roots: &[u32]) -> IndexDomainFactSource {
         let shape = &self.tensors[tensor as usize].shape;
         if roots.iter().any(|root| {
-            self.access_fact_source(&self.accesses[*root as usize], shape)
-                == IndexDomainFactSource::ShapeEnvironment
+            self.access_fact_source(
+                self.accesses[*root as usize]
+                    .direct()
+                    .expect("a partition root is a direct write"),
+                shape,
+            ) == IndexDomainFactSource::ShapeEnvironment
         }) {
             IndexDomainFactSource::ShapeEnvironment
         } else {
@@ -1586,6 +1592,228 @@ impl IndexRegionBuilder {
         self.read_values.insert(access.index, value.index);
         Ok(value)
     }
+
+    /// Creates or reuses one address-only indirect read and its scalar result.
+    ///
+    /// The result is one F32 scalar value. Loading the U32 index is *intrinsic*
+    /// to this compound access and never creates a scalar SSA value of its own,
+    /// which is what keeps the address read from being mistaken for a value
+    /// input by any consumer that pairs scalar leaves to reads by ordinal.
+    /// Repeating an identical call interns the whole access atomically and
+    /// returns the same scalar value; a separately authored direct U32 read is a
+    /// distinct access and does not satisfy, merge with, or share this one's
+    /// address read.
+    ///
+    /// `source_coordinates` supplies every source axis **except** `axis`, in
+    /// source-axis order; `index_coordinates` supplies every index axis in
+    /// index-axis order. The loaded U32 value supplies exactly the omitted
+    /// `axis` coordinate.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid handle, an aliased or non-input operand,
+    /// a wrong operand type, a nonliteral source boundary, index boundary, or
+    /// result-domain extent, a rank-zero source, an out-of-range axis, a wrong
+    /// coordinate arity, a duplicate or out-of-domain coordinate, or an exceeded
+    /// limit. The three literal-shape refusals precede the domain-shape
+    /// comparison, so a result shape is never derived by consulting a
+    /// `ShapeEnv`.
+    pub fn gather_read(
+        &mut self,
+        source: TensorId,
+        index: TensorId,
+        domain: &[DimensionId],
+        source_coordinates: &[IndexExprId],
+        index_coordinates: &[IndexExprId],
+        axis: Axis,
+    ) -> Result<ScalarValueId, IndexBuildError> {
+        let (data, bytes) = self.prepare_gather_access(
+            source,
+            index,
+            domain,
+            source_coordinates,
+            index_coordinates,
+            axis,
+        )?;
+        if let Some(access) = self.access_intern.get(&data)
+            && let Some(value) = self.read_values.get(access)
+        {
+            return Ok(ScalarValueId {
+                owner: self.owner,
+                index: *value,
+            });
+        }
+        limit(
+            self.values.len() + 1,
+            MAX_SCALAR_EXPRESSIONS,
+            IndexLimitKind::ScalarValues,
+        )?;
+        // The scalar result carries the *source* element type, because the
+        // gathered value is a source element unchanged. The index type never
+        // reaches a scalar value at all.
+        let value_type = self.resolve_tensor(source)?.value_type.clone();
+        let free_dimensions: BTreeSet<u32> = domain.iter().map(|d| d.index).collect();
+        let structural_key = Arc::new(access_read_key(&data, &self.tensors, &self.expressions));
+        let retained_bytes = structural_key
+            .len()
+            .saturating_add(value_type.canonical_encoding().as_bytes().len())
+            .saturating_add(free_dimensions.len().saturating_mul(4));
+        limit(
+            self.scalar_bytes.saturating_add(retained_bytes),
+            MAX_SCALAR_CANONICAL_BYTES,
+            IndexLimitKind::ScalarCanonicalBytes,
+        )?;
+        self.preflight_access(&data, bytes)?;
+        let access = self.commit_access(data, bytes)?;
+        let value = self.commit_value(
+            ScalarValueDefinition::AccessRead {
+                access: access.index,
+            },
+            value_type,
+            free_dimensions,
+            0,
+            structural_key,
+            retained_bytes,
+        );
+        self.read_values.insert(access.index, value.index);
+        Ok(value)
+    }
+
+    /// Checks one gather in the exact precedence the accepted surface fixes.
+    ///
+    /// The order is load-bearing rather than incidental. Handle validity comes
+    /// first so a later rule never reports on a handle this region does not
+    /// own. The three literal-shape rules precede `GatherDomainShape` so a
+    /// caller who authored a sourced boundary is told *that*, rather than being
+    /// shown a shape disagreement derived by consulting an environment this
+    /// surface deliberately does not consult. Coordinate scope is checked last
+    /// because it is the only rule whose subject is the domain the earlier
+    /// rules just validated.
+    fn prepare_gather_access(
+        &self,
+        source: TensorId,
+        index: TensorId,
+        domain: &[DimensionId],
+        source_coordinates: &[IndexExprId],
+        index_coordinates: &[IndexExprId],
+        axis: Axis,
+    ) -> Result<(AccessData, usize), IndexBuildError> {
+        let source_data = self.resolve_tensor(source)?.clone();
+        let index_data = self.resolve_tensor(index)?.clone();
+        if source.index == index.index {
+            return Err(IndexBuildError::GatherAliasedTensors { tensor: source });
+        }
+        if source_data.role != TensorRole::Input {
+            return Err(IndexBuildError::GatherSourceNotInput { tensor: source });
+        }
+        if index_data.role != TensorRole::Input {
+            return Err(IndexBuildError::GatherIndexNotInput { tensor: index });
+        }
+        if source_data.value_type != F32::resolved_type().clone() {
+            return Err(IndexBuildError::GatherSourceNotF32 {
+                tensor: source,
+                actual: Arc::new(source_data.value_type.clone()),
+            });
+        }
+        if source_data.value_type == index_data.value_type
+            || index_data.value_type != gather_index_resolved_type()
+        {
+            return Err(IndexBuildError::GatherIndexNotU32 {
+                tensor: index,
+                actual: Arc::new(index_data.value_type.clone()),
+            });
+        }
+        // `as_static()` rather than an environment query: an environment that
+        // happens to determine every symbol does not turn authored sourced
+        // spelling into a literal boundary, and admitting one here would claim
+        // sourced gather support this surface does not have.
+        let Some(source_shape) = source_data.shape.as_static() else {
+            return Err(IndexBuildError::GatherSourceShapeNotLiteral { tensor: source });
+        };
+        let Some(index_shape) = index_data.shape.as_static() else {
+            return Err(IndexBuildError::GatherIndexShapeNotLiteral { tensor: index });
+        };
+        let source_rank = source_shape.rank();
+        if source_rank == 0 {
+            return Err(IndexBuildError::GatherSourceRankZero { tensor: source });
+        }
+        if axis.get() as usize >= source_rank {
+            return Err(IndexBuildError::GatherAxisOutOfRange { axis, source_rank });
+        }
+        let expected_source_coordinates = source_rank.saturating_sub(1);
+        if source_coordinates.len() != expected_source_coordinates {
+            return Err(IndexBuildError::GatherSourceCoordinateRank {
+                expected: expected_source_coordinates,
+                actual: source_coordinates.len(),
+            });
+        }
+        if index_coordinates.len() != index_shape.rank() {
+            return Err(IndexBuildError::GatherIndexCoordinateRank {
+                expected: index_shape.rank(),
+                actual: index_coordinates.len(),
+            });
+        }
+        // The domain is validated in the caller's supplied order, so the first
+        // offending dimension is reported rather than whichever one a sorted
+        // set happened to visit first.
+        let mut domain_set = BTreeSet::new();
+        let mut declared = Vec::with_capacity(domain.len());
+        for dimension in domain {
+            self.resolve_dimension(*dimension)?;
+            if !domain_set.insert(dimension.index) {
+                return Err(IndexBuildError::DuplicateAccessDimension {
+                    dimension: *dimension,
+                });
+            }
+            let Some(extent) = self.dimensions[dimension.index as usize].extent.as_static() else {
+                return Err(IndexBuildError::GatherDomainExtentNotLiteral {
+                    dimension: *dimension,
+                });
+            };
+            declared.push(extent);
+        }
+        let declared_shape =
+            Shape::try_new(declared).map_err(|_| IndexBuildError::StructuralLimit {
+                resource: IndexLimitKind::TensorRank,
+                actual: domain.len() as u128,
+                limit: MAX_TENSOR_RANK as u128,
+            })?;
+        // Derived through the *semantic* family's own rule rather than a second
+        // splice written here, so the index layer cannot disagree with
+        // `tiler::gather-f32@1` about what a gather's result shape is.
+        let (_, derived) = gather_result_shape(axis, source_shape, index_shape)
+            .expect("the rank and axis rules were decided above");
+        if declared_shape != derived {
+            return Err(IndexBuildError::GatherDomainShape {
+                expected: derived,
+                actual: declared_shape,
+            });
+        }
+        let resolve_run = |run: &[IndexExprId]| -> Result<Vec<u32>, IndexBuildError> {
+            run.iter()
+                .map(|id| {
+                    let expr = self.resolve_expr(*id)?;
+                    if !expr.dimensions.is_subset(&domain_set) {
+                        return Err(IndexBuildError::CoordinateOutsideAccessDomain);
+                    }
+                    Ok(id.index)
+                })
+                .collect()
+        };
+        let source_coords = resolve_run(source_coordinates)?;
+        let index_coords = resolve_run(index_coordinates)?;
+        let data = AccessData::GatherRead(GatherReadAccessData {
+            source: source.index,
+            index: index.index,
+            axis: axis.get(),
+            domain: domain_set.iter().copied().collect(),
+            source_coordinates: source_coords,
+            index_coordinates: index_coords,
+        });
+        // Two tensor ordinals and one axis beyond a direct access's header.
+        let bytes = 36 + 4 * (data.domain().len() + data.coordinate_ordinals().len());
+        Ok((data, bytes))
+    }
     fn access(
         &mut self,
         tensor: TensorId,
@@ -1656,13 +1884,13 @@ impl IndexRegionBuilder {
                 Ok(id.index)
             })
             .collect::<Result<_, _>>()?;
-        let data = AccessData {
+        let data = AccessData::Direct(DirectAccessData {
             tensor: tensor.index,
             mode,
             domain: domain_set.iter().copied().collect(),
             coordinates: coords,
-        };
-        let bytes = 24 + 4 * (data.domain.len() + data.coordinates.len());
+        });
+        let bytes = 24 + 4 * (data.domain().len() + data.coordinate_ordinals().len());
         Ok((data, bytes))
     }
 
@@ -2247,13 +2475,15 @@ impl IndexRegionBuilder {
         )?;
         let access_data = self.resolve_access(access)?.clone();
         let value_data = self.resolve_value(value)?;
-        if access_data.mode != AccessMode::Write {
+        // A gather is a read by construction and has no `Write` spelling, so it
+        // reaches the same refusal a direct read does rather than a second one.
+        let Some(direct) = access_data.direct().filter(|d| d.mode == AccessMode::Write) else {
             return Err(IndexBuildError::OutputUsesRead);
-        }
-        if self.tensors[access_data.tensor as usize].value_type != value_data.value_type {
+        };
+        if self.tensors[direct.tensor as usize].value_type != value_data.value_type {
             return Err(IndexBuildError::OutputTypeMismatch);
         }
-        self.output_tensors.insert(access_data.tensor);
+        self.output_tensors.insert(direct.tensor);
         self.outputs.push(OutputData {
             access: access.index,
             value: value.index,
@@ -2680,10 +2910,12 @@ fn bounded_index(index: usize) -> u32 {
     u32::try_from(index).expect("governed region limits fit u32")
 }
 mod compact;
+mod gather;
 mod identity;
 mod proof;
 mod reduction;
 
+use gather::derive_gather_index_bounds;
 use identity::{
     access_read_key, alpha_expr_key_impl, apply_operation_key, assign_dimension,
     encode_reducer_body, encode_region, encode_u32s, encoded_reducer_body_len,

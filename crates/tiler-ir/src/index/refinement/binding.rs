@@ -350,7 +350,14 @@ pub(super) fn bind_results(
     let mut outputs: Vec<VerifiedTensorId> = Vec::new();
     let mut members: Vec<Vec<usize>> = Vec::new();
     for (ordinal, root) in roots.iter().enumerate() {
-        let tensor = region.access(root.access())?.tensor();
+        // An output root is a direct write by construction: `IndexRegionBuilder::output`
+        // refuses a read, and a gather has no write spelling to refuse.
+        let tensor = region
+            .access(root.access())?
+            .view()
+            .direct()
+            .expect("an output root is a direct write")
+            .tensor();
         if let Some(position) = outputs.iter().position(|bound| *bound == tensor) {
             members[position].push(ordinal);
         } else {
@@ -374,7 +381,11 @@ pub(super) fn bind_results(
         // incomplete write it is rather than as a boundary disagreement.
         for ordinal in &members[position] {
             let access = region.access(roots[*ordinal].access())?;
-            if access.write_ownership_proof().is_none() {
+            if access
+                .view()
+                .direct()
+                .is_none_or(|direct| direct.write_ownership_proof().is_none())
+            {
                 return Err(IndexRefinementVerificationError::IncompleteWrite { position });
             }
         }
