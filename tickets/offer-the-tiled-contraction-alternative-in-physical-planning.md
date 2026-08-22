@@ -1,7 +1,7 @@
 ---
 id: offer-the-tiled-contraction-alternative-in-physical-planning
 title: Offer the tiled contraction alternative in physical planning
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [realize-the-tiled-contraction-schedule-and-its-metal-emission, integrate-the-contraction-vertical-into-the-runtime]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, scheduling, cost-model, contraction]
-claimed_from: todo
-assignee: worker-costarm
-lease_expires_at: 1787429727
 ---
 ## User-visible outcome
 
