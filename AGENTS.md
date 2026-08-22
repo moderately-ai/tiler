@@ -194,7 +194,7 @@ Refill capacity after landings. Remove only clean, preserved worktrees with `git
 
 Keep Cargo output worktree-local. Gates can use 7–15 GB, so clear local `target/` data and size concurrency from measured free space.
 
-Make new checks fail deliberately before trusting them. Name and count populations so “nothing ran” cannot look green. Size one with `grep -o … | wc -l` and say which unit you report; `grep -c` counts **lines**, not occurrences, and undercounted a population by a quarter on 2026-08-19.
+Make new checks fail deliberately before trusting them. Name and count populations so “nothing ran” cannot look green. Size one with `grep -o … | wc -l` and say which unit you report; `grep -c` counts **lines**, not occurrences, and undercounted a population by a quarter on 2026-08-19. **Anchor the pattern too**: an unbounded `fn shape` also matches `fn shape_product` and `fn shape_of`, inflating a population from 26 to 43 on 2026-08-22. Bound it (`fn shape\b`) and say which form you counted.
 
 **Perturb the subject, never the assertion, and show the failure text.** Editing an assertion until it fails proves only that the assertion runs. Break the thing the check exists to guard — reuse a tag, drop a field, widen the ledger row, gate a module behind a platform predicate — and quote what the check said. A report that claims a check can fail without showing its message has not demonstrated it. Where a check guards several independent properties, perturb each one separately; a perturbation that reddens everything cannot show which assertion is load-bearing.
 
