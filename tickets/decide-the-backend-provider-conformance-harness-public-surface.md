@@ -1,7 +1,7 @@
 ---
 id: decide-the-backend-provider-conformance-harness-public-surface
 title: Decide the backend-provider conformance harness public surface
-status: done
+status: todo
 priority: p1
 dependencies: [exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio]
 related: [publish-the-backend-provider-conformance-suite, audit-backend-authoring-against-all-thirteen-responsibilities, specify-the-consumer-neutral-backend-provider-composition-contract, make-explain-dispositions-assertable-by-a-conformance-suite]
