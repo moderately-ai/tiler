@@ -1,7 +1,7 @@
 ---
 id: admit-the-selected-data-dependent-index-representation
 title: Admit the selected data-dependent index representation
-status: in-progress
+status: todo
 priority: p1
 dependencies: [accept-adr-0108-data-dependent-index-coordinate-siting, decide-the-data-dependent-index-representation-public-surface]
 related: [revise-adr-0108-with-a-complete-data-dependent-index-vertical, admit-an-invocation-scoped-gather-index-validation-receipt, emit-the-indirect-gather-on-metal]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/reference, implementation/compiler, c
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing, gather, verification, identity, decision, needs-tom, public-boundary]
-claimed_from: todo
-assignee: worker-gather-index
-lease_expires_at: 1787415365
 ---
 ## Status repair — 2026-08-19, this ticket was `blocked` with no surviving ground
 

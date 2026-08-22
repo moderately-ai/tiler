@@ -1,7 +1,7 @@
 ---
 id: repair-adr-0109-s-empty-evidence-and-mistyped-applies-to-edge
 title: Repair ADR 0109's empty evidence and mistyped applies-to edge
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [reconcile-the-three-adr-implementation-statuses-outside-the-metadata-vocabulary]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, decisions, metadata]
+claimed_from: todo
+assignee: worker-adr0109
+lease_expires_at: 1787419795
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: state-the-spike-currency-convention-where-readers-look
 title: State the spike currency convention where readers look
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [keep-the-ungated-spikes-compiling-against-the-workspace-api, keep-the-path-shared-route-gate-spike-compiling-or-make-its-breakage-loud]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, spikes, navigation]
+claimed_from: todo
+assignee: worker-spikedoc
+lease_expires_at: 1787419795
 ---
 ## User-visible outcome
 
