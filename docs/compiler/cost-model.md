@@ -75,6 +75,28 @@ than a large penalty.
 - materialized layout-conversion traffic.
 - peak live intermediate bytes and allocation lifetime.
 
+**Peak live intermediate bytes is a cost feature only while it is below a
+declared transient budget; against one it is hard feasibility and leaves this
+model entirely.** A plan whose live intermediates exceed the memory available
+cannot run at any price, so ranking the shortfall as a large cost would let
+selection trade it against a speedup and choose a plan that cannot execute —
+the substitution the [optimizer contract](optimizer.md) forbids and that
+"Separate hard feasibility from estimated cost so impossible plans fail
+clearly" states. The predicate therefore lives outside the cost model, in the
+compiler's transient-residency authority, and answers three ways rather than
+two: within budget, exceeds budget, or **budget undeclared**.
+
+The third answer is the live state of this repository rather than a formality:
+no target profile declares a transient-memory limit, so for a plan whose
+requirement is exact there is no second number to compare against. Reporting
+such a plan as feasible asserts an admission nothing supports, and reporting it
+as infeasible asserts a disproof nothing supports. It is retained in explain and
+search state and is **not admissible to an executable frontier**, which is the
+same treatment a target that never spoke to a synchronization subject or a
+numerical dimension already receives. The requirement is still reported exactly;
+it is the budget that is absent, and an explanation must say so in those words
+rather than printing a stand-in value.
+
 ## Parallel-execution features
 
 - grid and threadgroup dimensions;

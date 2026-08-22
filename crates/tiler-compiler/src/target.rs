@@ -219,6 +219,7 @@
 pub(crate) mod accuracy;
 pub(crate) mod feasibility;
 pub(crate) mod honourability;
+pub(crate) mod residency;
 
 // The declaration vocabulary itself, split by cohesion and kept private to this
 // module. Every path a consumer holds is one of the re-exports below, so a seam
