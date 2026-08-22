@@ -373,8 +373,11 @@ pub(super) fn verify_equivalence(
 /// the fail-closed direction and the one the exemption exists to be narrower
 /// than.
 ///
-/// - A pointwise output and a contraction publish from one region computing one
-///   recognized family; neither merges anything.
+/// - A pointwise output, a contraction, and a gather publish from one region
+///   computing one recognized family; none merges anything. A gather's two
+///   accesses are one region's source read and the address read serving it,
+///   not two merged occurrences — this predicate is about the occurrence count,
+///   and a gather's is one.
 /// - A fold merges nothing exactly when it reads a declared input directly. A
 ///   pointwise prologue is a merge — that is what the fused scalar program
 ///   *is* — and a materialized contributor is a partition of several regions,
@@ -387,7 +390,9 @@ fn merges_nothing(output: &crate::request::NormalizedOutput) -> bool {
     use crate::request::{NormalizedOutput, SerialSumContributor};
 
     match output {
-        NormalizedOutput::Pointwise(_) | NormalizedOutput::Contraction(_) => true,
+        NormalizedOutput::Pointwise(_)
+        | NormalizedOutput::Contraction(_)
+        | NormalizedOutput::Gather(_) => true,
         NormalizedOutput::SerialSum(serial) => match &serial.contributor {
             SerialSumContributor::DeclaredInput(_) => true,
             SerialSumContributor::PointwisePrologue { .. }

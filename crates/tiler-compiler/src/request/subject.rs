@@ -139,6 +139,73 @@ pub(crate) struct NormalizedSerialSumSubject {
     output_elements: u64,
 }
 
+/// The subject projection of one recognized gather.
+///
+/// **Every field of the recognized shape, copied rather than referenced.** The
+/// shape holds no graph handle a subject must not bind — its one occurrence
+/// coordinate is the graph-local member ordinal every other arm's member run
+/// already writes — so the projection is flat and total.
+///
+/// **Both declared ordinals travel, and that is the ADR 0108 amendment's whole
+/// point.** The checked semantic association between program-interface position
+/// and gather role lives *here*, in the compiler-private request subject, and in
+/// the stage and whole-program identities that fold it. Shared schedule identity
+/// carries only [`Self::index_access`], a region-local ordinal. So changing
+/// `source_input` or `index_input` alone moves this subject and leaves the
+/// reusable schedule relation byte-identical, which is the separation a
+/// declared-input ordinal in shared schedule IR would have destroyed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NormalizedGatherSubject {
+    input_keys: Vec<InputKey>,
+    output_key: OutputKey,
+    source_input: DeclaredInputOrdinal,
+    index_input: DeclaredInputOrdinal,
+    source_shape: Shape,
+    index_shape: Shape,
+    result_shape: Shape,
+    axis: Axis,
+    index_access: AccessOrdinal,
+    member: SemanticMemberId,
+    source_elements: u64,
+    index_elements: u64,
+    result_elements: u64,
+}
+
+impl NormalizedGatherSubject {
+    /// Returns the declared ordinal supplying the `f32` source payload.
+    pub(crate) const fn source_input(&self) -> DeclaredInputOrdinal {
+        self.source_input
+    }
+    /// Returns the declared ordinal supplying the exact U32 addresses.
+    pub(crate) const fn index_input(&self) -> DeclaredInputOrdinal {
+        self.index_input
+    }
+    pub(crate) const fn source_shape(&self) -> &Shape {
+        &self.source_shape
+    }
+    pub(crate) const fn index_shape(&self) -> &Shape {
+        &self.index_shape
+    }
+    /// Returns the published shape, which is the region's iteration domain.
+    pub(crate) const fn result_shape(&self) -> &Shape {
+        &self.result_shape
+    }
+    pub(crate) const fn axis(&self) -> Axis {
+        self.axis
+    }
+    /// Returns the region-local ordinal of the owned address-only read.
+    pub(crate) const fn index_access(&self) -> AccessOrdinal {
+        self.index_access
+    }
+    /// Returns the occurrence this gather's walk claimed.
+    pub(crate) const fn member(&self) -> SemanticMemberId {
+        self.member
+    }
+    pub(crate) const fn result_elements(&self) -> u64 {
+        self.result_elements
+    }
+}
+
 /// The subject projection of one recognized ordered named output.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum NormalizedOutputSubject {
@@ -157,6 +224,8 @@ pub(crate) enum NormalizedOutputSubject {
     /// projected, into the subject's own recursive slot, for the reason
     /// [`NormalizedEpilogueSubject`] projects a chain's.
     Staged(Box<NormalizedStagedSubject>),
+    /// Boxed for the reason [`NormalizedOutput::Gather`] is.
+    Gather(Box<NormalizedGatherSubject>),
 }
 
 /// The subject projection of one recognized staged family.
@@ -636,8 +705,68 @@ pub(super) fn encode_output_subject(bytes: &mut Vec<u8>, normalized: &Normalized
                 None => bytes.push(0x00),
             }
         }
+        // A seventh sub-tag, on the contraction, epilogue, and staged arms'
+        // argument: no existing arm's bytes move, so a subject encoded before
+        // this variant existed still encodes to exactly what it did, and a
+        // reader that reaches this tag is reading a subject the earlier
+        // vocabulary could not express at all. The enclosing
+        // `tiler.compiler.request-subject.v6` domain therefore does not step and
+        // no pinned request qualifier moves.
+        //
+        // **Every field below separates two programs, and the two declared
+        // ordinals are the ones a schedule-level spelling would have lost.**
+        // Source key and index key are the tensors; the declared ordinals are
+        // which interface position each plays, and `gather(a, b)` and
+        // `gather(b, a)` over one pair of declarations agree on every other
+        // field of this arm. The three shapes are not derivable from each other
+        // in the reader's direction — the result splices the index shape into
+        // the source at `axis`, so recovering the operands from the result
+        // requires the axis and both ranks — and are written whole rather than
+        // recomputed. The element counts are written although each is a product
+        // of its shape's extents, because that product is the arm's own claim
+        // about the tensor the ABI binds and a subject that recomputed it would
+        // silently agree with a recognizer that had derived it wrongly.
+        //
+        // **The association spelling tag is written although only one spelling
+        // exists.** Tom accepted option B, the source-side reference, so this
+        // encoder always writes `0x01` and always follows it with the local
+        // index-access ordinal. The tag is not dead framing: the acceptance
+        // record names the exact evidence — a demonstration that every detached
+        // relation consumer already owns the complete access list at no cost —
+        // that reopens the source-side-versus-fieldless choice as a *new*
+        // decision. Carrying the discriminant now means that decision, if it
+        // ever fires, writes `0x02` into a slot readers already frame, instead
+        // of moving every gather subject's bytes to make room for it.
+        NormalizedOutputSubject::Gather(normalized) => {
+            push_slice(bytes, b"gather-f32.v1");
+            push_len(bytes, normalized.input_keys.len());
+            for key in &normalized.input_keys {
+                push_slice(bytes, key.as_str().as_bytes());
+            }
+            push_slice(bytes, normalized.output_key.as_str().as_bytes());
+            bytes.extend_from_slice(&normalized.source_input.to_be_bytes());
+            bytes.extend_from_slice(&normalized.index_input.to_be_bytes());
+            encode_explain_shape(bytes, &normalized.source_shape);
+            encode_explain_shape(bytes, &normalized.index_shape);
+            encode_explain_shape(bytes, &normalized.result_shape);
+            bytes.extend_from_slice(&normalized.axis.get().to_be_bytes());
+            bytes.extend_from_slice(&normalized.member.0.to_be_bytes());
+            bytes.extend_from_slice(&normalized.source_elements.to_be_bytes());
+            bytes.extend_from_slice(&normalized.index_elements.to_be_bytes());
+            bytes.extend_from_slice(&normalized.result_elements.to_be_bytes());
+            bytes.push(GATHER_SOURCE_SIDE_ASSOCIATION_TAG);
+            bytes.extend_from_slice(&normalized.index_access.get().to_be_bytes());
+        }
     }
 }
+
+/// Request-subject spelling tag for the accepted source-side gather association.
+///
+/// Option B carries the address read's region-local ordinal on the owning source
+/// relation. The fieldless canonical-order spelling that lost the decision would
+/// take `0x02` and write no ordinal; reserving the discriminant is what would let
+/// that reopening add a spelling without moving these bytes.
+pub(super) const GATHER_SOURCE_SIDE_ASSOCIATION_TAG: u8 = 0x01;
 
 /// Appends the canonical `serial-sum-produced-f32.v1` encoding of one fold whose
 /// contributors another region materializes.
@@ -979,6 +1108,14 @@ pub(super) const UNREAD_DECLARED_INPUT_TAG: u8 = 0x04;
 /// domain does not step because previously encodable maps keep their payloads.
 pub(super) const PARAMETRIC_BROADCAST_ACCESS_TAG: u8 = 0x05;
 
+/// Request-subject tag for the gather's source relation.
+///
+/// Above [`PARAMETRIC_BROADCAST_ACCESS_TAG`], which is what keeps
+/// [`UNREAD_DECLARED_INPUT_TAG`]'s `0x04` a byte no relation can write and keeps
+/// every already-encodable map's bytes exact. The `tiler.compiler.request-subject.v6`
+/// domain does not step: this is a previously unencodable population.
+pub(super) const GATHER_SOURCE_ACCESS_TAG: u8 = 0x06;
+
 /// Encodes which declared inputs one whole-program, prologue, or fold region
 /// reads, and how.
 ///
@@ -1112,6 +1249,38 @@ pub(super) fn encode_access_relation(output: &mut Vec<u8>, map: &LogicalAccess) 
             encode_explain_sourced_shape(output, operand_shape);
             push_slice(output, mapping.canonical_encoding().as_bytes());
             push_slice(output, environment.as_bytes());
+        }
+        // The gather's source relation, at a tag above the parametric carrier's
+        // so no already-encodable map moves and the unread-input marker's `0x04`
+        // stays unreachable from this encoder.
+        //
+        // **This tag is the compiler request domain's, not the schedule's**, and
+        // the two are deliberately different values for one relation:
+        // `tiler_ir::schedule`'s own encoder writes `GatherSource` at `0x0C`.
+        // Tag spaces here are per-frame rather than global, so the pair is not a
+        // disagreement to reconcile — it is two independent frames each assigning
+        // its own next free value, and forcing them to agree would couple two
+        // identity domains that step for different reasons.
+        //
+        // The fields are the relation's own five, in the schedule declaration's
+        // order, so this encoding is injective independently of the enclosing
+        // output subject: two reads differing only in gathered axis, in either
+        // operand shape, or in which local read supplies the address differ in
+        // these bytes even when the recognized output around them is identical.
+        LogicalAccess::GatherSource {
+            source_shape,
+            result_shape,
+            axis,
+            index_access,
+            index_shape,
+        } => {
+            output.push(GATHER_SOURCE_ACCESS_TAG);
+            encode_explain_shape(output, source_shape);
+            encode_explain_shape(output, result_shape);
+            output.extend_from_slice(&axis.get().to_be_bytes());
+            output.push(GATHER_SOURCE_SIDE_ASSOCIATION_TAG);
+            output.extend_from_slice(&index_access.get().to_be_bytes());
+            encode_explain_shape(output, index_shape);
         }
         // No other relation can be recorded here. The arm is a refusal to encode
         // rather than a wildcard tag, so a relation added later cannot silently
@@ -1310,6 +1479,23 @@ pub(super) fn output_subject(normalized: &NormalizedOutput) -> NormalizedOutputS
             NormalizedOutputSubject::Staged(Box::new(NormalizedStagedSubject {
                 occurrence,
                 producer,
+            }))
+        }
+        NormalizedOutput::Gather(normalized) => {
+            NormalizedOutputSubject::Gather(Box::new(NormalizedGatherSubject {
+                input_keys: normalized.input_keys.clone(),
+                output_key: normalized.output_key.clone(),
+                source_input: normalized.source_input,
+                index_input: normalized.index_input,
+                source_shape: normalized.source_shape.clone(),
+                index_shape: normalized.index_shape.clone(),
+                result_shape: normalized.result_shape.clone(),
+                axis: normalized.axis,
+                index_access: normalized.index_access,
+                member: normalized.member,
+                source_elements: normalized.source_elements,
+                index_elements: normalized.index_elements,
+                result_elements: normalized.result_elements,
             }))
         }
         NormalizedOutput::Epilogue(chain) => {

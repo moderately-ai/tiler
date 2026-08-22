@@ -234,8 +234,28 @@ pub(super) fn select_supported_strategy(
 pub(super) fn recognized_program_arithmetic(
     program: &SemanticProgram,
 ) -> Result<ArithmeticType, RequestError> {
+    let addresses = gather_address_operands(program);
     let mut recognized: Option<ArithmeticType> = None;
     for value in program.values() {
+        // The exact address operand of a gather occurrence, and nothing else,
+        // is exempt from the program's one arithmetic. It is not a value any
+        // region computes over: the index load is intrinsic to the compound
+        // access, it never becomes a scalar SSA value, and no per-point
+        // vocabulary spells arithmetic on it. Requiring this walk to name a
+        // width for it would either refuse every admitted gather under
+        // `dtype-recognized`, or — if U32 were instead added to
+        // [`recognized_arithmetic`] — widen the *general* scalar dispatch set to
+        // a width no expression node can hold and no numerical contract governs.
+        //
+        // **The exemption is per value resolved from an operand position, not
+        // per type**, which is what keeps it from being a U32 admission. A U32
+        // value that is not some gather's second operand is not in this set and
+        // still refuses here; a program that also feeds this same index tensor
+        // to another operation has that other use's operand values outside the
+        // set too, so the wider program still fails.
+        if addresses.contains(&value.id()) {
+            continue;
+        }
         let Some(arithmetic) = recognized_arithmetic(value.resolved_type()) else {
             return mismatch("dtype-recognized");
         };
@@ -252,6 +272,176 @@ pub(super) fn recognized_program_arithmetic(
         phase: "strategy",
         rule: "dtype-recognized",
     })
+}
+
+/// Recognizes an output produced by one data-dependent gather occurrence.
+///
+/// **Every fact is re-derived here rather than trusted from the occurrence.**
+/// The semantic inferencer already proved the result shape when the occurrence
+/// was constructed, so this walk recomputes it from the axis and the two operand
+/// shapes and uses its own answer: a disagreement would be invalid graph state,
+/// and resolving it in favour of either side is how a region acquires a domain
+/// nothing derived.
+///
+/// **The literal-boundary refusals are this layer's own, not a delegation.** The
+/// index builder independently enforces them for direct authoring, and the
+/// semantic carrier refuses a symbolic operand before inference; stating them
+/// again here is what keeps a *recognized* gather from carrying a sourced shape
+/// into a request subject that has no spelling for one. All three report
+/// `gather-literal-shape` rather than being folded into the shape-handle rule,
+/// because "this program's boundary is symbolic" and "this handle names no
+/// shape" are different findings.
+///
+/// # Errors
+///
+/// Returns [`RequestError::UnsupportedCapability`] under `gather-axis` for a
+/// malformed or out-of-range gathered axis, `gather-operand-arity` for an
+/// occurrence not supplying exactly two operands, `gather-operand-input` for a
+/// source or index that is not a declared program input, `gather-operand-alias`
+/// when one declaration plays both roles, `gather-literal-shape` for a symbolic
+/// source, index, or derived result boundary, `gather-result-shape` when the
+/// axis and operands admit no result, and `gather-elements` when an element
+/// count overflows.
+fn recognize_gather(
+    program: &SemanticProgram,
+    output_key: OutputKey,
+    member: SemanticMemberId,
+    root: &tiler_ir::semantic::OperationRef<'_>,
+) -> Result<NormalizedGather, RequestError> {
+    let Some(axis) = root
+        .attributes()
+        .get(GATHER_AXIS_ATTRIBUTE)
+        .and_then(|value| gather_axis(value).ok())
+    else {
+        return mismatch("gather-axis");
+    };
+    let operands: Vec<ValueId> = root.operands().collect();
+    let [source_value, index_value] = operands.as_slice() else {
+        return mismatch("gather-operand-arity");
+    };
+    // Both operands must be declared program inputs. The accepted surface admits
+    // no computed source and no computed index — an index this walk cannot bind
+    // to a declared buffer is one no invocation could validate and no ABI could
+    // pass — so a non-input operand refuses here rather than being resolved to
+    // whichever producing occurrence happened to write it.
+    let Some(source_input) = declared_input_ordinal(program, *source_value) else {
+        return mismatch("gather-operand-input");
+    };
+    let Some(index_input) = declared_input_ordinal(program, *index_value) else {
+        return mismatch("gather-operand-input");
+    };
+    // One declaration cannot play both semantic roles. This is a *distinctness*
+    // rule over declared positions rather than an aliasing analysis: two
+    // declarations may still be bound to overlapping storage at call time, and
+    // this admission neither detects nor authorizes that.
+    if source_input == index_input {
+        return mismatch("gather-operand-alias");
+    }
+    let source_shape = literal_shape(program, *source_value, "gather-literal-shape")?;
+    let index_shape = literal_shape(program, *index_value, "gather-literal-shape")?;
+    let Ok((_, result_shape)) =
+        tiler_ir::semantic::gather_result_shape(axis, &source_shape, &index_shape)
+    else {
+        return mismatch("gather-result-shape");
+    };
+    // The declared output's own shape must be the derived one. The inferencer
+    // proved them equal at construction, so a disagreement is invalid state and
+    // is refused rather than resolved in favour of either side — the same rule
+    // the contraction recognizer applies to its derived output shape.
+    let published = literal_shape(
+        program,
+        root.results().next().unwrap_or(*source_value),
+        "gather-literal-shape",
+    )?;
+    if published != result_shape {
+        return mismatch("gather-result-shape");
+    }
+    let counts = [&source_shape, &index_shape, &result_shape]
+        .map(|shape| tiler_ir::schedule::element_count(shape).ok());
+    let [
+        Some(source_elements),
+        Some(index_elements),
+        Some(result_elements),
+    ] = counts
+    else {
+        return mismatch("gather-elements");
+    };
+    Ok(NormalizedGather {
+        input_keys: program.inputs().map(|input| input.key().clone()).collect(),
+        output_key,
+        source_input,
+        index_input,
+        source_shape,
+        index_shape,
+        result_shape,
+        axis,
+        // Canonical order for the one-gather occurrence this surface admits:
+        // source read 0, address read 1, write 2. Stated once here and
+        // independently re-checked by `physical::gather_accesses_match` against
+        // the region actually built, so the retained ordinal cannot drift from
+        // the read it names.
+        index_access: AccessOrdinal::new(1),
+        member,
+        source_elements,
+        index_elements,
+        result_elements,
+    })
+}
+
+/// The declared input position one value occupies, or `None` when it is not a
+/// declared program input.
+fn declared_input_ordinal(
+    program: &SemanticProgram,
+    value: ValueId,
+) -> Option<DeclaredInputOrdinal> {
+    program
+        .inputs()
+        .position(|input| input.value() == value)
+        .and_then(|position| u32::try_from(position).ok())
+        .map(DeclaredInputOrdinal::new)
+}
+
+/// One value's wholly literal shape, or a refusal naming the symbolic boundary.
+///
+/// `as_static` rather than an environment fold, deliberately: an environment
+/// that happens to determine every symbol does not turn an authored sourced
+/// spelling into a literal boundary, and specializing a request on a bound value
+/// is exactly what the accepted surface refuses.
+fn literal_shape(
+    program: &SemanticProgram,
+    value: ValueId,
+    rule: &'static str,
+) -> Result<Shape, RequestError> {
+    match sourced_shape(program, value, rule)?.as_static() {
+        Some(shape) => Ok(shape.clone()),
+        None => Err(RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule,
+        }),
+    }
+}
+
+/// The values occupying the address-operand position of a gather occurrence.
+///
+/// **Position, not type, is the definition.** A gather's schema fixes exactly
+/// two operands in the order `[source, index]`, so the address is operand one of
+/// every `tiler::gather-f32@1` occurrence; deriving the set from that position
+/// rather than from "every U32 value" is what stops the exemption in
+/// [`recognized_program_arithmetic`] from becoming a general U32 admission.
+///
+/// A malformed occurrence supplying fewer than two operands contributes nothing
+/// and is therefore *not* exempted, so it still refuses at the arithmetic walk
+/// rather than slipping through a set built by a lenient traversal. That is the
+/// fail-closed direction: the semantic registry's `OperationArity::exact(2)`
+/// already refuses such an occurrence at construction, so this is defence in
+/// depth rather than a live gate.
+fn gather_address_operands(program: &SemanticProgram) -> BTreeSet<ValueId> {
+    let gather = gather_f32_op();
+    program
+        .operations()
+        .filter(|operation| operation.key() == &gather)
+        .filter_map(|operation| operation.operands().nth(1))
+        .collect()
 }
 
 /// The arithmetic type one resolved value type names, when this build states a
@@ -349,6 +539,14 @@ fn recognize_output(
     } else if root.key() == &tensor_contraction_f32_op() {
         normalize_contraction(program, output.value(), output.key().clone())
             .map(|normalized| NormalizedOutput::Contraction(Box::new(normalized)))
+    } else if root.key() == &gather_f32_op() {
+        recognize_gather(
+            program,
+            output.key().clone(),
+            SemanticMemberId(member),
+            &root,
+        )
+        .map(|normalized| NormalizedOutput::Gather(Box::new(normalized)))
     } else if laws.family_realizes_region_sequence(root.key()) {
         recognize_staged_family(
             program,

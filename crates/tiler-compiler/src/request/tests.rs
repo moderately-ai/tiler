@@ -968,6 +968,7 @@ fn every_arm_answers_the_declared_tensors_own_count() {
         NormalizedOutput::Contraction(_) => "contraction",
         NormalizedOutput::Epilogue(_) => "epilogue",
         NormalizedOutput::Staged(_) => "staged",
+        NormalizedOutput::Gather(_) => "gather",
     };
     let rows: [CountRow; 7] = [
         CountRow {
@@ -1265,19 +1266,33 @@ fn laws_of(program: &SemanticProgram) -> FrozenIndexRealizationLawRegistry {
     .expect("a law authority over the fixture's own semantic authority coheres")
 }
 
-/// A gather stops first at exact target dispatch, then at arithmetic recognition.
+/// A gather stops first at exact target dispatch, then at governed lowering.
 ///
 /// The second compile changes only the target's exact U32 dispatch fact. It
-/// keeps the semantic program byte-for-byte identical, so advancing from the
-/// target-local `DTypeNotDispatchable` refusal to `dtype-recognized` pins the
+/// keeps the semantic program byte-for-byte identical, so the advance from the
+/// target-local `DTypeNotDispatchable` refusal to the next layer pins the
 /// request boundary's ordered diagnostic layers without granting Gather a
 /// production target claim or a planning route.
+///
+/// **The second expectation moved from `dtype-recognized` to
+/// `missing-capability`, and the move is this lane's landing.** The U32 index is
+/// no longer refused by whole-program arithmetic recognition: it is exempt by
+/// operand position, the gather recognizer resolves the output, and the request
+/// verifies. The next authority that has nothing to say about a gather is the
+/// governed lowering registry, which carries no gather capability row — so the
+/// program now reaches `phase: "lowering"` and stops there.
+///
+/// That is still fail-closed, and deliberately so: no gather acquires a schedule,
+/// kernel, artifact, cache, or dispatch route from this lane. Two named
+/// authorities stand between this refusal and one that could — the governed row
+/// itself, and `RegionVocabularyWall::GatherProofUnavailable`, which is what
+/// physical planning answers once a row exists.
 ///
 /// Watched failing under a deliberate subject perturbation: removing the
 /// U32 row from `governed_with_gather_index_dispatch_for_test` makes the
 /// second compile return the same target-local refusal as the first.
 #[test]
-fn a_governed_gather_refuses_at_dispatch_before_arithmetic_recognition() {
+fn a_governed_gather_refuses_at_dispatch_before_governed_lowering() {
     let program = gather_program();
     let product = crate::pipeline::compile(CompilationRequest::governed(&program))
         .expect("a target-local refusal is an ordinary compilation product");
@@ -1298,46 +1313,112 @@ fn a_governed_gather_refuses_at_dispatch_before_arithmetic_recognition() {
 
     let mut widened = CompilationRequest::governed(&program);
     widened.target_profiles = vec![TargetProfile::governed_with_gather_index_dispatch_for_test()];
-    match crate::pipeline::compile(widened) {
-        Err(error) => assert_eq!(
-            error,
-            crate::pipeline::CompileError::UnsupportedCapability(
-                RequestError::UnsupportedCapability {
-                    phase: "strategy",
-                    rule: "dtype-recognized",
-                }
-            ),
-            "an exact U32 dispatch fact advances the same program to arithmetic recognition",
-        ),
-        Ok(product) => {
-            let [outcome] = product.targets.as_slice() else {
-                panic!("the widened request carries one target outcome");
-            };
-            panic!(
-                "the exact U32 dispatch row did not advance recognition: {:?}",
-                outcome.failure()
-            );
-        }
-    }
+    // The refusal is compared by its phase and rule alone. A `CompileError`
+    // reaching this layer carries a whole explain trace, and comparing the
+    // error whole would pin every byte of that trace here — a fixture-shaped
+    // assertion that would move for reasons unrelated to the ordered layers
+    // this test is about.
+    let advanced = crate::pipeline::compile(widened).expect_err("the widened request refuses");
+    assert_eq!(
+        planning_capability_rule(&advanced)
+            .unwrap_or_else(|| panic!("the widened request refused with {advanced:?}")),
+        ("lowering", "missing-capability"),
+        "an exact U32 dispatch fact advances the same program past recognition to \
+governed lowering, which carries no gather capability row",
+    );
 }
 
-/// The real output recognizer independently refuses Gather under `operation-set`.
+/// The real output recognizer resolves a Gather to its own recognized shape.
 ///
-/// Supplying F32 deliberately bypasses whole-program arithmetic recognition;
-/// the real realization-law authority and output walk then reach the later
-/// operation-family boundary rather than an arbitrary test stub.
+/// **This assertion is the inverse of the one it replaces, and the inversion is
+/// the landing.** It previously required `operation-set` — the refusal a walk
+/// reports for an occurrence no recognizer claims — because no gather arm
+/// existed. `recognize_gather` is that arm, so the same fixture through the same
+/// real realization-law authority and output walk now produces a recognized
+/// shape, and leaving the old expectation in place would have left the suite
+/// asserting the opposite of the tree.
 ///
-/// Watched failing under a deliberate subject perturbation: classifying the
-/// Gather key in `elementwise_family` advances this walk to its attribute
-/// rule, so this exact `operation-set` expectation changes.
+/// Every field is checked against the fixture rather than the shape being merely
+/// destructured, because the fields are what the request subject binds: the two
+/// declared ordinals are the ADR 0108 amendment's checked association, and the
+/// result shape is derived here rather than read from the graph.
+///
+/// Watched failing under a deliberate subject perturbation: swapping
+/// `gather_program`'s two declared inputs so the U32 index is declared first
+/// moves `source_input`/`index_input` to `1`/`0` and reddens this exact
+/// assertion — the ordinals are read from declaration position, not assumed.
 #[test]
-fn gather_is_absent_from_the_real_request_recognition_operation_set() {
+fn the_real_request_recognizer_resolves_a_gather_to_its_own_shape() {
     let program = gather_program();
+    let recognized = recognize_program_outputs(&program, &laws_of(&program), ArithmeticType::F32)
+        .expect("the real output walk recognizes a gather");
+    let [output] = recognized.outputs() else {
+        panic!("the fixture declares one output");
+    };
+    let gather = output.gather().expect("the recognized shape is a gather");
+    assert_eq!(gather.source_input, 0, "the source is declared first");
+    assert_eq!(gather.index_input, 1, "the index is declared second");
+    assert_eq!(gather.source_shape, Shape::from_dims([4, 2]));
+    assert_eq!(gather.index_shape, Shape::from_dims([3]));
+    assert_eq!(
+        gather.result_shape,
+        Shape::from_dims([3, 2]),
+        "the index shape splices into the source at the gathered axis",
+    );
+    assert_eq!(gather.axis, Axis::new(0));
+    assert_eq!(
+        gather.index_access,
+        AccessOrdinal::new(1),
+        "the address read is canonical local access 1",
+    );
+    assert_eq!(
+        [
+            gather.source_elements,
+            gather.index_elements,
+            gather.result_elements
+        ],
+        [8, 3, 6],
+    );
+}
+
+/// A gather whose source is not a declared program input is refused by name.
+///
+/// The accepted surface admits only declared program inputs as either gather
+/// operand. This drives the `gather-operand-input` refusal specifically, rather
+/// than letting such a program fall through to a neighbouring rule.
+///
+/// **The perturbation is on the subject, and it is one edge.** The fixture is
+/// [`gather_program`] with a single `F32Multiply` interposed on the source, so
+/// the gathered-from value is computed rather than declared while its type,
+/// shape, the index operand, the axis, and the gather occurrence itself are all
+/// unchanged. Removing that one multiply restores the recognized shape the test
+/// above asserts, which is what shows this refusal is about the operand's source
+/// and not about the family.
+#[test]
+fn a_gather_reading_a_computed_source_is_refused_under_operand_input() {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let source = builder
+        .input::<F32>(InputKey::new("source").unwrap(), Shape::from_dims([4, 2]))
+        .unwrap();
+    let index = builder
+        .input_resolved(
+            InputKey::new("index").unwrap(),
+            Shape::from_dims([3]),
+            gather_index_resolved_type(),
+        )
+        .unwrap();
+    let one = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+    let computed = F32Multiply::apply(&mut builder, source, one).unwrap();
+    let gathered = F32Gather::apply(&mut builder, computed, index, Axis::new(0)).unwrap();
+    builder
+        .output(OutputKey::new("result").unwrap(), gathered)
+        .unwrap();
+    let program = builder.build().unwrap();
     assert_eq!(
         recognize_program_outputs(&program, &laws_of(&program), ArithmeticType::F32),
         Err(RequestError::UnsupportedCapability {
             phase: "strategy",
-            rule: "operation-set",
+            rule: "gather-operand-input",
         }),
     );
 }
@@ -5307,6 +5388,344 @@ fn recognized_parametric_read(program: &SemanticProgram) -> LogicalAccess {
         .map(|(_, map)| map.clone())
         .find(|map| matches!(map, LogicalAccess::ParametricBroadcast { .. }))
         .expect("recognition must retain the parametric carrier")
+}
+
+/// Builds a gather fixture over stated shapes and a stated gathered axis.
+fn gather_program_over(source: [u64; 2], index: [u64; 1], axis: u32) -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let source = builder
+        .input::<F32>(InputKey::new("source").unwrap(), Shape::from_dims(source))
+        .unwrap();
+    let index = builder
+        .input_resolved(
+            InputKey::new("index").unwrap(),
+            Shape::from_dims(index),
+            gather_index_resolved_type(),
+        )
+        .unwrap();
+    let gathered = F32Gather::apply(&mut builder, source, index, Axis::new(axis)).unwrap();
+    builder
+        .output(OutputKey::new("result").unwrap(), gathered)
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// The gather source relation takes its own request tag and encodes injectively.
+///
+/// **The tag is checked against the whole named space rather than against one
+/// neighbour.** `encode_access_relation` writes `0x01`, `0x02`, `0x03`, `0x05`,
+/// and the refusal `0x00`, and `UNREAD_DECLARED_INPUT_TAG` occupies `0x04` in
+/// the run this encoder's output sits inside — so a gather taking any of those
+/// would either collide with a relation or forge the unread-input marker. `0x06`
+/// is the first value above all of them.
+///
+/// **`0x06` is deliberately not the schedule layer's `0x0C` for the same
+/// relation.** Tag spaces here are per-frame, so the two frames each assign
+/// their own next free value; this assertion pins the request frame's, and the
+/// schedule frame's is pinned in `tiler-ir`.
+///
+/// Watched failing under three separate subject perturbations, each on the
+/// encoder rather than on the assertion:
+/// writing the gather at `PARAMETRIC_BROADCAST_ACCESS_TAG` collapses the first
+/// assertion; writing it at `UNREAD_DECLARED_INPUT_TAG` collapses the second;
+/// and swapping the source and index shape frames collapses the third, because
+/// the two shapes differ.
+#[test]
+fn the_gather_source_relation_takes_its_own_request_tag_and_encodes_injectively() {
+    let relation = |axis: u32, index_access: u32| LogicalAccess::GatherSource {
+        source_shape: Shape::from_dims([4, 2]),
+        result_shape: Shape::from_dims([3, 2]),
+        axis: Axis::new(axis),
+        index_access: AccessOrdinal::new(index_access),
+        index_shape: Shape::from_dims([3]),
+    };
+    let encode = |map: &LogicalAccess| {
+        let mut bytes = Vec::new();
+        encode_access_relation(&mut bytes, map);
+        bytes
+    };
+
+    let gather = encode(&relation(0, 1));
+    assert_eq!(
+        gather.first().copied(),
+        Some(0x06),
+        "the gather source relation takes the request frame's next free tag",
+    );
+
+    // **The distinctness check is derived from the encoder, not compared to the
+    // literal above, and the separation is deliberate.** Asserting that the
+    // gather's tag differs from each named constant would be unreachable by
+    // pigeonhole: any perturbation of the gather tag trips the pin first, so
+    // those assertions could never be the ones to fail and would prove only that
+    // the pin runs. Collecting the encoder's *own* answers and requiring them
+    // pairwise distinct fails independently — moving `LinearIdentity` onto
+    // `0x06` reddens this while leaving the pin above green.
+    //
+    // `LinearIdentity` and the gather are the two relations constructible here
+    // without a program fixture; the parametric carrier's tag is asserted from
+    // its constant, and the reindex and replication tags are covered by the
+    // pinned subject goldens elsewhere in this module.
+    let mut tags: Vec<u8> = [
+        encode(&LogicalAccess::LinearIdentity),
+        encode(&LogicalAccess::ScalarBroadcast),
+        gather.clone(),
+    ]
+    .iter()
+    .filter_map(|bytes| bytes.first().copied())
+    // The refusal tag is written for every relation this encoder declines, so
+    // several relations legitimately share it and it is not part of the
+    // distinct population.
+    .filter(|tag| *tag != 0x00)
+    .collect();
+    let written = tags.len();
+    tags.sort_unstable();
+    tags.dedup();
+    assert_eq!(
+        tags.len(),
+        written,
+        "two encodable access relations share a request-subject tag: {tags:?}",
+    );
+    assert!(
+        !tags.contains(&UNREAD_DECLARED_INPUT_TAG),
+        "no relation may forge the unread-declared-input marker: {tags:?}",
+    );
+    assert!(
+        !tags.contains(&PARAMETRIC_BROADCAST_ACCESS_TAG),
+        "these relations are not the parametric carrier: {tags:?}",
+    );
+
+    // Each member the relation carries separates two encodings on its own.
+    assert_ne!(
+        gather,
+        encode(&relation(1, 1)),
+        "the gathered axis is identity",
+    );
+    assert_ne!(
+        gather,
+        encode(&relation(0, 2)),
+        "the owned address read's local ordinal is identity",
+    );
+}
+
+/// The `gather-f32.v1` output subject separates every field it carries.
+///
+/// **The arm is encoded directly rather than through the whole request subject,
+/// and that is what makes this test able to fail.** A request subject opens with
+/// the semantic graph identity, which already separates any two *programs* that
+/// differ in a gather's axis or shapes — so a whole-subject comparison stays
+/// green with a field dropped from this arm entirely, and would be asserting the
+/// graph identity rather than the projection. Leaning on the enclosing subject
+/// to separate arms is exactly the unstated invariant
+/// [`encode_elementwise_reads`]'s own documentation forbids resting identity on.
+///
+/// **Two of these perturbations are unreachable from any program**, which is the
+/// other reason the shape is a forge rather than a fixture pair. Declaration
+/// order fixes `source_input`/`index_input`, and canonical access order fixes
+/// `index_access` at one, so swapping the declared association or moving the
+/// owned address ordinal cannot be expressed by authoring a different program.
+/// The association swap is the load-bearing one: it is the ADR 0108
+/// schedule-clause amendment's central claim that the checked
+/// declared-input association lives *here*, in the compiler-private request
+/// subject, and nowhere in shared schedule identity.
+///
+/// Watched failing under a deliberate subject perturbation: dropping
+/// `normalized.axis` from `encode_output_subject`'s gather arm reddens the first
+/// row with `the gathered axis must move the subject`, while leaving the whole
+/// request subject's own goldens green — which is the defect the direct
+/// encoding exists to catch.
+#[test]
+fn a_gather_output_subject_separates_every_field_it_carries() {
+    let program = gather_program_over([4, 4], [4], 0);
+    let normalized = select_supported_strategy(&program, &laws_of(&program))
+        .expect("the gather fixture is recognized");
+    let [recognized] = normalized.outputs() else {
+        panic!("the fixture declares one output");
+    };
+    let encoded = |output: &NormalizedOutput| {
+        let mut bytes = Vec::new();
+        encode_output_subject(&mut bytes, &output_subject(output));
+        bytes
+    };
+    let forge = |edit: fn(&mut NormalizedGather)| {
+        let mut forged = recognized.clone();
+        let NormalizedOutput::Gather(gather) = &mut forged else {
+            panic!("the fixture recognizes as a gather");
+        };
+        edit(gather);
+        encoded(&forged)
+    };
+
+    let base = encoded(recognized);
+    assert!(!base.is_empty(), "the gather arm encodes a subject");
+
+    for (label, forged) in [
+        (
+            "the gathered axis",
+            forge(|gather| gather.axis = Axis::new(1)),
+        ),
+        (
+            "the declared source/index association",
+            forge(|gather| std::mem::swap(&mut gather.source_input, &mut gather.index_input)),
+        ),
+        (
+            "the owned address read's local ordinal",
+            forge(|gather| gather.index_access = AccessOrdinal::new(2)),
+        ),
+        (
+            "the source shape",
+            forge(|gather| gather.source_shape = Shape::from_dims([5, 4])),
+        ),
+        (
+            "the index shape",
+            forge(|gather| gather.index_shape = Shape::from_dims([3])),
+        ),
+        (
+            "the result shape",
+            forge(|gather| gather.result_shape = Shape::from_dims([4, 5])),
+        ),
+        (
+            "the claimed occurrence",
+            forge(|gather| gather.member = SemanticMemberId(gather.member.0 + 1)),
+        ),
+        (
+            "the source element count",
+            forge(|gather| gather.source_elements += 1),
+        ),
+        (
+            "the index element count",
+            forge(|gather| gather.index_elements += 1),
+        ),
+        (
+            "the result element count",
+            forge(|gather| gather.result_elements += 1),
+        ),
+    ] {
+        assert_ne!(base, forged, "{label} must move the subject");
+    }
+}
+
+/// A gather takes its own output sub-tag, and no other arm's bytes move.
+///
+/// The sub-tag is what keeps `tiler.compiler.request-subject.v6` from stepping:
+/// a gather is a subject the earlier vocabulary could not express at all, so
+/// every previously encodable output still encodes to exactly what it did. The
+/// second half of that claim is carried by the module's existing pinned
+/// subjects, which this lane did not touch and which pass unchanged; this states
+/// the first half.
+#[test]
+fn a_gather_output_subject_takes_its_own_sub_tag() {
+    let program = gather_program_over([4, 2], [3], 0);
+    let normalized = select_supported_strategy(&program, &laws_of(&program))
+        .expect("the gather fixture is recognized");
+    let [recognized] = normalized.outputs() else {
+        panic!("the fixture declares one output");
+    };
+    let mut bytes = Vec::new();
+    encode_output_subject(&mut bytes, &output_subject(recognized));
+    let tag = b"gather-f32.v1";
+    assert!(
+        bytes
+            .windows(tag.len())
+            .any(|window| window == tag.as_slice()),
+        "the gather arm writes its own framed sub-tag",
+    );
+    for other in [
+        b"pointwise-f32.v4".as_slice(),
+        b"contraction-f32.v1".as_slice(),
+        b"serial-sum-f32.v3".as_slice(),
+        b"epilogue-f32.v1".as_slice(),
+        b"staged-family.v2".as_slice(),
+    ] {
+        assert!(
+            !bytes.windows(other.len()).any(|window| window == other),
+            "a gather subject must not carry another arm's sub-tag",
+        );
+    }
+}
+
+/// A recognized gather has no governed region spelling, and the wall says why.
+///
+/// **This is the lane's stopping point, stated as a typed answer rather than as
+/// an absence.** The occurrence is recognized, the request subject binds it, and
+/// the schedule layer defines both `LogicalAccess::GatherSource` and its paired
+/// `BoundsProofKind::GatherSource`. What physical planning cannot do is obtain
+/// the `GatherIndexBoundsProof` that proof variant carries: it is minted only by
+/// the index layer's verifier-private deriver, it binds a
+/// `CanonicalIndexRegionIdentity`, and the refinement that holds one is not
+/// reachable from a provider's `ImplementationContext`.
+///
+/// **What it would take for this to say something else.** The wall is reached
+/// only for a member set that is exactly the gather occurrence's, so the two
+/// ways it stops answering are a recognizer that stops producing
+/// `NormalizedOutput::Gather` and a `spell_output` arm that returns a spelling
+/// instead. The second is the intended future change, and this assertion is what
+/// will require the lane that makes it to state the new answer here.
+///
+/// Watched failing under a deliberate subject perturbation: returning
+/// `RegionVocabularyWall::PartialCoverage` from the gather arm reddens this with
+/// `left: PartialCoverage  right: GatherProofUnavailable`, and passing a member
+/// set that is not the occurrence's falls through to `PartialCoverage` instead —
+/// which is what shows the wall is decided for this occurrence rather than
+/// reported for every unspellable cover.
+#[test]
+fn a_recognized_gather_has_no_governed_region_spelling() {
+    let program = gather_program();
+    let mut request = CompilationRequest::governed(&program);
+    request.target_profiles = vec![TargetProfile::governed_with_gather_index_dispatch_for_test()];
+    let planned = verify_planned_request(request).expect("the fixture admits a planned request");
+    let target = planned
+        .for_target(0)
+        .expect("the U32-capable profile admits the fixture");
+    let [output] = target.normalized().outputs() else {
+        panic!("the fixture declares one output");
+    };
+    let members = output.members();
+    assert_eq!(members.len(), 1, "a gather claims exactly one occurrence");
+
+    assert_eq!(
+        crate::physical::spell_region(
+            &target,
+            &members,
+            crate::physical::RegionWrite::ProgramOutput,
+        ),
+        Err(crate::physical::RegionVocabularyWall::GatherProofUnavailable),
+        "a gather's own member set is declined by name, not reported as partial coverage",
+    );
+    assert_eq!(
+        crate::physical::RegionVocabularyWall::GatherProofUnavailable.reason(),
+        "gather-proof-unavailable",
+    );
+
+    // A member set that is not this occurrence's falls through to the caller's
+    // own wall, which is what separates "this region cannot be built" from
+    // "this cover names occurrences no output owns".
+    let foreign = [crate::region::SemanticStage::first(
+        crate::region::SemanticMemberId(members[0].member().0 + 1),
+    )];
+    assert_eq!(
+        crate::physical::spell_region(
+            &target,
+            &foreign,
+            crate::physical::RegionWrite::ProgramOutput,
+        ),
+        Err(crate::physical::RegionVocabularyWall::PartialCoverage),
+    );
+}
+
+/// The recognized-output vocabulary is sized from its own enum.
+///
+/// A hand-written six would be satisfied by an enumeration that had stopped
+/// covering the type. `variant_count` makes a widened vocabulary a build error
+/// at this line instead, which is the property every consumer's exhaustive match
+/// already has and which this states for the population as a whole.
+#[test]
+fn the_recognized_output_vocabulary_is_sized_from_its_type() {
+    assert_eq!(
+        std::mem::variant_count::<NormalizedOutput>(),
+        6,
+        "the recognized output vocabulary changed size; every dependent claim \
+about it needs re-reading",
+    );
 }
 
 fn request_subject_bytes(program: &SemanticProgram) -> Vec<u8> {
