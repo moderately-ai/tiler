@@ -1,7 +1,7 @@
 ---
 id: calibrate-the-contraction-tile-width-under-a-beneficiary-named-protocol
 title: Calibrate the contraction tile width under a beneficiary-named protocol
-status: in-progress
+status: blocked
 priority: p2
 dependencies: []
 related: [decide-the-contraction-tile-width-authority, carry-the-contraction-tile-width-policy-as-a-target-profile-row]
@@ -9,9 +9,6 @@ scopes: [research/scheduling]
 shared_scopes: [project/tickets]
 paths: []
 tags: [measurement, scheduling, contraction, target-profiles]
-claimed_from: todo
-assignee: worker-tileprotocol
-lease_expires_at: 1787430110
 ---
 ## User-visible outcome
 
@@ -21,9 +18,15 @@ The contraction tile width has a swept, protocol-registered measurement naming i
 
 Filed 2026-08-22 by the coordinator from the tile-width authority packet, which found the existing evidence cannot support any declared width and cannot be repaired.
 
-**Fact — the 16 was never swept.** `spikes/scheduling/metal_contraction_vertical/kernels.metal` declares `constant uint TILE = 16;` — one compile-time constant, with every other `TILE` reference derived from it. The spike swept *realization families*, not widths. **No width other than 16 has ever been executed.** Verified by the coordinator at `f2c974a8`; `grep -n "TILE" ` on that file returns the constant plus five derived uses and one precondition comment.
+**Fact — the 16 was never swept.** `spikes/scheduling/metal_contraction_vertical/kernels.metal` declares `constant uint TILE = 16;`. The spike swept *realization families*, not widths. **No width other than 16 has ever been executed.**
 
-**Fact — the retained record measures the tiled kernel losing.** The packet reports `tiled` at 523.5 µs against `direct`'s 251.4 and `ksplit_contiguous`'s 234.0 at one workload, and a 2.28x regression at another, with the record attributing the cause to a square block wasting fifteen of sixteen rows at M = 1 — *"a schedule mismatch, not a bandwidth result"*. Re-read the record before relying on these figures; they are the packet's, re-derived once.
+**Correction — 2026-08-22 by `worker-tileprotocol`, and the coordinator's version of this Fact would have produced a silently invalid sweep.** I wrote that the constant is the single binding, "with every other `TILE` reference derived from it", and gave the count as "the constant plus five derived uses and one precondition comment". Both halves are wrong. The count is **17 lines / 23 occurrences** in that file (`grep -c` versus `grep -o | wc -l`; the two units differ and I quoted neither). More seriously, **the width is bound at four independent sites across two files**, and the three in `host.m` derive from nothing: the precondition `k_extent % 16u`, the grid divisor `(n_extent + 15) / 16` paired with `(m_extent + 15) / 16`, and `MTLSizeMake(16, 16, 1)`. Verified by the coordinator at `97e7fef1`. **A worker who believed the width lived in one constant would have changed it and dispatched the old shape**, producing timings for a kernel that is not the one it thought it was measuring.
+
+**Fact — the retained record measures the tiled kernel losing.** At `w_vocab_slice`, `tiled` is 523.500 µs against `direct`'s 251.417 and `ksplit_contiguous`'s 234.000 — verified against `timing-summary.tsv` exactly. At `t_vocab_full` it is 9,669 µs against a 4,247 µs best. The record's stated cause, verbatim, is that the `16×16` output tile *"computes one useful row and fifteen masked ones when `M = 1` — a schedule mismatch, not a bandwidth result"*, in `docs/research/scheduling/first-metal-contraction-realizations.md`.
+
+**Correction — 2026-08-22 by `worker-tileprotocol`, two of the coordinator's figures were unsourced.** I wrote "a 2.28x regression" and "a square block wasting fifteen of sixteen rows". **`2.28` appears nowhere in any record** — it is a ratio I derived without saying so, and *which* ratio depends on the denominator: 2.2764 against `ksplit_contiguous`, 2.0327 against `direct`, 2.1883 against MPS. **"fifteen of sixteen" appears in no record either**; the record says "one useful row and fifteen masked ones". Both were carried from a worker report and restated in my own words, which is exactly what AGENTS.md forbids. Verified absent by the coordinator at `97e7fef1`.
+
+**Finding — the record labels an Inference as a Measurement, and this ticket must not inherit that.** The row-waste attribution above sits under a `**Measurement —**` heading in that record, but **no width was swept and no masked-thread count was instrumented**. It is an inference about a cause, carrying measurement authority. Treat it as the hypothesis this sweep tests, never as an established result — and see the null control the frozen protocol registers for exactly this reason.
 
 **Fact — ADR 0113 bars the existing record from ever populating a profile row.** Component 3(a) admits a measured row into a family-keyed profile only when the producing measurement's frozen protocol named that exact profile key as beneficiary *before* the run. The contraction spike named four realization families and no profile key, and the ADR is explicit that this is unrepairable. **A new measurement is the only route.**
 
@@ -82,3 +85,15 @@ Declaring any profile row — that is [`carry-the-contraction-tile-width-policy-
 ## Closes when
 
 A protocol naming its beneficiary key is committed before its harness runs, a width sweep is measured on the idle M3 Pro with its boundary stated, and the result either supports a width choice or records that none is supportable.
+
+## Coordinator disposition — 2026-08-22, merged at `97e7fef1`; protocol landed, timing held
+
+**Pre-registration is provable from history, not asserted.** The protocol is `a25f0a2f`, and `git ls-tree -r a25f0a2f -- spikes/scheduling/` shows the `metal_contraction_tile_width/` directory containing **only** `PROTOCOL-2026-08-22-contraction-tile-width.md` — no harness, no results. Verified by the coordinator. Sole named beneficiary: `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1`.
+
+**The worker did not inherit the sweep design, and that was the right call.** `TILE` is not a width: it is one constant serving as M-block height, N-block width, *and* K-chunk depth simultaneously. Sweeping it alone yields a compound and can only confirm the row-waste hypothesis, never refute it. The frozen protocol therefore carries **two arms** — square over six widths, and rectangular over twelve pairs decoupling block height from chunk depth — plus a registered **null control** at `M = 128`/`512`, where the waste factor is 1 for every admissible width and the mechanism predicts no effect. A protocol that can only confirm is not a protocol.
+
+**Harness validated without reading a clock.** The parameterized `(16,16)` variant collapses statement-for-statement to the retained kernel and matched the reference at all seven validation cells including the masking path; 126/126 cross-variant comparisons matched `direct`; identical digests at load 4.03 and 7.34, which itself demonstrates the correctness checks are load-independent. Two perturbations with their text: a mis-declared threadgroup height left 4,096 elements unwritten and was rejected, and a `+0.0`-seeded twin proved **invisible under PRNG operands** and was caught only under signed zeros — a random-operand corpus alone would have passed a semantically wrong kernel and reported clean.
+
+**HELD: the timing sweep. Release trigger — bench-host load below the 0.5 gate the protocol freezes.** At delivery the M3 Pro reported load `2.13 2.17 2.16` with no process above 3.2% CPU, so the cause is unidentified rather than transient; `--mode timing` refuses outright above the gate, which is the protocol working. The bench host is on build `26A5388g`, **not** the retained record's `26A5378n`, so the retained µs figures are not a baseline and every prediction in the protocol is written as a ratio internal to the new sweep. Command to run when the host is quiet is recorded in the delivery.
+
+**Gate blind spot found by perturbation, filed separately.** `make citations` returns exit 0 with a deliberately broken link under `spikes/`; the checker's population is `tickets/**`, `docs/**`, and root markdown. All sixteen links in this lane's documents were resolved by hand. See [`decide-whether-the-citation-checker-should-reach-spike-records`](decide-whether-the-citation-checker-should-reach-spike-records.md).

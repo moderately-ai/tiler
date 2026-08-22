@@ -1,7 +1,7 @@
 ---
 id: repair-plan-freedom-site-4-11-after-the-withdrawn-reassociation-gate
 title: Repair plan-freedom site 4.11 after the withdrawn reassociation gate
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [realize-the-tiled-contraction-schedule-and-its-metal-emission, re-enumerate-the-plan-freedom-sites-over-the-widened-topology-vocabulary, derive-staged-combine-structure-from-program-scope]
@@ -9,9 +9,6 @@ scopes: [research/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, doc-drift, scheduling, numerics]
-claimed_from: todo
-assignee: worker-site411
-lease_expires_at: 1787430750
 ---
 ## User-visible outcome
 
