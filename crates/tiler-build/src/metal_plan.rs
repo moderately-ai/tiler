@@ -2254,9 +2254,16 @@ mod tests {
     // falsifies: a second family's production selection can never equal the
     // macOS-measured rows' recorded selection, so the fixture now refuses by
     // name (`a_second_artifact_family_cannot_wear_this_profiles_measured_rows`
-    // in `metal_declaration`) instead of assembling. The multi-position
-    // machinery evidence they carried is owed again under
-    // `restore-multi-family-metal-delivery-evidence-under-per-family-profiles`.
+    // in `metal_declaration`) instead of assembling.
+    //
+    // The machinery they exercised has live evidence again, in two places and
+    // deliberately not here. `tests/custom_backend` drives the neutral seam
+    // over a second delivery position — a backend with no measured rows to
+    // inherit can hold two build targets under one compiler profile honestly —
+    // and `metal_cache`'s own tests cover this backend's per-position stage
+    // labelling from one compilation's captured output. What stays unreachable
+    // is a two-family Metal publication end to end, which needs a second
+    // *measured* declaration: `first-authoritative-ios-metal-compile-declaration`.
 
     /// The backend's own realization recheck survives a direct emitter call.
     ///

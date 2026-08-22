@@ -1,3 +1,7 @@
+// `variant_count` sizes `backend::ScalarHostFamily::ALL`, so a family added to
+// that vocabulary and not to the list is an array-length error at the
+// declaration rather than a delivery run that silently stops covering it.
+#![feature(variant_count)]
 //! One custom backend that is not Metal, producing a payload through `tiler-build`.
 //!
 //! # What this suite is evidence for
@@ -39,7 +43,8 @@ mod profile;
 use std::cell::Cell;
 
 use backend::{
-    EntryPerturbation, PayloadDeclaration, PreparedScalarPayload, ScalarHostFact, ScalarHostRefusal,
+    EntryPerturbation, PayloadDeclaration, PreparedScalarPayload, ScalarHostFact, ScalarHostFamily,
+    ScalarHostRefusal,
 };
 use image::{ScalarImageRefusal, encode};
 
@@ -66,6 +71,13 @@ use tiler_ir::semantic::{
     SemanticProgramBuilder, StrictSerialF32Sum,
 };
 use tiler_ir::shape::{Axis, Shape};
+
+/// The family every one-position case below builds for.
+///
+/// Named rather than spelled at each site so the multi-position section is the
+/// only place a second family appears, and so a case that reads "the sole
+/// delivery position" cannot silently become a case about a different target.
+const SOLE_FAMILY: ScalarHostFamily = ScalarHostFamily::MacOs;
 
 /// The exact refusal type this backend instantiates the promoted seam with.
 ///
@@ -158,13 +170,13 @@ fn produce(
 ) -> Result<Produced, ScalarHostRefusal> {
     backend::require_compiled_under(plan.compilation())?;
     let kernels: Vec<&VerifiedKernel> = plan.kernels().iter().collect();
-    let image = backend::emit(&kernels)?;
-    let metadata = backend::payload_metadata(&kernels, &image)?;
+    let image = backend::emit(&kernels, SOLE_FAMILY)?;
+    let metadata = backend::payload_metadata(&kernels, &image, SOLE_FAMILY)?;
     let code = damage.unwrap_or_else(|| encode(&image));
     let artifact = backend::assemble(
         semantic,
         plan,
-        PayloadContent { metadata, code },
+        vec![PayloadContent { metadata, code }],
         perturbation,
     )?;
     let bytes = artifact
@@ -600,8 +612,9 @@ fn two_assemblies_of_one_plan_are_byte_identical() {
 
 /// Takes the sole compiled payload of a one-position delivery run.
 ///
-/// Every case here declares one delivery position, so a run of any other length
-/// is a defect in the case rather than something to handle.
+/// Only the one-position cases reach this; the multi-position section below
+/// consumes the whole run in delivery order. A run of any other length here is a
+/// defect in the case rather than something to handle.
 fn sole(contents: Vec<PayloadContent>) -> PayloadContent {
     let [content] = <[PayloadContent; 1]>::try_from(contents)
         .expect("this backend declares exactly one delivery position");
@@ -657,7 +670,7 @@ fn resolve(cache: &ExpansionCache, run: SeamRun<'_>) -> Result<AcceptedArtifact,
                 retained,
             })
         },
-        |contents| backend::assemble(semantic, plan, sole(contents), perturbation),
+        |contents| backend::assemble(semantic, plan, contents, perturbation),
     )
 }
 
@@ -670,11 +683,12 @@ struct CacheFixture {
 impl CacheFixture {
     fn new(semantic: &SemanticProgram, plan: PlanAlternative<'_>) -> Self {
         let kernels: Vec<&VerifiedKernel> = plan.kernels().iter().collect();
-        let prepared = backend::prepare(&kernels).expect("the kernels translate and describe");
+        let prepared =
+            backend::prepare(&kernels, SOLE_FAMILY).expect("the kernels translate and describe");
         let pending = backend::assemble_pending(
             semantic,
             plan,
-            &prepared.declaration,
+            std::slice::from_ref(&prepared.declaration),
             EntryPerturbation::default(),
         )
         .expect("the pending artifact assembles");
@@ -683,10 +697,7 @@ impl CacheFixture {
 
     /// The content a sound compile step produces.
     fn compiled(&self) -> PayloadContent {
-        PayloadContent {
-            metadata: self.prepared.metadata.clone(),
-            code: encode(&self.prepared.image),
-        }
+        self.prepared.content()
     }
 
     /// The sound arrangement every case below starts from.
@@ -945,11 +956,16 @@ fn fixture_for(
         .identity()
         .expect("the moved metadata derives its digest");
     declaration.compilation = declaration.digest.as_bytes().to_vec();
-    let pending =
-        backend::assemble_pending(semantic, plan, &declaration, EntryPerturbation::default())
-            .expect("the moved pending artifact assembles");
+    let pending = backend::assemble_pending(
+        semantic,
+        plan,
+        std::slice::from_ref(&declaration),
+        EntryPerturbation::default(),
+    )
+    .expect("the moved pending artifact assembles");
     CacheFixture {
         prepared: PreparedScalarPayload {
+            family: sound.prepared.family,
             image: sound.prepared.image.clone(),
             metadata,
             declaration,
@@ -1108,14 +1124,7 @@ fn a_failing_compile_step_is_not_a_protocol_defect() {
         std::slice::from_ref(&fixture.prepared.declaration.declared()),
         |_, actual| backend::correspondence(&fixture.prepared.metadata, actual),
         || Err::<CompiledPayloads, _>(ScalarHostRefusal::UnsupportedAccessPattern { entry: 0 }),
-        |contents| {
-            backend::assemble(
-                &semantic,
-                plan,
-                sole(contents),
-                EntryPerturbation::default(),
-            )
-        },
+        |contents| backend::assemble(&semantic, plan, contents, EntryPerturbation::default()),
     )
     .expect_err("a compile step that refuses cannot publish");
 
@@ -1296,7 +1305,12 @@ fn an_artifact_carrying_other_object_bytes_is_refused_before_publication() {
         |contents| {
             let mut substituted = sole(contents);
             substituted.code.push(0);
-            backend::assemble(&semantic, plan, substituted, EntryPerturbation::default())
+            backend::assemble(
+                &semantic,
+                plan,
+                vec![substituted],
+                EntryPerturbation::default(),
+            )
         },
     )
     .expect_err("an object other than the compiled one cannot be published");
@@ -1336,7 +1350,7 @@ fn an_artifact_carrying_no_payload_content_is_refused_before_publication() {
             backend::assemble_pending(
                 &semantic,
                 plan,
-                &fixture.prepared.declaration,
+                std::slice::from_ref(&fixture.prepared.declaration),
                 EntryPerturbation::default(),
             )
         },
@@ -1376,7 +1390,7 @@ fn a_cache_entry_naming_another_artifact_is_refused_rather_than_accepted() {
     let other = backend::assemble(
         &semantic,
         plan,
-        fixture.compiled(),
+        vec![fixture.compiled()],
         EntryPerturbation {
             bindings: None,
             forbid_zero_work_skip: true,
@@ -1446,10 +1460,10 @@ fn a_cache_entry_whose_payload_moved_is_refused_after_resolution() {
         let moved = backend::assemble(
             &semantic,
             plan,
-            PayloadContent {
+            vec![PayloadContent {
                 metadata,
                 code: encode(&fixture.prepared.image),
-            },
+            }],
             EntryPerturbation::default(),
         )
         .expect("the moved artifact assembles");
@@ -1486,6 +1500,601 @@ fn a_cache_entry_whose_payload_moved_is_refused_after_resolution() {
         assert_eq!(compilations.get(), 0, "{label}: a hit is never rebuilt");
     }
     let _ = std::fs::remove_dir_all(directory);
+}
+
+// -------------------------------------------------------------------------
+// Several artifact families, one envelope: the multi-position delivery run
+// -------------------------------------------------------------------------
+
+/// One prepared payload per delivery position, and the pending artifact for the run.
+///
+/// The multi-position counterpart of [`CacheFixture`], kept separate rather than
+/// generalizing that one: every case above is *about* the sole position, and a
+/// fixture that could hold two would leave each of them asserting a cardinality
+/// it does not test.
+struct DeliveryFixture {
+    prepared: Vec<PreparedScalarPayload>,
+    pending: VerifiedArtifactProgram,
+}
+
+impl DeliveryFixture {
+    /// Translates one payload per family, in delivery order, and assembles the
+    /// descriptor-only artifact whose identity the cache subject names.
+    fn new(
+        semantic: &SemanticProgram,
+        plan: PlanAlternative<'_>,
+        families: &[ScalarHostFamily],
+    ) -> Self {
+        let kernels: Vec<&VerifiedKernel> = plan.kernels().iter().collect();
+        let prepared: Vec<PreparedScalarPayload> = families
+            .iter()
+            .map(|family| {
+                backend::prepare(&kernels, *family).expect("the kernels translate and describe")
+            })
+            .collect();
+        let declarations: Vec<PayloadDeclaration> = prepared
+            .iter()
+            .map(|payload| payload.declaration.clone())
+            .collect();
+        let pending =
+            backend::assemble_pending(semantic, plan, &declarations, EntryPerturbation::default())
+                .expect("the pending delivery run assembles");
+        Self { prepared, pending }
+    }
+
+    /// What this backend declares at each delivery position, in delivery order.
+    fn declared(&self) -> Vec<tiler_build::DeclaredPayload<'_>> {
+        self.prepared
+            .iter()
+            .map(|payload| payload.declaration.declared())
+            .collect()
+    }
+
+    /// The compilation subject each position's payload must describe.
+    fn expected(&self) -> Vec<PayloadMetadata> {
+        self.prepared
+            .iter()
+            .map(|payload| payload.metadata.clone())
+            .collect()
+    }
+
+    /// What a sound compile step produces, in delivery order.
+    fn compiled(&self) -> Vec<PayloadContent> {
+        self.prepared
+            .iter()
+            .map(PreparedScalarPayload::content)
+            .collect()
+    }
+
+    /// The sound arrangement every case below starts from.
+    fn run<'run>(
+        &'run self,
+        semantic: &'run SemanticProgram,
+        plan: PlanAlternative<'run>,
+        compilations: &'run Cell<usize>,
+    ) -> DeliveryRun<'run> {
+        DeliveryRun {
+            semantic,
+            plan,
+            pending: &self.pending,
+            declared: self.declared(),
+            expected: self.expected(),
+            compiled: self.compiled(),
+            carry: |contents| contents,
+            retained: DebugRetention::none(),
+            compilations,
+        }
+    }
+}
+
+/// One complete arrangement of a multi-position run through the promoted seam.
+///
+/// The same record-per-arrangement shape [`SeamRun`] uses, so a perturbation is
+/// one named field rather than one of eight positional arguments.
+struct DeliveryRun<'run> {
+    semantic: &'run SemanticProgram,
+    plan: PlanAlternative<'run>,
+    /// The descriptor-only artifact whose canonical identity the subject names.
+    pending: &'run VerifiedArtifactProgram,
+    /// What this backend declares at each delivery position, in delivery order.
+    declared: Vec<tiler_build::DeclaredPayload<'run>>,
+    /// What `correspondence` compares each position's carried metadata against.
+    expected: Vec<PayloadMetadata>,
+    /// What the miss closure returns, in delivery order.
+    compiled: Vec<PayloadContent>,
+    /// How the assembly step reorders the compiled run before carrying it.
+    ///
+    /// Identity in the sound arrangement. The one case that moves it is the
+    /// swapped-position defect, which is a *reordering* rather than a
+    /// substitution: the same two objects, carried the other way round.
+    carry: fn(Vec<PayloadContent>) -> Vec<PayloadContent>,
+    /// The debug text the miss closure states, empty in every case but one.
+    retained: DebugRetention,
+    /// Counts the miss closure's invocations.
+    compilations: &'run Cell<usize>,
+}
+
+/// Drives one multi-position arrangement through the promoted seam.
+///
+/// The correspondence closure reads its **delivery position** rather than
+/// ignoring it, which is the whole of what a second position adds here: with one
+/// payload in flight the argument cannot be wrong, and with two, comparing every
+/// position against position zero's compilation would accept an envelope whose
+/// families are swapped.
+fn resolve_delivery(
+    cache: &ExpansionCache,
+    run: DeliveryRun<'_>,
+) -> Result<AcceptedArtifact, SeamRefusal> {
+    let DeliveryRun {
+        semantic,
+        plan,
+        pending,
+        declared,
+        expected,
+        compiled,
+        carry,
+        retained,
+        compilations,
+    } = run;
+    accept_or_publish_delivered_payload_artifact(
+        cache,
+        pending,
+        &declared,
+        |delivery, actual| backend::correspondence(&expected[delivery], actual),
+        || {
+            compilations.set(compilations.get() + 1);
+            Ok::<CompiledPayloads, ScalarHostRefusal>(CompiledPayloads {
+                contents: compiled,
+                retained,
+            })
+        },
+        |contents| {
+            backend::assemble(
+                semantic,
+                plan,
+                carry(contents),
+                EntryPerturbation::default(),
+            )
+        },
+    )
+}
+
+/// Reads each delivery position's declared target, resolved through the entries.
+///
+/// Through the artifact's own entries and never through the descriptor table:
+/// that table is ordered by canonical content and says nothing about which object
+/// a consumer at a given position would load.
+fn delivered_targets(decoded: &DecodedArtifact, positions: usize) -> Vec<String> {
+    let entry = decoded
+        .variants()
+        .next()
+        .expect("one packaged variant")
+        .entries()
+        .next()
+        .expect("one packaged entry");
+    (0..positions)
+        .map(|delivery| {
+            let payload = entry
+                .payload(delivery)
+                .expect("every delivery position realizes this entry");
+            decoded
+                .payload_metadata(payload)
+                .expect("every position carries its compilation subject")
+                .provenance
+                .target
+                .clone()
+        })
+        .collect()
+}
+
+/// Reads the declared targets in the descriptor table's own canonical order.
+///
+/// The order a positional reader would get, which is what the comparison against
+/// [`delivered_targets`] exists to separate from delivery order.
+fn table_targets(decoded: &DecodedArtifact, positions: usize) -> Vec<String> {
+    (0..positions)
+        .map(|payload| {
+            decoded
+                .payload_metadata(payload)
+                .expect("every payload is carried")
+                .provenance
+                .target
+                .clone()
+        })
+        .collect()
+}
+
+/// One envelope carries one payload per artifact family, at its own position.
+///
+/// The neutral successor of the Metal-path evidence removed with the test-only
+/// second Metal declaration: the required compilation-selection provenance made
+/// that fixture unrepresentable, because a second Apple family's production
+/// selection can never equal the macOS-measured rows' recorded selection. This
+/// backend has no measured rows to inherit — its payload is an image its own
+/// in-process translator writes — so two of its build targets share one compiler
+/// profile honestly, and the multi-position machinery has a live exercise again.
+///
+/// **An artifact family is still not a compiler-profile axis**, which is what
+/// makes this a question about payloads rather than about profiles. The two
+/// positions are one compilation, one selected plan, one kernel program, and two
+/// translated images.
+///
+/// **What is proven, in the order it is asserted.** The two families share the
+/// compilation and differ in their declared target; the artifact declares two
+/// delivery positions and carries two payloads; each position resolves to the
+/// object built for *that* family, through the artifact's own entries rather
+/// than through the canonically ordered descriptor table; the reversed selection
+/// resolves the other way round while that table stays put; the backend's own
+/// from-bytes obligation accepts every position; and both the cache subject and
+/// the artifact identity cover the whole selection rather than one family's
+/// share of it.
+#[test]
+fn one_envelope_carries_one_payload_per_delivery_position() {
+    let directory = scratch("two-family-envelope");
+    let cache = ExpansionCache::open(directory.join("cache"));
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let compilations = Cell::new(0);
+
+    let fixture = DeliveryFixture::new(&semantic, plan, &ScalarHostFamily::ALL);
+    let [first, second] = &fixture.prepared[..] else {
+        panic!("two families are two prepared payloads");
+    };
+    assert_eq!(first.family, ScalarHostFamily::MacOs);
+    assert_eq!(second.family, ScalarHostFamily::IOs);
+    assert_eq!(first.metadata.provenance.target, "aarch64-apple-darwin");
+    assert_eq!(second.metadata.provenance.target, "aarch64-apple-ios");
+    assert_ne!(
+        first.declaration.digest, second.declaration.digest,
+        "two families are two compilation subjects",
+    );
+    assert_ne!(
+        encode(&first.image),
+        encode(&second.image),
+        "and two objects, or a swapped delivery would be invisible to the bytes",
+    );
+
+    let accepted = resolve_delivery(&cache, fixture.run(&semantic, plan, &compilations))
+        .expect("one selection produces one envelope carrying both families");
+    assert_eq!(outcome(accepted.resolution()), "published");
+
+    let decoded = accepted.decoded();
+    assert_eq!(decoded.delivery_positions(), 2);
+    assert_eq!(decoded.payloads().len(), 2);
+    let entry = decoded
+        .variants()
+        .next()
+        .expect("one packaged variant")
+        .entries()
+        .next()
+        .expect("one packaged entry");
+    assert_eq!(entry.delivery_positions(), 2);
+    assert_eq!(
+        delivered_targets(decoded, 2),
+        [first.family.triple(), second.family.triple()],
+        "each delivery position resolves to the object built for its own family",
+    );
+    // Two distinct objects, which is what "one payload per built family" means:
+    // a shared object would leave one family loading another's bytes.
+    assert_ne!(entry.payload(0), entry.payload(1));
+    assert_eq!(
+        backend::validate_from_bytes(decoded),
+        Ok(()),
+        "every position's entry must reach a symbol its own object declares",
+    );
+
+    // Resolving through the entries is a check rather than a coincidence, and
+    // the reversed selection is what shows it. The descriptor table is ordered by
+    // canonical content and does *not* move when the delivery order does, so the
+    // same two objects delivered the other way round resolve the other way round
+    // while the table stays put. A seam reading a payload positionally from that
+    // table would report the same pair for both selections.
+    let reversed_fixture = DeliveryFixture::new(
+        &semantic,
+        plan,
+        &[ScalarHostFamily::IOs, ScalarHostFamily::MacOs],
+    );
+    let reversed = resolve_delivery(&cache, reversed_fixture.run(&semantic, plan, &compilations))
+        .expect("the reversed selection resolves as its own artifact");
+    assert_eq!(
+        delivered_targets(reversed.decoded(), 2),
+        [second.family.triple(), first.family.triple()],
+        "delivery order decides which object a position names",
+    );
+    assert_eq!(
+        table_targets(reversed.decoded(), 2),
+        table_targets(decoded, 2),
+        "the canonically ordered descriptor table is the same for both",
+    );
+
+    // The whole selection, not one family's share of it: both the cache subject
+    // and the artifact identity move when the second family is dropped.
+    let one_family = DeliveryFixture::new(&semantic, plan, &[ScalarHostFamily::MacOs]);
+    let single = resolve_delivery(&cache, one_family.run(&semantic, plan, &compilations))
+        .expect("the one-family selection also resolves");
+    assert_eq!(single.decoded().delivery_positions(), 1);
+    assert_ne!(
+        accepted.cache_subject().as_bytes(),
+        single.cache_subject().as_bytes(),
+        "the cache subject covers the whole selection",
+    );
+    assert_ne!(
+        accepted.decoded().identity().as_bytes(),
+        single.decoded().identity().as_bytes(),
+        "identity folds every carried payload, so two families is not one",
+    );
+    assert_eq!(
+        compilations.get(),
+        3,
+        "three distinct selections are three misses, not one entry serving all",
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Every delivery position's retained run survives under its own label.
+///
+/// The neutral half of what the removed Metal per-position retention census
+/// covered. What it proves here is that a multi-position miss retains one run per
+/// position, that the runs travel to the published entry, and that a later
+/// *validated hit* returns each under the label its own position was named by —
+/// the two source strings deliberately differ, so a run set that observed only
+/// position 0, merged the two, or labelled either as the other cannot satisfy it.
+///
+/// **What it does not cover, stated rather than implied.** The labels here are
+/// this backend's own, and the standard Metal path derives its four
+/// (`tiler.metal.{delivery}.{tool}`) inside `tiler-build` from a run of prepared
+/// compilations. That derivation is exercised separately by `metal_cache`'s own
+/// tests, because reaching it end to end would need two *measured* Apple
+/// declarations, which is `first-authoritative-ios-metal-compile-declaration`.
+#[test]
+fn every_delivery_positions_retention_is_labelled_by_its_own_position() {
+    let directory = scratch("two-family-retention");
+    let cache = ExpansionCache::open(directory.join("cache"));
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let compilations = Cell::new(0);
+    let fixture = DeliveryFixture::new(&semantic, plan, &ScalarHostFamily::ALL);
+
+    let expected_runs = [
+        (
+            "scalar-host.0.notes",
+            b"note: translated for macos".as_slice(),
+        ),
+        (
+            "scalar-host.1.notes",
+            b"note: translated for ios".as_slice(),
+        ),
+    ];
+    let mut retained = DebugRetention::none();
+    for (label, bytes) in expected_runs {
+        retained = retained
+            .retaining(label, bytes)
+            .expect("a governed per-position label");
+    }
+
+    let published = resolve_delivery(
+        &cache,
+        DeliveryRun {
+            retained,
+            ..fixture.run(&semantic, plan, &compilations)
+        },
+    )
+    .expect("the two-position retaining producer resolves");
+    assert_eq!(outcome(published.resolution()), "published");
+
+    let hit = resolve_delivery(&cache, fixture.run(&semantic, plan, &compilations))
+        .expect("the two-position entry returns from its validated cache hit");
+    assert_eq!(outcome(hit.resolution()), "hit");
+    assert_eq!(
+        compilations.get(),
+        1,
+        "one miss compiles both positions, and the hit re-enters nothing",
+    );
+    let Resolution::Hit { entry, .. } = hit.resolution() else {
+        panic!("the second two-position run hits");
+    };
+    let retained = entry.retained_debug();
+    assert_eq!(
+        retained.runs().len(),
+        expected_runs.len(),
+        "each delivery position has exactly one retained run",
+    );
+    let actual: Vec<(&str, &[u8], u64)> = retained
+        .runs()
+        .iter()
+        .map(|run| (run.label(), run.as_bytes(), run.total_bytes()))
+        .collect();
+    let expected: Vec<(&str, &[u8], u64)> = expected_runs
+        .iter()
+        .map(|(label, bytes)| (*label, *bytes, bytes.len() as u64))
+        .collect();
+    assert_eq!(
+        actual, expected,
+        "every run preserves its own position's label, bytes, and stated total",
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// A payload at another family's delivery position is refused, four ways.
+///
+/// The perturbation is the *order*: the same two families, the same two
+/// translations, and the objects carried into the artifact the other way round.
+/// Nothing structural notices on its own — both families share a compiler
+/// profile, a profile descriptor, and a kernel program — so without a refusal a
+/// consumer's `cfg` would select position 0 and load the object built for the
+/// other target.
+///
+/// The four cases are four different places the same defect can be caught, and
+/// they are asserted separately because each without the others would not say
+/// where the protection lives:
+///
+/// 1. **Two orders are two artifacts.** Delivery order is meaning, so artifact
+///    identity folds each entry's payload keys *as stated*.
+/// 2. **A carried swap is refused before publication**, as an identity
+///    disagreement with the pending artifact whose identity keyed the cache.
+/// 3. **A *pending* swap is refused before any compiler work**, naming the
+///    position that disagreed — the same defect one step earlier.
+/// 4. **A correspondence closure that read the wrong position is refused**, on
+///    the one fact that distinguishes two families. This is what makes the
+///    delivery-position argument load-bearing rather than decorative.
+#[test]
+fn a_payload_at_another_familys_delivery_position_is_refused() {
+    let directory = scratch("swapped-delivery");
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let fixture = DeliveryFixture::new(&semantic, plan, &ScalarHostFamily::ALL);
+    let reversed_fixture = DeliveryFixture::new(
+        &semantic,
+        plan,
+        &[ScalarHostFamily::IOs, ScalarHostFamily::MacOs],
+    );
+
+    // 1. Two orders are two artifacts.
+    assert_ne!(
+        fixture.pending.canonical_identity().as_bytes(),
+        reversed_fixture.pending.canonical_identity().as_bytes(),
+        "delivery order is meaning, so two orders are two artifacts",
+    );
+
+    // 2. Prepared in one order, carried in the other. Under its own cache,
+    // because a sound publication of this subject would hit and the swapped
+    // assembly would never be attempted.
+    let compilations = Cell::new(0);
+    let swapped_cache = ExpansionCache::open(directory.join("carried-swap"));
+    let refusal = resolve_delivery(
+        &swapped_cache,
+        DeliveryRun {
+            carry: |mut contents| {
+                contents.reverse();
+                contents
+            },
+            ..fixture.run(&semantic, plan, &compilations)
+        },
+    )
+    .expect_err("an object at another family's delivery position cannot publish");
+    assert!(
+        matches!(
+            refusal,
+            SeamRefusal::Protocol(DeliveredPayloadProtocolError::ArtifactIdentity),
+        ),
+        "unexpected refusal: {refusal:?}",
+    );
+
+    // 3. The same defect in the pending artifact, refused before any compiler
+    // work and naming the position that disagreed.
+    let pending_cache = ExpansionCache::open(directory.join("pending-swap"));
+    let refusal = resolve_delivery(
+        &pending_cache,
+        DeliveryRun {
+            pending: &reversed_fixture.pending,
+            ..fixture.run(&semantic, plan, &compilations)
+        },
+    )
+    .expect_err("a pending artifact whose positions are swapped cannot be keyed");
+    assert!(
+        matches!(
+            refusal,
+            SeamRefusal::Protocol(DeliveredPayloadProtocolError::PayloadSubject { delivery: 0 }),
+        ),
+        "unexpected refusal: {refusal:?}",
+    );
+    assert_eq!(
+        compilations.get(),
+        1,
+        "the pending check precedes the compile step, so only case 2 compiled",
+    );
+
+    // 4. A sound run whose correspondence closure was handed the other
+    // position's compilation. Everything else agrees — the declarations, the
+    // pending artifact, the carried objects — so the only authority that can
+    // notice is the backend, and it names the one fact two families differ in.
+    let correspondence_cache = ExpansionCache::open(directory.join("correspondence"));
+    let mut expected = fixture.expected();
+    expected.reverse();
+    let refusal = resolve_delivery(
+        &correspondence_cache,
+        DeliveryRun {
+            expected,
+            ..fixture.run(&semantic, plan, &compilations)
+        },
+    )
+    .expect_err("a position compared against another position's compilation cannot publish");
+    assert!(
+        matches!(
+            refusal,
+            SeamRefusal::Protocol(DeliveredPayloadProtocolError::Correspondence {
+                delivery: 0,
+                cause: ScalarHostFact::Target,
+            }),
+        ),
+        "unexpected refusal: {refusal:?}",
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Another family's object under this family's metadata is caught only by the backend.
+///
+/// The half of the swap the artifact layer provably cannot see. Swapping whole
+/// payloads moves their metadata too and the seam refuses it on identity; this
+/// case swaps the **object bytes alone**, which artifact identity deliberately
+/// excludes — so the assembled artifact carries the *same* canonical identity as
+/// the sound one, every descriptor and digest agrees, and the envelope decodes.
+/// What is wrong is that position 0's entry maps a symbol only the macOS image
+/// declares while the bytes at position 0 are the iOS image, which is exactly the
+/// ADR 0090 item 8 obligation the artifact layer cannot discharge.
+///
+/// The standard Metal path has no equivalent detection: a wrong-family `metallib`
+/// loads and dispatches on the host GPU without complaint, which is why the
+/// delivery seam's identity refusal above is what protects it. Here the backend
+/// mangles its target into its entry-point symbols, so the bytes themselves
+/// disagree.
+#[test]
+fn another_familys_object_under_this_familys_metadata_is_caught_only_by_the_backend() {
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let fixture = DeliveryFixture::new(&semantic, plan, &ScalarHostFamily::ALL);
+
+    let sound = backend::assemble(
+        &semantic,
+        plan,
+        fixture.compiled(),
+        EntryPerturbation::default(),
+    )
+    .expect("the sound two-position artifact assembles");
+
+    let mut swapped_objects = fixture.compiled();
+    let codes: Vec<Vec<u8>> = swapped_objects
+        .iter()
+        .rev()
+        .map(|content| content.code.clone())
+        .collect();
+    for (content, code) in swapped_objects.iter_mut().zip(codes) {
+        content.code = code;
+    }
+    let damaged = backend::assemble(
+        &semantic,
+        plan,
+        swapped_objects,
+        EntryPerturbation::default(),
+    )
+    .expect("an artifact carrying the other family's object still assembles");
+
+    assert_eq!(
+        damaged.canonical_identity().as_bytes(),
+        sound.canonical_identity().as_bytes(),
+        "artifact identity must exclude the emitted object",
+    );
+    let bytes = damaged.encode().expect("the damaged artifact encodes");
+    let decoded = decode_artifact(&bytes).expect("the damaged envelope still decodes");
+    assert_eq!(
+        backend::validate_from_bytes(&decoded),
+        Err(ScalarHostRefusal::UnmappedSymbol),
+        "the backend's own from-bytes validation must refuse the swapped object",
+    );
 }
 
 // -------------------------------------------------------------------------
@@ -1559,8 +2168,9 @@ fn a_forged_entry_mapping_is_refused_when_the_envelope_decodes() {
     let compilation = scalar_host_compilation(&semantic);
     let plan = compilation.selected().expect("one selected plan");
     let kernels: Vec<&VerifiedKernel> = plan.kernels().iter().collect();
-    let image = backend::emit(&kernels).expect("the kernels translate");
-    let mut metadata = backend::payload_metadata(&kernels, &image).expect("a payload subject");
+    let image = backend::emit(&kernels, SOLE_FAMILY).expect("the kernels translate");
+    let mut metadata =
+        backend::payload_metadata(&kernels, &image, SOLE_FAMILY).expect("a payload subject");
     metadata.entries[0].entry_key =
         tiler_artifact::program::BackendEntryKey::from_bytes(b"a key no kernel minted")
             .expect("an opaque key");
@@ -1568,10 +2178,10 @@ fn a_forged_entry_mapping_is_refused_when_the_envelope_decodes() {
     let artifact = backend::assemble(
         &semantic,
         plan,
-        PayloadContent {
+        vec![PayloadContent {
             metadata,
             code: encode(&image),
-        },
+        }],
         EntryPerturbation::default(),
     )
     .expect("the artifact layer does not re-read a carried mapping at build time");
@@ -1592,8 +2202,9 @@ fn declaring_one_payload_twice_is_refused() {
     let compilation = scalar_host_compilation(&semantic);
     let plan = compilation.selected().expect("one selected plan");
     let kernels: Vec<&VerifiedKernel> = plan.kernels().iter().collect();
-    let image = backend::emit(&kernels).expect("the kernels translate");
-    let metadata = backend::payload_metadata(&kernels, &image).expect("a payload subject");
+    let image = backend::emit(&kernels, SOLE_FAMILY).expect("the kernels translate");
+    let metadata =
+        backend::payload_metadata(&kernels, &image, SOLE_FAMILY).expect("a payload subject");
     let content = PayloadContent {
         metadata,
         code: encode(&image),
@@ -1684,7 +2295,7 @@ fn damage_cases(
 ) -> Vec<(&'static str, Vec<u8>, ScalarHostRefusal)> {
     let _ = semantic;
     let kernels: Vec<&VerifiedKernel> = plan.kernels().iter().collect();
-    let image = backend::emit(&kernels).expect("the kernels translate");
+    let image = backend::emit(&kernels, SOLE_FAMILY).expect("the kernels translate");
     let sound_bytes = encode(&image);
 
     let mut foreign = sound_bytes.clone();
@@ -1881,12 +2492,12 @@ fn a_kernel_this_backend_cannot_place_is_refused_during_translation() {
     let plan = compilation.selected().expect("one selected plan");
     let placeable: Vec<&VerifiedKernel> = plan.kernels().iter().collect();
     assert!(
-        backend::emit(&placeable).is_ok(),
+        backend::emit(&placeable, SOLE_FAMILY).is_ok(),
         "the accepted neighbour: the compiled kernel translates",
     );
 
     let wide = wide_kernel();
-    let refusal = backend::emit(&[placeable[0], &wide])
+    let refusal = backend::emit(&[placeable[0], &wide], SOLE_FAMILY)
         .expect_err("a three-buffer signature cannot be placed by this backend");
     assert_eq!(
         refusal,
