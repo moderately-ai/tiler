@@ -1,0 +1,3 @@
+# Regenerable build products. The lockfile stays tracked so the probe's verdict
+# is reproducible against the exact dependency set it was recorded with.
+/target/
