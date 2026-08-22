@@ -25,13 +25,13 @@ use crate::semantic::{
     BroadcastAxisMapping, BroadcastAxisSource, CONCATENATE_AXIS_ATTRIBUTE,
     CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalIntegerWidth, CanonicalValue,
     CanonicalValueView, ContractionIndex, ContractionIndexStructure, EncodedComponentRole,
-    F32_CONSTANT_BITS_ATTRIBUTE, GATHER_AXIS_ATTRIBUTE, OperationAttributes, REDUCTION_AXES_ATTRIBUTE,
-    REINDEX_MAPPING_ATTRIBUTE, RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_REDUCED_AXES_ATTRIBUTE,
-    ReindexForm, ReindexFormKind, ResolvedValueType, SLICE_SELECTION_ATTRIBUTE,
-    SOFTMAX_REDUCED_AXES_ATTRIBUTE, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
-    STRICT_AFFINE_ZERO_POINT_ROLE, SliceAxisSelection, SliceSelection, StrictAffineU4, TypeKey,
-    concatenate_axis, concatenate_result_shape, gather_axis, gather_index_resolved_type,
-    gather_result_shape,
+    F32_CONSTANT_BITS_ATTRIBUTE, GATHER_AXIS_ATTRIBUTE, OperationAttributes,
+    REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, RMS_NORM_EPS_BITS_ATTRIBUTE,
+    RMS_NORM_REDUCED_AXES_ATTRIBUTE, ReindexForm, ReindexFormKind, ResolvedValueType,
+    SLICE_SELECTION_ATTRIBUTE, SOFTMAX_REDUCED_AXES_ATTRIBUTE, STRICT_AFFINE_CODES_ROLE,
+    STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE, SliceAxisSelection, SliceSelection,
+    StrictAffineU4, TypeKey, concatenate_axis, concatenate_result_shape, gather_axis,
+    gather_index_resolved_type, gather_result_shape,
 };
 use crate::shape::{Axis, Extent, ExtentSources, Shape, SourcedExtent};
 
@@ -2522,12 +2522,10 @@ fn realize_gather(
         .unwrap_or_default()
         .to_vec();
 
-    let source_tensor = context.tensor(
-        TensorRole::Input,
-        source.value_type().clone(),
-        source_shape,
-    )?;
-    let index_tensor = context.tensor(TensorRole::Input, index.value_type().clone(), index_shape)?;
+    let source_tensor =
+        context.tensor(TensorRole::Input, source.value_type().clone(), source_shape)?;
+    let index_tensor =
+        context.tensor(TensorRole::Input, index.value_type().clone(), index_shape)?;
     let value = context.gather_read(
         source_tensor,
         index_tensor,
@@ -5160,12 +5158,18 @@ mod tests {
             }
         };
         assert_eq!(
-            gather.source_coordinates().map(dimension_of).collect::<Vec<_>>(),
+            gather
+                .source_coordinates()
+                .map(dimension_of)
+                .collect::<Vec<_>>(),
             vec![domain[0], domain[3]],
             "the source run is the leading and trailing result axes, skipping the gathered one"
         );
         assert_eq!(
-            gather.index_coordinates().map(dimension_of).collect::<Vec<_>>(),
+            gather
+                .index_coordinates()
+                .map(dimension_of)
+                .collect::<Vec<_>>(),
             vec![domain[1], domain[2]],
             "the index run is exactly the axes the index shape contributed"
         );
@@ -5265,7 +5269,10 @@ mod tests {
             .bounds_resolution()
             .statically_proved()
             .expect("an empty result domain places no obligation on any value");
-        assert_eq!(proof.kind(), GatherIndexBoundsProofKind::VacuousEmptyResultDomain);
+        assert_eq!(
+            proof.kind(),
+            GatherIndexBoundsProofKind::VacuousEmptyResultDomain
+        );
         assert_eq!(
             proof.facts(),
             IndexDomainFactSource::Program,

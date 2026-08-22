@@ -153,6 +153,16 @@ Two notes a later worker should not have to rediscover. First, the coordinate-ru
 
 `cargo nextest run --workspace` 3,872 passed / 8 skipped; `cargo nextest run -p tiler-ir` 1,252 passed; `make lint` clean; `git diff --check` clean; `tkt lint` ok. `prototypes/serial-sum-run` carries three pre-existing clippy findings, attributed by `git log` to `79dc05a1` and deliberately outside the style gate per the `Makefile`'s `lint` target exclusions.
 
+### Interaction with `settle-the-gather-domain-declaration-order-semantics`
+
+That ticket reports that `gather_read` constrains the **declaration order** of the result domain: `prepare_gather_access` compares a `declared` vector built in caller order against `gather_result_shape`, while the committed `domain` is a `BTreeSet` and `verify_gather_access` rebuilds from the sorted run.
+
+**This layer cannot observe the defect, and does not disambiguate its repair.** `realize_gather` declares its domain through `declare_parallel_domain`, which maps over `result_shape.extents()` in order; `push_dimension` assigns `DimensionId::from_len(owner, dimensions.len())`, strictly increasing. Caller order and ascending ordinal order therefore **coincide by construction** on every region this law builds — not by fixture convention, so no gather fixture here chooses a spelling that could expose it.
+
+The consequence for sequencing is that **neither repair option moves any identity value recomputed above**. The stored domain is ascending today, and an order-carrying `GatherReadAccessData.domain` would store this law's caller order, which is the same ascending run. The realization-law row digest, the law-registry identity, and the sidecar length are all stable across either choice.
+
+This pass quotes neither the `proof.rs` module-doc claim nor `verify_gather_access`'s "every obligation `gather_read` enforces", and relies on neither.
+
 ### Scopes
 
 No scope beyond the declared set was needed. The pass touched `crates/tiler-ir` (`implementation/ir`), `crates/tiler-compiler` (`implementation/compiler`), and `tickets/` (`project/tickets`). `implementation/artifact` and `implementation/build` were **not** taken, and no pin under them moved.
