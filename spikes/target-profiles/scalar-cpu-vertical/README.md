@@ -165,6 +165,44 @@ Recorded quantities from that run: profile descriptor 865 bytes, payload 265 byt
 
 **The comparison was proved able to say no.** The `CanonicalizeF32Nan` perturbation in `src/interpret.rs` was applied again at this base and the run exited 1 naming exactly one differing element, the backend returning `0x7fc01234` where the reference requires `0x7fc00000` and the other eleven still agreeing. Perturbation reverted; `git diff` over `src/interpret.rs` is empty.
 
+### Four landings moved between the wiring landing and `3cca5438`, and only one of them was the one that was looked for
+
+**Fact — the spike was broken by four independent landings, and a grep found one.** [`keep-the-ungated-spikes-compiling-against-the-workspace-api`](../../../tickets/keep-the-ungated-spikes-compiling-against-the-workspace-api.md) was filed against a single defect: the `v13`/`v21` interface step replaced `DecodedInput`'s `shape` accessor, which returned a `&Shape` unconditionally, with `static_shape`, which returns `Option<Shape>` because an interface axis may now be symbolic. That was real, and it was three of this spike's call sites. It was not the whole breakage. A clean `cargo check` at `3cca5438` reported **five** errors, and those five errors are three separate landings rather than one; a fourth landing broke the spike somewhere `cargo check` cannot look. Attributed with `git log -S` against each changed signature:
+
+| Landing | Change reaching this spike | How it surfaced here |
+| --- | --- | --- |
+| `79dc05a1` packaging the symbolic population | the decoded-input accessor | `no method named 'shape' found for reference '&DecodedInput<'_>'`, three sites |
+| `c77aab39` implementing the ADR 0013 stability subject | `push_carried_payload` gained a target-environment parameter | `this method takes 7 arguments but 6 arguments were supplied` |
+| `bc0b7c0e` admitting the U32 carrier | `KernelType` gained `U32` | `non-exhaustive patterns: 'KernelType::U32' not covered` in `ImageType::from_kernel` |
+| the strict `f32` contract's dimension set | three dimensions this profile never declared | **no compile error at all** — the profile built, and the plan was refused at run time |
+
+**The repairs are refusals rather than defaults, deliberately.** `static_shape` returns an `Option` and this spike unwraps none of them. `bind_interface` needs the extents as numbers, because it sizes host allocations and a reference comparison from them, so a symbolic boundary is refused by name — the alternative is not a panic but something worse, since any extent invented here would be compared against a reference built from the same invention and the two would agree because they were told to. The target-environment parameter is `None`: a declaration is never an attestation, positive support needs an independently selected authority exposing the exact descriptor schema, and this spike registers none. `U32` joins the refused types on its own authority — the image's whole arithmetic vocabulary is `IndexAdd`, `IndexMultiply`, `IndexDivide`, `IndexModulo`, `F32Add`, `F32Multiply`, so there is no unsigned 32-bit value class to map it onto, and mapping it to `Index` would widen it silently.
+
+**The fourth row is the one worth keeping.** `declare_numerics` did not declare `ReciprocalTransform`, `ApproximateIntrinsics`, or `MaterializationRounding`, and the strict `f32` contract requires all three. An undeclared dimension is `Unknown`, and the contract check refuses `Unknown` rather than reading it as a denial — correctly, since "nobody said" is not "no". So the spike compiled cleanly and then exited non-zero with `TargetNumericalContractRefusal`, one dimension named per run. All three rows are now declared, each as a claim about this interpreter rather than a value chosen to pass: there is no `f32` division in the vocabulary for a reciprocal multiplication to replace, no intrinsic of any kind for an approximation envelope to bound, and the only materialization is an `f32` stored into an `f32` buffer, which narrows nothing.
+
+**Measurement.** Current-tree check at `3cca5438`, macOS arm64, against the previous recorded run at `d5960e81`:
+
+| Quantity | `d5960e81` | `3cca5438` |
+| --- | --- | --- |
+| envelope bytes | 87,338 | 39,159 |
+| artifact identity bytes | 42,832 | 37,490 |
+| payload bytes | 265 | 265 |
+| output elements agreeing with `tiler-reference` | 12 | 12 |
+
+The interval spans five landings, so the two moved rows are **not** attributed here the way the single-landing interval above attributes its delta; they are recorded as observed. The twelve output bit patterns are unchanged, as is the payload. The selected plan moved to `program-alternative:00624124430e9289`. This current-tree check does **not** rewrite [`results/2026-07-31-macos-arm64.json`](results/2026-07-31-macos-arm64.json), which stays bounded to its own base.
+
+### Keeping this spike current, and why no mechanical check guards it
+
+`spikes/` is absent from the workspace `members` and no `Makefile` target names it, so nothing in the repository builds this directory. That is a decision rather than an oversight — AGENTS.md requires spikes be run manually "so exploratory dependencies do not silently become repository gates" — but it leaves a real question, which the ticket above asked: how should a future break become visible? Two mechanical answers were costed against this spike's own breakage and both were rejected on evidence.
+
+**A symbol census inside the workspace, asserting these call sites still name existing symbols, cannot see the defect it would be built for.** At `3cca5438` the name `shape` is still defined at more than twenty sites in `crates/`, including `DecodedComponent`'s own `shape` accessor in the very file that removed the interface one. A name-based census resolves `.shape()` and reports green. It also cannot see a missing argument, a widened enum, a new required trait method, or a changed closure signature, because none of those is a question about whether a name exists. A type-aware census that could see them is the compiler. The failure mode is the expensive one: a green census reads as evidence of health, and it would have been wrong here on all four rows.
+
+**A compile-only `make spikes` target admits the fourth row.** Perturbing the subject rather than the assertion — deleting the `declare_reciprocal_transform` row from `src/profile.rs` — leaves `cargo check` reporting `Finished dev profile` with no diagnostic, while `cargo run` exits 1 with `TargetNumericalContractRefusal ... requirement: ReciprocalTransform ... disposition: Unknown`. A target that runs each spike instead would catch it, but then it needs a device for the Metal spikes, and a target nothing gates is run exactly as often as the documented command it wraps.
+
+**No mechanical option catches all four rows, including the forbidden one.** It is tempting to say the complete check exists and the repository has merely declined it, but that is not true: adding `spikes/` to the workspace `members` would have caught the three compile-visible rows and would still have reported this spike healthy while it refused its own plan at run time. Workspace membership is a compiler, and the fourth row is not a compile question. The only thing that catches all four is running the spike, which is what AGENTS.md already prescribes and what no target can be made to force without turning an exploratory dependency into a repository gate.
+
+**So the decision recorded here is: this spike is repaired on demand, and this README carries the currency claim.** The dated drift sections above are the mechanism — each names the base it was last known to run at, so a reader deciding whether to trust a cited measurement compares that base against the tip instead of assuming. There is no check to perturb, and that is stated rather than left implicit.
+
 ## Findings
 
 Each is what a consumer-neutral backend-provider contract has to account for. **Fact** means inspected source or this run's output; **Inference** is derived from those.

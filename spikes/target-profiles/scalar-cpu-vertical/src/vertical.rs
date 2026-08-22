@@ -357,6 +357,14 @@ fn assemble(
             // nonetheless GPU-shaped, with no way to say "an interpreted image",
             // "a JIT input", or "a dynamically linked object".
             ArtifactExecutionPolicy::NativeImage,
+            // No target-environment declaration. A `TargetEnvironmentDeclaration`
+            // is a declaration and never an attestation, and positive support
+            // needs an independently selected authority exposing the exact
+            // `TargetEnvironmentDescriptorSchema`. This spike registers no
+            // provider schema, so stating one here would assert a compatibility
+            // class nothing can validate. `None` keeps every cell `Unclaimed`
+            // and routable while claiming nothing.
+            None,
             PayloadContent {
                 metadata: PayloadMetadata {
                     source_representation: RepresentationKey::new(
@@ -542,7 +550,18 @@ fn bind_interface(decoded: &DecodedProgram) -> Result<(u64, u64, AbiFacts), Vert
     let [input] = inputs.as_slice() else {
         return Err(VerticalError::Interface("the artifact declares one input"));
     };
-    let [rows, columns] = input.shape().extents() else {
+    // The declared boundary is total over the interface vocabulary, so an axis
+    // may name a `ShapeEnv` symbol rather than a literal. This spike executes on
+    // the host and compares against a reference it sizes itself, so it needs the
+    // extents as numbers; a symbolic boundary is refused by name rather than
+    // defaulted, because any value invented here would be compared against a
+    // reference built from the same invention and the two would agree.
+    let Some(input_shape) = input.static_shape() else {
+        return Err(VerticalError::Interface(
+            "the artifact's input boundary is wholly literal",
+        ));
+    };
+    let [rows, columns] = input_shape.extents() else {
         return Err(VerticalError::Interface("the artifact's input is rank two"));
     };
     if input.key().as_str() != INPUT_KEY || input.resolved_type_encoding() != f32_type.as_bytes() {
@@ -554,8 +573,12 @@ fn bind_interface(decoded: &DecodedProgram) -> Result<(u64, u64, AbiFacts), Vert
     let [output] = outputs.as_slice() else {
         return Err(VerticalError::Interface("the artifact declares one output"));
     };
-    let published: u64 = output
-        .shape()
+    let Some(output_shape) = output.static_shape() else {
+        return Err(VerticalError::Interface(
+            "the artifact's output boundary is wholly literal",
+        ));
+    };
+    let published: u64 = output_shape
         .extents()
         .iter()
         .map(|extent| extent.get())
@@ -576,7 +599,7 @@ fn bind_interface(decoded: &DecodedProgram) -> Result<(u64, u64, AbiFacts), Vert
     // README records this as a naming seam rather than a functional one.
     let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
     binder
-        .bind_input_shape(input.key(), input.shape())
+        .bind_input_shape(input.key(), &input_shape)
         .map_err(|_| VerticalError::Interface("the declared input shape binds"))?;
     Ok((rows.get(), columns.get(), binder.build()))
 }
