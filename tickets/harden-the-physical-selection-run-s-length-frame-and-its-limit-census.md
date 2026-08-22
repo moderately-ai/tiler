@@ -1,7 +1,7 @@
 ---
 id: harden-the-physical-selection-run-s-length-frame-and-its-limit-census
 title: Harden the physical-selection run's length frame and its limit census
-status: in-progress
+status: todo
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, identity, unfireable-checks]
-claimed_from: todo
-assignee: worker-harden
-lease_expires_at: 1787443883
 ---
 ## User-visible outcome
 
